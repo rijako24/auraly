@@ -49,7 +49,8 @@ public sealed record DianSupportDocument(
         if (!DocumentNumber.StartsWith(Authorization.Prefix, StringComparison.Ordinal))
             throw new ArgumentException("The document number does not match the authorized prefix.");
         if (Lines.Any(line =>
-                line.Quantity * line.UnitPrice - line.DiscountAmount != line.UntaxedAmount))
+                decimal.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 4,
+                    MidpointRounding.AwayFromZero) != line.UntaxedAmount))
             throw new ArgumentException(
                 "A support-document line does not reconcile quantity, price, discount and net amount.");
         if (LineExtensionAmount != Lines.Sum(line => line.UntaxedAmount) ||

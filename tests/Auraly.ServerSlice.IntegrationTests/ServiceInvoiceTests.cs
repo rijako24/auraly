@@ -677,6 +677,9 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
     private sealed class AcceptedTransport(Guid documentId) :
         IDianHabilitationTransport, IDianProductionTransport
     {
+        public Task<DianSubmissionResult> GetStatusAsync(
+            DianSubmissionRequest request, CancellationToken cancellationToken = default) => Accepted();
+
         private Task<DianSubmissionResult> Accepted() => Task.FromResult(
             new DianSubmissionResult(DianSubmissionDisposition.Accepted,
                 $"track-service-{documentId:N}", "00", "Accepted",

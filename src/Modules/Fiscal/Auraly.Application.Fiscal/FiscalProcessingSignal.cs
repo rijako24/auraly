@@ -34,7 +34,8 @@ public static class FiscalGenerationPolicy
         SalesReturnDocumentTypes.SalesReturn or
         PurchasingDocumentTypes.GoodsReceipt or
         PurchasingDocumentTypes.PurchaseReturn or
-        ExpenseDocumentTypes.Expense;
+        ExpenseDocumentTypes.Expense or
+        ExpenseDocumentTypes.Cancellation;
 }
 
 public sealed class FiscalProcessingCoordinator(

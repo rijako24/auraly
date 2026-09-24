@@ -122,6 +122,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                     connection, transaction, source, cancellationToken),
                 "Expense" => await LoadExpenseFactsAsync(
                     connection, transaction, source, cancellationToken),
+                "ExpenseCancellation" => await LoadExpenseCancellationFactsAsync(
+                    connection, transaction, source, cancellationToken),
                 "PurchaseReturn" => await LoadPurchaseReturnFactsAsync(
                     connection, transaction, source, cancellationToken),
                 "PayablePayment" => FinancialFactsResult.Ready(
@@ -522,6 +524,8 @@ public sealed partial class SqlAccountingPostingProcessor(
             DECLARE @Resolved uniqueidentifier=@ExplicitCenter;
             IF @DocumentType=N'Expense'
               SELECT @Resolved=CostCenterId FROM dbo.Expenses WHERE ExpenseId=@DocumentId AND BusinessId=@BusinessId;
+            ELSE IF @DocumentType=N'ExpenseCancellation'
+              SELECT @Resolved=CostCenterId FROM dbo.Expenses WHERE CancellationId=@DocumentId AND BusinessId=@BusinessId;
             ELSE IF @DocumentType IN (N'CashReceipt',N'CashDisbursement')
               SELECT @Resolved=CostCenterId FROM dbo.CashMovementDocuments
               WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId AND DocumentType=@DocumentType;
@@ -996,6 +1000,85 @@ public sealed partial class SqlAccountingPostingProcessor(
         return FinancialFactsResult.Ready(FinancialFacts.Expense(expense.DocumentNumber, party,
             expense.TaxExclusiveAmount, expense.VatAmount, expense.GrossAmount,
             settlements, expense.ExpenseAccountId));
+    }
+
+    private static async Task<FinancialFactsResult> LoadExpenseCancellationFactsAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        var cancellation = Auraly.Contracts.Expenses.ExpenseCancellationSerializer.Deserialize(source.PayloadJson);
+        var original = cancellation.Original;
+        if (cancellation.CancellationId != source.DocumentId || cancellation.BusinessId != source.BusinessId ||
+            original.BusinessId != source.BusinessId || original.TenantId != source.TenantId ||
+            cancellation.PayableCredit + cancellation.SupplierCredit != original.Withholding.NetAmount)
+            throw new InvalidOperationException("The expense cancellation does not reconcile with its accounting source.");
+        await using var command = new SqlCommand("""
+            SELECT PartyId FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId;
+            SELECT l.AccountId,l.Debit,l.Credit,l.PartyId,l.CostCenterId
+            FROM dbo.AccountingEntries e
+            JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+            WHERE e.SourceDocumentId=@ExpenseId AND e.SourceDocumentType=N'Expense'
+              AND e.BusinessId=@BusinessId AND e.TenantId=@TenantId
+            ORDER BY l.LineNumber;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@SupplierId", original.SupplierId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        command.Parameters.AddWithValue("@ExpenseId", original.ExpenseId);
+        command.Parameters.AddWithValue("@TenantId", source.TenantId);
+        var originalLines = new List<ManualLineSpec>();
+        Guid party;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException("The cancelled expense supplier was not found for accounting.");
+            party = reader.GetGuid(0);
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                originalLines.Add(new(reader.GetGuid(0), reader.GetDecimal(1), reader.GetDecimal(2),
+                    reader.IsDBNull(3) ? null : reader.GetGuid(3),
+                    reader.IsDBNull(4) ? null : reader.GetGuid(4), ""));
+        }
+        if (originalLines.Sum(line => line.Debit) != original.GrossAmount ||
+            originalLines.Sum(line => line.Credit) != original.GrossAmount ||
+            originalLines.Count == 0 || originalLines[0].AccountId != original.ExpenseAccountId ||
+            originalLines[0].Debit != original.TaxExclusiveAmount)
+            throw new InvalidOperationException("The original expense journal does not reconcile with the cancellation.");
+        var payableLineIndex = original.VatAmount > 0 ? 2 : 1;
+        if (original.Withholding.NetAmount > 0 &&
+            (originalLines.Count <= payableLineIndex ||
+             originalLines[payableLineIndex].Credit != original.Withholding.NetAmount ||
+             originalLines[payableLineIndex].Debit != 0))
+            throw new InvalidOperationException("The original expense payable line is missing.");
+        var description = $"Anulación gasto {original.DocumentNumber}";
+        var reversed = new List<ManualLineSpec>(originalLines.Count + 1);
+        for (var i = 0; i < originalLines.Count; i++)
+        {
+            var line = originalLines[i];
+            if (i == payableLineIndex && original.Withholding.NetAmount > 0)
+            {
+                if (cancellation.PayableCredit > 0)
+                    reversed.Add(new(line.AccountId, cancellation.PayableCredit, 0,
+                        line.PartyId, line.CostCenterId, description));
+                continue;
+            }
+            reversed.Add(new(line.AccountId, line.Credit, line.Debit,
+                line.PartyId, line.CostCenterId, description));
+        }
+        if (cancellation.SupplierCredit > 0)
+        {
+            var accounts = await ResolveAccountsAsync(connection, transaction, source,
+                new HashSet<string>(StringComparer.Ordinal)
+                    { AccountingCategories.SupplierCreditsReceivable }, cancellationToken);
+            if (!accounts.TryGetValue(AccountingCategories.SupplierCreditsReceivable, out var accountId))
+                return FinancialFactsResult.Pending("MissingAccountMapping",
+                    "Supplier credits receivable has no active accounting mapping.");
+            reversed.Add(new(accountId, cancellation.SupplierCredit, 0,
+                party, original.CostCenterId, description));
+        }
+        if (reversed.Sum(line => line.Debit) != reversed.Sum(line => line.Credit))
+            throw new InvalidOperationException("The expense cancellation journal does not balance.");
+        return FinancialFactsResult.Ready(FinancialFacts.ExpenseCancellation(
+            original.DocumentNumber, party, reversed));
     }
 
     private static async Task<FinancialFactsResult> LoadPurchaseReturnFactsAsync(
@@ -1726,6 +1809,10 @@ public sealed partial class SqlAccountingPostingProcessor(
             decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements,
             Guid accountId) => new($"Gasto {number}", party, untaxed, vat,
                 total, 0, settlements, false, true, false, false, false, false, accountId);
+        public static FinancialFacts ExpenseCancellation(string number, Guid party,
+            IReadOnlyList<ManualLineSpec> lines) =>
+            new($"Anulación gasto {number}", party, 0, 0, 0, 0,
+                [], false, false, false, false, DirectLines: lines);
         public static FinancialFacts PurchaseReturn(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", party, expense, deductibleVat, total, inventory, settlements, true, true, false, false);
         public static FinancialFacts PurchaseReturnWithUnrefundedLandedCost(
             string number, Guid party, decimal inventory, decimal landedCost,

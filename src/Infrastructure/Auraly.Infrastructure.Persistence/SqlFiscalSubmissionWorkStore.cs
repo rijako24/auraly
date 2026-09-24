@@ -158,7 +158,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
         CancellationToken cancellationToken)
     {
         if (operation is not (DianOperationCodes.SendTestSet or
-            DianOperationCodes.GetStatusZip or DianOperationCodes.SendBillSync or
+            DianOperationCodes.GetStatusZip or DianOperationCodes.GetStatus or DianOperationCodes.SendBillSync or
             DianOperationCodes.SendPayrollSync))
             throw new ArgumentOutOfRangeException(nameof(operation));
         if (sanitizedRequest.Length == 0)

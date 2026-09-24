@@ -512,13 +512,14 @@ public sealed class FiscalGenerationWorker(
         var receipt = snapshot.Receipt;
         var expense = snapshot.Expense;
         var adjustment = snapshot.Adjustment;
+        var expenseCancellation = snapshot.ExpenseCancellation;
         var sourceCount = (receipt is null ? 0 : 1) + (expense is null ? 0 : 1) +
-                          (adjustment is null ? 0 : 1);
+                          (adjustment is null ? 0 : 1) + (expenseCancellation is null ? 0 : 1);
         if (sourceCount != 1)
             throw new FiscalSnapshotDataException(
                 "The purchase-support snapshot must contain exactly one acquisition source.");
-        if (adjustment is not null)
-            return await BuildSupportAdjustmentAsync(work, snapshot, adjustment,
+        if (adjustment is not null || expenseCancellation is not null)
+            return await BuildSupportAdjustmentAsync(work, snapshot,
                 cancellationToken);
         if ((receipt is null) == (expense is null))
             throw new FiscalSnapshotDataException(
@@ -614,13 +615,18 @@ public sealed class FiscalGenerationWorker(
     private async Task<FiscalUblBuildResult> BuildSupportAdjustmentAsync(
         FiscalGenerationWorkItem work,
         PurchaseSupportFiscalSnapshot snapshot,
-        PurchaseReturnDocumentPayload adjustment,
         CancellationToken cancellationToken)
     {
+        var adjustment = snapshot.Adjustment;
+        var cancellation = snapshot.ExpenseCancellation;
+        if ((adjustment is null) == (cancellation is null))
+            throw new FiscalSnapshotDataException("The support adjustment has no unique source.");
+        var documentId = adjustment?.ReturnId ?? cancellation!.CancellationId;
+        var businessId = adjustment?.BusinessId ?? cancellation!.BusinessId;
         if (work.FiscalDocumentType != FiscalDocumentTypeCodes.SupportDocumentAdjustment ||
             snapshot.FiscalIssuerConfigurationId != work.Issuer.Id ||
-            adjustment.ReturnId != work.DocumentId ||
-            adjustment.BusinessId != work.BusinessId ||
+            documentId != work.DocumentId ||
+            businessId != work.BusinessId ||
             snapshot.FiscalNumber != work.FiscalNumber ||
             snapshot.Environment != work.Issuer.Environment ||
             string.IsNullOrWhiteSpace(snapshot.OriginalSupportNumber) ||
@@ -633,40 +639,74 @@ public sealed class FiscalGenerationWorker(
         if (string.IsNullOrWhiteSpace(pin))
             throw new FiscalSnapshotDataException("The software PIN secret could not be resolved.");
         var metadata = snapshot.Lines.ToDictionary(line => line.LineNumber);
-        var lines = adjustment.Lines.OrderBy(line => line.LineNumber).Select(line =>
+        IReadOnlyList<DianCreditNoteLine> lines;
+        DateTimeOffset issuedAt; string currencyCode; decimal untaxedAmount, totalAmount, discountAmount;
+        if (adjustment is not null)
         {
-            if (!metadata.TryGetValue(line.LineNumber, out var item))
+            lines = adjustment.Lines.OrderBy(line => line.LineNumber).Select(line =>
+            {
+                if (!metadata.TryGetValue(line.LineNumber, out var item))
+                    throw new FiscalSnapshotDataException(
+                        $"Support-adjustment metadata is missing for line {line.LineNumber}.");
+                if (string.IsNullOrWhiteSpace(item.DianTaxCode))
+                    throw new FiscalSnapshotDataException(
+                        $"Support-adjustment metadata has no DIAN tax code for line {line.LineNumber}.");
+                return new DianCreditNoteLine(line.LineNumber, item.ProductCode,
+                    item.ProductCodeScheme, line.Description, item.UnitCode, line.Quantity,
+                    line.UnitCost, line.DiscountAmount, line.NetAmount,
+                    [new DianTax(item.DianTaxCode, item.TaxName, line.NetAmount,
+                        line.TaxAmount, line.TaxRate)]);
+            }).ToArray();
+            issuedAt = adjustment.ReturnedAt;
+            currencyCode = adjustment.CurrencyCode;
+            untaxedAmount = adjustment.NetAmount;
+            totalAmount = adjustment.TotalAmount;
+            discountAmount = adjustment.Lines.Sum(line => line.DiscountAmount);
+        }
+        else
+        {
+            var original = cancellation!.Original;
+            if (!metadata.TryGetValue(1, out var item))
                 throw new FiscalSnapshotDataException(
-                    $"Support-adjustment metadata is missing for line {line.LineNumber}.");
+                    "Support-adjustment metadata is missing for the expense line.");
             if (string.IsNullOrWhiteSpace(item.DianTaxCode))
                 throw new FiscalSnapshotDataException(
-                    $"Support-adjustment metadata has no DIAN tax code for line {line.LineNumber}.");
-            return new DianCreditNoteLine(line.LineNumber, item.ProductCode,
-                item.ProductCodeScheme, line.Description, item.UnitCode, line.Quantity,
-                line.UnitCost, line.DiscountAmount, line.NetAmount,
-                [new DianTax(item.DianTaxCode, item.TaxName, line.NetAmount,
-                    line.TaxAmount, line.TaxRate)]);
-        }).ToArray();
+                    "Support-adjustment metadata has no DIAN tax code for the expense line.");
+            var taxRate = original.TaxExclusiveAmount == 0 ? 0 :
+                decimal.Round(original.VatAmount / original.TaxExclusiveAmount * 100m,
+                    6, MidpointRounding.AwayFromZero);
+            lines = [new DianCreditNoteLine(1, item.ProductCode, item.ProductCodeScheme,
+                original.Description, item.UnitCode, 1m, original.TaxExclusiveAmount, 0,
+                original.TaxExclusiveAmount, [new DianTax(item.DianTaxCode, item.TaxName,
+                    original.TaxExclusiveAmount, original.VatAmount, taxRate)])];
+            issuedAt = cancellation.CancelledAt;
+            currencyCode = original.CurrencyCode;
+            untaxedAmount = original.TaxExclusiveAmount;
+            totalAmount = original.GrossAmount;
+            discountAmount = 0;
+        }
         var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
         var cuds = CudsCalculator.Calculate(new CudsInput(snapshot.FiscalNumber,
-            adjustment.ReturnedAt, adjustment.NetAmount,
+            issuedAt, untaxedAmount,
             taxes.Where(tax => tax.Code == "01").Sum(tax => tax.Amount),
-            adjustment.TotalAmount, snapshot.Seller.Identification,
+            totalAmount, snapshot.Seller.Identification,
             work.Issuer.SupplierTaxId, pin, (FiscalEnvironment)snapshot.Environment),
             snapshot.QrValidationUrl);
         var note = new DianCreditNote(snapshot.FiscalNumber, cuds.Cuds,
-            adjustment.ReturnedAt, adjustment.CurrencyCode,
-            DianCreditNoteCodes.ReferencesInvoiceOperation, "1",
-            "Devolución parcial de los bienes y/o no aceptación parcial del servicio",
+            issuedAt, currencyCode,
+            DianCreditNoteCodes.ReferencesInvoiceOperation, cancellation is null ? "1" : "2",
+            cancellation is null
+                ? "Devolución parcial de los bienes y/o no aceptación parcial del servicio"
+                : "Anulación del documento soporte",
             snapshot.Environment,
             new DianSoftware(work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
                 work.Issuer.SoftwareId, pin), Party(snapshot.Seller),
             IssuerParty(work.Issuer),
             new DianInvoiceReference(snapshot.OriginalSupportNumber!,
                 snapshot.OriginalSupportCuds!, snapshot.OriginalSupportIssuedOn.Value),
-            lines, taxes, adjustment.NetAmount, adjustment.NetAmount,
-            adjustment.TotalAmount, adjustment.Lines.Sum(line => line.DiscountAmount),
-            adjustment.TotalAmount, cuds.QrPayload,
+            lines, taxes, untaxedAmount, untaxedAmount,
+            totalAmount, discountAmount,
+            totalAmount, cuds.QrPayload,
             DocumentTypeCode: "95", CustomizationId: snapshot.SellerOriginCode,
             ProfileId: "Nota de ajuste al documento soporte en adquisiciones efectuadas a sujetos no obligados a expedir factura o documento equivalente",
             UniqueCodeScheme: "CUDS-SHA384",
@@ -763,7 +803,8 @@ public sealed class FiscalGenerationWorker(
                 work.SupportDocument?.Receipt?.ReceivedAt ??
                 work.SupportDocument?.Expense?.IssuedAt,
             FiscalDocumentTypeCodes.SupportDocumentAdjustment =>
-                work.SupportDocument?.Adjustment?.ReturnedAt,
+                work.SupportDocument?.Adjustment?.ReturnedAt ??
+                work.SupportDocument?.ExpenseCancellation?.CancelledAt,
             _ => null
         };
 

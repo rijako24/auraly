@@ -348,6 +348,27 @@ public sealed class DianHabilitationTransportTests
     }
 
     [Fact]
+    public async Task Production_in_process_response_is_pending_and_can_be_queried()
+    {
+        var client = new DeterministicClient
+        {
+            Bill = new DianDocumentResponse
+            {
+                IsValid = false, StatusCode = "98", StatusDescription = "En Proceso",
+                XmlDocumentKey = "cufe-42"
+            }
+        };
+        var transport = new DianProductionTransport(
+            new FixedProductionConfigurationProvider(), new FixedClientFactory(client));
+        var request = Request() with { TestSetId = null, TrackId = "cufe-42" };
+
+        Assert.Equal(DianSubmissionDisposition.Pending,
+            (await transport.SubmitBillSyncAsync(request)).Disposition);
+        Assert.Equal(DianSubmissionDisposition.Pending,
+            (await transport.GetStatusAsync(request)).Disposition);
+    }
+
+    [Fact]
     public async Task Production_payroll_transport_uses_SendNominaSync_and_maps_acceptance()
     {
         var client = new DeterministicClient
@@ -410,6 +431,9 @@ public sealed class DianHabilitationTransportTests
 
     private sealed class DeterministicClient : IDianWcfClient
     {
+        public Task<DianDocumentResponse> GetStatusAsync(
+            string trackId, CancellationToken cancellationToken) => Task.FromResult(Bill);
+
         public DianUploadDocumentResponse Upload { get; init; } = new();
         public IReadOnlyList<DianDocumentResponse> Status { get; init; } = [];
         public Exception? UploadException { get; init; }

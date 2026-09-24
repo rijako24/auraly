@@ -104,13 +104,13 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
     }
 
     public async Task<ExpensePage> ListAsync(ExpenseUserIdentity user, int page, int pageSize, string? search, Guid? conceptId,
-        Guid? supplierId, DateOnly? from, DateOnly? to, CancellationToken ct)
+        Guid? supplierId, DateOnly? from, DateOnly? to, string? status, CancellationToken ct)
     {
         await using var connection = connections.Create(); await connection.OpenAsync(ct);
-        const string filter = """e.BusinessId=@BusinessId AND (@Search IS NULL OR e.DocumentNumber LIKE N'%'+@Search+N'%' OR e.SupplierDocumentNumber LIKE N'%'+@Search+N'%' OR s.Name LIKE N'%'+@Search+N'%') AND (@ConceptId IS NULL OR e.ExpenseConceptId=@ConceptId) AND (@SupplierId IS NULL OR e.SupplierId=@SupplierId) AND (@From IS NULL OR CONVERT(date,e.IssuedAt)>=@From) AND (@To IS NULL OR CONVERT(date,e.IssuedAt)<=@To)""";
+        const string filter = """e.BusinessId=@BusinessId AND (@Search IS NULL OR e.DocumentNumber LIKE N'%'+@Search+N'%' OR e.SupplierDocumentNumber LIKE N'%'+@Search+N'%' OR s.Name LIKE N'%'+@Search+N'%' OR c.Name LIKE N'%'+@Search+N'%') AND (@ConceptId IS NULL OR e.ExpenseConceptId=@ConceptId) AND (@SupplierId IS NULL OR e.SupplierId=@SupplierId) AND (@From IS NULL OR CONVERT(date,e.IssuedAt)>=@From) AND (@To IS NULL OR CONVERT(date,e.IssuedAt)<=@To) AND (@Status IS NULL OR e.Status=@Status)""";
         await using var command = new SqlCommand($"""
             SELECT COUNT(*),COALESCE(SUM(e.GrossAmount),0),COALESCE(SUM(e.WithholdingAmount),0),COALESCE(SUM(e.NetPayable),0)
-              FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId WHERE {filter};
+              FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId WHERE {filter};
             SELECT e.ExpenseId,e.DocumentNumber,e.SupplierDocumentNumber,e.SupplierId,s.Name,e.ExpenseConceptId,c.Name,
               e.IssuedAt,e.DueDate,e.GrossAmount,e.WithholdingAmount,e.NetPayable,e.CurrencyCode,e.Status,e.EvidenceUrl,e.PurchaseEvidenceType
               FROM dbo.Expenses e JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId
@@ -120,12 +120,55 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
         command.Parameters.AddWithValue("@ConceptId", (object?)conceptId ?? DBNull.Value); command.Parameters.AddWithValue("@SupplierId", (object?)supplierId ?? DBNull.Value);
         command.Parameters.AddWithValue("@From", from is null ? DBNull.Value : from.Value.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@To", to is null ? DBNull.Value : to.Value.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);
         command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize); command.Parameters.AddWithValue("@Size", pageSize);
         await using var reader = await command.ExecuteReaderAsync(ct); await reader.ReadAsync(ct);
         var count = reader.GetInt32(0); var gross = reader.GetDecimal(1); var held = reader.GetDecimal(2); var net = reader.GetDecimal(3);
         await reader.NextResultAsync(ct); var items = new List<ExpenseListItem>();
         while (await reader.ReadAsync(ct)) items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5), reader.GetString(6), reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetString(12), reader.GetString(13), reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15)));
         return new(items, page, pageSize, count, gross, held, net);
+    }
+
+    public async Task<ExpenseDetail?> GetAsync(ExpenseUserIdentity user, Guid expenseId, CancellationToken ct)
+    {
+        await using var connection = connections.Create(); await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT e.ExpenseId,e.DocumentNumber,e.SupplierDocumentNumber,e.SupplierId,s.Name,
+              e.ExpenseConceptId,c.Name,e.IssuedAt,e.DueDate,e.CurrencyCode,e.Description,
+              e.TaxExclusiveAmount,e.VatAmount,e.GrossAmount,e.WithholdingAmount,e.NetPayable,
+              e.Status,e.PurchaseEvidenceType,e.EvidenceUrl,f.FiscalNumber,f.FiscalStatus,
+              p.PayableId,p.Status,p.OriginalAmount,p.OutstandingAmount,
+              e.CancellationId,e.CancellationReason,adjustment.FiscalNumber,adjustment.FiscalStatus
+            FROM dbo.Expenses e
+            JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.TenantId=@TenantId
+            JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId AND s.BusinessId=e.BusinessId
+            JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId AND c.BusinessId=e.BusinessId
+            LEFT JOIN dbo.FiscalDocuments f ON f.DocumentId=e.ExpenseId AND f.BusinessId=e.BusinessId
+            LEFT JOIN dbo.Payables p ON p.SourceDocumentId=e.ExpenseId AND p.SourceDocumentType=N'Expense'
+              AND p.BusinessId=e.BusinessId
+            LEFT JOIN dbo.FiscalDocuments adjustment ON adjustment.DocumentId=e.CancellationId
+              AND adjustment.BusinessId=e.BusinessId AND adjustment.FiscalDocumentType=N'SupportDocumentAdjustment'
+            WHERE e.BusinessId=@BusinessId AND e.ExpenseId=@ExpenseId;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@ExpenseId", expenseId);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+        ExpensePayableView? payable = reader.IsDBNull(21) ? null :
+            new(reader.GetGuid(21), reader.GetString(22), reader.GetDecimal(23), reader.GetDecimal(24));
+        return new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5), reader.GetString(6),
+            reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetString(9),
+            reader.GetString(10), reader.GetDecimal(11), reader.GetDecimal(12), reader.GetDecimal(13),
+            reader.GetDecimal(14), reader.GetDecimal(15), reader.GetString(16), reader.GetString(17),
+            reader.IsDBNull(18) ? null : reader.GetString(18),
+            reader.IsDBNull(19) ? null : reader.GetString(19),
+            reader.IsDBNull(20) ? null : reader.GetString(20), payable,
+            reader.IsDBNull(25) ? null : reader.GetGuid(25),
+            reader.IsDBNull(26) ? null : reader.GetString(26),
+            reader.IsDBNull(27) ? null : reader.GetString(27),
+            reader.IsDBNull(28) ? null : reader.GetString(28));
     }
 
     public async Task<ExpenseAcceptance> AcceptAsync(ExpenseUserIdentity user, string idempotencyKey, ConfirmExpenseRequest request,

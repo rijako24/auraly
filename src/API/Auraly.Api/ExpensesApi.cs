@@ -48,6 +48,7 @@ public static class ExpensesApi
             Guid? supplierId,
             DateOnly? from,
             DateOnly? to,
+            string? status,
             ExpenseService service,
             CancellationToken cancellationToken) =>
             Execute(() => service.ListAsync(
@@ -59,7 +60,22 @@ public static class ExpensesApi
                 supplierId,
                 from,
                 to,
+                status,
                 cancellationToken)));
+
+        group.MapGet("/{id:guid}", async (HttpContext context, Guid id,
+            ExpenseService service, CancellationToken cancellationToken) =>
+            await ExecuteResult(async () =>
+            {
+                var detail = await service.GetAsync(context.User.ToExpenseIdentity(), id, cancellationToken);
+                return detail is null ? Results.NotFound() : Results.Ok(detail);
+            }));
+
+        group.MapPost("/{id:guid}/cancel", async (HttpContext context, Guid id,
+            CancelExpenseRequest request, ExpenseService service, CancellationToken cancellationToken) =>
+            await ExecuteResult(async () => Results.Accepted(
+                $"/api/commerce/v1/expenses/{id:D}",
+                await service.CancelAsync(context.User.ToExpenseIdentity(), id, request, cancellationToken))));
 
         group.MapPost("/confirm", async (
             HttpContext context,

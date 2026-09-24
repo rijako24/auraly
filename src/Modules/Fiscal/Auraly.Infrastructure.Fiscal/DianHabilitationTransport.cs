@@ -11,6 +11,7 @@ namespace Auraly.Infrastructure.Fiscal;
 
 public interface IDianWcfClient : IAsyncDisposable
 {
+    Task<DianDocumentResponse> GetStatusAsync(string trackId, CancellationToken cancellationToken);
     Task<DianUploadDocumentResponse> SendTestSetAsync(
         string fileName,
         byte[] contentFile,
@@ -240,6 +241,12 @@ public interface IDianCustomerServices
     Task<DianDocumentResponse[]> GetStatusZipAsync(string trackId);
 
     [OperationContract(
+        Name = "GetStatus",
+        Action = "http://wcf.dian.colombia/IWcfDianCustomerServices/GetStatus",
+        ReplyAction = "http://wcf.dian.colombia/IWcfDianCustomerServices/GetStatusResponse")]
+    Task<DianDocumentResponse> GetStatusAsync(string trackId);
+
+    [OperationContract(
         Name = "GetNumberingRange",
         Action = "http://wcf.dian.colombia/IWcfDianCustomerServices/GetNumberingRange",
         ReplyAction = "http://wcf.dian.colombia/IWcfDianCustomerServices/GetNumberingRangeResponse")]
@@ -265,6 +272,13 @@ internal sealed class DianWcfClient(
     ChannelFactory<IDianCustomerServices> factory,
     IDianCustomerServices channel) : IDianWcfClient
 {
+    public async Task<DianDocumentResponse> GetStatusAsync(
+        string trackId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return await channel.GetStatusAsync(trackId).WaitAsync(cancellationToken);
+    }
+
     public async Task<DianUploadDocumentResponse> SendTestSetAsync(
         string fileName,
         byte[] contentFile,

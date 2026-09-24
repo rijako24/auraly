@@ -29,10 +29,16 @@ public sealed class ExpenseSupplierSelectionTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Reading_expenses_does_not_grant_supplier_selection()
+    public async Task Expense_reader_can_filter_by_supplier_without_browsing_other_parties()
     {
         using var client = fixture.CreateAdminClient(ExpensePermissionCodes.Read);
-        using var response = await client.GetAsync("/api/commerce/v1/parties/role-options?role=Supplier");
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var options = await client.GetFromJsonAsync<PartyRoleOptionPage>(
+            "/api/commerce/v1/parties/role-options?role=Supplier&page=1&pageSize=10");
+        Assert.NotNull(options);
+        Assert.Contains(options.Items, item => item.RoleId == fixture.SupplierId);
+        using var otherRole = await client.GetAsync("/api/commerce/v1/parties/role-options?role=Customer");
+        Assert.Equal(HttpStatusCode.Forbidden, otherRole.StatusCode);
+        using var workspace = await client.GetAsync("/api/commerce/v1/parties/");
+        Assert.Equal(HttpStatusCode.Forbidden, workspace.StatusCode);
     }
 }

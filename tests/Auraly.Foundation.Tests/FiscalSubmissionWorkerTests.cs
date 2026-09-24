@@ -126,6 +126,36 @@ public sealed class FiscalSubmissionWorkerTests
     }
 
     [Fact]
+    public async Task Production_document_with_a_dian_key_queries_status_without_resending()
+    {
+        var store = new TestStore(Work() with { TestSetId = null, TrackId = "cufe-42" });
+        var transport = new TestTransport(new DianSubmissionResult(
+            DianSubmissionDisposition.Accepted, "cufe-42", "00", "Accepted", null, [], true));
+
+        await Worker(store, transport).ProcessAsync(store.BusinessId, store.DocumentId, "worker-a");
+
+        Assert.Equal(DianOperationCodes.GetStatus, store.Started!.Operation);
+        Assert.Equal(0, transport.SendCalls);
+        Assert.Equal(1, transport.QueryCalls);
+        Assert.Equal(FiscalDocumentStatusCodes.DianAccepted, store.Status);
+    }
+
+    [Fact]
+    public async Task Pending_DIAN_status_stops_automatic_queries_after_the_bounded_attempts()
+    {
+        var store = new TestStore(Work() with { TestSetId = null, TrackId = "cufe-42" })
+            { AttemptNumber = 20 };
+        var transport = new TestTransport(new DianSubmissionResult(
+            DianSubmissionDisposition.Pending, "cufe-42", "98", "En proceso", null, [], true));
+
+        await Worker(store, transport).ProcessAsync(store.BusinessId, store.DocumentId, "worker-a");
+
+        Assert.Equal(DianOperationCodes.GetStatus, store.Started!.Operation);
+        Assert.Null(store.NextAttemptAt);
+        Assert.Equal(FiscalDocumentStatusCodes.PendingDianResult, store.Status);
+    }
+
+    [Fact]
     public async Task Production_electronic_payroll_selects_SendNominaSync()
     {
         var store = new TestStore(Work() with
@@ -175,6 +205,7 @@ public sealed class FiscalSubmissionWorkerTests
         public string? Status { get; private set; }
         public string? ErrorCode { get; private set; }
         public bool WasMarkedUnknown { get; private set; }
+        public int AttemptNumber { get; init; } = 1;
 
         public Task<FiscalSubmissionWorkItem?> AcquireAsync(
             Guid businessId, Guid documentId, string workerId, DateTimeOffset acquiredAt, TimeSpan lease,
@@ -200,7 +231,7 @@ public sealed class FiscalSubmissionWorkerTests
             if (operation == DianOperationCodes.SendTestSet) Assert.NotNull(submissionZip);
             Started = new FiscalSubmissionAttempt(
                 Guid.NewGuid(),
-                1,
+                AttemptNumber,
                 operation,
                 "correlation",
                 new DianSubmissionRequest(item.BusinessId, item.DocumentId, $"{item.FiscalNumber}.zip",
@@ -274,6 +305,11 @@ public sealed class FiscalSubmissionWorkerTests
 
     private sealed class TestProductionTransport(TestTransport transport) : IDianProductionTransport
     {
+        public Task<DianSubmissionResult> GetStatusAsync(
+            DianSubmissionRequest request,
+            CancellationToken cancellationToken = default) =>
+            transport.GetStatusZipAsync(request, cancellationToken);
+
         public Task<DianSubmissionResult> SubmitBillSyncAsync(
             DianSubmissionRequest request,
             CancellationToken cancellationToken = default) =>

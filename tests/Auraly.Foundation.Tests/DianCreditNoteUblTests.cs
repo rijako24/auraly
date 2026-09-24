@@ -24,6 +24,9 @@ public sealed class DianCreditNoteUblTests
         Assert.Equal("2", xml.Descendants(DianUblNamespaces.Cbc + "ProfileExecutionID").Single().Value);
         Assert.Equal(DianCreditNoteCodes.DocumentType,
             xml.Descendants(DianUblNamespaces.Cbc + "CreditNoteTypeCode").Single().Value);
+        var payment = xml.Descendants(DianUblNamespaces.Cac + "PaymentMeans").Single();
+        Assert.Equal("1", payment.Element(DianUblNamespaces.Cbc + "ID")?.Value);
+        Assert.Equal("ZZZ", payment.Element(DianUblNamespaces.Cbc + "PaymentMeansCode")?.Value);
         var originalCufe = xml.Descendants(DianUblNamespaces.Cac + "InvoiceDocumentReference")
             .Elements(DianUblNamespaces.Cbc + "UUID").Single();
         Assert.Equal("2", originalCufe.Attribute("schemeID")?.Value);

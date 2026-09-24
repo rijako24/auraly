@@ -57,10 +57,11 @@ public sealed class PartyWorkspaceService(
     public Task<PartyRoleOptionPage> RoleOptionsAsync(
         PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct)
     {
-        // Creating an expense needs the scoped supplier picker, not permission
-        // to browse/edit the full third-party workspace or other roles.
+        // Expense readers need the scoped supplier picker for filters; expense
+        // creators use the same picker without full third-party workspace access.
         if (query.Role?.Trim() != "Supplier" ||
             (!actor.Permissions.Contains(ExpensePermissionCodes.Create) &&
+             !actor.Permissions.Contains(ExpensePermissionCodes.Read) &&
              !actor.Permissions.Contains(InvoiceChargePermissions.Configure)))
             Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
         if (page < 1 || query.PageSize is < 1 or > 100)

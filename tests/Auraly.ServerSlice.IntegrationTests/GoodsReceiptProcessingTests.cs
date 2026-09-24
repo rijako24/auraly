@@ -639,7 +639,8 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             using var client = fixture.CreateAdminClient(
                 ExpensePermissionCodes.Read,
                 ExpensePermissionCodes.Create,
-                ExpensePermissionCodes.Configure);
+                ExpensePermissionCodes.Configure,
+                ExpensePermissionCodes.Cancel);
             var options = await client.GetFromJsonAsync<ExpenseWorkspaceOptions>(
                 "/api/commerce/v1/expenses/options")
                 ?? throw new InvalidOperationException("Expense options were not returned.");
@@ -687,6 +688,33 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                 supportExpenseId);
             Assert.Contains($"\"expenseId\":\"{supportExpenseId:D}\"", snapshot,
                 StringComparison.OrdinalIgnoreCase);
+            await GenerateFiscalAsync(supportExpenseId);
+            await using (var db = new SqlConnection(fixture.ConnectionString))
+            {
+                await db.OpenAsync();
+                await using var accepted = new SqlCommand("""
+                    UPDATE dbo.FiscalDocuments SET FiscalStatus=N'DianAccepted'
+                    WHERE DocumentId=@Id AND FiscalDocumentType=N'SupportDocument';
+                    """, db);
+                accepted.Parameters.AddWithValue("@Id", supportExpenseId);
+                Assert.Equal(1, await accepted.ExecuteNonQueryAsync());
+            }
+            var cancellationId = Guid.NewGuid();
+            using (var cancellation = await client.PostAsJsonAsync(
+                       $"/api/commerce/v1/expenses/{supportExpenseId:D}/cancel",
+                       new CancelExpenseRequest(cancellationId, "El servicio no fue prestado")))
+                Assert.True(cancellation.StatusCode == HttpStatusCode.Accepted,
+                    await cancellation.Content.ReadAsStringAsync());
+            Assert.Equal("SupportDocumentAdjustment", await ScalarAsync<string>(
+                "SELECT FiscalDocumentType FROM dbo.FiscalDocuments WHERE DocumentId=@Id", cancellationId));
+            Assert.Equal("Cancelled", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.Expenses WHERE ExpenseId=@Id", supportExpenseId));
+            await GenerateFiscalAsync(cancellationId);
+            var adjustmentXml = await ReadArtifactTextAsync(cancellationId, "SignedXml");
+            Assert.Contains("<cbc:CreditNoteTypeCode>95</cbc:CreditNoteTypeCode>", adjustmentXml,
+                StringComparison.Ordinal);
+            Assert.Contains("<cbc:ResponseCode>2</cbc:ResponseCode>", adjustmentXml,
+                StringComparison.Ordinal);
 
             await SetSupplierPurchaseEvidencePolicyAsync(null);
             var ordinaryExpenseId = Guid.NewGuid();

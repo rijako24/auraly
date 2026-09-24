@@ -160,10 +160,13 @@ public sealed class FiscalSubmissionWorker(
 
         var zip = packages.Build(work.FiscalNumber, work.SignedXml);
         var production = work.TestSetId is null;
-        if (production && !string.IsNullOrWhiteSpace(work.TrackId))
-            throw new InvalidOperationException("A synchronous production attempt cannot be polled with GetStatusZip.");
+        if (production && work.FiscalDocumentType == FiscalDocumentTypeCodes.ElectronicPayroll &&
+            !string.IsNullOrWhiteSpace(work.TrackId))
+            throw new InvalidOperationException("A production payroll attempt requires its own status inquiry policy.");
         var operation = production
-            ? work.FiscalDocumentType == FiscalDocumentTypeCodes.ElectronicPayroll
+            ? !string.IsNullOrWhiteSpace(work.TrackId)
+                ? DianOperationCodes.GetStatus
+                : work.FiscalDocumentType == FiscalDocumentTypeCodes.ElectronicPayroll
                 ? DianOperationCodes.SendPayrollSync
                 : DianOperationCodes.SendBillSync
             : string.IsNullOrWhiteSpace(work.TrackId)
@@ -200,12 +203,14 @@ public sealed class FiscalSubmissionWorker(
                 await transport.SubmitTestSetAsync(attempt.Request, cancellationToken),
             DianOperationCodes.GetStatusZip =>
                 await transport.GetStatusZipAsync(attempt.Request, cancellationToken),
+            DianOperationCodes.GetStatus =>
+                await productionTransport.GetStatusAsync(attempt.Request, cancellationToken),
             DianOperationCodes.SendPayrollSync =>
                 await productionTransport.SubmitPayrollSyncAsync(attempt.Request, cancellationToken),
             _ => await productionTransport.SubmitBillSyncAsync(attempt.Request, cancellationToken)
         };
         var completedAt = timeProvider.GetUtcNow();
-        var nextAttemptAt = NextAttempt(result, completedAt);
+        var nextAttemptAt = NextAttempt(result, completedAt, attempt.AttemptNumber);
         await store.CompleteAttemptAsync(
             work,
             attempt,
@@ -218,11 +223,13 @@ public sealed class FiscalSubmissionWorker(
 
     private static DateTimeOffset? NextAttempt(
         DianSubmissionResult result,
-        DateTimeOffset now) =>
+        DateTimeOffset now,
+        int attemptNumber) =>
+        attemptNumber >= 20 ? null :
         result.Disposition switch
         {
             DianSubmissionDisposition.Received or DianSubmissionDisposition.Pending =>
-                now.AddSeconds(5),
+                now.AddSeconds(Math.Min(60, 5 * (1 << Math.Clamp(attemptNumber - 1, 0, 4)))),
             DianSubmissionDisposition.TransientFailure when !result.MayHaveReachedDian =>
                 now.AddSeconds(15),
             DianSubmissionDisposition.TransientFailure when

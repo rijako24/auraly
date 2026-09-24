@@ -332,7 +332,8 @@ public sealed class SqlPurchaseReturnStore(
                 throw new PurchasingValidationException(
                     "El documento soporte original fue rechazado o falló y no puede recibir una nota de ajuste.");
             support = new SupportDocumentReference(reader.GetString(4),
-                reader.GetString(5), DateOnly.FromDateTime(reader.GetDateTimeOffset(6).Date),
+                reader.GetString(5), Auraly.Fiscal.Core.DianFiscalDateTime.DateInColombia(
+                    reader.GetDateTimeOffset(6)),
                 PurchaseSupportFiscalSnapshotSerializer.Deserialize(reader.GetString(8)));
         }
         var value=new OriginalReceipt(reader.GetGuid(0),reader.GetGuid(1),

@@ -16,7 +16,10 @@ public interface IExpenseStore
     Task<IReadOnlyList<ExpenseConceptView>> ListConceptsAsync(ExpenseUserIdentity user, bool includeInactive, CancellationToken ct);
     Task<ExpenseConceptView> SaveConceptAsync(ExpenseUserIdentity user, SaveExpenseConceptRequest request, CancellationToken ct);
     Task<ExpensePage> ListAsync(ExpenseUserIdentity user, int page, int pageSize, string? search, Guid? conceptId,
-        Guid? supplierId, DateOnly? from, DateOnly? to, CancellationToken ct);
+        Guid? supplierId, DateOnly? from, DateOnly? to, string? status, CancellationToken ct);
+    Task<ExpenseDetail?> GetAsync(ExpenseUserIdentity user, Guid expenseId, CancellationToken ct);
+    Task<ExpenseCancellationAcceptance> CancelAsync(ExpenseUserIdentity user, Guid expenseId,
+        CancelExpenseRequest request, CancellationToken ct);
     Task<ExpenseAcceptance> AcceptAsync(ExpenseUserIdentity user, string idempotencyKey,
         ConfirmExpenseRequest request, ExpenseAmounts amounts, WithholdingCalculationSnapshot withholding, CancellationToken ct);
 }
@@ -45,11 +48,40 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
     }
 
     public Task<ExpensePage> ListAsync(ExpenseUserIdentity user, int page, int pageSize, string? search,
-        Guid? conceptId, Guid? supplierId, DateOnly? from, DateOnly? to, CancellationToken ct = default)
+        Guid? conceptId, Guid? supplierId, DateOnly? from, DateOnly? to, string? status,
+        CancellationToken ct = default)
     {
         Demand(user, ExpensePermissionCodes.Read);
         if (page < 1 || pageSize is < 1 or > 100 || to < from) throw new ExpenseValidationException("Los filtros del reporte no son válidos.");
-        return store.ListAsync(user, page, pageSize, Optional(search, 120), conceptId, supplierId, from, to, ct);
+        if (status is not null and not ("Accepted" or "Processed" or "CancellationPending" or "Cancelled"))
+            throw new ExpenseValidationException("El estado del gasto no es válido.");
+        return store.ListAsync(user, page, pageSize, Optional(search, 120), conceptId, supplierId, from, to, status, ct);
+    }
+
+    public Task<ExpenseDetail?> GetAsync(ExpenseUserIdentity user, Guid expenseId, CancellationToken ct = default)
+    {
+        Demand(user, ExpensePermissionCodes.Read);
+        if (expenseId == Guid.Empty) throw new ExpenseValidationException("El gasto no es válido.");
+        return store.GetAsync(user, expenseId, ct);
+    }
+
+    public async Task<ExpenseCancellationAcceptance> CancelAsync(ExpenseUserIdentity user,
+        Guid expenseId, CancelExpenseRequest request, CancellationToken ct = default)
+    {
+        Demand(user, ExpensePermissionCodes.Cancel);
+        if (expenseId == Guid.Empty || request.CancellationId == Guid.Empty)
+            throw new ExpenseValidationException("El gasto y la anulación son obligatorios.");
+        var reason = Text(request.Reason, 300, "Motivo");
+        var accepted = await store.CancelAsync(user, expenseId, request with { Reason = reason }, ct);
+        if (!accepted.IdempotentReplay)
+        {
+            await signals.PublishAsync(new AccountingProcessingSignal(
+                accepted.AccountingJobId, user.BusinessId, accepted.CancellationId,
+                ExpenseDocumentTypes.Cancellation), ct);
+            if (accepted.HasFiscalAdjustment)
+                await fiscal.RequestGenerationAsync(user.BusinessId, accepted.CancellationId, ct);
+        }
+        return accepted;
     }
 
     public async Task<ExpenseAcceptance> ConfirmAsync(ExpenseUserIdentity user, string idempotencyKey,

@@ -6,4 +6,7 @@ public static class DianFiscalDateTime
 
     public static DateTimeOffset InColombia(DateTimeOffset value) =>
         value.ToOffset(ColombiaOffset);
+
+    public static DateOnly DateInColombia(DateTimeOffset value) =>
+        DateOnly.FromDateTime(InColombia(value).Date);
 }

@@ -501,7 +501,11 @@ public sealed class SqlPayablesStore(
                 JOIN dbo.SupplierPayments payment WITH(UPDLOCK,HOLDLOCK) ON payment.PaymentId=a.PaymentId
                 WHERE a.PayableId=input.PayableId AND a.AppliedAt IS NULL AND payment.Status=N'Accepted') pending
               WHERE p.PayableId IS NULL OR p.SupplierId<>@SupplierId OR p.CurrencyCode<>@Currency
-                OR p.Status IN(N'Paid',N'Cancelled') OR input.Amount>p.OutstandingAmount-pending.Reserved)
+                OR p.Status IN(N'Paid',N'Cancelled') OR input.Amount>p.OutstandingAmount-pending.Reserved
+                OR (p.SourceDocumentType=N'Expense' AND NOT EXISTS(
+                  SELECT 1 FROM dbo.Expenses e WITH(UPDLOCK,HOLDLOCK)
+                  WHERE e.ExpenseId=p.SourceDocumentId AND e.BusinessId=p.BusinessId
+                    AND e.Status=N'Processed')))
               THROW 51211,'An allocation is unavailable or outside the selected supplier.',1;
             DECLARE @AccountingReady bit=CONVERT(bit,CASE WHEN EXISTS(
               SELECT 1 FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId AND Status=N'Ready'

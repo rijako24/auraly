@@ -95,6 +95,7 @@ public static class AccountingProcessingPolicy
         "CashReceipt",
         "CashDisbursement",
         "Expense",
+        "ExpenseCancellation",
         AccountingManualDocumentTypes.AccountAdjustment,
         AccountingManualDocumentTypes.ManualVoucher,
         AccountingManualDocumentTypes.OpeningBalance,

@@ -58,6 +58,29 @@ soporte genera, por el mismo motor fiscal, una nota de ajuste tipo `95`, CUDS y
 referencia inmutable al número y CUDS originales. No crea otra cola ni otro
 emisor fiscal.
 
+La anulación de un gasto procesado conserva el gasto y el pago histórico. El
+motor contable reversa la cuenta de gasto, el IVA descontable y las retenciones;
+para estas líneas reutiliza las cuentas del asiento original aunque el mapeo
+PUC haya cambiado desde entonces. También reversa en su cuenta original el
+saldo no pagado de la cuenta por pagar y reconoce el importe ya
+pagado como saldo a favor del proveedor en la categoría PUC
+`SupplierCreditsReceivable` (semilla `133595`). El saldo a favor se registra en
+`SupplierCredits` para su posterior devolución o compensación documentada. No se
+requiere otra categoría PUC. La aceptación bloquea pagos pendientes de aplicar
+y nuevos pagos contra el gasto durante el procesamiento de la anulación.
+Si una retención ya fue declarada o pagada fuera de Auraly, el asiento reverso
+deja el débito en la cuenta de retenciones correspondiente; la conciliación de
+esa declaración requiere revisión tributaria. El módulo no registra el estado
+de las declaraciones y no debe inferir que la DIAN ya devolvió ese importe.
+
+Cuando el gasto tiene documento soporte aceptado por la DIAN, la anulación
+reserva una nota de ajuste tipo `95` con causal `2`, referencia al número y CUDS
+originales y usa el motor fiscal existente. Un documento soporte todavía en
+trámite o con resultado no aceptado requiere resolver primero su estado fiscal;
+no se emite una nota de ajuste sin referencia aceptada. Si el gasto se basó en
+una factura electrónica del proveedor, la anulación interna no anula esa factura
+ante la DIAN: el proveedor debe emitir la nota crédito que corresponda.
+
 La vista de la recepción reutiliza el visor corporativo de reportes para su
 representación imprimible/PDF y exportación tabular. Cuando la compra genera
 documento soporte, el reporte presenta el número fiscal y el CUDS persistidos

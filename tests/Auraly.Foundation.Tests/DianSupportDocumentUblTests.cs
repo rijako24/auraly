@@ -93,6 +93,26 @@ public sealed class DianSupportDocumentUblTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Support_document_accepts_a_purchase_line_rounded_to_four_decimal_places()
+    {
+        const decimal net = 1_259_999.9983m;
+        var support = CreateSupportDocument() with
+        {
+            Lines = [new DianInvoiceLine(1, "P1", "999", "Producto", "EA",
+                336.78m, 3_741.3148m, 0m, net,
+                [new DianTax("01", "IVA", net, 0m, 0m)])],
+            Taxes = [new DianTax("01", "IVA", net, 0m, 0m)],
+            LineExtensionAmount = net,
+            TaxExclusiveAmount = net,
+            TaxInclusiveAmount = net,
+            PayableAmount = net
+        };
+
+        var built = new DianSupportDocumentUblBuilder().Build(support);
+        Assert.True(new DianSchemaValidator().Validate(built.Xml).IsValid);
+    }
+
     private static DianSupportDocument CreateSupportDocument()
     {
         var lines = new[]

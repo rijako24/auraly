@@ -437,6 +437,15 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
     private sealed class SequenceTransport(params DianSubmissionResult[] results)
         : IDianHabilitationTransport, IDianProductionTransport
     {
+        public Task<DianSubmissionResult> GetStatusAsync(
+            DianSubmissionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            QueryCalls++;
+            Assert.False(string.IsNullOrWhiteSpace(request.TrackId));
+            return Next();
+        }
+
         private int index;
         public int SendCalls { get; private set; }
         public int TestSetCalls { get; private set; }

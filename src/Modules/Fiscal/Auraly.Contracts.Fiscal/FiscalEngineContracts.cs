@@ -131,6 +131,10 @@ public interface IDianHabilitationTransport
 
 public interface IDianProductionTransport
 {
+    Task<DianSubmissionResult> GetStatusAsync(
+        DianSubmissionRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<DianSubmissionResult> SubmitBillSyncAsync(
         DianSubmissionRequest request,
         CancellationToken cancellationToken = default);
@@ -145,5 +149,6 @@ public static class DianOperationCodes
     public const string SendTestSet = "SendTestSetAsync";
     public const string GetStatusZip = "GetStatusZip";
     public const string SendBillSync = "SendBillSync";
+    public const string GetStatus = "GetStatus";
     public const string SendPayrollSync = "SendNominaSync";
 }

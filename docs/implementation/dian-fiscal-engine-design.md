@@ -1,6 +1,6 @@
 # Diseño del motor fiscal DIAN
 
-Fecha de actualización: 2026-09-20.
+Fecha de actualización: 2026-09-24.
 
 ## Flujo vertical conectado
 
@@ -10,7 +10,7 @@ Fecha de actualización: 2026-09-20.
 4. El servidor conserva como autoritativo el CUFE creado una sola vez en POS Edge y ejecuta `Auraly.Fiscal.Core` solamente para compararlo, sin reemplazarlo. Una diferencia termina en `FiscalIntegrityConflict` y no produce inventario, pago, XML ni envío.
 5. El motor comercial procesa una sola vez inventario, pagos y outbox servidor.
 6. `FiscalGenerationHostedService` adquiere `PendingGeneration` con lease SQL, genera UBL 2.1 desde el snapshot, valida los XSD oficiales, firma XAdES-EPES y persiste XML y hashes.
-7. `FiscalSubmissionHostedService` adquiere `PendingSubmission`, crea un ZIP determinístico y registra el intento antes de usar la red. En habilitación ejecuta `SendTestSetAsync`: el HTTP/SOAP exitoso y su `ZipKey` sólo prueban recepción, por lo que el worker consulta después `GetStatusZip`. Una respuesta individual válida prueba el documento; el código `2` prueba que el set está aceptado, pero no demuestra que un documento adicional enviado después del cierre haya sido incorporado. En producción ejecuta `SendBillSync`, cuya respuesta `DianResponse` es terminal y no dispara `GetStatusZip`. Ambos caminos usan el mismo XML, firma, ZIP, worker e historial durable.
+7. `FiscalSubmissionHostedService` adquiere `PendingSubmission`, crea un ZIP determinístico y registra el intento antes de usar la red. En habilitación ejecuta `SendTestSetAsync`: el HTTP/SOAP exitoso y su `ZipKey` sólo prueban recepción, por lo que el worker consulta después `GetStatusZip`. Una respuesta individual válida prueba el documento; el código `2` prueba que el set está aceptado, pero no demuestra que un documento adicional enviado después del cierre haya sido incorporado. En producción ejecuta `SendBillSync`. La respuesta `DianResponse` es terminal si DIAN acepta o rechaza definitivamente; el código `98` indica procesamiento pendiente y el worker consulta `GetStatus` por la clave recibida, sin reenviar el ZIP. Las consultas tienen espera creciente y un máximo de veinte intentos; después requieren reintento explícito. Ambos caminos usan el mismo XML, firma, ZIP, worker e historial durable.
 
 El perfil XAdES-EPES interoperable con la DIAN es único para todos los proveedores de certificado: RSA-SHA256, digest SHA-256 en documento, `KeyInfo` y `SignedProperties`, transformación enveloped para el documento, certificado hoja más `RSAKeyValue` en `KeyInfo`, certificado hoja en `SigningCertificate`, `DataObjectFormat` `text/xml`/`UTF-8`, rol `supplier` y canonicalización inclusiva con el contexto de namespaces heredado. No se bifurca por emisor del certificado. El 2026-09-12 este perfil se verificó contra habilitación real con el certificado de Megafruver: el envío generado por el firmador canónico de Auraly fue aceptado con `StatusCode=00`, `TrackId=d05c7e93-b050-493e-8868-a54817973585` y aceptación del set `cca705a6-4bc7-4af8-a0b8-92365e8ad342`.
 8. Aceptación, rechazo, pendiente o reintento quedan en `FiscalDocumentProcesses`, `FiscalTransmissionAttempts`, `FiscalArtifacts` y outbox servidor.

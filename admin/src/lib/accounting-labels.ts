@@ -1,7 +1,7 @@
 const documentTypes:Record<string,string>={
   SalesInvoice:"Factura de venta",ServiceInvoice:"Factura de servicios",SalesReceipt:"Documento POS",
   SalesReturn:"Devolución de venta",SalesDebitNote:"Nota débito de venta",GoodsReceipt:"Recepción de compra",
-  GoodsReceiptCostDocument:"Factura agregada a la compra",Expense:"Gasto",PurchaseReturn:"Devolución a proveedor",
+  GoodsReceiptCostDocument:"Factura agregada a la compra",Expense:"Gasto",ExpenseCancellation:"Anulación de gasto",PurchaseReturn:"Devolución a proveedor",
   PayablePayment:"Pago a proveedor",ReceivablePayment:"Abono de cliente",CashReceipt:"Recibo de caja",
   CashDisbursement:"Comprobante de egreso",AccountAdjustment:"Nota contable",AccountingAccountAdjustment:"Nota contable",
   AccountingManualVoucher:"Comprobante manual",ManualAccountingVoucher:"Comprobante manual",
@@ -13,8 +13,8 @@ const documentTypes:Record<string,string>={
   SupportDocument:"Documento soporte electrónico",Payroll:"Nómina electrónica",
 };
 const accountingStatuses:Record<string,string>={Posted:"Contabilizado",Pending:"Pendiente de contabilización",Processing:"En contabilización",CommercialEffectsApplied:"Efecto comercial sin asiento",AccountingPendingConfiguration:"Requiere configuración contable",MissingAccountingJob:"Ausencia contable",AccountingDisabled:"No requiere asiento",Failed:"Error contable",NotRequired:"No requiere asiento"};
-const fiscalStatuses:Record<string,string>={Draft:"Borrador",Pending:"Pendiente",Queued:"En cola",Processing:"En proceso",Accepted:"Aceptado por la DIAN",DianAccepted:"Aceptado por la DIAN",Rejected:"Rechazado por la DIAN",DianRejected:"Rechazado por la DIAN",Failed:"Error fiscal",NotRequired:"No requiere envío fiscal",Issued:"Emitido",Voided:"Anulado",Validated:"Validado",Sent:"Enviado",Received:"Recibido",BlockedByQuota:"Bloqueado por cupo"};
-const businessStatuses:Record<string,string>={Draft:"Borrador",Pending:"Pendiente",Processing:"En proceso",Confirmed:"Confirmado",Approved:"Aprobado",Calculated:"Calculado",Posted:"Contabilizado",Paid:"Pagado",Open:"Abierto",Closed:"Cerrado",Active:"Activo",Inactive:"Inactivo",Retired:"Retirado",Ready:"Listo",Blocked:"Bloqueado",Reopened:"Reabierto",Cancelled:"Cancelado",Completed:"Completado"};
+const fiscalStatuses:Record<string,string>={Draft:"Borrador",Pending:"Pendiente",PendingGeneration:"Pendiente de generación",PendingSubmission:"Pendiente de envío",PendingDianResult:"En proceso en la DIAN",RetryScheduled:"Reintento programado",PermanentFailure:"Error fiscal",Queued:"En cola",Processing:"En proceso",Accepted:"Aceptado por la DIAN",DianAccepted:"Aceptado por la DIAN",Rejected:"Rechazado por la DIAN",DianRejected:"Rechazado por la DIAN",Failed:"Error fiscal",NotRequired:"No requiere envío fiscal",Issued:"Emitido",Voided:"Anulado",Validated:"Validado",Sent:"Enviado",Received:"Recibido",BlockedByQuota:"Bloqueado por cupo"};
+const businessStatuses:Record<string,string>={Draft:"Borrador",Pending:"Pendiente",Processing:"En proceso",Processed:"Procesado",CancellationPending:"Anulación pendiente",Confirmed:"Confirmado",Approved:"Aprobado",Calculated:"Calculado",Posted:"Contabilizado",Paid:"Pagado",Open:"Abierto",Closed:"Cerrado",Active:"Activo",Inactive:"Inactivo",Retired:"Retirado",Ready:"Listo",Blocked:"Bloqueado",Reopened:"Reabierto",Cancelled:"Cancelado",Completed:"Completado"};
 
 export function accountingDocumentTypeLabel(value:string|null|undefined){return value?documentTypes[value]??humanize(value):"Documento"}
 export function accountingStatusLabel(value:string|null|undefined){return value?accountingStatuses[value]??humanize(value):"Sin estado"}

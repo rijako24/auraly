@@ -7,6 +7,7 @@ using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Payables;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
@@ -1481,8 +1482,12 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                })
         {
             expenseMessage.Headers.Add("Idempotency-Key", $"expense-{expenseId:N}");
+            var saveWatch = System.Diagnostics.Stopwatch.StartNew();
             using var expenseResponse = await expenseUser.SendAsync(expenseMessage);
+            saveWatch.Stop();
             Assert.Equal(HttpStatusCode.Accepted, expenseResponse.StatusCode);
+            Assert.True(saveWatch.ElapsedMilliseconds < 1_000,
+                $"Expense acceptance took {saveWatch.ElapsedMilliseconds} ms.");
         }
         Assert.Equal(AccountingPostingStatuses.Posted,
             await ScalarAsync<string>(
@@ -1818,6 +1823,132 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                 readyRun.RunId);
             Assert.Equal(System.Security.Cryptography.SHA256.HashData(content), persistedHash);
         }
+
+        await using (var db = new SqlConnection(fixture.ConnectionString))
+        {
+            await db.OpenAsync();
+            await using var series = new SqlCommand("""
+                IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@BusinessId
+                  AND DocumentType=N'PayablePayment' AND IsActive=1)
+                  INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,
+                    Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                  VALUES(@SeriesId,@BusinessId,NULL,N'PayablePayment',N'PGP',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
+                """, db);
+            series.Parameters.AddWithValue("@SeriesId", Guid.NewGuid());
+            series.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await series.ExecuteNonQueryAsync();
+        }
+        var expensePayableId = await ScalarAsync<Guid>(
+            "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", expenseId);
+        using (var paymentUser = fixture.CreateAdminClient(PayablesPermissionCodes.RegisterPayment))
+        {
+            var partialPayment = new ConfirmSupplierPaymentRequest(Guid.NewGuid(), fixture.BusinessId,
+                fixture.SupplierId, receivedAt.AddDays(1), "COP", "Abono antes de anular gasto",
+                [new(expensePayableId, 40_000m)], [new(SupplierPaymentMethods.Cash, 40_000m, 40_000m)]);
+            using var paymentMessage = new HttpRequestMessage(HttpMethod.Post,
+                "/api/commerce/v1/payable-payments/confirm")
+                { Content = JsonContent.Create(partialPayment) };
+            paymentMessage.Headers.Add("Idempotency-Key", partialPayment.PaymentId.ToString("N"));
+            using var paymentResponse = await paymentUser.SendAsync(paymentMessage);
+            Assert.True(paymentResponse.IsSuccessStatusCode,
+                await paymentResponse.Content.ReadAsStringAsync());
+            Assert.Equal("Processed", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.SupplierPayments WHERE PaymentId=@Id", partialPayment.PaymentId));
+        }
+        Assert.Equal(72_650m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", expensePayableId));
+        await SetAccountingMappingAsync("InputVat", "143505");
+        try
+        {
+            using (var cancellationUser = fixture.CreateAdminClient(
+                       ExpensePermissionCodes.Read, ExpensePermissionCodes.Cancel))
+            {
+                var cancellation = new CancelExpenseRequest(Guid.NewGuid(), "Servicio no prestado");
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                using var response = await cancellationUser.PostAsJsonAsync(
+                    $"/api/commerce/v1/expenses/{expenseId:D}/cancel", cancellation);
+                watch.Stop();
+                Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+                Assert.True(watch.ElapsedMilliseconds < 1_000,
+                    $"Expense cancellation acceptance took {watch.ElapsedMilliseconds} ms.");
+                var accepted = await response.Content.ReadFromJsonAsync<ExpenseCancellationAcceptance>();
+                Assert.NotNull(accepted);
+                Assert.False(accepted.HasFiscalAdjustment);
+                Assert.False(accepted.IdempotentReplay);
+                Assert.Equal(AccountingPostingStatuses.Posted, await ScalarAsync<string>(
+                    "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", cancellation.CancellationId));
+                await AssertBalancedAsync(cancellation.CancellationId);
+                Assert.Equal(72_650m, await AccountAmountAsync(cancellation.CancellationId, "220505", debit: true));
+                Assert.Equal(40_000m, await AccountAmountAsync(cancellation.CancellationId, "133595", debit: true));
+                Assert.Equal(100_000m, await AccountAmountAsync(cancellation.CancellationId, "519595", debit: false));
+                Assert.Equal(19_000m, await AccountAmountAsync(cancellation.CancellationId, "240810", debit: false));
+                Assert.Equal(6_350m, await ScalarAsync<decimal>("""
+                    SELECT SUM(l.Debit) FROM dbo.AccountingEntries e
+                    JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+                    JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+                    WHERE e.SourceDocumentId=@Id AND a.Code IN(N'236540',N'236701',N'236805');
+                    """, cancellation.CancellationId));
+                Assert.Equal("Cancelled", await ScalarAsync<string>(
+                    "SELECT Status FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
+                Assert.Equal(0m, await ScalarAsync<decimal>(
+                    "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", expensePayableId));
+                Assert.Equal(40_000m, await ScalarAsync<decimal>(
+                    "SELECT AvailableAmount FROM dbo.SupplierCredits WHERE SourceDocumentId=@Id AND SourceDocumentType=N'ExpenseCancellation'",
+                    cancellation.CancellationId));
+                var detail = await cancellationUser.GetFromJsonAsync<ExpenseDetail>(
+                    $"/api/commerce/v1/expenses/{expenseId:D}");
+                Assert.Equal("Cancelled", detail?.Status);
+                Assert.Equal(0m, detail?.Payable?.OutstandingAmount);
+                var filtered = await cancellationUser.GetFromJsonAsync<ExpensePage>(
+                    "/api/commerce/v1/expenses?page=1&pageSize=25&status=Cancelled");
+                Assert.Contains(filtered!.Items, item => item.ExpenseId == expenseId);
+                using var replay = await cancellationUser.PostAsJsonAsync(
+                    $"/api/commerce/v1/expenses/{expenseId:D}/cancel", cancellation);
+                Assert.Equal(HttpStatusCode.Accepted, replay.StatusCode);
+                Assert.True((await replay.Content.ReadFromJsonAsync<ExpenseCancellationAcceptance>())!.IdempotentReplay);
+            }
+        }
+        finally { await SetAccountingMappingAsync("InputVat", "240810"); }
+
+        var fullyPaidExpenseId = Guid.NewGuid();
+        var fullyPaidExpense = new ConfirmExpenseRequest(fullyPaidExpenseId, fixture.BusinessId,
+            fixture.SupplierId, expenseConceptId, null, $"GASTO-{Guid.NewGuid():N}",
+            receivedAt.AddHours(4), receivedAt.AddDays(30), "COP",
+            "Servicio pagado antes de anular", 100_000m, 19_000m, "11001", null);
+        using (var expenseMessage = new HttpRequestMessage(HttpMethod.Post,
+                   "/api/commerce/v1/expenses/confirm") { Content = JsonContent.Create(fullyPaidExpense) })
+        {
+            expenseMessage.Headers.Add("Idempotency-Key", $"expense-{fullyPaidExpenseId:N}");
+            using var response = await expenseUser.SendAsync(expenseMessage);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        var fullyPaidPayableId = await ScalarAsync<Guid>(
+            "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", fullyPaidExpenseId);
+        using (var paymentUser = fixture.CreateAdminClient(PayablesPermissionCodes.RegisterPayment))
+        {
+            var fullPayment = new ConfirmSupplierPaymentRequest(Guid.NewGuid(), fixture.BusinessId,
+                fixture.SupplierId, receivedAt.AddDays(1), "COP", "Pago total antes de anular gasto",
+                [new(fullyPaidPayableId, 112_650m)],
+                [new(SupplierPaymentMethods.Cash, 112_650m, 112_650m)]);
+            using var paymentMessage = new HttpRequestMessage(HttpMethod.Post,
+                "/api/commerce/v1/payable-payments/confirm")
+                { Content = JsonContent.Create(fullPayment) };
+            paymentMessage.Headers.Add("Idempotency-Key", fullPayment.PaymentId.ToString("N"));
+            using var response = await paymentUser.SendAsync(paymentMessage);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        var fullCancellation = new CancelExpenseRequest(Guid.NewGuid(), "Pago total sujeto a devolución");
+        using (var cancellationUser = fixture.CreateAdminClient(ExpensePermissionCodes.Cancel))
+        using (var response = await cancellationUser.PostAsJsonAsync(
+                   $"/api/commerce/v1/expenses/{fullyPaidExpenseId:D}/cancel", fullCancellation))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await AssertBalancedAsync(fullCancellation.CancellationId);
+        Assert.Equal(0m, await AccountAmountAsync(fullCancellation.CancellationId, "220505", debit: true));
+        Assert.Equal(112_650m, await AccountAmountAsync(fullCancellation.CancellationId, "133595", debit: true));
+        Assert.Equal("Paid", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.Payables WHERE PayableId=@Id", fullyPaidPayableId));
+        Assert.Equal("Cancelled", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.Expenses WHERE ExpenseId=@Id", fullyPaidExpenseId));
 
         var nextPeriod = Guid.NewGuid();
         using (var create = await accounting.PostAsJsonAsync("/api/commerce/v1/accounting/periods",
@@ -2991,6 +3122,24 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         return productId;
     }
 
+    private async Task SetAccountingMappingAsync(string category, string accountCode)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE mapping SET AccountId=account.AccountId
+            FROM dbo.AccountingAccountMappings mapping
+            JOIN dbo.AccountingAccounts account ON account.TenantId=mapping.TenantId
+              AND account.Code=@Code
+            WHERE mapping.TenantId=@TenantId AND mapping.BusinessId IS NULL
+              AND mapping.Category=@Category AND mapping.EffectiveTo IS NULL;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@Category", category);
+        command.Parameters.AddWithValue("@Code", accountCode);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
     private async Task<decimal> AccountAmountAsync(
         Guid documentId,
         string accountCode,
@@ -3000,7 +3149,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             accountCode,
             new[] { "143505", "240810", "519595", "220505",
                 "236540", "236701", "236805", "110505", "111005", "130505",
-                "130510", "130515", "130520", "139995", "429595", "429596",
+                "130510", "130515", "130520", "133595", "139995", "429595", "429596",
                 "429598", "539595", "539596", "539598" });
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);

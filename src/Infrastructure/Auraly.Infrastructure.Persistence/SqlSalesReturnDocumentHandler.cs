@@ -136,7 +136,8 @@ public sealed class SqlSalesReturnDocumentHandler(
             value, issuerConfigurationId, value.DocumentNumber, originalUbl.CurrencyCode,
             environment, qrValidationUrl, originalUbl.Customer,
             originalFiscal.FiscalNumber, originalFiscal.Cufe,
-            DateOnly.FromDateTime(originalFiscal.IssuedAt.Date), lineMetadata);
+            Auraly.Fiscal.Core.DianFiscalDateTime.DateInColombia(originalFiscal.IssuedAt),
+            lineMetadata);
         var snapshotJson = SalesReturnCreditNoteSnapshotSerializer.Serialize(snapshot);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshotJson));
         var now = DateTimeOffset.UtcNow;

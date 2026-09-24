@@ -60,6 +60,9 @@ public sealed class DianCreditNoteUblBuilder
                     E(Cbc, "IssueDate", Date(note.OriginalInvoice.IssuedOn)))),
             Party("AccountingSupplierParty", note.Supplier),
             Party("AccountingCustomerParty", note.Customer),
+            new XElement(Cac + "PaymentMeans",
+                E(Cbc, "ID", "1"),
+                E(Cbc, "PaymentMeansCode", "ZZZ")),
             DianTaxTotalXml.Header(note.Taxes, note.CurrencyCode),
             RequestedMonetaryTotal(note),
             note.Lines.Select(line => CreditLine(line, note.CurrencyCode)));

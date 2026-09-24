@@ -35,7 +35,8 @@ public sealed record PurchaseSupportFiscalSnapshot(
     string? OriginalSupportNumber = null,
     string? OriginalSupportCuds = null,
     DateOnly? OriginalSupportIssuedOn = null,
-    string? SellerPostalZone = null);
+    string? SellerPostalZone = null,
+    ExpenseCancellationPayload? ExpenseCancellation = null);
 
 public static class PurchaseSupportFiscalSnapshotSerializer
 {

@@ -69,14 +69,18 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
         const string sql = """
             UPDATE p WITH (UPDLOCK, ROWLOCK)
             SET Status = CASE
+                  WHEN p.Status=@DianRejected AND p.LastStatusCode=N'98' AND p.TrackId IS NOT NULL
+                    THEN @PendingResult
                   WHEN p.Status=@DianRejected THEN @PendingGeneration
                   WHEN p.TrackId IS NULL THEN @PendingGeneration
                   ELSE @PendingResult END,
                 NextAttemptAt = @RequestedAt,
                 LockedAt = NULL,
                 LockedBy = NULL,
-                TrackId = CASE WHEN p.Status=@DianRejected THEN NULL ELSE p.TrackId END,
-                CorrelationId = CASE WHEN p.Status=@DianRejected THEN NULL ELSE p.CorrelationId END,
+                TrackId = CASE WHEN p.Status=@DianRejected AND ISNULL(p.LastStatusCode,N'')<>N'98'
+                  THEN NULL ELSE p.TrackId END,
+                CorrelationId = CASE WHEN p.Status=@DianRejected AND ISNULL(p.LastStatusCode,N'')<>N'98'
+                  THEN NULL ELSE p.CorrelationId END,
                 CompletedAt = CASE WHEN p.Status=@DianRejected THEN NULL ELSE p.CompletedAt END,
                 LastErrorCode = NULL,
                 LastErrorMessage = NULL,

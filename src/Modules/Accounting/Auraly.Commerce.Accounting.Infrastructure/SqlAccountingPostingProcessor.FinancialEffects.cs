@@ -74,6 +74,10 @@ public sealed partial class SqlAccountingPostingProcessor
                     connection, transaction,
                     ExpenseContractSerializer.Deserialize(source.PayloadJson), cancellationToken);
                 break;
+            case "ExpenseCancellation":
+                await ApplyExpenseCancellationFinancialEffectsAsync(connection, transaction,
+                    ExpenseCancellationSerializer.Deserialize(source.PayloadJson), cancellationToken);
+                break;
             case "PurchaseReturn":
                 await ApplyPurchaseReturnFinancialEffectsAsync(
                     connection, transaction,
@@ -568,6 +572,64 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(token);
+    }
+
+    private async Task ApplyExpenseCancellationFinancialEffectsAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        ExpenseCancellationPayload value, CancellationToken token)
+    {
+        var now = timeProvider.GetUtcNow();
+        if (value.PayableId is Guid payableId)
+        {
+            await using var payable = new SqlCommand("""
+                UPDATE dbo.Payables SET OutstandingAmount=0,
+                  FunctionalOutstandingAmount=0,
+                  Status=CASE WHEN @Credit=OriginalAmount THEN N'Cancelled' ELSE N'Paid' END
+                WHERE PayableId=@PayableId AND BusinessId=@BusinessId
+                  AND SourceDocumentId=@ExpenseId AND SourceDocumentType=N'Expense'
+                  AND OutstandingAmount=@Credit;
+                IF @@ROWCOUNT<>1 THROW 51801,'The expense payable changed before cancellation.',1;
+                IF @Credit>0 INSERT dbo.PayableTransactions
+                  (PayableTransactionId,PayableId,TransactionType,Amount,
+                   SourceDocumentId,OccurredAt,CreatedAt)
+                VALUES(@TransactionId,@PayableId,N'Credit',@Credit,@CancellationId,@Now,@Now);
+                """, connection, transaction);
+            payable.Parameters.AddWithValue("@PayableId", payableId);
+            payable.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+            payable.Parameters.AddWithValue("@ExpenseId", value.Original.ExpenseId);
+            payable.Parameters.AddWithValue("@CancellationId", value.CancellationId);
+            payable.Parameters.AddWithValue("@TransactionId", ids.NewId());
+            AddMoney(payable, "@Credit", value.PayableCredit);
+            payable.Parameters.AddWithValue("@Now", now);
+            await payable.ExecuteNonQueryAsync(token);
+        }
+        if (value.SupplierCredit > 0)
+        {
+            await using var credit = new SqlCommand("""
+                INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,
+                  SourceDocumentId,SourceDocumentType,OriginalAmount,AvailableAmount,Status,CreatedAt)
+                VALUES(@Id,@BusinessId,@SupplierId,@CancellationId,N'ExpenseCancellation',
+                  @Amount,@Amount,N'Open',@Now);
+                """, connection, transaction);
+            credit.Parameters.AddWithValue("@Id", ids.NewId());
+            credit.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+            credit.Parameters.AddWithValue("@SupplierId", value.Original.SupplierId);
+            credit.Parameters.AddWithValue("@CancellationId", value.CancellationId);
+            AddMoney(credit, "@Amount", value.SupplierCredit);
+            credit.Parameters.AddWithValue("@Now", now);
+            await credit.ExecuteNonQueryAsync(token);
+        }
+        await using var expense = new SqlCommand("""
+            UPDATE dbo.Expenses SET Status=N'Cancelled',CancelledAt=@Now
+            WHERE ExpenseId=@ExpenseId AND BusinessId=@BusinessId
+              AND Status=N'CancellationPending' AND CancellationId=@CancellationId;
+            """, connection, transaction);
+        expense.Parameters.AddWithValue("@ExpenseId", value.Original.ExpenseId);
+        expense.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        expense.Parameters.AddWithValue("@CancellationId", value.CancellationId);
+        expense.Parameters.AddWithValue("@Now", now);
+        if (await expense.ExecuteNonQueryAsync(token) != 1)
+            throw new DBConcurrencyException("The expense cancellation state changed before accounting.");
     }
 
     private async Task OpenPayableAsync(

@@ -51,6 +51,10 @@ CREATE TABLE [dbo].[Expenses]
     [RequestHash] BINARY(32) NOT NULL,
     [AcceptedAt] DATETIMEOFFSET(7) NOT NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
+    [CancellationId] UNIQUEIDENTIFIER NULL,
+    [CancellationReason] NVARCHAR(300) NULL,
+    [CancellationAcceptedAt] DATETIMEOFFSET(7) NULL,
+    [CancelledAt] DATETIMEOFFSET(7) NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_Expenses] PRIMARY KEY ([ExpenseId]),
     CONSTRAINT [UQ_Expenses_Business_Number] UNIQUE ([BusinessId],[DocumentNumber]),
@@ -68,8 +72,15 @@ CREATE TABLE [dbo].[Expenses]
     CONSTRAINT [FK_Expenses_Users] FOREIGN KEY ([ConfirmedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
     CONSTRAINT [CK_Expenses_Amounts] CHECK ([TaxExclusiveAmount]>0 AND [VatAmount]>=0 AND [GrossAmount]=[TaxExclusiveAmount]+[VatAmount] AND [NetPayable]=[GrossAmount]-[WithholdingAmount] AND [NetPayable]>=0),
     CONSTRAINT [CK_Expenses_Dates] CHECK ([DueDate]>=[IssuedAt]),
-    CONSTRAINT [CK_Expenses_Status] CHECK ([Status] IN (N'Accepted',N'Processed'))
+    CONSTRAINT [CK_Expenses_Status] CHECK ([Status] IN (N'Accepted',N'Processed',N'CancellationPending',N'Cancelled')),
+    CONSTRAINT [CK_Expenses_Cancellation] CHECK
+      (([CancellationId] IS NULL AND [CancellationReason] IS NULL AND [CancellationAcceptedAt] IS NULL AND [CancelledAt] IS NULL)
+       OR ([CancellationId] IS NOT NULL AND [CancellationReason] IS NOT NULL AND [CancellationAcceptedAt] IS NOT NULL
+         AND (([Status]=N'CancellationPending' AND [CancelledAt] IS NULL)
+           OR ([Status]=N'Cancelled' AND [CancelledAt] IS NOT NULL))))
 );
+GO
+CREATE UNIQUE INDEX [UX_Expenses_CancellationId] ON [dbo].[Expenses]([CancellationId]) WHERE [CancellationId] IS NOT NULL;
 GO
 CREATE INDEX [IX_Expenses_Business_Issued] ON [dbo].[Expenses]([BusinessId],[IssuedAt] DESC);
 GO
