@@ -460,9 +460,14 @@ public sealed class PosCaptureServiceTests
         bool assignCustomer = true)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-capture-{Guid.NewGuid():N}.db");
+        var connectionString = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Pooling = false,
+        }.ToString();
         try
         {
-            var catalog = new PosCatalogStore($"Data Source={path}");
+            var catalog = new PosCatalogStore(connectionString);
             await catalog.InitializeAsync();
             var productId = Guid.NewGuid();
             var item = new PosCatalogItem(
@@ -492,7 +497,7 @@ public sealed class PosCaptureServiceTests
                 Promotions: promotionsFactory?.Invoke(productId)));
 
             var drafts = new PosDraftStore(
-                $"Data Source={path}",
+                connectionString,
                 new TestIdGenerator(),
                 TimeProvider.System);
             await drafts.InitializeAsync();
@@ -513,7 +518,6 @@ public sealed class PosCaptureServiceTests
         }
         finally
         {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             for (var attempt = 0; attempt < 10 && File.Exists(path); attempt++)
             {
                 try
