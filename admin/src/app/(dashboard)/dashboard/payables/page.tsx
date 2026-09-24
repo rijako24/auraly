@@ -137,7 +137,7 @@ export default function PayablesPage() {
 
     <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} filters={
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Filtros</summary><div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-        <PartyRoleSelect role="Supplier" value={supplierId??""} sourceKey="web-portfolio" loadPage={(search,page,pageSize)=>partiesApi.portfolioRoleOptions({role:"Supplier",search,page,pageSize})} selectedOption={supplierFilter?{value:supplierFilter.roleId,label:supplierFilter.displayName}:null} placeholder="Filtrar por proveedor" onChange={(id,party)=>{setSupplierId(id);setSupplierFilter(party??null);setPage(1)}}/>
+        <PartyRoleSelect role="Supplier" value={supplierId??""} sourceKey="web-portfolio" loadPage={(search,page,pageSize)=>partiesApi.portfolioRoleOptions({role:"Supplier",search,page,pageSize})} selectedOption={supplierFilter?{value:supplierFilter.roleId,label:supplierFilter.displayName}:null} placeholder="Filtrar por proveedor" onChange={(id,party)=>{setSupplierId(id || undefined);setSupplierFilter(party??null);setPage(1)}}/>
         <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Número de documento o identificación" />
         <Select value={status} onValueChange={(value) => { setStatus(value as PayableStatus | "all"); setPage(1); }}>
           <SelectTrigger><SelectValue placeholder="Todos los estados" /></SelectTrigger>
@@ -167,7 +167,7 @@ export default function PayablesPage() {
       {query.isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudieron cargar las obligaciones. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div>
       ) : (
-        <><div className="mb-3 flex items-center justify-between">{supplierId?<Badge variant="secondary">Cartera del proveedor seleccionado</Badge>:<span/>}{supplierId&&<Button size="sm" variant="ghost" onClick={()=>{setSupplierId(undefined);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading}
+        <><div className="mb-3 flex items-center justify-between">{supplierId?<Badge variant="secondary">Cartera del proveedor seleccionado</Badge>:<span/>}{supplierId&&<Button size="sm" variant="ghost" onClick={()=>{setSupplierId(undefined);setSupplierFilter(null);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading}
           page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages}
           totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }}
           onRowClick={(item) => setSelectedId(item.payableId)} enableRowSelection={false} /></>

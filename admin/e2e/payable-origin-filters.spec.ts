@@ -18,6 +18,7 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   let conceptFilter = "";
   let conceptPageSize = "";
   let receiptMode = false;
+  const portfolioRequests: Array<string | null> = [];
   await page.route("**/api/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
@@ -26,9 +27,16 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
     else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
-    else if (path.endsWith("/payables/suppliers") || path.endsWith("/receivables/customers"))
+    else if (path.endsWith("/payables/suppliers") || path.endsWith("/receivables/customers")) {
+      const partyId = url.searchParams.get(path.endsWith("/payables/suppliers") ? "supplierId" : "customerId");
+      portfolioRequests.push(partyId);
+      if (partyId === "") {
+        await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ title: "Invalid party ID" }) });
+        return;
+      }
       body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0,
         totalOutstanding: 0, totalOverdue: 0, totalInvoiceCount: 0, totalSupplierCredit: 0 };
+    }
     else if (path.endsWith("/payables/expense-concepts")) {
       conceptPageSize = url.searchParams.get("pageSize") ?? "";
       body = { items: [{ conceptId, name: "Transporte y mensajería" }],
@@ -64,7 +72,13 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
     }
     else if (path.endsWith("/payable-payments") || path.endsWith("/receivable-payments"))
       body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 };
-    else if (path.endsWith("/parties/role-options")) body = { items: [], page: 1, totalPages: 0, totalCount: 0 };
+    else if (path.endsWith("/parties/role-options")) {
+      const role = url.searchParams.get("role") ?? "Supplier";
+      body = { items: [{ partyId: conceptId, roleId: conceptId, role,
+        displayName: "Tercero de prueba", identification: "1001",
+        supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: null }],
+        page: 1, totalPages: 1, totalCount: 1 };
+    }
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
 
@@ -73,6 +87,14 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   expect(await page.getByLabel("Resumen de cartera").evaluate(node =>
     !!(node.compareDocumentPosition(document.querySelector("details")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await page.getByText("Filtros", { exact: true }).click();
+  await page.getByRole("combobox", { name: "Seleccionar supplier" }).click();
+  await page.getByRole("option", { name: /Tercero de prueba/ }).click();
+  await expect.poll(() => portfolioRequests.at(-1)).toBe(conceptId);
+  const payableRequestsBeforeClear = portfolioRequests.length;
+  await page.getByRole("button", { name: "Quitar selección de Seleccionar supplier" }).click();
+  await expect.poll(() => portfolioRequests.at(-1)).toBeNull();
+  expect(portfolioRequests.length).toBe(payableRequestsBeforeClear + 1);
+  await expect(page.getByText("No fue posible cargar la información.")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Desde" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Hasta" })).toBeVisible();
   await expect(page.locator('input[type="date"]')).toHaveCount(0);
@@ -95,6 +117,14 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   expect(await page.getByLabel("Resumen de cartera").evaluate(node =>
     !!(node.compareDocumentPosition(document.querySelector("details")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await page.getByText("Filtros", { exact: true }).click();
+  await page.getByRole("combobox", { name: "Seleccionar customer" }).click();
+  await page.getByRole("option", { name: /Tercero de prueba/ }).click();
+  await expect.poll(() => portfolioRequests.at(-1)).toBe(conceptId);
+  const receivableRequestsBeforeClear = portfolioRequests.length;
+  await page.getByRole("button", { name: "Quitar selección de Seleccionar customer" }).click();
+  await expect.poll(() => portfolioRequests.at(-1)).toBeNull();
+  expect(portfolioRequests.length).toBe(receivableRequestsBeforeClear + 1);
+  await expect(page.getByText("No fue posible cargar la información.")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Desde" })).toBeVisible();
   await expect(page.locator('input[type="date"]')).toHaveCount(0);
 
