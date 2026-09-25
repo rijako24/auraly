@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 for (const scenario of [
-  { direction: "receivable", shortcut: "Control+f", role: "Customer", dialog: "Abono a cartera", invoicePath: "/receivables", confirmationPath: "/receivable-payments/confirm", documentNumber: "ABO-001" },
-  { direction: "payable", shortcut: "Control+g", role: "Supplier", dialog: "Pago a proveedores", invoicePath: "/payables", confirmationPath: "/payable-payments/confirm", documentNumber: "PGP-001" },
+  { direction: "receivable", shortcut: "Control+f", role: "Customer", dialog: "Abono a cartera", invoicePath: "/pos/receivables", confirmationPath: "/pos/receivable-payments/confirm", documentNumber: "ABO-001" },
+  { direction: "payable", shortcut: "Control+g", role: "Supplier", dialog: "Pago a proveedores", invoicePath: "/pos/payables", confirmationPath: "/pos/payable-payments/confirm", documentNumber: "PGP-001" },
 ] as const) {
   test(`${scenario.dialog} en POS cierra al confirmar y despacha su tirilla`, async ({ page, baseURL }) => {
     const tenantId = "11111111-1111-1111-1111-111111111111";
@@ -11,7 +11,7 @@ for (const scenario of [
     const partyId = "44444444-4444-4444-4444-444444444444";
     const invoiceId = "55555555-5555-5555-5555-555555555555";
     const paymentId = "66666666-6666-6666-6666-666666666666";
-    const permissions = ["pos.sales.create", "receivables.payments.create", "payables.payments.create"];
+    const permissions = ["pos.sales.create", "pos.receivables.payments.create", "pos.payables.payments.create"];
     const user = { userId: "77777777-7777-7777-7777-777777777777", tenantId, tenantKey: "TEST",
       username: "cajero", firstName: "Laura", lastName: "Prueba", roles: [], permissions };
     const workspace = { businessId, warehouseId, businessName: "Sede prueba", warehouseName: "Principal",

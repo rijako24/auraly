@@ -36,6 +36,21 @@ public static class PartyWorkspaceApi
                 return Results.Ok(await service.RoleOptionsAsync(actor,page??1,
                     new PartyRoleOptionQuery(role,pageSize??10,search,roleId,null),ct));
             })).RequireAuthorization();
+        endpoints.MapGet("/api/commerce/v1/pos/portfolio/parties/role-options", async(HttpContext context,PartyWorkspaceService service,
+            int? page,int? pageSize,string role,string? search,Guid? roleId,CancellationToken ct)=>
+            await Handle(async()=>
+            {
+                if(role is not ("Customer" or "Supplier"))
+                    throw new PartyValidationException("Solo se pueden consultar clientes o proveedores.");
+                var identity=context.User.ToPartyUserIdentity();
+                var permission=role=="Customer"?ReceivablesPermissionCodes.RegisterPosPayment:PayablesPermissionCodes.RegisterPosPayment;
+                if(!identity.Permissions.Contains(permission))
+                    throw new PartyForbiddenException("No tienes permiso para gestionar esta cartera desde caja.");
+                var partyPermission=role=="Customer"?PartyPermissionCodes.CustomerRead:PartyWorkspacePermissionCodes.SupplierRead;
+                var actor=identity with { Permissions=new HashSet<string>([partyPermission],StringComparer.Ordinal) };
+                return Results.Ok(await service.RoleOptionsAsync(actor,page??1,
+                    new PartyRoleOptionQuery(role,pageSize??10,search,roleId,null),ct));
+            })).RequireAuthorization();
         parties.MapPost("/identity", async(
             HttpContext context,
             PartyWorkspaceService service,
@@ -98,7 +113,7 @@ public static class PartyWorkspaceApi
                 if(role is not ("Customer" or "Supplier"))
                     throw new PartyValidationException("Solo se pueden consultar clientes o proveedores.");
                 var device=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,ct);
-                device.RequirePermission(role=="Customer"?ReceivablesPermissionCodes.Read:PayablesPermissionCodes.Read);
+                device.RequirePermission(role=="Customer"?ReceivablesPermissionCodes.RegisterPosPayment:PayablesPermissionCodes.RegisterPosPayment);
                 var permission=role=="Customer"?PartyPermissionCodes.CustomerRead:PartyWorkspacePermissionCodes.SupplierRead;
                 var rolePermissions=new HashSet<string>(device.Permissions,StringComparer.Ordinal) { permission };
                 var actor=new PartyActorIdentity(device.UserId,device.TenantId,device.BusinessId,

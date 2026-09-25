@@ -125,6 +125,8 @@ export const receivablesApi = {
     "/commerce/v1/receivables",
     withPagedDefaults(params),
   ),
+  posList: (params: {page:number;pageSize:number;customerId:string;outstandingOnly:true}) =>
+    apiClient.get<ReceivablePage>("/commerce/v1/pos/receivables",params),
   get: (receivableId: string) =>
     apiClient.get<ReceivableDetail>(`/commerce/v1/receivables/${receivableId}`),
   confirmPayment: (request: ConfirmCustomerPaymentRequest, idempotencyKey: string) =>
@@ -133,4 +135,7 @@ export const receivablesApi = {
       request,
       idempotencyKey,
     ),
+  confirmPosPayment: (request: ConfirmCustomerPaymentRequest, idempotencyKey: string) =>
+    apiClient.postIdempotent<CustomerPaymentAcceptance>(
+      "/commerce/v1/pos/receivable-payments/confirm",request,idempotencyKey),
 };

@@ -76,7 +76,7 @@ http://localhost:3000/dashboard/payables
 ```
 
 El proxy del admin debe apuntar a `Auraly.Api`. Para registrar pagos el usuario
-requiere `payables.read` y `payables.payments.create`.
+requiere `payables.read` y `payables.payments.create`. En punto de venta, la selección y el pago usan `pos.payables.payments.create` con una sesión de caja abierta; este permiso no abre la vista administrativa de cuentas por pagar.
 
 ## Recorrido de verificación manual
 

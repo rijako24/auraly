@@ -105,6 +105,17 @@ public sealed class WorkSessionService(
         return store.CurrentAsync(identity, cancellationToken);
     }
 
+    public async Task RequireActiveWebSessionAsync(
+        WorkSessionIdentity identity, Guid? workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (workSessionId is null || workSessionId == Guid.Empty)
+            throw new WorkSessionForbiddenException("El pago de caja requiere una sesión abierta.");
+        var current = await CurrentAsync(identity, cancellationToken);
+        if (current?.WorkSessionId != workSessionId)
+            throw new WorkSessionForbiddenException("El pago no corresponde a la sesión de caja activa.");
+    }
+
     public async Task<WorkSessionView> RequireActiveDeviceSessionAsync(
         Guid userId, Guid tenantId, Guid businessId, Guid deviceId,
         Guid workSessionId, CancellationToken cancellationToken = default)

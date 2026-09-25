@@ -7,6 +7,7 @@ public static class PayablesPermissionCodes
 {
     public const string Read = "payables.read";
     public const string RegisterPayment = "payables.payments.create";
+    public const string RegisterPosPayment = "pos.payables.payments.create";
 }
 
 public static class PayablesDocumentTypes

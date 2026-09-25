@@ -7,6 +7,7 @@ public static class ReceivablesPermissionCodes
 {
     public const string Read = "receivables.read";
     public const string RegisterPayment = "receivables.payments.create";
+    public const string RegisterPosPayment = "pos.receivables.payments.create";
     public const string ManageCredit = "receivables.credit.manage";
 }
 

@@ -80,13 +80,26 @@ public static class PayablesApi
                             $"/api/commerce/v1/payable-payments/{value.PaymentId:D}", value);
                     }))
             .RequireAuthorization("payables.user");
+        endpoints.MapGet("/api/commerce/v1/pos/payables",async(HttpContext context,int page,int pageSize,string? search,Guid? supplierId,string? status,bool? overdue,bool? outstandingOnly,PayablesService service,CancellationToken token)=>
+            await ExecuteAsync(()=>service.ListForPosAsync(context.User.ToPayablesIdentity(),
+                new PayableQuery(page,pageSize,search,supplierId,status,overdue,outstandingOnly==true),token),Results.Ok)).RequireAuthorization("payables.user");
+        endpoints.MapPost("/api/commerce/v1/pos/payable-payments/confirm",async(HttpContext context,ConfirmSupplierPaymentRequest request,PayablesService service,WorkSessionService sessions,CancellationToken token)=>
+            await ExecuteAsync(async()=>
+            {
+                var actor=context.User.ToPayablesIdentity();
+                if(!actor.Permissions.Contains(PayablesPermissionCodes.RegisterPosPayment))
+                    throw new PayablesForbiddenException("El usuario no puede pagar proveedores desde caja.");
+                await sessions.RequireActiveWebSessionAsync(context.User.ToWorkSessionIdentity(),request.WorkSessionId,token);
+                var value=await service.ConfirmPosPaymentAsync(actor,context.Request.Headers["Idempotency-Key"].ToString(),request,token);
+                return Results.Accepted($"/api/commerce/v1/payable-payments/{value.PaymentId:D}",value);
+            })).RequireAuthorization("payables.user");
         var device=endpoints.MapGroup("/api/pos/v1").RequireAuthorization("pos.enrolled");
         device.MapGet("/payables",async(HttpContext context,int page,int pageSize,string? search,Guid? supplierId,string? status,bool? overdue,bool? outstandingOnly,PayablesService service,WorkSessionService sessions,IUserService users,CancellationToken token)=>
             await ExecuteAsync(async()=>
             {
                 var actor=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,token);
-                actor.RequirePermission(PayablesPermissionCodes.Read);
-                return Results.Ok(await service.ListAsync(new PayablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
+                actor.RequirePermission(PayablesPermissionCodes.RegisterPosPayment);
+                return Results.Ok(await service.ListForPosAsync(new PayablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
                     actor.Permissions),
                     new PayableQuery(page,pageSize,search,supplierId,status,overdue,outstandingOnly==true),token));
             }));
@@ -94,9 +107,9 @@ public static class PayablesApi
             await ExecuteAsync(async()=>
             {
                 var actor=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,token);
-                actor.RequirePermission(PayablesPermissionCodes.RegisterPayment);
+                actor.RequirePermission(PayablesPermissionCodes.RegisterPosPayment);
                 actor.RequirePayment(request.BusinessId,request.WorkSessionId);
-                var value=await service.ConfirmPaymentAsync(new PayablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
+                var value=await service.ConfirmPosPaymentAsync(new PayablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
                     actor.Permissions),
                     context.Request.Headers["Idempotency-Key"].ToString(),request,token);
                 return Results.Accepted($"/api/commerce/v1/payable-payments/{value.PaymentId:D}",value);

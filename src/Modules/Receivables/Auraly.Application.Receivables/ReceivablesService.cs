@@ -41,8 +41,20 @@ public sealed class ReceivablesService(
     }
 
     public Task<ReceivablePage> ListAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token = default)
+        => ListCoreAsync(user, query, ReceivablesPermissionCodes.Read, token);
+
+    public Task<ReceivablePage> ListForPosAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token = default)
     {
-        Require(user, ReceivablesPermissionCodes.Read);
+        Require(user, ReceivablesPermissionCodes.RegisterPosPayment);
+        if (query.CustomerId is null || query.CustomerId == Guid.Empty)
+            throw new ReceivablesValidationException("Selecciona un cliente para consultar sus facturas pendientes.");
+        return ListCoreAsync(user, query with { Search = null, Status = null,
+            Overdue = null, OutstandingOnly = true }, ReceivablesPermissionCodes.RegisterPosPayment, token);
+    }
+
+    private Task<ReceivablePage> ListCoreAsync(ReceivablesUserIdentity user, ReceivableQuery query, string permission, CancellationToken token)
+    {
+        Require(user, permission);
         if (query.Page < 1 || query.PageSize is < 1 or > 100) throw new ReceivablesValidationException("Invalid pagination.");
         ValidateLedgerFilters(query.Status, query.From, query.To);
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
@@ -100,10 +112,21 @@ public sealed class ReceivablesService(
         return result;
     }
 
-    public async Task<CustomerPaymentAcceptance> ConfirmPaymentAsync(ReceivablesUserIdentity user,
+    public Task<CustomerPaymentAcceptance> ConfirmPaymentAsync(ReceivablesUserIdentity user,
         string idempotencyKey, ConfirmCustomerPaymentRequest request, CancellationToken token = default)
+        => ConfirmPaymentCoreAsync(user, idempotencyKey, request, ReceivablesPermissionCodes.RegisterPayment, token);
+
+    public Task<CustomerPaymentAcceptance> ConfirmPosPaymentAsync(ReceivablesUserIdentity user,
+        string idempotencyKey, ConfirmCustomerPaymentRequest request, CancellationToken token = default)
+        => ConfirmPaymentCoreAsync(user, idempotencyKey, request, ReceivablesPermissionCodes.RegisterPosPayment, token);
+
+    private async Task<CustomerPaymentAcceptance> ConfirmPaymentCoreAsync(ReceivablesUserIdentity user,
+        string idempotencyKey, ConfirmCustomerPaymentRequest request, string permission, CancellationToken token)
     {
-        Require(user, ReceivablesPermissionCodes.RegisterPayment);
+        Require(user, permission);
+        if (permission == ReceivablesPermissionCodes.RegisterPosPayment &&
+            (request.WorkSessionId is null || request.WorkSessionId == Guid.Empty))
+            throw new ReceivablesValidationException("POS payments require an open work session.");
         if (request.BusinessId != user.BusinessId) throw new ReceivablesForbiddenException("The receipt belongs to another business.");
         if (request.PaymentId == Guid.Empty || request.CustomerId == Guid.Empty || request.PaidAt == default)
             throw new ReceivablesValidationException("PaymentId, CustomerId and PaidAt are required.");

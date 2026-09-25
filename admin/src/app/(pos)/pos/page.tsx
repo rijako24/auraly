@@ -1199,8 +1199,8 @@ export default function PosPage() {
     .includes("work-sessions.cash.drawer.open");
   const canReadProductAvailability = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.inventory.availability.read");
-  const canReceivePortfolio=activePosPermissions.includes("receivables.payments.create");
-  const canPayPortfolio=activePosPermissions.includes("payables.payments.create");
+  const canReceivePortfolio=activePosPermissions.includes("pos.receivables.payments.create");
+  const canPayPortfolio=activePosPermissions.includes("pos.payables.payments.create");
 
   useEffect(()=>{
     const handle=(event:KeyboardEvent)=>{

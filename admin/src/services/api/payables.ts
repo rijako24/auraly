@@ -111,6 +111,8 @@ export const payablesApi = {
     "/commerce/v1/payables",
     withPagedDefaults(params),
   ),
+  posList: (params: {page:number;pageSize:number;supplierId:string;outstandingOnly:true}) =>
+    apiClient.get<PayablePage>("/commerce/v1/pos/payables",params),
   get: (payableId: string) =>
     apiClient.get<PayableDetail>(`/commerce/v1/payables/${payableId}`),
   confirmPayment: (request: ConfirmSupplierPaymentRequest, idempotencyKey: string) =>
@@ -119,4 +121,7 @@ export const payablesApi = {
       request,
       idempotencyKey,
     ),
+  confirmPosPayment: (request: ConfirmSupplierPaymentRequest, idempotencyKey: string) =>
+    apiClient.postIdempotent<SupplierPaymentAcceptance>(
+      "/commerce/v1/pos/payable-payments/confirm",request,idempotencyKey),
 };

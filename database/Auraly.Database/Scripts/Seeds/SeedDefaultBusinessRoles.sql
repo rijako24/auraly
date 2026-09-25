@@ -13,6 +13,8 @@ FROM (VALUES
   (N'TenantProfile',N'Update',N'tenant.profile.update',N'Actualizar la identidad de la empresa propia'),
   (N'POS',N'CreateCustomer',N'pos.customer.create',N'Crear y seleccionar clientes desde el punto de venta'),
   (N'POS',N'ReadInventoryAvailability',N'pos.inventory.availability.read',N'Consultar existencias desde el punto de venta'),
+  (N'POS',N'CollectReceivable',N'pos.receivables.payments.create',N'Registrar abonos a cartera desde punto de venta'),
+  (N'POS',N'PaySupplier',N'pos.payables.payments.create',N'Registrar pagos a proveedores desde punto de venta'),
   (N'Sales',N'ChangePrice',N'sales.change-price',N'Cambiar costo permitido, margen, descuento o precio de una línea de venta'),
   (N'Sales',N'ReadCostAndMargin',N'sales.lines.cost-margin.read',N'Ver costo y margen en la edición de líneas de venta'),
   (N'Sales',N'ChangeDescription',N'sales.lines.change-description',N'Editar la descripción de una línea de venta'),
@@ -68,7 +70,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
   AND NOT (
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
-      N'receivables.read',N'receivables.payments.create',N'payables.read',N'payables.payments.create',
+      N'pos.receivables.payments.create',N'pos.payables.payments.create',
       N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
@@ -124,7 +126,7 @@ WHERE roleValue.IsActive=1
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
-      N'receivables.read',N'receivables.payments.create',N'payables.read',N'payables.payments.create',
+      N'pos.receivables.payments.create',N'pos.payables.payments.create',
       N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'pos.inventory.availability.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(

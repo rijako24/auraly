@@ -10,8 +10,10 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Sales_update_the_authoritative_balance_in_sequence_and_a_duplicate_has_no_effect()
     {
-        var averageCostBefore = await ReadBalanceAverageUnitCostAsync() ?? 0m;
         var quantityBefore = await ReadBalanceQuantityAsync() ?? 0m;
+        var averageCostBefore = await ReadBalanceAverageUnitCostAsync() ?? 0m;
+        if (averageCostBefore == 0m && quantityBefore <= 0m)
+            averageCostBefore = await ReadProductCostBasisAsync();
         var first = fixture.CreateValidRequest(8_891);
         var second = fixture.CreateValidRequest(8_892);
         using var client = fixture.CreateClient();
@@ -27,7 +29,7 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
                 Assert.Equal(quantityBefore, movement.QuantityBefore);
                 Assert.Equal(quantityBefore - first.Lines[0].Quantity, movement.QuantityAfter);
                 Assert.Equal(averageCostBefore, movement.RecognizedUnitCost);
-                Assert.Equal(decimal.Round(-first.Lines[0].Quantity * averageCostBefore, 4, MidpointRounding.AwayFromZero), movement.ValueChange);
+                Assert.InRange(decimal.Abs(movement.ValueChange + first.Lines[0].Quantity * averageCostBefore), 0m, 0.0001m);
             },
             movement =>
             {
@@ -37,7 +39,7 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
                     movement.QuantityAfter);
                 Assert.True(movement.ProcessingSequence > movements[0].ProcessingSequence);
                 Assert.Equal(averageCostBefore, movement.RecognizedUnitCost);
-                Assert.Equal(decimal.Round(-second.Lines[0].Quantity * averageCostBefore, 4, MidpointRounding.AwayFromZero), movement.ValueChange);
+                Assert.InRange(decimal.Abs(movement.ValueChange + second.Lines[0].Quantity * averageCostBefore), 0m, 0.0001m);
             });
 
         var quantityAfter = await ReadBalanceQuantityAsync();
@@ -201,6 +203,20 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
         var value = await command.ExecuteScalarAsync();
         return value is null or DBNull ? null : (decimal)value;
+    }
+
+    private async Task<decimal> ReadProductCostBasisAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT CostBasisAmount FROM dbo.ProductPrices
+            WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+        return (decimal)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("The product has no initial cost."));
     }
 
     private async Task<IReadOnlyList<MovementEvidence>> ReadMovementsAsync(Guid first, Guid second)

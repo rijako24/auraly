@@ -27,6 +27,18 @@ public static class ReceivablesApi
             await Execute(()=>service.UpdateCreditProfileAsync(context.User.ToReceivablesIdentity(),customerId,request,token),Results.Ok)).RequireAuthorization("receivables.user");
         endpoints.MapPost("/api/commerce/v1/receivable-payments/confirm",async(HttpContext context,ConfirmCustomerPaymentRequest request,ReceivablesService service,CancellationToken token)=>
             await Execute(async()=>{var value=await service.ConfirmPaymentAsync(context.User.ToReceivablesIdentity(),context.Request.Headers["Idempotency-Key"].ToString(),request,token);return Results.Accepted($"/api/commerce/v1/receivable-payments/{value.PaymentId:D}",value);})).RequireAuthorization("receivables.user");
+        endpoints.MapGet("/api/commerce/v1/pos/receivables",async(HttpContext context,int page,int pageSize,string? search,Guid? customerId,string? status,bool? overdue,bool? outstandingOnly,ReceivablesService service,CancellationToken token)=>
+            await Execute(()=>service.ListForPosAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,customerId,status,overdue,OutstandingOnly:outstandingOnly==true),token),Results.Ok)).RequireAuthorization("receivables.user");
+        endpoints.MapPost("/api/commerce/v1/pos/receivable-payments/confirm",async(HttpContext context,ConfirmCustomerPaymentRequest request,ReceivablesService service,WorkSessionService sessions,CancellationToken token)=>
+            await Execute(async()=>
+            {
+                var actor=context.User.ToReceivablesIdentity();
+                if(!actor.Permissions.Contains(ReceivablesPermissionCodes.RegisterPosPayment))
+                    throw new ReceivablesForbiddenException("El usuario no puede recibir abonos desde caja.");
+                await sessions.RequireActiveWebSessionAsync(context.User.ToWorkSessionIdentity(),request.WorkSessionId,token);
+                var value=await service.ConfirmPosPaymentAsync(actor,context.Request.Headers["Idempotency-Key"].ToString(),request,token);
+                return Results.Accepted($"/api/commerce/v1/receivable-payments/{value.PaymentId:D}",value);
+            })).RequireAuthorization("receivables.user");
         endpoints.MapPost("/api/commerce/v1/receivables/preexisting/import",async(HttpContext context,ImportPreexistingReceivablesRequest request,ReceivablesService service,CancellationToken token)=>
             await Execute(async()=>
             {
@@ -38,8 +50,8 @@ public static class ReceivablesApi
             await Execute(async()=>
             {
                 var actor=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,token);
-                actor.RequirePermission(ReceivablesPermissionCodes.Read);
-                return Results.Ok(await service.ListAsync(new ReceivablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
+                actor.RequirePermission(ReceivablesPermissionCodes.RegisterPosPayment);
+                return Results.Ok(await service.ListForPosAsync(new ReceivablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
                     actor.Permissions),
                     new(page,pageSize,search,customerId,status,overdue,OutstandingOnly:outstandingOnly==true),token));
             }));
@@ -47,9 +59,9 @@ public static class ReceivablesApi
             await Execute(async()=>
             {
                 var actor=await PosPortfolioDeviceContext.RequireAsync(context,sessions,users,token);
-                actor.RequirePermission(ReceivablesPermissionCodes.RegisterPayment);
+                actor.RequirePermission(ReceivablesPermissionCodes.RegisterPosPayment);
                 actor.RequirePayment(request.BusinessId,request.WorkSessionId);
-                var value=await service.ConfirmPaymentAsync(new ReceivablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
+                var value=await service.ConfirmPosPaymentAsync(new ReceivablesUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,
                     actor.Permissions),
                     context.Request.Headers["Idempotency-Key"].ToString(),request,token);
                 return Results.Accepted($"/api/commerce/v1/receivable-payments/{value.PaymentId:D}",value);

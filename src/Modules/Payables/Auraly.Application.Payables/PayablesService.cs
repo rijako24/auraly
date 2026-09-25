@@ -64,8 +64,24 @@ public sealed class PayablesService(
         PayablesUserIdentity user,
         PayableQuery query,
         CancellationToken cancellationToken = default)
+        => ListCoreAsync(user, query, PayablesPermissionCodes.Read, cancellationToken);
+
+    public Task<PayablePage> ListForPosAsync(
+        PayablesUserIdentity user, PayableQuery query,
+        CancellationToken cancellationToken = default)
     {
-        Require(user, PayablesPermissionCodes.Read);
+        Require(user, PayablesPermissionCodes.RegisterPosPayment);
+        if (query.SupplierId is null || query.SupplierId == Guid.Empty)
+            throw new PayablesValidationException("Selecciona un proveedor para consultar sus facturas pendientes.");
+        return ListCoreAsync(user, query with { Search = null, Status = null,
+            Overdue = null, OutstandingOnly = true }, PayablesPermissionCodes.RegisterPosPayment, cancellationToken);
+    }
+
+    private Task<PayablePage> ListCoreAsync(
+        PayablesUserIdentity user, PayableQuery query, string permission,
+        CancellationToken cancellationToken)
+    {
+        Require(user, permission);
         if (query.Page < 1) throw new PayablesValidationException("Page must be greater than zero.");
         if (query.PageSize is < 1 or > 100)
             throw new PayablesValidationException("PageSize must be between 1 and 100.");
@@ -110,13 +126,29 @@ public sealed class PayablesService(
         if(from>to)throw new PayablesValidationException("The date range is invalid.");
     }
 
-    public async Task<SupplierPaymentAcceptance> ConfirmPaymentAsync(
+    public Task<SupplierPaymentAcceptance> ConfirmPaymentAsync(
         PayablesUserIdentity user,
         string idempotencyKey,
         ConfirmSupplierPaymentRequest request,
         CancellationToken cancellationToken = default)
+        => ConfirmPaymentCoreAsync(user, idempotencyKey, request,
+            PayablesPermissionCodes.RegisterPayment, cancellationToken);
+
+    public Task<SupplierPaymentAcceptance> ConfirmPosPaymentAsync(
+        PayablesUserIdentity user, string idempotencyKey,
+        ConfirmSupplierPaymentRequest request, CancellationToken cancellationToken = default)
+        => ConfirmPaymentCoreAsync(user, idempotencyKey, request,
+            PayablesPermissionCodes.RegisterPosPayment, cancellationToken);
+
+    private async Task<SupplierPaymentAcceptance> ConfirmPaymentCoreAsync(
+        PayablesUserIdentity user, string idempotencyKey,
+        ConfirmSupplierPaymentRequest request, string permission,
+        CancellationToken cancellationToken)
     {
-        Require(user, PayablesPermissionCodes.RegisterPayment);
+        Require(user, permission);
+        if (permission == PayablesPermissionCodes.RegisterPosPayment &&
+            (request.WorkSessionId is null || request.WorkSessionId == Guid.Empty))
+            throw new PayablesValidationException("POS payments require an open work session.");
         if (request.BusinessId != user.BusinessId)
             throw new PayablesForbiddenException("The payment belongs to another business.");
         if (request.PaymentId == Guid.Empty) throw new PayablesValidationException("PaymentId is required.");

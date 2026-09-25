@@ -73,6 +73,8 @@ export const partiesApi = {
     apiClient.get<PartyRoleOptionPage>("/commerce/v1/parties/role-options", params),
   portfolioRoleOptions: (params: {page:number;pageSize:number;role:"Customer"|"Supplier";search?:string;roleId?:string}) =>
     apiClient.get<PartyRoleOptionPage>("/commerce/v1/portfolio/parties/role-options",params),
+  posPortfolioRoleOptions: (params: {page:number;pageSize:number;role:"Customer"|"Supplier";search?:string;roleId?:string}) =>
+    apiClient.get<PartyRoleOptionPage>("/commerce/v1/pos/portfolio/parties/role-options",params),
   createIdentity: (request: CreateThirdPartyRequest & { targetRole: "Employee" | "User" }) => apiClient.post<PartyIdentityAcceptance>("/commerce/v1/parties/identity", request),
   customerMap: () => apiClient.get<CustomerMapSite[]>("/commerce/v1/parties/customer-map"),
   createCustomer: (request: CreateThirdPartyRequest) => apiClient.post<CustomerAcceptance>("/commerce/v1/customers", request),

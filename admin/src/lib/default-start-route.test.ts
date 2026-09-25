@@ -22,7 +22,7 @@ test("the first authorized view owns the generic landing", () => {
   assert.equal(defaultStartRoute(["Vendedor", "Administrador"], ["orders.read"]), "/dashboard/orders");
   assert.equal(defaultStartRoute(["Cajero"], ["sales.create"]), "/pos");
   assert.equal(defaultStartRoute(["Cajero"], ["sales.create", "orders.read"]), "/pos");
-  assert.equal(defaultStartRoute(["Cajero"], ["sales.create", "orders.read", "orders.invoice", "receivables.read", "receivables.payments.create", "payables.read", "payables.payments.create"]), "/pos");
+  assert.equal(defaultStartRoute(["Cajero"], ["sales.create", "orders.read", "orders.invoice", "pos.receivables.payments.create", "pos.payables.payments.create"]), "/pos");
   assert.equal(defaultStartRoute(["Administrador"], ["sales.create", "payables.read"]), "/dashboard/payables");
   assert.equal(defaultStartRoute(["Administrador"], ["sales.create", "catalog.read"]), "/dashboard/products");
   assert.equal(defaultStartRoute(["Administrador"], ["parties.read", "catalog.read"]), "/dashboard/products");
@@ -42,7 +42,8 @@ test("users without any navigable permission keep the neutral dashboard", () => 
 test("installed login distinguishes local POS access from administrative workspaces", () => {
   assert.equal(requiresCloudWorkspace(["sales.create", "sales.change-price"]), false);
   assert.equal(requiresCloudWorkspace(["sales.create", "orders.read"]), false);
-  assert.equal(requiresCloudWorkspace(["sales.create", "receivables.read", "receivables.payments.create", "payables.read", "payables.payments.create"]), false);
+  assert.equal(requiresCloudWorkspace(["sales.create", "pos.receivables.payments.create", "pos.payables.payments.create"]), false);
+  assert.equal(requiresCloudWorkspace(["sales.create", "receivables.read", "receivables.payments.create"]), true);
   assert.equal(requiresCloudWorkspace(["sales.create", "sales.reports.read"]), true);
   assert.equal(requiresCloudWorkspace(["catalog.read"]), true);
 });

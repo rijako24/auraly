@@ -1793,11 +1793,14 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await AssertFastProcessingAsync(purchaseReturn.ReturnId, "devolución a proveedor");
         Assert.Equal(23_800m, await AccountAmountAsync(
             purchaseReturn.ReturnId, "220505", debit: true));
-        Assert.Equal(10_000m, await AccountAmountAsync(
+        var purchaseReturnInventory = decimal.Abs(await ScalarAsync<decimal>(
+            "SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id",
+            purchaseReturn.ReturnId));
+        Assert.Equal(purchaseReturnInventory, await AccountAmountAsync(
             purchaseReturn.ReturnId, "143505", debit: false));
         Assert.Equal(1_900m, await AccountAmountAsync(
             purchaseReturn.ReturnId, "240810", debit: false));
-        Assert.Equal(11_900m, await AccountAmountAsync(
+        Assert.Equal(21_900m - purchaseReturnInventory, await AccountAmountAsync(
             purchaseReturn.ReturnId, "519595", debit: false));
         var receiptWithoutSettlement = receipt with
         {

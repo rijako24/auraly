@@ -241,13 +241,12 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", CommercePermissionCodes.SalesCreate));
         Assert.True(await RoleHasPermissionAsync(
-            result.TenantId, "CASHIER", "receivables.read"));
+            result.TenantId, "CASHIER", "pos.receivables.payments.create"));
         Assert.True(await RoleHasPermissionAsync(
-            result.TenantId, "CASHIER", "receivables.payments.create"));
-        Assert.True(await RoleHasPermissionAsync(
-            result.TenantId, "CASHIER", "payables.read"));
-        Assert.True(await RoleHasPermissionAsync(
-            result.TenantId, "CASHIER", "payables.payments.create"));
+            result.TenantId, "CASHIER", "pos.payables.payments.create"));
+        foreach (var permission in new[] { "receivables.read", "receivables.payments.create",
+                     "payables.read", "payables.payments.create" })
+            Assert.False(await RoleHasPermissionAsync(result.TenantId, "CASHIER", permission));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "work-sessions.read"));
         Assert.True(await RoleHasPermissionAsync(
@@ -1093,10 +1092,14 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             INNER JOIN dbo.Warehouses warehouse
               ON warehouse.BusinessId=balance.BusinessId
              AND warehouse.WarehouseId=balance.WarehouseId
+            INNER JOIN dbo.ProductPrices price
+              ON price.BusinessId=balance.BusinessId
+             AND price.ProductId=balance.ProductId
+             AND price.IsActive=1
             WHERE balance.BusinessId=@BusinessId AND balance.ProductId=@ProductId
               AND warehouse.Code IN(N'VEN',N'PED',N'AVE',N'TRA')
               AND balance.QuantityOnHand=0
-              AND balance.AverageUnitCost=0
+              AND balance.AverageUnitCost=price.CostBasisAmount
               AND balance.InventoryValue=0;
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", businessId);

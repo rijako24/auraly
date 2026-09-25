@@ -1251,26 +1251,25 @@ public static class PosEdgeHostApplication
         edge.MapGet("/portfolio/parties",async(HttpContext http,PosOrdersServerClient server,
             PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendPortfolioAsync(
                 HttpMethod.Get,$"api/pos/v1/portfolio/parties/role-options{http.Request.QueryString}",null,
-                RequiredPortfolioUser(sessions,http.Request.Query["role"]=="Customer"?"receivables.read":"payables.read",
-                    http.Request.Query["role"]=="Customer"?"receivables.payments.create":"payables.payments.create"),ct)));
+                RequiredPortfolioUser(sessions,http.Request.Query["role"]=="Customer"?"pos.receivables.payments.create":"pos.payables.payments.create"),ct)));
         edge.MapGet("/portfolio/receivables",async(HttpContext http,PosOrdersServerClient server,
             PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendPortfolioAsync(
                 HttpMethod.Get,$"api/pos/v1/receivables{http.Request.QueryString}",null,
-                RequiredPortfolioUser(sessions,"receivables.read","receivables.payments.create"),ct)));
+                RequiredPortfolioUser(sessions,"pos.receivables.payments.create"),ct)));
         edge.MapGet("/portfolio/payables",async(HttpContext http,PosOrdersServerClient server,
             PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendPortfolioAsync(
                 HttpMethod.Get,$"api/pos/v1/payables{http.Request.QueryString}",null,
-                RequiredPortfolioUser(sessions,"payables.read","payables.payments.create"),ct)));
+                RequiredPortfolioUser(sessions,"pos.payables.payments.create"),ct)));
         edge.MapGet("/portfolio/settlement-configuration",async(PosOrdersServerClient server,
             PosLocalSessionAccessor sessions,CancellationToken ct)=>await ServerOrderResult(()=>server.SendPortfolioAsync(
                 HttpMethod.Get,"api/pos/v1/accounting/settlement-configuration",null,
-                RequiredPortfolioUser(sessions,"receivables.payments.create","payables.payments.create"),ct)));
+                RequiredPortfolioUser(sessions,"pos.receivables.payments.create","pos.payables.payments.create"),ct)));
         edge.MapPost("/portfolio/receivable-payments",async(HttpContext http,JsonElement request,
             PosOrdersServerClient server,PosLocalSessionAccessor sessions,
             PosOfflineWorkSessionClosureStore closureStore,CancellationToken ct)=>
             await ServerOrderResult(async()=>
             {
-                var user=RequiredPortfolioUser(sessions,"receivables.payments.create");
+                var user=RequiredPortfolioUser(sessions,"pos.receivables.payments.create");
                 var paymentId=request.GetProperty("paymentId").GetGuid();
                 var inserted=await PreparePortfolioPaymentAsync(closureStore,request,user,"Receivable",ct);
                 JsonElement accepted;
@@ -1286,7 +1285,7 @@ public static class PosEdgeHostApplication
             PosOfflineWorkSessionClosureStore closureStore,CancellationToken ct)=>
             await ServerOrderResult(async()=>
             {
-                var user=RequiredPortfolioUser(sessions,"payables.payments.create");
+                var user=RequiredPortfolioUser(sessions,"pos.payables.payments.create");
                 var paymentId=request.GetProperty("paymentId").GetGuid();
                 var inserted=await PreparePortfolioPaymentAsync(closureStore,request,user,"Payable",ct);
                 JsonElement accepted;

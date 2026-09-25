@@ -1678,7 +1678,7 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
                     "cashier",
                     "Cajera de prueba",
                     ["sales.create", "sales.change-price", "sales.lines.cost-margin.read", "sales.reprint", "sales.void", "orders.create",
-                        "sales.returns.create", "receivables.payments.create", "payables.payments.create",
+                        "sales.returns.create", "pos.receivables.payments.create", "pos.payables.payments.create",
                         CommercePermissionCodes.SalesRemoveLine,
                         CommercePermissionCodes.SalesRestartDraft,
                         CommercePermissionCodes.SalesDeletePausedDraft,

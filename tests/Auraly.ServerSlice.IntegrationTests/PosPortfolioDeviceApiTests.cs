@@ -23,15 +23,69 @@ public sealed class PosPortfolioDeviceApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Pos_payment_permissions_do_not_open_administrative_portfolios()
+    {
+        var customerId=Guid.NewGuid();
+        using var client=fixture.CreateAdminClient(
+            ReceivablesPermissionCodes.RegisterPosPayment,
+            PayablesPermissionCodes.RegisterPosPayment);
+        foreach(var path in new[]
+        {
+            "/api/commerce/v1/pos/portfolio/parties/role-options?role=Customer&page=1&pageSize=10",
+            "/api/commerce/v1/pos/portfolio/parties/role-options?role=Supplier&page=1&pageSize=10",
+            $"/api/commerce/v1/pos/receivables?page=1&pageSize=10&customerId={customerId:D}",
+            $"/api/commerce/v1/pos/payables?page=1&pageSize=10&supplierId={fixture.SupplierId:D}"
+        })
+        {
+            using var response=await client.GetAsync(path);
+            Assert.Equal(HttpStatusCode.OK,response.StatusCode);
+        }
+        using(var response=await client.GetAsync(
+            "/api/commerce/v1/pos/payables?page=1&pageSize=10"))
+            Assert.Equal(HttpStatusCode.BadRequest,response.StatusCode);
+        foreach(var path in new[]
+        {
+            "/api/commerce/v1/portfolio/parties/role-options?role=Customer&page=1&pageSize=10",
+            "/api/commerce/v1/portfolio/parties/role-options?role=Supplier&page=1&pageSize=10",
+            "/api/commerce/v1/receivables?page=1&pageSize=10",
+            "/api/commerce/v1/payables?page=1&pageSize=10"
+        })
+        {
+            using var response=await client.GetAsync(path);
+            Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);
+        }
+        var receivable=new ConfirmCustomerPaymentRequest(Guid.NewGuid(),fixture.BusinessId,Guid.NewGuid(),
+            null,DateTimeOffset.UtcNow,"COP",null,[],[]);
+        using(var response=await client.PostAsJsonAsync(
+            "/api/commerce/v1/receivable-payments/confirm",receivable))
+            Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);
+        using(var response=await client.PostAsJsonAsync(
+            "/api/commerce/v1/pos/receivable-payments/confirm",receivable))
+            Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);
+        var payable=new ConfirmSupplierPaymentRequest(Guid.NewGuid(),fixture.BusinessId,Guid.NewGuid(),
+            DateTimeOffset.UtcNow,"COP",null,[],[],null);
+        using(var response=await client.PostAsJsonAsync(
+            "/api/commerce/v1/payable-payments/confirm",payable))
+            Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);
+        using(var response=await client.PostAsJsonAsync(
+            "/api/commerce/v1/pos/payable-payments/confirm",payable))
+            Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);
+    }
+
+    [Fact]
     public async Task Enrolled_portfolio_uses_the_registered_user_session_and_canonical_services()
     {
+        var customerId=Guid.NewGuid();
         var userId=Guid.NewGuid();
         var workSessionId=Guid.NewGuid();
+        var roleId=Guid.NewGuid();
         await using(var connection=new SqlConnection(fixture.ConnectionString))
         {
             await connection.OpenAsync();
             await using var command=connection.CreateCommand();
             command.CommandText="""
+                INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+                VALUES(@RoleId,@TenantId,@RoleName,@RoleName,N'POS cartera',1,0,SYSUTCDATETIME());
                 INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
                     FirstName,LastName,IsActive,CreatedAt)
                 VALUES(@UserId,@TenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
@@ -41,8 +95,8 @@ public sealed class PosPortfolioDeviceApiTests(ServerSliceFixture fixture)
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
                 FROM dbo.Permissions
-                WHERE Resource IN(N'receivables.read',N'receivables.payments.create',
-                    N'payables.read',N'payables.payments.create')
+                WHERE Resource IN(N'pos.receivables.payments.create',
+                    N'pos.payables.payments.create')
                   AND NOT EXISTS(
                     SELECT 1 FROM dbo.RolePermissions existing
                     WHERE existing.RoleId=@RoleId
@@ -51,7 +105,8 @@ public sealed class PosPortfolioDeviceApiTests(ServerSliceFixture fixture)
             command.Parameters.AddWithValue("@UserId",userId);
             command.Parameters.AddWithValue("@TenantId",fixture.TenantId);
             command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);
-            command.Parameters.AddWithValue("@RoleId",fixture.RoleId);
+            command.Parameters.AddWithValue("@RoleId",roleId);
+            command.Parameters.AddWithValue("@RoleName",$"POS-PORTFOLIO-{roleId:N}");
             command.Parameters.AddWithValue("@Username",$"portfolio-{userId:N}");
             command.Parameters.AddWithValue("@Email",$"portfolio-{userId:N}@test.local");
             await command.ExecuteNonQueryAsync();
@@ -69,8 +124,8 @@ public sealed class PosPortfolioDeviceApiTests(ServerSliceFixture fixture)
         {
             "/api/pos/v1/portfolio/parties/role-options?role=Customer&page=1&pageSize=20",
             "/api/pos/v1/portfolio/parties/role-options?role=Supplier&page=1&pageSize=20",
-            "/api/pos/v1/receivables?page=1&pageSize=20&outstandingOnly=true",
-            "/api/pos/v1/payables?page=1&pageSize=20&outstandingOnly=true"
+            $"/api/pos/v1/receivables?page=1&pageSize=20&customerId={customerId:D}",
+            $"/api/pos/v1/payables?page=1&pageSize=20&supplierId={fixture.SupplierId:D}"
         })
         {
             using var request=DeviceRequest(HttpMethod.Get,path,userId,workSessionId);
@@ -79,7 +134,7 @@ public sealed class PosPortfolioDeviceApiTests(ServerSliceFixture fixture)
         }
 
         using(var request=DeviceRequest(HttpMethod.Get,
-            "/api/pos/v1/receivables?page=1&pageSize=20",userId,Guid.NewGuid()))
+            $"/api/pos/v1/receivables?page=1&pageSize=20&customerId={customerId:D}",userId,Guid.NewGuid()))
         using(var response=await client.SendAsync(request))
             Assert.Equal(HttpStatusCode.Forbidden,response.StatusCode);
 

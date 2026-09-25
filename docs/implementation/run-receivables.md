@@ -39,7 +39,7 @@ La API requiere identidad autenticada con `tenant_id`, `business_id`, identifica
 - `PUT /api/commerce/v1/customers/{customerId}/credit`
 - `POST /api/commerce/v1/receivable-payments/confirm`
 
-El registro de recaudo exige `Idempotency-Key`. Los permisos son `receivables.read`, `receivables.payments.create` y `receivables.credit.manage`.
+El registro de recaudo exige `Idempotency-Key`. La administración usa `receivables.read`, `receivables.payments.create` y `receivables.credit.manage`. El abono desde punto de venta usa `pos.receivables.payments.create` y una sesión de caja abierta; ese permiso no habilita la vista administrativa de cuentas por cobrar.
 
 ## Verificación manual
 

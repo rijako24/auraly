@@ -97,9 +97,12 @@ public sealed class SqlBusinessDefaultsProvisioner(
             INSERT dbo.InventoryBalances
               (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,
                LastProcessingSequence,UpdatedAt)
-            SELECT @BusinessId,warehouse.WarehouseId,product.ProductId,0,0,0,0,@Now
+            SELECT @BusinessId,warehouse.WarehouseId,product.ProductId,0,
+                   COALESCE(price.CostBasisAmount,0),0,0,@Now
             FROM dbo.Products product
             CROSS JOIN dbo.Warehouses warehouse
+            LEFT JOIN dbo.ProductPrices price
+              ON price.BusinessId=@BusinessId AND price.ProductId=product.ProductId AND price.IsActive=1
             WHERE product.TenantId=@TenantId AND product.ManageStock=1
               AND warehouse.BusinessId=@BusinessId;
 
