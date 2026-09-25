@@ -2000,6 +2000,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(119_000m, firstPass.CashDebit);
         Assert.Equal(100_000m, firstPass.SalesRevenueCredit);
         Assert.Equal(19_000m, firstPass.OutputVatCredit);
+        Assert.True(firstPass.ValuedInventoryCost > 0,
+            "The received stock must have an authoritative inventory cost.");
+        Assert.Equal(firstPass.ValuedInventoryCost, firstPass.CostOfGoodsSoldDebit);
+        Assert.Equal(firstPass.ValuedInventoryCost, firstPass.InventoryCredit);
         Assert.Equal(10, firstPass.ReportDocuments);
         Assert.Equal(119_000m, firstPass.ReportDocumentTotal);
         Assert.Equal(10, firstPass.ReportLineFacts);
@@ -2400,7 +2404,17 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                FROM dbo.AccountingPostingJobs WHERE SourceDocumentId IN ({ids})),
               (SELECT MAX(DATEDIFF_BIG(microsecond,StartedAt,CompletedAt))
                FROM reporting.SalesReportingJobs
-               WHERE SourceDocumentId IN ({ids}) AND Status=N'Projected');
+               WHERE SourceDocumentId IN ({ids}) AND Status=N'Projected'),
+              (SELECT COALESCE(-SUM(ValueChange),0) FROM dbo.InventoryMovements
+               WHERE DocumentId IN ({ids}) AND DocumentType=N'SalesInvoice'),
+              (SELECT COALESCE(SUM(l.Debit),0) FROM dbo.AccountingEntries e
+               INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({ids}) AND a.Code=N'613595'),
+              (SELECT COALESCE(SUM(l.Credit),0) FROM dbo.AccountingEntries e
+               INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({ids}) AND a.Code=N'143505');
             """;
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
@@ -2410,7 +2424,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             reader.GetInt64(6), reader.GetDecimal(7), reader.GetDecimal(8),
             reader.GetDecimal(9), reader.GetInt64(10), reader.GetDecimal(11),
             reader.GetInt64(12), reader.GetDecimal(13), reader.GetDecimal(14),
-            reader.GetInt64(15), reader.GetInt64(16), reader.GetInt64(17));
+            reader.GetInt64(15), reader.GetInt64(16), reader.GetInt64(17),
+            reader.GetDecimal(18), reader.GetDecimal(19), reader.GetDecimal(20));
     }
 
     private async Task AssertInventoryMovementChainAsync(
@@ -2492,7 +2507,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         decimal OutputVatCredit, long ReportDocuments, decimal ReportDocumentTotal,
         long ReportLineFacts, decimal ReportQuantity, decimal ReportLineTotal,
         long MaxOperationalMicroseconds, long MaxAccountingMicroseconds,
-        long MaxReportingMicroseconds);
+        long MaxReportingMicroseconds, decimal ValuedInventoryCost,
+        decimal CostOfGoodsSoldDebit, decimal InventoryCredit);
 
     private sealed record AccumulatedAccountingSnapshot(
         long AccountingSources, long AccountingJobs, long AccountingEntries,
