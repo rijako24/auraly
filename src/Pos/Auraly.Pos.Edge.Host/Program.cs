@@ -46,7 +46,12 @@ public sealed record PosWorkstationIdentity(
     string WarehouseName,
     string UserDisplayName,
     string CompanyName,
-    string? CompanyLogoSource);
+    string? CompanyLogoSource,
+    string? CompanyLegalName = null,
+    string? CompanyNit = null,
+    string? CompanyVerificationDigit = null,
+    string? BusinessAddress = null,
+    string? BusinessPhone = null);
 
 public sealed record CaptureRequest(string Value, Guid? CustomerId, decimal? Quantity = null);
 public sealed record QuantityRequest(decimal Quantity);
@@ -180,7 +185,12 @@ public static class PosEdgeHostApplication
             OptionalLabel(builder.Configuration, "PosEdge:UserDisplayName", "Usuario sin nombre"),
             OptionalLabel(builder.Configuration, "PosEdge:CompanyName",
                 OptionalLabel(builder.Configuration, "PosEdge:BusinessName", "Negocio sin nombre")),
-            builder.Configuration["PosEdge:CompanyLogoSource"]));
+            builder.Configuration["PosEdge:CompanyLogoSource"],
+            builder.Configuration["PosEdge:CompanyLegalName"],
+            builder.Configuration["PosEdge:CompanyNit"] ?? builder.Configuration["PosEdge:SupplierTaxId"],
+            builder.Configuration["PosEdge:CompanyVerificationDigit"],
+            builder.Configuration["PosEdge:BusinessAddress"],
+            builder.Configuration["PosEdge:BusinessPhone"]));
         builder.Services.AddSingleton(new PosCatalogStore(connectionString));
         builder.Services.AddSingleton(sp => new PosDraftStore(
             connectionString,

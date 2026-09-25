@@ -75,7 +75,7 @@ public sealed class GoodsReceiptDomainTests
         Assert.Equal(-6m, result.QuantityAfter);
         Assert.Equal(5_000m, result.AverageUnitCostAfter);
         Assert.Equal(-30_000m, result.InventoryValueAfter);
-        Assert.Equal(24_000m, result.ValueChange);
+        Assert.Equal(20_000m, result.ValueChange);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public sealed class GoodsReceiptDomainTests
         Assert.Equal(4m, result.QuantityAfter);
         Assert.Equal(6_000m, result.AverageUnitCostAfter);
         Assert.Equal(24_000m, result.InventoryValueAfter);
-        Assert.Equal(84_000m, result.ValueChange);
+        Assert.Equal(74_000m, result.ValueChange);
     }
 
     [Fact]
@@ -155,6 +155,70 @@ public sealed class GoodsReceiptDomainTests
         Assert.Equal(0.5m, positiveReceipt.QuantityAfter);
         Assert.Equal(9_000m, positiveReceipt.AverageUnitCostAfter);
         Assert.Equal(4_500m, positiveReceipt.InventoryValueAfter);
+    }
+
+    [Fact]
+    public void Initial_unit_cost_values_a_sale_before_the_first_goods_receipt()
+    {
+        var sale = InventoryValuationCalculator.Calculate(
+            State(0m, 5_000m, 0m), -3m, null, InventoryValuationMode.AverageCost);
+
+        Assert.Equal(-3m, sale.QuantityAfter);
+        Assert.Equal(5_000m, sale.RecognizedUnitCost);
+        Assert.Equal(-15_000m, sale.ValueChange);
+        Assert.Equal(-15_000m, sale.InventoryValueAfter);
+    }
+
+    [Fact]
+    public void Receipt_covering_negative_stock_records_the_real_book_value_change()
+    {
+        var partial = InventoryValuationCalculator.Calculate(
+            State(-3m, 5_000m, -15_000m), 2m, 6_000m,
+            InventoryValuationMode.WeightedAverageReceipt);
+        Assert.Equal(-1m, partial.QuantityAfter);
+        Assert.Equal(5_000m, partial.AverageUnitCostAfter);
+        Assert.Equal(10_000m, partial.ValueChange);
+        Assert.Equal(2_000m, 12_000m - partial.ValueChange);
+
+        var crossing = InventoryValuationCalculator.Calculate(
+            State(-3m, 5_000m, -15_000m), 5m, 6_000m,
+            InventoryValuationMode.WeightedAverageReceipt);
+        Assert.Equal(2m, crossing.QuantityAfter);
+        Assert.Equal(6_000m, crossing.AverageUnitCostAfter);
+        Assert.Equal(12_000m, crossing.InventoryValueAfter);
+        Assert.Equal(27_000m, crossing.ValueChange);
+        Assert.Equal(3_000m, 30_000m - crossing.ValueChange);
+    }
+
+    [Fact]
+    public void Cheaper_receipt_to_zero_keeps_last_cost_and_reverses_excess_cost_of_sales()
+    {
+        var result = InventoryValuationCalculator.Calculate(
+            State(-1m, 6_000m, -6_000m), 1m, 4_000m,
+            InventoryValuationMode.WeightedAverageReceipt);
+
+        Assert.Equal(0m, result.QuantityAfter);
+        Assert.Equal(6_000m, result.AverageUnitCostAfter);
+        Assert.Equal(0m, result.InventoryValueAfter);
+        Assert.Equal(6_000m, result.ValueChange);
+        Assert.Equal(-2_000m, 4_000m - result.ValueChange);
+    }
+
+    [Fact]
+    public void Return_of_a_sale_made_without_stock_restores_quantity_and_book_value()
+    {
+        var sale = InventoryValuationCalculator.Calculate(
+            State(0m, 5_000m, 0m), -1m, null,
+            InventoryValuationMode.AverageCost);
+        var returned = InventoryValuationCalculator.Calculate(
+            State(sale.QuantityAfter, sale.AverageUnitCostAfter,
+                sale.InventoryValueAfter), 1m, sale.RecognizedUnitCost,
+            InventoryValuationMode.WeightedAverageReceipt);
+
+        Assert.Equal(0m, returned.QuantityAfter);
+        Assert.Equal(5_000m, returned.AverageUnitCostAfter);
+        Assert.Equal(0m, returned.InventoryValueAfter);
+        Assert.Equal(-sale.ValueChange, returned.ValueChange);
     }
 
     [Fact]

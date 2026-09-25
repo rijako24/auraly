@@ -137,13 +137,27 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
               WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsSystem=0;
               IF @@ROWCOUNT=0 THROW 51201,'Warehouse was not found in the authenticated business.',1;
             END;
+            ;WITH KnownCosts AS (
+              SELECT balance.ProductId,MAX(balance.AverageUnitCost) AverageUnitCost
+              FROM dbo.InventoryBalances balance
+              INNER JOIN dbo.Businesses poolBusiness ON poolBusiness.BusinessId=balance.BusinessId
+              INNER JOIN dbo.Businesses ownerBusiness ON ownerBusiness.BusinessId=@BusinessId
+              WHERE poolBusiness.TenantId=@TenantId AND balance.AverageUnitCost>0
+                AND (balance.BusinessId=@BusinessId OR
+                  (ownerBusiness.SharesProductPrices=1 AND poolBusiness.SharesProductPrices=1))
+              GROUP BY balance.ProductId
+            )
             INSERT dbo.InventoryBalances
               (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
                InventoryValue,LastProcessingSequence,UpdatedAt)
-            SELECT @BusinessId,@WarehouseId,product.ProductId,0,0,0,
+            SELECT @BusinessId,@WarehouseId,product.ProductId,0,
+                   COALESCE(known.AverageUnitCost,price.CostBasisAmount,0),0,
                    COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),
                    SYSUTCDATETIME()
             FROM dbo.Products product
+            LEFT JOIN KnownCosts known ON known.ProductId=product.ProductId
+            LEFT JOIN dbo.ProductPrices price ON price.BusinessId=@BusinessId
+              AND price.ProductId=product.ProductId AND price.IsActive=1
             WHERE product.TenantId=@TenantId
               AND NOT EXISTS (
                 SELECT 1 FROM dbo.InventoryBalances balance

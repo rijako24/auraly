@@ -23,6 +23,32 @@ var thermalRenderer = new HtmlReceiptPreviewRenderer();
 var sheetRenderer = new HalfLetterDocumentRenderer();
 var pages = new List<(string FileName, string Label)>();
 
+var portfolioPaidAt = new DateTimeOffset(2026, 9, 24, 17, 42, 0, TimeSpan.FromHours(-5));
+var portfolioRenderer = new PortfolioPaymentReceiptRenderer();
+foreach (var width in new[] { 58, 80 })
+foreach (var direction in new[] { "Receivable", "Payable" })
+{
+    var incoming = direction == "Receivable";
+    var receipt = new PortfolioPaymentReceipt(
+        Guid.Parse(incoming ? "30000000-0000-0000-0000-000000000003" : "40000000-0000-0000-0000-000000000004"),
+        direction,
+        incoming ? "ABO00-00000128" : "PPR00-00000057",
+        portfolioPaidAt,
+        "Comercializadora Uno", "Comercializadora Uno S.A.S.", "900123456", "7", null,
+        "Sede principal", "Calle 10 # 20-30, Valledupar", "(605) 555 0182",
+        incoming ? "María Camila Pérez" : "Distribuciones del Cesar S.A.S.",
+        incoming ? "CC 1.065.123.456" : "NIT 901.234.567-8", "Laura Rodríguez",
+        125_000m,
+        [new(incoming ? "VTA01-00000452" : "FC-2026-0041", 75_000m),
+         new(incoming ? "VTA01-00000453" : "FC-2026-0042", 50_000m)],
+        [new("Efectivo", 100_000m, null), new("Transferencia", 25_000m, "BAN-88291")]);
+    var slug = incoming ? "abono-cartera" : "pago-proveedor";
+    var file = $"{slug}-{width}mm.html";
+    await File.WriteAllTextAsync(Path.Combine(output, file),
+        portfolioRenderer.Render(receipt, width), Encoding.UTF8);
+    pages.Add((file, $"{(incoming ? "Abono a cartera" : "Pago a proveedor")} · {width} mm"));
+}
+
 foreach (var width in new[] { 58, 80 })
 foreach (var version in new[] { 2, 3 })
 {

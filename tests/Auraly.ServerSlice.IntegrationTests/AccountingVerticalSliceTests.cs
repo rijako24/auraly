@@ -211,6 +211,176 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     }
 
     [Fact]
+    public async Task Sales_without_initial_stock_and_later_receipt_post_inventory_cost_and_negative_stock_adjustment()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate,
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        using (var defaults = await accounting.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(
+                       new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        var productId = await CreateManagedProductWithInitialCostAsync(5_000m);
+        await SetWarehouseNegativeSalesPolicyAsync(true);
+        for (var consecutive = 9_930; consecutive < 9_933; consecutive++)
+        {
+            var source = fixture.CreateValidRequest(consecutive);
+            var invoice = WithUblSnapshot(source with
+            {
+                Lines = [source.Lines[0] with
+                {
+                    ProductId = productId,
+                    DocumentUnitCost = 5_000m
+                }]
+            });
+            using var upload = fixture.CreateUploadMessage(invoice);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+            await AssertBalancedAsync(invoice.DocumentId);
+            await AssertFastProcessingAsync(invoice.DocumentId, "venta sin existencias", 1_000_000);
+            Assert.Equal(11_900m, await AccountAmountAsync(
+                invoice.DocumentId, "110505", debit: true));
+            Assert.Equal(10_000m, await AccountAmountAsync(
+                invoice.DocumentId, "413595", debit: false));
+            Assert.Equal(1_900m, await AccountAmountAsync(
+                invoice.DocumentId, "240805", debit: false));
+            var movementValue = await ScalarAsync<decimal>(
+                "SELECT ValueChange FROM dbo.InventoryMovements WHERE DocumentId=@Id",
+                invoice.DocumentId);
+            var costOfSalesDebit = await AccountAmountAsync(invoice.DocumentId,
+                "613595", debit: true);
+            Assert.True(costOfSalesDebit == 5_000m,
+                $"Costo de ventas {costOfSalesDebit}; movimiento {movementValue}.");
+            Assert.Equal(5_000m, await AccountAmountAsync(
+                invoice.DocumentId, "143505", debit: false));
+            Assert.Equal(-5_000m, movementValue);
+        }
+
+        Assert.Equal(-3m, await InventoryBalanceFieldAsync(productId, "QuantityOnHand"));
+        Assert.Equal(5_000m, await InventoryBalanceFieldAsync(productId, "AverageUnitCost"));
+        Assert.Equal(-15_000m, await InventoryBalanceFieldAsync(productId, "InventoryValue"));
+
+        var receivedAt = new DateTimeOffset(2026, 8, 1, 9, 0, 0,
+            TimeSpan.FromHours(-5));
+        var receipt = new ConfirmGoodsReceiptRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            fixture.SupplierId, $"NEG-{Guid.NewGuid():N}", receivedAt.AddDays(-1),
+            receivedAt, true, receivedAt.AddDays(29), "COP", "Reposición de saldo negativo",
+            [new GoodsReceiptLineRequest(1, productId, "Producto inventariable", 2m,
+                6_000m, 0m, "00", 0m, PurchasingTaxTreatments.NotApplicable)]);
+        using (var message = CreateGoodsReceiptMessage(receipt,
+                   $"negative-cost-{receipt.DocumentId:N}"))
+        using (var response = await accounting.SendAsync(message))
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                await response.Content.ReadAsStringAsync());
+
+        await AssertBalancedAsync(receipt.DocumentId);
+        await AssertFastProcessingAsync(receipt.DocumentId, "entrada parcial en negativo", 1_000_000);
+        Assert.Equal(10_000m, await ScalarAsync<decimal>(
+            "SELECT ValueChange FROM dbo.InventoryMovements WHERE DocumentId=@Id",
+            receipt.DocumentId));
+        Assert.Equal(12_000m, await AccountAmountAsync(receipt.DocumentId,
+            "143505", debit: true));
+        Assert.Equal(2_000m, await AccountAmountAsync(receipt.DocumentId,
+            "143505", debit: false));
+        Assert.Equal(2_000m, await AccountAmountAsync(receipt.DocumentId,
+            "613595", debit: true));
+        Assert.Equal(12_000m, await AccountAmountAsync(receipt.DocumentId,
+            "220505", debit: false));
+        Assert.Equal(-1m, await InventoryBalanceFieldAsync(productId, "QuantityOnHand"));
+        Assert.Equal(-5_000m, await InventoryBalanceFieldAsync(productId, "InventoryValue"));
+
+        var crossingReceipt = new ConfirmGoodsReceiptRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            fixture.SupplierId, $"NEG-{Guid.NewGuid():N}", receivedAt,
+            receivedAt.AddMinutes(1), true, receivedAt.AddDays(29), "COP",
+            "Entrada que vuelve a existencia positiva",
+            [new GoodsReceiptLineRequest(1, productId, "Producto inventariable", 2m,
+                6_000m, 0m, "00", 0m, PurchasingTaxTreatments.NotApplicable)]);
+        using (var message = CreateGoodsReceiptMessage(crossingReceipt,
+                   $"negative-cost-{crossingReceipt.DocumentId:N}"))
+        using (var response = await accounting.SendAsync(message))
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                await response.Content.ReadAsStringAsync());
+
+        await AssertBalancedAsync(crossingReceipt.DocumentId);
+        await AssertFastProcessingAsync(crossingReceipt.DocumentId, "entrada que cruza a positivo", 1_000_000);
+        Assert.Equal(11_000m, await ScalarAsync<decimal>(
+            "SELECT ValueChange FROM dbo.InventoryMovements WHERE DocumentId=@Id",
+            crossingReceipt.DocumentId));
+        Assert.Equal(12_000m, await AccountAmountAsync(crossingReceipt.DocumentId,
+            "143505", debit: true));
+        Assert.Equal(1_000m, await AccountAmountAsync(crossingReceipt.DocumentId,
+            "143505", debit: false));
+        Assert.Equal(1_000m, await AccountAmountAsync(crossingReceipt.DocumentId,
+            "613595", debit: true));
+        Assert.Equal(1m, await InventoryBalanceFieldAsync(productId, "QuantityOnHand"));
+        Assert.Equal(6_000m, await InventoryBalanceFieldAsync(productId, "AverageUnitCost"));
+        Assert.Equal(6_000m, await InventoryBalanceFieldAsync(productId, "InventoryValue"));
+
+        for (var consecutive = 9_933; consecutive < 9_935; consecutive++)
+        {
+            var source = fixture.CreateValidRequest(consecutive);
+            var invoice = WithUblSnapshot(source with
+            {
+                Lines = [source.Lines[0] with
+                {
+                    ProductId = productId,
+                    DocumentUnitCost = 6_000m
+                }]
+            });
+            using var upload = fixture.CreateUploadMessage(invoice);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+            await AssertBalancedAsync(invoice.DocumentId);
+            await AssertFastProcessingAsync(invoice.DocumentId, "venta que agota inventario", 1_000_000);
+            Assert.Equal(6_000m, await AccountAmountAsync(invoice.DocumentId,
+                "613595", debit: true));
+            Assert.Equal(6_000m, await AccountAmountAsync(invoice.DocumentId,
+                "143505", debit: false));
+        }
+        Assert.Equal(-1m, await InventoryBalanceFieldAsync(productId, "QuantityOnHand"));
+        Assert.Equal(-6_000m, await InventoryBalanceFieldAsync(productId, "InventoryValue"));
+
+        var cheaperReceipt = new ConfirmGoodsReceiptRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            fixture.SupplierId, $"NEG-{Guid.NewGuid():N}", receivedAt,
+            receivedAt.AddMinutes(2), true, receivedAt.AddDays(29), "COP",
+            "Entrada con costo menor que el conservado",
+            [new GoodsReceiptLineRequest(1, productId, "Producto inventariable", 1m,
+                4_000m, 0m, "00", 0m, PurchasingTaxTreatments.NotApplicable)]);
+        using (var message = CreateGoodsReceiptMessage(cheaperReceipt,
+                   $"negative-cost-{cheaperReceipt.DocumentId:N}"))
+        using (var response = await accounting.SendAsync(message))
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                await response.Content.ReadAsStringAsync());
+
+        await AssertBalancedAsync(cheaperReceipt.DocumentId);
+        await AssertFastProcessingAsync(cheaperReceipt.DocumentId, "entrada hasta cero", 1_000_000);
+        Assert.Equal(6_000m, await ScalarAsync<decimal>(
+            "SELECT ValueChange FROM dbo.InventoryMovements WHERE DocumentId=@Id",
+            cheaperReceipt.DocumentId));
+        Assert.Equal(6_000m, await AccountAmountAsync(cheaperReceipt.DocumentId,
+            "143505", debit: true));
+        Assert.Equal(2_000m, await AccountAmountAsync(cheaperReceipt.DocumentId,
+            "613595", debit: false));
+        Assert.Equal(4_000m, await AccountAmountAsync(cheaperReceipt.DocumentId,
+            "220505", debit: false));
+        Assert.Equal(0m, await InventoryBalanceFieldAsync(productId, "QuantityOnHand"));
+        Assert.Equal(6_000m, await InventoryBalanceFieldAsync(productId, "AverageUnitCost"));
+        Assert.Equal(0m, await InventoryBalanceFieldAsync(productId, "InventoryValue"));
+    }
+
+    [Fact]
     public async Task Automatic_cost_center_is_required_frozen_and_auditable_on_every_entry_line()
     {
         using var accounting = fixture.CreateAdminClient(
@@ -1389,8 +1559,15 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                        ]
                    }))
             Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
-        Assert.Equal(50_000m, await AccountAmountAsync(
-            receipt.DocumentId, "143505", debit: true));
+        var receiptInventoryChange = await ScalarAsync<decimal>(
+            "SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id",
+            receipt.DocumentId);
+        Assert.Equal(receiptInventoryChange,
+            await AccountAmountAsync(receipt.DocumentId, "143505", debit: true)
+            - await AccountAmountAsync(receipt.DocumentId, "143505", debit: false));
+        Assert.Equal(50_000m - receiptInventoryChange,
+            await AccountAmountAsync(receipt.DocumentId, "613595", debit: true)
+            - await AccountAmountAsync(receipt.DocumentId, "613595", debit: false));
         Assert.Equal(9_500m, await AccountAmountAsync(
             receipt.DocumentId, "240810", debit: true));
         Assert.Equal(23_800m, await AccountAmountAsync(
@@ -1973,6 +2150,26 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
 
     private async Task AssertTenSalePipelineIsExactAndIdempotentAsync()
     {
+        var quantityToValue = Math.Max(100m, 100m - await InventoryQuantityAsync());
+        var receivedAt = new DateTimeOffset(2026, 7, 27, 13, 0, 0,
+            TimeSpan.FromHours(-5));
+        var valuedReceipt = new ConfirmGoodsReceiptRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            fixture.SupplierId, $"VAL-{Guid.NewGuid():N}",
+            receivedAt, receivedAt, true, receivedAt.AddDays(30), "COP",
+            "Entrada valorizada para ventas contables",
+            [new GoodsReceiptLineRequest(1, fixture.ProductId,
+                "Inventario valorizado", quantityToValue, 5_000m, 0m,
+                "00", 0m, PurchasingTaxTreatments.NotApplicable)]);
+        using var purchasing = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        using (var message = CreateGoodsReceiptMessage(valuedReceipt,
+                   $"valued-sales-{valuedReceipt.DocumentId:N}"))
+        using (var response = await purchasing.SendAsync(message))
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                await response.Content.ReadAsStringAsync());
+
         var sales = Enumerable.Range(0, 10)
             .Select(index => WithUblSnapshot(fixture.CreateValidRequest(9_820 + index)))
             .ToArray();
@@ -3058,7 +3255,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             $"Document job: {documentStatus ?? "missing"}.");
     }
 
-    private async Task AssertFastProcessingAsync(Guid documentId, string operation)
+    private async Task AssertFastProcessingAsync(Guid documentId, string operation,
+        long maxMicroseconds = 2_000_000)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -3069,8 +3267,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             """, connection);
         command.Parameters.AddWithValue("@Id", documentId);
         var microseconds = Convert.ToInt64(await command.ExecuteScalarAsync());
-        Assert.True(microseconds < 2_000_000,
-            $"El motor tardó {microseconds / 1000m:N0} ms en {operation}; el límite local es 2.000 ms.");
+        Assert.True(microseconds < maxMicroseconds,
+            $"El motor tardó {microseconds / 1000m:N0} ms en {operation}; el límite local es {maxMicroseconds / 1000:N0} ms.");
     }
 
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
@@ -3150,6 +3348,59 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         return productId;
     }
 
+    private async Task<Guid> CreateManagedProductWithInitialCostAsync(decimal initialCost)
+    {
+        var productId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.Products
+              (ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
+               ManageStock,IsActive,CreatedAt)
+            VALUES
+              (@ProductId,@TenantId,@BusinessId,0,@Sku,N'Producto sin existencias',
+               N'COP',1,1,SYSUTCDATETIME());
+
+            INSERT dbo.ProductPrices
+              (ProductPriceId,BusinessId,ProductId,Amount,CostBasisAmount,CurrencyCode,
+               ValidFrom,TargetMarginPercent,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@ProductId,10000,@InitialCost,N'COP','2026-01-01',
+               30,1,N'Nearest',1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.SupplierProducts
+              (SupplierProductId,BusinessId,ProductId,SupplierId,
+               SupplierProductCode,IsPrimary,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@ProductId,@SupplierId,@Sku,1,1,
+               SYSDATETIMEOFFSET());
+            """, connection);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
+        command.Parameters.AddWithValue("@Sku", $"NEG-{productId:N}");
+        command.Parameters.AddWithValue("@InitialCost", initialCost);
+        await command.ExecuteNonQueryAsync();
+        return productId;
+    }
+
+    private async Task<decimal> InventoryBalanceFieldAsync(Guid productId, string field)
+    {
+        Assert.Contains(field, new[] { "QuantityOnHand", "AverageUnitCost", "InventoryValue" });
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand($"""
+            SELECT [{field}] FROM dbo.InventoryBalances
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+              AND ProductId=@ProductId;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        return Convert.ToDecimal(await command.ExecuteScalarAsync());
+    }
+
     private async Task SetAccountingMappingAsync(string category, string accountCode)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -3175,7 +3426,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     {
         Assert.Contains(
             accountCode,
-            new[] { "143505", "240810", "519595", "220505",
+            new[] { "143505", "240805", "240810", "413595", "519595", "613595", "220505",
                 "236540", "236701", "236805", "110505", "111005", "130505",
                 "130510", "130515", "130520", "133595", "139995", "429595", "429596",
                 "429598", "539595", "539596", "539598" });

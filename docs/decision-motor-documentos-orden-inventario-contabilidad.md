@@ -188,6 +188,8 @@ Cada línea conserva cantidad anterior y posterior, costo promedio anterior y po
 
 El método inicial es promedio ponderado permanente por producto y negocio. El costo de venta se congela por línea y nunca se recalcula silenciosamente por cambios posteriores.
 
+El costo positivo declarado en la creación inicia el promedio aun con existencia cero. Si se permite vender en negativo, la salida reconoce ese último promedio, registra valor negativo de inventario y lo conserva mientras el saldo no sea positivo. Una entrada parcial que deja saldo negativo disminuye ese valor negativo al promedio anterior. El asiento de la entrada reconoce por separado la diferencia entre costo de adquisición y cambio de valor en libros como ajuste de costo de ventas. Al cruzar a saldo positivo, el promedio de las unidades restantes parte del costo de la entrada. La selección del tenant entre último costo y costo promedio se limita a precio y rentabilidad comercial; no cambia el método del kardex ni del PUC.
+
 Las ventas offline conservan `OccurredAt`, secuencia local y caja. Al llegar reciben `PostedAt` y secuencia del servidor. No se insertan retroactivamente entre movimientos ya contabilizados. El servidor usa la historia de valoración aplicable a la emisión; cualquier diferencia posterior se registra mediante un ajuste explícito.
 
 ## 11. Conteos

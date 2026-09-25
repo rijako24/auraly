@@ -32,4 +32,6 @@ public sealed record TenantBrandingDto(
     Guid TenantId,
     string DisplayName,
     string? LegalName,
-    string? LogoUrl);
+    string? LogoUrl,
+    string? Nit,
+    string? VerificationDigit);

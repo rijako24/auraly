@@ -44,7 +44,7 @@ public static class InventoryValuationCalculator
         var recognizedUnitCost = mode == InventoryValuationMode.AverageCost
             ? poolAverageBefore
             : RequiredSpecifiedCost(specifiedUnitCost);
-        var valueChange = Money(quantityChange * recognizedUnitCost);
+        var acquisitionValue = Money(quantityChange * recognizedUnitCost);
 
         decimal averageAfter;
         switch (mode)
@@ -65,7 +65,7 @@ public static class InventoryValuationCalculator
                     ? poolAverageBefore
                     : poolQuantityBefore <= 0
                         ? recognizedUnitCost
-                        : UnitCost((Math.Max(0m, Money(state.PoolInventoryValue)) + valueChange) /
+                        : UnitCost((Math.Max(0m, Money(state.PoolInventoryValue)) + acquisitionValue) /
                             poolQuantityAfter);
                 break;
 
@@ -77,7 +77,7 @@ public static class InventoryValuationCalculator
                 var specifiedPoolQuantityAfter = Quantity(poolQuantityBefore + quantityChange);
                 averageAfter = specifiedPoolQuantityAfter <= 0
                     ? poolAverageBefore
-                    : UnitCost((Money(state.PoolInventoryValue) + valueChange) /
+                    : UnitCost((Money(state.PoolInventoryValue) + acquisitionValue) /
                         specifiedPoolQuantityAfter);
                 break;
 
@@ -88,6 +88,12 @@ public static class InventoryValuationCalculator
         if (averageAfter < 0)
             throw new InvalidOperationException("The inventory average cost cannot become negative.");
 
+        // A movement changes the book value of the cost pool. A receipt that
+        // covers negative stock can differ from its acquisition amount; the
+        // accounting entry must recognize that difference in cost of sales.
+        var poolQuantityAfterValuation = Quantity(poolQuantityBefore + quantityChange);
+        var valueChange = Money(poolQuantityAfterValuation * averageAfter) -
+            Money(state.PoolInventoryValue);
         return new InventoryValuationResult(
             quantityAfter,
             poolAverageBefore,
@@ -106,10 +112,14 @@ public static class InventoryValuationCalculator
         return UnitCost(value.Value);
     }
 
-    private static decimal PoolAverage(decimal quantity, decimal value, decimal fallback) =>
-        quantity != 0m && value / quantity >= 0m
+    private static decimal PoolAverage(decimal quantity, decimal value, decimal fallback)
+    {
+        if (quantity > 0m)
+            return value > 0m ? UnitCost(value / quantity) : 0m;
+        return quantity < 0m && value / quantity > 0m
             ? UnitCost(value / quantity)
             : UnitCost(fallback);
+    }
 
     private static decimal Money(decimal value) =>
         decimal.Round(value, 4, MidpointRounding.AwayFromZero);

@@ -33,7 +33,8 @@ public sealed class TenantService(
         var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
             ?? throw new NotFoundException(nameof(Tenant), tenantId);
         return new(tenant.TenantId, tenant.Name, tenant.LegalName,
-            await ResolveLogoUrlAsync(tenant, ct));
+            await ResolveLogoUrlAsync(tenant, ct), tenant.Nit,
+            tenant.VerificationDigit);
     }
 
     public async Task<PagedResponse<TenantDto>> GetPagedAsync(PagedRequest request, CancellationToken ct)

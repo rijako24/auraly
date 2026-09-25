@@ -69,14 +69,22 @@ Sales return / credit note:
 
 Goods receipt / purchase:
 
-- debit inventory only with the value recognized by the inventory movement for
-  products that manage stock;
+- debit inventory for the acquisition amount of products that manage stock;
+- when a receipt covers negative stock, post the difference between acquisition
+  amount and the movement's book-value change against cost of goods sold and
+  inventory in the same balanced receipt entry; the net inventory posting then
+  equals `InventoryMovements.ValueChange`;
 - debit purchases expense for non-inventoriable concepts;
 - debit input VAT only when the immutable line explicitly uses
   `DeductibleInputVat`;
 - capitalize purchase VAT into inventory or expense when the line explicitly
   uses `CapitalizedCost`;
 - credit accounts payable for the immutable receipt total.
+
+An ordinary product's positive initial cost seeds its zero-quantity balance.
+Sales through zero and into negative stock retain the last weighted-average
+unit cost, so each sale posts inventory and cost of goods sold. The tenant's
+`InventoryCostBasis` selects a commercial pricing basis, not a journal method.
 
 A zero-rate line must use `NotApplicable`. A positive-rate line must explicitly
 select deductible or capitalized treatment; the server never infers this from the

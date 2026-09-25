@@ -39,6 +39,8 @@ internal static class PosPeripheralModule
         services.AddSingleton<IPosReceiptPrinter>(sp =>
             sp.GetRequiredService<ConfigurablePosReceiptPrinter>());
         services.AddSingleton<PosCashMovementTicketPrinter>();
+        services.AddSingleton<PortfolioPaymentReceiptRenderer>();
+        services.AddSingleton<PosPortfolioPaymentTicketPrinter>();
         services.AddSingleton<PosCashDenominationCountTicketPrinter>();
         services.AddSingleton<PosWorkSessionClosurePrinter>();
         services.AddSingleton<IPosWorkSessionClosurePrinter>(sp =>
@@ -191,6 +193,28 @@ internal static class PosPeripheralModule
             {
                 return Results.Problem(
                     exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
+
+        edge.MapPost("/print/portfolio-payment", async (
+            PortfolioPaymentReceipt request,
+            PosPortfolioPaymentTicketPrinter printer,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                await printer.PrintAsync(request, ct);
+                return Results.NoContent();
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                    { [nameof(request)] = [exception.Message] });
+            }
+            catch (Exception exception) when (exception is IOException or InvalidOperationException)
+            {
+                return Results.Problem(exception.Message,
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         });

@@ -291,7 +291,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Product_creation_provisions_zero_balance_for_every_warehouse_including_system_warehouses()
+    public async Task Product_creation_provisions_initial_unit_cost_without_inventory_value()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();
         using var admin = fixture.CreateAdminClient(
@@ -316,11 +316,11 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
              AND balance.ProductId=@ProductId
             WHERE warehouse.BusinessId=@BusinessId
               AND (balance.ProductId IS NULL OR balance.QuantityOnHand<>0
-                   OR balance.AverageUnitCost<>0 OR balance.InventoryValue<>0);
+                   OR balance.AverageUnitCost<>8000 OR balance.InventoryValue<>0);
             """,
             new SqlParameter("@ProductId", product.ProductId),
             new SqlParameter("@BusinessId", fixture.BusinessId));
-        Assert.True(string.IsNullOrEmpty(invalidBalances), $"Every product balance must start at zero: {invalidBalances}");
+        Assert.True(string.IsNullOrEmpty(invalidBalances), $"Every product balance must start with its declared unit cost and zero value: {invalidBalances}");
         Assert.True(await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ProductId;",
             new SqlParameter("@BusinessId", fixture.BusinessId),

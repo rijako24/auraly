@@ -20,6 +20,7 @@ export interface TenantEnrolledDevice {
 }
 export interface TenantBranding {
   tenantId: string; displayName: string; legalName: string | null; logoUrl: string | null;
+  nit: string | null; verificationDigit: string | null;
 }
 export interface ProvisionTenantResult {
   provisioningRequestId: string; tenantId: string; tenantKey: string; businessId: string;

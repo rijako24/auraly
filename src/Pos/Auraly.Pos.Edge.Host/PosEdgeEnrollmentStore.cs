@@ -130,10 +130,15 @@ public sealed class PosEdgeEnrollmentStore(
             ["PosEdge:BusinessId"] = package.BusinessId.ToString("D"),
             ["PosEdge:WarehouseId"] = package.WarehouseId.ToString("D"),
             ["PosEdge:BusinessName"] = package.BusinessName,
+            ["PosEdge:BusinessAddress"] = package.BusinessAddress,
+            ["PosEdge:BusinessPhone"] = package.BusinessPhone,
             ["PosEdge:CompanyName"] = string.IsNullOrWhiteSpace(package.CompanyName)
                 ? package.BusinessName
                 : package.CompanyName,
             ["PosEdge:CompanyLogoSource"] = package.CompanyLogoSource,
+            ["PosEdge:CompanyLegalName"] = package.CompanyLegalName,
+            ["PosEdge:CompanyNit"] = package.CompanyNit,
+            ["PosEdge:CompanyVerificationDigit"] = package.CompanyVerificationDigit,
             ["PosEdge:WarehouseCode"] = package.WarehouseCode,
             ["PosEdge:WarehouseName"] = package.WarehouseName,
             ["PosEdge:WarehouseAllowsNegativeStock"] =

@@ -430,6 +430,23 @@ group.MapPost("/{draftId:guid}/items", async (
                 draftId, lineId, request, IdempotencyKey(context), ct)));
 
         // Render the response already held by the caller; no database or per-document QR request.
+        group.MapPost("/portfolio-payments/receipt/render", (
+            PortfolioPaymentRenderRequest request) =>
+        {
+            try
+            {
+                var html = new PortfolioPaymentReceiptRenderer().Render(
+                    request.Receipt, request.PaperWidthMillimeters);
+                return Results.Ok(new { html });
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                    { [nameof(request.Receipt)] = [exception.Message] });
+            }
+        });
+
+        // Render the response already held by the caller; no database or per-document QR request.
         group.MapPost("/sales/receipts/render", (SalesReceiptsRenderRequest request) =>
         {
             if (request.Receipts is null || request.Receipts.Count is < 1 or > 500 ||
@@ -716,6 +733,10 @@ group.MapPost("/{draftId:guid}/items", async (
         }
     }
 }
+
+public sealed record PortfolioPaymentRenderRequest(
+    PortfolioPaymentReceipt Receipt,
+    int PaperWidthMillimeters);
 
 public static class OnlineSalesDraftClaimsPrincipalExtensions
 {

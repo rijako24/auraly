@@ -117,4 +117,9 @@ public sealed record PosEnrollmentPackage(
     OfflineAuthenticationLeaseAcquireResponse? InitialOfflineAccess = null,
     PosOfflineIdentitySnapshot? InitialIdentitySnapshot = null,
     bool? ReusesDevice = null,
-    IReadOnlyList<DeviceWorkSessionSnapshot>? InitialWorkSessions = null);
+    IReadOnlyList<DeviceWorkSessionSnapshot>? InitialWorkSessions = null,
+    string? CompanyLegalName = null,
+    string? CompanyNit = null,
+    string? CompanyVerificationDigit = null,
+    string? BusinessAddress = null,
+    string? BusinessPhone = null);

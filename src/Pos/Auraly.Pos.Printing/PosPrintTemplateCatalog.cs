@@ -28,6 +28,10 @@ public static class PosPrintTemplateCatalog
     public static readonly PosPrintTemplateVersion CashExit = new("cash-exit", 3);
     public static readonly PosPrintTemplateVersion CreditSaleAcknowledgement =
         new("credit-sale-acknowledgement", 1);
+    public static readonly PosPrintTemplateVersion ReceivablePayment =
+        new("receivable-payment", 1);
+    public static readonly PosPrintTemplateVersion PayablePayment =
+        new("payable-payment", 1);
 
     public static PosPrintTemplateVersion ForSale(string documentType) =>
         PosSaleDocumentTypes.IsFiscal(documentType) ? SalesInvoice : SalesReceipt;

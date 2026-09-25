@@ -106,12 +106,14 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     INSERT dbo.InventoryBalances
                       (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
                        InventoryValue,LastProcessingSequence,UpdatedAt)
-                    SELECT warehouse.BusinessId,warehouse.WarehouseId,@ProductId,0,0,0,
+                    SELECT warehouse.BusinessId,warehouse.WarehouseId,@ProductId,0,@InitialUnitCost,0,
                            COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=warehouse.BusinessId),0),@Now
                     FROM dbo.Warehouses warehouse
                     INNER JOIN dbo.Businesses business ON business.BusinessId=warehouse.BusinessId
                     WHERE business.TenantId=@TenantId;
-                    """, [P("@TenantId", user.TenantId), P("@ProductId", productId), P("@Now", now)], ct);
+                    """, [P("@TenantId", user.TenantId), P("@ProductId", productId),
+                        P("@InitialUnitCost", request.IsGenericProduct ? 0m : request.Prices.Single().CostBasisAmount),
+                        P("@Now", now)], ct);
             await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId AND IsActive=1;
                 IF @ParentProductId IS NOT NULL

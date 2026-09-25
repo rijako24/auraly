@@ -150,6 +150,17 @@ la factura como un segundo trabajo físico: primero termina y corta la factura y
 después imprime y corta el comprobante. La secuencia aplica a tirilla de 58/80
 mm, media carta, media oficio y carta.
 
+`receivable-payment` y `payable-payment` versión 1 son las tirillas de abono a
+cartera y pago a proveedor confirmados desde punto de venta. El comprobante
+incluye empresa, NIT cuando está disponible, sede, tercero, fecha y hora,
+facturas aplicadas, medios, valor y responsable; el pago a proveedor reserva
+espacio para la firma de recibido. Ambos usan
+`PortfolioPaymentReceiptRenderer` en servidor y POS Edge, con el resultado de
+confirmación y las selecciones ya presentes en el POS. La operación termina al
+confirmarse el pago: después se despacha la impresión sin bloquear la caja ni
+volver a consultar el pago. Una respuesta de reintento idempotente no genera
+una segunda impresión automática. Las otras vistas de cartera no imprimen.
+
 La versión 2 de `sales-invoice` y la versión 2 activa de `sales-receipt` conservan el contenido
 de la versión 1 y agregan, cuando el pago en efectivo registró un valor entregado,
 `Efectivo recibido` y `Cambio` inmediatamente después del total. La versión 1
@@ -176,6 +187,8 @@ permite comparar versiones y formatos. Los cierres de sesión de 80 y 58 mm
 aparecen primero, con el de 80 mm seleccionado inicialmente; incluyen movimientos,
 cartera, pagos en efectivo, tarjeta y transferencia, cargos repetidos y gastos
 de ejemplo, usando `WorkSessionClosureReceiptRenderer`.
+También incluye abono a cartera y pago a proveedor en 58 y 80 mm, generados
+por el renderizador canónico de sus tirillas.
 Los archivos se escriben bajo
 `artifacts/report-preview`, fuera del control de versiones. La tirilla HTML/CSS
 continúa como representación canónica porque preserva QR, logotipo, anchos físicos

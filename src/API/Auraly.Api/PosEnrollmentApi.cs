@@ -123,7 +123,10 @@ public static class PosEnrollmentApi
                 CompanyName = string.IsNullOrWhiteSpace(branding.DisplayName)
                     ? package.BusinessName
                     : branding.DisplayName,
-                CompanyLogoSource = branding.LogoUrl
+                CompanyLogoSource = branding.LogoUrl,
+                CompanyLegalName = branding.LegalName,
+                CompanyNit = branding.Nit,
+                CompanyVerificationDigit = branding.VerificationDigit
             };
         }
         catch (Exception exception) when (exception is not OperationCanceledException)

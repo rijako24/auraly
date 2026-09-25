@@ -919,6 +919,13 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     {
         var product = Guid.NewGuid();
         await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var previousAverage = await ScalarAsync<decimal>(
+            """
+            SELECT COALESCE(
+              NULLIF((SELECT MAX(AverageUnitCost) FROM dbo.InventoryBalances WHERE ProductId=@Id),0),
+              (SELECT MAX(CostBasisAmount) FROM dbo.ProductPrices WHERE ProductId=@Id AND IsActive=1),0)
+            """,
+            fixture.ProductId);
         using var client = fixture.CreateAdminClient(
             InventoryPermissionCodes.Read,
             InventoryPermissionCodes.Adjust,
@@ -948,8 +955,11 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
              AND balance.ProductId=product.ProductId
             WHERE warehouse.WarehouseId=@Id
               AND (balance.ProductId IS NULL OR balance.QuantityOnHand<>0
-                   OR balance.AverageUnitCost<>0 OR balance.InventoryValue<>0)
+                   OR balance.AverageUnitCost<0 OR balance.InventoryValue<>0)
             """, created.WarehouseId));
+        Assert.Equal(previousAverage, await ScalarAsync<decimal>(
+            "SELECT AverageUnitCost FROM dbo.InventoryBalances WHERE WarehouseId=@Id AND ProductId=@ProductId",
+            created.WarehouseId, fixture.ProductId));
 
         var options = Assert.IsAssignableFrom<IReadOnlyList<InventoryWarehouseOption>>(
             await client.GetFromJsonAsync<List<InventoryWarehouseOption>>(
@@ -1103,7 +1113,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     private static HttpRequestMessage CreateMessage<T>(string url,T request,string key){var message=new HttpRequestMessage(HttpMethod.Post,url){Content=JsonContent.Create(request)};message.Headers.Add("Idempotency-Key",key);return message;}
     private async Task<(decimal Quantity,decimal Average,decimal Value)> BalanceAsync(Guid warehouse,Guid product)
     {await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT QuantityOnHand,AverageUnitCost,InventoryValue FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId",connection);command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@WarehouseId",warehouse);command.Parameters.AddWithValue("@ProductId",product);await using var reader=await command.ExecuteReaderAsync();if(!await reader.ReadAsync())return(0,0,0);return(reader.GetDecimal(0),reader.GetDecimal(1),reader.GetDecimal(2));}
-    private async Task<T> ScalarAsync<T>(string sql,Guid id){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Id",id);return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!,typeof(T));}
+    private async Task<T> ScalarAsync<T>(string sql,Guid id,Guid? productId=null){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Id",id);if(productId.HasValue)command.Parameters.AddWithValue("@ProductId",productId.Value);return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!,typeof(T));}
     private async Task ExecuteAsync(string sql,Guid id){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Id",id);await command.ExecuteNonQueryAsync();}
     private async Task<Guid> SystemWarehouseIdAsync(string code){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT WarehouseId FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND Code=@Code AND IsSystem=1 AND IsActive=1",connection);command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@Code",code);return (Guid)(await command.ExecuteScalarAsync() ?? throw new InvalidOperationException($"System warehouse '{code}' is missing."));}
     private async Task<int> CountAsync(string table,Guid id){Assert.Contains(table,new[]{"InventoryMovements","ServerOutboxMessages"});return await ScalarAsync<int>($"SELECT COUNT(*) FROM dbo.[{table}] WHERE DocumentId=@Id",id);}

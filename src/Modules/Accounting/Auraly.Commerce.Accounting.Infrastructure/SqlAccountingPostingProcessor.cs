@@ -887,6 +887,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         decimal deductibleVat;
         decimal acquisitionAmount;
         decimal inventory;
+        decimal inventoryMovementValue;
         await using (var command = new SqlCommand("""
             SELECT
               COALESCE(SUM(CASE WHEN TaxTreatment=N'DeductibleInputVat'
@@ -896,10 +897,12 @@ public sealed partial class SqlAccountingPostingProcessor(
                          THEN FunctionalTaxAmount ELSE 0 END),0),
               COALESCE(SUM(CASE WHEN movement.LineNumber IS NOT NULL
                 THEN FunctionalNetAmount + CASE WHEN TaxTreatment=N'CapitalizedCost'
-                         THEN FunctionalTaxAmount ELSE 0 END ELSE 0 END),0)
+                         THEN FunctionalTaxAmount ELSE 0 END ELSE 0 END),0),
+              COALESCE(SUM(movement.ValueChange),0)
             FROM dbo.GoodsReceiptLines l
-            LEFT JOIN (SELECT DISTINCT DocumentId,LineNumber FROM dbo.InventoryMovements
-                       WHERE DocumentType=N'GoodsReceipt') movement
+            LEFT JOIN (SELECT DocumentId,LineNumber,SUM(ValueChange) ValueChange
+                       FROM dbo.InventoryMovements WHERE DocumentType=N'GoodsReceipt'
+                         AND DocumentId=@DocumentId GROUP BY DocumentId,LineNumber) movement
               ON movement.DocumentId=l.GoodsReceiptId AND movement.LineNumber=l.LineNumber
             WHERE GoodsReceiptId=@DocumentId;
             """, connection, transaction))
@@ -912,6 +915,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             deductibleVat = reader.GetDecimal(0);
             acquisitionAmount = reader.GetDecimal(1);
             inventory = reader.GetDecimal(2);
+            inventoryMovementValue = reader.GetDecimal(3);
         }
         var expense = decimal.Round(
             acquisitionAmount - inventory, 4, MidpointRounding.AwayFromZero);
@@ -925,7 +929,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         var settlements = await LoadPurchaseWithholdingSettlementsAsync(
             connection, transaction, source, total, cancellationToken);
         return FinancialFactsResult.Ready(FinancialFacts.Purchase(
-            number, partyId, inventory, expense, deductibleVat, total, settlements));
+            number, partyId, inventory, expense, deductibleVat, total, settlements,
+            decimal.Round(inventory - inventoryMovementValue, 4, MidpointRounding.AwayFromZero)));
     }
 
     private static async Task<FinancialFactsResult> LoadGoodsReceiptCostDocumentFactsAsync(
@@ -1703,7 +1708,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         IReadOnlyList<CategoryLineSpec>? DirectCategoryLines = null,
         string RevenueCategory = AccountingCategories.SalesRevenue,
         decimal RoundingAdjustment = 0m,
-        IReadOnlyList<ManualLineSpec>? AdditionalDirectLines = null)
+        IReadOnlyList<ManualLineSpec>? AdditionalDirectLines = null,
+        decimal PurchaseInventoryCostAdjustment = 0m)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -1733,6 +1739,11 @@ public sealed partial class SqlAccountingPostingProcessor(
                 if (IsPurchase)
                 {
                     if (Cost > 0) values.Add(AccountingCategories.Inventory);
+                    if (PurchaseInventoryCostAdjustment != 0m)
+                    {
+                        values.Add(AccountingCategories.Inventory);
+                        values.Add(AccountingCategories.CostOfGoodsSold);
+                    }
                     if (Untaxed > 0 && DirectExpenseAccountId is null) values.Add(AccountingCategories.PurchasesExpense);
                     if (Tax > 0) values.Add(AccountingCategories.InputVat);
                     foreach (var settlement in Settlements) values.Add(settlement.Category);
@@ -1809,6 +1820,16 @@ public sealed partial class SqlAccountingPostingProcessor(
                 else
                 {
                     if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description);
+                    if (PurchaseInventoryCostAdjustment > 0m)
+                    {
+                        yield return new(accounts[AccountingCategories.CostOfGoodsSold], PurchaseInventoryCostAdjustment, 0, PartyId, costCenter, "Ajuste de costo por inventario negativo: " + Description);
+                        yield return new(accounts[AccountingCategories.Inventory], 0, PurchaseInventoryCostAdjustment, PartyId, costCenter, "Ajuste de costo por inventario negativo: " + Description);
+                    }
+                    else if (PurchaseInventoryCostAdjustment < 0m)
+                    {
+                        yield return new(accounts[AccountingCategories.Inventory], -PurchaseInventoryCostAdjustment, 0, PartyId, costCenter, "Ajuste de costo por inventario negativo: " + Description);
+                        yield return new(accounts[AccountingCategories.CostOfGoodsSold], 0, -PurchaseInventoryCostAdjustment, PartyId, costCenter, "Ajuste de costo por inventario negativo: " + Description);
+                    }
                     if (Untaxed > 0) yield return new(DirectExpenseAccountId ?? accounts[AccountingCategories.PurchasesExpense], Untaxed, 0, PartyId, costCenter, Description);
                     if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, costCenter, Description);
                     foreach (var settlement in Settlements)
@@ -1852,8 +1873,9 @@ public sealed partial class SqlAccountingPostingProcessor(
         public static FinancialFacts DebitNote(string number, Guid party, decimal untaxed, decimal tax, decimal total) =>
             new($"Nota débito de venta {number}", party, untaxed, tax, total, 0,
                 [(AccountingCategories.AccountsReceivable, total)], false, false, false, false);
-        public static FinancialFacts Purchase(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) =>
-            new($"Entrada de mercancia {number}", party, expense, deductibleVat, total, inventory, settlements, false, true, false, false);
+        public static FinancialFacts Purchase(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements, decimal inventoryCostAdjustment) =>
+            new($"Entrada de mercancia {number}", party, expense, deductibleVat, total, inventory, settlements, false, true, false, false,
+                PurchaseInventoryCostAdjustment: inventoryCostAdjustment);
         public static FinancialFacts PurchaseCostDocument(
             string number, IReadOnlyList<CategoryLineSpec> lines) =>
             new($"Costo asociado a compra {number}", null, 0, 0, 0, 0, [],

@@ -219,7 +219,8 @@ public sealed class SqlPosEnrollmentStore(
                 ProductionActive: data.ProductionActive),
             receiptDocumentSeries,
             trustedPublicKeys,
-            now, ReusesDevice: existing is not null && data.ReusesDevice is not false);
+            now, ReusesDevice: existing is not null && data.ReusesDevice is not false,
+            BusinessAddress: data.BusinessAddress, BusinessPhone: data.BusinessPhone);
     }
 
     private static async Task EnsureDeviceCapacityAsync(
@@ -366,7 +367,7 @@ public sealed class SqlPosEnrollmentStore(
                   SELECT 1 FROM dbo.FiscalIssuerConfigurations production
                   WHERE production.BusinessId=e.BusinessId AND production.Environment=1
                     AND production.IsActive=1
-              ) THEN 1 ELSE 0 END),e.ReusesDevice
+              ) THEN 1 ELSE 0 END),e.ReusesDevice,b.Address,b.Phone
             FROM dbo.PosEnrollmentSessions e WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.IsActive=1
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
@@ -410,7 +411,9 @@ public sealed class SqlPosEnrollmentStore(
             reader.IsDBNull(21) ? null : reader.GetString(21),
             reader.IsDBNull(22) ? null : reader.GetString(22),
             reader.IsDBNull(23) ? null : reader.GetString(23),
-            reader.GetBoolean(24), reader.IsDBNull(25) ? null : reader.GetBoolean(25));
+            reader.GetBoolean(24), reader.IsDBNull(25) ? null : reader.GetBoolean(25),
+            reader.IsDBNull(26) ? null : reader.GetString(26),
+            reader.IsDBNull(27) ? null : reader.GetString(27));
     }
 
     private static async Task<string> AllocateSeriesCodeAsync(
@@ -587,5 +590,7 @@ public sealed class SqlPosEnrollmentStore(
         string? TechnicalKeyVersion,
         string? QrValidationUrl,
         bool ProductionActive,
-        bool? ReusesDevice);
+        bool? ReusesDevice,
+        string? BusinessAddress,
+        string? BusinessPhone);
 }

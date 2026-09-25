@@ -1,5 +1,6 @@
 import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
 import type { TenantBranding } from "@/services/api/tenants";
+import type { PortfolioPaymentReceipt } from "./pos-portfolio-payment-print";
 import type { InventoryReasonItem } from "@/services/api/inventory";
 import type { ReferenceOption } from "@/services/api/reference-options";
 import type { PartyRoleOptionPage } from "@/services/api/parties";
@@ -1834,6 +1835,12 @@ export class PosEdgeClient implements PosClient {
   printCashMovement(ticket: PosCashMovementTicket) {
     return this.requestVoid("/edge/v1/print/cash-movement", {
       method: "POST", body: JSON.stringify(ticket),
+    });
+  }
+
+  printPortfolioPayment(receipt: PortfolioPaymentReceipt) {
+    return this.requestVoid("/edge/v1/print/portfolio-payment", {
+      method: "POST", body: JSON.stringify(receipt),
     });
   }
 

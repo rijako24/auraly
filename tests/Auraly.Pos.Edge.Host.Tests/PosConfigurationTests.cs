@@ -995,7 +995,7 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
-    public async Task Closure_and_cash_movements_always_use_invoice_printer_as_receipt()
+    public async Task Closure_cash_movements_and_portfolio_payments_use_invoice_printer_as_receipt()
     {
         var directory = Path.Combine(
             Path.GetTempPath(), "auraly-fixed-receipts-" + Guid.NewGuid().ToString("N"));
@@ -1023,6 +1023,15 @@ public sealed class PosConfigurationTests
                 new PosCashMovementTicket(
                     Guid.NewGuid(), "In", "Base", 10m, now, null, null, "Cajero"),
                 CancellationToken.None);
+            await new PosPortfolioPaymentTicketPrinter(
+                store, rendered, new PortfolioPaymentReceiptRenderer(), workstation with
+                { CompanyNit = "900123456", CompanyVerificationDigit = "7" }).PrintAsync(
+                new PortfolioPaymentReceipt(
+                    Guid.NewGuid(), "Payable", "PGP-1", now,
+                    "Nombre del navegador", null, null, null, null,
+                    "Sede", null, null, "Proveedor", "NIT 800", "Cajero", 10m,
+                    [new("FC-1", 10m)], [new("Efectivo", 10m, null)]),
+                CancellationToken.None);
             await new PosWorkSessionClosurePrinter(
                 store, rendered, workstation).PrintAsync(
                 new WorkSessionClosureView(
@@ -1033,9 +1042,12 @@ public sealed class PosConfigurationTests
                 CancellationToken.None);
 
             Assert.Equal(
-                new[] { "Microsoft XPS Document Writer", "Microsoft XPS Document Writer" },
+                new[] { "Microsoft XPS Document Writer", "Microsoft XPS Document Writer", "Microsoft XPS Document Writer" },
                 rendered.PrinterNames);
-            Assert.Equal(new int?[] { 58, 58 }, rendered.PaperWidths);
+            Assert.Equal(new int?[] { 58, 58, 58 }, rendered.PaperWidths);
+            Assert.Contains("NIT 900123456-7", rendered.Documents[1]);
+            Assert.Contains("Firma de recibido", rendered.Documents[1]);
+            Assert.DoesNotContain("Nombre del navegador", rendered.Documents[1]);
             Assert.Empty(raw.PrinterNames);
         }
         finally

@@ -48,15 +48,18 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
             var poolKeys = pools[target.ProductId];
             var poolQuantity = poolKeys.Sum(poolKey => balances[poolKey].QuantityOnHand);
             var poolValue = poolKeys.Sum(poolKey => balances[poolKey].InventoryValue);
+            var lastKnownCost = poolKeys.Select(poolKey => balances[poolKey].AverageUnitCost)
+                .FirstOrDefault(cost => cost > 0m);
+            var initialCost = lastKnownCost > 0m ? lastKnownCost : target.InitialUnitCost;
             var quantityChange = decimal.Round(posting.QuantityChange * target.InventoryFactor, 6, MidpointRounding.AwayFromZero);
             decimal? specifiedCost = posting.SpecifiedUnitCost is null ? null :
                 decimal.Round(posting.SpecifiedUnitCost.Value / target.InventoryFactor, 6, MidpointRounding.AwayFromZero);
             var valuation = InventoryValuationCalculator.Calculate(
-                new(balance.QuantityOnHand, balance.AverageUnitCost, poolQuantity, poolValue),
+                new(balance.QuantityOnHand, initialCost, poolQuantity, poolValue),
                 quantityChange, specifiedCost, posting.ValuationMode);
-            movements.Add(new(ids.NewId(), posting.LineNumber, target.ProductId, posting.MovementType,
-                quantityChange, balance.QuantityOnHand, valuation.QuantityAfter, valuation.AverageUnitCostBefore,
-                valuation.AverageUnitCostAfter, valuation.RecognizedUnitCost, valuation.ValueChange, posting.OccurredAt));
+            if (posting.MovementType == "Sale" && valuation.RecognizedUnitCost <= 0m)
+                throw new InvalidOperationException(
+                    "El producto inventariable no tiene una valorización contable positiva. Registra o corrige su costo antes de venderlo.");
             balances[key] = balance with { QuantityOnHand = valuation.QuantityAfter, IsTarget = true };
             foreach (var poolKey in poolKeys)
             {
@@ -64,9 +67,16 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
                 balances[poolKey] = current with { AverageUnitCost = valuation.AverageUnitCostAfter,
                     InventoryValue = decimal.Round(current.QuantityOnHand * valuation.AverageUnitCostAfter, 4, MidpointRounding.AwayFromZero) };
             }
+            // Individual warehouse values are rounded before persistence. Use
+            // their exact aggregate delta so the movement reconciles to the
+            // stored balances even when a shared pool has fractional stock.
+            var bookValueChange = poolKeys.Sum(poolKey => balances[poolKey].InventoryValue) - poolValue;
+            movements.Add(new(ids.NewId(), posting.LineNumber, target.ProductId, posting.MovementType,
+                quantityChange, balance.QuantityOnHand, valuation.QuantityAfter, valuation.AverageUnitCostBefore,
+                valuation.AverageUnitCostAfter, valuation.RecognizedUnitCost, bookValueChange, posting.OccurredAt));
             if (valuation.AverageUnitCostAfter != valuation.AverageUnitCostBefore) changedProducts.Add(target.ProductId);
             results[target.Position] = new(valuation.QuantityAfter, valuation.AverageUnitCostAfter,
-                valuation.InventoryValueAfter, valuation.RecognizedUnitCost, valuation.ValueChange);
+                valuation.InventoryValueAfter, valuation.RecognizedUnitCost, bookValueChange);
         }
         if (movements.Count > 0)
             await PersistAsync(session, scope, loaded, balances.Values.ToArray(), movements, changedProducts, cancellationToken);
@@ -84,18 +94,21 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
               WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId)
               THROW 51600,'The inventory product or warehouse is outside the business.',1;
             DECLARE @Targets TABLE(Position int PRIMARY KEY,ProductId uniqueidentifier,
-              InventoryFactor decimal(19,6),ManageStock bit);
+              InventoryFactor decimal(19,6),ManageStock bit,InitialUnitCost decimal(19,6));
             INSERT @Targets
-            SELECT input.Position,COALESCE(link.ParentProductId,input.ProductId),COALESCE(link.InventoryFactor,1),product.ManageStock
+            SELECT input.Position,COALESCE(link.ParentProductId,input.ProductId),COALESCE(link.InventoryFactor,1),
+              product.ManageStock,COALESCE(price.CostBasisAmount,0)
             FROM OPENJSON(@Postings) WITH(Position int,ProductId uniqueidentifier) input
             LEFT JOIN dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK) ON link.BusinessId=@BusinessId
               AND link.ChildProductId=input.ProductId AND link.SharesInventory=1 AND link.IsActive=1
             LEFT JOIN dbo.Products product WITH(UPDLOCK,HOLDLOCK) ON product.ProductId=COALESCE(link.ParentProductId,input.ProductId)
-              AND (product.TenantId=@TenantId OR (product.TenantId IS NULL AND product.BusinessId=@BusinessId)) AND product.IsActive=1;
+              AND (product.TenantId=@TenantId OR (product.TenantId IS NULL AND product.BusinessId=@BusinessId)) AND product.IsActive=1
+            LEFT JOIN dbo.ProductPrices price WITH(UPDLOCK,HOLDLOCK) ON price.BusinessId=@BusinessId
+              AND price.ProductId=product.ProductId AND price.IsActive=1;
             IF EXISTS(SELECT 1 FROM @Targets WHERE ManageStock IS NULL)
               THROW 51600,'The inventory product or warehouse is outside the business.',1;
             -- Lock both existing and missing target balances before reading the cost pools.
-            SELECT target.Position,target.ProductId,target.InventoryFactor,target.ManageStock,
+            SELECT target.Position,target.ProductId,target.InventoryFactor,target.ManageStock,target.InitialUnitCost,
               balance.ProductId LockedProductId
             FROM @Targets target LEFT JOIN dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
               ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=target.ProductId
@@ -116,7 +129,7 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
             postings.Select((posting, position) => new { Position = position, posting.ProductId }));
         await using var reader = await command.ExecuteReaderAsync(token);
         var targets = new List<Target>(postings.Count);
-        while (await reader.ReadAsync(token)) targets.Add(new(reader.GetInt32(0), reader.GetGuid(1), reader.GetDecimal(2), reader.GetBoolean(3)));
+        while (await reader.ReadAsync(token)) targets.Add(new(reader.GetInt32(0), reader.GetGuid(1), reader.GetDecimal(2), reader.GetBoolean(3), reader.GetDecimal(4)));
         if (targets.Count != postings.Count) throw new InvalidOperationException("The complete inventory batch could not be resolved.");
         await reader.NextResultAsync(token); await reader.ReadAsync(token);
         var tenantId = reader.GetGuid(0); var sharesPrices = reader.GetBoolean(1);
@@ -188,7 +201,7 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
         await command.ExecuteNonQueryAsync(token);
     }
 
-    private sealed record Target(int Position,Guid ProductId,decimal InventoryFactor,bool ManageStock);
+    private sealed record Target(int Position,Guid ProductId,decimal InventoryFactor,bool ManageStock,decimal InitialUnitCost);
     private sealed record Balance(Guid BusinessId,Guid WarehouseId,Guid ProductId,decimal QuantityOnHand,
         decimal AverageUnitCost,decimal InventoryValue,bool BalanceExists,bool IsTarget);
     private sealed record LoadedState(Guid TenantId,bool SharesPrices,IReadOnlyList<Target> Targets,IReadOnlyList<Balance> Balances);
