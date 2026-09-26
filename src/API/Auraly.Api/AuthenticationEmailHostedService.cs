@@ -19,7 +19,7 @@ public sealed record PlatformEmailOptions(
     string PublicAppUrl,
     string LogoUrl,
     string SupportEmail,
-    bool DeliveryEnabled = true);
+    bool DeliveryEnabled = false);
 
 public sealed class PlatformEmailOutboxHostedService(
     SqlServerConnectionFactory connections,

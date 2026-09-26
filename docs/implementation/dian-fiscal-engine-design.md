@@ -155,9 +155,10 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   XML persistidos, no repite una llamada a DIAN. El ZIP sigue limitado a 2 MB. Esta regla
   implementa el artículo 35 de la Resolución DIAN 000165 de 2023.
 - El único consumidor del outbox de correo es `PlatformEmailOutboxHostedService`.
-  En DEV, `Auraly:Email:DeliveryEnabled=false` impide reclamar o enviar
-  cualquier mensaje, incluso si se configura una credencial; los pendientes
-  permanecen en el outbox. En producción la entrega continúa habilitada.
+  El envío requiere `Auraly:Email:DeliveryEnabled=true` explícito y un
+  ambiente distinto de Development. En DEV la infraestructura declara `false`:
+  no reclama ni envía mensajes aunque haya credencial, y los pendientes
+  permanecen en el outbox. Producción declara `true` explícitamente.
 - Las notas crédito de devoluciones procesadas entran al mismo outbox
   `FiscalInvoiceDelivery` dentro de la transacción de aceptación DIAN y usan
   `DeliveryOutboxMessageId` para impedir entregas duplicadas. El destinatario
