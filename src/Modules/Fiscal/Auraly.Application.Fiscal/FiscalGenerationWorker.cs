@@ -35,7 +35,8 @@ public sealed record FiscalGenerationWorkItem(
     ElectronicPayrollSnapshot? ElectronicPayroll = null,
     ServiceInvoiceSnapshot? ServiceInvoice = null,
     bool IsCorrection = false,
-    bool IsFiscalHabilitation = false);
+    bool IsFiscalHabilitation = false,
+    FiscalOnlyCreditNoteSnapshot? FiscalOnlyCreditNote = null);
 
 public sealed record FiscalGeneratedArtifacts(
     byte[] UnsignedXml, string UnsignedSha256Hex, byte[] SignedXml, string SignedSha256Hex,
@@ -337,6 +338,10 @@ public sealed class FiscalGenerationWorker(
             throw new FiscalSnapshotDataException(
                 $"Fiscal document type '{work.FiscalDocumentType}' is unsupported.");
 
+        if (work.FiscalOnlyCreditNote is not null)
+            return await BuildFiscalOnlyCreditNoteAsync(
+                work, work.FiscalOnlyCreditNote, cancellationToken);
+
         var snapshot = work.CreditNote
             ?? throw new FiscalSnapshotDataException("The credit-note fiscal payload is missing.");
         if (snapshot.FiscalIssuerConfigurationId != work.Issuer.Id)
@@ -354,10 +359,6 @@ public sealed class FiscalGenerationWorker(
             throw new FiscalSnapshotDataException(
                 "Credit-note line metadata does not match the immutable return.");
 
-        var pin = await pins.ResolveAsync(work.BusinessId,
-            work.Issuer.SoftwarePinSecretReference, cancellationToken);
-        if (string.IsNullOrWhiteSpace(pin))
-            throw new FiscalSnapshotDataException("The software PIN secret could not be resolved.");
         var metadata = snapshot.Lines.ToDictionary(line => line.LineNumber);
         var lines = snapshot.Return.Lines.OrderBy(line => line.LineNumber).Select(line =>
         {
@@ -377,28 +378,100 @@ public sealed class FiscalGenerationWorker(
                 charge.InvoicedUntaxedAmount, 0m, charge.InvoicedUntaxedAmount,
                 [new DianTax(charge.TaxCode, TaxName(charge.TaxCode),
                     charge.InvoicedUntaxedAmount, charge.InvoicedTaxAmount, charge.TaxRate)]));
-        var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
-        var cude = CudeCalculator.Calculate(new CudeInput(
-            snapshot.FiscalNumber, snapshot.Return.ReturnedAt,
-            snapshot.Return.UntaxedAmount, snapshot.Return.TotalAmount,
-            work.Issuer.SupplierTaxId, snapshot.Return.CustomerIdentification,
-            pin, (FiscalEnvironment)snapshot.Environment,
-            taxes.Select(tax => new FiscalTaxAmount(tax.Code, tax.Amount))),
-            snapshot.QrValidationUrl);
-        var note = new DianCreditNote(
-            snapshot.FiscalNumber, cude.Cude, snapshot.Return.ReturnedAt,
-            snapshot.CurrencyCode, DianCreditNoteCodes.ReferencesInvoiceOperation,
-            snapshot.Return.CorrectionCode, snapshot.Return.ReasonDescription,
-            snapshot.Environment,
-            new DianSoftware(work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
-                work.Issuer.SoftwareId, pin),
-            IssuerParty(work.Issuer), Party(snapshot.Customer),
-            new DianInvoiceReference(snapshot.OriginalInvoiceNumber,
-                snapshot.OriginalInvoiceCufe, snapshot.OriginalInvoiceIssuedOn),
-            lines, taxes, snapshot.Return.UntaxedAmount, snapshot.Return.UntaxedAmount,
+        return await BuildCreditNoteAsync(work, snapshot.FiscalNumber,
+            snapshot.Return.ReturnedAt, snapshot.CurrencyCode,
+            snapshot.Environment, snapshot.QrValidationUrl,
+            snapshot.Customer, snapshot.Return.CustomerIdentification,
+            snapshot.OriginalInvoiceNumber, snapshot.OriginalInvoiceCufe,
+            snapshot.OriginalInvoiceIssuedOn, snapshot.Return.CorrectionCode,
+            snapshot.Return.ReasonDescription, snapshot.Return.UntaxedAmount,
             snapshot.Return.TotalAmount,
             snapshot.Return.Lines.Sum(line => line.DiscountAmount),
-            snapshot.Return.TotalAmount, cude.QrPayload);
+            lines, cancellationToken);
+    }
+
+    private Task<FiscalUblBuildResult> BuildFiscalOnlyCreditNoteAsync(
+        FiscalGenerationWorkItem work,
+        FiscalOnlyCreditNoteSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        if (snapshot.CorrectionId != work.DocumentId ||
+            snapshot.BusinessId != work.BusinessId ||
+            snapshot.FiscalIssuerConfigurationId != work.Issuer.Id ||
+            snapshot.FiscalNumber != work.FiscalNumber ||
+            snapshot.Environment != work.Issuer.Environment ||
+            snapshot.Lines.Count == 0 ||
+            snapshot.Customer.Identification != snapshot.CustomerIdentification)
+            throw new FiscalSnapshotDataException(
+                "La nota crédito fiscal no coincide con su raíz ni con el adquirente congelado.");
+
+        var lines = snapshot.Lines.OrderBy(line => line.LineNumber)
+            .Select(line => new DianCreditNoteLine(
+                line.LineNumber, line.ProductCode, line.ProductCodeScheme,
+                line.Description, line.UnitCode, line.Quantity,
+                line.UnitPrice, line.DiscountAmount, line.UntaxedAmount,
+                [new DianTax(line.TaxCode, line.TaxName, line.UntaxedAmount,
+                    line.TaxAmount, line.TaxRate)]))
+            .ToArray();
+        if (lines.Sum(line => line.UntaxedAmount) != snapshot.UntaxedAmount ||
+            lines.Sum(line => line.UntaxedAmount + line.Taxes.Sum(tax => tax.Amount))
+                != snapshot.TotalAmount)
+            throw new FiscalSnapshotDataException(
+                "Los valores de la nota crédito fiscal no concilian con sus líneas.");
+
+        return BuildCreditNoteAsync(work, snapshot.FiscalNumber,
+            snapshot.IssuedAt, snapshot.CurrencyCode, snapshot.Environment,
+            snapshot.QrValidationUrl, snapshot.Customer,
+            snapshot.CustomerIdentification, snapshot.OriginalInvoiceNumber,
+            snapshot.OriginalInvoiceCufe, snapshot.OriginalInvoiceIssuedOn,
+            DianCreditNoteCodes.FullCancellation,
+            "Anulación de factura electrónica duplicada",
+            snapshot.UntaxedAmount, snapshot.TotalAmount,
+            snapshot.DiscountAmount, lines, cancellationToken);
+    }
+
+    private async Task<FiscalUblBuildResult> BuildCreditNoteAsync(
+        FiscalGenerationWorkItem work,
+        string fiscalNumber,
+        DateTimeOffset issuedAt,
+        string currencyCode,
+        int environment,
+        string qrValidationUrl,
+        PosSaleUblPartyContract customer,
+        string customerIdentification,
+        string originalInvoiceNumber,
+        string originalInvoiceCufe,
+        DateOnly originalInvoiceIssuedOn,
+        string correctionCode,
+        string reason,
+        decimal untaxedAmount,
+        decimal totalAmount,
+        decimal discountAmount,
+        IReadOnlyList<DianCreditNoteLine> lines,
+        CancellationToken cancellationToken)
+    {
+        var pin = await pins.ResolveAsync(work.BusinessId,
+            work.Issuer.SoftwarePinSecretReference, cancellationToken);
+        if (string.IsNullOrWhiteSpace(pin))
+            throw new FiscalSnapshotDataException("The software PIN secret could not be resolved.");
+        var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
+        var cude = CudeCalculator.Calculate(new CudeInput(
+            fiscalNumber, issuedAt, untaxedAmount, totalAmount,
+            work.Issuer.SupplierTaxId, customerIdentification,
+            pin, (FiscalEnvironment)environment,
+            taxes.Select(tax => new FiscalTaxAmount(tax.Code, tax.Amount))),
+            qrValidationUrl);
+        var note = new DianCreditNote(
+            fiscalNumber, cude.Cude, issuedAt, currencyCode,
+            DianCreditNoteCodes.ReferencesInvoiceOperation,
+            correctionCode, reason, environment,
+            new DianSoftware(work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
+                work.Issuer.SoftwareId, pin),
+            IssuerParty(work.Issuer), Party(customer),
+            new DianInvoiceReference(originalInvoiceNumber, originalInvoiceCufe,
+                originalInvoiceIssuedOn),
+            lines, taxes, untaxedAmount, untaxedAmount, totalAmount,
+            discountAmount, totalAmount, cude.QrPayload);
         return new FiscalUblBuildResult(
             creditNoteBuilder.Build(note), cude.Cude, cude.QrPayload);
     }
@@ -832,7 +905,8 @@ public sealed class FiscalGenerationWorker(
             FiscalDocumentTypeCodes.SupportDocumentAdjustment =>
                 work.SupportDocument?.Adjustment?.ReturnedAt ??
                 work.SupportDocument?.ExpenseCancellation?.CancelledAt,
-            FiscalDocumentTypeCodes.CreditNote => work.CreditNote?.Return.ReturnedAt,
+            FiscalDocumentTypeCodes.CreditNote =>
+                work.CreditNote?.Return.ReturnedAt ?? work.FiscalOnlyCreditNote?.IssuedAt,
             FiscalDocumentTypeCodes.DebitNote => work.DebitNote?.DebitNote.IssuedAt,
             _ => null
         };

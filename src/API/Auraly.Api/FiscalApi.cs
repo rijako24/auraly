@@ -6,6 +6,8 @@ namespace Auraly.Api;
 
 public static class FiscalApi
 {
+    private sealed record CorrectDuplicateSaleRequest(Guid RetainedDocumentId);
+
     public static IEndpointRouteBuilder MapFiscalApi(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/commerce/v1/fiscal/documents")
@@ -44,6 +46,13 @@ public static class FiscalApi
                     context.User.ToFiscalUserIdentity(), documentId, ct);
                 return result is null ? Results.NotFound() : Results.Ok(result);
             }));
+        group.MapPost("/{documentId:guid}/correct-duplicate", async (
+            HttpContext context, FiscalDocumentService service, Guid documentId,
+            CorrectDuplicateSaleRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(
+                await service.CorrectDuplicateSaleAsync(
+                    context.User.ToFiscalUserIdentity(), documentId,
+                    request.RetainedDocumentId, ct))));
 
         endpoints.MapGet("/api/pos/v1/fiscal/statuses", async (
             HttpContext context,

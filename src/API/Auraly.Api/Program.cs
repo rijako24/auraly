@@ -105,6 +105,7 @@ builder.Services.AddScoped<FiscalOnboardingService>();
 builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
 builder.Services.AddScoped<IFiscalSaleRecovery, FiscalSaleRecovery>();
+builder.Services.AddScoped<IFiscalSaleCorrectionStore, SqlFiscalSaleCorrectionStore>();
 builder.Services.AddScoped<FiscalDocumentService>();
 builder.Services.AddScoped<IPosFiscalStatusStore, SqlPosFiscalStatusStore>();
 builder.Services.AddScoped<PosFiscalStatusService>();

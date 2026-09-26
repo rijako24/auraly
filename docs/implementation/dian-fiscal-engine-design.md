@@ -52,6 +52,20 @@ La antigua responsabilidad de `SalidaDeMercanciaFolio` no se migra. No hace falt
 
 Las devoluciones procesadas generan una nota crédito que referencia el número y CUFE originales. Su CUDE se calcula durante la generación fiscal, se persiste una sola vez y se usa sin renumerar en todos los reintentos. Facturas y notas crédito comparten workers, leases, artefactos, intentos y estados, pero conservan snapshots tipados distintos.
 
+Una factura de venta duplicada que DIAN ya aceptó, pero que nunca tuvo efectos
+comerciales, se corrige mediante una nota crédito fiscal de anulación total
+(`ResponseCode=2`) referenciada a esa factura. La corrección exige que la otra
+factura del mismo pedido ya esté procesada, vinculada al pedido y aceptada por
+DIAN. Se comprueban ambos snapshots y hashes, el mismo adquirente, líneas e
+importes, y la ausencia de trabajo, líneas, pagos, cartera, inventario y asiento
+en la duplicada. `fiscal.FiscalSaleCorrections` conserva el vínculo, motivo, numeración
+y snapshot inmutable; `FiscalDocuments` y los workers fiscales existentes hacen
+la generación, firma, transmisión y correo. La clave única por factura original
+vuelve idempotente el comando. La nota no crea una devolución comercial ni toca
+inventario, cartera o contabilidad: la factura duplicada tampoco creó esos
+efectos. El envío pendiente del correo de esa factura se cancela dentro de la
+misma transacción antes de crear la nota.
+
 La credencial de un snapshot fiscal histórico conserva su proveedor y referencia.
 En Azure, las altas nuevas se guardan en Key Vault; referencias anteriores
 `fiscal://tenant/` se resuelven con el almacén cifrado de SQL usando la llave
@@ -104,10 +118,12 @@ municipio, ciudad, departamento y país. La generación rechaza el snapshot si
 falta el código; no elimina ese dato del XML ni inventa uno en el reintento.
 Este contrato corresponde a las reglas DIAN `NSAD03`, `NSAJ08a` y `NSAJ73`.
 
-Una factura de venta solo entra a generación fiscal cuando su procesamiento
-operativo en `SalesDocuments` está `Completed`. El store de generación verifica
-esta condición en la misma consulta que adquiere el lease y también al calcular
-una reanudación; una venta recibida que acabó en error no se transmite a DIAN.
+Una factura de venta solo entra a generación o transmisión fiscal cuando su
+procesamiento operativo en `SalesDocuments` está `Completed`. Ambos stores
+verifican esta condición al adquirir el lease, incluso si el XML ya estaba
+firmado antes de la protección; una venta recibida que acabó en error no se
+transmite a DIAN. El store de generación aplica la misma regla al calcular una
+reanudación.
 El checkout de un borrador procedente de pedido comprueba además el vínculo
 `OrderInvoiceLinks` antes de reservar los consecutivos.
 

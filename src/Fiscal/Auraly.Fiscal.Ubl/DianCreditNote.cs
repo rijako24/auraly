@@ -5,6 +5,7 @@ public static class DianCreditNoteCodes
     public const string DocumentType = "91";
     public const string ReferencesInvoiceOperation = "20";
     public const string PartialReturn = "1";
+    public const string FullCancellation = "2";
     public const string SupportAdjustmentProfileId =
         "DIAN 2.1: Nota de ajuste al documento soporte en adquisiciones efectuadas a sujetos no obligados a expedir factura o documento equivalente";
 }
@@ -62,8 +63,9 @@ public sealed record DianCreditNote(
             throw new ArgumentException("Document number and unique code are required.");
         if (DocumentTypeCode == DianCreditNoteCodes.DocumentType &&
             (OperationCode != DianCreditNoteCodes.ReferencesInvoiceOperation ||
-             CorrectionCode != DianCreditNoteCodes.PartialReturn || BuyerGenerated))
-            throw new ArgumentException("The sales return must be a referenced DIAN credit note.");
+             CorrectionCode is not (DianCreditNoteCodes.PartialReturn or
+                 DianCreditNoteCodes.FullCancellation) || BuyerGenerated))
+            throw new ArgumentException("La nota crédito debe referenciar la factura electrónica y tener un motivo DIAN válido.");
         if (DocumentTypeCode == "95" &&
             (!BuyerGenerated || CustomizationId is not ("10" or "11") ||
              CorrectionCode is not ("1" or "2" or "3" or "4" or "5") ||

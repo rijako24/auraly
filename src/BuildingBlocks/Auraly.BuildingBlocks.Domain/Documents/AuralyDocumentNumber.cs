@@ -7,6 +7,7 @@ public static class AuralyDocumentTypes
     public const string SalesReceipt = "SalesReceipt";
     public const string SalesOrder = "SalesOrder";
     public const string SalesReturn = "SalesReturn";
+    public const string FiscalSaleCorrection = "FiscalSaleCorrection";
     public const string SalesDebitNote = "SalesDebitNote";
     public const string GoodsReceipt = "GoodsReceipt";
     public const string PurchaseOrder = "PurchaseOrder";
@@ -34,6 +35,7 @@ public static class AuralyDocumentTypes
         SalesReceipt => "CVI",
         SalesOrder => "PED",
         SalesReturn => "DVT",
+        FiscalSaleCorrection => "NCF",
         SalesDebitNote => "NDB",
         GoodsReceipt => "EMC",
         PurchaseOrder => "OCP",

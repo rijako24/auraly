@@ -93,6 +93,54 @@ public static class SalesReturnCreditNoteSnapshotSerializer
     }
 }
 
+public sealed record FiscalOnlyCreditNoteLine(
+    int LineNumber,
+    string ProductCode,
+    string ProductCodeScheme,
+    string Description,
+    string UnitCode,
+    decimal Quantity,
+    decimal UnitPrice,
+    decimal DiscountAmount,
+    decimal UntaxedAmount,
+    string TaxCode,
+    string TaxName,
+    decimal TaxAmount,
+    decimal TaxRate);
+
+public sealed record FiscalOnlyCreditNoteSnapshot(
+    Guid CorrectionId,
+    Guid BusinessId,
+    Guid OriginalDocumentId,
+    Guid RetainedDocumentId,
+    Guid FiscalIssuerConfigurationId,
+    string FiscalNumber,
+    string CurrencyCode,
+    int Environment,
+    string QrValidationUrl,
+    PosSaleUblPartyContract Customer,
+    string CustomerIdentification,
+    string OriginalInvoiceNumber,
+    string OriginalInvoiceCufe,
+    DateOnly OriginalInvoiceIssuedOn,
+    DateTimeOffset IssuedAt,
+    decimal UntaxedAmount,
+    decimal TotalAmount,
+    decimal DiscountAmount,
+    IReadOnlyList<FiscalOnlyCreditNoteLine> Lines);
+
+public static class FiscalOnlyCreditNoteSnapshotSerializer
+{
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+
+    public static string Serialize(FiscalOnlyCreditNoteSnapshot snapshot) =>
+        JsonSerializer.Serialize(snapshot, Options);
+
+    public static FiscalOnlyCreditNoteSnapshot Deserialize(string value) =>
+        JsonSerializer.Deserialize<FiscalOnlyCreditNoteSnapshot>(value, Options)
+        ?? throw new InvalidOperationException("El snapshot de la nota crédito fiscal es inválido.");
+}
+
 public sealed record SalesDebitNoteFiscalSnapshot(
     SalesDebitNoteDocumentPayload DebitNote,
     Guid FiscalIssuerConfigurationId,
