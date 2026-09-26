@@ -339,7 +339,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
             UPDATE dbo.SalesReturns SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
 
-            UPDATE dbo.FiscalSaleCorrections SET FiscalStatus=@Status
+            UPDATE fiscal.FiscalSaleCorrections SET FiscalStatus=@Status
             WHERE CorrectionId=@DocumentId AND BusinessId=@BusinessId;
 
             UPDATE dbo.SalesDebitNotes SET FiscalStatus=@Status
@@ -466,7 +466,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
             WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
             UPDATE dbo.SalesReturns SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
-            UPDATE dbo.FiscalSaleCorrections SET FiscalStatus=@Status
+            UPDATE fiscal.FiscalSaleCorrections SET FiscalStatus=@Status
             WHERE CorrectionId=@DocumentId AND BusinessId=@BusinessId;
             UPDATE dbo.SalesDebitNotes SET FiscalStatus=@Status
             WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId;
@@ -650,7 +650,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
             LEFT JOIN dbo.SalesReturns returned ON returned.ReturnId=fiscal.DocumentId
              AND returned.BusinessId=fiscal.BusinessId
              AND fiscal.FiscalDocumentType=N'CreditNote'
-            LEFT JOIN dbo.FiscalSaleCorrections correction
+            LEFT JOIN fiscal.FiscalSaleCorrections correction
               ON correction.CorrectionId=fiscal.DocumentId
              AND correction.BusinessId=fiscal.BusinessId
              AND fiscal.FiscalDocumentType=N'CreditNote'

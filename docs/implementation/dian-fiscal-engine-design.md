@@ -58,7 +58,7 @@ comerciales, se corrige mediante una nota crédito fiscal de anulación total
 factura del mismo pedido ya esté procesada, vinculada al pedido y aceptada por
 DIAN. Se comprueban ambos snapshots y hashes, el mismo adquirente, líneas e
 importes, y la ausencia de trabajo, líneas, pagos, cartera, inventario y asiento
-en la duplicada. `FiscalSaleCorrections` conserva el vínculo, motivo, numeración
+en la duplicada. `fiscal.FiscalSaleCorrections` conserva el vínculo, motivo, numeración
 y snapshot inmutable; `FiscalDocuments` y los workers fiscales existentes hacen
 la generación, firma, transmisión y correo. La clave única por factura original
 vuelve idempotente el comando. La nota no crea una devolución comercial ni toca

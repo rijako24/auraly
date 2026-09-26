@@ -687,7 +687,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             fixture.BusinessId, correctionId, "duplicate-submitter")).WorkFound);
         Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
             await ScalarStringAsync("""
-                SELECT FiscalStatus FROM dbo.FiscalSaleCorrections
+                SELECT FiscalStatus FROM fiscal.FiscalSaleCorrections
                 WHERE CorrectionId=@DocumentId
                 """, correctionId));
 
@@ -740,7 +740,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.False(replay.Created);
         Assert.Equal(correctionId, replay.CorrectionId);
         Assert.Equal(1, await ScalarIntAsync(
-            "SELECT COUNT(*) FROM dbo.FiscalSaleCorrections WHERE OriginalDocumentId=@DocumentId",
+            "SELECT COUNT(*) FROM fiscal.FiscalSaleCorrections WHERE OriginalDocumentId=@DocumentId",
             duplicate.DocumentId));
         Assert.Equal(1, await ScalarIntAsync(
             "SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId",

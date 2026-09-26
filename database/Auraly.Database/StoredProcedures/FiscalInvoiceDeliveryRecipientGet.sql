@@ -35,7 +35,7 @@ BEGIN
     LEFT JOIN dbo.SalesReturns returned ON returned.ReturnId=fiscal.DocumentId
      AND returned.BusinessId=fiscal.BusinessId
      AND fiscal.FiscalDocumentType=N'CreditNote'
-    LEFT JOIN dbo.FiscalSaleCorrections correction
+    LEFT JOIN fiscal.FiscalSaleCorrections correction
       ON correction.CorrectionId=fiscal.DocumentId
      AND correction.BusinessId=fiscal.BusinessId
      AND fiscal.FiscalDocumentType=N'CreditNote'

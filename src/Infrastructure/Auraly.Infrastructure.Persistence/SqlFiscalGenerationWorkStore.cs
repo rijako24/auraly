@@ -160,7 +160,7 @@ public sealed class SqlFiscalGenerationWorkStore(
             UPDATE dbo.SalesReturnFiscalSnapshots
             SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
             WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'CreditNote';
-            UPDATE dbo.FiscalSaleCorrections
+            UPDATE fiscal.FiscalSaleCorrections
             SET FiscalStatus=@Status
             WHERE CorrectionId=@DocumentId AND BusinessId=@BusinessId
               AND @FiscalDocumentType=N'CreditNote';
@@ -217,7 +217,7 @@ public sealed class SqlFiscalGenerationWorkStore(
             SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId
               AND @FiscalDocumentType=N'CreditNote';
-            UPDATE dbo.FiscalSaleCorrections
+            UPDATE fiscal.FiscalSaleCorrections
             SET FiscalStatus=@Status
             WHERE CorrectionId=@DocumentId AND BusinessId=@BusinessId
               AND @FiscalDocumentType=N'CreditNote';
@@ -293,7 +293,7 @@ public sealed class SqlFiscalGenerationWorkStore(
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId
             LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesReturnFiscalSnapshots credit ON credit.DocumentId=p.DocumentId
-            LEFT JOIN dbo.FiscalSaleCorrections correction
+            LEFT JOIN fiscal.FiscalSaleCorrections correction
               ON correction.CorrectionId=p.DocumentId
              AND correction.BusinessId=p.BusinessId
             LEFT JOIN dbo.SalesDebitNoteFiscalSnapshots debit ON debit.DocumentId=p.DocumentId

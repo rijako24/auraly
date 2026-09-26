@@ -73,7 +73,7 @@ public sealed class SqlFiscalSaleCorrectionStore(
                   IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
                 VALUES(@CorrectionId,@BusinessId,N'FiscalSaleCorrection',N'CreditNote',
                   @Number,@Number,N'CUDE',NULL,@IssuedAt,N'PendingGeneration',@IssuedAt,@IssuedAt);
-                INSERT dbo.FiscalSaleCorrections(
+                INSERT fiscal.FiscalSaleCorrections(
                   CorrectionId,BusinessId,OriginalDocumentId,RetainedDocumentId,
                   CreatedByUserId,DocumentSeriesId,DocumentConsecutive,ReasonCode,
                   IssuedAt,SnapshotJson,PayloadHash,FiscalStatus,CreatedAt)
@@ -135,7 +135,7 @@ public sealed class SqlFiscalSaleCorrectionStore(
         await using var command = new SqlCommand("""
             SELECT correction.CorrectionId,correction.RetainedDocumentId,
                    fiscal.FiscalStatus
-            FROM dbo.FiscalSaleCorrections correction WITH(UPDLOCK,HOLDLOCK)
+            FROM fiscal.FiscalSaleCorrections correction WITH(UPDLOCK,HOLDLOCK)
             JOIN dbo.FiscalDocuments fiscal
               ON fiscal.DocumentId=correction.CorrectionId
              AND fiscal.BusinessId=correction.BusinessId

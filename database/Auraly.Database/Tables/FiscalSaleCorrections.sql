@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[FiscalSaleCorrections]
+CREATE TABLE [fiscal].[FiscalSaleCorrections]
 (
     [CorrectionId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
@@ -36,6 +36,6 @@ CREATE TABLE [dbo].[FiscalSaleCorrections]
 );
 GO
 CREATE INDEX [IX_FiscalSaleCorrections_Business_Issued]
-    ON [dbo].[FiscalSaleCorrections] ([BusinessId],[IssuedAt])
+    ON [fiscal].[FiscalSaleCorrections] ([BusinessId],[IssuedAt])
     INCLUDE ([OriginalDocumentId],[RetainedDocumentId],[FiscalStatus]);
 GO
