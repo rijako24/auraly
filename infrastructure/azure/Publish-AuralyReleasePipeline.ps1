@@ -648,10 +648,14 @@ function Publish-Function {
 
 function Publish-Api {
     $zip = Join-Path $releasePath "auraly-api-$ReleaseVersion.zip"
+    $emailDeliveryEnabled = if ($Environment -eq 'prod') { 'true' } else { 'false' }
     # Configure the cold-start budget before OneDeploy starts tracking readiness.
     & az webapp config appsettings set --resource-group $configuration.ResourceGroup `
-        --name $configuration.Api --settings 'WEBSITES_CONTAINER_START_TIME_LIMIT=900' --output none
-    Assert-LastExitCode 'No se pudo configurar el tiempo de arranque de la API'
+        --name $configuration.Api `
+        --settings 'WEBSITES_CONTAINER_START_TIME_LIMIT=900' `
+            "Auraly__Email__DeliveryEnabled=$emailDeliveryEnabled" `
+        --output none
+    Assert-LastExitCode 'No se pudo configurar el arranque y el envío de correo de la API'
     & az webapp config set --resource-group $configuration.ResourceGroup `
         --name $configuration.Api --startup-file 'if [ -f /home/site/wwwroot/start-api.sh ]; then exec bash /home/site/wwwroot/start-api.sh; else exec dotnet /home/site/wwwroot/Auraly.Api.dll; fi' --output none
     Assert-LastExitCode 'No se pudo configurar el runtime PDF de la API'
@@ -771,6 +775,16 @@ if ($selectedComponents -contains 'api') {
         --output tsv).Trim()
     Assert-LastExitCode 'No se pudo validar la version de API'
     if ($apiVersion -ne $ReleaseVersion) { throw "Version remota de API inconsistente: $apiVersion." }
+    $emailDeliveryEnabled = (& az webapp config appsettings list `
+        --resource-group $configuration.ResourceGroup `
+        --name $configuration.Api `
+        --query "[?name=='Auraly__Email__DeliveryEnabled'].value | [0]" `
+        --output tsv).Trim()
+    Assert-LastExitCode 'No se pudo validar el envío de correo de la API'
+    $expectedEmailDelivery = if ($Environment -eq 'prod') { 'true' } else { 'false' }
+    if ($emailDeliveryEnabled -ne $expectedEmailDelivery) {
+        throw "Configuracion de correo de API inconsistente para ${Environment}: $emailDeliveryEnabled."
+    }
 }
 if ($selectedComponents -contains 'function') {
     $functionVersion = (& az functionapp config appsettings list `
