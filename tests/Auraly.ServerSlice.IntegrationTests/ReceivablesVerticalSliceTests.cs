@@ -585,6 +585,54 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(remaining - concurrentAmount, await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
             receivable.ReceivableId));
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+            await EnsureAccountAsync(connection, transaction, "111020", "Bancos", "Asset", false);
+            await ExecuteAsync(connection, transaction, """
+                IF NOT EXISTS(SELECT 1 FROM accounting.BankAccounts
+                  WHERE TenantId=@TenantId AND IsActive=1)
+                INSERT accounting.BankAccounts(BankAccountId,TenantId,AccountingAccountId,
+                  AccountTypeOptionId,BankName,AccountNumber,DisplayName,CurrencyCode,
+                  IsPrimary,IsActive,CreatedByUserId,CreatedAt,UpdatedByUserId,UpdatedAt)
+                SELECT NEWID(),@TenantId,account.AccountId,optionValue.OptionId,
+                  N'Banco pruebas',N'0001',N'Cuenta principal',N'COP',1,1,
+                  @UserId,SYSDATETIMEOFFSET(),@UserId,SYSDATETIMEOFFSET()
+                FROM dbo.AccountingAccounts account
+                CROSS JOIN reference.Options optionValue
+                WHERE account.TenantId=@TenantId AND account.Code=N'111020'
+                  AND optionValue.CatalogCode=N'bank-account-type'
+                  AND optionValue.Code=N'Checking' AND optionValue.IsActive=1;
+                """, new("@TenantId", fixture.TenantId), new("@UserId", userId));
+            await transaction.CommitAsync();
+        }
+        var configuration = await client.GetFromJsonAsync<PosAccountingSettlementConfiguration>(
+            "/api/commerce/v1/pos/settlement-configuration");
+        var bank = Assert.Single(configuration!.BankAccounts.Where(item => item.IsPrimary));
+        var transferAmount = remaining - concurrentAmount;
+        var transfer = payment with
+        {
+            PaymentId = Guid.NewGuid(),
+            Allocations = [new(receivable.ReceivableId, transferAmount)],
+            Payments = [new CustomerPaymentTenderRequest(CustomerPaymentMethods.Transfer,
+                transferAmount, BankAccountId: bank.BankAccountId, Reference: "TRX-CARTERA")]
+        };
+        using (var response = await SendAsync(client,
+                   "/api/commerce/v1/receivable-payments/confirm", transfer,
+                   $"transfer-{transfer.PaymentId:N}"))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.CustomerPaymentTenders WHERE PaymentId=@Id AND MethodCode=N'Transfer'",
+            transfer.PaymentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id AND PaymentMethodCode=N'Transfer'",
+            transfer.PaymentId));
+        Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", transfer.PaymentId));
+        Assert.Equal(0m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
+            receivable.ReceivableId));
     }
 
     [Fact]
@@ -672,6 +720,8 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             var portfolio=await portfolioResponse.Content.ReadFromJsonAsync<CustomerPortfolioPage>();
             Assert.Equal(paidBeforeReturn,Assert.Single(portfolio!.Items,
                 item=>item.CustomerId==customerId).PaidAmount);
+            Assert.Equal(portfolio.Items.Sum(item => item.OriginalAmount), portfolio.TotalOriginal);
+            Assert.Equal(portfolio.Items.Sum(item => item.PaidAmount), portfolio.TotalPaid);
         }
 
         var paymentDate=DateOnly.FromDateTime(payment.PaidAt.UtcDateTime).ToString("yyyy-MM-dd");
@@ -683,9 +733,13 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var invoices=await client.GetFromJsonAsync<ReceivablePage>(
             $"/api/commerce/v1/receivables?page=1&pageSize=20&{customerFilter}");
         Assert.Contains(invoices!.Items,item=>item.ReceivableId==receivable.ReceivableId);
+        Assert.Equal(invoices.Items.Sum(item=>item.OriginalAmount),invoices.TotalOriginal);
+        Assert.Equal(invoices.Items.Sum(item=>item.PaidAmount),invoices.TotalPaid);
+        Assert.True(invoices.TotalPaid>0);
         var payments=await client.GetFromJsonAsync<CustomerPaymentHistoryPage>(
             $"/api/commerce/v1/receivable-payments?page=1&pageSize=20&customerId={customerId:D}&status=Paid&from={paymentDate}&to={paymentDate}");
         Assert.Contains(payments!.Items,item=>item.PaymentId==payment.PaymentId);
+        Assert.Equal(payments.Items.Sum(item => item.TotalAmount), payments.TotalAmount);
 
         var fullyPaidRequest = request with
         {

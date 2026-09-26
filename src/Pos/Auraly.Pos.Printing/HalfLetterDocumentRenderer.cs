@@ -149,13 +149,14 @@ public sealed class HalfLetterDocumentRenderer
     private static string RenderCopy(OnlineSalesReceipt receipt, int? templateVersion)
     {
         var isInvoice = receipt.DocumentType == PosSaleDocumentTypes.Invoice;
+        var isCreditNote = receipt.DocumentType == "SalesReturn" && receipt.CreditNotePrintDetails is not null;
         var isOrder = receipt.DocumentType == "Order";
-        var template = isInvoice
+        var template = isInvoice || isCreditNote
             ? templateVersion switch
             {
                 2 => PosPrintTemplateCatalog.SalesInvoiceV2,
                 3 => PosPrintTemplateCatalog.SalesInvoice,
-                null when receipt.InvoicePrintDetails is null => PosPrintTemplateCatalog.SalesInvoiceV2,
+                null when receipt.InvoicePrintDetails is null && !isCreditNote => PosPrintTemplateCatalog.SalesInvoiceV2,
                 null => PosPrintTemplateCatalog.SalesInvoice,
                 _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
             }
@@ -169,6 +170,8 @@ public sealed class HalfLetterDocumentRenderer
                         ? invoiceDetails.CustomerAddress
                         : receipt.CustomerAddress,
                     receipt.CustomerPhone)
+                : isCreditNote
+                    ? OrderContactPresentation.OptionalHtml(receipt.CustomerAddress, receipt.CustomerPhone)
                 : string.Empty;
         var customerDetails = isOrder && template.Version >= 2
             ? customerContact
@@ -178,21 +181,29 @@ public sealed class HalfLetterDocumentRenderer
         var fiscalDetails = isInvoice && template.Version >= 3 &&
             receipt.InvoicePrintDetails is { } details
             ? FiscalDetails(details)
-            : string.Empty;
+            : isCreditNote && receipt.CreditNotePrintDetails is { } creditDetails
+                ? $"<section class=\"fiscal-compliance\"><div>{Encode(receipt.CompanyName)} · NIT {Encode(creditDetails.SupplierIdentification)} · {Encode(creditDetails.SupplierAddress)}</div><div>Factura original: {Encode(creditDetails.OriginalInvoiceNumber)} · Motivo: {Encode(creditDetails.Reason)}</div></section>"
+                : string.Empty;
         var documentName = isOrder
             ? "Pedido"
             : isInvoice
             ? "Factura electrónica de venta"
+            : isCreditNote
+            ? "Nota crédito electrónica"
             : "Comprobante de venta";
         var representationName = isOrder
             ? "Pedido"
             : isInvoice
             ? "Representación gráfica de factura electrónica"
+            : isCreditNote
+            ? "Representación gráfica de nota crédito electrónica"
             : "Representación gráfica del comprobante de venta";
         var issuedBy = isInvoice
             ? "Factura emitida por Auraly"
+            : isCreditNote
+            ? "Nota crédito emitida por Auraly"
             : "Comprobante emitido por Auraly";
-        var fiscalNumber = !isInvoice || string.IsNullOrWhiteSpace(receipt.FiscalNumber)
+        var fiscalNumber = !(isInvoice || isCreditNote) || string.IsNullOrWhiteSpace(receipt.FiscalNumber)
             ? string.Empty
             : $"<div class=\"pair\"><span>Número DIAN</span><strong>{Encode(receipt.FiscalNumber)}</strong></div>";
         var rows = string.Join("", receipt.Lines.Select(line =>
@@ -202,12 +213,12 @@ public sealed class HalfLetterDocumentRenderer
                 identity += $"<br><small>Descuento: {Money(line.Discount)}</small>";
             return $"<tr><td>{identity}</td><td class=\"numeric\">{Quantity(line.Quantity)}</td><td class=\"numeric\">{Money(line.UnitPrice)}</td><td class=\"numeric\">{Money(line.Total)}</td></tr>";
         }));
-        var qr = !isInvoice || string.IsNullOrWhiteSpace(receipt.QrPayload)
+        var qr = !(isInvoice || isCreditNote) || string.IsNullOrWhiteSpace(receipt.QrPayload)
             ? string.Empty
             : $"<img class=\"qr\" alt=\"QR DIAN\" src=\"data:image/svg+xml;base64,{QrBase64(receipt.QrPayload)}\">";
-        var cufe = !isInvoice || string.IsNullOrWhiteSpace(receipt.Cufe)
+        var cufe = !(isInvoice || isCreditNote) || string.IsNullOrWhiteSpace(receipt.Cufe)
             ? string.Empty
-            : $"<div class=\"fiscal\"><strong>CUFE</strong><br>{Encode(receipt.Cufe)}</div>";
+            : $"<div class=\"fiscal\"><strong>{(isCreditNote ? "CUDE" : "CUFE")}</strong><br>{Encode(receipt.Cufe)}</div>";
         var taxes = receipt.TaxTotals is { } taxTotals
             ? string.Join("", taxTotals.Select(tax => $"<div class=\"pair\"><span>{Encode(tax.Name)} {Rate(tax.Rate)}% · base {Money(tax.TaxableAmount)}</span><strong>{Money(tax.Amount)}</strong></div>"))
             : string.Join("", receipt.Lines
@@ -242,14 +253,16 @@ public sealed class HalfLetterDocumentRenderer
         var issuedAt = DianFiscalDateTime.InColombia(receipt.IssuedAt).ToString("d/M/yyyy, h:mm:ss tt", ColombianCulture);
         var detailSection = isOrder
             ? $"<section class=\"details\"><div><div class=\"caption\">Detalle del pedido · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div></div></div></section>"
+            : isCreditNote
+            ? $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Base de la devolución</span><strong>{Money(receipt.UntaxedAmount)}</strong></div><div class=\"pair\"><span>Impuestos</span><strong>{Money(receipt.TaxAmount)}</strong></div><div class=\"pair total\"><span>Total nota crédito</span><strong>{Money(receipt.PayableAmount)}</strong></div>{qr}</div></div></section>"
             : $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section><section class=\"breakdown\"><div class=\"breakdown-title\">Medios de pago</div>{payments}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Subtotal factura</span><strong>{Money(invoiceSubtotal)}</strong></div>{rounding}{grossTotal}{withholdingTotals}<div class=\"pair total\"><span>Total a pagar</span><strong>{Money(netPayable)}</strong></div>{cashTender}{qr}</div></div></section>";
 
         return $$"""
           <article class="document" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
-            <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>N.º de ticket</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
+            <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>{{(isCreditNote ? "Número de nota" : "N.º de ticket")}}</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
             <section class="meta">{{customerDetails}}{{fiscalNumber}}</section>
             {{fiscalDetails}}
-            <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
+            <table><thead><tr><th>Producto</th><th class="numeric">{{(isCreditNote ? "Cantidad devuelta" : "Cant.")}}</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
             {{detailSection}}
             <footer class="footer"><span>{{representationName}}</span><span class="platform">{{issuedBy}} · <strong>www.auralyapp.co</strong><br>Emitido: {{issuedAt}}</span><span class="page-number">Página 1 de 1</span></footer>
           </div></article>

@@ -6,15 +6,19 @@ using Microsoft.AspNetCore.Mvc;
 namespace Auraly.Pos.Edge.Host;
 
 public sealed class PosOrdersServerClient(HttpClient http, PosDeviceCredentials credentials,
-    PosEdgeRuntimeContext runtime)
+    PosEdgeRuntimeContext runtime, PosWorkSessionOpenUploader workSessionOpenings)
 {
     public Task<JsonElement> SendAsync(HttpMethod method, string path, JsonElement? body,
         PosLocalUserSession user, CancellationToken token, string? idempotencyKey = null) =>
         SendCoreAsync(method, path, body, user, token, idempotencyKey, "Pedidos");
 
-    public Task<JsonElement> SendPortfolioAsync(HttpMethod method, string path, JsonElement? body,
-        PosLocalUserSession user, CancellationToken token, string? idempotencyKey = null) =>
-        SendCoreAsync(method, path, body, user, token, idempotencyKey, "Cartera");
+    public async Task<JsonElement> SendPortfolioAsync(HttpMethod method, string path, JsonElement? body,
+        PosLocalUserSession user, CancellationToken token, string? idempotencyKey = null)
+    {
+        if (method == HttpMethod.Post)
+            await workSessionOpenings.EnsureUploadedAsync(user.WorkSessionId, token);
+        return await SendCoreAsync(method, path, body, user, token, idempotencyKey, "Cartera");
+    }
 
     private async Task<JsonElement> SendCoreAsync(HttpMethod method, string path, JsonElement? body,
         PosLocalUserSession user, CancellationToken token, string? idempotencyKey,

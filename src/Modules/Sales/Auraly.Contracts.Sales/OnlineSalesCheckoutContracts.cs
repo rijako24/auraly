@@ -81,6 +81,12 @@ public sealed record CreditSaleAcknowledgementRenderResponse(
 
 public sealed record SalesReceiptTaxTotal(string Name, decimal Rate, decimal TaxableAmount, decimal Amount);
 
+public sealed record CreditNotePrintDetails(
+    string SupplierIdentification,
+    string SupplierAddress,
+    string OriginalInvoiceNumber,
+    string Reason);
+
 public sealed record OnlineSalesReceipt(
     Guid DocumentId,
     string DocumentType,
@@ -107,7 +113,8 @@ public sealed record OnlineSalesReceipt(
     string? CustomerPhone = null,
     string? CustomerAddress = null,
     IReadOnlyList<SalesReceiptTaxTotal>? TaxTotals = null,
-    decimal PayableRoundingAmount = 0m);
+    decimal PayableRoundingAmount = 0m,
+    CreditNotePrintDetails? CreditNotePrintDetails = null);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

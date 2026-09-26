@@ -888,6 +888,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         decimal acquisitionAmount;
         decimal inventory;
         decimal inventoryMovementValue;
+        decimal capitalizedCostInInventoryMovements;
         await using (var command = new SqlCommand("""
             SELECT
               COALESCE(SUM(CASE WHEN TaxTreatment=N'DeductibleInputVat'
@@ -898,7 +899,9 @@ public sealed partial class SqlAccountingPostingProcessor(
               COALESCE(SUM(CASE WHEN movement.LineNumber IS NOT NULL
                 THEN FunctionalNetAmount + CASE WHEN TaxTreatment=N'CapitalizedCost'
                          THEN FunctionalTaxAmount ELSE 0 END ELSE 0 END),0),
-              COALESCE(SUM(movement.ValueChange),0)
+              COALESCE(SUM(movement.ValueChange),0),
+              COALESCE(SUM(CASE WHEN movement.LineNumber IS NOT NULL
+                THEN l.AllocatedLandedCostAmount ELSE 0 END),0)
             FROM dbo.GoodsReceiptLines l
             LEFT JOIN (SELECT DocumentId,LineNumber,SUM(ValueChange) ValueChange
                        FROM dbo.InventoryMovements WHERE DocumentType=N'GoodsReceipt'
@@ -916,6 +919,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             acquisitionAmount = reader.GetDecimal(1);
             inventory = reader.GetDecimal(2);
             inventoryMovementValue = reader.GetDecimal(3);
+            capitalizedCostInInventoryMovements = reader.GetDecimal(4);
         }
         var expense = decimal.Round(
             acquisitionAmount - inventory, 4, MidpointRounding.AwayFromZero);
@@ -930,7 +934,8 @@ public sealed partial class SqlAccountingPostingProcessor(
             connection, transaction, source, total, cancellationToken);
         return FinancialFactsResult.Ready(FinancialFacts.Purchase(
             number, partyId, inventory, expense, deductibleVat, total, settlements,
-            decimal.Round(inventory - inventoryMovementValue, 4, MidpointRounding.AwayFromZero)));
+            decimal.Round(inventory + capitalizedCostInInventoryMovements -
+                inventoryMovementValue, 4, MidpointRounding.AwayFromZero)));
     }
 
     private static async Task<FinancialFactsResult> LoadGoodsReceiptCostDocumentFactsAsync(
@@ -939,6 +944,10 @@ public sealed partial class SqlAccountingPostingProcessor(
     {
         var payload = GoodsReceiptContractSerializer.DeserializeCostDocument(source.PayloadJson);
         var document = payload.Document;
+        if (payload.TenantId != source.TenantId || payload.BusinessId != source.BusinessId ||
+            document.CostDocumentId != source.DocumentId)
+            throw new InvalidOperationException(
+                "El documento de costo adicional no coincide con el origen contable autenticado.");
         Guid partyId;
         await using (var party = new SqlCommand("""
             SELECT PartyId FROM dbo.Suppliers
@@ -953,13 +962,47 @@ public sealed partial class SqlAccountingPostingProcessor(
 
         var stockReceiptLines = new HashSet<int>();
         await using (var command = new SqlCommand("""
-            SELECT DISTINCT LineNumber FROM dbo.InventoryMovements
-            WHERE DocumentId=@ReceiptId AND DocumentType=N'GoodsReceipt';
+            SELECT DISTINCT movement.LineNumber
+            FROM dbo.InventoryMovements movement
+            JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=movement.DocumentId
+              AND receipt.BusinessId=@BusinessId
+            WHERE movement.DocumentId=@ReceiptId AND movement.DocumentType=N'GoodsReceipt';
             """, connection, transaction))
         {
             command.Parameters.AddWithValue("@ReceiptId", payload.GoodsReceiptId);
+            command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) stockReceiptLines.Add(reader.GetInt32(0));
+        }
+
+        var expenseKinds = document.Lines.Where(line =>
+                line.CostTreatment == PurchaseCostTreatments.Expense
+                    ? line.FunctionalAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
+                        ? line.FunctionalTaxAmount : 0m) > 0
+                    : line.Allocations.Any(value => !stockReceiptLines.Contains(value.ReceiptLineNumber)
+                        && value.FunctionalAmount > 0))
+            .Select(line => line.CostKind).Distinct(StringComparer.Ordinal).ToArray();
+        var expenseCategories = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (expenseKinds.Length > 0)
+        {
+            await using var categories = new SqlCommand("""
+                SELECT m.SourceCode,m.Category
+                FROM dbo.AccountingConfigurationProfiles p
+                JOIN dbo.AccountingSourceCategoryMappings m ON m.ProfileCode=p.ProfileCode
+                JOIN OPENJSON(@Kinds) requested ON requested.value=m.SourceCode
+                WHERE p.IsDefault=1 AND p.IsActive=1
+                  AND m.SourceType=N'PurchaseCostKind';
+                """, connection, transaction);
+            categories.Parameters.AddWithValue("@Kinds", JsonSerializer.Serialize(expenseKinds));
+            await using var reader = await categories.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                if (!expenseCategories.TryAdd(reader.GetString(0), reader.GetString(1)))
+                    throw new InvalidOperationException(
+                        $"Source 'PurchaseCostKind:{reader.GetString(0)}' has multiple accounting category mappings.");
+            foreach (var kind in expenseKinds)
+                if (!expenseCategories.ContainsKey(kind))
+                    throw new InvalidOperationException(
+                        $"Source 'PurchaseCostKind:{kind}' has no accounting category mapping.");
         }
 
         var debitByCategory = new Dictionary<string, decimal>(StringComparer.Ordinal);
@@ -980,8 +1023,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 : line.Allocations.Where(value => !stockReceiptLines.Contains(value.ReceiptLineNumber))
                     .Sum(value => value.FunctionalAmount);
             if (expensed > 0)
-                Add(debitByCategory, await ResolveSourceCategoryAsync(connection, transaction,
-                    "PurchaseCostKind", line.CostKind, cancellationToken), expensed);
+                Add(debitByCategory, expenseCategories[line.CostKind], expensed);
             if (line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat)
                 Add(debitByCategory, AccountingCategories.InputVat, line.FunctionalTaxAmount);
         }
@@ -1272,19 +1314,19 @@ public sealed partial class SqlAccountingPostingProcessor(
         }).ToArray();
         await using var command = new SqlCommand("""
             SELECT input.LineNumber,
-              CASE WHEN input.MethodCode=N'BankTransfer'
+              CASE WHEN input.BankAccountId IS NOT NULL
                    THEN CONCAT(N'BankAccount:',CONVERT(nvarchar(36),bank.BankAccountId))
                    ELSE mapping.Category END,
               input.Amount
             FROM OPENJSON(@Payments) WITH(
               LineNumber int,MethodCode nvarchar(32),Amount decimal(19,4),BankAccountId uniqueidentifier) input
-            LEFT JOIN accounting.BankAccounts bank ON input.MethodCode=N'BankTransfer'
-              AND bank.BankAccountId=input.BankAccountId AND bank.TenantId=@TenantId AND bank.IsActive=1
+            LEFT JOIN accounting.BankAccounts bank ON bank.BankAccountId=input.BankAccountId
+              AND bank.TenantId=@TenantId AND bank.IsActive=1
             LEFT JOIN dbo.AccountingConfigurationProfiles profile ON profile.IsDefault=1 AND profile.IsActive=1
             LEFT JOIN dbo.AccountingSourceCategoryMappings mapping ON mapping.ProfileCode=profile.ProfileCode
               AND mapping.SourceType=@SourceType AND mapping.SourceCode=input.MethodCode
-            WHERE (input.MethodCode=N'BankTransfer' AND bank.BankAccountId IS NOT NULL)
-               OR (input.MethodCode<>N'BankTransfer' AND mapping.Category IS NOT NULL)
+            WHERE (input.BankAccountId IS NOT NULL AND bank.BankAccountId IS NOT NULL)
+               OR (input.BankAccountId IS NULL AND mapping.Category IS NOT NULL)
             ORDER BY input.LineNumber;
             """, connection, transaction);
         command.Parameters.AddWithValue("@Payments", JsonSerializer.Serialize(input));

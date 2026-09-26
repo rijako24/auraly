@@ -547,12 +547,15 @@ public sealed class SqlSalesReturnStore(
             SELECT WorkSessionId
             FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND UserId=@UserId
-              AND Status=N'Open' AND (@RequestedId IS NULL OR WorkSessionId=@RequestedId);
+              AND Status=N'Open' AND (@RequestedId IS NULL OR WorkSessionId=@RequestedId)
+              AND ((@DeviceId IS NULL AND DeviceId IS NULL)
+                OR (@DeviceId IS NOT NULL AND DeviceId=@DeviceId));
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@UserId", user.UserId);
         command.Parameters.AddWithValue("@RequestedId", (object?)requestedWorkSessionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@DeviceId", (object?)user.DeviceId ?? DBNull.Value);
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return value is Guid workSessionId
             ? workSessionId

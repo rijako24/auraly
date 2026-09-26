@@ -1122,9 +1122,12 @@ public static class PosEdgeHostApplication
                 var inserted = await closureStore.PrepareRefundAsync(new PosLocalWorkSessionRefund(
                     returnId, user.WorkSessionId, method, localAmount), ct);
                 try { return await server.ConfirmAsync(request, user, ct); }
-                catch (PosSalesReturnServerException error) when (inserted && error.StatusCode is >= 400 and < 500 and not 408 and not 409 and not 429)
+                catch (Exception error) when (inserted &&
+                    (error is HttpRequestException or OperationCanceledException ||
+                     error is PosSalesReturnServerException { Code: not "InvalidReturnAcceptance" }))
                 {
-                    await closureStore.RemoveRefundAsync(returnId, user.WorkSessionId, ct);
+                    await closureStore.RemoveRefundAsync(
+                        returnId, user.WorkSessionId, CancellationToken.None);
                     throw;
                 }
             }));
@@ -1275,9 +1278,14 @@ public static class PosEdgeHostApplication
                 JsonElement accepted;
                 try { accepted=await server.SendPortfolioAsync(HttpMethod.Post,"api/pos/v1/receivable-payments/confirm",request,
                     user,ct,http.Request.Headers["Idempotency-Key"]); }
-                catch(PosOrdersServerException error) when(inserted && error.StatusCode is >=400 and <500 and not 408 and not 409 and not 429)
-                { await closureStore.RemovePortfolioPaymentAsync(paymentId,user.WorkSessionId,ct); throw; }
-                await RecordAcceptedPortfolioPaymentAsync(closureStore,request,accepted,user,"Receivable",ct);
+                catch
+                {
+                    if(inserted)
+                        await closureStore.RemovePortfolioPaymentAsync(
+                            paymentId,user.WorkSessionId,CancellationToken.None);
+                    throw;
+                }
+                await RecordAcceptedPortfolioPaymentAsync(closureStore,request,accepted,user,"Receivable",CancellationToken.None);
                 return accepted;
             }));
         edge.MapPost("/portfolio/payable-payments",async(HttpContext http,JsonElement request,
@@ -1291,9 +1299,14 @@ public static class PosEdgeHostApplication
                 JsonElement accepted;
                 try { accepted=await server.SendPortfolioAsync(HttpMethod.Post,"api/pos/v1/payable-payments/confirm",request,
                     user,ct,http.Request.Headers["Idempotency-Key"]); }
-                catch(PosOrdersServerException error) when(inserted && error.StatusCode is >=400 and <500 and not 408 and not 409 and not 429)
-                { await closureStore.RemovePortfolioPaymentAsync(paymentId,user.WorkSessionId,ct); throw; }
-                await RecordAcceptedPortfolioPaymentAsync(closureStore,request,accepted,user,"Payable",ct);
+                catch
+                {
+                    if(inserted)
+                        await closureStore.RemovePortfolioPaymentAsync(
+                            paymentId,user.WorkSessionId,CancellationToken.None);
+                    throw;
+                }
+                await RecordAcceptedPortfolioPaymentAsync(closureStore,request,accepted,user,"Payable",CancellationToken.None);
                 return accepted;
             }));
 

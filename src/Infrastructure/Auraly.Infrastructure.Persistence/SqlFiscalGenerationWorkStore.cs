@@ -13,20 +13,39 @@ public sealed class SqlFiscalGenerationWorkStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids) : IFiscalGenerationWorkStore
 {
+    private const string SourceReadyPredicate = """
+        (fiscal.SourceDocumentType NOT IN (N'SalesInvoice',N'GoodsReceipt',N'GoodsReceiptCostDocument')
+         OR fiscal.SourceDocumentType=N'SalesInvoice' AND sale.ProcessingStatus=N'Completed'
+         OR fiscal.SourceDocumentType=N'GoodsReceipt' AND EXISTS (
+              SELECT 1 FROM dbo.GoodsReceipts receipt
+              WHERE receipt.GoodsReceiptId=p.DocumentId AND receipt.BusinessId=p.BusinessId
+                AND receipt.Status=N'Processed')
+         OR fiscal.SourceDocumentType=N'GoodsReceiptCostDocument' AND EXISTS (
+              SELECT 1 FROM purchasing.GoodsReceiptCostDocuments cost
+              JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=cost.GoodsReceiptId
+                AND receipt.BusinessId=p.BusinessId
+              WHERE cost.CostDocumentId=p.DocumentId AND receipt.Status=N'Processed'))
+        """;
+
     public async Task<FiscalGenerationWorkItem?> AcquireAsync(
         Guid businessId, Guid requestedDocumentId, string workerId,
         DateTimeOffset acquiredAt, TimeSpan lease,
         CancellationToken cancellationToken)
     {
-        const string acquireSql = """
+        var acquireSql = $"""
             DECLARE @Document TABLE(DocumentId uniqueidentifier NOT NULL);
             ;WITH candidate AS
             (
                 SELECT p.DocumentId
                 FROM dbo.FiscalDocumentProcesses p WITH (UPDLOCK, READPAST, ROWLOCK)
+                JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=p.DocumentId
+                  AND fiscal.BusinessId=p.BusinessId
+                LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=p.DocumentId
+                  AND sale.BusinessId=p.BusinessId
                 WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId
                   AND p.Status = @PendingGeneration
                   AND p.FiscalIssuerConfigurationId IS NOT NULL
+                  AND {SourceReadyPredicate}
                   AND (p.NextAttemptAt IS NULL OR p.NextAttemptAt <= @AcquiredAt)
                   AND (p.LockedAt IS NULL OR p.LockedAt < @LeaseExpiredAt)
             )
@@ -72,11 +91,16 @@ public sealed class SqlFiscalGenerationWorkStore(
         TimeSpan lease,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $"""
             SELECT p.NextAttemptAt,p.LockedAt
             FROM dbo.FiscalDocumentProcesses p
+            JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=p.DocumentId
+              AND fiscal.BusinessId=p.BusinessId
+            LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=p.DocumentId
+              AND sale.BusinessId=p.BusinessId
             WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId
               AND p.Status=@PendingGeneration
+              AND {SourceReadyPredicate}
               AND p.FiscalIssuerConfigurationId IS NOT NULL;
             """;
         await using var connection = connections.Create();

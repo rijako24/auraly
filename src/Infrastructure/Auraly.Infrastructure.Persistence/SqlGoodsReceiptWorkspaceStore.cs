@@ -141,7 +141,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             IF NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers
               WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51120,'The supplier is outside the authenticated business.',1;
+              THROW 51120,'El proveedor no está activo en esta sede.',1;
 
             DECLARE @TenantId UNIQUEIDENTIFIER,@SharesProductPrices BIT;
             SELECT @TenantId=TenantId,@SharesProductPrices=SharesProductPrices
@@ -268,16 +268,16 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             const string sql = """
                 IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers
                                WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
-                  THROW 51120,'The supplier is outside the authenticated business.',1;
+                  THROW 51120,'El proveedor no está activo en esta sede.',1;
                 IF NOT EXISTS (SELECT 1 FROM dbo.Products
                                WHERE ProductId=@ProductId AND IsActive=1
                                  AND (TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
                                       OR (TenantId IS NULL AND BusinessId=@BusinessId)))
-                  THROW 51125,'The product is outside the authenticated business.',1;
+                  THROW 51125,'El producto no pertenece a esta sede.',1;
                 IF EXISTS (SELECT 1 FROM dbo.ProductLinks
                            WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId
                              AND SharesInventory=1 AND IsActive=1)
-                  THROW 51125,'Linked inventory products must be received through their root product.',1;
+                  THROW 51125,'Los productos vinculados al inventario deben recibirse mediante su producto principal.',1;
 
                 IF @IsPrimary=1
                   UPDATE dbo.SupplierProducts SET IsPrimary=0
@@ -345,7 +345,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
-                throw new PurchasingValidationException("The associated product could not be read.");
+                throw new PurchasingValidationException("No fue posible consultar el producto asociado.");
             var product = ReadProduct(reader);
             await reader.CloseAsync();
             await transaction.CommitAsync(cancellationToken);
@@ -359,7 +359,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(cancellationToken);
-            throw new PurchasingConflictException("The product is already associated with this supplier.");
+            throw new PurchasingConflictException("El producto ya está asociado con este proveedor.");
         }
     }
 
@@ -619,20 +619,20 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             if (existingToken is null)
             {
                 if (request.ConcurrencyToken is not null)
-                    throw new PurchasingConflictException("The draft no longer exists.");
+                    throw new PurchasingConflictException("El borrador ya no existe.");
                 await InsertDraftAsync(connection, transaction, user, request, calculation, now, cancellationToken);
             }
             else
             {
                 if (request.ConcurrencyToken is null ||
                     !existingToken.AsSpan().SequenceEqual(ParseToken(request.ConcurrencyToken)))
-                    throw new PurchasingConflictException("The draft changed in another session.");
+                    throw new PurchasingConflictException("El borrador cambió en otra sesión. Recárgalo antes de continuar.");
                 await UpdateDraftAsync(connection, transaction, user, request, calculation, existingToken, now, cancellationToken);
                 await DeleteLinesAsync(connection, transaction, request.DraftId, cancellationToken);
             }
             await InsertLinesAsync(connection, transaction, request.DraftId, request.Lines, calculation, cancellationToken);
             var saved = await LoadDraftAsync(connection, transaction, user.BusinessId, request.DraftId, cancellationToken)
-                ?? throw new InvalidOperationException("The saved draft could not be loaded.");
+                ?? throw new InvalidOperationException("No fue posible cargar el borrador guardado.");
             await transaction.CommitAsync(cancellationToken);
             return saved;
         }
@@ -666,7 +666,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         exists.Parameters.AddWithValue("@DraftId", draftId);
         exists.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         if (Convert.ToInt32(await exists.ExecuteScalarAsync(cancellationToken)) != 0)
-            throw new PurchasingConflictException("The draft no longer exists or changed in another session.");
+            throw new PurchasingConflictException("El borrador ya no existe o cambió en otra sesión. Recárgalo antes de continuar.");
     }
 
     private static async Task ValidateScopeAsync(
@@ -675,24 +675,24 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     {
         const string sql = """
             IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
-              THROW 51121,'The business is outside the authenticated tenant.',1;
+              THROW 51121,'La sede no pertenece a la empresa autenticada.',1;
             IF @WarehouseId IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
                 AND IsActive=1 AND IsSystem=0 AND UseForGoodsReceipts=1)
-              THROW 51122,'The warehouse is outside the authenticated business.',1;
+              THROW 51122,'La bodega no pertenece a esta sede.',1;
             IF @SupplierId IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51123,'The supplier is outside the authenticated business.',1;
+              THROW 51123,'El proveedor no está activo en esta sede.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId') x
               LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId AND s.IsActive=1
               WHERE s.SupplierId IS NULL)
-              THROW 51127,'An additional-cost supplier is outside the authenticated business.',1;
+              THROW 51127,'Un proveedor de costo adicional no está activo en esta sede.',1;
             IF @CurrencyCode<>N'COP' AND NOT EXISTS (
               SELECT 1 FROM reference.Options
               WHERE CatalogCode=N'exchange-rate-source' AND Code=@ExchangeRateSource AND IsActive=1)
-              THROW 51128,'The exchange-rate source is not active in the canonical catalog.',1;
+              THROW 51128,'La fuente de la tasa de cambio no está activa.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (CurrencyCode nvarchar(3) '$.CurrencyCode',ExchangeRateSource nvarchar(64) '$.ExchangeRateSource') x
@@ -700,7 +700,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 ON optionValue.CatalogCode=N'exchange-rate-source'
                AND optionValue.Code=x.ExchangeRateSource AND optionValue.IsActive=1
               WHERE UPPER(x.CurrencyCode)<>N'COP' AND optionValue.OptionId IS NULL)
-              THROW 51129,'An additional document has an exchange-rate source outside the canonical catalog.',1;
+              THROW 51129,'Un documento adicional usa una fuente de tasa de cambio que no está activa.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId',PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
@@ -712,7 +712,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 OR supplier.PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND x.PurchaseEvidenceType=N'InternalReceiptVoucher'
                 OR supplier.PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND x.PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                 OR supplier.PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND x.PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
-              THROW 51130,'An additional document evidence type is not allowed by its supplier configuration.',1;
+              THROW 51130,'El tipo de soporte de un documento adicional no está permitido para su proveedor.',1;
             IF @SupplierId IS NOT NULL AND @PurchaseEvidenceType IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers
               WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1
@@ -720,7 +720,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                   OR PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND @PurchaseEvidenceType=N'InternalReceiptVoucher'
                   OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                   OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
-              THROW 51126,'The selected evidence type is not allowed by the supplier configuration.',1;
+              THROW 51126,'El tipo de soporte seleccionado no está permitido para este proveedor.',1;
             IF @ProductsJson<>N'[]' AND EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson) WITH (ProductId UNIQUEIDENTIFIER '$') x
@@ -729,7 +729,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
               LEFT JOIN dbo.SupplierProducts sp ON sp.ProductId=x.ProductId AND sp.SupplierId=@SupplierId
                     AND sp.BusinessId=@BusinessId AND sp.IsActive=1
               WHERE p.ProductId IS NULL OR sp.SupplierProductId IS NULL)
-              THROW 51124,'Every product must be active and associated with the selected supplier.',1;
+              THROW 51124,'Cada producto debe estar activo y asociado con el proveedor seleccionado.',1;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -758,7 +758,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             SELECT RowVersion FROM dbo.GoodsReceiptDrafts WITH (UPDLOCK,HOLDLOCK)
             WHERE GoodsReceiptDraftId=@DraftId AND BusinessId=@BusinessId;
             IF EXISTS (SELECT 1 FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@DraftId AND BusinessId=@BusinessId)
-              THROW 51125,'A confirmed receipt already exists with this identifier.',1;
+              THROW 51125,'Ya existe una recepción confirmada con este identificador.',1;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DraftId", draftId);
@@ -805,7 +805,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         await using var command = DraftCommand(sql, connection, transaction, user, request, calculation, now);
         command.Parameters.Add("@RowVersion", SqlDbType.Timestamp).Value = rowVersion;
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new PurchasingConflictException("The draft changed in another session.");
+            throw new PurchasingConflictException("El borrador cambió en otra sesión. Recárgalo antes de continuar.");
     }
 
     private static SqlCommand DraftCommand(
@@ -965,7 +965,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     {
         try { return Convert.FromBase64String(value); }
         catch (FormatException exception)
-        { throw new PurchasingValidationException("ConcurrencyToken is invalid.", exception); }
+        { throw new PurchasingValidationException("La versión del borrador es inválida.", exception); }
     }
 
     private static void AddDecimal(SqlCommand command, string name, decimal value, byte precision, byte scale)

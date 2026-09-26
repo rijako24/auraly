@@ -38,21 +38,24 @@ public sealed class DianAttachedDocumentBuilder
         DateTimeOffset generatedAt)
     {
         if (signedInvoice.IsEmpty)
-            throw new ArgumentException("The signed invoice XML is required.", nameof(signedInvoice));
+            throw new ArgumentException("Falta el XML fiscal firmado.", nameof(signedInvoice));
         if (dianApplicationResponse.IsEmpty)
-            throw new ArgumentException("The DIAN ApplicationResponse XML is required.", nameof(dianApplicationResponse));
+            throw new ArgumentException("Falta la respuesta XML de la DIAN.", nameof(dianApplicationResponse));
 
-        var invoice = Load(signedInvoice, "signed invoice");
+        var invoice = Load(signedInvoice, "documento fiscal firmado");
         var response = Load(dianApplicationResponse, "DIAN ApplicationResponse");
-        if (invoice.Root?.Name != DianUblNamespaces.Invoice + "Invoice")
-            throw new InvalidOperationException("The delivery source is not a UBL Invoice document.");
+        var isCreditNote = invoice.Root?.Name == DianUblNamespaces.CreditNote + "CreditNote";
+        if (!isCreditNote && invoice.Root?.Name != DianUblNamespaces.Invoice + "Invoice")
+            throw new InvalidOperationException("El envío requiere una factura o nota crédito UBL.");
+        if (invoice.Root is null) throw new InvalidOperationException("El documento fiscal no tiene contenido.");
         if (response.Root?.Name.LocalName != "ApplicationResponse")
-            throw new InvalidOperationException("The DIAN response is not a UBL ApplicationResponse document.");
+            throw new InvalidOperationException("La respuesta de la DIAN no es un ApplicationResponse UBL.");
 
         var fiscalNumber = Required(invoice.Root.Element(Cbc + "ID"), "Invoice/cbc:ID");
         var uniqueCode = Required(invoice.Root.Element(Cbc + "UUID"), "Invoice/cbc:UUID");
         var invoiceIssuedOn = Required(invoice.Root.Element(Cbc + "IssueDate"), "Invoice/cbc:IssueDate");
-        var documentTypeCode = Required(invoice.Root.Element(Cbc + "InvoiceTypeCode"), "Invoice/cbc:InvoiceTypeCode");
+        var documentTypeCode = Required(invoice.Root.Element(Cbc +
+            (isCreditNote ? "CreditNoteTypeCode" : "InvoiceTypeCode")), "document type code");
         var profileExecutionId = Required(invoice.Root.Element(Cbc + "ProfileExecutionID"), "Invoice/cbc:ProfileExecutionID");
         var supplier = RequiredTaxScheme(invoice, "AccountingSupplierParty");
         var customer = RequiredTaxScheme(invoice, "AccountingCustomerParty");
@@ -70,7 +73,7 @@ public sealed class DianAttachedDocumentBuilder
         var validationCode = response.Descendants()
             .FirstOrDefault(value => value.Name.LocalName == "ResponseCode")?.Value.Trim();
         if (string.IsNullOrWhiteSpace(validationCode))
-            throw new InvalidOperationException("The DIAN ApplicationResponse has no ResponseCode.");
+            throw new InvalidOperationException("La respuesta de la DIAN no tiene código de resultado.");
 
         var colombiaTime = DianFiscalDateTime.InColombia(generatedAt);
         var root = new XElement(
@@ -85,12 +88,12 @@ public sealed class DianAttachedDocumentBuilder
             new XAttribute(Xsi + "schemaLocation", $"{Attached} UBL-AttachedDocument-2.1.xsd"),
             E(Cbc, "UBLVersionID", "UBL 2.1"),
             E(Cbc, "CustomizationID", "Documentos adjuntos"),
-            E(Cbc, "ProfileID", "Factura Electrónica de Venta"),
+            E(Cbc, "ProfileID", isCreditNote ? "Nota Crédito Electrónica" : "Factura Electrónica de Venta"),
             E(Cbc, "ProfileExecutionID", profileExecutionId),
             E(Cbc, "ID", fiscalNumber),
             E(Cbc, "IssueDate", colombiaTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
             E(Cbc, "IssueTime", colombiaTime.ToString("HH:mm:sszzz", CultureInfo.InvariantCulture)),
-            E(Cbc, "DocumentType", "Contenedor de Factura Electrónica"),
+            E(Cbc, "DocumentType", isCreditNote ? "Contenedor de Nota Crédito Electrónica" : "Contenedor de Factura Electrónica"),
             E(Cbc, "ParentDocumentID", fiscalNumber),
             new XElement(Cac + "SenderParty", new XElement(supplier)),
             new XElement(Cac + "ReceiverParty", new XElement(customer)),
@@ -100,7 +103,7 @@ public sealed class DianAttachedDocumentBuilder
                 new XElement(Cac + "DocumentReference",
                     E(Cbc, "ID", fiscalNumber),
                     new XElement(Cbc + "UUID",
-                        new XAttribute("schemeName", "CUFE-SHA384"), uniqueCode),
+                        new XAttribute("schemeName", isCreditNote ? "CUDE-SHA384" : "CUFE-SHA384"), uniqueCode),
                     E(Cbc, "IssueDate", invoiceIssuedOn),
                     E(Cbc, "DocumentType", "ApplicationResponse"),
                     XmlAttachment(dianApplicationResponse),
@@ -121,7 +124,10 @@ public sealed class DianAttachedDocumentBuilder
 
     public DianAttachedDocumentMetadata ReadMetadata(ReadOnlyMemory<byte> signedInvoice)
     {
-        var invoice = Load(signedInvoice, "signed invoice");
+        var invoice = Load(signedInvoice, "documento fiscal firmado");
+        var isCreditNote = invoice.Root?.Name == DianUblNamespaces.CreditNote + "CreditNote";
+        if (!isCreditNote && invoice.Root?.Name != DianUblNamespaces.Invoice + "Invoice")
+            throw new InvalidOperationException("El envío requiere una factura o nota crédito UBL.");
         var supplier = RequiredTaxScheme(invoice, "AccountingSupplierParty");
         var customer = RequiredTaxScheme(invoice, "AccountingCustomerParty");
         var legalName = Required(supplier.Element(Cbc + "RegistrationName"), "supplier RegistrationName");
@@ -136,7 +142,8 @@ public sealed class DianAttachedDocumentBuilder
             tradeName,
             Required(customer.Element(Cbc + "RegistrationName"), "customer RegistrationName"),
             Required(invoice.Root?.Element(Cbc + "ID"), "Invoice/cbc:ID"),
-            Required(invoice.Root?.Element(Cbc + "InvoiceTypeCode"), "Invoice/cbc:InvoiceTypeCode"),
+            Required(invoice.Root?.Element(Cbc +
+                (isCreditNote ? "CreditNoteTypeCode" : "InvoiceTypeCode")), "document type code"),
             Required(invoice.Root?.Element(Cbc + "ProfileExecutionID"), "Invoice/cbc:ProfileExecutionID"));
     }
 
@@ -161,7 +168,7 @@ public sealed class DianAttachedDocumentBuilder
         }
         catch (XmlException exception)
         {
-            throw new InvalidOperationException($"The {label} is invalid XML.", exception);
+            throw new InvalidOperationException($"El {label} no es un XML válido.", exception);
         }
     }
 
@@ -170,27 +177,27 @@ public sealed class DianAttachedDocumentBuilder
             .Elements(Cac + "Party")
             .Elements(Cac + "PartyTaxScheme")
             .SingleOrDefault()
-        ?? throw new InvalidOperationException($"The invoice has no {partyName}/PartyTaxScheme.");
+        ?? throw new InvalidOperationException($"El documento fiscal no tiene {partyName}/PartyTaxScheme.");
 
     private static string RequiredLocal(XDocument document, string localName) =>
         document.Root?.Elements().FirstOrDefault(value => value.Name.LocalName == localName)
             is { } element
             ? Required(element, $"ApplicationResponse/{localName}")
-            : throw new InvalidOperationException($"The DIAN ApplicationResponse has no {localName}.");
+            : throw new InvalidOperationException($"La respuesta de la DIAN no tiene {localName}.");
 
     private static string Required(XElement? element, string field)
     {
         var value = element?.Value.Trim();
         return !string.IsNullOrWhiteSpace(value)
             ? value
-            : throw new InvalidOperationException($"The fiscal XML has no {field}.");
+            : throw new InvalidOperationException($"El XML fiscal no tiene {field}.");
     }
 
     private static string Utf8(ReadOnlyMemory<byte> value)
     {
         var text = new UTF8Encoding(false, true).GetString(value.Span);
         if (text.Contains("]]>", StringComparison.Ordinal))
-            throw new InvalidOperationException("The embedded fiscal XML cannot be represented as CDATA.");
+            throw new InvalidOperationException("El XML fiscal adjunto no puede representarse como CDATA.");
         return text;
     }
 

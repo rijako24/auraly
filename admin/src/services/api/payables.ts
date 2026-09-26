@@ -9,6 +9,7 @@ export interface PayableListItem {
   documentNumber: string;
   currencyCode: string;
   originalAmount: number;
+  paidAmount: number;
   outstandingAmount: number;
   dueDate: string;
   status: PayableStatus;
@@ -25,6 +26,7 @@ export interface PayablePage {
   totalPages: number;
   totalOutstanding: number;
   totalOverdue: number;
+  currencyTotals: Array<{ currencyCode: string; outstandingAmount: number; overdueAmount: number }>;
 }
 
 export interface PayableTransaction {
@@ -66,7 +68,7 @@ export interface ConfirmSupplierPaymentRequest {
   payments: SupplierPaymentTender[];
   workSessionId: string | null;
 }
-export interface SupplierPaymentTender {methodCode:"Cash"|"BankTransfer"|"DebitCard"|"CreditCard";amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null;cardFranchiseCode:string|null;approvalNumber:string|null}
+export interface SupplierPaymentTender {methodCode:"Cash"|"Transfer"|"DebitCard"|"CreditCard";amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null;cardFranchiseCode:string|null;approvalNumber:string|null}
 
 export interface PaymentSettlementConfiguration {
   isAccountingEnabled: boolean;
@@ -84,7 +86,7 @@ export interface SupplierPaymentHistoryPage {
   items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:SupplierPaymentTender[];applications:Array<{payableId:string;documentNumber:string;amount:number}>;supplierId:string|null;supplierName:string|null}>;
   page:number;pageSize:number;totalCount:number;totalPages:number;
 }
-export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalSupplierCredit:number}
+export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalSupplierCredit:number;currencyTotals:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>}
 
 export const payablesApi = {
   expenseConcepts: (search: string, page: number, pageSize: number) =>

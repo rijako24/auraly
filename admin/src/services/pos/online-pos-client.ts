@@ -94,6 +94,7 @@ import {
 } from "@/lib/realtime-reconnect-policy";
 import { cashDenominationCountHtml, printCashDenominationCount, printWorkSessionClosure, workSessionCloseRequest, workSessionClosurePreviewRequest, workSessionClosureReceiptRequest } from "./pos-work-session-close";
 import { cashMovementTicketHtml, printCashMovementTicket } from "./pos-cash-movement-print";
+import type { PortfolioPaymentReceipt } from "./pos-portfolio-payment-print";
 import {
   isWorkspacePolicySynchronizationMessage,
   shouldReconnectWorkspacePolicy,
@@ -333,6 +334,13 @@ export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[
   }
 }
 
+function openOnlineWorkSession(businessId: string, warehouseId: string) {
+  return request<{ workSessionId: string }>("/api/commerce/v1/work-sessions/current", {
+    method: "POST",
+    body: JSON.stringify({ businessId, warehouseId, deviceId: null }),
+  });
+}
+
 export async function selectSalesWorkspace(
   option: SalesWorkspaceOption,
   change = false,
@@ -351,17 +359,7 @@ export async function selectSalesWorkspace(
       }),
     },
   );
-  const session = await request<{ workSessionId: string }>(
-    "/api/commerce/v1/work-sessions/current",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        businessId: selected.businessId,
-        warehouseId: selected.warehouseId,
-        deviceId: null,
-      }),
-    },
-  );
+  const session = await openOnlineWorkSession(selected.businessId, selected.warehouseId);
   const scope = currentPosStorageScope();
   const storageKey = posWorkspaceStorageKey(scope.tenantId, scope.userId);
   if (storageKey)
@@ -420,6 +418,12 @@ export class OnlinePosClient implements PosClient {
     private readonly userDisplayName: string,
     private readonly edgeSessionToken: string | null = null,
   ) {}
+
+  async openWorkSession() {
+    const session = await openOnlineWorkSession(this.context.businessId, this.context.warehouseId);
+    this.context.workSessionId = session.workSessionId;
+    return session;
+  }
 
   watchWarehousePolicy(onChanged: (allowsNegativeStock: boolean) => void) {
     let stopped = false;
@@ -652,6 +656,10 @@ export class OnlinePosClient implements PosClient {
       this.context.businessName,
       this.context.warehouseName,
     ));
+  }
+
+  printPortfolioPayment(receipt: PortfolioPaymentReceipt) {
+    return this.localEdge().printPortfolioPayment(receipt);
   }
   async printCashDenominationCount(ticket: import("./pos-edge-client").PosCashDenominationCount) {
     if (this.edgeSessionToken) return this.localEdge().printCashDenominationCount(ticket);

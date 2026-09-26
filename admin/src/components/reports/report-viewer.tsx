@@ -73,9 +73,25 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
         <style jsx global>{`
           @media print {
             body * { visibility: hidden !important; }
+            body:has(#auraly-report-print-area) { height: auto !important; overflow: visible !important; }
+            body:has(#auraly-report-print-area) > :not(:has(#auraly-report-print-area)) { display: none !important; }
+            body *:has(#auraly-report-print-area) {
+              position: static !important;
+              inset: auto !important;
+              transform: none !important;
+              display: block !important;
+              width: auto !important;
+              height: auto !important;
+              min-height: 0 !important;
+              max-height: none !important;
+              overflow: visible !important;
+            }
+            body *:has(#auraly-report-print-area) > :not(:has(#auraly-report-print-area)):not(#auraly-report-print-area) {
+              display: none !important;
+            }
             #auraly-report-print-area, #auraly-report-print-area * { visibility: visible !important; }
-            #auraly-report-print-area { position: fixed; inset: 0; overflow: visible !important; padding: 0 !important; }
-            #auraly-report-print-area table { font-size: 9pt; }
+            #auraly-report-print-area { position: static !important; width: auto !important; height: auto !important; min-height: 0 !important; overflow: visible !important; padding: 0 !important; }
+            #auraly-report-print-area table { width: 100% !important; min-width: 0 !important; font-size: 9pt; }
             #auraly-report-print-area thead { display: table-header-group; }
             #auraly-report-print-area tr { break-inside: avoid; }
             @page { size: landscape; margin: 10mm; }

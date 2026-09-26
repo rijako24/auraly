@@ -50,6 +50,8 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         Assert.True(await store.PrepareRefundAsync(refund));
         await store.RecordRefundAsync(refund);
         Assert.False(await store.PrepareRefundAsync(refund));
+        await store.RemoveRefundAsync(refund.ReturnId, sessionId);
+        Assert.Single(await store.ReadRefundsAsync(sessionId));
 
         var payment = new PosLocalPortfolioPayment(Guid.NewGuid(), sessionId, "Receivable",
             "Pendiente de confirmación", DateTimeOffset.UtcNow,
@@ -58,6 +60,50 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         Assert.True(await store.PreparePortfolioPaymentAsync(payment));
         await store.RecordPortfolioPaymentAsync(payment with { DocumentNumber = "RCC-1" });
         Assert.False(await store.PreparePortfolioPaymentAsync(payment));
+        await store.RemovePortfolioPaymentAsync(payment.PaymentId, sessionId);
+        Assert.Single(await store.ReadPortfolioPaymentsAsync(sessionId));
+    }
+
+    [Fact]
+    public async Task Legacy_closure_rows_without_acceptance_column_remain_confirmed()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-legacy-closure-{Guid.NewGuid():N}.db");
+        try
+        {
+            var sessionId = Guid.NewGuid();
+            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE PosWorkSessionRefunds(
+                      ReturnId TEXT PRIMARY KEY,WorkSessionId TEXT,PaymentMethodCode TEXT,
+                      Amount TEXT,CreatedAt TEXT);
+                    CREATE TABLE PosWorkSessionPortfolioPayments(
+                      PaymentId TEXT PRIMARY KEY,WorkSessionId TEXT,Direction TEXT,
+                      DocumentNumber TEXT,PaidAt TEXT,TendersJson TEXT);
+                    INSERT INTO PosWorkSessionRefunds VALUES($refund,$session,'Cash','1000',$now);
+                    INSERT INTO PosWorkSessionPortfolioPayments VALUES(
+                      $payment,$session,'Receivable','RCC-1',$now,$tenders);
+                    """;
+                command.Parameters.AddWithValue("$refund", Guid.NewGuid().ToString("D"));
+                command.Parameters.AddWithValue("$payment", Guid.NewGuid().ToString("D"));
+                command.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+                command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+                command.Parameters.AddWithValue("$tenders", JsonSerializer.Serialize(
+                    new[] { new PosLocalPortfolioTender("Cash", 5000m) }));
+                await command.ExecuteNonQueryAsync();
+            }
+            var store = new PosOfflineWorkSessionClosureStore($"Data Source={path}", TimeProvider.System);
+            await store.InitializeAsync();
+            Assert.Single(await store.ReadRefundsAsync(sessionId));
+            Assert.Single(await store.ReadPortfolioPaymentsAsync(sessionId));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
 
     [Fact]
@@ -116,10 +162,17 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         await using var current = connection.CreateCommand();
         current.CommandText = "SELECT WorkSessionId FROM PosLocalWorkSessions WHERE ClosedAt IS NULL LIMIT 1;";
         var workSessionId = Guid.Parse((string)(await current.ExecuteScalarAsync())!);
+        current.CommandText = "UPDATE Outbox SET Status='Uploaded' WHERE Type=$type;";
+        current.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionOpened);
+        await current.ExecuteNonQueryAsync();
         var observed = new HashSet<string>();
         _serverHandler.BeforeSend = async request =>
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path is not ("/api/pos/v1/sales-returns/confirm" or
+                "/api/pos/v1/receivable-payments/confirm" or
+                "/api/pos/v1/payable-payments/confirm")) return;
+            if (path == "/api/pos/v1/sales-returns/confirm" && observed.Contains(path)) return;
             var table = path.Contains("sales-returns", StringComparison.Ordinal)
                 ? "PosWorkSessionRefunds" : "PosWorkSessionPortfolioPayments";
             await using var check = connection.CreateCommand();
@@ -160,8 +213,16 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         }
         Assert.Contains("/api/pos/v1/sales-returns/confirm", observed);
         var store = _factory!.Services.GetRequiredService<PosOfflineWorkSessionClosureStore>();
-        Assert.Equal(12500m, Assert.Single(await store.ReadRefundsAsync(workSessionId)).Amount);
-        Assert.Equal(2, (await store.ReadPortfolioPaymentsAsync(workSessionId)).Count);
+        Assert.Empty(await store.ReadRefundsAsync(workSessionId));
+        Assert.Empty(await store.ReadPortfolioPaymentsAsync(workSessionId));
+        await using var pendingRefund = connection.CreateCommand();
+        pendingRefund.CommandText = "SELECT COUNT(*) FROM PosWorkSessionRefunds WHERE WorkSessionId=$session;";
+        pendingRefund.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
+        Assert.Equal(0L, await pendingRefund.ExecuteScalarAsync());
+        await using var pending = connection.CreateCommand();
+        pending.CommandText = "SELECT COUNT(*) FROM PosWorkSessionPortfolioPayments WHERE WorkSessionId=$session;";
+        pending.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
+        Assert.Equal(0L, await pending.ExecuteScalarAsync());
     }
 
     [Fact]
@@ -187,6 +248,97 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
     }
 
     [Fact]
+    public async Task First_portfolio_payment_registers_session_then_confirms_and_projects_locally()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT WorkSessionId FROM PosLocalWorkSessions WHERE ClosedAt IS NULL LIMIT 1;";
+        var workSessionId = Guid.Parse((string)(await command.ExecuteScalarAsync())!);
+        command.CommandText = "UPDATE Outbox SET Status='RetryScheduled',NextAttemptAt='2099-01-01T00:00:00Z' WHERE Type=$type;";
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionOpened);
+        await command.ExecuteNonQueryAsync();
+        command.CommandText = """
+            INSERT INTO Outbox(MessageId,LocalSequence,DocumentId,Type,Payload,
+              Status,AttemptCount,CreatedAt,NextAttemptAt)
+            VALUES($message,-1,$document,'customer.created','{}',
+              'RetryScheduled',0,$created,'2099-01-01T00:00:00Z');
+            """;
+        command.Parameters.Clear();
+        command.Parameters.AddWithValue("$message", Guid.NewGuid().ToString("D"));
+        command.Parameters.AddWithValue("$document", Guid.NewGuid().ToString("D"));
+        command.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToString("O"));
+        await command.ExecuteNonQueryAsync();
+        var paymentId = Guid.NewGuid();
+        var paths = new List<string>();
+        _serverHandler.BeforeSend = async request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path is not ("/api/pos/v1/work-sessions/opened" or
+                "/api/pos/v1/receivable-payments/confirm")) return;
+            paths.Add(path);
+            if (path != "/api/pos/v1/receivable-payments/confirm") return;
+            await using var local = connection.CreateCommand();
+            local.CommandText = "SELECT Accepted FROM PosWorkSessionPortfolioPayments WHERE PaymentId=$id;";
+            local.Parameters.AddWithValue("$id", paymentId.ToString("D"));
+            Assert.Equal(0L, await local.ExecuteScalarAsync());
+        };
+        _serverHandler.Reply = request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/pos/v1/work-sessions/opened" => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { workSessionId })
+            },
+            "/api/pos/v1/receivable-payments/confirm" => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { paymentId, documentNumber = "RCC-1" })
+            },
+            _ => null
+        };
+        var timer = Stopwatch.StartNew();
+        using var paid = await Client.PostAsJsonAsync(
+            "/edge/v1/portfolio/receivable-payments", new
+            {
+                paymentId, workSessionId, paidAt = DateTimeOffset.UtcNow,
+                payments = new[] { new { methodCode = "Cash", amount = 5000m } }
+            });
+        timer.Stop();
+        paid.EnsureSuccessStatusCode();
+        output.WriteLine($"Pago POS local con servidor simulado: {timer.ElapsedMilliseconds} ms");
+        Assert.Contains("/api/pos/v1/work-sessions/opened", paths);
+        Assert.Contains("/api/pos/v1/receivable-payments/confirm", paths);
+        Assert.Equal(1, paths.Count(path => path == "/api/pos/v1/work-sessions/opened"));
+        Assert.Equal(1, paths.Count(path => path == "/api/pos/v1/receivable-payments/confirm"));
+        Assert.True(paths.IndexOf("/api/pos/v1/work-sessions/opened") <
+                    paths.IndexOf("/api/pos/v1/receivable-payments/confirm"));
+        var store = _factory!.Services.GetRequiredService<PosOfflineWorkSessionClosureStore>();
+        Assert.Equal("RCC-1", Assert.Single(await store.ReadPortfolioPaymentsAsync(workSessionId)).DocumentNumber);
+    }
+
+    [Fact]
+    public async Task Failed_local_portfolio_write_does_not_call_server()
+    {
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DROP TABLE PosWorkSessionPortfolioPayments;";
+        await command.ExecuteNonQueryAsync();
+        var calls = _serverHandler.Count;
+        try
+        {
+            using var response = await Client.PostAsJsonAsync(
+                "/edge/v1/portfolio/payable-payments", new
+                {
+                    paymentId = Guid.NewGuid(), paidAt = DateTimeOffset.UtcNow,
+                    payments = new[] { new { methodCode = "Cash", amount = 5000m } }
+                });
+            Assert.False(response.IsSuccessStatusCode);
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException) { }
+        Assert.Equal(calls, _serverHandler.Count);
+    }
+
+    [Fact]
     public async Task Confirmed_portfolio_payment_is_projected_once_into_its_local_session()
     {
         var store=_factory!.Services.GetRequiredService<PosOfflineWorkSessionClosureStore>();
@@ -195,12 +347,12 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         var session = (await current.Content.ReadFromJsonAsync<PosLocalUserSession>())!;
         var sessionId=session.WorkSessionId;
         var payment=new PosLocalPortfolioPayment(Guid.NewGuid(),sessionId,"Receivable","RCC-1",
-            DateTimeOffset.UtcNow,[new("Cash",12500m),new("BankTransfer",7500m)]);
+            DateTimeOffset.UtcNow,[new("Cash",12500m),new("Transfer",7500m)]);
         await store.RecordPortfolioPaymentAsync(payment);
         await store.RecordPortfolioPaymentAsync(payment);
         await store.RecordPortfolioPaymentAsync(new PosLocalPortfolioPayment(Guid.NewGuid(),sessionId,
             "Payable","PGP-1",DateTimeOffset.UtcNow,
-            [new("Cash",3000m),new("BankTransfer",1000m),
+            [new("Cash",3000m),new("Transfer",1000m),
              new("DebitCard",500m),new("CreditCard",500m)]));
         Assert.False(await store.PreparePortfolioPaymentAsync(payment with
         {

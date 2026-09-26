@@ -332,9 +332,49 @@ public sealed class PosWorkSessionOpenUploader(
     TimeProvider timeProvider,
     PosSynchronizationEventLog events)
 {
+    private readonly SemaphoreSlim uploadGate = new(1, 1);
+
     public async Task<bool> UploadNextAsync(CancellationToken cancellationToken = default)
     {
-        var item = await ClaimAsync(cancellationToken);
+        await uploadGate.WaitAsync(cancellationToken);
+        try { return await UploadNextCoreAsync(cancellationToken); }
+        finally { uploadGate.Release(); }
+    }
+
+    public async Task EnsureUploadedAsync(Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await uploadGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (await IsUploadedAsync(workSessionId, cancellationToken)) return;
+            await UploadNextCoreAsync(cancellationToken, workSessionId);
+            if (!await IsUploadedAsync(workSessionId, cancellationToken))
+                throw new PosOrdersServerException(503, "WorkSessionPending",
+                    "La sesión de caja aún no está confirmada en el servidor. Reintenta la operación.");
+        }
+        finally { uploadGate.Release(); }
+    }
+
+    private async Task<bool> IsUploadedAsync(Guid workSessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Status FROM Outbox WHERE DocumentId=$id AND Type=$type;
+            """;
+        command.Parameters.AddWithValue("$id", workSessionId.ToString("D"));
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionOpened);
+        return string.Equals(await command.ExecuteScalarAsync(cancellationToken) as string,
+            "Uploaded", StringComparison.Ordinal);
+    }
+
+    private async Task<bool> UploadNextCoreAsync(CancellationToken cancellationToken,
+        Guid? requestedSessionId = null)
+    {
+        var item = await ClaimAsync(cancellationToken, requestedSessionId);
         if (item is null) return false;
         try
         {
@@ -368,7 +408,7 @@ public sealed class PosWorkSessionOpenUploader(
     }
 
     private async Task<(Guid WorkSessionId, string Payload, int Attempts)?> ClaimAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? requestedSessionId)
     {
         var now = timeProvider.GetUtcNow();
         await using var connection = new SqliteConnection(connectionString);
@@ -379,13 +419,16 @@ public sealed class PosWorkSessionOpenUploader(
         read.CommandText = $$"""
             SELECT DocumentId,Payload,AttemptCount FROM Outbox current
             WHERE current.Type=$type
+              AND ($requested IS NULL OR current.DocumentId=$requested)
               AND ((current.Status IN ('Pending','RetryScheduled') AND
-                    (current.NextAttemptAt IS NULL OR current.NextAttemptAt<=$now))
+                    ($requested IS NOT NULL OR current.NextAttemptAt IS NULL OR current.NextAttemptAt<=$now))
                    OR (current.Status='Uploading' AND current.LastAttemptAt<$stale))
-              AND {{PosOutboxOrdering.NoBlockingPriorRowSql}}
+              AND ($requested IS NOT NULL OR {{PosOutboxOrdering.NoBlockingPriorRowSql}})
             ORDER BY current.LocalSequence LIMIT 1;
             """;
         read.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionOpened);
+        read.Parameters.AddWithValue("$requested", requestedSessionId.HasValue
+            ? requestedSessionId.Value.ToString("D") : DBNull.Value);
         read.Parameters.AddWithValue("$now", now.ToString("O"));
         read.Parameters.AddWithValue("$stale", now.AddMinutes(-2).ToString("O"));
         await using var reader = await read.ExecuteReaderAsync(cancellationToken);

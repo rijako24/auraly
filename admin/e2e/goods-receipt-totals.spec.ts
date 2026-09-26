@@ -16,12 +16,18 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
     purchaseEvidenceType: "SupplierElectronicInvoice", createsPayable: true,
     currencyCode: "COP", netAmount: 4000, taxAmount: 760, grandTotal: 4760,
     functionalNetAmount: 4000, functionalTaxAmount: 760, functionalGrandTotal: 4760,
-    lines: [3000, 1000].map((amount, index) => ({ lineNumber: index + 1,
+    lines: [...[3000, 1000].map((amount, index) => ({ lineNumber: index + 1,
       description: `Producto ${index + 1}`, quantity: 1, unitCost: amount,
       presentationName: "Unidad", presentationQuantity: 1, unitsPerPresentation: 1,
       discountAmount: 0, taxRate: 19, taxTreatment: "DeductibleInputVat",
       netAmount: amount, taxAmount: amount * 0.19, lineTotal: amount * 1.19,
       allocatedLandedCostAmount: amount / 2, recognizedInventoryCostAmount: amount * 1.5 })),
+      ...Array.from({ length: 38 }, (_, index) => ({ lineNumber: index + 3,
+        description: `Producto informe ${String(index + 3).padStart(2, "0")}`,
+        quantity: 1, unitCost: 0, presentationName: "Unidad", presentationQuantity: 1,
+        unitsPerPresentation: 1, discountAmount: 0, taxRate: 0,
+        taxTreatment: "NotApplicable", netAmount: 0, taxAmount: 0, lineTotal: 0,
+        allocatedLandedCostAmount: 0, recognizedInventoryCostAmount: 0 }))],
     additionalCostDocuments: [
       { costDocumentId: "freight", documentNumber: "FLETE-1", currencyCode: "COP",
         purchaseEvidenceType: "SupplierElectronicInvoice", functionalGrandTotal: 1190,
@@ -89,6 +95,14 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
   await dialog.getByRole("button", { name: "Abrir reporte" }).click();
   await expect(page.getByRole("row").filter({ hasText: "Total bruto de documentos" })).toContainText("7.950");
   await expect(page.getByRole("row").filter({ hasText: "Valor que entra al inventario" })).toContainText("6.000");
+  await expect(page.getByRole("row").filter({ hasText: "Total retenciones" })).not.toContainText(/-\s*\$\s*0/);
   await expect(page.getByText(/NaN/)).toHaveCount(0);
   await page.screenshot({ path: "test-results/goods-receipt-totals.png", fullPage: true });
+  await page.emulateMedia({ media: "print" });
+  const printArea = page.locator("#auraly-report-print-area");
+  await expect(printArea).toHaveCSS("position", "static");
+  await expect(printArea).toHaveCSS("overflow", "visible");
+  await expect(printArea.getByText("Producto informe 40")).toHaveCount(1);
+  const pdf = await page.pdf({ path: "test-results/goods-receipt-multipage.pdf", printBackground: true });
+  expect((pdf.toString("latin1").match(/\/Type\s*\/Page\b/g) ?? []).length).toBeGreaterThan(1);
 });

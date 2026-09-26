@@ -102,7 +102,7 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
             LEFT JOIN dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK) ON link.BusinessId=@BusinessId
               AND link.ChildProductId=input.ProductId AND link.SharesInventory=1 AND link.IsActive=1
             LEFT JOIN dbo.Products product WITH(UPDLOCK,HOLDLOCK) ON product.ProductId=COALESCE(link.ParentProductId,input.ProductId)
-              AND (product.TenantId=@TenantId OR (product.TenantId IS NULL AND product.BusinessId=@BusinessId)) AND product.IsActive=1
+              AND (product.TenantId=@TenantId OR (product.TenantId IS NULL AND product.BusinessId=@BusinessId))
             LEFT JOIN dbo.ProductPrices price WITH(UPDLOCK,HOLDLOCK) ON price.BusinessId=@BusinessId
               AND price.ProductId=product.ProductId AND price.IsActive=1;
             IF EXISTS(SELECT 1 FROM @Targets WHERE ManageStock IS NULL)

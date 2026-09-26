@@ -29,9 +29,9 @@ type InvoicePage={totalCount:number;totalPages:number;items:Invoice[]};
 type InvoiceLoad={key:string;status:"loading"|"success"|"error";data:InvoicePage|null};
 type PaymentAttempt={fingerprint:string;paymentId:string;paidAt:string;sessionId:string|null};
 const toPortfolioMethod=(code:string):CustomerPaymentMethod|null=>
-  code==="Transfer"?"BankTransfer":code==="Cash"||code==="DebitCard"||code==="CreditCard"?code:null;
+  code==="Transfer"||code==="Cash"||code==="DebitCard"||code==="CreditCard"?code:null;
 
-export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty,initialInvoice,workSessionId,onCompleted,edgeClient,businessId:businessIdOverride,printOnPos=false,businessName:posBusinessName}:{direction:Direction;open:boolean;onOpenChange:(open:boolean)=>void;initialParty?:PartyRoleSelection|null;initialInvoice?:Invoice|null;workSessionId?:string|null;onCompleted?:()=>void;edgeClient?:PosEdgeClient|null;businessId?:string|null;printOnPos?:boolean;businessName?:string}){
+export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty,initialInvoice,workSessionId,onCompleted,edgeClient,receiptPrinter,businessId:businessIdOverride,printOnPos=false,businessName:posBusinessName}:{direction:Direction;open:boolean;onOpenChange:(open:boolean)=>void;initialParty?:PartyRoleSelection|null;initialInvoice?:Invoice|null;workSessionId?:string|null;onCompleted?:()=>void;edgeClient?:PosEdgeClient|null;receiptPrinter?:Pick<PosEdgeClient,"printPortfolioPayment">|null;businessId?:string|null;printOnPos?:boolean;businessName?:string}){
   const initialPartyRef=useRef(initialParty);initialPartyRef.current=initialParty;
   const initialInvoiceRef=useRef(initialInvoice);initialInvoiceRef.current=initialInvoice;
   const selectedBusinessId=useBusinessContextStore(state=>state.selectedBusinessId);const businessId=businessIdOverride??selectedBusinessId;
@@ -140,7 +140,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
         reference:value.reference?.trim()||null,
       })),
     };
-    void printPortfolioPayment(receipt,businessId,edgeClient??null).catch(error=>
+    void printPortfolioPayment(receipt,businessId,receiptPrinter??null).catch(error=>
       toast.error(`El pago quedó registrado, pero no se pudo imprimir: ${error instanceof Error?error.message:"revisa la impresora."}`));
   },onError:error=>toast.error(error instanceof Error?error.message:"No fue posible registrar el movimiento. Si no recibiste confirmación, reintenta sin cambiar los valores.")});
   const validateStepOne=()=>{if(!partyId||allocations.length===0){toast.error("Selecciona un tercero y al menos una factura.");return false;}if(allocations.some(x=>x.amount>(selectedLimits[x.id]??0))){toast.error("Ningún abono puede superar el saldo de la factura.");return false;}return true;};

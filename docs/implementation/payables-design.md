@@ -91,7 +91,7 @@ En COP, el pago contabiliza:
 
 - débito a cuentas por pagar;
 - crédito a caja para `Cash`;
-- crédito a la cuenta bancaria activa seleccionada para `BankTransfer`; la cuenta
+- crédito a la cuenta bancaria activa seleccionada para `Transfer`; la cuenta
   principal se propone por defecto, pero puede cambiarse antes de confirmar.
 
 La categoría `Bank` es explícita: no se reutiliza indebidamente la cuenta puente

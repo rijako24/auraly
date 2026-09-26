@@ -141,7 +141,7 @@ public sealed class DianPayrollLiveE2ETests(ITestOutputHelper output)
             DECLARE @Risk uniqueidentifier=(SELECT OptionId FROM payroll.CatalogOptions WHERE CatalogCode=N'payroll-risk-class' AND Code=N'I');
             DECLARE @Worker uniqueidentifier=(SELECT OptionId FROM payroll.CatalogOptions WHERE CatalogCode=N'payroll-worker-type' AND Code=N'01');
             DECLARE @Subtype uniqueidentifier=(SELECT OptionId FROM payroll.CatalogOptions WHERE CatalogCode=N'payroll-worker-subtype' AND Code=N'00');
-            DECLARE @Payment uniqueidentifier=(SELECT OptionId FROM payroll.CatalogOptions WHERE CatalogCode=N'payroll-payment-method' AND Code=N'BankTransfer');
+            DECLARE @Payment uniqueidentifier=(SELECT OptionId FROM payroll.CatalogOptions WHERE CatalogCode=N'payroll-payment-method' AND Code=N'Transfer');
             DECLARE @Nature uniqueidentifier=(SELECT OptionId FROM payroll.CatalogOptions WHERE CatalogCode=N'payroll-concept-nature' AND Code=N'Earning');
             DECLARE @Method uniqueidentifier=(SELECT OptionId FROM payroll.CatalogOptions WHERE CatalogCode=N'payroll-calculation-method' AND Code=N'FixedAmount');
             DECLARE @Treatment uniqueidentifier=(SELECT OptionId FROM payroll.CatalogOptions WHERE CatalogCode=N'payroll-concept-treatment' AND Code=N'Salary');

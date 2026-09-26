@@ -5,8 +5,10 @@ CREATE PROCEDURE dbo.FiscalInvoiceDeliveryRecipientGet
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT fiscal.BusinessId,fiscal.DeliveryEmail,sale.DocumentNumber,
-           fiscal.FiscalNumber,fiscal.IssuedAt,sale.PayableAmount,
+    SELECT fiscal.BusinessId,fiscal.DeliveryEmail,
+           COALESCE(sale.DocumentNumber,returned.DocumentNumber),
+           fiscal.FiscalNumber,fiscal.IssuedAt,
+           COALESCE(sale.PayableAmount,returned.TotalAmount),
            signedXml.Content,applicationResponse.Content,
            attachedDocument.Content,attachedDocument.FileName,
            CAST(NULL AS VARBINARY(MAX)),CAST(NULL AS NVARCHAR(256)),
@@ -17,21 +19,29 @@ BEGIN
                             payment.Notes,payment.TenderedAmount,payment.RoundingAdjustment
                      FROM dbo.SalesPayments payment WHERE payment.DocumentId=sale.DocumentId
                      ORDER BY payment.PaymentNumber FOR JSON PATH),N'[]') AS PaymentsJson,
-           sale.CreditAmount,
+           COALESCE(sale.CreditAmount,0) AS CreditAmount,
            JSON_QUERY(payload.PayloadJson,'$.commercialSnapshot.withholding') AS WithholdingJson,
            sale.CreditDueDate,
-           COALESCE(payload.PayloadJson,serviceSnapshot.SnapshotJson) AS SnapshotJson,
-           sale.DocumentType
+           COALESCE(creditSnapshot.SnapshotJson,payload.PayloadJson,
+             serviceSnapshot.SnapshotJson) AS SnapshotJson,
+           COALESCE(sale.DocumentType,N'SalesReturn') AS DocumentType
     FROM dbo.FiscalDocuments fiscal
     JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
      AND business.TenantId=@TenantId
-    JOIN dbo.SalesDocuments sale ON sale.DocumentId=fiscal.DocumentId
+    LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=fiscal.DocumentId
      AND sale.BusinessId=fiscal.BusinessId
+     AND fiscal.FiscalDocumentType=N'Invoice'
+    LEFT JOIN dbo.SalesReturns returned ON returned.ReturnId=fiscal.DocumentId
+     AND returned.BusinessId=fiscal.BusinessId
+     AND fiscal.FiscalDocumentType=N'CreditNote'
     LEFT JOIN dbo.DocumentProcessingPayloads payload
-      ON payload.DocumentId=sale.DocumentId AND payload.DocumentType=sale.DocumentType
-     AND payload.BusinessId=sale.BusinessId
+      ON payload.DocumentId=fiscal.DocumentId
+     AND payload.DocumentType=COALESCE(sale.DocumentType,N'SalesReturn')
+     AND payload.BusinessId=fiscal.BusinessId
     LEFT JOIN sales.SalesDocumentServiceFiscalSnapshots serviceSnapshot
       ON serviceSnapshot.DocumentId=sale.DocumentId
+    LEFT JOIN dbo.SalesReturnFiscalSnapshots creditSnapshot
+      ON creditSnapshot.DocumentId=returned.ReturnId
     JOIN dbo.FiscalDocumentProcesses process ON process.DocumentId=fiscal.DocumentId
      AND process.BusinessId=fiscal.BusinessId
     JOIN dbo.FiscalIssuerConfigurations issuer
@@ -62,7 +72,9 @@ BEGIN
       AND fiscal.DeliveryOutboxMessageId=@MessageId
       AND fiscal.FiscalStatus=N'DianAccepted'
       AND fiscal.DeliveredAt IS NULL
-      AND COALESCE(payload.PayloadJson,serviceSnapshot.SnapshotJson) IS NOT NULL
+      AND (sale.DocumentId IS NOT NULL OR returned.ReturnId IS NOT NULL)
+      AND COALESCE(creditSnapshot.SnapshotJson,payload.PayloadJson,
+        serviceSnapshot.SnapshotJson) IS NOT NULL
       AND NULLIF(LTRIM(RTRIM(fiscal.DeliveryEmail)),N'') IS NOT NULL;
 END;
 GO

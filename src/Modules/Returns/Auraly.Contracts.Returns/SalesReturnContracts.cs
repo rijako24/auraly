@@ -150,7 +150,8 @@ public sealed record SalesReturnUserIdentity(
     Guid UserId,
     Guid TenantId,
     Guid BusinessId,
-    IReadOnlySet<string> Permissions);
+    IReadOnlySet<string> Permissions,
+    Guid? DeviceId = null);
 
 public static class SalesReturnContractSerializer
 {

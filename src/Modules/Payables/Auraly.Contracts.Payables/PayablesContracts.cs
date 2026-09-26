@@ -18,10 +18,10 @@ public static class PayablesDocumentTypes
 public static class SupplierPaymentMethods
 {
     public const string Cash = "Cash";
-    public const string BankTransfer = "BankTransfer";
+    public const string Transfer = "Transfer";
     public const string DebitCard = "DebitCard";
     public const string CreditCard = "CreditCard";
-    public static bool IsSupported(string value) => value is Cash or BankTransfer or DebitCard or CreditCard;
+    public static bool IsSupported(string value) => value is Cash or Transfer or DebitCard or CreditCard;
 }
 
 public sealed record PayablesUserIdentity(
@@ -52,7 +52,8 @@ public sealed record PayableListItem(
     string Status,
     bool IsOverdue,
     DateTimeOffset CreatedAt,
-    string? ExpenseConceptName = null);
+    string? ExpenseConceptName = null,
+    decimal PaidAmount = 0);
 
 public sealed record PayablePage(
     IReadOnlyList<PayableListItem> Items,
@@ -62,10 +63,14 @@ public sealed record PayablePage(
     decimal TotalOutstanding,
     decimal TotalOverdue)
 {
+    public IReadOnlyList<PayableCurrencyTotal> CurrencyTotals { get; init; } = [];
     public int TotalPages => TotalCount == 0
         ? 0
         : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
+
+public sealed record PayableCurrencyTotal(string CurrencyCode, decimal OutstandingAmount,
+    decimal OverdueAmount);
 
 public sealed record PayableExpenseConceptOption(Guid ConceptId, string Name);
 public sealed record PayableExpenseConceptPage(
@@ -170,11 +175,13 @@ public sealed record SupplierPortfolioQuery(int Page, int PageSize, string? Sear
     Guid? SupplierId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null);
 public sealed record SupplierPortfolioItem(Guid SupplierId, string SupplierName,
     string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
-    decimal OutstandingAmount, decimal OverdueAmount, decimal SupplierCreditAmount = 0);
+    decimal OutstandingAmount, decimal OverdueAmount, decimal SupplierCreditAmount = 0,
+    string CurrencyCode = "COP");
 public sealed record SupplierPortfolioPage(IReadOnlyList<SupplierPortfolioItem> Items,
     int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
     int TotalInvoiceCount = 0, decimal TotalSupplierCredit = 0)
 {
+    public IReadOnlyList<PayableCurrencyTotal> CurrencyTotals { get; init; } = [];
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
 

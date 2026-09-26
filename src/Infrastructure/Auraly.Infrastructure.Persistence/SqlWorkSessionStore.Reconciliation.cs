@@ -169,16 +169,35 @@ public sealed partial class SqlWorkSessionStore
                     throw new WorkSessionValidationException("Toda diferencia residual necesita un motivo.");
                 return input with { PaymentMethodCode=value.PaymentMethodCode, ReasonCode=reason };
             }).ToArray();
-            foreach (var reason in normalizedLines.Select(line => line.ReasonCode).Where(value => value is not null).Distinct(StringComparer.OrdinalIgnoreCase))
+            var categories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            await using (var lookup = new SqlCommand("""
+                SELECT requested.PaymentMethodCode,mapping.Category,
+                  CAST(CASE WHEN requested.ReasonCode IS NULL OR reason.OptionId IS NOT NULL
+                    THEN 1 ELSE 0 END AS bit)
+                FROM OPENJSON(@Lines) WITH(
+                  PaymentMethodCode nvarchar(32),ReasonCode nvarchar(40)) requested
+                LEFT JOIN reference.Options reason ON reason.CatalogCode=N'cash-reconciliation-reason'
+                  AND reason.Code=requested.ReasonCode AND reason.IsActive=1
+                LEFT JOIN dbo.AccountingConfigurationProfiles profile
+                  ON profile.IsDefault=1 AND profile.IsActive=1
+                LEFT JOIN dbo.AccountingSourceCategoryMappings mapping
+                  ON mapping.ProfileCode=profile.ProfileCode
+                  AND mapping.SourceType=N'ClosurePaymentMethod'
+                  AND mapping.SourceCode=requested.PaymentMethodCode;
+                """, connection, transaction))
             {
-                await using var validateReason = new SqlCommand("""
-                    SELECT COUNT(*) FROM reference.Options
-                    WHERE CatalogCode=N'cash-reconciliation-reason' AND Code=@Code AND IsActive=1;
-                    """, connection, transaction);
-                validateReason.Parameters.AddWithValue("@Code", reason!);
-                if (Convert.ToInt32(await validateReason.ExecuteScalarAsync(cancellationToken)) != 1)
-                    throw new WorkSessionValidationException("El motivo de conciliación no pertenece al catálogo vigente.");
+                lookup.Parameters.AddWithValue("@Lines", JsonSerializer.Serialize(normalizedLines));
+                await using var reader = await lookup.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    if (!reader.GetBoolean(2))
+                        throw new WorkSessionValidationException("El motivo de conciliación no pertenece al catálogo vigente.");
+                    if (reader.IsDBNull(1) || !categories.TryAdd(reader.GetString(0), reader.GetString(1)))
+                        throw new WorkSessionValidationException("Falta la configuración contable del medio de pago.");
+                }
             }
+            if (categories.Count != normalizedLines.Length)
+                throw new WorkSessionValidationException("Falta la configuración contable del medio de pago.");
             var snapshotObject = new
             {
                 reconciliationId, closureId, status, reconciledAt, lines=normalizedLines,
@@ -200,49 +219,58 @@ public sealed partial class SqlWorkSessionStore
                 insert.Parameters.AddWithValue("@Snapshot", snapshot); insert.Parameters.Add("@Hash",SqlDbType.Binary,32).Value=hash;
                 insert.Parameters.AddWithValue("@At", reconciledAt); await insert.ExecuteNonQueryAsync(cancellationToken);
             }
-            foreach (var line in normalizedLines)
+            var lineRows = normalizedLines.Select(line =>
             {
-                var total = countable.Single(value => value.PaymentMethodCode.Equals(line.PaymentMethodCode,StringComparison.OrdinalIgnoreCase));
-                await using var insert = new SqlCommand("""
-                    INSERT dbo.WorkSessionClosureReconciliationLines
-                      (ReconciliationId,PaymentMethodCode,ExpectedAmount,CountedAmount,VerifiedAmount,Difference,IsConfirmed,ReasonCode)
-                    VALUES(@Id,@Method,@Expected,@Counted,@Verified,@Difference,@Confirmed,@Reason);
-                    """, connection, transaction);
-                insert.Parameters.AddWithValue("@Id",reconciliationId); insert.Parameters.AddWithValue("@Method",line.PaymentMethodCode);
-                AddMoney(insert,"@Expected",total.NetAmount); insert.Parameters.AddWithValue("@Counted",(object?)total.CountedAmount ?? DBNull.Value);
-                AddMoney(insert,"@Verified",line.VerifiedAmount); AddMoney(insert,"@Difference",line.VerifiedAmount-total.NetAmount);
-                insert.Parameters.AddWithValue("@Confirmed",line.IsConfirmed); insert.Parameters.AddWithValue("@Reason",(object?)line.ReasonCode ?? DBNull.Value);
-                await insert.ExecuteNonQueryAsync(cancellationToken);
-            }
-            for (var index=0; index<request.Reclassifications.Count; index++)
+                var total = countable.Single(value => value.PaymentMethodCode.Equals(
+                    line.PaymentMethodCode,StringComparison.OrdinalIgnoreCase));
+                return new
+                {
+                    line.PaymentMethodCode, ExpectedAmount=total.NetAmount,
+                    CountedAmount=total.CountedAmount, line.VerifiedAmount,
+                    Difference=line.VerifiedAmount-total.NetAmount,
+                    line.IsConfirmed, line.ReasonCode
+                };
+            }).ToArray();
+            var reclassificationRows = request.Reclassifications.Select((item,index) => new
             {
-                var correction=request.Reclassifications[index];
-                await using var insert=new SqlCommand("""
-                    INSERT dbo.WorkSessionClosureReclassifications
-                      (ReclassificationId,ReconciliationId,LineNumber,FromPaymentMethodCode,ToPaymentMethodCode,Amount)
-                    VALUES(@Id,@ReconciliationId,@Line,@From,@To,@Amount);
-                    """,connection,transaction);
-                insert.Parameters.AddWithValue("@Id",ids.NewId()); insert.Parameters.AddWithValue("@ReconciliationId",reconciliationId);
-                insert.Parameters.AddWithValue("@Line",index+1); insert.Parameters.AddWithValue("@From",correction.FromPaymentMethodCode);
-                insert.Parameters.AddWithValue("@To",correction.ToPaymentMethodCode); AddMoney(insert,"@Amount",correction.Amount);
-                await insert.ExecuteNonQueryAsync(cancellationToken);
+                ReclassificationId=ids.NewId(), LineNumber=index+1,
+                item.FromPaymentMethodCode,item.ToPaymentMethodCode,item.Amount
+            }).ToArray();
+            await using (var insertDetails = new SqlCommand("""
+                INSERT dbo.WorkSessionClosureReconciliationLines
+                  (ReconciliationId,PaymentMethodCode,ExpectedAmount,CountedAmount,
+                   VerifiedAmount,Difference,IsConfirmed,ReasonCode)
+                SELECT @Id,line.PaymentMethodCode,line.ExpectedAmount,line.CountedAmount,
+                  line.VerifiedAmount,line.Difference,line.IsConfirmed,line.ReasonCode
+                FROM OPENJSON(@Lines) WITH(
+                  PaymentMethodCode nvarchar(32),ExpectedAmount decimal(19,4),
+                  CountedAmount decimal(19,4),VerifiedAmount decimal(19,4),
+                  Difference decimal(19,4),IsConfirmed bit,ReasonCode nvarchar(40)) line;
+                INSERT dbo.WorkSessionClosureReclassifications
+                  (ReclassificationId,ReconciliationId,LineNumber,FromPaymentMethodCode,
+                   ToPaymentMethodCode,Amount)
+                SELECT correction.ReclassificationId,@Id,correction.LineNumber,
+                  correction.FromPaymentMethodCode,correction.ToPaymentMethodCode,correction.Amount
+                FROM OPENJSON(@Reclassifications) WITH(
+                  ReclassificationId uniqueidentifier,LineNumber int,
+                  FromPaymentMethodCode nvarchar(32),ToPaymentMethodCode nvarchar(32),
+                  Amount decimal(19,4)) correction;
+                """, connection, transaction))
+            {
+                insertDetails.Parameters.AddWithValue("@Id", reconciliationId);
+                insertDetails.Parameters.AddWithValue("@Lines", JsonSerializer.Serialize(lineRows));
+                insertDetails.Parameters.AddWithValue("@Reclassifications",
+                    JsonSerializer.Serialize(reclassificationRows));
+                await insertDetails.ExecuteNonQueryAsync(cancellationToken);
             }
-            var accountingLines = new List<WorkSessionClosureReconciliationAccountingLine>();
-            foreach (var line in normalizedLines)
+            var accountingLines = normalizedLines.Select(line =>
             {
                 var total=countable.Single(value=>value.PaymentMethodCode.Equals(line.PaymentMethodCode,StringComparison.OrdinalIgnoreCase));
-                await using var category=new SqlCommand("""
-                    SELECT mapping.Category FROM dbo.AccountingConfigurationProfiles profile
-                    INNER JOIN dbo.AccountingSourceCategoryMappings mapping ON mapping.ProfileCode=profile.ProfileCode
-                      AND mapping.SourceType=N'ClosurePaymentMethod' AND mapping.SourceCode=@Method
-                    WHERE profile.IsDefault=1 AND profile.IsActive=1;
-                    """,connection,transaction);
-                category.Parameters.AddWithValue("@Method",line.PaymentMethodCode);
-                accountingLines.Add(new(line.PaymentMethodCode,(string)(await category.ExecuteScalarAsync(cancellationToken)
-                    ?? throw new WorkSessionValidationException("Falta la configuración contable del medio de pago.")),
-                    total.NetAmount,total.CountedAmount ?? total.NetAmount,line.VerifiedAmount,
-                    line.VerifiedAmount-total.NetAmount,line.ReasonCode));
-            }
+                return new WorkSessionClosureReconciliationAccountingLine(line.PaymentMethodCode,
+                    categories[line.PaymentMethodCode],total.NetAmount,
+                    total.CountedAmount ?? total.NetAmount,line.VerifiedAmount,
+                    line.VerifiedAmount-total.NetAmount,line.ReasonCode);
+            }).ToArray();
             var payload = new WorkSessionClosureReconciliationPayload(reconciliationId,closureId,identity.TenantId,businessId,
                 identity.UserId,reconciledAt,accountingLines,request.Reclassifications);
             var accountingRequired = accountingLines.Any(line => line.VerifiedAmount != line.CountedAmount)
@@ -283,39 +311,31 @@ public sealed partial class SqlWorkSessionStore
     private static async Task<IReadOnlyList<WorkSessionPaymentTotal>> ReadClosurePaymentTotalsAsync(
         SqlConnection connection, Guid closureId, CancellationToken cancellationToken, SqlTransaction? transaction=null)
     {
-        var result=new List<WorkSessionPaymentTotal>();
-        await using var command=new SqlCommand("""
-            SELECT total.PaymentMethodCode,total.SalesAmount,total.RefundAmount,total.OtherAmount,total.NetAmount,
-              total.CountedAmount,total.Difference,CAST(CASE WHEN closureOption.OptionId IS NULL THEN 0 ELSE 1 END AS bit)
-            FROM dbo.WorkSessionClosurePaymentTotals total
-            LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method' AND closureOption.Code=total.PaymentMethodCode AND closureOption.IsActive=1
-            WHERE total.WorkSessionClosureId=@ClosureId ORDER BY COALESCE(closureOption.SortOrder,1000),total.PaymentMethodCode;
-            """,connection,transaction);
-        command.Parameters.AddWithValue("@ClosureId",closureId); await using var reader=await command.ExecuteReaderAsync(cancellationToken);
-        while(await reader.ReadAsync(cancellationToken)) result.Add(new(reader.GetString(0),reader.GetDecimal(1),reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4),
-            reader.IsDBNull(5)?null:reader.GetDecimal(5),reader.IsDBNull(6)?null:reader.GetDecimal(6),reader.GetBoolean(7)));
-        return result;
+        var totals = await ReadClosurePaymentTotalsAsync(connection, [closureId], cancellationToken, transaction);
+        return totals.GetValueOrDefault(closureId) ?? [];
     }
 
     private static async Task<IReadOnlyDictionary<Guid, IReadOnlyList<WorkSessionPaymentTotal>>> ReadClosurePaymentTotalsAsync(
-        SqlConnection connection, IReadOnlyList<Guid> closureIds, CancellationToken cancellationToken)
+        SqlConnection connection, IReadOnlyList<Guid> closureIds, CancellationToken cancellationToken,
+        SqlTransaction? transaction=null)
     {
         if (closureIds.Count == 0)
             return new Dictionary<Guid, IReadOnlyList<WorkSessionPaymentTotal>>();
-        var parameterNames = closureIds.Select((_, index) => $"@ClosureId{index}").ToArray();
-        await using var command = new SqlCommand($"""
-            SELECT total.WorkSessionClosureId,total.PaymentMethodCode,total.SalesAmount,total.RefundAmount,
-              total.OtherAmount,total.NetAmount,total.CountedAmount,total.Difference,
+        await using var command = new SqlCommand("""
+            SELECT total.WorkSessionClosureId,total.PaymentMethodCode,
+              total.SalesAmount,total.RefundAmount,total.OtherAmount,total.NetAmount,
+              total.CountedAmount,total.Difference,
               CAST(CASE WHEN closureOption.OptionId IS NULL THEN 0 ELSE 1 END AS bit),
               COALESCE(closureOption.SortOrder,1000)
-            FROM dbo.WorkSessionClosurePaymentTotals total
+            FROM OPENJSON(@ClosureIds) WITH(ClosureId uniqueidentifier '$') ids
+            JOIN dbo.WorkSessionClosurePaymentTotals total
+              ON total.WorkSessionClosureId=ids.ClosureId
             LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=total.PaymentMethodCode AND closureOption.IsActive=1
-            WHERE total.WorkSessionClosureId IN ({string.Join(',', parameterNames)})
-            ORDER BY total.WorkSessionClosureId,COALESCE(closureOption.SortOrder,1000),total.PaymentMethodCode;
-            """, connection);
-        for (var index = 0; index < closureIds.Count; index++)
-            command.Parameters.AddWithValue(parameterNames[index], closureIds[index]);
+            ORDER BY total.WorkSessionClosureId,COALESCE(closureOption.SortOrder,1000),
+              total.PaymentMethodCode;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@ClosureIds", JsonSerializer.Serialize(closureIds));
         var grouped = new Dictionary<Guid, List<WorkSessionPaymentTotal>>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

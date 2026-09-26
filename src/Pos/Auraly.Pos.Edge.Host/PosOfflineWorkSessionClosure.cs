@@ -82,7 +82,8 @@ public sealed class PosOfflineWorkSessionClosureStore(
             if (reader.GetString(1) == "Accepted") return;
         await reader.DisposeAsync();
         await using var alter = connection.CreateCommand();
-        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN Accepted INTEGER NOT NULL DEFAULT 0;";
+        // Rows written before the provisional state existed were already confirmed.
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN Accepted INTEGER NOT NULL DEFAULT 1;";
         await alter.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -146,7 +147,7 @@ public sealed class PosOfflineWorkSessionClosureStore(
         command.CommandText = """
             SELECT ReturnId,PaymentMethodCode,Amount
             FROM PosWorkSessionRefunds
-            WHERE WorkSessionId=$session AND CAST(Amount AS REAL)>0
+            WHERE WorkSessionId=$session AND Accepted=1 AND CAST(Amount AS REAL)>0
             ORDER BY CreatedAt,ReturnId;
             """;
         command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
@@ -166,7 +167,8 @@ public sealed class PosOfflineWorkSessionClosureStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            DELETE FROM PosWorkSessionRefunds WHERE ReturnId=$id AND WorkSessionId=$session;
+            DELETE FROM PosWorkSessionRefunds
+            WHERE ReturnId=$id AND WorkSessionId=$session AND Accepted=0;
             """;
         command.Parameters.AddWithValue("$id", returnId.ToString("D"));
         command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
@@ -245,7 +247,7 @@ public sealed class PosOfflineWorkSessionClosureStore(
         await using var command=connection.CreateCommand();
         command.CommandText="""
             SELECT PaymentId,Direction,DocumentNumber,PaidAt,TendersJson
-            FROM PosWorkSessionPortfolioPayments WHERE WorkSessionId=$session
+            FROM PosWorkSessionPortfolioPayments WHERE WorkSessionId=$session AND Accepted=1
             ORDER BY PaidAt,PaymentId;
             """;
         command.Parameters.AddWithValue("$session",workSessionId.ToString("D"));
@@ -266,7 +268,7 @@ public sealed class PosOfflineWorkSessionClosureStore(
         await using var command = connection.CreateCommand();
         command.CommandText = """
             DELETE FROM PosWorkSessionPortfolioPayments
-            WHERE PaymentId=$id AND WorkSessionId=$session;
+            WHERE PaymentId=$id AND WorkSessionId=$session AND Accepted=0;
             """;
         command.Parameters.AddWithValue("$id", paymentId.ToString("D"));
         command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
@@ -730,7 +732,7 @@ public sealed class PosOfflineWorkSessionClosureService(
     private static string ClosureMethod(string code) => code switch
     {
         "DebitCard" or "CreditCard" or "Card" => "Card",
-        "Transfer" or "BankTransfer" => "Transfer",
+        "Transfer" => "Transfer",
         "Cash" => "Cash",
         _ => code
     };

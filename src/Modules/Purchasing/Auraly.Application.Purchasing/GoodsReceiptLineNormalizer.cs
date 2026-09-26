@@ -13,9 +13,9 @@ internal static class GoodsReceiptLineNormalizer
             ? "Unidad"
             : line.PresentationName.Trim();
         if (presentation.Length > 80)
-            throw new PurchasingValidationException("PresentationName cannot exceed 80 characters.");
+            throw new PurchasingValidationException("El nombre de la presentación no puede superar 80 caracteres.");
         if (line.UnitsPerPresentation <= 0)
-            throw new PurchasingValidationException("UnitsPerPresentation must be greater than zero.");
+            throw new PurchasingValidationException("Las unidades por presentación deben ser mayores que cero.");
 
         var presentationQuantity = line.PresentationQuantity;
         if (line.UnitsPerPresentation == 1 &&
@@ -23,12 +23,12 @@ internal static class GoodsReceiptLineNormalizer
             presentationQuantity = line.Quantity;
 
         if (presentationQuantity <= 0)
-            throw new PurchasingValidationException("PresentationQuantity must be greater than zero.");
+            throw new PurchasingValidationException("La cantidad de presentaciones debe ser mayor que cero.");
         if (presentationQuantity * line.UnitsPerPresentation != line.Quantity)
             throw new PurchasingValidationException(
-                "Quantity must equal PresentationQuantity multiplied by UnitsPerPresentation.");
+                "La cantidad debe coincidir con las presentaciones multiplicadas por sus unidades.");
         if (line.UnitGrossWeightKg is <= 0)
-            throw new PurchasingValidationException("UnitGrossWeightKg must be greater than zero when provided.");
+            throw new PurchasingValidationException("El peso bruto unitario debe ser mayor que cero.");
 
         return line with
         {

@@ -95,6 +95,30 @@ fragmento; el motor agrega `documentkey` exactamente una vez y rechaza cualquier
 configuración que incumpla ese contrato. La misma regla aplica a la nota de
 ajuste tipo `95`; no altera el contrato QR de factura de venta.
 
+La nota de ajuste tipo `95` usa el `ProfileID` literal del anexo de documento
+soporte 1.1 (`DIAN 2.1: Nota de ajuste...`). Para vendedor residente toma del
+snapshot fiscal inmutable el mismo código postal DIAN de seis dígitos del
+documento soporte original y lo emite en
+`AccountingSupplierParty/Party/PhysicalLocation/Address/PostalZone` junto con
+municipio, ciudad, departamento y país. La generación rechaza el snapshot si
+falta el código; no elimina ese dato del XML ni inventa uno en el reintento.
+Este contrato corresponde a las reglas DIAN `NSAD03`, `NSAJ08a` y `NSAJ73`.
+
+Una factura de venta solo entra a generación fiscal cuando su procesamiento
+operativo en `SalesDocuments` está `Completed`. El store de generación verifica
+esta condición en la misma consulta que adquiere el lease y también al calcular
+una reanudación; una venta recibida que acabó en error no se transmite a DIAN.
+El checkout de un borrador procedente de pedido comprueba además el vínculo
+`OrderInvoiceLinks` antes de reservar los consecutivos.
+
+Los documentos soporte de una recepción, tanto el principal como los costos
+adicionales, sólo pueden adquirir el lease fiscal cuando `GoodsReceipts.Status`
+es `Processed`. El observador del procesamiento operativo publica una señal
+para el principal y otra por cada costo adicional pendiente, localizado en una
+única consulta acotada por recepción. La señal posterior al commit evita que
+un XML llegue a la DIAN si falla el procesamiento operativo de la recepción
+o su inventario; la contabilización conserva su propio trabajo asíncrono.
+
 La prueba de habilitación de devolución recorre la venta original, devolución parcial, `CreditNote` tipo `91`, concepto de corrección `1`, `ProfileExecutionID=2`, CUDE, firma, `SendTestSetAsync` y `GetStatusZip`. También verifica que el transporte productivo no sea invocado. La activación de producción exige evidencia durable de aceptación del set (`GetStatusZip`, código `2`); la aceptación individual de un documento con código `00` no abre esa puerta.
 
 ## Prueba real de nota crédito contra DIAN
@@ -126,13 +150,26 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   mismo snapshot inmutable de emisión. El `AttachedDocument` firmado se conserva
   como artefacto fiscal; el PDF se genera en memoria al preparar cada entrega, se
   adjunta al ZIP y se descarta. No se persisten nuevas representaciones PDF ni se
-  usa el XML firmado para reconstruirlas. Un reintento reutiliza el snapshot y los
+  usa el XML firmado para reconstruir la factura (la nota crédito usa su XML
+  firmado e inmutable, como se detalla abajo). Un reintento reutiliza el snapshot y los
   XML persistidos, no repite una llamada a DIAN. El ZIP sigue limitado a 2 MB. Esta regla
   implementa el artículo 35 de la Resolución DIAN 000165 de 2023.
 - El único consumidor del outbox de correo es `PlatformEmailOutboxHostedService`.
-  En DEV, `Auraly:Email:DeliveryEnabled=false` impide reclamar o enviar
-  cualquier mensaje, incluso si se configura una credencial; los pendientes
-  permanecen en el outbox. En producción la entrega continúa habilitada.
+  El envío requiere `Auraly:Email:DeliveryEnabled=true` explícito y un
+  ambiente distinto de Development. En DEV la infraestructura declara `false`:
+  no reclama ni envía mensajes aunque haya credencial, y los pendientes
+  permanecen en el outbox. Producción declara `true` explícitamente.
+- Las notas crédito de devoluciones procesadas entran al mismo outbox
+  `FiscalInvoiceDelivery` dentro de la transacción de aceptación DIAN y usan
+  `DeliveryOutboxMessageId` para impedir entregas duplicadas. El destinatario
+  sale del cliente de la devolución, con aislamiento por `BusinessId` y tenant.
+  El mismo consumidor firma y conserva el `AttachedDocument` que contiene el
+  XML de la nota y la respuesta DIAN; adjunta en el ZIP una representación
+  Carta v3 en PDF. Para la nota, la proyección de esa carta lee el XML fiscal
+  firmado e inmutable: muestra número, CUDE, factura original, motivo y todas
+  las líneas devueltas. No presenta medios de pago ni un nuevo saldo a pagar.
+  La nota no se envía antes de `DianAccepted`; DEV conserva el bloqueo de
+  entrega real y producción conserva el motor activo.
 - La representación enviada por correo reutiliza `sales-invoice` Carta v3 de
   `HalfLetterDocumentRenderer`. `SalesInvoicePresentationMapper` adapta el snapshot
   inmutable al contrato de presentación y `DianInvoicePdfRenderer` convierte ese

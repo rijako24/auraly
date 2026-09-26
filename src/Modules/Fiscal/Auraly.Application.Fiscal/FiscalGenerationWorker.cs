@@ -511,21 +511,23 @@ public sealed class FiscalGenerationWorker(
             ?? throw new FiscalSnapshotDataException("The support-document fiscal payload is missing.");
         var receipt = snapshot.Receipt;
         var expense = snapshot.Expense;
+        var costDocument = snapshot.CostDocument;
         var adjustment = snapshot.Adjustment;
         var expenseCancellation = snapshot.ExpenseCancellation;
         var sourceCount = (receipt is null ? 0 : 1) + (expense is null ? 0 : 1) +
-                          (adjustment is null ? 0 : 1) + (expenseCancellation is null ? 0 : 1);
+                          (costDocument is null ? 0 : 1) + (adjustment is null ? 0 : 1) +
+                          (expenseCancellation is null ? 0 : 1);
         if (sourceCount != 1)
             throw new FiscalSnapshotDataException(
                 "The purchase-support snapshot must contain exactly one acquisition source.");
         if (adjustment is not null || expenseCancellation is not null)
             return await BuildSupportAdjustmentAsync(work, snapshot,
                 cancellationToken);
-        if ((receipt is null) == (expense is null))
+        if (receipt is null && expense is null && costDocument is null)
             throw new FiscalSnapshotDataException(
                 "The support-document snapshot must contain exactly one acquisition source.");
-        var sourceDocumentId = receipt?.DocumentId ?? expense!.ExpenseId;
-        var sourceBusinessId = receipt?.BusinessId ?? expense!.BusinessId;
+        var sourceDocumentId = receipt?.DocumentId ?? expense?.ExpenseId ?? costDocument!.Document.CostDocumentId;
+        var sourceBusinessId = receipt?.BusinessId ?? expense?.BusinessId ?? costDocument!.BusinessId;
         if (snapshot.FiscalIssuerConfigurationId != work.Issuer.Id ||
             sourceDocumentId != work.DocumentId || sourceBusinessId != work.BusinessId ||
             snapshot.FiscalNumber != work.FiscalNumber || snapshot.Environment != work.Issuer.Environment)
@@ -568,6 +570,29 @@ public sealed class FiscalGenerationWorker(
             totalAmount = receipt.GrandTotal;
             discountAmount = receipt.Lines.Sum(x => x.DiscountAmount);
             createsPayable = receipt.CreatesPayable;
+        }
+        else if (costDocument is not null)
+        {
+            var cost = costDocument.Document;
+            lines = cost.Lines.OrderBy(line => line.LineNumber).Select(line =>
+            {
+                if (!metadata.TryGetValue(line.LineNumber, out var item) ||
+                    string.IsNullOrWhiteSpace(item.DianTaxCode))
+                    throw new FiscalSnapshotDataException(
+                        $"Faltan los datos tributarios DIAN de la línea {line.LineNumber} del costo adicional.");
+                return new DianInvoiceLine(line.LineNumber, item.ProductCode, item.ProductCodeScheme,
+                    line.Description, item.UnitCode, 1m, line.Amount, 0m, line.Amount,
+                    [new DianTax(item.DianTaxCode, item.TaxName,
+                        line.TaxableBaseAmount, line.TaxAmount, line.TaxRate)]);
+            }).ToArray();
+            issuedAt = cost.IssuedAt;
+            dueAt = cost.DueDate ?? cost.IssuedAt;
+            currencyCode = cost.CurrencyCode;
+            untaxedAmount = cost.NetAmount;
+            taxAmount = cost.TaxAmount;
+            totalAmount = cost.GrandTotal;
+            discountAmount = 0m;
+            createsPayable = cost.CreatesPayable;
         }
         else
         {
@@ -700,7 +725,7 @@ public sealed class FiscalGenerationWorker(
                 : "Anulación del documento soporte",
             snapshot.Environment,
             new DianSoftware(work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
-                work.Issuer.SoftwareId, pin), Party(snapshot.Seller),
+                work.Issuer.SoftwareId, pin), SupportSeller(snapshot),
             IssuerParty(work.Issuer),
             new DianInvoiceReference(snapshot.OriginalSupportNumber!,
                 snapshot.OriginalSupportCuds!, snapshot.OriginalSupportIssuedOn.Value),
@@ -708,9 +733,10 @@ public sealed class FiscalGenerationWorker(
             totalAmount, discountAmount,
             totalAmount, cuds.QrPayload,
             DocumentTypeCode: "95", CustomizationId: snapshot.SellerOriginCode,
-            ProfileId: "Nota de ajuste al documento soporte en adquisiciones efectuadas a sujetos no obligados a expedir factura o documento equivalente",
+            ProfileId: DianCreditNoteCodes.SupportAdjustmentProfileId,
             UniqueCodeScheme: "CUDS-SHA384",
-            OriginalUniqueCodeScheme: "CUDS-SHA384", BuyerGenerated: true);
+            OriginalUniqueCodeScheme: "CUDS-SHA384", BuyerGenerated: true,
+            SellerPostalZone: snapshot.SellerPostalZone);
         return new FiscalUblBuildResult(
             creditNoteBuilder.Build(note), cuds.Cuds, cuds.QrPayload);
     }
@@ -801,7 +827,8 @@ public sealed class FiscalGenerationWorker(
                 work.ServiceInvoice?.FiscalSnapshot.IssuedAt,
             FiscalDocumentTypeCodes.SupportDocument =>
                 work.SupportDocument?.Receipt?.ReceivedAt ??
-                work.SupportDocument?.Expense?.IssuedAt,
+                work.SupportDocument?.Expense?.IssuedAt ??
+                work.SupportDocument?.CostDocument?.Document.IssuedAt,
             FiscalDocumentTypeCodes.SupportDocumentAdjustment =>
                 work.SupportDocument?.Adjustment?.ReturnedAt ??
                 work.SupportDocument?.ExpenseCancellation?.CancelledAt,

@@ -392,7 +392,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
         if (status is FiscalDocumentStatusCodes.DianAccepted or FiscalDocumentStatusCodes.DianRejected)
             await InsertStatusEventAsync(connection, transaction, work, status, result, completedAt, cancellationToken);
         if (status == FiscalDocumentStatusCodes.DianAccepted)
-            await QueueInvoiceDeliveryAsync(
+            await QueueFiscalSalesDeliveryAsync(
                 connection, transaction, work, completedAt, cancellationToken);
         if (terminal)
             await SqlFiscalStatusSynchronizationOutbox.InsertAsync(
@@ -616,7 +616,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private async Task QueueInvoiceDeliveryAsync(
+    private async Task QueueFiscalSalesDeliveryAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         FiscalSubmissionWorkItem work,
@@ -626,17 +626,23 @@ public sealed class SqlFiscalSubmissionWorkStore(
         const string recipientSql = """
             SELECT TOP(1) business.TenantId,LTRIM(RTRIM(contact.Value))
             FROM dbo.FiscalDocuments fiscal WITH(UPDLOCK,HOLDLOCK)
-            JOIN dbo.SalesDocuments sale ON sale.DocumentId=fiscal.DocumentId
+            LEFT JOIN dbo.SalesReturns returned ON returned.ReturnId=fiscal.DocumentId
+             AND returned.BusinessId=fiscal.BusinessId
+             AND fiscal.FiscalDocumentType=N'CreditNote'
+            JOIN dbo.SalesDocuments sale
+              ON sale.DocumentId=COALESCE(returned.OriginalDocumentId,fiscal.DocumentId)
              AND sale.BusinessId=fiscal.BusinessId
              AND sale.DocumentType IN(N'SalesInvoice',N'ServiceInvoice')
             JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
-            JOIN dbo.Customers customer ON customer.CustomerId=sale.CustomerId
+            JOIN dbo.Customers customer ON customer.CustomerId=COALESCE(returned.CustomerId,sale.CustomerId)
             JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             JOIN dbo.PartyContacts contact ON contact.PartyId=party.PartyId
              AND contact.ContactType=N'Email' AND contact.IsActive=1
              AND NULLIF(LTRIM(RTRIM(contact.Value)),N'') IS NOT NULL
             WHERE fiscal.DocumentId=@DocumentId AND fiscal.BusinessId=@BusinessId
               AND fiscal.FiscalStatus=N'DianAccepted'
+              AND (fiscal.FiscalDocumentType=N'Invoice' OR
+                   fiscal.FiscalDocumentType=N'CreditNote' AND returned.ReturnId IS NOT NULL)
               AND fiscal.DeliveryOutboxMessageId IS NULL
             ORDER BY contact.IsPrimary DESC,contact.CreatedAt,contact.PartyContactId;
             """;

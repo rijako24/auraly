@@ -9,6 +9,51 @@ namespace Auraly.Foundation.Tests;
 public sealed class DianInvoicePdfRendererTests
 {
     [Fact]
+    public async Task Accepted_credit_note_uses_the_same_Carta_v3_renderer_with_its_own_fiscal_identity()
+    {
+        var note = DianCreditNoteUblTests.CreateNote();
+        var xml = new DianCreditNoteUblBuilder().Build(note).Xml;
+        var renderer = new DianInvoicePdfRenderer();
+        var receipt = renderer.ReadReceipt(xml);
+        var html = renderer.RenderHtml(xml);
+
+        Assert.Equal("SalesReturn", receipt.DocumentType);
+        Assert.Equal(note.Cude, receipt.Cufe);
+        Assert.Equal(note.PayableAmount, receipt.PayableAmount);
+        Assert.Empty(receipt.Payments);
+        Assert.Equal(note.OriginalInvoice.DocumentNumber, receipt.CreditNotePrintDetails!.OriginalInvoiceNumber);
+        Assert.Equal(note.CorrectionDescription, receipt.CreditNotePrintDetails.Reason);
+        Assert.Contains("Nota crédito electrónica", html);
+        Assert.Contains("Total nota crédito", html);
+        Assert.Contains("Cantidad devuelta", html);
+        Assert.Contains("Producto", html);
+        Assert.Contains("CUDE", html);
+        Assert.Contains("Factura original: SETP1", html);
+        Assert.Contains("data-auraly-report-version=\"3\"", html);
+        Assert.DoesNotContain("Total a pagar", html);
+        Assert.DoesNotContain("Medios de pago", html);
+        var pdf = await renderer.RenderAsync(receipt);
+        Assert.StartsWith("%PDF-", Encoding.ASCII.GetString(pdf, 0, 8));
+
+        var returnedLine = Assert.Single(receipt.Lines);
+        var manyReturns = receipt with
+        {
+            Lines = Enumerable.Range(1, 70)
+                .Select(number => returnedLine with { Description = $"Producto devuelto {number}" })
+                .ToArray()
+        };
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
+        var page = await browser.NewPageAsync();
+        await page.EmulateMediaAsync(new() { Media = Media.Print });
+        await page.SetContentAsync(renderer.RenderHtml(manyReturns));
+        await page.WaitForFunctionAsync("document.documentElement.dataset.auralyReportReady === 'true'");
+        Assert.Equal(70, await page.Locator("tbody > tr").CountAsync());
+        Assert.True(await page.Locator(".sheet").CountAsync() > 1);
+        Assert.Contains("Producto devuelto 70", await page.Locator("tbody > tr").Last.InnerTextAsync());
+    }
+
+    [Fact]
     public void Email_uses_exactly_the_shared_letter_v3_html_and_signed_values()
     {
         var invoice = CreateInvoice();

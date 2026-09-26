@@ -27,6 +27,13 @@ Al cerrar la sesión operativa se genera un cierre por usuario con:
 
 - ventas y devoluciones;
 - totales por medio de pago;
+- ventas, abonos a cartera y pagos a proveedores guardan la transferencia con
+  el mismo código `Transfer`; el cierre agrega esos movimientos en un solo medio;
+- el corte de datos normaliza los abonos, pagos, movimientos y cierres anteriores
+  a `Transfer` antes de publicar el código nuevo. Conserva el cierre original en
+  auditoría y su fuente contable inmutable. Si ya se contabilizó una diferencia
+  falsa, exige primero un comprobante manual correctivo contabilizado. Después
+  del corte no hay una ruta de compatibilidad para `BankTransfer`;
 - efectivo esperado y contado cuando corresponda;
 - diferencias;
 - anulaciones y reimpresiones relevantes;
@@ -60,6 +67,12 @@ equipo enrolado. Pestañas y navegadores web recuperan el mismo `WorkSessionId` 
 un Edge recupera únicamente el suyo. Cambiar la autenticación activa no abre ni
 cierra trabajo. Una nueva sesión del mismo canal/dispositivo solo puede comenzar
 después del cierre operativo explícito de la anterior.
+
+En la caja preparada, el abono, pago a proveedor o reintegro de una devolución
+solo entra al cierre local después de la aceptación del servidor. La proyección
+local se termina aunque el navegador cierre su petición justo después de esa
+aceptación; una respuesta inválida se deja identificada para reintentar con la
+misma clave, sin dar por aceptado un movimiento que no confirmó el servidor.
 
 ## Eliminación
 

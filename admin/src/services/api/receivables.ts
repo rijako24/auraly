@@ -1,7 +1,7 @@
 import { apiClient, withPagedDefaults } from "./client";
 
 export type ReceivableStatus = "Open" | "PartiallyPaid" | "Paid" | "Cancelled";
-export type CustomerPaymentMethod = "Cash" | "BankTransfer" | "DebitCard" | "CreditCard";
+export type CustomerPaymentMethod = "Cash" | "Transfer" | "DebitCard" | "CreditCard";
 
 export interface ReceivableListItem {
   receivableId: string;
@@ -12,6 +12,7 @@ export interface ReceivableListItem {
   documentNumber: string;
   currencyCode: string;
   originalAmount: number;
+  paidAmount: number;
   outstandingAmount: number;
   dueDate: string;
   status: ReceivableStatus;
@@ -27,6 +28,8 @@ export interface ReceivablePage {
   totalPages: number;
   totalOutstanding: number;
   totalOverdue: number;
+  totalOriginal: number;
+  totalPaid: number;
 }
 
 export interface ReceivableDetail {
@@ -75,9 +78,9 @@ export interface CustomerPaymentAcceptance {
 }
 export interface CustomerPaymentHistoryPage {
   items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:CustomerPaymentTender[];applications:Array<{receivableId:string;documentNumber:string;amount:number}>;customerId:string|null;customerName:string|null}>;
-  page:number;pageSize:number;totalCount:number;totalPages:number;
+  page:number;pageSize:number;totalCount:number;totalPages:number;totalAmount:number;
 }
-export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number}
+export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalOriginal:number;totalPaid:number}
 export interface ImportPreexistingReceivablesRequest {businessId:string;items:Array<{receivableId:string;customerId:string|null;customerIdentification:string|null;partySiteId:string|null;documentNumber:string;issuedAt:string;dueDate:string;amount:number;counterpartAccountId:string;notes:string|null}>}
 
 export interface PaymentSettlementConfiguration {

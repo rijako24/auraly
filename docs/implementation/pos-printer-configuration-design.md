@@ -189,6 +189,10 @@ cartera, pagos en efectivo, tarjeta y transferencia, cargos repetidos y gastos
 de ejemplo, usando `WorkSessionClosureReceiptRenderer`.
 También incluye abono a cartera y pago a proveedor en 58 y 80 mm, generados
 por el renderizador canónico de sus tirillas.
+En el POS instalado, aun cuando el pago se confirma en línea, estas tirillas
+se envían al servicio local y a `PosPrinterName`, la misma impresora de
+facturas. El POS usado solo en un navegador abre el diálogo de impresión del
+navegador, que no puede seleccionar por sí mismo una impresora de Windows.
 Los archivos se escriben bajo
 `artifacts/report-preview`, fuera del control de versiones. La tirilla HTML/CSS
 continúa como representación canónica porque preserva QR, logotipo, anchos físicos

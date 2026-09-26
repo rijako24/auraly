@@ -41,7 +41,7 @@ public sealed class DianInvoicePdfRenderer
         await page.EmulateMediaAsync(new() { Media = Media.Print });
         await page.SetContentAsync(html, new() { WaitUntil = WaitUntilState.Load });
         cancellationToken.ThrowIfCancellationRequested();
-        if (errors.Count != 0) throw new InvalidOperationException("The shared invoice template could not paginate.");
+        if (errors.Count != 0) throw new InvalidOperationException("No se pudo paginar la representación gráfica fiscal.");
         await page.WaitForFunctionAsync("document.documentElement.dataset.auralyReportReady === 'true'");
         var pdf = await page.PdfAsync(new() { PreferCSSPageSize = true, PrintBackground = true, DisplayHeaderFooter = false })
             .WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
@@ -60,31 +60,33 @@ public sealed class DianInvoicePdfRenderer
                 { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
             document = XDocument.Load(reader);
         }
-        catch (XmlException exception) { throw new InvalidOperationException("The signed invoice is invalid XML.", exception); }
+        catch (XmlException exception) { throw new InvalidOperationException("El documento fiscal firmado no es un XML válido.", exception); }
         var root = document.Root;
-        if (root?.Name != DianUblNamespaces.Invoice + "Invoice")
-            throw new InvalidOperationException("The PDF source is not a UBL Invoice document.");
+        var isCreditNote = root?.Name == DianUblNamespaces.CreditNote + "CreditNote";
+        if (!isCreditNote && root?.Name != DianUblNamespaces.Invoice + "Invoice")
+            throw new InvalidOperationException("El PDF requiere una factura o nota crédito UBL.");
+        if (root is null) throw new InvalidOperationException("El documento fiscal no tiene contenido.");
         var supplier = Party(root, "AccountingSupplierParty");
         var customer = Party(root, "AccountingCustomerParty");
         var customerPhone = ContactTelephone(root, "AccountingCustomerParty");
         var number = Required(root.Element(Cbc + "ID"), "Invoice/ID");
         var currency = Required(root.Element(Cbc + "DocumentCurrencyCode"), "DocumentCurrencyCode");
-        if (currency != "COP") throw new InvalidOperationException("The shared invoice template requires COP.");
-        var payment = root.Element(Cac + "PaymentMeans") ?? throw new InvalidOperationException("Missing PaymentMeans.");
-        var form = Required(payment.Element(Cbc + "ID"), "PaymentMeans/ID");
-        if (form is not ("1" or "2")) throw new InvalidOperationException("Unsupported payment form.");
-        var means = Required(payment.Element(Cbc + "PaymentMeansCode"), "PaymentMeansCode");
+        if (currency != "COP") throw new InvalidOperationException("La representación gráfica fiscal requiere pesos colombianos.");
+        var payment = isCreditNote ? null : root.Element(Cac + "PaymentMeans") ?? throw new InvalidOperationException("La factura no tiene medio de pago fiscal.");
+        var form = isCreditNote ? null : Required(payment!.Element(Cbc + "ID"), "PaymentMeans/ID");
+        if (!isCreditNote && form is not ("1" or "2")) throw new InvalidOperationException("La factura tiene una forma de pago no admitida.");
+        var means = isCreditNote ? null : Required(payment!.Element(Cbc + "PaymentMeansCode"), "PaymentMeansCode");
         var provider = Required(document.Descendants(Sts + "ProviderID").SingleOrDefault(), "ProviderID");
         if (provider != Required(supplier.Element(Cbc + "CompanyID"), "supplier ID"))
-            throw new InvalidOperationException("The software provider is not identified by the signed invoice.");
-        var totals = root.Element(Cac + "LegalMonetaryTotal") ?? throw new InvalidOperationException("Missing LegalMonetaryTotal.");
+            throw new InvalidOperationException("El proveedor del software no coincide con el documento fiscal firmado.");
+        var totals = root.Element(Cac + "LegalMonetaryTotal") ?? throw new InvalidOperationException("El documento fiscal no tiene totales.");
         var payable = Amount(totals.Element(Cbc + "PayableAmount"));
         var payableRounding = totals.Element(Cbc + "PayableRoundingAmount") is { } rounding
             ? Amount(rounding)
             : 0m;
-        var lines = root.Elements(Cac + "InvoiceLine").Select(line =>
+        var lines = root.Elements(Cac + (isCreditNote ? "CreditNoteLine" : "InvoiceLine")).Select(line =>
         {
-            var quantity = line.Element(Cbc + "InvoicedQuantity");
+            var quantity = line.Element(Cbc + (isCreditNote ? "CreditedQuantity" : "InvoicedQuantity"));
             var taxes = line.Elements(Cac + "TaxTotal").ToArray();
             var tax = taxes.Sum(value => Amount(value.Element(Cbc + "TaxAmount")));
             var category = taxes.Elements(Cac + "TaxSubtotal").Elements(Cac + "TaxCategory").FirstOrDefault();
@@ -97,15 +99,15 @@ public sealed class DianInvoicePdfRenderer
                 tax, Amount(line.Element(Cbc + "LineExtensionAmount")) + tax,
                 category?.Element(Cac + "TaxScheme")?.Element(Cbc + "ID")?.Value ?? "ZZ",
                 category?.Element(Cbc + "Percent") is { } percent ? Amount(percent) : 0,
-                quantity?.Attribute("unitCode")?.Value ?? throw new InvalidOperationException("Missing unitCode."));
+                quantity?.Attribute("unitCode")?.Value ?? throw new InvalidOperationException("Una línea fiscal no tiene unidad de medida."));
         }).ToArray();
-        if (lines.Length == 0) throw new InvalidOperationException("The invoice has no lines.");
+        if (lines.Length == 0) throw new InvalidOperationException("El documento fiscal no tiene líneas.");
         var taxSummary = root.Elements(Cac + "TaxTotal").Elements(Cac + "TaxSubtotal").Select(tax =>
             new SalesReceiptTaxTotal(
                 Required(tax.Element(Cac + "TaxCategory")?.Element(Cac + "TaxScheme")?.Element(Cbc + "Name"), "TaxName"),
                 Amount(tax.Element(Cac + "TaxCategory")?.Element(Cbc + "Percent")),
                 Amount(tax.Element(Cbc + "TaxableAmount")), Amount(tax.Element(Cbc + "TaxAmount")))).ToArray();
-        var details = new SalesInvoicePrintDetails(
+        var details = isCreditNote ? null : new SalesInvoicePrintDetails(
             Required(supplier.Element(Cbc + "RegistrationName"), "SupplierName"), Identification(supplier),
             Required(supplier.Element(Cbc + "TaxLevelCode"), "TaxLevelCode"), Address(supplier), Address(customer),
             Required(document.Descendants(Sts + "InvoiceAuthorization").SingleOrDefault(), "InvoiceAuthorization"),
@@ -114,9 +116,13 @@ public sealed class DianInvoicePdfRenderer
             Required(document.Descendants(Sts + "Prefix").SingleOrDefault(), "Prefix"),
             long.Parse(Required(document.Descendants(Sts + "From").SingleOrDefault(), "From"), CultureInfo.InvariantCulture),
             long.Parse(Required(document.Descendants(Sts + "To").SingleOrDefault(), "To"), CultureInfo.InvariantCulture),
-            form, means, Date(payment.Element(Cbc + "PaymentDueDate")), provider, "Auraly");
+            form!, means!, Date(payment!.Element(Cbc + "PaymentDueDate")), provider, "Auraly");
+        var creditDetails = isCreditNote ? new CreditNotePrintDetails(
+            Identification(supplier), Address(supplier),
+            Required(root.Element(Cac + "BillingReference")?.Element(Cac + "InvoiceDocumentReference")?.Element(Cbc + "ID"), "factura original"),
+            Required(root.Element(Cac + "DiscrepancyResponse")?.Element(Cbc + "Description"), "motivo de nota crédito")) : null;
         return new OnlineSalesReceipt(
-            Guid.Empty, PosSaleDocumentTypes.Invoice, number, number,
+            Guid.Empty, isCreditNote ? "SalesReturn" : PosSaleDocumentTypes.Invoice, number, number,
             DateTimeOffset.Parse(Required(root.Element(Cbc + "IssueDate"), "IssueDate") + "T" +
                 Required(root.Element(Cbc + "IssueTime"), "IssueTime"), CultureInfo.InvariantCulture),
             Identification(customer), lines, [],
@@ -124,16 +130,17 @@ public sealed class DianInvoicePdfRenderer
             root.Elements(Cac + "TaxTotal").Sum(tax => Amount(tax.Element(Cbc + "TaxAmount"))), payable,
             Required(root.Element(Cbc + "UUID"), "UUID"),
             Required(document.Descendants(Sts + "QRCode").SingleOrDefault(), "QRCode"), null,
-            Required(customer.Element(Cbc + "RegistrationName"), "CustomerName"), details.SupplierName,
+            Required(customer.Element(Cbc + "RegistrationName"), "CustomerName"), Required(supplier.Element(Cbc + "RegistrationName"), "SupplierName"),
             InvoicePrintDetails: details,
             CustomerPhone: customerPhone,
-            CustomerAddress: details.CustomerAddress,
+            CustomerAddress: Address(customer),
             TaxTotals: taxSummary,
-            PayableRoundingAmount: payableRounding);
+            PayableRoundingAmount: payableRounding,
+            CreditNotePrintDetails: creditDetails);
     }
 
     private static XElement Party(XElement root, string name) => root.Element(Cac + name)?.Element(Cac + "Party")?.Element(Cac + "PartyTaxScheme")
-        ?? throw new InvalidOperationException($"Missing {name}/PartyTaxScheme.");
+        ?? throw new InvalidOperationException($"El documento fiscal no tiene {name}/PartyTaxScheme.");
     private static string? ContactTelephone(XElement root, string name)
     {
         var value = root.Element(Cac + name)?.Element(Cac + "Party")?
@@ -147,7 +154,7 @@ public sealed class DianInvoicePdfRenderer
     }
     private static string Address(XElement party) => Required(party.Element(Cac + "RegistrationAddress")?.Element(Cac + "AddressLine")?.Element(Cbc + "Line"), "AddressLine");
     private static string Required(XElement? element, string name) => !string.IsNullOrWhiteSpace(element?.Value)
-        ? element.Value.Trim() : throw new InvalidOperationException($"The signed invoice has no {name}.");
+        ? element.Value.Trim() : throw new InvalidOperationException($"El documento fiscal firmado no tiene {name}.");
     private static decimal Amount(XElement? element) => decimal.Parse(Required(element, "amount"), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture);
     private static DateOnly Date(XElement? element) => DateOnly.ParseExact(Required(element, "date"), "yyyy-MM-dd", CultureInfo.InvariantCulture);
 }

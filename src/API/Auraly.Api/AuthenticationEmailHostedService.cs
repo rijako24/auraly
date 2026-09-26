@@ -19,7 +19,7 @@ public sealed record PlatformEmailOptions(
     string PublicAppUrl,
     string LogoUrl,
     string SupportEmail,
-    bool DeliveryEnabled = true);
+    bool DeliveryEnabled = false);
 
 public sealed class PlatformEmailOutboxHostedService(
     SqlServerConnectionFactory connections,
@@ -39,12 +39,12 @@ public sealed class PlatformEmailOutboxHostedService(
     {
         if (!options.DeliveryEnabled)
         {
-            logger.LogInformation("Platform email delivery is disabled for this environment.");
+            logger.LogInformation("El envío de correos está deshabilitado en este ambiente.");
             return;
         }
         if (string.IsNullOrWhiteSpace(options.ConnectionString))
         {
-            logger.LogWarning("Platform email delivery is disabled because Auraly:Email:ConnectionString is missing.");
+            logger.LogWarning("El envío de correos está deshabilitado porque falta Auraly:Email:ConnectionString.");
             return;
         }
 
@@ -90,10 +90,10 @@ public sealed class PlatformEmailOutboxHostedService(
                     await DeliverSubscriptionReminderAsync(client, message, cancellationToken);
                     break;
                 case "FiscalInvoiceDelivery":
-                    await DeliverFiscalInvoiceAsync(client, message, cancellationToken);
+                    await DeliverFiscalSalesDocumentAsync(client, message, cancellationToken);
                     break;
                 default:
-                    throw new InvalidOperationException($"Unsupported authentication email type '{message.Type}'.");
+                    throw new InvalidOperationException($"El tipo de correo '{message.Type}' no está admitido.");
             }
             await CompleteAsync(message, cancellationToken);
             logger.LogInformation("Platform email {Type}/{MessageId} delivered.", message.Type, message.MessageId);
@@ -137,7 +137,7 @@ public sealed class PlatformEmailOutboxHostedService(
             BuildSubscriptionReminderPlain(recipient, paymentUrl), cancellationToken);
     }
 
-    private async Task DeliverFiscalInvoiceAsync(
+    private async Task DeliverFiscalSalesDocumentAsync(
         EmailClient client, ClaimedMessage message, CancellationToken cancellationToken)
     {
         var payload = JsonSerializer.Deserialize<FiscalInvoicePayload>(message.Payload, Json)
@@ -146,7 +146,8 @@ public sealed class PlatformEmailOutboxHostedService(
             payload.DocumentId, message.MessageId, message.TenantId, cancellationToken);
         if (invoice is null)
             throw new InvalidOperationException(
-                "The accepted fiscal invoice delivery package is not ready.");
+                "El paquete del documento fiscal aceptado todavía no está listo.");
+        var isCreditNote = invoice.DocumentType == "SalesReturn";
         var metadata = attachedDocuments.ReadMetadata(invoice.SignedXml);
         var signedAttachedDocument = invoice.SignedAttachedDocument;
         var signedAttachedDocumentFileName = invoice.SignedAttachedDocumentFileName;
@@ -208,10 +209,12 @@ public sealed class PlatformEmailOutboxHostedService(
                     System.Security.Cryptography.SHA256.HashData(signedAttachedDocument),
                     signedAttachedDocumentFileName ?? "AttachedDocument.xml",
                     cancellationToken);
-            // The PDF is a transient delivery representation. It comes from the same immutable
-            // issuance snapshot as the fiscal XML and is never persisted.
-            var receipt = SalesInvoicePresentationMapper.FromSnapshot(
-                invoice.DocumentType, invoice.SnapshotJson, "DianAccepted");
+            // The PDF is transient. Invoice presentation uses the issuance snapshot;
+            // credit-note presentation reads the accepted, immutable signed UBL.
+            var receipt = isCreditNote
+                ? invoicePdfs.ReadReceipt(invoice.SignedXml)
+                : SalesInvoicePresentationMapper.FromSnapshot(
+                    invoice.DocumentType, invoice.SnapshotJson, "DianAccepted");
             var pdf = await invoicePdfs.RenderAsync(receipt, cancellationToken);
             var pdfFileName =
                 $"RepresentacionGrafica-{SafeFileName(invoice.FiscalNumber)}.pdf";
@@ -221,7 +224,7 @@ public sealed class PlatformEmailOutboxHostedService(
                 pdfFileName ?? "RepresentacionGrafica.pdf",
                 pdf,
                 invoice.IssuedAt);
-            attachmentFileName = $"FacturaElectronica-{SafeFileName(invoice.FiscalNumber)}.zip";
+            attachmentFileName = $"{(isCreditNote ? "NotaCreditoElectronica" : "FacturaElectronica")}-{SafeFileName(invoice.FiscalNumber)}.zip";
             subject = BuildFiscalInvoiceSubject(metadata);
             html = BuildFiscalInvoiceHtml(invoice, metadata);
             plain = BuildFiscalInvoicePlain(invoice, metadata);
@@ -643,6 +646,12 @@ public sealed class PlatformEmailOutboxHostedService(
         FiscalInvoiceRecipient invoice,
         DianAttachedDocumentMetadata metadata)
     {
+        var isCreditNote = invoice.DocumentType == "SalesReturn";
+        var title = isCreditNote ? "Tu nota crédito electrónica está lista" : "Tu factura electrónica está lista";
+        var description = isCreditNote
+            ? "emitió la nota crédito electrónica que encontrarás adjunta a este correo."
+            : "emitió la factura electrónica de venta que encontrarás adjunta a este correo.";
+        var attachmentDescription = isCreditNote ? "nota crédito XML" : "factura XML";
         var business = WebUtility.HtmlEncode(metadata.SupplierLegalName);
         var customer = WebUtility.HtmlEncode(metadata.CustomerName);
         var document = WebUtility.HtmlEncode(invoice.DocumentNumber);
@@ -657,10 +666,10 @@ public sealed class PlatformEmailOutboxHostedService(
             <table role="presentation" width="620" cellspacing="0" cellpadding="0" style="max-width:620px;width:100%;background:#fff;border:1px solid #dce5e9;border-radius:22px;overflow:hidden">
             <tr><td style="height:7px;background:#14b8a6"></td></tr><tr><td style="padding:30px 32px">
             <img src="{{logo}}" width="44" height="44" alt="Auraly" style="display:block"><p style="margin:20px 0 5px;color:#0f766e;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase">Documento validado por la DIAN</p>
-            <h1 style="margin:0 0 14px;font-size:28px">Tu factura electrónica está lista</h1>
-            <p style="font-size:16px;line-height:1.6">Hola, <strong>{{customer}}</strong>. <strong>{{business}}</strong> emitió la factura electrónica de venta que encontrarás adjunta a este correo.</p>
+            <h1 style="margin:0 0 14px;font-size:28px">{{title}}</h1>
+            <p style="font-size:16px;line-height:1.6">Hola, <strong>{{customer}}</strong>. <strong>{{business}}</strong> {{description}}</p>
             <table role="presentation" width="100%" style="margin:22px 0;background:#f0fdfa;border:1px solid #99f6e4;border-radius:14px"><tr><td style="padding:17px;line-height:1.8">Documento Auraly: <strong>{{document}}</strong><br>Número DIAN: <strong>{{fiscal}}</strong><br>Fecha: {{invoice.IssuedAt:dd/MM/yyyy HH:mm}}<br>Total: <strong>{{amount}}</strong></td></tr></table>
-            <p style="font-size:14px;line-height:1.6;color:#526170">El archivo ZIP adjunto contiene el AttachedDocument firmado con la factura XML, la respuesta electrónica de validación de la DIAN y la representación gráfica en PDF. Guárdalo como soporte del documento.</p>
+            <p style="font-size:14px;line-height:1.6;color:#526170">El archivo ZIP adjunto contiene el AttachedDocument firmado con la {{attachmentDescription}}, la respuesta electrónica de validación de la DIAN y la representación gráfica en PDF. Guárdalo como soporte del documento.</p>
             <p style="font-size:12px;line-height:1.6;color:#64748b">Correo autorrespuesta: {{support}}</p>
             <p style="padding:14px;border-radius:12px;background:#f6f9fa;border:1px solid #dce5e9;font-size:12px;color:#64748b">Este mensaje es informativo. No respondas con claves, contraseñas ni datos de pago.</p>
             </td></tr><tr><td style="padding:20px 32px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px">Soporte: <a href="mailto:{{support}}">{{support}}</a> · Enviado de forma segura por Auraly.</td></tr>
@@ -670,15 +679,18 @@ public sealed class PlatformEmailOutboxHostedService(
 
     private string BuildFiscalInvoicePlain(
         FiscalInvoiceRecipient invoice,
-        DianAttachedDocumentMetadata metadata) =>
-        $"""
+        DianAttachedDocumentMetadata metadata)
+    {
+        var documentName = invoice.DocumentType == "SalesReturn" ? "nota crédito electrónica" : "factura electrónica";
+        return $"""
         Hola, {metadata.CustomerName}.
-        {metadata.SupplierLegalName} emitió la factura electrónica {invoice.FiscalNumber}.
+        {metadata.SupplierLegalName} emitió la {documentName} {invoice.FiscalNumber}.
         Documento Auraly: {invoice.DocumentNumber}. Fecha: {invoice.IssuedAt:dd/MM/yyyy HH:mm}.
         Total: {invoice.Amount:C0} COP.
-        El ZIP adjunto contiene el AttachedDocument firmado con la factura XML, la respuesta de validación de la DIAN y la representación gráfica en PDF.
+        El ZIP adjunto contiene el AttachedDocument firmado con el XML, la respuesta de validación de la DIAN y la representación gráfica en PDF.
         Correo autorrespuesta: {options.SupportEmail}
         """;
+    }
 
     private string BuildPlain(RecipientContext recipient, string activationUrl) =>
         $"""

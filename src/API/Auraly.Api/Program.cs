@@ -491,7 +491,7 @@ builder.Services.AddSingleton(new PlatformEmailOptions(
     builder.Configuration["Auraly:Email:LogoUrl"] ?? "https://auralyapp.co/brand/auraly-mark.png",
     builder.Configuration["Auraly:Email:SupportEmail"] ?? "soporte@auralyapp.co",
     !builder.Environment.IsDevelopment() &&
-        builder.Configuration.GetValue<bool?>("Auraly:Email:DeliveryEnabled") != false));
+        builder.Configuration.GetValue<bool>("Auraly:Email:DeliveryEnabled")));
 builder.Services.AddHostedService<PlatformEmailOutboxHostedService>();
 
 

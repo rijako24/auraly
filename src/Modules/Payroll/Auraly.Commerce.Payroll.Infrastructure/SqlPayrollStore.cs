@@ -448,7 +448,7 @@ public sealed class SqlPayrollStore(
                     THROW 51704,N'El banco no pertenece al catálogo de nómina.',1;
                 IF @BankAccountType IS NOT NULL AND NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@BankAccountType AND CatalogCode=N'payroll-bank-account-type' AND IsActive=1)
                     THROW 51704,N'El tipo de cuenta no pertenece al catálogo de nómina.',1;
-                IF EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@PaymentMethod AND Code=N'BankTransfer')
+                IF EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@PaymentMethod AND Code=N'Transfer')
                    AND (@Bank IS NULL OR @BankAccountType IS NULL OR NULLIF(LTRIM(RTRIM(@BankAccountNumber)),N'') IS NULL)
                     THROW 51704,N'Banco, tipo y número de cuenta son obligatorios para transferencia.',1;
 

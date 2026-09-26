@@ -33,6 +33,24 @@ public sealed class DianAttachedDocumentBuilderTests
     }
 
     [Fact]
+    public void Builds_schema_valid_credit_note_container_with_cude_and_exact_xml()
+    {
+        var creditXml = new DianCreditNoteUblBuilder().Build(DianCreditNoteUblTests.CreateNote()).Xml;
+        var response = Encoding.UTF8.GetBytes(ApplicationResponseXml);
+        var result = new DianAttachedDocumentBuilder().Build(creditXml, response, GeneratedAt);
+        var validation = new DianSchemaValidator().Validate(result.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+        var document = XDocument.Parse(Encoding.UTF8.GetString(result.Xml));
+        Assert.Equal("91", result.Metadata.DocumentTypeCode);
+        Assert.Equal("CUDE-SHA384", document.Descendants(DianUblNamespaces.Cbc + "UUID")
+            .Single().Attribute("schemeName")?.Value);
+        Assert.Contains("<CreditNote", document.Descendants(DianUblNamespaces.Cbc + "Description")
+            .First().Value);
+        Assert.Equal(Encoding.UTF8.GetString(creditXml), document.Descendants(DianUblNamespaces.Cbc + "Description")
+            .First().Value);
+    }
+
+    [Fact]
     public void Reads_immutable_subject_metadata_from_the_signed_invoice()
     {
         var metadata = new DianAttachedDocumentBuilder()
@@ -56,7 +74,7 @@ public sealed class DianAttachedDocumentBuilderTests
                 Encoding.UTF8.GetBytes("<ApplicationResponse xmlns=\"urn:oasis:names:specification:ubl:schema:xsd:ApplicationResponse-2\" xmlns:cbc=\"urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2\"><cbc:IssueDate>2026-09-12</cbc:IssueDate><cbc:IssueTime>11:29:59-05:00</cbc:IssueTime></ApplicationResponse>"),
                 GeneratedAt));
 
-        Assert.Contains("ResponseCode", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("código de resultado", exception.Message, StringComparison.Ordinal);
     }
 
     private const string InvoiceXml =

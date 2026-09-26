@@ -116,6 +116,7 @@ VALUES
 ('6B000000-0000-0000-0000-000000000002',N'purchase-cost-evidence-type',N'ForeignCommercialInvoice',N'Factura del exterior',NULL,20),
 ('6B000000-0000-0000-0000-000000000003',N'purchase-cost-evidence-type',N'ImportDeclaration',N'Declaración de importación',NULL,30),
 ('6B000000-0000-0000-0000-000000000004',N'purchase-cost-evidence-type',N'InternalReceiptVoucher',N'Comprobante interno',NULL,40),
+('6B000000-0000-0000-0000-000000000005',N'purchase-cost-evidence-type',N'BuyerElectronicSupportDocument',N'Documento soporte electrónico',N'Auraly asigna la numeración, genera y envía el documento a la DIAN.',50),
 ('6C000000-0000-0000-0000-000000000001',N'purchase-cost-kind',N'Freight',N'Flete',NULL,10),
 ('6C000000-0000-0000-0000-000000000002',N'purchase-cost-kind',N'Insurance',N'Seguro',NULL,20),
 ('6C000000-0000-0000-0000-000000000003',N'purchase-cost-kind',N'CustomsDuty',N'Arancel',NULL,30),

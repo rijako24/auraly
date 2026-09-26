@@ -295,6 +295,113 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(0, preview.CreditSalesCount);
         Assert.Equal(0m, preview.CreditSalesAmount);
         Assert.Equal(0, preview.ReturnCount);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            WITH SourceMethods AS
+            (
+              SELECT Code FROM reference.Options
+              WHERE CatalogCode=N'payment-method' AND IsActive=1
+            )
+            SELECT source.Code FROM SourceMethods source
+            LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
+              ON mapping.PaymentMethodCode=source.Code
+            LEFT JOIN reference.Options closureMethod
+              ON closureMethod.CatalogCode=N'cash-closure-method'
+             AND closureMethod.Code=mapping.ClosureMethodCode
+             AND closureMethod.IsActive=1
+            WHERE mapping.PaymentMethodCode IS NULL
+               OR (mapping.RequiresCount=1 AND closureMethod.OptionId IS NULL);
+            """;
+        var unmapped = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) unmapped.Add(reader.GetString(0));
+        Assert.Empty(unmapped);
+    }
+
+    [Fact]
+    public async Task Transfer_receivable_is_counted_once_at_closure()
+    {
+        var userId = await CreateUserAsync("work-session-transfer");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences);
+        var opened = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, null));
+        var customerId = await CreateCustomerAsync(userId, "Cliente transferencia");
+        var paymentId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                DECLARE @SeriesId uniqueidentifier;
+                SELECT TOP(1) @SeriesId=DocumentSeriesId FROM dbo.DocumentSeries
+                WHERE BusinessId=@BusinessId AND DocumentType=N'ReceivablePayment'
+                  AND DeviceId IS NULL AND IsActive=1;
+                IF @SeriesId IS NULL
+                BEGIN
+                  SET @SeriesId=NEWID();
+                  INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,
+                    DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,
+                    IsOfflineCapable,IsActive,CreatedAt)
+                  VALUES(@SeriesId,@BusinessId,NULL,N'ReceivablePayment',N'RCC',N'00',
+                    8,1,99999999,0,1,SYSDATETIMEOFFSET());
+                END;
+                INSERT dbo.CustomerPayments(PaymentId,BusinessId,CustomerId,
+                  WorkSessionId,DocumentSeriesId,DocumentNumber,DocumentPrefix,
+                  DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,
+                  PaidAt,CurrencyCode,TotalAmount,Status,ConfirmedByUserId,AcceptedAt)
+                VALUES(@PaymentId,@BusinessId,@CustomerId,@WorkSessionId,@SeriesId,
+                  @DocumentNumber,N'RCC',N'00',@Consecutive,@IdempotencyKey,
+                  CONVERT(binary(32),0),SYSDATETIMEOFFSET(),N'COP',12345.67,
+                  N'Accepted',@UserId,SYSDATETIMEOFFSET());
+                INSERT dbo.CustomerPaymentTenders(PaymentId,LineNumber,MethodCode,Amount)
+                VALUES(@PaymentId,1,N'Transfer',12345.67);
+                """;
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@CustomerId", customerId);
+            command.Parameters.AddWithValue("@WorkSessionId", opened.WorkSessionId);
+            command.Parameters.AddWithValue("@PaymentId", paymentId);
+            command.Parameters.AddWithValue("@DocumentNumber", $"RCC-TEST-{paymentId:N}"[..20]);
+            command.Parameters.AddWithValue("@Consecutive", (long)BitConverter.ToUInt32(paymentId.ToByteArray(), 0) + 1);
+            command.Parameters.AddWithValue("@IdempotencyKey", $"transfer-{paymentId:N}");
+            command.Parameters.AddWithValue("@UserId", userId);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var preview = await client.GetFromJsonAsync<WorkSessionClosurePreviewView>(
+            $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview");
+        Assert.NotNull(preview);
+        Assert.DoesNotContain(preview.PaymentTotals,
+            value => value.PaymentMethodCode == "BankTransfer");
+        Assert.Equal(12345.67m, preview.PaymentTotals.Single(value =>
+            value.PaymentMethodCode == "Transfer").NetAmount);
+
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null,
+                PaymentCounts: [new("Cash", 0m), new("Card", 0m),
+                    new("Transfer", 12345.67m)]));
+        var transfer = Assert.Single(closure.PaymentTotals,
+            value => value.PaymentMethodCode == "Transfer");
+        Assert.Equal(12345.67m, transfer.NetAmount);
+        Assert.Equal(0m, transfer.Difference);
+
+        var from = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+        var to = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
+        var page = await client.GetFromJsonAsync<WorkSessionClosurePage>(
+            $"/api/commerce/v1/work-sessions/closures?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        var listed = Assert.Single(page!.Items,
+            item => item.WorkSessionClosureId == closure.WorkSessionClosureId);
+        Assert.DoesNotContain(listed.PaymentTotals,
+            item => item.PaymentMethodCode == "BankTransfer");
+        var canonical = Assert.Single(listed.PaymentTotals,
+            item => item.PaymentMethodCode == "Transfer");
+        Assert.Equal(12345.67m, canonical.NetAmount);
+        Assert.Equal(12345.67m, canonical.CountedAmount);
+        Assert.Equal(0m, canonical.Difference);
     }
 
     [Fact]

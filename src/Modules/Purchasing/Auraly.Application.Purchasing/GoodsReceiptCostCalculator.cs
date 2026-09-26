@@ -115,13 +115,13 @@ public static class GoodsReceiptCostCalculator
             return [];
         }
         if (line.AllocationMethod == PurchaseCostAllocationMethods.None)
-            throw new PurchasingValidationException("A capitalized cost requires an allocation method.");
+            throw new PurchasingValidationException("Un costo capitalizable requiere un método de distribución.");
 
         var eligibleNumbers = line.EligibleReceiptLineNumbers is { Count: > 0 }
             ? line.EligibleReceiptLineNumbers.Distinct().Order().ToArray()
             : merchandise.Select(value => value.LineNumber).Order().ToArray();
         if (eligibleNumbers.Length == 0 || eligibleNumbers.Any(number => !requests.ContainsKey(number)))
-            throw new PurchasingValidationException("A cost allocation references an invalid receipt line.");
+            throw new PurchasingValidationException("La distribución del costo contiene una línea de recepción inválida.");
 
         if (line.AllocationMethod == PurchaseCostAllocationMethods.Manual)
         {
@@ -130,7 +130,7 @@ public static class GoodsReceiptCostCalculator
                 !manual.Select(value => value.ReceiptLineNumber).SequenceEqual(eligibleNumbers) ||
                 manual.Any(value => value.FunctionalAmount < 0) ||
                 Money(manual.Sum(value => value.FunctionalAmount)) != amount)
-                throw new PurchasingValidationException("Manual allocations must cover eligible lines and equal the capitalized functional amount.");
+                throw new PurchasingValidationException("La distribución manual debe cubrir las líneas elegibles y sumar el valor capitalizable en COP.");
             return manual.Select(value => new GoodsReceiptCostAllocationSnapshot(
                 line.LineNumber, value.ReceiptLineNumber,
                 amount == 0 ? 0 : value.FunctionalAmount / amount,
@@ -148,12 +148,12 @@ public static class GoodsReceiptCostCalculator
                 PurchaseCostAllocationMethods.Weight => request.TotalGrossWeightKg ?? 0,
                 PurchaseCostAllocationMethods.Volume => request.TotalVolumeM3 ?? 0,
                 PurchaseCostAllocationMethods.Equal => 1m,
-                _ => throw new PurchasingValidationException("The cost allocation method is invalid.")
+                _ => throw new PurchasingValidationException("El método de distribución del costo es inválido.")
             };
         }).ToArray();
         if (weights.Any(value => value <= 0))
             throw new PurchasingValidationException(
-                $"Allocation by {line.AllocationMethod} requires a positive value on every eligible receipt line.");
+                "La distribución requiere un valor positivo en cada línea elegible.");
         var totalWeight = weights.Sum();
         var raw = weights.Select(value => amount * value / totalWeight).ToArray();
         var rounded = raw.Select(Money).ToArray();
@@ -173,22 +173,25 @@ public static class GoodsReceiptCostCalculator
     private static void ValidateDocument(GoodsReceiptCostDocumentRequest document)
     {
         if (document.CostDocumentId == Guid.Empty || document.SupplierId == Guid.Empty)
-            throw new PurchasingValidationException("Every additional cost document requires an id and supplier.");
+            throw new PurchasingValidationException("Cada documento de costo adicional requiere proveedor e identificador.");
         if (!PurchaseEvidenceTypes.IsValid(document.PurchaseEvidenceType))
-            throw new PurchasingValidationException("The additional document evidence type is invalid.");
-        if (string.IsNullOrWhiteSpace(document.DocumentNumber) || document.DocumentNumber.Trim().Length > 80)
-            throw new PurchasingValidationException("Every additional cost document requires a number of at most 80 characters.");
+            throw new PurchasingValidationException("El tipo de soporte del documento adicional es inválido.");
+        if (document.DocumentNumber?.Trim().Length > 80 ||
+            (document.PurchaseEvidenceType != PurchaseEvidenceTypes.BuyerElectronicSupportDocument &&
+             string.IsNullOrWhiteSpace(document.DocumentNumber)))
+            throw new PurchasingValidationException(
+                "Cada documento adicional requiere un número de hasta 80 caracteres; el documento soporte lo numera Auraly.");
         if (document.IssuedAt == default || document.Lines is null || document.Lines.Count == 0)
-            throw new PurchasingValidationException("Every additional cost document requires an issue date and lines.");
+            throw new PurchasingValidationException("Cada documento adicional requiere fecha de emisión y conceptos.");
         if (!document.CreatesPayable)
             throw new PurchasingValidationException(
-                "Additional supplier documents must create a payable until a cash-settlement source is available.");
+                "El documento adicional debe generar una cuenta por pagar; el pago de contado se registra por separado.");
         if (document.CreatesPayable && document.DueDate is null)
-            throw new PurchasingValidationException("A payable additional document requires a due date.");
+            throw new PurchasingValidationException("El documento adicional requiere fecha de vencimiento.");
         if (document.DueDate < document.IssuedAt)
-            throw new PurchasingValidationException("An additional document due date cannot precede its issue date.");
+            throw new PurchasingValidationException("El vencimiento del documento adicional no puede ser anterior a su emisión.");
         if (document.Lines.Select(line => line.LineNumber).Distinct().Count() != document.Lines.Count)
-            throw new PurchasingValidationException("Additional document line numbers must be unique.");
+            throw new PurchasingValidationException("Los números de concepto del documento adicional deben ser únicos.");
     }
 
     private static void ValidateCostLine(
@@ -199,27 +202,31 @@ public static class GoodsReceiptCostCalculator
             !PurchaseCostAllocationMethods.IsValid(line.AllocationMethod) ||
             line.TaxTreatment is not (PurchasingTaxTreatments.DeductibleInputVat or
                 PurchasingTaxTreatments.CapitalizedCost or PurchasingTaxTreatments.NotApplicable))
-            throw new PurchasingValidationException("An additional cost line has an invalid type, treatment or allocation method.");
+            throw new PurchasingValidationException("Un concepto adicional tiene tipo, tratamiento o distribución inválidos.");
         if (string.IsNullOrWhiteSpace(line.Description) || line.Description.Trim().Length > 250 ||
             line.Amount < 0 || line.TaxableBaseAmount < 0 || line.TaxAmount < 0 ||
             line.TaxRate is < 0 or > 100 || string.IsNullOrWhiteSpace(line.TaxCode))
-            throw new PurchasingValidationException("An additional cost line contains invalid amounts or description.");
+            throw new PurchasingValidationException("Un concepto adicional tiene valores o descripción inválidos.");
         if (line.TaxRate == 0 && line.TaxAmount != 0)
-            throw new PurchasingValidationException("A zero-rate additional cost line cannot contain tax.");
+            throw new PurchasingValidationException("Un concepto con tarifa cero no puede incluir impuesto.");
         if (line.TaxRate > 0 && line.TaxTreatment == PurchasingTaxTreatments.NotApplicable)
-            throw new PurchasingValidationException("A taxed additional cost line must declare its tax treatment.");
+            throw new PurchasingValidationException("Un concepto gravado requiere tratamiento del IVA.");
         if (line.TaxRate == 0 && line.TaxTreatment != PurchasingTaxTreatments.NotApplicable)
-            throw new PurchasingValidationException("A zero-rate additional cost line must use NotApplicable.");
+            throw new PurchasingValidationException("Un concepto con tarifa cero debe marcar el IVA como no aplicable.");
         if (document.PurchaseEvidenceType != PurchaseEvidenceTypes.ImportDeclaration &&
             Money(line.TaxableBaseAmount * line.TaxRate / 100m) != Money(line.TaxAmount))
-            throw new PurchasingValidationException("The additional document tax does not reconcile with its base and rate.");
+            throw new PurchasingValidationException("El IVA del documento adicional no coincide con su base y tarifa.");
         if (document.PurchaseEvidenceType == PurchaseEvidenceTypes.ForeignCommercialInvoice &&
             line.TaxAmount > 0)
             throw new PurchasingValidationException(
-                "A foreign commercial invoice cannot recognize Colombian input VAT; use an import declaration.");
+                "Una factura del exterior no puede registrar IVA colombiano descontable; usa la declaración de importación.");
+        if (document.PurchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher &&
+            line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat)
+            throw new PurchasingValidationException(
+                "Un comprobante interno de costo adicional no puede registrar IVA descontable; inclúyelo en el costo.");
         if (line.CostTreatment == PurchaseCostTreatments.Expense &&
             line.AllocationMethod != PurchaseCostAllocationMethods.None)
-            throw new PurchasingValidationException("An expensed cost line must not allocate inventory cost.");
+            throw new PurchasingValidationException("Un costo llevado al gasto no puede distribuirse al inventario.");
     }
 
     private static (decimal Rate, DateOnly Date, string Source) ValidateExchange(
@@ -227,11 +234,11 @@ public static class GoodsReceiptCostCalculator
     {
         var normalized = currency?.Trim().ToUpperInvariant() ?? string.Empty;
         if (normalized.Length != 3 || rate <= 0)
-            throw new PurchasingValidationException("Currency and a positive exchange rate are required.");
+            throw new PurchasingValidationException("Se requiere moneda y una tasa de cambio positiva.");
         if (normalized == "COP" && rate != 1)
-            throw new PurchasingValidationException("COP documents must use exchange rate 1.");
+            throw new PurchasingValidationException("Los documentos en COP deben usar tasa de cambio 1.");
         if (normalized != "COP" && (date is null || string.IsNullOrWhiteSpace(source)))
-            throw new PurchasingValidationException("Foreign-currency documents require exchange-rate date and source.");
+            throw new PurchasingValidationException("Los documentos en moneda extranjera requieren fecha y fuente de la tasa de cambio.");
         return (decimal.Round(rate, 8, MidpointRounding.AwayFromZero),
             date ?? DateOnly.FromDateTime(occurredAt.Date),
             string.IsNullOrWhiteSpace(source) ? "FunctionalCurrency" : source.Trim());
