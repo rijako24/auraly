@@ -348,18 +348,34 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 ProcessedAt = @ProcessedAt
             WHERE DocumentId = @DocumentId
               AND BusinessId = @BusinessId
-              AND ((DocumentType = 'SalesInvoice' AND FiscalStatus = 'FiscalVerified')
+              AND ((DocumentType = 'SalesInvoice' AND FiscalStatus IN ('FiscalVerified','DianAccepted'))
                    OR (DocumentType = 'SalesReceipt' AND FiscalStatus IS NULL))
               AND ProcessingStatus IN ('Received', 'Failed');
+            IF @@ROWCOUNT<>1
+                THROW 51022,N'La venta no pudo marcarse como procesada.',1;
+
+            UPDATE draft
+            SET Status=N'Consumed',ConsumedAt=@ProcessedAt,
+                DeletedAt=NULL,UpdatedAt=@ProcessedAt
+            FROM dbo.SalesDrafts draft
+            JOIN dbo.OnlineSalesCheckoutReceipts receipt
+              ON receipt.SalesDraftId=draft.SalesDraftId
+             AND receipt.BusinessId=draft.BusinessId
+            WHERE receipt.DocumentId=@DocumentId
+              AND receipt.BusinessId=@BusinessId
+              AND receipt.Status=N'FiscalConflict'
+              AND draft.Status=N'Deleted';
+
+            UPDATE dbo.OnlineSalesCheckoutReceipts
+            SET Status=N'Completed',CompletedAt=@ProcessedAt
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
+              AND Status=N'FiscalConflict';
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@ProcessedAt", _timeProvider.GetUtcNow());
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-        {
-            throw new DBConcurrencyException("The sale document could not be marked as processed.");
-        }
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static void AddDecimal(

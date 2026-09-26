@@ -503,6 +503,252 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Accepted_online_invoice_without_economic_work_is_recovered_once_without_resending()
+    {
+        fixture.DrainDocumentSignals();
+        var request = fixture.CreateValidRequest(7_126) with
+        {
+            DeviceId = Guid.Empty,
+            SourceMode = SaleSourceModes.Online
+        };
+        await SeedAcceptedBlockedOnlineAsync(request);
+        var previousDraftId = Guid.NewGuid();
+        await SeedConflictedDraftReceiptAsync(request, previousDraftId);
+
+        using (var denied = fixture.CreateAdminClient())
+        using (var forbidden = await denied.PostAsync(
+                   $"/api/commerce/v1/fiscal/documents/{request.DocumentId}/recover-accepted-sale", null))
+            Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+        Assert.Equal(0, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
+
+        using var client = fixture.CreateAdminClient(FiscalPermissionCodes.Retry);
+        using (var response = await client.PostAsync(
+                   $"/api/commerce/v1/fiscal/documents/{request.DocumentId}/recover-accepted-sale", null))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var accepted = await response.Content.ReadFromJsonAsync<AcceptedSaleRecoveryResult>();
+            Assert.NotNull(accepted);
+            Assert.True(accepted.Enqueued);
+            Assert.Equal(request.DocumentId, accepted.DocumentId);
+        }
+
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var job = new SqlCommand("""
+                SELECT Status,LastError FROM dbo.DocumentProcessingJobs
+                WHERE DocumentId=@DocumentId;
+                """, connection);
+            job.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            await using var reader = await job.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.True(reader.GetString(0) == "Completed",
+                reader.IsDBNull(1) ? reader.GetString(0) : reader.GetString(1));
+        }
+        Assert.Equal(1, await fixture.CountAsync("SalesDocumentLines", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("SalesPayments", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("InventoryMovements", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("FiscalTransmissionAttempts", request.DocumentId));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var financial = new SqlCommand("""
+                SELECT
+                  (SELECT COUNT(*) FROM dbo.AccountingSourceDocuments
+                   WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=N'SalesInvoice'),
+                  (SELECT COUNT(*) FROM dbo.AccountingPostingJobs
+                   WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=N'SalesInvoice');
+                """, connection);
+            financial.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            await using var reader = await financial.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1, reader.GetInt32(0));
+            Assert.Equal(1, reader.GetInt32(1));
+        }
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var receipt = new SqlCommand("""
+                SELECT draft.Status,receipt.Status
+                FROM dbo.OnlineSalesCheckoutReceipts receipt
+                JOIN dbo.SalesDrafts draft ON draft.SalesDraftId=receipt.SalesDraftId
+                WHERE receipt.DocumentId=@DocumentId;
+                """, connection);
+            receipt.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            await using var reader = await receipt.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("Consumed", reader.GetString(0));
+            Assert.Equal("Completed", reader.GetString(1));
+        }
+        var signal = Assert.Single(fixture.DrainDocumentSignals());
+        Assert.Equal(request.DocumentId, signal.DocumentId);
+
+        using (var replay = await client.PostAsync(
+                   $"/api/commerce/v1/fiscal/documents/{request.DocumentId}/recover-accepted-sale", null))
+        {
+            Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+            var accepted = await replay.Content.ReadFromJsonAsync<AcceptedSaleRecoveryResult>();
+            Assert.NotNull(accepted);
+            Assert.False(accepted.Enqueued);
+            Assert.Equal("Completed", accepted.ProcessingStatus);
+        }
+        Assert.Empty(fixture.DrainDocumentSignals());
+        Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("SalesDocumentLines", request.DocumentId));
+        Assert.Equal(1, await fixture.CountAsync("FiscalTransmissionAttempts", request.DocumentId));
+    }
+
+    [Fact]
+    public async Task Accepted_duplicate_cannot_queue_a_second_sale_for_the_same_order()
+    {
+        fixture.DrainDocumentSignals();
+        var orderId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = new SqlCommand("""
+                INSERT dbo.Orders(
+                  OrderId,BusinessId,OrdersWarehouseId,Status,CustomerConfirmed,
+                  Subtotal,Total,CreatedAt)
+                VALUES(@OrderId,@BusinessId,@WarehouseId,2,1,10000,11900,SYSUTCDATETIME());
+                """, connection);
+            seed.Parameters.AddWithValue("@OrderId", orderId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            Assert.Equal(1, await seed.ExecuteNonQueryAsync());
+        }
+
+        var first = fixture.CreateValidRequest(7_127) with
+        {
+            DeviceId = Guid.Empty,
+            SourceMode = SaleSourceModes.Online,
+            SourceOrderId = orderId
+        };
+        var duplicate = fixture.CreateValidRequest(7_128) with
+        {
+            DeviceId = Guid.Empty,
+            SourceMode = SaleSourceModes.Online,
+            SourceOrderId = orderId
+        };
+        await SeedAcceptedBlockedOnlineAsync(first);
+        await SeedAcceptedBlockedOnlineAsync(duplicate);
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            using var client = fixture.CreateAdminClient(FiscalPermissionCodes.Retry);
+            using (var accepted = await client.PostAsync(
+                       $"/api/commerce/v1/fiscal/documents/{first.DocumentId}/recover-accepted-sale", null))
+                Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+            using (var replay = await client.PostAsync(
+                       $"/api/commerce/v1/fiscal/documents/{first.DocumentId}/recover-accepted-sale", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+                var state = await replay.Content.ReadFromJsonAsync<AcceptedSaleRecoveryResult>();
+                Assert.NotNull(state);
+                Assert.False(state.Enqueued);
+                Assert.Equal("Received", state.ProcessingStatus);
+            }
+            using (var conflict = await client.PostAsync(
+                       $"/api/commerce/v1/fiscal/documents/{duplicate.DocumentId}/recover-accepted-sale", null))
+                Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+
+            Assert.Equal(1, await fixture.CountAsync("DocumentProcessingJobs", first.DocumentId));
+            Assert.Equal(0, await fixture.CountAsync("DocumentProcessingJobs", duplicate.DocumentId));
+            Assert.Equal(0, await fixture.CountAsync("SalesDocumentLines", duplicate.DocumentId));
+            Assert.Equal(1, await fixture.CountAsync("FiscalTransmissionAttempts", duplicate.DocumentId));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in fixture.DrainDocumentSignals())
+                await fixture.DocumentSignals.PublishAsync(signal);
+            fixture.DrainDocumentSignals();
+        }
+    }
+
+    private async Task SeedAcceptedBlockedOnlineAsync(PosSaleUploadRequest request)
+    {
+        using (var scope = fixture.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<IPosSaleServerStore>();
+            var verifier = scope.ServiceProvider.GetRequiredService<IFiscalSnapshotVerifier>();
+            var verified = await verifier.VerifyAsync(request, CancellationToken.None);
+            Assert.True(verified.IsVerified, verified.ConflictReason);
+            var received = await store.StoreReceptionAsync(
+                new StorePosSaleReceptionCommand(
+                    request, $"online:{request.DocumentId:N}",
+                    PosSaleContractSerializer.Serialize(request),
+                    PosSaleContractSerializer.Hash(request),
+                    verified with { IsVerified = false, ConflictReason = "Defecto histórico simulado" },
+                    DateTimeOffset.UtcNow), CancellationToken.None);
+            Assert.Equal("Blocked", received.ProcessingStatus);
+        }
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var accepted = new SqlCommand("""
+            UPDATE dbo.FiscalSnapshots
+            SET IntegrityStatus=N'FiscalVerified',VerifiedAt=SYSDATETIMEOFFSET(),ConflictReason=NULL
+            WHERE DocumentId=@DocumentId;
+            UPDATE dbo.SalesDocuments SET FiscalStatus=N'DianAccepted'
+            WHERE DocumentId=@DocumentId;
+            UPDATE dbo.FiscalDocuments SET FiscalStatus=N'DianAccepted'
+            WHERE DocumentId=@DocumentId;
+            UPDATE dbo.FiscalDocumentProcesses
+            SET Status=N'DianAccepted',TrackId=@TrackId
+            WHERE DocumentId=@DocumentId;
+            INSERT dbo.FiscalTransmissionAttempts(
+              FiscalTransmissionAttemptId,DocumentId,AttemptNumber,Operation,
+              CorrelationId,TrackId,StartedAt,CompletedAt,Disposition,
+              StatusCode,MayHaveReachedDian)
+            VALUES(NEWID(),@DocumentId,1,N'SendBillSync',@CorrelationId,@TrackId,
+              SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Accepted',N'00',1);
+            """, connection);
+        accepted.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        accepted.Parameters.AddWithValue("@TrackId", request.FiscalSnapshot!.Cufe);
+        accepted.Parameters.AddWithValue("@CorrelationId", $"test-{request.DocumentId:N}");
+        Assert.Equal(5, await accepted.ExecuteNonQueryAsync());
+    }
+
+    private async Task SeedConflictedDraftReceiptAsync(
+        PosSaleUploadRequest request, Guid previousDraftId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var seed = new SqlCommand("""
+            INSERT dbo.SalesDrafts(
+              SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,
+              Status,CreatedAt,UpdatedAt,DeletedAt)
+            VALUES(@PreviousDraftId,@BusinessId,@WarehouseId,@WorkSessionId,@UserId,
+              N'Deleted',SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+            INSERT dbo.SalesDrafts(
+              SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,
+              Status,CreatedAt,UpdatedAt)
+            VALUES(@NextDraftId,@BusinessId,@WarehouseId,@WorkSessionId,@UserId,
+              N'Temporary',SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+            INSERT dbo.OnlineSalesCheckoutReceipts(
+              OnlineSalesCheckoutReceiptId,BusinessId,SalesDraftId,NextSalesDraftId,
+              IdempotencyKey,RequestHash,DocumentId,PayloadJson,Status,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@PreviousDraftId,@NextDraftId,
+              @Key,@Hash,@DocumentId,@Payload,N'FiscalConflict',SYSDATETIMEOFFSET());
+            """, connection);
+        seed.Parameters.AddWithValue("@PreviousDraftId", previousDraftId);
+        seed.Parameters.AddWithValue("@NextDraftId", Guid.NewGuid());
+        seed.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        seed.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        seed.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
+        seed.Parameters.AddWithValue("@UserId", request.SoldByUserId);
+        seed.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        seed.Parameters.AddWithValue("@Key", $"checkout:{request.DocumentId:N}");
+        seed.Parameters.AddWithValue("@Hash",
+            Convert.ToHexString(PosSaleContractSerializer.Hash(request)));
+        seed.Parameters.AddWithValue("@Payload", PosSaleContractSerializer.Serialize(request));
+        Assert.Equal(3, await seed.ExecuteNonQueryAsync());
+    }
+
+    [Fact]
     public async Task Fiscal_verifier_accepts_a_frozen_line_when_document_totals_are_consistent()
     {
         var request = fixture.CreateValidRequest(7_124);

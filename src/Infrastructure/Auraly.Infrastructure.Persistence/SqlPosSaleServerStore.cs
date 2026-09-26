@@ -7,7 +7,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlPosSaleServerStore(
+public sealed partial class SqlPosSaleServerStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator idGenerator)
     : IPosSaleServerStore

@@ -10,9 +10,19 @@ public sealed record FiscalUserIdentity(
 public sealed class FiscalForbiddenException(string message) : Exception(message);
 public sealed class FiscalOperationException(string message) : Exception(message);
 
-public interface IFiscalIntegrityConflictRecovery
+public sealed record AcceptedSaleRecoveryResult(
+    Guid DocumentId,
+    string ProcessingStatus,
+    bool Enqueued);
+
+public interface IFiscalSaleRecovery
 {
     Task<bool> RecoverAsync(
+        Guid businessId,
+        Guid documentId,
+        CancellationToken cancellationToken);
+
+    Task<AcceptedSaleRecoveryResult?> RecoverAcceptedSaleAsync(
         Guid businessId,
         Guid documentId,
         CancellationToken cancellationToken);
@@ -29,7 +39,7 @@ public sealed class FiscalDocumentService(
     IFiscalDocumentStore store,
     TimeProvider timeProvider,
     FiscalProcessingCoordinator processing,
-    IFiscalIntegrityConflictRecovery integrityConflictRecovery)
+    IFiscalSaleRecovery saleRecovery)
 {
     public Task<FiscalDocumentView?> GetAsync(
         FiscalUserIdentity user,
@@ -63,7 +73,7 @@ public sealed class FiscalDocumentService(
         if (current is null) return null;
         if (current.Status == FiscalDocumentStatusCodes.FiscalIntegrityConflict)
         {
-            if (!await integrityConflictRecovery.RecoverAsync(
+            if (!await saleRecovery.RecoverAsync(
                     user.BusinessId, documentId, cancellationToken))
                 throw new FiscalOperationException(
                     "The fiscal integrity conflict could not be recovered from its immutable snapshot.");
@@ -91,6 +101,16 @@ public sealed class FiscalDocumentService(
                 cancellationToken: CancellationToken.None);
 
         return document;
+    }
+
+    public Task<AcceptedSaleRecoveryResult?> RecoverAcceptedSaleAsync(
+        FiscalUserIdentity user,
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.Retry);
+        return saleRecovery.RecoverAcceptedSaleAsync(
+            user.BusinessId, documentId, cancellationToken);
     }
 
     private static void Demand(FiscalUserIdentity user, string permission)
