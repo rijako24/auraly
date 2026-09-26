@@ -13,6 +13,12 @@ public sealed class SqlFiscalSubmissionWorkStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids) : IFiscalSubmissionWorkStore
 {
+    private const string SourceSendReadyPredicate = """
+        (fiscal.SourceDocumentType<>N'SalesInvoice'
+         OR sale.ProcessingStatus=N'Completed'
+         OR p.TrackId IS NOT NULL)
+        """;
+
     public async Task<FiscalSubmissionWorkItem?> AcquireAsync(
         Guid businessId,
         Guid documentId,
@@ -21,13 +27,18 @@ public sealed class SqlFiscalSubmissionWorkStore(
         TimeSpan lease,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $"""
             DECLARE @Document TABLE(DocumentId uniqueidentifier NOT NULL);
             ;WITH candidate AS
             (
                 SELECT p.DocumentId
                 FROM dbo.FiscalDocumentProcesses p WITH (UPDLOCK, READPAST, ROWLOCK)
+                JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=p.DocumentId
+                  AND fiscal.BusinessId=p.BusinessId
+                LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=p.DocumentId
+                  AND sale.BusinessId=p.BusinessId
                 WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId
+                  AND {SourceSendReadyPredicate}
                   AND
                   (
                     p.Status=@PendingSubmission OR
@@ -114,10 +125,15 @@ public sealed class SqlFiscalSubmissionWorkStore(
         TimeSpan lease,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $"""
             SELECT p.Status,p.TrackId,p.NextAttemptAt,p.LockedAt
             FROM dbo.FiscalDocumentProcesses p
-            WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId;
+            JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=p.DocumentId
+              AND fiscal.BusinessId=p.BusinessId
+            LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=p.DocumentId
+              AND sale.BusinessId=p.BusinessId
+            WHERE p.DocumentId=@DocumentId AND p.BusinessId=@BusinessId
+              AND {SourceSendReadyPredicate};
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);

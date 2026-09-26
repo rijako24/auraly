@@ -65,6 +65,94 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Signed_invoice_is_not_sent_while_its_operational_sale_is_blocked()
+    {
+        var request = WithUblSnapshot(fixture.CreateValidRequest(8902));
+        using var client = fixture.CreateClient();
+        using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var connections = new SqlServerConnectionFactory(
+            new AuralySqlConnectionSource(fixture.ConnectionString));
+        var ids = new TestIds();
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+        Assert.True(await CreateWorker(
+            new SqlFiscalGenerationWorkStore(connections, ids),
+            new FixedTimeProvider(now)).ProcessAsync(
+                fixture.BusinessId, request.DocumentId, "signed-invoice"));
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using (var block = new SqlCommand("""
+            UPDATE dbo.SalesDocuments SET ProcessingStatus=N'Blocked'
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+            """, connection))
+        {
+            block.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            block.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(1, await block.ExecuteNonQueryAsync());
+        }
+
+        var submission = new SqlFiscalSubmissionWorkStore(connections, ids);
+        Assert.Null(await submission.AcquireAsync(fixture.BusinessId, request.DocumentId,
+            "blocked-invoice", now.AddSeconds(1), TimeSpan.FromMinutes(2), default));
+        Assert.Null(await submission.GetResumeAtAsync(fixture.BusinessId, request.DocumentId,
+            now.AddSeconds(1), TimeSpan.FromMinutes(2), default));
+        Assert.Equal(0, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId",
+            request.DocumentId));
+
+        await using (var complete = new SqlCommand("""
+            UPDATE dbo.SalesDocuments SET ProcessingStatus=N'Completed'
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+            """, connection))
+        {
+            complete.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            complete.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(1, await complete.ExecuteNonQueryAsync());
+        }
+        Assert.NotNull(await submission.AcquireAsync(fixture.BusinessId, request.DocumentId,
+            "completed-invoice", now.AddSeconds(2), TimeSpan.FromMinutes(2), default));
+    }
+
+    [Fact]
+    public async Task Sent_invoice_can_still_query_its_DIAN_result_if_operational_state_changes()
+    {
+        var request = WithUblSnapshot(fixture.CreateValidRequest(8903));
+        using var client = fixture.CreateClient();
+        using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var connections = new SqlServerConnectionFactory(
+            new AuralySqlConnectionSource(fixture.ConnectionString));
+        var ids = new TestIds();
+        var now = DateTimeOffset.UtcNow.AddMinutes(5);
+        Assert.True(await CreateWorker(
+            new SqlFiscalGenerationWorkStore(connections, ids),
+            new FixedTimeProvider(now)).ProcessAsync(
+                fixture.BusinessId, request.DocumentId, "query-invoice"));
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                UPDATE dbo.SalesDocuments SET ProcessingStatus=N'Blocked'
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+                UPDATE dbo.FiscalDocumentProcesses
+                SET Status=N'PendingDianResult',TrackId=N'prior-send-track'
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+                """, connection);
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        }
+
+        var submission = new SqlFiscalSubmissionWorkStore(connections, ids);
+        Assert.NotNull(await submission.AcquireAsync(fixture.BusinessId, request.DocumentId,
+            "status-query", now.AddSeconds(1), TimeSpan.FromMinutes(2), default));
+    }
+
+    [Fact]
     public async Task Snapshot_is_leased_once_and_persisted_without_reading_changed_master_values()
     {
         var request = WithUblSnapshot(fixture.CreateValidRequest(901));

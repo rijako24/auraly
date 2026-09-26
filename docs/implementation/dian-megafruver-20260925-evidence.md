@@ -25,6 +25,32 @@ Se cruzaron además todas las líneas completadas de productos que manejan inven
 | `VTA00-00042696` / `FVL143` | `DianAccepted` | `Blocked`; sin trabajo operativo, líneas, pagos ni cartera, y sin recibo de checkout. Su snapshot corresponde al pedido `4caf6581-6dff-2ae8-e29f-993140557799`. | Conciliar como la primera de dos facturas aceptadas para el mismo pedido antes de decidir cuál documento conservar operativamente. |
 | `VTA00-00042707` / `FVL154` | `DianAccepted` | `Blocked`; sin trabajo operativo, líneas, pagos ni cartera. Corresponde al mismo pedido y cliente de `FVL143`, con el mismo importe de $245.515,67 y el mismo hash SHA-256 de sus 12 líneas. | Es un duplicado fiscal confirmado por los datos persistidos. No procesar ambas; definir la corrección fiscal de la factura duplicada y la conciliación comercial de la otra. |
 
+### Verificación de los tres envíos aceptados — 26 de septiembre
+
+Una nueva consulta de solo lectura a producción confirmó que los tres documentos
+permanecen `Blocked`, sin trabajo en `DocumentProcessingJobs` ni vínculo en
+`OrderInvoiceLinks`. Los tres `FiscalSnapshots` cambiaron a `FiscalVerified`
+el 18 de septiembre aproximadamente a las 18:21, hora de Colombia, **después**
+de haberse recibido como conflictos. El proceso fiscal se transmitió después,
+sin que el estado operativo cambiara a `Completed`:
+
+| Factura | Origen del checkout | Primer `SendBillSync` (hora de Colombia) | DIAN |
+| --- | --- | --- | --- |
+| `FVL143` | Pedido `4caf6581-6dff-2ae8-e29f-993140557799`, sin recibo histórico de checkout | 18:22:07 | `00`, aceptada |
+| `FVL154` | Mismo pedido, recibo `FiscalConflict`, lote `Failed` | 18:22:09 | `00`, aceptada |
+| `FVL112` | Borrador de venta originado en pedido `f659e5df-9a73-e6f0-f374-84e057087589`, recibo `FiscalConflict` | 18:36:58 | `00`, aceptada |
+
+La causa inmediata de este incidente fue transmitir facturas aceptadas por el
+motor fiscal sin comprobar antes que su venta se hubiera procesado. El cambio
+de verificación del snapshot, por sí solo, no creó líneas, pagos, cartera,
+inventario ni asientos. La generación fiscal nueva ya exige
+`SalesDocuments.ProcessingStatus=Completed`; la adquisición de transmisión
+debe imponer el mismo requisito sobre XML firmados previamente. Para corregir
+los registros históricos hay que procesar operativamente `FVL112` y una sola
+factura del pedido duplicado, y emitir una nota crédito referenciada por la
+otra. No se puede repetir `SendBillSync` ni fabricar una devolución de
+mercancía para cancelar la duplicación fiscal.
+
 El cierre del 25 de septiembre sumó $11.257.100 en ventas y el reporte de ventas procesadas sumó $6.295.800. La diferencia de $4.961.300 coincide exactamente con `VTA00-00043286`: el cierre incluía esa factura recibida mientras el reporte, inventario y cartera todavía no la habían procesado. Se retiró la barrera añadida al cierre por indicación del usuario; la corrección se hace en el procesamiento canónico de la venta, y las búsquedas de productos y códigos de barras conservan el filtro de productos activos.
 
 Los snapshots de `FVL143` y `FVL154` tienen el mismo `sourceOrderId`, `customerId`, valor y hash de líneas. Por tanto, las tres facturas `Blocked` representan como máximo dos ventas comerciales distintas; su aceptación DIAN no acredita que el procesamiento económico haya ocurrido. Ninguna se recuperó directamente en SQL.
