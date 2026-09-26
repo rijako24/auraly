@@ -11,6 +11,7 @@ using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
+using Auraly.Fiscal.Core;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
@@ -383,10 +384,31 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             customerId = selected.GetGuid(0);
             siteId = selected.GetGuid(1);
         }
-        var original = WithUblSnapshot(fixture.CreateValidRequest(903) with
+        var source = fixture.CreateValidRequest(903);
+        var fiscal = source.FiscalSnapshot!;
+        const decimal rounding = .4m;
+        var payable = fiscal.PayableAmount + rounding;
+        var cufe = CufeCalculator.Calculate(new CufeInput(
+            fiscal.FiscalNumber, fiscal.IssuedAt, fiscal.UntaxedAmount, payable,
+            ServerSliceFixture.SupplierTaxId, fiscal.CustomerIdentification,
+            new FiscalTechnicalKey(ServerSliceFixture.TechnicalKeyValue,
+                ServerSliceFixture.TechnicalKeyVersion), FiscalEnvironment.Test,
+            [new FiscalTaxAmount("01", fiscal.TaxAmount)]),
+            ServerSliceFixture.QrValidationUrl);
+        var original = WithUblSnapshot(source with
         {
             CustomerId = customerId,
-            CustomerPartySiteId = siteId
+            CustomerPartySiteId = siteId,
+            CommercialSnapshot = source.CommercialSnapshot with
+            {
+                PayableAmount = payable, PayableRoundingAmount = rounding
+            },
+            FiscalSnapshot = fiscal with
+            {
+                PayableAmount = payable, PayableRoundingAmount = rounding,
+                Cufe = cufe.Cufe, QrPayload = cufe.QrPayload
+            },
+            Payments = [new PosSalePaymentContract(1, "Cash", payable, null)]
         });
         using var pos = fixture.CreateClient();
         using (var upload = fixture.CreateUploadMessage(original))
@@ -414,6 +436,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             $"Expected Accepted but received {returnResponse.StatusCode}: {await returnResponse.Content.ReadAsStringAsync()}");
         var accepted = await returnResponse.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
         Assert.NotNull(accepted);
+        Assert.Equal(5_950.2m, accepted.TotalAmount);
 
         Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration,
             await ScalarStringAsync(
@@ -452,6 +475,12 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             element.Name.LocalName == "ProfileExecutionID").Value);
         Assert.Equal("91", xml.Descendants().Single(element =>
             element.Name.LocalName == "CreditNoteTypeCode").Value);
+        XNamespace cbc = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2";
+        XNamespace cac = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2";
+        var totals = xml.Root.Element(cac + "LegalMonetaryTotal")!;
+        Assert.Equal(5_950m, (decimal)totals.Element(cbc + "TaxInclusiveAmount")!);
+        Assert.Equal(.2m, (decimal)totals.Element(cbc + "PayableRoundingAmount")!);
+        Assert.Equal(5_950.2m, (decimal)totals.Element(cbc + "PayableAmount")!);
         Assert.Equal("1", xml.Descendants().Single(element =>
             element.Name.LocalName == "ResponseCode").Value);
         var creditReceipt = new DianInvoicePdfRenderer().ReadReceipt(

@@ -472,7 +472,8 @@ public sealed class FiscalGenerationWorker(
             IssuerParty(work.Issuer), Party(customer),
             new DianInvoiceReference(originalInvoiceNumber, originalInvoiceCufe,
                 originalInvoiceIssuedOn),
-            lines, taxes, untaxedAmount, untaxedAmount, totalAmount,
+            lines, taxes, untaxedAmount, untaxedAmount,
+            untaxedAmount + taxes.Sum(tax => tax.Amount),
             discountAmount, totalAmount, cude.QrPayload,
             PayableRoundingAmount: payableRoundingAmount);
         return new FiscalUblBuildResult(
