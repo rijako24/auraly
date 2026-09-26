@@ -44,6 +44,15 @@ public sealed record StoredFiscalIntegrityConflict(
     string IdempotencyKey,
     string SnapshotJson);
 
+public sealed record StoredAcceptedBlockedSale(
+    string IdempotencyKey,
+    string SnapshotJson);
+
+public sealed record AcceptedOnlineSaleRecovery(
+    Guid DocumentId,
+    string ProcessingStatus,
+    bool Enqueued);
+
 public interface IPosSaleServerStore
 {
     Task<PosSaleContextValidation> ValidateContextAsync(
@@ -67,6 +76,15 @@ public interface IPosSaleServerStore
     Task<StoredFiscalIntegrityConflict?> LoadFiscalIntegrityConflictAsync(
         Guid businessId,
         Guid documentId,
+        CancellationToken cancellationToken);
+
+    Task<StoredAcceptedBlockedSale?> LoadAcceptedBlockedSaleAsync(
+        Guid businessId,
+        Guid documentId,
+        CancellationToken cancellationToken);
+
+    Task<(StoredPosSale Sale, bool Enqueued)> RecoverAcceptedBlockedSaleAsync(
+        StorePosSaleReceptionCommand command,
         CancellationToken cancellationToken);
 }
 
@@ -183,6 +201,58 @@ public sealed class ReceivePosSaleService(
             lookupExisting: true,
             cancellationToken);
         return response.Status != PosSaleRemoteStatuses.FiscalIntegrityConflict;
+    }
+
+    public async Task<AcceptedOnlineSaleRecovery?> RecoverAcceptedBlockedOnlineSaleAsync(
+        Guid businessId,
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var blocked = await store.LoadAcceptedBlockedSaleAsync(
+            businessId, documentId, cancellationToken);
+        if (blocked is null) return null;
+
+        PosSaleUploadRequest request;
+        try
+        {
+            request = PosSaleContractSerializer.Deserialize(blocked.SnapshotJson);
+        }
+        catch (Exception exception) when (exception is ArgumentException or System.Text.Json.JsonException)
+        {
+            throw new PosSaleInvalidException(
+                $"El snapshot de la factura aceptada no se puede recuperar: {exception.Message}");
+        }
+
+        if (request.BusinessId != businessId || request.DocumentId != documentId ||
+            request.SourceMode != SaleSourceModes.Online ||
+            request.CommercialSnapshot.DocumentType != PosSaleDocumentTypes.Invoice ||
+            request.FiscalSnapshot is null)
+            throw new PosSaleInvalidException(
+                "La factura aceptada no corresponde a una venta electrónica en línea.");
+
+        var verification = await fiscalVerifier.VerifyAsync(request, cancellationToken);
+        if (!verification.IsVerified)
+            throw new PosSaleInvalidException(
+                $"El snapshot de la factura aceptada no supera la validación fiscal: {verification.ConflictReason}");
+
+        var recovered = await store.RecoverAcceptedBlockedSaleAsync(
+            new StorePosSaleReceptionCommand(
+                request, blocked.IdempotencyKey, blocked.SnapshotJson,
+                PosSaleContractSerializer.Hash(request), verification,
+                timeProvider.GetUtcNow()), cancellationToken);
+        if (recovered.Sale.ProcessingStatus == "Completed")
+            return new(documentId, recovered.Sale.ProcessingStatus, false);
+        if (recovered.Sale.MovementId is null)
+            throw new InvalidOperationException(
+                "La factura aceptada no tiene trabajo comercial para procesar.");
+
+        // The job is durable even when publishing the first signal fails. A replay
+        // may wake that same pending job without creating another commercial effect.
+        await signalPublisher.PublishAsync(
+            new DocumentProcessingSignal(recovered.Sale.MovementId.Value,
+                businessId, documentId, PosSaleDocumentTypes.Invoice,
+                EconomicEffectsEnabled: true), cancellationToken);
+        return new(documentId, recovered.Sale.ProcessingStatus, recovered.Enqueued);
     }
 
     private static bool RequiresDeviceContext(PosSaleUploadRequest request) =>
