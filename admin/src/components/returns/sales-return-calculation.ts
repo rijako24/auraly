@@ -41,3 +41,19 @@ export function calculateSalesReturnSelection(
 
   return { selectedLineNumbers, lineTotals, estimatedTotal, isValid };
 }
+
+export function estimateSalesReturnTotal(
+  originalUnrounded: number,
+  originalRounding: number,
+  unroundedOutstanding: number,
+  remainingRounding: number,
+  proposedUnrounded: number,
+): number {
+  if (originalUnrounded <= 0 || proposedUnrounded <= 0) return proposedUnrounded;
+  const cumulative = originalUnrounded - unroundedOutstanding + proposedUnrounded;
+  const proportional = originalRounding * cumulative / originalUnrounded;
+  const cumulativeRounding = Math.abs(proposedUnrounded - unroundedOutstanding) < 0.0001
+    ? originalRounding
+    : Math.sign(proportional) * Math.round(Math.abs(proportional) * 10000) / 10000;
+  return proposedUnrounded + cumulativeRounding - (originalRounding - remainingRounding);
+}

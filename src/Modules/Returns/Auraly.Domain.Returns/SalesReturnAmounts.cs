@@ -8,6 +8,26 @@ public sealed record SalesReturnAmounts(
 
 public static class SalesReturnAmountCalculator
 {
+    public static decimal AllocatePaymentRounding(
+        decimal originalUnrounded,
+        decimal originalRounding,
+        decimal alreadyReturnedUnrounded,
+        decimal alreadyReturnedRounding,
+        decimal returnUnrounded)
+    {
+        if (originalUnrounded <= 0 || returnUnrounded <= 0 ||
+            alreadyReturnedUnrounded < 0 ||
+            alreadyReturnedUnrounded + returnUnrounded > originalUnrounded)
+            throw new ArgumentOutOfRangeException(nameof(returnUnrounded));
+
+        var cumulativeUnrounded = alreadyReturnedUnrounded + returnUnrounded;
+        var cumulativeRounding = cumulativeUnrounded == originalUnrounded
+            ? originalRounding
+            : decimal.Round(originalRounding * cumulativeUnrounded / originalUnrounded,
+                4, MidpointRounding.AwayFromZero);
+        return cumulativeRounding - alreadyReturnedRounding;
+    }
+
     public static SalesReturnAmounts Calculate(
         decimal originalQuantity,
         decimal originalDiscount,

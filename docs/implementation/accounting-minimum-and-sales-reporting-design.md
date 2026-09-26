@@ -123,6 +123,13 @@ Reporting conserva ese total en `TotalAmount` y publica
 `RoundingAdjustmentAmount`; el subtotal exacto se reconstruye como `TotalAmount
 - RoundingAdjustmentAmount`.
 
+La devolución conserva las bases e impuestos de las líneas originales y asigna
+el ajuste al peso de la venta proporcionalmente al valor acumulado devuelto,
+con cuatro decimales. La última devolución toma el remanente exacto. Así, la
+suma de las devoluciones completa el total cobrado sin dejar saldo artificial;
+el asiento revierte `RoundingGain` o `RoundingLoss` por el ajuste asignado,
+además de revertir ingreso, IVA, costo e inventario según corresponda.
+
 ## Informes fiscales e información exógena
 
 No se agregó una quinta cola. El motor fiscal durable continúa siendo el único

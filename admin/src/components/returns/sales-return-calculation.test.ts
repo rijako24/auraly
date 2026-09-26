@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   calculateSalesReturnSelection,
+  estimateSalesReturnTotal,
   salesReturnPurchasedUnitPrice,
 } from "./sales-return-calculation";
 
@@ -40,4 +41,10 @@ test("ignora líneas sin cantidad y rechaza valores no numéricos", () => {
     estimatedTotal: 0,
     isValid: false,
   });
+});
+
+test("estima el cobro redondeado también en la última devolución parcial", () => {
+  assert.equal(estimateSalesReturnTotal(2770, 30, 2770, 30, 1246.5), 1260);
+  assert.equal(estimateSalesReturnTotal(2770, 30, 1523.5, 16.5, 1523.5), 1540);
+  assert.ok(Math.abs(estimateSalesReturnTotal(11940, -40, 10, -0.0335, 10) - 9.9665) < 1e-8);
 });

@@ -43,6 +43,10 @@ export interface ReturnableSale {
   totalAmount: number;
   returnedAmount: number;
   receivableOutstanding: number;
+  originalUnrounded: number;
+  originalRounding: number;
+  unroundedOutstanding: number;
+  remainingRounding: number;
   fiscalStatus: string;
   payments: Array<{
     paymentNumber: number;

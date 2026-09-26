@@ -121,6 +121,15 @@ public sealed class SqlSalesReturnStore(
                 charges.Sum(charge => charge.InvoicedTaxAmount);
             var total = lines.Sum(line => line.LineTotal);
             total += charges.Sum(charge => charge.InvoicedAmount);
+            if (untaxed + tax > original.UnroundedOutstanding)
+                throw new SalesReturnConflictException(
+                    "El valor seleccionado supera el saldo pendiente de la venta original.");
+            var returnedUnrounded = untaxed + tax;
+            total += SalesReturnAmountCalculator.AllocatePaymentRounding(
+                original.OriginalUnrounded, original.OriginalRounding,
+                original.OriginalUnrounded - original.UnroundedOutstanding,
+                original.OriginalRounding - original.RemainingRounding,
+                returnedUnrounded);
             if (total <= 0) throw new SalesReturnValidationException(
                 "The return must have a positive economic value.");
             if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
@@ -258,8 +267,19 @@ public sealed class SqlSalesReturnStore(
                    COALESCE((SELECT SUM(r.OutstandingAmount) FROM dbo.Receivables r
                      WHERE r.BusinessId=d.BusinessId AND r.SourceDocumentId=d.DocumentId
                        AND r.SourceDocumentType=d.DocumentType
-                       AND r.Status IN(N'Open',N'PartiallyPaid')),0)
+                       AND r.Status IN(N'Open',N'PartiallyPaid')),0),
+                   d.UntaxedAmount+d.TaxAmount,
+                   d.PayableAmount-d.UntaxedAmount-d.TaxAmount,
+                   d.UntaxedAmount+d.TaxAmount-COALESCE(prior.Unrounded,0),
+                   d.PayableAmount-d.UntaxedAmount-d.TaxAmount-
+                     COALESCE(prior.Rounding,0)
             FROM dbo.SalesDocuments d WITH (UPDLOCK,HOLDLOCK)
+            OUTER APPLY (
+              SELECT SUM(r.UntaxedAmount+r.TaxAmount) Unrounded,
+                     SUM(r.TotalAmount-r.UntaxedAmount-r.TaxAmount) Rounding
+              FROM dbo.SalesReturns r WITH(UPDLOCK,HOLDLOCK)
+              WHERE r.OriginalDocumentId=d.DocumentId
+            ) prior
             WHERE d.DocumentId=@OriginalDocumentId AND d.BusinessId=@BusinessId
               AND d.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
               AND d.ProcessingStatus=N'Completed';
@@ -276,7 +296,9 @@ public sealed class SqlSalesReturnStore(
                 throw new SalesReturnValidationException(
                     "The original completed invoice was not found in this business.");
             return new OriginalSale(
-                reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1), reader.GetDecimal(2));
+                reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1),
+                reader.GetDecimal(2), reader.GetDecimal(3), reader.GetDecimal(4),
+                reader.GetDecimal(5), reader.GetDecimal(6));
         }
         catch (SqlException exception) when (exception.Number is 51200 or 51201)
         {
@@ -376,7 +398,7 @@ public sealed class SqlSalesReturnStore(
         }
 
         await using var card = new SqlCommand("""
-            SELECT p.MethodCode,p.Amount-COALESCE(reversed.Amount,0),
+            SELECT p.MethodCode,p.Amount+p.RoundingAdjustment-COALESCE(reversed.Amount,0),
                    p.CardFranchiseCode,p.ApprovalNumber
             FROM dbo.SalesPayments p WITH(UPDLOCK,HOLDLOCK)
             OUTER APPLY
@@ -701,7 +723,9 @@ public sealed class SqlSalesReturnStore(
         parameter.Precision=precision; parameter.Scale=scale; parameter.Value=value;
     }
 
-    private sealed record OriginalSale(Guid? CustomerId,string CustomerIdentification,decimal ReceivableOutstanding);
+    private sealed record OriginalSale(Guid? CustomerId,string CustomerIdentification,
+        decimal ReceivableOutstanding,decimal OriginalUnrounded,decimal OriginalRounding,
+        decimal UnroundedOutstanding,decimal RemainingRounding);
     private sealed record RefundSettlementContext(
         int? OriginalPaymentNumber,
         Guid? BankAccountId,

@@ -27,6 +27,10 @@ Cuando el emisor aplica ajuste al peso, el snapshot comercial y el fiscal congel
 el mismo valor. El UBL publica `PayableRoundingAmount` y valida que el total a pagar
 sea total con impuestos más dicho ajuste; cero se omite. El motor nunca inventa un
 ajuste durante la generación ni modifica bases o impuestos para forzar el balance.
+La nota crédito de una devolución publica el ajuste al peso ya fijado por el
+documento comercial en `PayableRoundingAmount`; su total a pagar incluye ese
+ajuste y la suma de las notas de una devolución completa coincide con el total
+de la factura original. El motor fiscal no recalcula el ajuste.
 Los productores de importes monetarios por línea —POS, recuperación de pedidos y
 dominio de ventas— usan una sola regla canónica: dos decimales con
 `MidpointRounding.ToEven`, expuesta por `MonetaryRounding.RoundLineAmount`. El

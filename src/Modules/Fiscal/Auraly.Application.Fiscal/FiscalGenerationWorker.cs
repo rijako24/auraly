@@ -387,7 +387,8 @@ public sealed class FiscalGenerationWorker(
             snapshot.Return.ReasonDescription, snapshot.Return.UntaxedAmount,
             snapshot.Return.TotalAmount,
             snapshot.Return.Lines.Sum(line => line.DiscountAmount),
-            lines, cancellationToken);
+            lines, cancellationToken,
+            snapshot.Return.TotalAmount - snapshot.Return.UntaxedAmount - snapshot.Return.TaxAmount);
     }
 
     private Task<FiscalUblBuildResult> BuildFiscalOnlyCreditNoteAsync(
@@ -448,7 +449,8 @@ public sealed class FiscalGenerationWorker(
         decimal totalAmount,
         decimal discountAmount,
         IReadOnlyList<DianCreditNoteLine> lines,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        decimal payableRoundingAmount = 0m)
     {
         var pin = await pins.ResolveAsync(work.BusinessId,
             work.Issuer.SoftwarePinSecretReference, cancellationToken);
@@ -471,7 +473,8 @@ public sealed class FiscalGenerationWorker(
             new DianInvoiceReference(originalInvoiceNumber, originalInvoiceCufe,
                 originalInvoiceIssuedOn),
             lines, taxes, untaxedAmount, untaxedAmount, totalAmount,
-            discountAmount, totalAmount, cude.QrPayload);
+            discountAmount, totalAmount, cude.QrPayload,
+            PayableRoundingAmount: payableRoundingAmount);
         return new FiscalUblBuildResult(
             creditNoteBuilder.Build(note), cude.Cude, cude.QrPayload);
     }

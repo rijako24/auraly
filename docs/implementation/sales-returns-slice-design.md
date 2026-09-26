@@ -21,7 +21,7 @@ La rebanada pendiente debe conectar esa base con consultas y experiencia operati
 - consulta paginada e historial de devoluciones;
 - confirmación desde la vista web;
 - acceso desde facturación online reutilizando el mismo editor;
-- reembolso de efectivo limitado al valor originalmente pagado en efectivo; si el POS aporta una sesión de trabajo abierta, el movimiento queda asociado a esa caja;
+- reembolso en efectivo por el valor confirmado de la devolución, aunque la venta se haya pagado con otro medio; si el POS aporta una sesión de trabajo abierta, el movimiento queda asociado a esa caja;
 - aplicación primero a la cuenta por cobrar originada por la factura y creación de saldo a favor solamente por el excedente;
 - inventario, contabilidad y nota crédito mediante los motores canónicos existentes y sus señales de outbox;
 - `sales.returns.create` como único permiso operativo para buscar la factura y confirmar la devolución, sin depender del usuario o sesión que emitieron la venta;
@@ -36,10 +36,17 @@ aplica el valor en este orden:
 2. registra un movimiento compensatorio inmutable en el libro CxC;
 3. si queda un excedente, crea el saldo a favor del cliente.
 
-Un reembolso en efectivo no puede superar el efectivo cobrado originalmente menos
-reembolsos anteriores. Desde POS puede incluir la sesión abierta del usuario para
+El reembolso no puede superar el valor retornable de la venta; en efectivo no
+exige que el pago original haya sido en efectivo. Desde POS incluye la sesión abierta del usuario para
 afectar su cierre; desde administración puede omitirse y se registra como
 liquidación de tesorería/contabilidad, sin inventar un movimiento de caja.
+
+El importe de una devolución incluye la parte del ajuste al peso cobrado en la
+factura original. El documento operacional asigna ese ajuste proporcionalmente
+al valor acumulado de líneas y cargos devueltos, con cuatro decimales; la última
+devolución recibe el remanente exacto. El detalle consultado muestra el ajuste
+pendiente para anticipar el importe. Los motores contable y fiscal consumen el
+importe ya confirmado; ninguno vuelve a decidirlo.
 
 ## Destino físico
 

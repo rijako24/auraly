@@ -45,8 +45,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             options.Select(option => option.Code).Order(StringComparer.Ordinal));
     }
 
-    [Fact]
-    public async Task Sales_adjustment_to_peso_is_frozen_balanced_and_posted_separately()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(-1)]
+    public async Task Sales_adjustment_to_peso_is_frozen_balanced_and_posted_separately(int direction)
     {
         using var accounting = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
@@ -60,8 +62,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                        new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
             activate.EnsureSuccessStatusCode();
 
-        const decimal adjustment = 0.40m;
-        var source = fixture.CreateValidRequest(9_918);
+        var adjustment = 0.40m * direction;
+        var source = fixture.CreateValidRequest(direction > 0 ? 9_918 : 9_919);
         var fiscal = source.FiscalSnapshot!;
         var payable = fiscal.PayableAmount + adjustment;
         var cufe = CufeCalculator.Calculate(new CufeInput(
@@ -105,8 +107,35 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await AssertBalancedAsync(invoice.DocumentId);
         Assert.Equal(payable, await AccountAmountAsync(
             invoice.DocumentId, "110505", debit: true));
-        Assert.Equal(adjustment, await AccountAmountAsync(
-            invoice.DocumentId, "429598", debit: false));
+        Assert.Equal(decimal.Abs(adjustment), await AccountAmountAsync(
+            invoice.DocumentId, adjustment > 0 ? "429598" : "539598",
+            debit: adjustment < 0));
+
+        var sessionId = await fixture.OpenWebWorkSessionAsync();
+        var returned = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            invoice.DocumentId, DateTimeOffset.UtcNow,
+            ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Cash,
+            "Reversión completa de factura redondeada",
+            [new ConfirmSalesReturnLineRequest(1, 1m,
+                ReturnInventoryDispositions.Sellable)],
+            sessionId, null, "Other", ReturnScopeCode: SalesReturnScopes.FullCancellation);
+        using var returns = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create);
+        using (var confirm = new HttpRequestMessage(HttpMethod.Post,
+                   "/api/commerce/v1/sales-returns/confirm")
+               { Content = JsonContent.Create(returned) })
+        {
+            confirm.Headers.Add("Idempotency-Key", returned.ReturnId.ToString("D"));
+            using var response = await returns.SendAsync(confirm);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+        }
+        await AssertBalancedAsync(returned.ReturnId);
+        Assert.Equal(payable, await AccountAmountAsync(
+            returned.ReturnId, "110505", debit: false));
+        Assert.Equal(decimal.Abs(adjustment), await AccountAmountAsync(
+            returned.ReturnId, adjustment > 0 ? "429598" : "539598",
+            debit: adjustment > 0));
     }
 
     [Fact]

@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useConfirmSalesReturn, useReturnableSales, type PosSalesReturnRuntime } from "@/hooks/use-sales-returns";
-import { calculateSalesReturnSelection, salesReturnPurchasedUnitPrice } from "./sales-return-calculation";
+import { calculateSalesReturnSelection, estimateSalesReturnTotal, salesReturnPurchasedUnitPrice } from "./sales-return-calculation";
 import { salesReturnsApi, type ReturnableSale, type ReturnableSaleListItem, type SalesReturnRefundMethod, type SalesReturnResolution, type SalesReturnScope } from "@/services/api/sales-returns";
 import { workSessionsApi } from "@/services/api/work-sessions";
 import { useAuthStore } from "@/stores/auth-store";
@@ -122,7 +122,12 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
   const returnedChargeAmount = returnCharges
     ? availableCharges.reduce((sum, charge) => sum + charge.invoicedAmount, 0)
     : 0;
-  const estimated = selection.estimatedTotal + returnedChargeAmount;
+  const unroundedEstimate = selection.estimatedTotal + returnedChargeAmount;
+  const hasRoundingSnapshot = [sale.originalUnrounded, sale.originalRounding,
+    sale.unroundedOutstanding, sale.remainingRounding].every(Number.isFinite);
+  const estimated = hasRoundingSnapshot ? estimateSalesReturnTotal(sale.originalUnrounded,
+    sale.originalRounding, sale.unroundedOutstanding,
+    sale.remainingRounding, unroundedEstimate) : 0;
   const economicResolution: SalesReturnResolution = resolutionMethod === "CustomerCredit" ? "CustomerCredit" : "Refund";
   const reversibleCardMethods = new Set(sale.payments
     .filter(payment => ["DebitCard","CreditCard"].includes(payment.methodCode) && payment.availableAmount > 0)
@@ -261,10 +266,10 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
             {sale.charges.map((charge) => <div key={charge.appliedChargeId} className="grid min-w-[36rem] grid-cols-[1fr_8rem_13rem] gap-3 border-t px-3 py-2 text-sm"><span><b>{charge.name}</b><small className="block text-muted-foreground">{charge.code} · costo proveedor {formatCurrency(charge.amount)}</small></span><span className="text-right tabular-nums">{formatCurrency(charge.invoicedAmount)}</span><span className="text-right">{charge.isReturned ? "Devuelto" : charge.expenseStatus === "Cancelled" ? charge.invoicedAmount > 0 ? "Gasto anulado; cobro disponible" : "Gasto anulado" : charge.expenseStatus === "CancellationPending" ? "Anulación en curso" : charge.expenseStatus === "Processed" ? "Disponible" : "Gasto en proceso"}</span></div>)}
           </div>
         </section>}
-        <Card className="ml-auto w-full border-primary/20 bg-primary/5 sm:max-w-sm"><CardContent className="flex items-center justify-between gap-6 p-4"><div><p className="text-xs uppercase tracking-wide text-muted-foreground">Valor estimado</p><p className="text-xs text-muted-foreground">El servidor conserva el redondeo original.</p></div><p className="shrink-0 text-right text-2xl font-semibold tabular-nums">{formatCurrency(estimated)}</p></CardContent></Card>
+        <Card className="ml-auto w-full border-primary/20 bg-primary/5 sm:max-w-sm"><CardContent className="flex items-center justify-between gap-6 p-4"><div><p className="text-xs uppercase tracking-wide text-muted-foreground">Valor estimado</p><p className="text-xs text-muted-foreground">{hasRoundingSnapshot ? "El servidor conserva el redondeo original." : "Actualiza la aplicación para consultar el valor exacto."}</p></div><p className="shrink-0 text-right text-2xl font-semibold tabular-nums">{hasRoundingSnapshot ? formatCurrency(estimated) : "—"}</p></CardContent></Card>
         <Field label="Notas internas (opcional)"><Textarea className="min-h-24" maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
       </div>
-      <DialogFooter className="shrink-0 border-t bg-background px-6 py-4"><Button variant="outline" onClick={onClose}>Cancelar</Button><Button disabled={!canConfirm || !reasonCode || chosen.length === 0 || confirm.isPending} onClick={submit}><RotateCcw className="mr-2 h-4 w-4" /> {confirm.isPending ? "Confirmando..." : "Confirmar devolución"}</Button></DialogFooter>
+      <DialogFooter className="shrink-0 border-t bg-background px-6 py-4"><Button variant="outline" onClick={onClose}>Cancelar</Button><Button disabled={!hasRoundingSnapshot || !canConfirm || !reasonCode || chosen.length === 0 || confirm.isPending} onClick={submit}><RotateCcw className="mr-2 h-4 w-4" /> {confirm.isPending ? "Confirmando..." : "Confirmar devolución"}</Button></DialogFooter>
     </DialogContent>
     <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
       <DialogContent className="max-w-md">

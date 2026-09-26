@@ -98,7 +98,11 @@ public sealed record ReturnableSale(
     string FiscalStatus,
     IReadOnlyList<ReturnableSalePayment> Payments,
     IReadOnlyList<ReturnableSaleLine> Lines,
-    IReadOnlyList<ReturnableSaleCharge> Charges);
+    IReadOnlyList<ReturnableSaleCharge> Charges,
+    decimal OriginalUnrounded = 0m,
+    decimal OriginalRounding = 0m,
+    decimal UnroundedOutstanding = 0m,
+    decimal RemainingRounding = 0m);
 
 public sealed record SalesReturnQuery(
     int Page,

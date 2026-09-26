@@ -54,7 +54,8 @@ public sealed record DianCreditNote(
     string UniqueCodeScheme = "CUDE-SHA384",
     string OriginalUniqueCodeScheme = "CUFE-SHA384",
     bool BuyerGenerated = false,
-    string? SellerPostalZone = null)
+    string? SellerPostalZone = null,
+    decimal PayableRoundingAmount = 0m)
 {
     public void Validate()
     {
@@ -91,7 +92,7 @@ public sealed record DianCreditNote(
             DiscountAmount != Lines.Sum(line => line.DiscountAmount) ||
             TaxExclusiveAmount != Lines.Sum(line => line.UntaxedAmount) ||
             TaxInclusiveAmount != LineExtensionAmount + Taxes.Sum(tax => tax.Amount) ||
-            PayableAmount != TaxInclusiveAmount)
+            PayableAmount != TaxInclusiveAmount + PayableRoundingAmount)
             throw new ArgumentException("Credit note monetary totals are inconsistent.");
     }
 }

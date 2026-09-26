@@ -29,4 +29,34 @@ public sealed class SalesReturnAmountCalculatorTests
 
         Assert.Contains("exceeds", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Theory]
+    [InlineData(30, "13.5", "16.5")]
+    [InlineData(-40, "-18", "-22")]
+    public void Partial_returns_allocate_the_original_payment_rounding_without_residual(
+        int originalRounding, string firstExpected, string secondExpected)
+    {
+        const decimal original = 2770m;
+        var first = SalesReturnAmountCalculator.AllocatePaymentRounding(
+            original, originalRounding, 0m, 0m, 1246.5m);
+        var second = SalesReturnAmountCalculator.AllocatePaymentRounding(
+            original, originalRounding, 1246.5m, first, 1523.5m);
+
+        Assert.Equal(decimal.Parse(firstExpected, System.Globalization.CultureInfo.InvariantCulture), first);
+        Assert.Equal(decimal.Parse(secondExpected, System.Globalization.CultureInfo.InvariantCulture), second);
+        Assert.Equal(original + originalRounding,
+            1246.5m + first + 1523.5m + second);
+    }
+
+    [Fact]
+    public void A_small_final_return_never_receives_the_entire_negative_rounding()
+    {
+        var first = SalesReturnAmountCalculator.AllocatePaymentRounding(
+            11940m, -40m, 0m, 0m, 11930m);
+        var last = SalesReturnAmountCalculator.AllocatePaymentRounding(
+            11940m, -40m, 11930m, first, 10m);
+
+        Assert.True(10m + last > 0m);
+        Assert.Equal(11900m, 11930m + first + 10m + last);
+    }
 }

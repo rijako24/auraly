@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Fiscal.Core;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -12,6 +14,79 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Operational")]
 public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(-1)]
+    public async Task Two_partial_returns_reverse_the_exact_rounded_sale_total(int direction)
+    {
+        var rounding = .4m * direction;
+        var source = fixture.CreateValidRequest(direction > 0 ? 9_511 : 9_512);
+        var fiscal = source.FiscalSnapshot!;
+        var payable = fiscal.PayableAmount + rounding;
+        var cufe = CufeCalculator.Calculate(new CufeInput(
+            fiscal.FiscalNumber, fiscal.IssuedAt, fiscal.UntaxedAmount, payable,
+            ServerSliceFixture.SupplierTaxId, fiscal.CustomerIdentification,
+            new FiscalTechnicalKey(ServerSliceFixture.TechnicalKeyValue,
+                ServerSliceFixture.TechnicalKeyVersion), FiscalEnvironment.Test,
+            [new FiscalTaxAmount("01", fiscal.TaxAmount)]),
+            ServerSliceFixture.QrValidationUrl);
+        var original = WithUblSnapshot(source with
+        {
+            CommercialSnapshot = source.CommercialSnapshot with
+            {
+                PayableAmount = payable, PayableRoundingAmount = rounding
+            },
+            FiscalSnapshot = fiscal with
+            {
+                PayableAmount = payable, PayableRoundingAmount = rounding,
+                Cufe = cufe.Cufe, QrPayload = cufe.QrPayload
+            },
+            Payments = [new PosSalePaymentContract(1, "Cash", payable, null)]
+        });
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var response = await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+        Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
+
+        using var user = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create,
+            SalesReturnPermissionCodes.Read);
+        var sessionId = await fixture.OpenWebWorkSessionAsync();
+        var refunded = 0m;
+        for (var index = 0; index < 2; index++)
+        {
+            var request = new ConfirmSalesReturnRequest(
+                Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+                original.DocumentId, DateTimeOffset.UtcNow,
+                ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Cash,
+                "Devolución del importe cobrado con redondeo",
+                [new ConfirmSalesReturnLineRequest(1, .5m,
+                    ReturnInventoryDispositions.Sellable)],
+                sessionId, null, "Other");
+            using var message = Message(request, request.ReturnId.ToString("D"));
+            var started = Stopwatch.GetTimestamp();
+            using var response = await user.SendAsync(message);
+            Console.WriteLine($"Devolución aceptada en {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} ms");
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var accepted = await response.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
+            Assert.NotNull(accepted);
+            Assert.Equal(5_950m + rounding / 2m, accepted.TotalAmount);
+            Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
+            refunded += accepted.TotalAmount;
+            Assert.Equal(accepted.TotalAmount, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id",
+                request.ReturnId));
+        }
+        Assert.Equal(payable, refunded);
+        using var read = await user.GetAsync(
+            $"/api/commerce/v1/sales-returns/sales/{original.DocumentId:D}?businessId={fixture.BusinessId:D}");
+        read.EnsureSuccessStatusCode();
+        var sale = await read.Content.ReadFromJsonAsync<ReturnableSale>();
+        Assert.NotNull(sale);
+        Assert.Equal(0m, sale.UnroundedOutstanding);
+        Assert.Equal(0m, sale.RemainingRounding);
+    }
+
     [Fact]
     public async Task Enrolled_pos_rejects_a_refund_without_the_active_work_session()
     {

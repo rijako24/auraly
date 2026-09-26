@@ -141,6 +141,10 @@ public sealed class DianCreditNoteUblBuilder
             MoneyElement("LineExtensionAmount", note.LineExtensionAmount, note.CurrencyCode),
             MoneyElement("TaxExclusiveAmount", note.TaxExclusiveAmount, note.CurrencyCode),
             MoneyElement("TaxInclusiveAmount", note.TaxInclusiveAmount, note.CurrencyCode),
+            note.PayableRoundingAmount == 0
+                ? null
+                : MoneyElement("PayableRoundingAmount", note.PayableRoundingAmount,
+                    note.CurrencyCode),
             MoneyElement("PayableAmount", note.PayableAmount, note.CurrencyCode));
 
     private static XElement CreditLine(DianCreditNoteLine line, string currency) =>

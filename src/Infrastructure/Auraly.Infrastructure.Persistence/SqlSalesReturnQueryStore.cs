@@ -107,14 +107,24 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                    COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
                      NULLIF(d.CustomerIdentification,N''),N'Consumidor final'),
                    d.CustomerIdentification,d.WarehouseId,w.Name,d.PayableAmount,
-                   COALESCE((SELECT SUM(r.TotalAmount) FROM dbo.SalesReturns r
-                             WHERE r.OriginalDocumentId=d.DocumentId),0),
+                   COALESCE(prior.Total,0),
                    COALESCE((SELECT SUM(r.OutstandingAmount) FROM dbo.Receivables r
                              WHERE r.SourceDocumentId=d.DocumentId
                                AND r.SourceDocumentType=d.DocumentType
                                AND r.Status IN(N'Open',N'PartiallyPaid')),0),
-                   COALESCE(d.FiscalStatus,N'No aplica')
+                   COALESCE(d.FiscalStatus,N'No aplica'),
+                   d.UntaxedAmount+d.TaxAmount,
+                   d.PayableAmount-d.UntaxedAmount-d.TaxAmount,
+                   d.UntaxedAmount+d.TaxAmount-COALESCE(prior.Unrounded,0),
+                   d.PayableAmount-d.UntaxedAmount-d.TaxAmount-
+                     COALESCE(prior.Rounding,0)
             FROM dbo.SalesDocuments d
+            OUTER APPLY (
+              SELECT SUM(r.TotalAmount) Total,
+                     SUM(r.UntaxedAmount+r.TaxAmount) Unrounded,
+                     SUM(r.TotalAmount-r.UntaxedAmount-r.TaxAmount) Rounding
+              FROM dbo.SalesReturns r WHERE r.OriginalDocumentId=d.DocumentId
+            ) prior
             INNER JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
             LEFT JOIN dbo.Customers c ON c.CustomerId=d.CustomerId
@@ -126,6 +136,8 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         string number; string fiscal; string cufe; DateTimeOffset issued; Guid? customerId;
         string customerName; string identification; Guid warehouseId; string warehouseName;
         decimal total; decimal returned; decimal receivable; string fiscalStatus;
+        decimal originalUnrounded; decimal originalRounding;
+        decimal unroundedOutstanding; decimal remainingRounding;
         await using (var command = new SqlCommand(headerSql, connection))
         {
             Scope(command, user); command.Parameters.AddWithValue("@Id", documentId);
@@ -137,13 +149,16 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             warehouseId=reader.GetGuid(7); warehouseName=reader.GetString(8);
             total=reader.GetDecimal(9); returned=reader.GetDecimal(10);
             receivable=reader.GetDecimal(11); fiscalStatus=reader.GetString(12);
+            originalUnrounded=reader.GetDecimal(13); originalRounding=reader.GetDecimal(14);
+            unroundedOutstanding=reader.GetDecimal(15); remainingRounding=reader.GetDecimal(16);
         }
         var payments = await LoadPaymentsAsync(connection, documentId, cancellationToken);
         var lines = await LoadLinesAsync(connection, documentId, cancellationToken);
         var charges = await LoadChargesAsync(connection, documentId, cancellationToken);
         return new ReturnableSale(documentId, number, fiscal, cufe, issued, customerId,
             customerName, identification, warehouseId, warehouseName, total, returned,
-            receivable, fiscalStatus, payments, lines, charges);
+            receivable, fiscalStatus, payments, lines, charges,
+            originalUnrounded, originalRounding, unroundedOutstanding, remainingRounding);
     }
 
     public async Task<SalesReturnPage> ListReturnsAsync(
@@ -251,13 +266,13 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         SqlConnection connection,Guid documentId,CancellationToken cancellationToken)
     {
         await using var command=new SqlCommand("""
-            SELECT p.PaymentNumber,p.MethodCode,p.Amount,COALESCE(SUM(s.Amount),0),
+            SELECT p.PaymentNumber,p.MethodCode,p.Amount+p.RoundingAdjustment,COALESCE(SUM(s.Amount),0),
                    p.CardFranchiseCode,p.ApprovalNumber
             FROM dbo.SalesPayments p
             LEFT JOIN dbo.SalesReturnSettlements s ON s.OriginalDocumentId=p.DocumentId
               AND s.OriginalPaymentNumber=p.PaymentNumber AND s.SettlementType=N'Refund'
             WHERE p.DocumentId=@Id
-            GROUP BY p.PaymentNumber,p.MethodCode,p.Amount,p.CardFranchiseCode,p.ApprovalNumber
+            GROUP BY p.PaymentNumber,p.MethodCode,p.Amount,p.RoundingAdjustment,p.CardFranchiseCode,p.ApprovalNumber
             ORDER BY p.PaymentNumber;
             """,connection);
         command.Parameters.AddWithValue("@Id",documentId);var values=new List<ReturnableSalePayment>();

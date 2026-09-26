@@ -846,7 +846,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                     line.PartyId, line.CostCenterId, line.Description)));
         }
         return FinancialFactsResult.Ready(FinancialFacts.Return(number, partyId, untaxed,
-            tax, total, cost, settlements, chargeReversals));
+            tax, total, cost, settlements, chargeReversals, total - untaxed - tax));
     }
 
     private static async Task<FinancialFactsResult> LoadGoodsReceiptFactsAsync(
@@ -1896,6 +1896,12 @@ public sealed partial class SqlAccountingPostingProcessor(
             {
                 yield return new(accounts[AccountingCategories.SalesReturns], Untaxed, 0, PartyId, costCenter, Description);
                 if (Tax > 0) yield return new(accounts[AccountingCategories.OutputVat], Tax, 0, PartyId, costCenter, Description);
+                if (RoundingAdjustment > 0)
+                    yield return new(accounts[AccountingCategories.RoundingGain], RoundingAdjustment,
+                        0, PartyId, costCenter, Description);
+                if (RoundingAdjustment < 0)
+                    yield return new(accounts[AccountingCategories.RoundingLoss], 0,
+                        -RoundingAdjustment, PartyId, costCenter, Description);
                 foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
                 if (Cost > 0) { yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description); yield return new(accounts[AccountingCategories.CostOfGoodsSold], 0, Cost, PartyId, costCenter, Description); }
             }
@@ -1911,7 +1917,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             decimal roundingAdjustment = 0m) => new($"Factura de venta {number}", party,
                 untaxed, tax, total, cost, settlements, false, false, false, false,
                 RevenueCategory: revenueCategory, RoundingAdjustment: roundingAdjustment);
-        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements, IReadOnlyList<ManualLineSpec>? chargeReversals = null) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false, AdditionalDirectLines: chargeReversals);
+        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements, IReadOnlyList<ManualLineSpec>? chargeReversals = null, decimal roundingAdjustment = 0m) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false, RoundingAdjustment: roundingAdjustment, AdditionalDirectLines: chargeReversals);
         public static FinancialFacts DebitNote(string number, Guid party, decimal untaxed, decimal tax, decimal total) =>
             new($"Nota débito de venta {number}", party, untaxed, tax, total, 0,
                 [(AccountingCategories.AccountsReceivable, total)], false, false, false, false);

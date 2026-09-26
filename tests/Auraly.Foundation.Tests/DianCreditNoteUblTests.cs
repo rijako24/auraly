@@ -61,6 +61,28 @@ public sealed class DianCreditNoteUblTests
         Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
     }
 
+    [Theory]
+    [InlineData(30, 5980)]
+    [InlineData(-40, 5910)]
+    public void Credit_note_keeps_payment_rounding_in_legal_total(decimal adjustment, decimal payable)
+    {
+        var note = CreateNote() with
+        {
+            PayableRoundingAmount = adjustment,
+            PayableAmount = payable
+        };
+        var built = new DianCreditNoteUblBuilder().Build(note);
+        var xml = XDocument.Parse(System.Text.Encoding.UTF8.GetString(built.Xml));
+        var monetary = xml.Descendants(DianUblNamespaces.Cac + "LegalMonetaryTotal").Single();
+
+        Assert.Equal(adjustment.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            monetary.Element(DianUblNamespaces.Cbc + "PayableRoundingAmount")?.Value);
+        Assert.Equal(payable.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+            monetary.Element(DianUblNamespaces.Cbc + "PayableAmount")?.Value);
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+    }
+
     [Fact]
     public void Support_document_adjustment_uses_type_95_and_references_the_original_cuds()
     {
