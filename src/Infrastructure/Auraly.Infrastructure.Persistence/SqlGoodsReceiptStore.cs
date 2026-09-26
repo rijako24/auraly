@@ -80,21 +80,37 @@ public sealed class SqlGoodsReceiptStore(
                 connection, transaction, user, request, cancellationToken);
             var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, cancellationToken);
             var now = timeProvider.GetUtcNow();
-            if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
-                && !await SqlDianDocumentQuota.TryReserveAsync(connection, transaction,
-                    user.BusinessId, request.DocumentId, "SupportDocument", now, cancellationToken))
+            var supportRequests = new List<(Guid DocumentId, Guid SupplierId, DateTimeOffset IssuedAt)>();
+            if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument)
+                supportRequests.Add((request.DocumentId, request.SupplierId, request.SupplierInvoiceDate!.Value));
+            supportRequests.AddRange(costCalculation.AdditionalDocuments
+                .Where(item => item.Request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument)
+                .Select(item => (item.Request.CostDocumentId, item.Request.SupplierId, item.Request.IssuedAt)));
+            if (supportRequests.Count > 100)
+                throw new PurchasingValidationException(
+                    "Una recepción admite hasta 100 documentos soporte electrónicos.");
+            if (supportRequests.Count > 0 &&
+                !await SqlDianDocumentQuota.TryReserveManyAsync(connection, transaction,
+                    user.BusinessId, supportRequests.Select(item => item.DocumentId).ToArray(),
+                    "SupportDocument", now, cancellationToken))
                 throw new PurchasingValidationException(
                     "No hay cupo de documentos DIAN. Compra un paquete antes de seleccionar documento soporte electrónico.");
-            var support = request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
-                ? await AllocateSupportFiscalAsync(connection, transaction, user.BusinessId,
-                    request.SupplierId, request.SupplierInvoiceDate!.Value, now, cancellationToken)
-                : null;
+            var supports = supportRequests.Count == 0
+                ? new Dictionary<Guid, SupportFiscalAllocation>()
+                : (await AllocateSupportFiscalBatchAsync(connection, transaction, user.BusinessId,
+                    supportRequests.Select(item => (item.SupplierId, item.IssuedAt)).ToArray(),
+                    now, cancellationToken))
+                    .Select((allocation, index) => (supportRequests[index].DocumentId, allocation))
+                    .ToDictionary(item => item.DocumentId, item => item.allocation);
+            supports.TryGetValue(request.DocumentId, out var support);
             var sequence = await AllocateProcessingSequenceAsync(
                 connection, transaction, user.BusinessId, now, cancellationToken);
             var additionalDocuments = costCalculation.AdditionalDocuments.Select(document =>
                 new GoodsReceiptCostDocumentSnapshot(
                     document.Request.CostDocumentId, document.Request.SupplierId,
-                    document.Request.PurchaseEvidenceType, document.Request.DocumentNumber,
+                    document.Request.PurchaseEvidenceType,
+                    supports.TryGetValue(document.Request.CostDocumentId, out var costSupport)
+                        ? costSupport.FiscalNumber : document.Request.DocumentNumber,
                     document.Request.IssuedAt, document.Request.CreatesPayable,
                     document.Request.DueDate, document.Request.CurrencyCode,
                     document.Request.ExchangeRate, document.Request.ExchangeRateDate!.Value,
@@ -157,6 +173,10 @@ public sealed class SqlGoodsReceiptStore(
             if (support is not null)
                 await InsertSupportFiscalAsync(connection, transaction, payload, support,
                     request.Lines, now, cancellationToken);
+            await InsertCostSupportFiscalBatchAsync(connection, transaction, payload,
+                additionalDocuments.Where(item => item.PurchaseEvidenceType ==
+                    PurchaseEvidenceTypes.BuyerElectronicSupportDocument).ToArray(),
+                supports, now, cancellationToken);
             await DeleteDraftIfPresentAsync(
                 connection, transaction, user.BusinessId, request.DocumentId, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -180,7 +200,7 @@ public sealed class SqlGoodsReceiptStore(
         {
             await transaction.RollbackAsync(CancellationToken.None);
             throw new PurchasingConflictException(
-                "The receipt number, supplier invoice or idempotency key is already in use.");
+                "El número de recepción, la factura del proveedor o la clave de confirmación ya está en uso.");
         }
         catch
         {
@@ -213,7 +233,7 @@ public sealed class SqlGoodsReceiptStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         if (!reader.GetFieldValue<byte[]>(3).AsSpan().SequenceEqual(requestHash))
-            throw new PurchasingConflictException("The idempotency key or DocumentId was reused with another payload.");
+            throw new PurchasingConflictException("Esta recepción ya se intentó confirmar con datos diferentes. Recárgala antes de continuar.");
         return new GoodsReceiptAcceptance(
             reader.GetGuid(0), reader.GetGuid(5), reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true);
     }
@@ -227,21 +247,21 @@ public sealed class SqlGoodsReceiptStore(
     {
         const string sql = """
             IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
-              THROW 51100,'The business is outside the authenticated tenant.',1;
+              THROW 51100,'La sede no pertenece a la empresa autenticada.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND IsSystem=0 AND UseForGoodsReceipts=1)
               THROW 51101,'Selecciona una bodega activa para recibir mercancía.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51102,'The supplier is outside the authenticated business.',1;
+              THROW 51102,'El proveedor no está activo en esta sede.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId') x
               LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId AND s.IsActive=1
               WHERE s.SupplierId IS NULL)
-              THROW 51105,'An additional-cost supplier is outside the authenticated business.',1;
+              THROW 51105,'Un proveedor de costo adicional no está activo en esta sede.',1;
             IF @CurrencyCode<>N'COP' AND NOT EXISTS (
               SELECT 1 FROM reference.Options
               WHERE CatalogCode=N'exchange-rate-source' AND Code=@ExchangeRateSource AND IsActive=1)
-              THROW 51107,'The exchange-rate source is not active in the canonical catalog.',1;
+              THROW 51107,'La fuente de la tasa de cambio no está activa.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (CurrencyCode nvarchar(3) '$.CurrencyCode',ExchangeRateSource nvarchar(64) '$.ExchangeRateSource') x
@@ -249,7 +269,7 @@ public sealed class SqlGoodsReceiptStore(
                 ON optionValue.CatalogCode=N'exchange-rate-source'
                AND optionValue.Code=x.ExchangeRateSource AND optionValue.IsActive=1
               WHERE UPPER(x.CurrencyCode)<>N'COP' AND optionValue.OptionId IS NULL)
-              THROW 51108,'An additional document has an exchange-rate source outside the canonical catalog.',1;
+              THROW 51108,'Un documento adicional usa una fuente de tasa de cambio que no está activa.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId',PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
@@ -261,14 +281,39 @@ public sealed class SqlGoodsReceiptStore(
                 OR supplier.PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND x.PurchaseEvidenceType=N'InternalReceiptVoucher'
                 OR supplier.PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND x.PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                 OR supplier.PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND x.PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
-              THROW 51109,'An additional document evidence type is not allowed by its supplier configuration.',1;
-            IF EXISTS (
-              SELECT 1 FROM OPENJSON(@CostDocumentsJson)
-              WITH (SupplierId uniqueidentifier '$.SupplierId',DocumentNumber nvarchar(80) '$.DocumentNumber') x
-              INNER JOIN purchasing.GoodsReceiptCostDocuments d
-                ON d.SupplierId=x.SupplierId AND d.DocumentNumber=x.DocumentNumber
-              INNER JOIN dbo.GoodsReceipts r ON r.GoodsReceiptId=d.GoodsReceiptId AND r.BusinessId=@BusinessId)
-              THROW 51106,'An additional supplier document with the same number already exists.',1;
+              THROW 51109,'El tipo de soporte de un documento adicional no está permitido para su proveedor.',1;
+            DECLARE @RepeatedCostNumber nvarchar(80), @RepeatedSupplier nvarchar(200), @PreviousReceipt nvarchar(80);
+            SELECT TOP (1) @RepeatedCostNumber=x.DocumentNumber,
+              @RepeatedSupplier=s.Name,@PreviousReceipt=r.DocumentNumber
+            FROM OPENJSON(@CostDocumentsJson)
+              WITH (SupplierId uniqueidentifier '$.SupplierId',DocumentNumber nvarchar(80) '$.DocumentNumber',
+                PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
+            INNER JOIN purchasing.GoodsReceiptCostDocuments d
+              ON d.SupplierId=x.SupplierId AND d.DocumentNumber=x.DocumentNumber
+            INNER JOIN dbo.GoodsReceipts r ON r.GoodsReceiptId=d.GoodsReceiptId AND r.BusinessId=@BusinessId
+            INNER JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId
+            WHERE x.PurchaseEvidenceType<>N'BuyerElectronicSupportDocument';
+            IF @RepeatedCostNumber IS NOT NULL
+            BEGIN
+              DECLARE @RepeatedCostMessage nvarchar(2048)=CONCAT(N'La factura ',@RepeatedCostNumber,
+                N' de ',@RepeatedSupplier,N' ya está registrada en la recepción ',@PreviousReceipt,
+                N'. Revisa el número o abre esa recepción antes de confirmar.');
+              THROW 51106,@RepeatedCostMessage,1;
+            END;
+            SELECT TOP (1) @RepeatedCostNumber=x.DocumentNumber,@RepeatedSupplier=s.Name
+            FROM OPENJSON(@CostDocumentsJson)
+              WITH (SupplierId uniqueidentifier '$.SupplierId',DocumentNumber nvarchar(80) '$.DocumentNumber',
+                PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
+            INNER JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId
+            WHERE x.PurchaseEvidenceType<>N'BuyerElectronicSupportDocument'
+            GROUP BY x.SupplierId,x.DocumentNumber,s.Name
+            HAVING COUNT(*)>1;
+            IF @RepeatedCostNumber IS NOT NULL
+            BEGIN
+              SET @RepeatedCostMessage=CONCAT(N'La factura ',@RepeatedCostNumber,N' de ',
+                @RepeatedSupplier,N' se agregó más de una vez a esta recepción.');
+              THROW 51106,@RepeatedCostMessage,1;
+            END;
             IF NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers
               WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1
@@ -278,7 +323,7 @@ public sealed class SqlGoodsReceiptStore(
                   OR PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND @PurchaseEvidenceType=N'InternalReceiptVoucher'
                   OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
                   OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
-              THROW 51104,'The selected evidence type is not allowed by the supplier configuration.',1;
+              THROW 51104,'El tipo de soporte seleccionado no está permitido para este proveedor.',1;
             IF EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson)
@@ -288,7 +333,7 @@ public sealed class SqlGoodsReceiptStore(
                      OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
               LEFT JOIN dbo.SupplierProducts sp ON sp.ProductId=x.ProductId AND sp.SupplierId=@SupplierId AND sp.BusinessId=@BusinessId AND sp.IsActive=1
               WHERE p.ProductId IS NULL OR sp.SupplierProductId IS NULL)
-              THROW 51103,'Every product must be active and associated with the selected supplier.',1;
+              THROW 51103,'Cada producto debe estar activo y asociado con el proveedor seleccionado.',1;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -609,7 +654,7 @@ public sealed class SqlGoodsReceiptStore(
         if (request.PurchaseOrderId is null)
         {
             if (request.Lines.Any(line => line.PurchaseOrderLineId is not null || line.OverReceiptReason is not null))
-                throw new PurchasingValidationException("Receipt lines cannot reference a purchase order without PurchaseOrderId.");
+                throw new PurchasingValidationException("Las líneas de la recepción no pueden referir una orden de compra sin seleccionarla.");
             return result;
         }
 
@@ -655,9 +700,16 @@ public sealed class SqlGoodsReceiptStore(
 
     internal static async Task<IReadOnlyList<SupportFiscalAllocation>> AllocateSupportFiscalBatchAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId, IReadOnlyList<Guid> supplierIds,
-        DateTimeOffset issuedAt, DateTimeOffset now, CancellationToken cancellationToken)
+        DateTimeOffset issuedAt, DateTimeOffset now, CancellationToken cancellationToken) =>
+        await AllocateSupportFiscalBatchAsync(connection, transaction, businessId,
+            supplierIds.Select(id => (SupplierId: id, IssuedAt: issuedAt)).ToArray(), now, cancellationToken);
+
+    internal static async Task<IReadOnlyList<SupportFiscalAllocation>> AllocateSupportFiscalBatchAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        IReadOnlyList<(Guid SupplierId, DateTimeOffset IssuedAt)> requests,
+        DateTimeOffset now, CancellationToken cancellationToken)
     {
-        if (supplierIds.Count is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(supplierIds));
+        if (requests.Count is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(requests));
         const string sql = """
             SELECT requested.[key],fs.SeriesId,fs.FiscalAuthorizationId,fs.Prefix,fs.RangeStart,fs.RangeEnd,
                    a.AuthorizationNumber,a.ValidFrom,a.ValidUntil,a.Environment,a.QrValidationUrl,
@@ -666,21 +718,22 @@ public sealed class SqlGoodsReceiptStore(
                    COALESCE(p.LegalName,p.DisplayName),COALESCE(p.DisplayName,p.LegalName),
                    country.Code,country.Name,division.Code,division.Name,city.Code,city.Name,site.AddressLine,
                    email.Value,phone.Value,site.PostalCode
-            FROM OPENJSON(@SupplierIds) requested
-            CROSS JOIN (SELECT TOP(1) value.* FROM dbo.FiscalSeries value WITH(UPDLOCK,HOLDLOCK)
+            FROM OPENJSON(@Requests) requested
+            CROSS APPLY OPENJSON(requested.value) WITH(SupplierId uniqueidentifier,IssuedAt datetimeoffset) item
+            CROSS APPLY (SELECT TOP(1) value.* FROM dbo.FiscalSeries value WITH(UPDLOCK,HOLDLOCK)
               JOIN dbo.FiscalAuthorizations auth ON auth.FiscalAuthorizationId=value.FiscalAuthorizationId
               WHERE value.BusinessId=@BusinessId AND value.DocumentType=N'SupportDocument'
                 AND value.EmitterKind=N'Server' AND value.DeviceId IS NULL AND value.IsActive=1
-                AND auth.IsActive=1 AND auth.ValidFrom<=CONVERT(date,@IssuedAt) AND auth.ValidUntil>=CONVERT(date,@IssuedAt)
+                AND auth.IsActive=1 AND auth.ValidFrom<=CONVERT(date,item.IssuedAt) AND auth.ValidUntil>=CONVERT(date,item.IssuedAt)
                 AND EXISTS(SELECT 1 FROM dbo.FiscalIssuerConfigurations issuer WHERE issuer.BusinessId=value.BusinessId
                   AND issuer.IsActive=1 AND issuer.Environment=auth.Environment
-                  AND issuer.ValidFrom<=@IssuedAt AND (issuer.ValidTo IS NULL OR issuer.ValidTo>@IssuedAt))
+                  AND issuer.ValidFrom<=item.IssuedAt AND (issuer.ValidTo IS NULL OR issuer.ValidTo>item.IssuedAt))
               ORDER BY auth.ValidUntil DESC,value.SeriesId) fs
             JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=fs.FiscalAuthorizationId
             JOIN dbo.FiscalIssuerConfigurations c ON c.BusinessId=fs.BusinessId AND c.IsActive=1
               AND c.Environment=a.Environment
-              AND c.ValidFrom<=@IssuedAt AND (c.ValidTo IS NULL OR c.ValidTo>@IssuedAt)
-            JOIN dbo.Suppliers s ON s.SupplierId=CONVERT(uniqueidentifier,requested.value) AND s.BusinessId=fs.BusinessId AND s.IsActive=1
+              AND c.ValidFrom<=item.IssuedAt AND (c.ValidTo IS NULL OR c.ValidTo>item.IssuedAt)
+            JOIN dbo.Suppliers s ON s.SupplierId=item.SupplierId AND s.BusinessId=fs.BusinessId AND s.IsActive=1
             JOIN dbo.Parties p ON p.PartyId=s.PartyId AND p.IsActive=1
             LEFT JOIN dbo.PartySites site ON site.PartyId=p.PartyId
               AND site.IsActive=1 AND site.IsPrimary=1
@@ -695,19 +748,23 @@ public sealed class SqlGoodsReceiptStore(
               ORDER BY value.IsPrimary DESC,value.CreatedAt) phone
             WHERE fs.BusinessId=@BusinessId AND fs.DocumentType=N'SupportDocument'
               AND fs.EmitterKind=N'Server' AND fs.DeviceId IS NULL AND fs.IsActive=1
-              AND a.IsActive=1 AND a.ValidFrom<=CONVERT(date,@IssuedAt) AND a.ValidUntil>=CONVERT(date,@IssuedAt)
+              AND a.IsActive=1 AND a.ValidFrom<=CONVERT(date,item.IssuedAt) AND a.ValidUntil>=CONVERT(date,item.IssuedAt)
             ORDER BY CONVERT(int,requested.[key]);
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@SupplierIds", JsonSerializer.Serialize(supplierIds));
-        command.Parameters.AddWithValue("@IssuedAt", issuedAt);
+        command.Parameters.AddWithValue("@Requests", JsonSerializer.Serialize(
+            requests.Select(item => new { item.SupplierId, item.IssuedAt })));
         var allocations = new List<SupportFiscalAllocation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        int? failedIndex = null;
         while (await reader.ReadAsync(cancellationToken))
         {
             if (Convert.ToInt32(reader.GetString(0)) != allocations.Count)
-                throw new PurchasingValidationException("The complete supplier fiscal batch could not be loaded.");
+            {
+                failedIndex = allocations.Count;
+                break;
+            }
             var seriesId = reader.GetGuid(1);
             var authorizationId = reader.GetGuid(2);
             var prefix = reader.GetString(3);
@@ -747,27 +804,69 @@ public sealed class SqlGoodsReceiptStore(
                 environment, qrUrl, authorization, seller, postalZone));
         }
         await reader.CloseAsync();
-        if (allocations.Count != supplierIds.Count || allocations.Select(item => item.SeriesId).Distinct().Count() != 1)
+        if (failedIndex is not null || allocations.Count != requests.Count)
+        {
+            var failed = requests[Math.Min(failedIndex ?? allocations.Count, requests.Count - 1)];
             throw new PurchasingValidationException(await ExplainSupportFiscalAllocationFailureAsync(
-                connection, transaction, businessId, supplierIds, issuedAt, cancellationToken));
-        var first = allocations[0];
+                connection, transaction, businessId, [failed.SupplierId],
+                failed.IssuedAt, cancellationToken));
+        }
+        var groups = allocations.GroupBy(item => item.SeriesId)
+            .Select(group => new
+            {
+                SeriesId = group.Key,
+                RangeStart = group.First().Authorization.RangeStart,
+                RangeEnd = group.First().Authorization.RangeEnd,
+                Count = group.Count()
+            }).ToArray();
         await using var cursor = new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.FiscalSeriesCursors WITH(UPDLOCK,HOLDLOCK) WHERE SeriesId=@SeriesId)
-              INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt) VALUES(@SeriesId,@RangeStart,@Now);
-            DECLARE @Value bigint;
-            SELECT @Value=NextConsecutive FROM dbo.FiscalSeriesCursors WITH(UPDLOCK,HOLDLOCK) WHERE SeriesId=@SeriesId;
-            IF @Value>@RangeEnd-@Count+1 THROW 51734,N'La numeración DIAN de documento soporte está agotada.',1;
-            UPDATE dbo.FiscalSeriesCursors SET NextConsecutive=@Value+@Count,UpdatedAt=@Now WHERE SeriesId=@SeriesId;
-            SELECT @Value;
+            DECLARE @Groups TABLE(SeriesId uniqueidentifier PRIMARY KEY,RangeStart bigint,RangeEnd bigint,DocumentCount int);
+            INSERT @Groups(SeriesId,RangeStart,RangeEnd,DocumentCount)
+            SELECT SeriesId,RangeStart,RangeEnd,DocumentCount
+            FROM OPENJSON(@GroupsJson) WITH(
+              SeriesId uniqueidentifier,RangeStart bigint,RangeEnd bigint,DocumentCount int);
+            INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt)
+            SELECT requested.SeriesId,requested.RangeStart,@Now FROM @Groups requested
+            WHERE NOT EXISTS(SELECT 1 FROM dbo.FiscalSeriesCursors existing WITH(UPDLOCK,HOLDLOCK)
+              WHERE existing.SeriesId=requested.SeriesId);
+            IF EXISTS(SELECT 1 FROM @Groups requested
+              JOIN dbo.FiscalSeriesCursors currentCursor WITH(UPDLOCK,HOLDLOCK)
+                ON currentCursor.SeriesId=requested.SeriesId
+              WHERE currentCursor.NextConsecutive>requested.RangeEnd-requested.DocumentCount+1)
+              THROW 51734,N'La numeración DIAN de documento soporte está agotada.',1;
+            DECLARE @Assigned TABLE(SeriesId uniqueidentifier PRIMARY KEY,FirstConsecutive bigint);
+            UPDATE currentCursor SET NextConsecutive=currentCursor.NextConsecutive+requested.DocumentCount,
+              UpdatedAt=@Now
+            OUTPUT inserted.SeriesId,deleted.NextConsecutive
+              INTO @Assigned(SeriesId,FirstConsecutive)
+            FROM dbo.FiscalSeriesCursors currentCursor WITH(UPDLOCK,HOLDLOCK)
+            JOIN @Groups requested ON requested.SeriesId=currentCursor.SeriesId;
+            IF (SELECT COUNT(*) FROM @Assigned)<>(SELECT COUNT(*) FROM @Groups)
+              THROW 51735,N'No se pudo reservar la numeración DIAN completa.',1;
+            SELECT SeriesId,FirstConsecutive FROM @Assigned;
             """, connection, transaction);
-        cursor.Parameters.AddWithValue("@SeriesId", first.SeriesId);
-        cursor.Parameters.AddWithValue("@RangeStart", first.Authorization.RangeStart);
-        cursor.Parameters.AddWithValue("@RangeEnd", first.Authorization.RangeEnd);
-        cursor.Parameters.AddWithValue("@Count", allocations.Count);
+        cursor.Parameters.AddWithValue("@GroupsJson", JsonSerializer.Serialize(groups.Select(group => new
+        {
+            group.SeriesId, group.RangeStart, group.RangeEnd, DocumentCount = group.Count
+        })));
         cursor.Parameters.AddWithValue("@Now", now);
-        var consecutive = Convert.ToInt64(await cursor.ExecuteScalarAsync(cancellationToken));
-        return allocations.Select((item, index) => item with {
-            FiscalNumber = item.Authorization.Prefix + (consecutive + index) }).ToArray();
+        var nextBySeries = new Dictionary<Guid, long>();
+        try
+        {
+            await using var assigned = await cursor.ExecuteReaderAsync(cancellationToken);
+            while (await assigned.ReadAsync(cancellationToken))
+                nextBySeries.Add(assigned.GetGuid(0), assigned.GetInt64(1));
+        }
+        catch (SqlException exception) when (exception.Number is 51734 or 51735)
+        {
+            throw new PurchasingValidationException(exception.Message);
+        }
+        return allocations.Select(item =>
+        {
+            var consecutive = nextBySeries[item.SeriesId];
+            nextBySeries[item.SeriesId] = consecutive + 1;
+            return item with { FiscalNumber = item.Authorization.Prefix + consecutive };
+        }).ToArray();
     }
 
     private static async Task<string> ExplainSupportFiscalAllocationFailureAsync(
@@ -810,7 +909,7 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@IssuedAt", issuedAt);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            throw new InvalidOperationException("The support fiscal allocation diagnostic returned no row.");
+            throw new InvalidOperationException("No fue posible consultar el diagnóstico del documento soporte.");
         if (reader.GetInt32(0) > 0)
             return "El proveedor no está activo en esta sede. Revísalo en Terceros > Proveedores antes de registrar el documento soporte.";
         if (reader.GetInt32(1) > 0)
@@ -896,19 +995,106 @@ public sealed class SqlGoodsReceiptStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static async Task InsertCostSupportFiscalBatchAsync(
+        SqlConnection connection, SqlTransaction transaction, GoodsReceiptDocumentPayload receipt,
+        IReadOnlyList<GoodsReceiptCostDocumentSnapshot> documents,
+        IReadOnlyDictionary<Guid, SupportFiscalAllocation> supports,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (documents.Count == 0) return;
+        var taxCodes = documents.SelectMany(item => item.Lines)
+            .Select(item => item.TaxCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var taxProfiles = new Dictionary<string, (string DianCode, decimal Rate)>(
+            StringComparer.OrdinalIgnoreCase);
+        var taxProfilesByDianCode = new Dictionary<(string DianCode, decimal Rate), string>();
+        await using (var taxCommand = new SqlCommand("""
+            SELECT Code,DianTaxCode,Rate FROM dbo.TaxProfiles
+            WHERE BusinessId=@BusinessId AND IsActive=1
+              AND (Code IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$'))
+                OR DianTaxCode IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$')));
+            """, connection, transaction))
+        {
+            taxCommand.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
+            taxCommand.Parameters.AddWithValue("@TaxCodes", JsonSerializer.Serialize(taxCodes));
+            await using var reader = await taxCommand.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var code = reader.GetString(0);
+                var dianCode = reader.IsDBNull(1) ? string.Empty : reader.GetString(1).Trim();
+                var rate = reader.GetDecimal(2);
+                taxProfiles[code] = (dianCode, rate);
+                if (!string.IsNullOrWhiteSpace(dianCode))
+                    taxProfilesByDianCode[(dianCode.ToUpperInvariant(), rate)] = dianCode;
+            }
+        }
+        var rows = documents.Select(document =>
+        {
+            var support = supports[document.CostDocumentId];
+            var snapshot = new PurchaseSupportFiscalSnapshot(null, support.IssuerConfigurationId,
+                support.FiscalNumber, support.Environment, support.QrValidationUrl, support.Seller,
+                support.Authorization, document.Lines.Select(line =>
+            {
+                var dianTaxCode = ResolveDianTaxCode(line.LineNumber, line.TaxCode, line.TaxRate,
+                    taxProfiles, taxProfilesByDianCode);
+                return new PurchaseSupportLineMetadata(line.LineNumber,
+                    $"COSTO-{line.CostKind}", "999", "EA",
+                    PosSaleFiscalMappings.TaxName(dianTaxCode), dianTaxCode);
+            }).ToArray(), SellerPostalZone: support.SellerPostalZone,
+                CostDocument: new GoodsReceiptCostDocumentAccountingPayload(
+                    receipt.TenantId, receipt.BusinessId, receipt.DocumentId, document));
+            return new
+            {
+                DocumentId = document.CostDocumentId, receipt.BusinessId,
+                AuralyNumber = document.DocumentNumber, support.FiscalNumber,
+                document.IssuedAt, support.IssuerConfigurationId,
+                support.Environment,
+                SnapshotJson = PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot)
+            };
+        }).ToArray();
+        await using var command = new SqlCommand("""
+            DECLARE @Rows TABLE(DocumentId uniqueidentifier PRIMARY KEY,BusinessId uniqueidentifier,
+              AuralyNumber nvarchar(80),FiscalNumber nvarchar(80),IssuedAt datetimeoffset,
+              IssuerId uniqueidentifier,Environment tinyint,SnapshotJson nvarchar(max));
+            INSERT @Rows SELECT DocumentId,BusinessId,AuralyNumber,FiscalNumber,IssuedAt,
+              IssuerConfigurationId,Environment,SnapshotJson
+            FROM OPENJSON(@RowsJson) WITH(DocumentId uniqueidentifier,BusinessId uniqueidentifier,
+              AuralyNumber nvarchar(80),FiscalNumber nvarchar(80),IssuedAt datetimeoffset,
+              IssuerConfigurationId uniqueidentifier,Environment tinyint,SnapshotJson nvarchar(max));
+            INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
+              AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
+            SELECT DocumentId,BusinessId,N'GoodsReceiptCostDocument',N'SupportDocument',
+              AuralyNumber,FiscalNumber,N'CUDS',NULL,IssuedAt,@Status,@Now,@Now FROM @Rows;
+            INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
+            SELECT DocumentId,SnapshotJson,Environment,@Now FROM @Rows;
+            INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
+              AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
+            SELECT DocumentId,BusinessId,IssuerId,@Status,0,@Now,@Now,@Now FROM @Rows;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@RowsJson", JsonSerializer.Serialize(rows));
+        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
+        command.Parameters.AddWithValue("@Now", now);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static string ResolveDianTaxCode(
         GoodsReceiptLineSnapshot line,
         IReadOnlyDictionary<string, (string DianCode, decimal Rate)> taxProfiles,
+        IReadOnlyDictionary<(string DianCode, decimal Rate), string> taxProfilesByDianCode) =>
+        ResolveDianTaxCode(line.LineNumber, line.TaxCode, line.TaxRate,
+            taxProfiles, taxProfilesByDianCode);
+
+    private static string ResolveDianTaxCode(int lineNumber, string taxCode, decimal taxRate,
+        IReadOnlyDictionary<string, (string DianCode, decimal Rate)> taxProfiles,
         IReadOnlyDictionary<(string DianCode, decimal Rate), string> taxProfilesByDianCode)
     {
-        if (taxProfiles.TryGetValue(line.TaxCode, out var profile) &&
-            profile.Rate == line.TaxRate && !string.IsNullOrWhiteSpace(profile.DianCode))
+        if (taxProfiles.TryGetValue(taxCode, out var profile) &&
+            profile.Rate == taxRate && !string.IsNullOrWhiteSpace(profile.DianCode))
             return profile.DianCode;
         if (taxProfilesByDianCode.TryGetValue(
-                (line.TaxCode.Trim().ToUpperInvariant(), line.TaxRate), out var dianCode))
+                (taxCode.Trim().ToUpperInvariant(), taxRate), out var dianCode))
             return dianCode;
         throw new PurchasingValidationException(
-            $"La línea {line.LineNumber} no tiene un código tributario DIAN congelable.");
+            $"La línea {lineNumber} no tiene un código tributario DIAN congelable.");
     }
 
     private async Task InsertJobAsync(SqlConnection connection, SqlTransaction transaction,

@@ -52,40 +52,14 @@ public sealed class SqlReceivablesStore(
                   OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%'
                   OR r.DocumentNumber LIKE N'%' + @Search + N'%')
               GROUP BY r.CustomerId,p.DisplayName,p.LegalName,p.Identification)
-            SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0),COALESCE(SUM(InvoiceCount),0)
-            FROM Portfolio WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0)
+            SELECT * INTO #Portfolio FROM Portfolio
+            WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0)
               OR (@Overdue=0 AND OverdueAmount=0);
-            WITH Paid AS(
-              SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
-              FROM dbo.CustomerPaymentApplications application
-              JOIN dbo.Receivables scoped ON scoped.ReceivableId=application.ReceivableId
-              WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
-              GROUP BY application.ReceivableId),
-            Portfolio AS(
-              SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
-                COALESCE(p.Identification,N'') Identification,COUNT(*) InvoiceCount,
-                SUM(r.OriginalAmount) OriginalAmount,SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,
-                SUM(r.OutstandingAmount) OutstandingAmount,
-                SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN r.OutstandingAmount ELSE 0 END) OverdueAmount
-              FROM dbo.Receivables r
-              JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
-              JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
-              JOIN dbo.Parties p ON p.PartyId=c.PartyId
-              LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId
-              WHERE r.BusinessId=@BusinessId AND b.TenantId=@TenantId
-                AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
-                AND (@Status IS NULL OR r.Status=@Status)
-                AND (@From IS NULL OR r.CreatedAt>=@From)
-                AND (@To IS NULL OR r.CreatedAt<@To)
-                AND (@Overdue IS NULL OR (@Overdue=1 AND r.OutstandingAmount>0 AND r.DueDate<@Now)
-                  OR (@Overdue=0 AND (r.OutstandingAmount=0 OR r.DueDate>=@Now)))
-                AND (@Search IS NULL OR p.DisplayName LIKE N'%' + @Search + N'%'
-                  OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%'
-                  OR r.DocumentNumber LIKE N'%' + @Search + N'%')
-              GROUP BY r.CustomerId,p.DisplayName,p.LegalName,p.Identification)
+            SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0),COALESCE(SUM(InvoiceCount),0),
+              COALESCE(SUM(OriginalAmount),0),COALESCE(SUM(PaidAmount),0)
+            FROM #Portfolio;
             SELECT CustomerId,CustomerName,Identification,InvoiceCount,OriginalAmount,PaidAmount,
-              OutstandingAmount,OverdueAmount FROM Portfolio
-            WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0) OR (@Overdue=0 AND OverdueAmount=0)
+              OutstandingAmount,OverdueAmount FROM #Portfolio
             ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,CustomerName
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """,connection);
@@ -97,9 +71,10 @@ public sealed class SqlReceivablesStore(
         command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
         await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);
         var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);var invoices=reader.GetInt32(3);
+        var original=reader.GetDecimal(4);var paid=reader.GetDecimal(5);
         await reader.NextResultAsync(token);var items=new List<CustomerPortfolioItem>();
         while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7)));
-        return new(items,query.Page,query.PageSize,count,outstanding,overdue,invoices);
+        return new(items,query.Page,query.PageSize,count,outstanding,overdue,invoices,original,paid);
     }
 
     public async Task<ReceivablePage> ListAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token)
@@ -122,32 +97,56 @@ public sealed class SqlReceivablesStore(
                  OR site.Name LIKE N'%' + @Search + N'%'
                  OR site.Code LIKE N'%' + @Search + N'%')
             """;
-        int count; decimal outstanding; decimal overdue;
+        int count; decimal outstanding; decimal overdue; decimal original; decimal paidTotal;
         await using (var command = new SqlCommand($"""
-            SELECT COUNT(*),COALESCE(SUM(r.OutstandingAmount),0),
-                   COALESCE(SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN r.OutstandingAmount ELSE 0 END),0)
+            WITH Filtered AS (
+              SELECT r.ReceivableId,r.OutstandingAmount,r.DueDate,r.OriginalAmount
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
             INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
-            LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId WHERE {where};
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId
+              WHERE {where}),
+            Paid AS (SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
+              FROM dbo.CustomerPaymentApplications application
+              JOIN Filtered scoped ON scoped.ReceivableId=application.ReceivableId
+              WHERE application.AppliedAt IS NOT NULL
+              GROUP BY application.ReceivableId)
+            SELECT COUNT(*),COALESCE(SUM(r.OutstandingAmount),0),
+              COALESCE(SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now
+                THEN r.OutstandingAmount ELSE 0 END),0),
+              COALESCE(SUM(r.OriginalAmount),0),COALESCE(SUM(COALESCE(paid.PaidAmount,0)),0)
+            FROM Filtered r LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId;
             """, connection))
         {
             AddQuery(command, user, query, timeProvider.GetUtcNow());
             await using var reader = await command.ExecuteReaderAsync(token);
             await reader.ReadAsync(token); count=reader.GetInt32(0); outstanding=reader.GetDecimal(1); overdue=reader.GetDecimal(2);
+            original=reader.GetDecimal(3); paidTotal=reader.GetDecimal(4);
         }
         var items = new List<ReceivableListItem>();
         await using (var command = new SqlCommand($"""
-            SELECT r.ReceivableId,r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification),
+            SELECT r.ReceivableId,r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                    r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,r.OutstandingAmount,r.DueDate,
-                   r.Status,r.CreatedAt,CAST(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 1 ELSE 0 END AS bit),
-                   r.PartySiteId,site.Name
+                   r.Status,r.CreatedAt,CAST(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 1 ELSE 0 END AS bit) IsOverdue,
+                   r.PartySiteId,site.Name PartySiteName
+            INTO #Page
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
             INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId WHERE {where}
             ORDER BY CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 0 ELSE 1 END,r.DueDate,r.ReceivableId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT page.ReceivableId,page.CustomerId,page.CustomerName,page.DocumentNumber,
+              page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
+              page.Status,page.CreatedAt,page.IsOverdue,page.PartySiteId,page.PartySiteName,
+              COALESCE(paid.PaidAmount,0)
+            FROM #Page page
+            LEFT JOIN (SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
+              FROM dbo.CustomerPaymentApplications application
+              JOIN #Page selected ON selected.ReceivableId=application.ReceivableId
+              WHERE application.AppliedAt IS NOT NULL
+              GROUP BY application.ReceivableId) paid ON paid.ReceivableId=page.ReceivableId
+            ORDER BY CASE WHEN page.IsOverdue=1 THEN 0 ELSE 1 END,page.DueDate,page.ReceivableId;
             """, connection))
         {
             AddQuery(command,user,query,timeProvider.GetUtcNow());
@@ -157,9 +156,9 @@ public sealed class SqlReceivablesStore(
             while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),
                 reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDateTimeOffset(7),
                 reader.GetString(8),reader.GetBoolean(10),reader.GetDateTimeOffset(9),
-                reader.IsDBNull(11)?null:reader.GetGuid(11),reader.IsDBNull(12)?null:reader.GetString(12)));
+                reader.IsDBNull(11)?null:reader.GetGuid(11),reader.IsDBNull(12)?null:reader.GetString(12),reader.GetDecimal(13)));
         }
-        return new(items,query.Page,query.PageSize,count,outstanding,overdue);
+        return new(items,query.Page,query.PageSize,count,outstanding,overdue,original,paidTotal);
     }
 
     public Task<CustomerPaymentHistoryPage> PaymentHistoryAsync(ReceivablesUserIdentity user,
@@ -171,7 +170,7 @@ public sealed class SqlReceivablesStore(
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token);
         await using var command=new SqlCommand("""
-            SELECT COUNT(*) FROM dbo.CustomerPayments payment
+            SELECT COUNT(*),COALESCE(SUM(payment.TotalAmount),0) FROM dbo.CustomerPayments payment
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
@@ -254,7 +253,7 @@ public sealed class SqlReceivablesStore(
         command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);
         command.Parameters.AddWithValue("@PageSize",query.PageSize);
         await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token);
-        var total=reader.GetInt32(0); await reader.NextResultAsync(token);
+        var total=reader.GetInt32(0);var totalAmount=reader.GetDecimal(1); await reader.NextResultAsync(token);
         var items=new List<CustomerPaymentHistoryItem>();
         while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),
             reader.GetDateTimeOffset(2),reader.GetString(3),reader.GetDecimal(4),reader.GetString(5),reader.GetInt32(6),
@@ -271,7 +270,7 @@ public sealed class SqlReceivablesStore(
         while(await reader.ReadAsync(token)) applications[reader.GetGuid(0)].Add(new(
             reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3)));
         return new(items.Select(item=>item with { Payments=byPayment[item.PaymentId],Applications=applications[item.PaymentId] }).ToArray(),
-            query.Page,query.PageSize,total);
+            query.Page,query.PageSize,total,totalAmount);
     }
 
     public async Task<ReceivableDetail?> GetAsync(ReceivablesUserIdentity user, Guid id, CancellationToken token)
@@ -532,7 +531,7 @@ public sealed class SqlReceivablesStore(
                 AND EffectiveFrom<=CONVERT(date,@PaidAt)) THEN 1 ELSE 0 END);
             IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(
                 MethodCode nvarchar(32),BankAccountId uniqueidentifier)
-              WHERE MethodCode=N'BankTransfer' AND @AccountingReady=1 AND BankAccountId IS NULL)
+              WHERE MethodCode=N'Transfer' AND @AccountingReady=1 AND BankAccountId IS NULL)
               THROW 51313,'Select a bank account for every transfer.',1;
             IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(
                 MethodCode nvarchar(32),BankAccountId uniqueidentifier) input

@@ -841,6 +841,9 @@ public sealed class OrderRecoveryTests(
         await RecoverAsync(client, userId, workSession.WorkSessionId, invoiceOrderId, cleanDraft);
         var recoveredForInvoice = await OpenDraftAsync(client, workSession.WorkSessionId);
         Assert.Equal(invoiceOrderId, recoveredForInvoice.SourceOrderId);
+        await ExecuteAsync(
+            "UPDATE dbo.Products SET IsActive=0 WHERE ProductId=@ProductId;",
+            new SqlParameter("@ProductId", firstProductId));
         using (var invoiceRequest = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/commerce/v1/pos/drafts/{recoveredForInvoice.DraftId:D}/complete")
@@ -865,6 +868,16 @@ public sealed class OrderRecoveryTests(
         Assert.Equal("Invoiced", invoicedDetail.Status);
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.OrderInvoiceLinks WHERE OrderId=@OrderId;",
+            new SqlParameter("@OrderId", invoiceOrderId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            """
+            SELECT COUNT(*) FROM dbo.OrderInvoiceLinks link
+            JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId
+            JOIN dbo.DocumentProcessingJobs job
+              ON job.DocumentId=document.DocumentId AND job.DocumentType=document.DocumentType
+            WHERE link.OrderId=@OrderId AND document.ProcessingStatus=N'Completed'
+              AND job.Status=N'Completed';
+            """,
             new SqlParameter("@OrderId", invoiceOrderId)));
 
         async Task<(decimal FirstSource, decimal SecondSource, decimal FirstReserved, decimal SecondReserved)> ReadBalancesAsync(
@@ -1421,6 +1434,27 @@ public sealed class OrderRecoveryTests(
             Assert.Equal(22_500m, verifyReader.GetDecimal(4));
             Assert.Equal(updatedPartySiteId, verifyReader.GetGuid(5));
             Assert.Equal(updatedPartySiteId, verifyReader.GetGuid(6));
+            await verifyReader.DisposeAsync();
+
+            var staleDraft = await OpenDraftAsync(client, workSession.WorkSessionId);
+            Assert.Equal(orderId, staleDraft.SourceOrderId);
+            using var duplicateRequest = new HttpRequestMessage(HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{staleDraft.DraftId:D}/complete")
+            {
+                Content = JsonContent.Create(new CompleteOnlineSalesDraftRequest(
+                    staleDraft.Version,
+                    [new OnlineSalesPayment("Cash", staleDraft.PayableAmount,
+                        null, RoundingAdjustment: 0m)]))
+            };
+            duplicateRequest.Headers.Add("Idempotency-Key",
+                $"stale-order-draft-{Guid.NewGuid():N}");
+            using var duplicateResponse = await client.SendAsync(duplicateRequest);
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, duplicateResponse.StatusCode);
+            Assert.Contains("ya no está disponible", await duplicateResponse.Content.ReadAsStringAsync(),
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.OnlineSalesCheckoutReceipts WHERE SalesDraftId=@DraftId",
+                new SqlParameter("@DraftId", staleDraft.DraftId)));
         }
         finally
         {

@@ -39,7 +39,7 @@ La API requiere identidad autenticada con `tenant_id`, `business_id`, identifica
 - `PUT /api/commerce/v1/customers/{customerId}/credit`
 - `POST /api/commerce/v1/receivable-payments/confirm`
 
-El registro de recaudo exige `Idempotency-Key`. La administración usa `receivables.read`, `receivables.payments.create` y `receivables.credit.manage`. El abono desde punto de venta usa `pos.receivables.payments.create` y una sesión de caja abierta; ese permiso no habilita la vista administrativa de cuentas por cobrar.
+El registro de recaudo exige `Idempotency-Key`. La administración usa `receivables.read`, `receivables.payments.create` y `receivables.credit.manage`. El abono desde punto de venta usa `pos.receivables.payments.create`; al iniciar la operación se abre o retoma automáticamente la sesión operativa del usuario, aunque no exista una venta previa. En la caja preparada, Edge confirma que esa sesión ya está registrada en el servidor antes de consultar o pagar cartera. Ese permiso no habilita la vista administrativa de cuentas por cobrar.
 
 ## Verificación manual
 

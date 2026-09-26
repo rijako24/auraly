@@ -76,7 +76,7 @@ http://localhost:3000/dashboard/payables
 ```
 
 El proxy del admin debe apuntar a `Auraly.Api`. Para registrar pagos el usuario
-requiere `payables.read` y `payables.payments.create`. En punto de venta, la selección y el pago usan `pos.payables.payments.create` con una sesión de caja abierta; este permiso no abre la vista administrativa de cuentas por pagar.
+requiere `payables.read` y `payables.payments.create`. En punto de venta, la selección y el pago usan `pos.payables.payments.create`; al iniciar la operación se abre o retoma automáticamente la sesión operativa del usuario, aunque no exista una venta previa. En la caja preparada, Edge confirma que esa sesión ya está registrada en el servidor antes de consultar o pagar cartera. Este permiso no abre la vista administrativa de cuentas por pagar.
 
 ## Recorrido de verificación manual
 
@@ -91,3 +91,13 @@ requiere `payables.read` y `payables.payments.create`. En punto de venta, la sel
 
 No hay polling. Una vista abierta hace su consulta normal e invalida una vez al
 aceptar su propia mutación.
+# Totales por moneda
+
+La cartera de proveedores admite obligaciones en distintas monedas. `GET /commerce/v1/payables` y
+`GET /commerce/v1/payables/suppliers` devuelven `currencyTotals` por moneda del conjunto filtrado;
+los importes escalares `totalOutstanding` y `totalOverdue` conservan la semántica COP para
+compatibilidad. En la pestaña de proveedores cada fila corresponde a proveedor y moneda,
+incluida su paginación. Nunca se suman saldos USD y COP como si tuvieran la misma unidad.
+Los saldos a favor del proveedor permanecen en COP y se asignan a una sola fila del tercero:
+la fila COP si existe en el filtro o, de lo contrario, la primera moneda visible. Así se muestran
+también para proveedores con obligaciones únicamente en moneda extranjera sin duplicarlos en el total.

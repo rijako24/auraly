@@ -225,7 +225,11 @@ los medios de pago y `Idempotency-Key`.
 Dentro de una transacción serializable, el servidor:
 
 1. bloquea el borrador del usuario;
-2. valida que siga activo y tenga la versión esperada;
+2. valida que siga activo y tenga la versión esperada; si procede de un pedido,
+   vuelve a verificar bajo bloqueo que `OrderInvoiceLinks` aún no lo vincule a
+   otra factura. Una caja pudo haberlo importado al borrador antes de que otra
+   ruta lo facturara. En ese caso rechaza el borrador obsoleto antes de reservar
+   consecutivos, crear `SalesDocuments` o iniciar DIAN;
 3. valida que los pagos cubran exactamente el total;
 4. resuelve las series operativa y fiscal del emisor servidor de la sede;
 5. consume atómicamente ambos consecutivos;

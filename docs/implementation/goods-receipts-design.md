@@ -144,6 +144,8 @@ La recepción completa se confirma una sola vez. El payload inmutable lleva docu
 
 La factura principal conserva el `AccountingPostingJob` vigente. Cada documento adicional genera su propia fuente y otro job en el mismo motor contable. Así conserva proveedor, fecha de causación, período, moneda, vencimiento y eventual reversión propios. El processor produce un asiento balanceado y una cuenta por pagar por documento, usando las asignaciones congeladas para debitar inventario, gasto e IVA. No se crean otra tabla de jobs, cola, worker ni posting service. La suma de débitos a inventario de la factura principal y los documentos adicionales debe conciliar con el valor reconocido por el único movimiento operativo de la recepción.
 
+La conciliación del ajuste por inventario negativo usa el costo total que ya lleva el movimiento operativo: base de mercancía más costos adicionales capitalizados en las líneas con movimiento. El ajuste es esa suma menos el cambio real de valor del inventario. Comparar el movimiento completo solo con la base de la factura principal vuelve a debitar los costos adicionales y reduce indebidamente el costo de ventas. Con existencias positivas, mercancía de COP 50.000 y flete capitalizado de COP 10.000 producen un solo aumento de inventario de COP 60.000: dos débitos documentales por COP 50.000 y COP 10.000, sin asiento de ajuste. Si la entrada cubre inventario negativo, el ajuste lleva a costo de ventas únicamente la diferencia entre COP 60.000 y el aumento real de valor del inventario.
+
 `Payables` se vincula al `CostDocumentId` inmutable y conserva también `GoodsReceiptId` para navegación. Su unicidad deja de ser una sola obligación por recepción y pasa a una obligación por documento de costo. La reversión posterior referencia ambos identificadores.
 
 Los documentos adicionales no generan `DocumentProcessingJobs` ficticios. El handler de la recepción crea sus `AccountingSourceDocuments` y `AccountingPostingJobs` directamente en las tablas canónicas del motor contable, dentro de la misma transacción que deja procesada la recepción.
@@ -166,7 +168,15 @@ Un registro sólo por factura, declaración o soporte adicional; la factura prin
 - subtotal, impuestos, retenciones, total y neto por pagar en moneda original y COP;
 - estado y snapshot inmutable al confirmar.
 
-Unicidad mínima: `BusinessId + SupplierId + número normalizado + tipo de soporte`. Un número vacío sólo es admisible para el soporte que legalmente no lo requiera.
+La persistencia impide repetir el mismo número externo para un proveedor de costo adicional, incluso en otra recepción de la misma sede. Así no se causa dos veces la misma obligación. Si el soporte lo emite Auraly, el usuario deja el número vacío y el motor le asigna un consecutivo fiscal DIAN distinto a cada documento dentro de la confirmación; la validación de números externos no trata esos campos vacíos como duplicados. El número asignado se conserva en el documento de costo y su cuenta por pagar.
+
+El documento soporte de un costo adicional usa el mismo emisor, cupo, snapshot y proceso fiscal que el documento soporte de la factura principal, con raíz fiscal propia referida al `CostDocumentId`. El motor selecciona la resolución y serie vigentes para la fecha de emisión de cada documento; si dos fechas corresponden a series distintas, reserva los consecutivos de ambas series en un único lote. La reserva de todos los soportes de una recepción, su inventario y sus obligaciones quedan en una transacción SQL. Si falta cupo, configuración o un dato DIAN, no se confirma ninguna parte de la recepción. El asiento de cada documento adicional sigue el motor contable existente: débito a inventario para la porción capitalizable de productos recibidos, débito al concepto PUC de gasto cuando no se capitaliza, IVA descontable únicamente con tratamiento fiscal permitido y créditos a retenciones y cuenta por pagar del proveedor. La selección del soporte no crea otro asiento ni modifica la cuenta PUC del concepto.
+
+La generación fiscal de la factura principal y de cada costo adicional sólo puede adquirir trabajo después de que la recepción quede `Processed`. El observador canónico de finalización publica la señal del documento principal y, en una consulta acotada por recepción, identifica los costos adicionales con generación pendiente y publica su señal individual. Reproducir el observador es idempotente y no vuelve a contabilizar ni reservar numeración.
+
+Un comprobante interno adicional aplica la misma restricción que la factura principal: no acredita IVA descontable por sí solo. Si el impuesto es no recuperable y el costo es directamente atribuible a la mercancía, se clasifica como mayor valor del inventario; en caso contrario se lleva al gasto correspondiente.
+
+Con el PUC semilla, inventario usa `143505`, IVA descontable `240810` y proveedores `220505`; las retenciones van a las categorías `236540`, `236701` y `236805` según la regla tributaria. Un flete que no se capitaliza usa `513550`; seguro `513025`, aduanas `519525`, manejo `513595` y otros costos directos `519596`. Las empresas pueden configurar las cuentas de esas categorías y conceptos sin cambiar el proceso. La factura principal de mercancía reconoce su propio inventario y su propia cuenta por pagar; los documentos adicionales solo agregan su costo atribuible o gasto y su obligación independiente.
 
 #### `purchasing.GoodsReceiptCostLines`
 
@@ -572,3 +582,4 @@ hosted service canónico vuelve a publicar los jobs pendientes desde
 `DocumentProcessingJobs`. Conteos, ajustes, averías, conversiones y ambos extremos
 de un traslado comparten el mismo publicador; no se crea otra tabla, otro motor,
 otro writer ni otro servicio desplegable.
+La confirmación carga reglas y perfiles de retención una sola vez para los proveedores de la factura principal y de todos los documentos adicionales. Cada retención se calcula luego en memoria con el plan congelado; agregar documentos no aumenta el número de lecturas SQL de retención.

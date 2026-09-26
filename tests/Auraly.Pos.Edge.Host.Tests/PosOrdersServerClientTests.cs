@@ -25,7 +25,8 @@ public sealed class PosOrdersServerClientTests
         var client = new PosOrdersServerClient(http,
             new PosDeviceCredentials(deviceId, "device-secret"),
             new PosEdgeRuntimeContext(new TenantId(tenantId), new BusinessId(businessId),
-                new WarehouseId(warehouseId), new DeviceId(deviceId), false));
+                new WarehouseId(warehouseId), new DeviceId(deviceId), false),
+            TestOpenings(http, new PosDeviceCredentials(deviceId, "device-secret")));
         var session = new PosLocalUserSession(Guid.NewGuid(), workSessionId, userId,
             "cashier", "Cashier", ["orders.invoice"],
             DateTimeOffset.UtcNow.AddHours(1), "session-token");
@@ -56,7 +57,8 @@ public sealed class PosOrdersServerClientTests
             new BusinessId(Guid.NewGuid()), new WarehouseId(Guid.NewGuid()),
             new DeviceId(Guid.NewGuid()), false);
         var client = new PosOrdersServerClient(http,
-            new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret"), runtime);
+            new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret"), runtime,
+            TestOpenings(http, new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret")));
         var session = new PosLocalUserSession(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             "cashier", "Cashier", ["orders.create"],
             DateTimeOffset.UtcNow.AddHours(1), "session-token");
@@ -79,7 +81,8 @@ public sealed class PosOrdersServerClientTests
             new BusinessId(Guid.NewGuid()), new WarehouseId(Guid.NewGuid()),
             new DeviceId(Guid.NewGuid()), false);
         var client = new PosOrdersServerClient(http,
-            new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret"), runtime);
+            new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret"), runtime,
+            TestOpenings(http, new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret")));
         var session = new PosLocalUserSession(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             "cashier", "Cashier", ["orders.read"],
             DateTimeOffset.UtcNow.AddHours(1), "session-token");
@@ -103,7 +106,8 @@ public sealed class PosOrdersServerClientTests
             new BusinessId(Guid.NewGuid()), new WarehouseId(Guid.NewGuid()),
             new DeviceId(Guid.NewGuid()), false);
         var client = new PosOrdersServerClient(http,
-            new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret"), runtime);
+            new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret"), runtime,
+            TestOpenings(http, new PosDeviceCredentials(runtime.DeviceId.Value, "device-secret")));
         var session = new PosLocalUserSession(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             "cashier", "Cashier", ["orders.read"],
             DateTimeOffset.UtcNow.AddHours(1), "session-token");
@@ -116,6 +120,11 @@ public sealed class PosOrdersServerClientTests
         Assert.Equal("No fue posible procesar los pedidos.", error.Message);
         Assert.DoesNotContain("html", error.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static PosWorkSessionOpenUploader TestOpenings(
+        HttpClient http, PosDeviceCredentials credentials) =>
+        new("Data Source=:memory:", http, credentials, TimeProvider.System,
+            new PosSynchronizationEventLog(TimeProvider.System));
 
     private sealed class RecordingHandler(
         HttpStatusCode statusCode = HttpStatusCode.OK,

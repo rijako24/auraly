@@ -378,6 +378,59 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(0m, await InventoryBalanceFieldAsync(productId, "QuantityOnHand"));
         Assert.Equal(6_000m, await InventoryBalanceFieldAsync(productId, "AverageUnitCost"));
         Assert.Equal(0m, await InventoryBalanceFieldAsync(productId, "InventoryValue"));
+
+        var negativeSaleSource = fixture.CreateValidRequest(9_935);
+        var negativeSale = WithUblSnapshot(negativeSaleSource with
+        {
+            Lines = [negativeSaleSource.Lines[0] with
+            {
+                ProductId = productId,
+                DocumentUnitCost = 6_000m
+            }]
+        });
+        using (var upload = fixture.CreateUploadMessage(negativeSale))
+        using (var response = await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+        Assert.Equal(-1m, await InventoryBalanceFieldAsync(productId, "QuantityOnHand"));
+        Assert.Equal(-6_000m, await InventoryBalanceFieldAsync(productId, "InventoryValue"));
+
+        var freightId = Guid.NewGuid();
+        var receiptWithFreight = new ConfirmGoodsReceiptRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            fixture.SupplierId, $"NEG-{Guid.NewGuid():N}", receivedAt,
+            receivedAt.AddMinutes(3), true, receivedAt.AddDays(29), "COP",
+            "Entrada con flete que cubre inventario negativo",
+            [new GoodsReceiptLineRequest(1, productId, "Producto inventariable", 1m,
+                4_000m, 0m, "00", 0m, PurchasingTaxTreatments.NotApplicable)],
+            AdditionalCostDocuments:
+            [new GoodsReceiptCostDocumentRequest(
+                freightId, fixture.SupplierId, PurchaseEvidenceTypes.SupplierElectronicInvoice,
+                $"FLETE-{freightId:N}", receivedAt, true, receivedAt.AddDays(29),
+                "COP", 1m, DateOnly.FromDateTime(receivedAt.Date), "FunctionalCurrency",
+                [new GoodsReceiptCostLineRequest(
+                    1, PurchaseCostKinds.Freight, "Flete de reposición", 1_000m,
+                    0m, "00", 0m, 0m, PurchasingTaxTreatments.NotApplicable,
+                    PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)])]);
+        using (var message = CreateGoodsReceiptMessage(receiptWithFreight,
+                   $"negative-freight-{receiptWithFreight.DocumentId:N}"))
+        using (var response = await accounting.SendAsync(message))
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                await response.Content.ReadAsStringAsync());
+
+        await AssertBalancedAsync(receiptWithFreight.DocumentId);
+        await AssertBalancedAsync(freightId);
+        Assert.Equal(6_000m, await ScalarAsync<decimal>(
+            "SELECT ValueChange FROM dbo.InventoryMovements WHERE DocumentId=@Id",
+            receiptWithFreight.DocumentId));
+        Assert.Equal(5_000m, await AccountAmountAsync(receiptWithFreight.DocumentId,
+            "143505", debit: true));
+        Assert.Equal(1_000m, await AccountAmountAsync(freightId,
+            "143505", debit: true));
+        Assert.Equal(1_000m, await AccountAmountAsync(receiptWithFreight.DocumentId,
+            "613595", debit: false));
+        Assert.Equal(0m, await InventoryBalanceFieldAsync(productId, "QuantityOnHand"));
+        Assert.Equal(0m, await InventoryBalanceFieldAsync(productId, "InventoryValue"));
     }
 
     [Fact]
@@ -643,10 +696,11 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await settlementWorker.StartAsync(CancellationToken.None);
         try
         {
+            var webSessionId = await fixture.OpenWebWorkSessionAsync();
             var request = new SettleDispatchRequest(
                 invoice.CommercialSnapshot.PayableAmount - 1_000m,
                 "Faltante entregado por el transportador", $"settle-{dispatchId:N}",
-                fixture.WorkSessionId);
+                webSessionId);
             using var settle = await accounting.PostAsJsonAsync(
                 $"/api/commerce/v1/dispatches/{dispatchId:D}/settle", request);
             Assert.True(settle.IsSuccessStatusCode,
@@ -757,13 +811,14 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         using(var rule=await accounting.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments",laterRule)) rule.EnsureSuccessStatusCode();
         try
         {
+        var webSessionId = await fixture.OpenWebWorkSessionAsync();
         var salesReturn = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, request.DocumentId,
             new DateTimeOffset(2026, 8, 31, 15, 0, 0, TimeSpan.FromHours(-5)),
             ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Transfer,
             "Reintegro por transferencia",
             [new ConfirmSalesReturnLineRequest(1, .1m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, null, "Other", null, SalesReturnScopes.Partial, bankAccountId,
+            webSessionId, null, "Other", null, SalesReturnScopes.Partial, bankAccountId,
             "TR-RETURN-2000", "Reintegro confirmado por el banco");
         using (var returns = fixture.CreateAdminClient(
                    SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm))
@@ -1834,12 +1889,13 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             "AccountingEntries", "SourceDocumentId",
             receiptWithoutSettlement.DocumentId));
 
+        var webSessionId = await fixture.OpenWebWorkSessionAsync();
         var returnRequest = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, invoice.DocumentId,
             new DateTimeOffset(2026, 8, 1, 10, 0, 0, TimeSpan.FromHours(-5)),
             ReturnEconomicResolutions.Refund, "Cash", "Devolucion contable",
             [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, null, "Other");
+            webSessionId, null, "Other");
         using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
         { Content = JsonContent.Create(returnRequest) })
         {

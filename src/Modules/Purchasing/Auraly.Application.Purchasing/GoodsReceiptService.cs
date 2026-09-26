@@ -33,16 +33,16 @@ public sealed class GoodsReceiptService(
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(request);
         if (user.BusinessId != request.BusinessId)
-            throw new PurchasingForbiddenException("The goods receipt belongs to another business.");
+            throw new PurchasingForbiddenException("La recepción pertenece a otra sede.");
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
         if (request.SupplierId == Guid.Empty)
-            throw new PurchasingValidationException("SupplierId is required.");
+            throw new PurchasingValidationException("Selecciona un proveedor.");
         if (request.SupplierInvoiceDate == default)
-            throw new PurchasingValidationException("SupplierInvoiceDate is required.");
+            throw new PurchasingValidationException("Indica la fecha de emisión.");
         if (!PurchaseEvidenceTypes.IsValid(request.PurchaseEvidenceType))
-            throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
+            throw new PurchasingValidationException("El tipo de soporte de compra es inválido.");
         if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.ImportDeclaration)
-            throw new PurchasingValidationException("An import declaration must be added as a nationalization cost document.");
+            throw new PurchasingValidationException("Agrega la declaración de importación como documento de costo de nacionalización.");
         var productWeights = await workspaceStore.GetUnitGrossWeightsAsync(
             user, request.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
         var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines.Select(line => line with
@@ -52,7 +52,7 @@ public sealed class GoodsReceiptService(
         ValidateEvidenceTaxTreatment(request.PurchaseEvidenceType, normalizedLines);
         var calculation = Calculate(normalizedLines);
         if (request.ExchangeRate <= 0)
-            throw new PurchasingValidationException("ExchangeRate must be positive.");
+            throw new PurchasingValidationException("La tasa de cambio debe ser positiva.");
         return await CalculateWithholdingAsync(
             user, request.SupplierId, request.WithholdingConceptCode,
             request.WithholdingJurisdictionCode,
@@ -72,20 +72,20 @@ public sealed class GoodsReceiptService(
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(request);
         if (user.BusinessId != request.BusinessId)
-            throw new PurchasingForbiddenException("The cost document belongs to another business.");
+            throw new PurchasingForbiddenException("El documento de costo pertenece a otra sede.");
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
-        var document = request.Document ?? throw new PurchasingValidationException("Document is required.");
+        var document = request.Document ?? throw new PurchasingValidationException("Selecciona un documento de costo.");
         if (document.SupplierId == Guid.Empty || document.IssuedAt == default ||
             document.ExchangeRate <= 0 || document.Lines is null || document.Lines.Count == 0)
-            throw new PurchasingValidationException("Supplier, issue date, exchange rate and lines are required.");
+            throw new PurchasingValidationException("Completa proveedor, emisión, tasa de cambio y conceptos.");
         if (!PurchaseEvidenceTypes.IsValid(document.PurchaseEvidenceType))
-            throw new PurchasingValidationException("The cost document evidence type is invalid.");
+            throw new PurchasingValidationException("El tipo de soporte del costo es inválido.");
         if (document.Lines.Any(line => line.Amount < 0 || line.TaxAmount < 0 ||
             line.TaxableBaseAmount < 0 || line.TaxRate is < 0 or > 100))
-            throw new PurchasingValidationException("The cost document contains invalid amounts.");
+            throw new PurchasingValidationException("El documento de costo contiene valores inválidos.");
         if (document.PurchaseEvidenceType == PurchaseEvidenceTypes.ForeignCommercialInvoice &&
             document.Lines.Any(line => line.TaxAmount != 0))
-            throw new PurchasingValidationException("A foreign invoice cannot recognize Colombian input VAT.");
+            throw new PurchasingValidationException("Una factura del exterior no puede registrar IVA colombiano descontable.");
         var calculation = FunctionalCalculation(
             decimal.Round(document.Lines.Sum(line => line.Amount) * document.ExchangeRate, 4,
                 MidpointRounding.AwayFromZero),
@@ -106,35 +106,40 @@ public sealed class GoodsReceiptService(
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(request);
         if (user.BusinessId != request.BusinessId)
-            throw new PurchasingForbiddenException("The goods receipt belongs to another business.");
+            throw new PurchasingForbiddenException("La recepción pertenece a otra sede.");
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
         Require(user, PurchasingPermissionCodes.ConfirmGoodsReceipts);
-        if (request.DocumentId == Guid.Empty) throw new PurchasingValidationException("DocumentId is required.");
-        if (request.WarehouseId == Guid.Empty) throw new PurchasingValidationException("WarehouseId is required.");
-        if (request.SupplierId == Guid.Empty) throw new PurchasingValidationException("SupplierId is required.");
-        if (string.IsNullOrWhiteSpace(idempotencyKey)) throw new PurchasingValidationException("Idempotency-Key is required.");
-        if (idempotencyKey.Length > 160) throw new PurchasingValidationException("Idempotency-Key is too long.");
-        if (request.ReceivedAt == default) throw new PurchasingValidationException("ReceivedAt is required.");
+        if (request.DocumentId == Guid.Empty) throw new PurchasingValidationException("Falta el identificador de la recepción.");
+        if (request.WarehouseId == Guid.Empty) throw new PurchasingValidationException("Selecciona una bodega.");
+        if (request.SupplierId == Guid.Empty) throw new PurchasingValidationException("Selecciona un proveedor.");
+        if (string.IsNullOrWhiteSpace(idempotencyKey)) throw new PurchasingValidationException("Falta la clave de confirmación.");
+        if (idempotencyKey.Length > 160) throw new PurchasingValidationException("La clave de confirmación es demasiado larga.");
+        if (request.ReceivedAt == default) throw new PurchasingValidationException("Indica la fecha de recepción.");
         if (!PurchaseEvidenceTypes.IsValid(request.PurchaseEvidenceType))
-            throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
+            throw new PurchasingValidationException("El tipo de soporte de compra es inválido.");
         if (request.SupplierInvoiceDate is null)
-            throw new PurchasingValidationException("SupplierInvoiceDate is required as the purchase document issue date.");
+            throw new PurchasingValidationException("Indica la fecha de emisión del documento de compra.");
         if (request.PurchaseEvidenceType is PurchaseEvidenceTypes.SupplierElectronicInvoice or
                 PurchaseEvidenceTypes.ForeignCommercialInvoice &&
             string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber))
             throw new PurchasingValidationException(
-                "Supplier invoice number and date are required for an electronic supplier invoice.");
+                "La factura del proveedor requiere número y fecha de emisión.");
         if (request.PurchaseEvidenceType is not (PurchaseEvidenceTypes.SupplierElectronicInvoice or
                 PurchaseEvidenceTypes.ForeignCommercialInvoice) &&
             !string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber))
             throw new PurchasingValidationException(
-                "Supplier invoice number is only valid for an electronic supplier invoice.");
+                "El número de factura del proveedor solo aplica cuando ese es el tipo de soporte.");
         if (request.CreatesPayable && request.DueDate is null)
-            throw new PurchasingValidationException("DueDate is required when the receipt creates a payable.");
+            throw new PurchasingValidationException("Indica el vencimiento de la cuenta por pagar.");
         if (request.DueDate < request.SupplierInvoiceDate)
-            throw new PurchasingValidationException("DueDate cannot be earlier than SupplierInvoiceDate.");
+            throw new PurchasingValidationException("El vencimiento no puede ser anterior a la emisión.");
+        if ((request.AdditionalCostDocuments ?? []).Any(document =>
+            document.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument &&
+            !string.IsNullOrWhiteSpace(document.DocumentNumber)))
+            throw new PurchasingValidationException(
+                "Deja vacío el número del documento soporte adicional; Auraly lo asigna al confirmar.");
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
-        if (currency.Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
+        if (currency.Length != 3) throw new PurchasingValidationException("El código de moneda debe tener tres caracteres.");
 
         var productWeights = await workspaceStore.GetUnitGrossWeightsAsync(
             user, request.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
@@ -143,11 +148,11 @@ public sealed class GoodsReceiptService(
             UnitGrossWeightKg = productWeights.GetValueOrDefault(line.ProductId)
         }).ToArray());
         if (request.PurchaseOrderId is null && normalizedLines.Any(line => line.PurchaseOrderLineId is not null))
-            throw new PurchasingValidationException("PurchaseOrderId is required when receipt lines reference an order.");
+            throw new PurchasingValidationException("Selecciona la orden de compra referida por las líneas.");
         if (request.PurchaseOrderId is not null && normalizedLines.Any(line => line.PurchaseOrderLineId is null))
-            throw new PurchasingValidationException("Every line recovered from a purchase order must retain its order-line reference.");
+            throw new PurchasingValidationException("Cada línea recuperada de una orden debe conservar su referencia.");
         if (normalizedLines.Any(line => line.OverReceiptReason?.Trim().Length > 500))
-            throw new PurchasingValidationException("OverReceiptReason cannot exceed 500 characters.");
+            throw new PurchasingValidationException("El motivo del exceso recibido no puede superar 500 caracteres.");
         ValidateEvidenceTaxTreatment(request.PurchaseEvidenceType, normalizedLines);
         var calculation = Calculate(normalizedLines);
         var normalizedRequest = request with
@@ -163,27 +168,31 @@ public sealed class GoodsReceiptService(
         if ((normalizedRequest.AdditionalCostDocuments ?? []).Select(value => value.CostDocumentId)
             .Append(request.DocumentId).Distinct().Count() !=
             (normalizedRequest.AdditionalCostDocuments?.Count ?? 0) + 1)
-            throw new PurchasingValidationException("Document ids must be unique within the receipt.");
+            throw new PurchasingValidationException("Cada documento de la recepción debe tener un identificador único.");
         if ((normalizedRequest.AdditionalCostDocuments ?? []).Any(value =>
             value.SupplierId == request.SupplierId &&
             string.Equals(value.DocumentNumber, normalizedRequest.SupplierInvoiceNumber,
                 StringComparison.OrdinalIgnoreCase)))
             throw new PurchasingValidationException(
-                "The primary supplier invoice cannot be repeated as an additional cost document.");
+                "La factura principal del proveedor no se puede repetir como documento de costo adicional.");
         var costCalculation = GoodsReceiptCostCalculator.Calculate(normalizedRequest, calculation);
-        var withholding = await CalculateWithholdingAsync(
+        var withholdingPlan = await withholdingService.PrepareCalculationPlanAsync(
+            user.TenantId, user.BusinessId,
+            costCalculation.AdditionalDocuments.Select(item => item.Request.SupplierId)
+                .Append(request.SupplierId).Distinct().ToArray(), cancellationToken);
+        var withholding = CalculateWithholding(withholdingPlan,
             user, request.SupplierId, request.WithholdingConceptCode,
             request.WithholdingJurisdictionCode, FunctionalCalculation(
                 costCalculation.FunctionalNetAmount, costCalculation.FunctionalTaxAmount),
-            request.SupplierInvoiceDate.Value, cancellationToken);
+            request.SupplierInvoiceDate.Value);
         var additionalWithholdings = new Dictionary<Guid, WithholdingCalculationSnapshot>();
         foreach (var document in costCalculation.AdditionalDocuments)
         {
-            additionalWithholdings[document.Request.CostDocumentId] = await CalculateWithholdingAsync(
+            additionalWithholdings[document.Request.CostDocumentId] = CalculateWithholding(withholdingPlan,
                 user, document.Request.SupplierId, document.Request.WithholdingConceptCode,
                 document.Request.WithholdingJurisdictionCode,
                 FunctionalCalculation(document.FunctionalNetAmount, document.FunctionalTaxAmount),
-                document.Request.IssuedAt, cancellationToken);
+                document.Request.IssuedAt);
         }
 
         var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), normalizedRequest,
@@ -198,14 +207,23 @@ public sealed class GoodsReceiptService(
         return acceptance;
     }
 
-    private Task<WithholdingCalculationSnapshot> CalculateWithholdingAsync(
+    private WithholdingCalculationSnapshot CalculateWithholding(
+        WithholdingCalculationPlan plan,
         PurchasingUserIdentity user,
         Guid supplierId,
         string? conceptCode,
         string? jurisdictionCode,
         GoodsReceiptCalculation calculation,
-        DateTimeOffset occurredAt,
-        CancellationToken cancellationToken) =>
+        DateTimeOffset occurredAt) =>
+        withholdingService.Calculate(plan,
+            new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
+                WithholdingRecognitionMoments.Accrual, supplierId, conceptCode,
+                jurisdictionCode, calculation.NetAmount, calculation.TaxAmount, occurredAt));
+
+    private Task<WithholdingCalculationSnapshot> CalculateWithholdingAsync(
+        PurchasingUserIdentity user, Guid supplierId, string? conceptCode,
+        string? jurisdictionCode, GoodsReceiptCalculation calculation,
+        DateTimeOffset occurredAt, CancellationToken cancellationToken) =>
         withholdingService.CalculateAsync(user.TenantId, user.BusinessId,
             new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
                 WithholdingRecognitionMoments.Accrual, supplierId, conceptCode,
@@ -235,7 +253,9 @@ public sealed class GoodsReceiptService(
         IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? documents) =>
         documents?.Select(document => document with
         {
-            DocumentNumber = Normalize(document.DocumentNumber, 80)!,
+            DocumentNumber = document.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
+                ? $"DS-{document.CostDocumentId:N}"
+                : Normalize(document.DocumentNumber, 80)!,
             CurrencyCode = document.CurrencyCode.Trim().ToUpperInvariant(),
             ExchangeRateSource = Normalize(document.ExchangeRateSource, 64) ?? "FunctionalCurrency",
             Lines = document.Lines.Select(line => line with
@@ -253,11 +273,11 @@ public sealed class GoodsReceiptService(
             normalizedLines.Any(line => line.TaxRate > 0 &&
                 line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat))
             throw new PurchasingValidationException(
-                "An internal receipt voucher cannot recognize deductible input VAT; use CapitalizedCost.");
+                "Un comprobante interno no puede registrar IVA descontable; inclúyelo en el costo.");
         if (purchaseEvidenceType == PurchaseEvidenceTypes.ForeignCommercialInvoice &&
             normalizedLines.Any(line => line.TaxRate > 0))
             throw new PurchasingValidationException(
-                "A foreign commercial invoice cannot recognize Colombian input VAT; record import VAT on the import declaration.");
+                "Una factura del exterior no puede registrar IVA colombiano descontable; regístralo en la declaración de importación.");
     }
 
     private static string? Normalize(string? value, int maximumLength)
@@ -265,7 +285,7 @@ public sealed class GoodsReceiptService(
         if (string.IsNullOrWhiteSpace(value)) return null;
         var normalized = value.Trim();
         if (normalized.Length > maximumLength)
-            throw new PurchasingValidationException($"The value exceeds {maximumLength} characters.");
+            throw new PurchasingValidationException($"El valor supera {maximumLength} caracteres.");
         return normalized;
     }
 
@@ -275,8 +295,7 @@ public sealed class GoodsReceiptService(
             !Enum.IsDefined(treatment))
         {
             throw new PurchasingValidationException(
-                $"TaxTreatment must be {PurchasingTaxTreatments.DeductibleInputVat}, " +
-                $"{PurchasingTaxTreatments.CapitalizedCost} or {PurchasingTaxTreatments.NotApplicable}.");
+                "Selecciona un tratamiento del IVA válido.");
         }
 
         return treatment;
@@ -285,7 +304,7 @@ public sealed class GoodsReceiptService(
     private static void Require(PurchasingUserIdentity user, string permission)
     {
         if (!user.Permissions.Contains(permission))
-            throw new PurchasingForbiddenException($"Permission '{permission}' is required.");
+            throw new PurchasingForbiddenException("No tienes permiso para esta operación de compras.");
     }
 }
 

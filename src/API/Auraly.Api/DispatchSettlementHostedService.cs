@@ -136,7 +136,7 @@ public sealed class DispatchSettlementHostedService(
                         [new CustomerPaymentAllocationRequest(item.ReceivableId, item.Amount)],
                         [new CustomerPaymentTenderRequest(
                             item.PaymentMethod == "Deposit"
-                                ? CustomerPaymentMethods.BankTransfer
+                                ? CustomerPaymentMethods.Transfer
                                 : CustomerPaymentMethods.Cash,
                             item.Amount,
                             BankAccountId: item.BankAccountId,

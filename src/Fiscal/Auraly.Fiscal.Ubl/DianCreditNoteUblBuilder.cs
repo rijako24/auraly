@@ -58,7 +58,8 @@ public sealed class DianCreditNoteUblBuilder
                         new XAttribute("schemeID", note.Environment),
                         new XAttribute("schemeName", note.OriginalUniqueCodeScheme), note.OriginalInvoice.Cufe),
                     E(Cbc, "IssueDate", Date(note.OriginalInvoice.IssuedOn)))),
-            Party("AccountingSupplierParty", note.Supplier),
+            Party("AccountingSupplierParty", note.Supplier,
+                note.BuyerGenerated && note.CustomizationId == "10" ? note.SellerPostalZone : null),
             Party("AccountingCustomerParty", note.Customer),
             new XElement(Cac + "PaymentMeans",
                 E(Cbc, "ID", "1"),
@@ -94,7 +95,7 @@ public sealed class DianCreditNoteUblBuilder
                         E(Sts, "QRCode", note.QrPayload)))));
     }
 
-    private static XElement Party(string element, DianParty party) =>
+    private static XElement Party(string element, DianParty party, string? postalZone = null) =>
         new(Cac + element,
             E(Cbc, "AdditionalAccountID", party.OrganizationTypeCode),
             new XElement(Cac + "Party",
@@ -104,7 +105,7 @@ public sealed class DianCreditNoteUblBuilder
                             party.CheckDigit, party.IdentificationTypeCode))
                     : null,
                 new XElement(Cac + "PartyName", E(Cbc, "Name", party.TradeName)),
-                new XElement(Cac + "PhysicalLocation", Address(party.Address)),
+                new XElement(Cac + "PhysicalLocation", Address(party.Address, postalZone)),
                 new XElement(Cac + "PartyTaxScheme",
                     E(Cbc, "RegistrationName", party.RegistrationName),
                     Identification(Cbc + "CompanyID", party.Identification,
@@ -112,7 +113,7 @@ public sealed class DianCreditNoteUblBuilder
                     new XElement(Cbc + "TaxLevelCode",
                         new XAttribute("listName", element == "AccountingSupplierParty" ? "04" : "05"),
                         party.TaxResponsibilityCode),
-                    Address(party.Address, "RegistrationAddress"),
+                    Address(party.Address, name: "RegistrationAddress"),
                     TaxScheme(party.TaxSchemeId, party.TaxSchemeName)),
                 new XElement(Cac + "PartyLegalEntity",
                     E(Cbc, "RegistrationName", party.RegistrationName),
@@ -124,9 +125,10 @@ public sealed class DianCreditNoteUblBuilder
                         string.IsNullOrWhiteSpace(party.Telephone) ? null : E(Cbc, "Telephone", party.Telephone),
                         string.IsNullOrWhiteSpace(party.Email) ? null : E(Cbc, "ElectronicMail", party.Email))));
 
-    private static XElement Address(DianAddress value, string name = "Address") =>
+    private static XElement Address(DianAddress value, string? postalZone = null, string name = "Address") =>
         new(Cac + name,
             E(Cbc, "ID", value.MunicipalityCode), E(Cbc, "CityName", value.CityName),
+            postalZone is null ? null : E(Cbc, "PostalZone", postalZone),
             E(Cbc, "CountrySubentity", value.DepartmentName),
             E(Cbc, "CountrySubentityCode", value.DepartmentCode),
             new XElement(Cac + "AddressLine", E(Cbc, "Line", value.AddressLine)),

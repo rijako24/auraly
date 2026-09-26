@@ -332,7 +332,7 @@ function ReceiptDetailDialog({
     ...(additionalWithheld > 0
       ? [{ label: "Retenciones otras facturas", value: -additionalWithheld }]
       : []),
-    { label: "Total retenciones", value: totals.withholding === null ? null : -totals.withholding },
+    { label: "Total retenciones", value: totals.withholding === null ? null : totals.withholding === 0 ? 0 : -totals.withholding },
     { label: "Cuentas por pagar netas", value: totals.net },
   ] : [
     { label: "Subtotal antes de IVA", value: totals.principal === null ? null : detail.functionalNetAmount },
@@ -700,9 +700,11 @@ function ReceiptEditor({
   });
   const saveCostDocument = () => {
     if (!editingCostDocument) return;
-    if (!editingCostDocument.supplierId || !editingCostDocument.documentNumber.trim() ||
+    if (!editingCostDocument.supplierId ||
+        (editingCostDocument.purchaseEvidenceType !== "BuyerElectronicSupportDocument" &&
+         !editingCostDocument.documentNumber.trim()) ||
         !editingCostDocument.issuedAt || editingCostDocument.lines.length === 0) {
-      toast.error("Completa proveedor, número, fecha y al menos un concepto.");
+      toast.error("Completa proveedor, fecha, conceptos y número cuando corresponda.");
       return;
     }
     const exists = draft.additionalCostDocuments.some((document) =>
@@ -1388,8 +1390,8 @@ function ReceiptEditor({
             return <Dialog key={document.costDocumentId} open onOpenChange={(value) => !value && closeCostDocument()}>
               <DialogContent className="flex max-h-[92dvh] max-w-6xl flex-col overflow-hidden p-0">
               <DialogHeader className="border-b px-6 py-5">
-                <DialogTitle>{committedIndex >= 0 ? "Editar" : "Agregar"} factura</DialogTitle>
-                <DialogDescription>{evidenceLabel}. Captura sus conceptos, impuestos, distribución y vencimiento independiente.</DialogDescription>
+                <DialogTitle>{committedIndex >= 0 ? "Editar" : "Agregar"} documento adicional</DialogTitle>
+                <DialogDescription>{evidenceLabel}. Captura sus conceptos, impuestos, distribución y vencimiento independiente.{document.purchaseEvidenceType === "BuyerElectronicSupportDocument" ? " Auraly asignará el número y lo enviará a la DIAN al confirmar." : ""}</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 overflow-y-auto px-6 py-5">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1399,8 +1401,8 @@ function ReceiptEditor({
                     if (supplier) setCostSupplierNames((names) => ({ ...names, [supplierId]: supplier.displayName }));
                     updateCostDocument({ supplierId });
                   }} /></Field>
-                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument({ purchaseEvidenceType })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
-                <Field label="Número"><Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} /></Field>
+                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                <Field label="Número">{document.purchaseEvidenceType === "BuyerElectronicSupportDocument" ? <Input readOnly value="Se asignará al confirmar" /> : <Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} />}</Field>
                 <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
                 <Field label="Moneda"><Select value={document.currencyCode} onValueChange={(currencyCode) => updateCostDocument({ currencyCode, exchangeRate: currencyCode === "COP" ? 1 : document.exchangeRate, exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" : (document.exchangeRateSource === "FunctionalCurrency" ? options.data?.exchangeRateSources[0]?.code ?? "" : document.exchangeRateSource) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                 {document.currencyCode !== "COP" && <><Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={document.exchangeRate} onValueChange={(value) => updateCostDocument({ exchangeRate: value ?? 0 })} /></Field><Field label="Fecha de la tasa"><DatePicker value={document.exchangeRateDate?.slice(0, 10) ?? document.issuedAt.slice(0, 10)} onChange={(exchangeRateDate) => updateCostDocument({ exchangeRateDate })} /></Field><Field label="Fuente de la tasa"><Select value={document.exchangeRateSource} onValueChange={(exchangeRateSource) => updateCostDocument({ exchangeRateSource })}><SelectTrigger disabled={options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger><SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field></>}
@@ -1452,7 +1454,7 @@ function ReceiptEditor({
                 <DocumentTotal label="IVA del documento" value={documentTax} suffix={document.currencyCode} />
                 <DocumentTotal label="Total bruto" value={documentNet + documentTax} suffix={document.currencyCode} />
                 {document.currencyCode !== "COP" && <DocumentTotal label="Reconocido en COP" value={functionalGross} suffix="COP" />}
-                <DocumentTotal label="Retenciones" value={-(withholding?.data?.withholdingTotal ?? 0)} suffix="COP" />
+                <DocumentTotal label="Retenciones" value={withholding?.data?.withholdingTotal ? -withholding.data.withholdingTotal : 0} suffix="COP" />
                 <DocumentTotal label="Neto por pagar" value={withholding?.data?.netAmount ?? functionalGross} suffix="COP" strong />
                 <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">El IVA descontable se reconoce separado; únicamente las bases y los impuestos marcados como mayor valor se llevan al costo o gasto.</p>
                 {withholding?.isFetching && <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">Calculando retenciones con el motor tributario…</p>}
@@ -1479,7 +1481,7 @@ function ReceiptEditor({
               <Amount label="IVA de compra" value={totals.tax} />
               <Amount label="Total factura" value={totals.total} />
               {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} (${line.rate}%)`} value={-line.amount} />)}
-              <Amount label="Total retenciones" value={-(withholdingPreview.data?.withholdingTotal ?? 0)} />
+              <Amount label="Total retenciones" value={withholdingPreview.data?.withholdingTotal ? -withholdingPreview.data.withholdingTotal : 0} />
               <Amount label={draft.createsPayable ? "Neto por pagar" : "Total pagado"}
                 value={draft.createsPayable ? (withholdingPreview.data?.netAmount ?? totals.total) : totals.total} strong />
             </> : <>
@@ -1491,7 +1493,7 @@ function ReceiptEditor({
               <Amount label="Total bruto de documentos" value={totals.total * mainRate + additionalSummary.gross} />
               {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} mercancía (${line.rate}%)`} value={-line.amount} />)}
               {additionalSummary.withheld > 0 && <Amount label="Retenciones otras facturas" value={-additionalSummary.withheld} />}
-              <Amount label="Total retenciones" value={-totalWithheld} />
+              <Amount label="Total retenciones" value={totalWithheld ? -totalWithheld : 0} />
               <Amount label="Cuentas por pagar netas" value={totalPayable} strong />
             </>}
             <p className="pt-2 text-xs text-slate-300">Las retenciones reducen lo adeudado; no reducen el costo ni el IVA reconocido.</p>

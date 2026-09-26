@@ -28,10 +28,10 @@ export type PortfolioPaymentReceipt = {
 export async function printPortfolioPayment(
   receipt: PortfolioPaymentReceipt,
   businessId: string,
-  edgeClient: PosEdgeClient | null,
+  printerClient: Pick<PosEdgeClient, "printPortfolioPayment"> | null,
 ): Promise<void> {
-  if (edgeClient) {
-    await edgeClient.printPortfolioPayment(receipt);
+  if (printerClient) {
+    await printerClient.printPortfolioPayment(receipt);
     return;
   }
   const [branding, business] = await Promise.all([

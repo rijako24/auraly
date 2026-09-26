@@ -166,6 +166,9 @@ public sealed partial class SqlOnlineSalesDraftStore
         }
 
         DemandActiveVersion(state, request.ExpectedVersion);
+        if (state.SourceOrderId is Guid sourceOrderId)
+            await DemandOrderAsync(connection, transaction, user, state.BusinessId,
+                sourceOrderId, cancellationToken);
         var draft = await ReadDraftAsync(
             connection, transaction, draftId, cancellationToken);
         if (draft.Lines.Count == 0)

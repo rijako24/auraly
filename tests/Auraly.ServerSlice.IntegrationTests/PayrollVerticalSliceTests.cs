@@ -45,7 +45,7 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
             Option(PayrollCatalogCodes.RiskClass, "I"),
             Option(PayrollCatalogCodes.WorkerType, "01"),
             Option(PayrollCatalogCodes.WorkerSubtype, "00"),
-            Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"));
+            Option(PayrollCatalogCodes.PaymentMethod, "Transfer"));
         var deactivatedLegacy = await PutAsync<PayrollEmploymentView>(client,
             $"/api/commerce/v1/payroll/employments/{legacy.EmploymentId:D}",
             new SavePayrollEmploymentRequest(legacy.EmploymentId, legacy.PartyId,
@@ -56,7 +56,7 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 Option(PayrollCatalogCodes.RiskClass, "I"),
                 Option(PayrollCatalogCodes.WorkerType, "01"),
                 Option(PayrollCatalogCodes.WorkerSubtype, "00"),
-                Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"),
+                Option(PayrollCatalogCodes.PaymentMethod, "Transfer"),
                 "LEGACY-INCOMPLETE", new DateOnly(2026, 1, 1),
                 new DateOnly(2026, 7, 31), 1_000_000m, null, null,
                 null, null, null, false, legacy.RowVersion));
@@ -125,7 +125,7 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 Option(PayrollCatalogCodes.RiskClass, "I"),
                 Option(PayrollCatalogCodes.WorkerType, "01"),
                 Option(PayrollCatalogCodes.WorkerSubtype, "00"),
-                Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"),
+                Option(PayrollCatalogCodes.PaymentMethod, "Transfer"),
                 "CERT-EMP-001", new DateOnly(2026, 8, 1), null, 3_000_000m,
                   null, null, Option(PayrollCatalogCodes.Bank, "Bancolombia"),
                   Option(PayrollCatalogCodes.BankAccountType, "Savings"),
@@ -247,7 +247,7 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
         var batchId = Guid.NewGuid();
         await PostAsync<PayrollPaymentBatchView>(client, "/api/commerce/v1/payroll/payments",
             new CreatePayrollPaymentBatchRequest(batchId, runId,
-                Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"),
+                Option(PayrollCatalogCodes.PaymentMethod, "Transfer"),
                 new DateOnly(2026, 8, 31), "BANK-CERT-001"));
         await AssertBalancedEntryAsync(batchId, PayrollAccountingDocumentTypes.Payment);
         await AssertPayrollCostCenterAsync(batchId, payrollCenterId);

@@ -37,9 +37,11 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         var payableId = await ScalarAsync<Guid>(
             "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id",
             receipt.DocumentId);
+        var payableNumber = await ScalarAsync<string>(
+            "SELECT DocumentNumber FROM dbo.Payables WHERE PayableId=@Id", payableId);
 
         using (var pageResponse = await client.GetAsync(
-                   "/api/commerce/v1/payables?page=1&pageSize=20&status=Open"))
+                   $"/api/commerce/v1/payables?page=1&pageSize=100&status=Open&supplierId={fixture.SupplierId:D}&search={Uri.EscapeDataString(payableNumber)}"))
         {
             Assert.Equal(HttpStatusCode.OK, pageResponse.StatusCode);
             var page = await pageResponse.Content.ReadFromJsonAsync<PayablePage>();
@@ -69,7 +71,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             occurredAt.AddHours(1), "COP", "Abono por transferencia",
             [new SupplierPaymentAllocationRequest(payableId, 40_000m)],
             [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash,10_000m,10_000m),
-             new SupplierPaymentTenderRequest(SupplierPaymentMethods.BankTransfer,10_000m,
+             new SupplierPaymentTenderRequest(SupplierPaymentMethods.Transfer,10_000m,
                 BankAccountId:bankAccount.BankAccountId,Reference:"TRX-9001"),
              new SupplierPaymentTenderRequest(SupplierPaymentMethods.DebitCard,10_000m,
                 CardFranchiseCode:"Visa",ApprovalNumber:"DEBIT-9001"),
@@ -109,7 +111,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             && item.Payments.Count == 4
             && item.Payments[0].MethodCode == SupplierPaymentMethods.Cash
             && item.Payments[0].Amount == 10_000m
-            && item.Payments[1].MethodCode == SupplierPaymentMethods.BankTransfer
+            && item.Payments[1].MethodCode == SupplierPaymentMethods.Transfer
             && item.Payments[1].Amount == 10_000m
             && item.Payments[2].MethodCode == SupplierPaymentMethods.DebitCard
             && item.Payments[2].CardFranchiseCode == "Visa"
@@ -136,7 +138,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Contains(supplierPage!.Items, item => item.SupplierId == fixture.SupplierId && item.InvoiceCount > 0);
         var invoicePage = await client.GetFromJsonAsync<PayablePage>(
             $"/api/commerce/v1/payables?page=1&pageSize=20&{supplierFilter}");
-        Assert.Contains(invoicePage!.Items, item => item.PayableId == payableId);
+        Assert.Contains(invoicePage!.Items, item => item.PayableId == payableId && item.PaidAmount > 0);
         var paymentsPage = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
             $"/api/commerce/v1/payable-payments?page=1&pageSize=20&supplierId={fixture.SupplierId:D}&status=PartiallyPaid&from={paymentDate}&to={paymentDate}");
         Assert.Contains(paymentsPage!.Items, item => item.PaymentId == payment.PaymentId);
@@ -195,7 +197,7 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         {
             PaymentId = Guid.NewGuid(),
             Allocations = [new SupplierPaymentAllocationRequest(payableId, 20_001m)],
-            Payments = [new SupplierPaymentTenderRequest(SupplierPaymentMethods.BankTransfer,20_001m,
+            Payments = [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Transfer,20_001m,
                 BankAccountId:bankAccount.BankAccountId,Reference:"TRX-OVERPAY")]
         };
         using (var response = await SendAsync(
@@ -209,7 +211,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         {
             var page=await client.GetFromJsonAsync<SupplierPortfolioPage>(
                 "/api/commerce/v1/payables/suppliers?page=1&pageSize=100");
-            return Assert.Single(page!.Items,item=>item.SupplierId==fixture.SupplierId);
+            return Assert.Single(page!.Items,item=>item.SupplierId==fixture.SupplierId &&
+                item.CurrencyCode=="COP");
         }
         var paidBeforeAdjustment=(await SupplierPortfolioAsync()).PaidAmount;
         await using (var connection=new SqlConnection(fixture.ConnectionString))

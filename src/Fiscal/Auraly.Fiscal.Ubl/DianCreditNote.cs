@@ -5,6 +5,8 @@ public static class DianCreditNoteCodes
     public const string DocumentType = "91";
     public const string ReferencesInvoiceOperation = "20";
     public const string PartialReturn = "1";
+    public const string SupportAdjustmentProfileId =
+        "DIAN 2.1: Nota de ajuste al documento soporte en adquisiciones efectuadas a sujetos no obligados a expedir factura o documento equivalente";
 }
 
 public sealed record DianInvoiceReference(
@@ -50,7 +52,8 @@ public sealed record DianCreditNote(
     string ProfileId = "DIAN 2.1: Nota Crédito de Factura Electrónica de Venta",
     string UniqueCodeScheme = "CUDE-SHA384",
     string OriginalUniqueCodeScheme = "CUFE-SHA384",
-    bool BuyerGenerated = false)
+    bool BuyerGenerated = false,
+    string? SellerPostalZone = null)
 {
     public void Validate()
     {
@@ -64,8 +67,13 @@ public sealed record DianCreditNote(
         if (DocumentTypeCode == "95" &&
             (!BuyerGenerated || CustomizationId is not ("10" or "11") ||
              CorrectionCode is not ("1" or "2" or "3" or "4" or "5") ||
-             UniqueCodeScheme != "CUDS-SHA384" || OriginalUniqueCodeScheme != "CUDS-SHA384"))
-            throw new ArgumentException("The purchase adjustment does not follow DIAN support-document rules.");
+             UniqueCodeScheme != "CUDS-SHA384" || OriginalUniqueCodeScheme != "CUDS-SHA384" ||
+             ProfileId != DianCreditNoteCodes.SupportAdjustmentProfileId))
+            throw new ArgumentException("La nota de ajuste no cumple las reglas DIAN del documento soporte.");
+        if (DocumentTypeCode == "95" && CustomizationId == "10" &&
+            (SellerPostalZone is null || SellerPostalZone.Length != 6 ||
+             !SellerPostalZone.All(char.IsAsciiDigit)))
+            throw new ArgumentException("El vendedor residente de la nota de ajuste requiere un código postal DIAN de seis dígitos.");
         if (DocumentTypeCode is not (DianCreditNoteCodes.DocumentType or "95"))
             throw new ArgumentException("The credit-note document type is unsupported.");
         if (string.IsNullOrWhiteSpace(OriginalInvoice.DocumentNumber) ||

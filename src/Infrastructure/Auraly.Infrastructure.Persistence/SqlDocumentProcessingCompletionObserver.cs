@@ -2,6 +2,7 @@ using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.Application.Sales;
 using Auraly.Commerce.Accounting.Application;
+using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -27,6 +28,10 @@ public sealed class SqlDocumentProcessingCompletionObserver(
             if (FiscalGenerationPolicy.Supports(signal.DocumentType))
                 await fiscal.RequestGenerationAsync(
                     signal.BusinessId, signal.DocumentId, cancellationToken);
+
+            if (signal.DocumentType == PurchasingDocumentTypes.GoodsReceipt)
+                foreach (var costDocumentId in await LoadCostSupportDocumentsAsync(signal, cancellationToken))
+                    await fiscal.RequestGenerationAsync(signal.BusinessId, costDocumentId, cancellationToken);
 
             if (signal.EconomicEffectsEnabled && Auraly.Contracts.Sales.PosSaleDocumentTypes.IsSupported(signal.DocumentType))
                 foreach (var expenseId in await LoadChargeSupportDocumentsAsync(signal, cancellationToken))
@@ -70,6 +75,31 @@ public sealed class SqlDocumentProcessingCompletionObserver(
         while (await reader.ReadAsync(ct)) result.Add(reader.GetGuid(0));
         if (result.Count > InvoiceChargeApplication.MaximumChargesPerInvoice)
             throw new InvalidOperationException("The invoice has more fiscal charge documents than allowed.");
+        return result;
+    }
+
+    private async Task<IReadOnlyList<Guid>> LoadCostSupportDocumentsAsync(
+        DocumentProcessingSignal signal, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT TOP(101) cost.CostDocumentId
+            FROM purchasing.GoodsReceiptCostDocuments cost
+            JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=cost.GoodsReceiptId
+              AND receipt.BusinessId=@BusinessId
+            JOIN dbo.FiscalDocumentProcesses process ON process.DocumentId=cost.CostDocumentId
+              AND process.BusinessId=receipt.BusinessId
+            WHERE cost.GoodsReceiptId=@DocumentId
+              AND process.Status=N'PendingGeneration'
+            ORDER BY cost.CostDocumentId;
+            """, connection);
+        AddScope(command, signal);
+        var result = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) result.Add(reader.GetGuid(0));
+        if (result.Count > 100)
+            throw new InvalidOperationException("La recepción supera el límite de 100 documentos fiscales de costo.");
         return result;
     }
 

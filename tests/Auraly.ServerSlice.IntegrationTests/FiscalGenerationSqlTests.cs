@@ -20,6 +20,51 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Invoice_does_not_enter_DIAN_generation_before_operational_processing_completes()
+    {
+        var request = WithUblSnapshot(fixture.CreateValidRequest(8901));
+        using var client = fixture.CreateClient();
+        using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                UPDATE dbo.SalesDocuments SET ProcessingStatus=N'Received'
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+                """, connection);
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+
+        var connections = new SqlServerConnectionFactory(
+            new AuralySqlConnectionSource(fixture.ConnectionString));
+        var worker = CreateWorker(
+            new SqlFiscalGenerationWorkStore(connections, new TestIds()),
+            new FixedTimeProvider(DateTimeOffset.UtcNow.AddMinutes(5)));
+        Assert.False(await worker.ProcessAsync(fixture.BusinessId, request.DocumentId, "premature-invoice"));
+        Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration,
+            await ScalarStringAsync("SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId", request.DocumentId));
+        Assert.Equal(0, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId", request.DocumentId));
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                UPDATE dbo.SalesDocuments SET ProcessingStatus=N'Completed'
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+                """, connection);
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+        Assert.True(await worker.ProcessAsync(fixture.BusinessId, request.DocumentId, "completed-invoice"));
+    }
+
+    [Fact]
     public async Task Snapshot_is_leased_once_and_persisted_without_reading_changed_master_values()
     {
         var request = WithUblSnapshot(fixture.CreateValidRequest(901));
@@ -180,19 +225,91 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
     {
         await using var inventory = await InventoryCheckpoint.CaptureAsync(
             fixture.ConnectionString, fixture.BusinessId, fixture.WarehouseId, fixture.ProductId);
-        var original = WithUblSnapshot(fixture.CreateValidRequest(903));
+        var customerId = Guid.NewGuid();
+        var partyId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var customer = new SqlCommand("""
+                DECLARE @ResolvedPartyId uniqueidentifier=(SELECT TOP(1) PartyId FROM dbo.Parties
+                  WHERE TenantId=@TenantId AND IdentificationTypeCode=N'CC'
+                    AND NormalizedIdentification=N'222222222');
+                IF @ResolvedPartyId IS NULL
+                BEGIN
+                INSERT dbo.Parties
+                  (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
+                   Identification,NormalizedIdentification,DisplayName,CompletionStatus,
+                   IsActive,CreatedBy,CreatedAt)
+                SELECT @PartyId,@TenantId,N'NaturalPerson',country.CountryId,N'CC',
+                  N'222222222',N'222222222',N'CLIENTE HISTORICO',N'Complete',
+                  1,@UserId,SYSDATETIMEOFFSET()
+                FROM dbo.Countries country WHERE country.Code=N'CO';
+                SET @ResolvedPartyId=@PartyId;
+                END;
+                DECLARE @ResolvedCustomerId uniqueidentifier=(SELECT CustomerId FROM dbo.Customers
+                  WHERE PartyId=@ResolvedPartyId AND BusinessId=@BusinessId);
+                IF @ResolvedCustomerId IS NULL
+                BEGIN
+                INSERT dbo.Customers(CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+                  IsActive,CreatedBy,CreatedAt)
+                VALUES(@CustomerId,@ResolvedPartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+                SET @ResolvedCustomerId=@CustomerId;
+                END;
+                DECLARE @ResolvedSiteId uniqueidentifier=(SELECT TOP(1) PartySiteId FROM dbo.PartySites
+                  WHERE PartyId=@ResolvedPartyId AND IsActive=1 ORDER BY IsPrimary DESC,CreatedAt);
+                IF @ResolvedSiteId IS NULL
+                BEGIN
+                INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,
+                  AdministrativeDivisionId,CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                SELECT TOP(1) @SiteId,@ResolvedPartyId,N'PRINCIPAL',N'Sede principal',
+                  country.CountryId,division.AdministrativeDivisionId,city.CityId,
+                  N'Calle 1',1,1,@UserId,SYSDATETIMEOFFSET()
+                FROM dbo.Countries country
+                JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+                JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+                WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1;
+                SET @ResolvedSiteId=@SiteId;
+                END;
+                IF NOT EXISTS(SELECT 1 FROM dbo.PartyContacts
+                  WHERE PartyId=@ResolvedPartyId AND ContactType=N'Email' AND IsActive=1)
+                BEGIN
+                INSERT dbo.PartyContacts
+                  (PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
+                VALUES(NEWID(),@ResolvedPartyId,N'Email',N'credit-note-test@auraly.test',
+                  N'CREDIT-NOTE-TEST@AURALY.TEST',1,1,SYSDATETIMEOFFSET());
+                END;
+                SELECT @ResolvedCustomerId,@ResolvedSiteId;
+                """, connection);
+            customer.Parameters.AddWithValue("@PartyId", partyId);
+            customer.Parameters.AddWithValue("@CustomerId", customerId);
+            customer.Parameters.AddWithValue("@SiteId", siteId);
+            customer.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            customer.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            customer.Parameters.AddWithValue("@UserId", fixture.UserId);
+            await using var selected = await customer.ExecuteReaderAsync();
+            Assert.True(await selected.ReadAsync());
+            customerId = selected.GetGuid(0);
+            siteId = selected.GetGuid(1);
+        }
+        var original = WithUblSnapshot(fixture.CreateValidRequest(903) with
+        {
+            CustomerId = customerId,
+            CustomerPartySiteId = siteId
+        });
         using var pos = fixture.CreateClient();
         using (var upload = fixture.CreateUploadMessage(original))
         using (var uploadResponse = await pos.SendAsync(upload))
             Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
 
+        var webSessionId = await fixture.OpenWebWorkSessionAsync();
         var returnId = Guid.NewGuid();
         var returnRequest = new ConfirmSalesReturnRequest(
             returnId, fixture.BusinessId, fixture.WarehouseId, original.DocumentId,
             new DateTimeOffset(2026, 8, 1, 11, 0, 0, TimeSpan.FromHours(-5)),
             ReturnEconomicResolutions.Refund, "Cash", "Devolución parcial de bienes",
             [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, null, "Other");
+            webSessionId, null, "Other");
         using var user = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
         using var returnMessage = new HttpRequestMessage(
@@ -246,6 +363,10 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             element.Name.LocalName == "CreditNoteTypeCode").Value);
         Assert.Equal("1", xml.Descendants().Single(element =>
             element.Name.LocalName == "ResponseCode").Value);
+        var creditReceipt = new DianInvoicePdfRenderer().ReadReceipt(
+            await ArtifactAsync(returnId, FiscalArtifactTypeCodes.SignedXml));
+        Assert.Equal(.5m, Assert.Single(creditReceipt.Lines).Quantity);
+        Assert.Contains("Cantidad devuelta", new DianInvoicePdfRenderer().RenderHtml(creditReceipt));
         Assert.Equal(2, await ScalarIntAsync(
             "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId", returnId));
 
@@ -289,6 +410,31 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType='SubmissionZip'", returnId));
         Assert.Equal(1, await ScalarIntAsync(
             "SELECT COUNT(*) FROM dbo.ServerOutboxMessages WHERE DocumentId=@DocumentId AND Type='FiscalDocument.DianAccepted'", returnId));
+        Assert.Equal(1, await ScalarIntAsync("""
+            SELECT COUNT(*) FROM dbo.FiscalDocuments fiscal
+            JOIN dbo.TenantProvisioningOutboxMessages message
+              ON message.MessageId=fiscal.DeliveryOutboxMessageId
+            WHERE fiscal.DocumentId=@DocumentId
+              AND message.Type=N'FiscalInvoiceDelivery' AND message.ProcessedAt IS NULL
+            """, returnId));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var recipient = new SqlCommand("""
+                DECLARE @MessageId uniqueidentifier=(SELECT DeliveryOutboxMessageId
+                  FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId);
+                EXEC dbo.FiscalInvoiceDeliveryRecipientGet @DocumentId,@MessageId,@TenantId;
+                """, connection);
+            recipient.Parameters.AddWithValue("@DocumentId", returnId);
+            recipient.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await using var reader = await recipient.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("SalesReturn", reader.GetString(22));
+            Assert.Equal((decimal)accepted.TotalAmount, reader.GetDecimal(5));
+            Assert.True(((byte[])reader[6]).Length > 0);
+            Assert.False(reader.IsDBNull(21));
+            Assert.False(await reader.ReadAsync());
+        }
         Assert.Equal(1, transport.SendCalls);
         Assert.Equal(1, transport.TestSetCalls);
         Assert.Equal(0, transport.ProductionCalls);

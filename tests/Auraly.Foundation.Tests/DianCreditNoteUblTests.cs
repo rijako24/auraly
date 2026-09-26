@@ -71,10 +71,11 @@ public sealed class DianCreditNoteUblTests
             Cude = new string('d', 96),
             DocumentTypeCode = "95",
             CustomizationId = "10",
-            ProfileId = "DIAN 2.1: Nota de ajuste al documento soporte en adquisiciones efectuadas a sujetos no obligados a expedir factura o documento equivalente",
+            ProfileId = DianCreditNoteCodes.SupportAdjustmentProfileId,
             UniqueCodeScheme = "CUDS-SHA384",
             OriginalUniqueCodeScheme = "CUDS-SHA384",
             BuyerGenerated = true,
+            SellerPostalZone = "110111",
             CorrectionCode = "1",
             Lines =
             [
@@ -97,6 +98,14 @@ public sealed class DianCreditNoteUblTests
             DianUblNamespaces.Cbc + "CreditNoteTypeCode").Single().Value);
         Assert.Equal("10", xml.Descendants(
             DianUblNamespaces.Cbc + "CustomizationID").Single().Value);
+        Assert.Equal(note.ProfileId, xml.Root!.Element(
+            DianUblNamespaces.Cbc + "ProfileID")?.Value);
+        var sellerAddress = xml.Descendants(DianUblNamespaces.Cac + "AccountingSupplierParty")
+            .Descendants(DianUblNamespaces.Cac + "PhysicalLocation")
+            .Elements(DianUblNamespaces.Cac + "Address").Single();
+        Assert.Equal("110111", sellerAddress.Element(DianUblNamespaces.Cbc + "PostalZone")?.Value);
+        Assert.Equal("11001", sellerAddress.Element(DianUblNamespaces.Cbc + "ID")?.Value);
+        Assert.Equal("Bogota", sellerAddress.Element(DianUblNamespaces.Cbc + "CityName")?.Value);
         Assert.Equal(originalCuds, originalReference.Element(
             DianUblNamespaces.Cbc + "UUID")?.Value);
         Assert.Equal("CUDS-SHA384", originalReference.Element(
@@ -113,7 +122,40 @@ public sealed class DianCreditNoteUblTests
         Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
     }
 
-    private static DianCreditNote CreateNote()
+    [Fact]
+    public void Resident_support_adjustment_rejects_missing_postal_zone_before_signing()
+    {
+        var note = CreateNote() with
+        {
+            DocumentTypeCode = "95",
+            CustomizationId = "10",
+            UniqueCodeScheme = "CUDS-SHA384",
+            OriginalUniqueCodeScheme = "CUDS-SHA384",
+            ProfileId = DianCreditNoteCodes.SupportAdjustmentProfileId,
+            BuyerGenerated = true
+        };
+
+        Assert.Throws<ArgumentException>(() => new DianCreditNoteUblBuilder().Build(note));
+    }
+
+    [Fact]
+    public void Support_adjustment_rejects_an_incorrect_DIAN_profile_before_signing()
+    {
+        var note = CreateNote() with
+        {
+            DocumentTypeCode = "95",
+            CustomizationId = "10",
+            UniqueCodeScheme = "CUDS-SHA384",
+            OriginalUniqueCodeScheme = "CUDS-SHA384",
+            ProfileId = "Nota de ajuste al documento soporte",
+            BuyerGenerated = true,
+            SellerPostalZone = "110111"
+        };
+
+        Assert.Throws<ArgumentException>(() => new DianCreditNoteUblBuilder().Build(note));
+    }
+
+    internal static DianCreditNote CreateNote()
     {
         var address = new DianAddress("11001", "Bogota", "Bogota D.C.", "11", "Calle 1");
         var supplier = new DianParty("900373076", "4", "31", "1", "Auraly SAS", "Auraly",

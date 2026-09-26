@@ -44,7 +44,7 @@ public sealed class PosSalesReturnServerClient(
                 throw new PosSalesReturnServerException(502, "InvalidReturnAcceptance",
                     "La devolución fue aceptada, pero no coincide con la sesión local. Reintenta con el mismo identificador.");
             await closureStore.RecordRefundAsync(new PosLocalWorkSessionRefund(
-                id, workSessionId, method, amount), token);
+                id, workSessionId, method, amount), CancellationToken.None);
         }
         return result;
     }

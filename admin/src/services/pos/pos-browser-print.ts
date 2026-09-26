@@ -18,12 +18,14 @@ export function printPosHtmlDocument(html: string, failureMessage: string): Prom
         }
         printWindow.addEventListener("afterprint", remove, { once: true });
         printWindow.focus();
-        // Dispatch is complete once the browser owns the print dialog. Do not
-        // keep the POS operation pending until the user prints or cancels it.
-        resolve();
         window.setTimeout(() => {
           try {
             printWindow.print();
+            // The browser owns the dialog; no printer completion wait is needed.
+            resolve();
+          } catch {
+            remove();
+            reject(new Error(failureMessage));
           } finally {
             window.setTimeout(remove, 60_000);
           }

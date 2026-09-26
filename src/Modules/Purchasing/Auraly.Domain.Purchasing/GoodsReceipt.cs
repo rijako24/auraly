@@ -37,33 +37,33 @@ public static class GoodsReceiptCalculator
         ArgumentNullException.ThrowIfNull(source);
         var input = source.OrderBy(line => line.LineNumber).ToArray();
         if (input.Length == 0)
-            throw new ArgumentException("A goods receipt requires at least one line.", nameof(source));
+            throw new ArgumentException("La recepción requiere al menos un producto.", nameof(source));
         if (input.Select(line => line.LineNumber).Distinct().Count() != input.Length)
-            throw new ArgumentException("Goods receipt line numbers must be unique.", nameof(source));
+            throw new ArgumentException("Los números de línea de la recepción deben ser únicos.", nameof(source));
 
         var lines = new List<CalculatedGoodsReceiptLine>(input.Length);
         foreach (var line in input)
         {
-            if (line.LineNumber <= 0) throw new ArgumentOutOfRangeException(nameof(source), "Line numbers must be positive.");
-            if (line.ProductId == Guid.Empty) throw new ArgumentException("A product is required on every line.", nameof(source));
-            if (string.IsNullOrWhiteSpace(line.Description)) throw new ArgumentException("A description is required on every line.", nameof(source));
-            if (line.Quantity <= 0) throw new ArgumentOutOfRangeException(nameof(source), "Received quantity must be positive.");
-            if (line.UnitCost < 0) throw new ArgumentOutOfRangeException(nameof(source), "Unit cost cannot be negative.");
-            if (line.DiscountAmount < 0) throw new ArgumentOutOfRangeException(nameof(source), "Discount cannot be negative.");
-            if (line.TaxRate is < 0 or > 100) throw new ArgumentOutOfRangeException(nameof(source), "Tax rate must be between zero and one hundred.");
-            if (string.IsNullOrWhiteSpace(line.TaxCode)) throw new ArgumentException("A tax code is required on every line.", nameof(source));
+            if (line.LineNumber <= 0) throw new ArgumentOutOfRangeException(nameof(source), "Los números de línea deben ser positivos.");
+            if (line.ProductId == Guid.Empty) throw new ArgumentException("Cada línea requiere un producto.", nameof(source));
+            if (string.IsNullOrWhiteSpace(line.Description)) throw new ArgumentException("Cada línea requiere una descripción.", nameof(source));
+            if (line.Quantity <= 0) throw new ArgumentOutOfRangeException(nameof(source), "La cantidad recibida debe ser positiva.");
+            if (line.UnitCost < 0) throw new ArgumentOutOfRangeException(nameof(source), "El costo unitario no puede ser negativo.");
+            if (line.DiscountAmount < 0) throw new ArgumentOutOfRangeException(nameof(source), "El descuento no puede ser negativo.");
+            if (line.TaxRate is < 0 or > 100) throw new ArgumentOutOfRangeException(nameof(source), "La tarifa del impuesto debe estar entre 0 y 100.");
+            if (string.IsNullOrWhiteSpace(line.TaxCode)) throw new ArgumentException("Cada línea requiere un código tributario.", nameof(source));
             if (!Enum.IsDefined(line.TaxTreatment))
-                throw new ArgumentException("The purchase tax treatment is not valid.", nameof(source));
+                throw new ArgumentException("El tratamiento del IVA de compra es inválido.", nameof(source));
             if (line.TaxRate == 0 && line.TaxTreatment != PurchaseTaxTreatment.NotApplicable)
-                throw new ArgumentException("A zero-rated purchase line must use NotApplicable tax treatment.", nameof(source));
+                throw new ArgumentException("Una línea con tarifa cero debe marcar el IVA como no aplicable.", nameof(source));
             if (line.TaxRate > 0 && line.TaxTreatment == PurchaseTaxTreatment.NotApplicable)
                 throw new ArgumentException(
-                    "A taxed purchase line must declare whether VAT is deductible or capitalized.",
+                    "Una línea gravada debe indicar si el IVA es descontable o se incluye en el costo.",
                     nameof(source));
 
             var gross = Money(line.Quantity * line.UnitCost);
             if (line.DiscountAmount > gross)
-                throw new ArgumentOutOfRangeException(nameof(source), "Discount cannot exceed the line gross amount.");
+                throw new ArgumentOutOfRangeException(nameof(source), "El descuento no puede superar el valor bruto de la línea.");
             var discount = Money(line.DiscountAmount);
             var net = Money(gross - discount);
             var tax = Money(net * line.TaxRate / 100m);

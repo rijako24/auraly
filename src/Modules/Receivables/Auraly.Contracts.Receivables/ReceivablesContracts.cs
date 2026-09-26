@@ -20,10 +20,10 @@ public static class ReceivablesDocumentTypes
 public static class CustomerPaymentMethods
 {
     public const string Cash = "Cash";
-    public const string BankTransfer = "BankTransfer";
+    public const string Transfer = "Transfer";
     public const string DebitCard = "DebitCard";
     public const string CreditCard = "CreditCard";
-    public static bool IsSupported(string value) => value is Cash or BankTransfer or DebitCard or CreditCard;
+    public static bool IsSupported(string value) => value is Cash or Transfer or DebitCard or CreditCard;
 }
 
 public sealed record ReceivablesUserIdentity(Guid UserId, Guid TenantId, Guid BusinessId,
@@ -34,9 +34,10 @@ public sealed record ReceivableQuery(int Page, int PageSize, string? Search, Gui
 public sealed record ReceivableListItem(Guid ReceivableId, Guid CustomerId, string CustomerName,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
     DateTimeOffset DueDate, string Status, bool IsOverdue, DateTimeOffset CreatedAt,
-    Guid? PartySiteId = null, string? PartySiteName = null);
+    Guid? PartySiteId = null, string? PartySiteName = null, decimal PaidAmount = 0);
 public sealed record ReceivablePage(IReadOnlyList<ReceivableListItem> Items, int Page, int PageSize,
-    int TotalCount, decimal TotalOutstanding, decimal TotalOverdue)
+    int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
+    decimal TotalOriginal = 0, decimal TotalPaid = 0)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
@@ -80,7 +81,7 @@ public sealed record CustomerPaymentHistoryApplication(Guid ReceivableId,string 
 public sealed record CustomerPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? CustomerId,
     string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null);
 public sealed record CustomerPaymentHistoryPage(IReadOnlyList<CustomerPaymentHistoryItem> Items,
-    int Page, int PageSize, int TotalCount)
+    int Page, int PageSize, int TotalCount, decimal TotalAmount = 0)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
@@ -91,7 +92,7 @@ public sealed record CustomerPortfolioItem(Guid CustomerId, string CustomerName,
     decimal OutstandingAmount, decimal OverdueAmount);
 public sealed record CustomerPortfolioPage(IReadOnlyList<CustomerPortfolioItem> Items,
     int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
-    int TotalInvoiceCount = 0)
+    int TotalInvoiceCount = 0, decimal TotalOriginal = 0, decimal TotalPaid = 0)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }

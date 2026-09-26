@@ -297,6 +297,18 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         client.DefaultRequestHeaders.Add("X-Business-Id", BusinessId.ToString("D"));
         return client;
     }
+
+    public async Task<Guid> OpenWebWorkSessionAsync()
+    {
+        using var client = CreateAdminClient();
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/work-sessions/current",
+            new OpenWorkSessionRequest(BusinessId, WarehouseId, null));
+        response.EnsureSuccessStatusCode();
+        var session = await response.Content.ReadFromJsonAsync<WorkSessionView>();
+        return session?.WorkSessionId ?? throw new InvalidDataException(
+            "La sesión web de prueba no devolvió un identificador.");
+    }
     public HttpClient CreateAdminClientWithBusinessHeader(
         Guid businessId,
         params string[] permissions)
@@ -896,6 +908,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
               (UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
             VALUES
               (NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
+            INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+            SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
+            FROM dbo.Permissions WHERE Resource=N'sales.returns.create';
 
             IF NOT EXISTS(SELECT 1 FROM billing.PlatformBillingSettings WHERE PlatformBillingSettingId=1)
               INSERT billing.PlatformBillingSettings

@@ -175,7 +175,7 @@ public sealed class ReceivablesService(
     }
 
     private static readonly IReadOnlySet<string> SupportedMethods = new HashSet<string>(
-        [CustomerPaymentMethods.Cash, CustomerPaymentMethods.BankTransfer,
+        [CustomerPaymentMethods.Cash, CustomerPaymentMethods.Transfer,
          CustomerPaymentMethods.DebitCard, CustomerPaymentMethods.CreditCard], StringComparer.Ordinal);
 
     private static CustomerPaymentTenderRequest NormalizeTender(CustomerPaymentTenderRequest value) => value with
@@ -193,14 +193,14 @@ public sealed class ReceivablesService(
     {
         foreach (var tender in breakdown.Tenders)
         {
-            if (tender.MethodCode == CustomerPaymentMethods.BankTransfer &&
+            if (tender.MethodCode == CustomerPaymentMethods.Transfer &&
                 string.IsNullOrWhiteSpace(tender.Reference))
                 throw new ArgumentException("A bank transfer requires a reference.");
             if (tender.MethodCode is CustomerPaymentMethods.DebitCard or CustomerPaymentMethods.CreditCard &&
                 (string.IsNullOrWhiteSpace(tender.CardFranchiseCode) ||
                  string.IsNullOrWhiteSpace(tender.ApprovalNumber)))
                 throw new ArgumentException("A card payment requires franchise and approval number.");
-            if (tender.MethodCode != CustomerPaymentMethods.BankTransfer && tender.BankAccountId is not null)
+            if (tender.MethodCode != CustomerPaymentMethods.Transfer && tender.BankAccountId is not null)
                 throw new ArgumentException("Only a bank transfer can select a bank account.");
         }
     }

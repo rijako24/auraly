@@ -65,16 +65,15 @@ public sealed class SqlPayablesStore(
               SELECT SupplierId,SUM(AvailableAmount) CreditAmount
               FROM dbo.SupplierCredits WHERE BusinessId=@BusinessId AND AvailableAmount>0
               GROUP BY SupplierId),
-            Portfolio AS(
+            Grouped AS(
               SELECT p.SupplierId,s.Name SupplierName,COALESCE(s.Identification,N'') Identification,
+                p.CurrencyCode,
                 COUNT(*) InvoiceCount,SUM(p.OriginalAmount) OriginalAmount,
                 SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
-                SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount,
-                MAX(COALESCE(credits.CreditAmount,0)) SupplierCreditAmount
+                SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount
               FROM dbo.Payables p JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
               JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
               LEFT JOIN Paid paid ON paid.PayableId=p.PayableId
-              LEFT JOIN Credits credits ON credits.SupplierId=p.SupplierId
               WHERE p.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
                 AND (@Status IS NULL OR p.Status=@Status)
@@ -84,20 +83,45 @@ public sealed class SqlPayablesStore(
                   OR (@Overdue=0 AND (p.OutstandingAmount=0 OR p.DueDate>=@Now)))
                 AND (@Search IS NULL OR s.Name LIKE N'%' + @Search + N'%' OR s.Identification LIKE N'%' + @Search + N'%'
                   OR p.DocumentNumber LIKE N'%' + @Search + N'%')
-              GROUP BY p.SupplierId,s.Name,s.Identification)
+              GROUP BY p.SupplierId,s.Name,s.Identification,p.CurrencyCode),
+            Portfolio AS(
+              SELECT grouped.*,
+                CASE WHEN grouped.CurrencyCode=COALESCE(
+                  MAX(CASE WHEN grouped.CurrencyCode=N'COP' THEN N'COP' END)
+                    OVER(PARTITION BY grouped.SupplierId),
+                  MIN(grouped.CurrencyCode) OVER(PARTITION BY grouped.SupplierId))
+                THEN COALESCE(credits.CreditAmount,0) ELSE 0 END SupplierCreditAmount
+              FROM Grouped grouped
+              LEFT JOIN Credits credits ON credits.SupplierId=grouped.SupplierId)
             SELECT * INTO #Portfolio FROM Portfolio
             WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0) OR (@Overdue=0 AND OverdueAmount=0);
-            SELECT COUNT(*),COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0),COALESCE(SUM(InvoiceCount),0),COALESCE(SUM(SupplierCreditAmount),0)
-            FROM #Portfolio;
-            SELECT SupplierId,SupplierName,Identification,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount,SupplierCreditAmount
+            SELECT CASE WHEN GROUPING(CurrencyCode)=1 THEN NULL ELSE CurrencyCode END,
+              COUNT(*),COALESCE(SUM(InvoiceCount),0),COALESCE(SUM(SupplierCreditAmount),0),
+              COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0)
+            FROM #Portfolio GROUP BY GROUPING SETS ((CurrencyCode),());
+            SELECT SupplierId,SupplierName,Identification,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount,SupplierCreditAmount,CurrencyCode
             FROM #Portfolio
             ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,SupplierName,SupplierId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value);command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);AddDateRange(command,query.From,query.To);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
-        await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);var invoices=reader.GetInt32(3);var supplierCredit=reader.GetDecimal(4);await reader.NextResultAsync(token);
-        var items=new List<SupplierPortfolioItem>();while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.GetDecimal(8)));
-        return new(items,query.Page,query.PageSize,count,outstanding,overdue,invoices,supplierCredit);
+        await using var reader=await command.ExecuteReaderAsync(token);
+        var count=0;var invoices=0;var supplierCredit=0m;
+        var currencyTotals=new List<PayableCurrencyTotal>();
+        while(await reader.ReadAsync(token))
+        {
+            if(reader.IsDBNull(0))
+            {
+                count=reader.GetInt32(1);invoices=reader.GetInt32(2);supplierCredit=reader.GetDecimal(3);
+            }
+            else currencyTotals.Add(new(reader.GetString(0),reader.GetDecimal(4),reader.GetDecimal(5)));
+        }
+        await reader.NextResultAsync(token);
+        var items=new List<SupplierPortfolioItem>();while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetString(9)));
+        var cop=currencyTotals.FirstOrDefault(item=>item.CurrencyCode=="COP");
+        return new SupplierPortfolioPage(items,query.Page,query.PageSize,count,
+            cop?.OutstandingAmount??0,cop?.OverdueAmount??0,invoices,supplierCredit)
+            {CurrencyTotals=currencyTotals};
     }
 
     public async Task<PayablePage> ListAsync(
@@ -127,32 +151,35 @@ public sealed class SqlPayablesStore(
                  OR s.Identification LIKE N'%' + @Search + N'%')
             """;
         var countSql = $"""
-            SELECT COUNT(*),COALESCE(SUM(p.OutstandingAmount),0),
+            SELECT CASE WHEN GROUPING(p.CurrencyCode)=1 THEN NULL ELSE p.CurrencyCode END,
+                   COUNT(*),COALESCE(SUM(p.OutstandingAmount),0),
                    COALESCE(SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now
                                      THEN p.OutstandingAmount ELSE 0 END),0)
             FROM dbo.Payables p
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
-            WHERE {filters};
+            WHERE {filters}
+            GROUP BY GROUPING SETS ((p.CurrencyCode),());
             """;
-        int totalCount;
-        decimal totalOutstanding;
-        decimal totalOverdue;
+        var totalCount = 0;
+        var currencyTotals = new List<PayableCurrencyTotal>();
         await using (var command = new SqlCommand(countSql, connection))
         {
             AddQueryParameters(command, user, query, timeProvider.GetUtcNow());
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            await reader.ReadAsync(cancellationToken);
-            totalCount = reader.GetInt32(0);
-            totalOutstanding = reader.GetDecimal(1);
-            totalOverdue = reader.GetDecimal(2);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (reader.IsDBNull(0)) totalCount = reader.GetInt32(1);
+                else currencyTotals.Add(new(reader.GetString(0),reader.GetDecimal(2),reader.GetDecimal(3)));
+            }
         }
 
         var dataSql = $"""
-            SELECT p.PayableId,p.SupplierId,s.Name,p.DocumentNumber,p.CurrencyCode,
+            SELECT p.PayableId,p.SupplierId,s.Name SupplierName,p.DocumentNumber,p.CurrencyCode,
                    p.OriginalAmount,p.OutstandingAmount,p.DueDate,p.Status,p.CreatedAt,
                    CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN CAST(1 AS BIT)
-                        ELSE CAST(0 AS BIT) END,concept.Name
+                        ELSE CAST(0 AS BIT) END IsOverdue,concept.Name ExpenseConceptName
+            INTO #Page
             FROM dbo.Payables p
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
@@ -164,6 +191,17 @@ public sealed class SqlPayablesStore(
             ORDER BY CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN 0 ELSE 1 END,
                      p.DueDate,p.PayableId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT page.PayableId,page.SupplierId,page.SupplierName,page.DocumentNumber,
+              page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
+              page.Status,page.CreatedAt,page.IsOverdue,page.ExpenseConceptName,
+              COALESCE(paid.PaidAmount,0)
+            FROM #Page page
+            LEFT JOIN (SELECT application.PayableId,SUM(application.Amount) PaidAmount
+              FROM dbo.SupplierPaymentApplications application
+              JOIN #Page selected ON selected.PayableId=application.PayableId
+              WHERE application.AppliedAt IS NOT NULL
+              GROUP BY application.PayableId) paid ON paid.PayableId=page.PayableId
+            ORDER BY CASE WHEN page.IsOverdue=1 THEN 0 ELSE 1 END,page.DueDate,page.PayableId;
             """;
         var items = new List<PayableListItem>();
         await using (var command = new SqlCommand(dataSql, connection))
@@ -178,10 +216,12 @@ public sealed class SqlPayablesStore(
                     reader.GetString(3), reader.GetString(4), reader.GetDecimal(5),
                     reader.GetDecimal(6), reader.GetDateTimeOffset(7), reader.GetString(8),
                     reader.GetBoolean(10), reader.GetDateTimeOffset(9),
-                    reader.IsDBNull(11) ? null : reader.GetString(11)));
+                    reader.IsDBNull(11) ? null : reader.GetString(11),reader.GetDecimal(12)));
         }
-        return new PayablePage(
-            items, query.Page, query.PageSize, totalCount, totalOutstanding, totalOverdue);
+        var cop = currencyTotals.FirstOrDefault(item => item.CurrencyCode == "COP");
+        return new PayablePage(items, query.Page, query.PageSize, totalCount,
+            cop?.OutstandingAmount ?? 0, cop?.OverdueAmount ?? 0)
+            { CurrencyTotals = currencyTotals };
     }
 
     public Task<SupplierPaymentHistoryPage> PaymentHistoryAsync(PayablesUserIdentity user,
@@ -556,7 +596,7 @@ public sealed class SqlPayablesStore(
                 AND EffectiveFrom<=CONVERT(date,@PaidAt)) THEN 1 ELSE 0 END);
             IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(
                 MethodCode nvarchar(32),BankAccountId uniqueidentifier)
-              WHERE MethodCode=N'BankTransfer' AND @AccountingReady=1 AND BankAccountId IS NULL)
+              WHERE MethodCode=N'Transfer' AND @AccountingReady=1 AND BankAccountId IS NULL)
               THROW 51212,'Select a bank account for every transfer.',1;
             IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(BankAccountId uniqueidentifier) input
               WHERE input.BankAccountId IS NOT NULL AND NOT EXISTS(

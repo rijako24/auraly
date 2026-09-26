@@ -42,6 +42,69 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Return_session_cannot_cross_between_a_prepared_device_and_web()
+    {
+        var original = WithUblSnapshot(fixture.CreateValidRequest(9_510));
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var response = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
+
+        var request = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            original.DocumentId, DateTimeOffset.UtcNow,
+            ReturnEconomicResolutions.Refund, SalesReturnRefundMethods.Cash,
+            "Validar la sesión del equipo",
+            [new ConfirmSalesReturnLineRequest(1, .1m, ReturnInventoryDispositions.Sellable)],
+            fixture.WorkSessionId, null, "Other");
+        using (var wrongDevice = fixture.CreateClient())
+        using (var message = new HttpRequestMessage(HttpMethod.Post,
+                   "/api/pos/v1/sales-returns/confirm") { Content = JsonContent.Create(request) })
+        {
+            message.Headers.Add("X-Auraly-Device-Id", fixture.DeniedDeviceId.ToString("D"));
+            message.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeniedDeviceSecret);
+            message.Headers.Add("X-Auraly-User-Id", fixture.UserId.ToString("D"));
+            message.Headers.Add("Idempotency-Key", request.ReturnId.ToString("D"));
+            using var response = await wrongDevice.SendAsync(message);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+        using (var web = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create))
+        using (var message = Message(request, request.ReturnId.ToString("D")))
+        using (var response = await web.SendAsync(message))
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var unauthorizedUserId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var insert = new SqlCommand("""
+                INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,
+                  Email,NormalizedEmail,FirstName,LastName,IsActive,CreatedAt)
+                VALUES(@UserId,@TenantId,@Username,UPPER(@Username),
+                  @Email,UPPER(@Email),N'Operador',N'Sin permiso',1,SYSUTCDATETIME());
+                """, connection);
+            insert.Parameters.AddWithValue("@UserId", unauthorizedUserId);
+            insert.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            insert.Parameters.AddWithValue("@Username", $"return-{unauthorizedUserId:N}");
+            insert.Parameters.AddWithValue("@Email", $"return-{unauthorizedUserId:N}@test.local");
+            await insert.ExecuteNonQueryAsync();
+        }
+        using (var device = fixture.CreateClient())
+        using (var message = new HttpRequestMessage(HttpMethod.Post,
+                   "/api/pos/v1/sales-returns/confirm") { Content = JsonContent.Create(request) })
+        {
+            message.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+            message.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+            message.Headers.Add("X-Auraly-User-Id", unauthorizedUserId.ToString("D"));
+            message.Headers.Add("Idempotency-Key", request.ReturnId.ToString("D"));
+            using var response = await device.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id", request.ReturnId));
+    }
+
+    [Fact]
     public async Task Closure_subtracts_each_refund_from_its_payment_method()
     {
         const long consecutive = 9_505;
@@ -69,6 +132,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             SalesReturnPermissionCodes.Confirm,
             WorkSessionPermissionCodes.Read,
             WorkSessionPermissionCodes.Close);
+        var webSessionId = await fixture.OpenWebWorkSessionAsync();
         foreach (var (refundMethod, closureMethod) in new[]
         {
             (SalesReturnRefundMethods.Cash, "Cash"),
@@ -77,7 +141,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         })
         {
             var before = await user.GetFromJsonAsync<WorkSessionClosurePreviewView>(
-                $"/api/commerce/v1/work-sessions/{fixture.WorkSessionId:D}/closure-preview");
+                $"/api/commerce/v1/work-sessions/{webSessionId:D}/closure-preview");
             Assert.NotNull(before);
             var beforeMethod = Assert.Single(before.PaymentTotals,
                 value => value.PaymentMethodCode == closureMethod);
@@ -88,7 +152,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
                 "Regresión de cierre por medio de pago",
                 [new ConfirmSalesReturnLineRequest(
                     1, .2m, ReturnInventoryDispositions.Sellable)],
-                fixture.WorkSessionId,
+                webSessionId,
                 refundMethod == SalesReturnRefundMethods.CreditCard ? 2 : null,
                 "Other",
                 BankAccountId: refundMethod == SalesReturnRefundMethods.Transfer
@@ -104,10 +168,10 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.NotNull(acceptance);
             Assert.Equal(2_380m, acceptance.TotalAmount);
             Assert.Equal(refundMethod, acceptance.RefundMethodCode);
-            Assert.Equal(fixture.WorkSessionId, acceptance.WorkSessionId);
+            Assert.Equal(webSessionId, acceptance.WorkSessionId);
 
             var after = await user.GetFromJsonAsync<WorkSessionClosurePreviewView>(
-                $"/api/commerce/v1/work-sessions/{fixture.WorkSessionId:D}/closure-preview");
+                $"/api/commerce/v1/work-sessions/{webSessionId:D}/closure-preview");
             Assert.NotNull(after);
             var afterMethod = Assert.Single(after.PaymentTotals,
                 value => value.PaymentMethodCode == closureMethod);
@@ -132,6 +196,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
         Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
 
+        var webSessionId = await fixture.OpenWebWorkSessionAsync();
         var request = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
             original.DocumentId,
@@ -140,7 +205,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             "Cambio de medio para el reintegro",
             [new ConfirmSalesReturnLineRequest(
                 1, .25m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, null, "Other");
+            webSessionId, null, "Other");
         using var user = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
         using var message = Message(request, $"sales-return-cash-{request.ReturnId:N}");
@@ -169,6 +234,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
         Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
 
+        var webSessionId = await fixture.OpenWebWorkSessionAsync();
         var request = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
             original.DocumentId,
@@ -188,10 +254,10 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var acceptance = await response.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
         Assert.NotNull(acceptance);
-        Assert.NotNull(acceptance.WorkSessionId);
+        Assert.Equal(webSessionId, acceptance.WorkSessionId);
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.WorkSessions WHERE WorkSessionId=@Id AND Status=N'Open'",
-            acceptance.WorkSessionId.Value));
+            webSessionId));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.SalesReturns WHERE ReturnId=@Id",
             request.ReturnId));
@@ -214,6 +280,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
         Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
 
+        var webSessionId = await fixture.OpenWebWorkSessionAsync();
         var request = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
             original.DocumentId,
@@ -222,7 +289,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             "Reversión del pago original con tarjeta",
             [new ConfirmSalesReturnLineRequest(
                 1, .25m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, 1, "Other", null, SalesReturnScopes.Partial);
+            webSessionId, 1, "Other", null, SalesReturnScopes.Partial);
         using var user = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
         using var message = Message(request, $"sales-return-card-{request.ReturnId:N}");
@@ -252,6 +319,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
         var afterSale = await QuantityAsync();
+        var webSessionId = await fixture.OpenWebWorkSessionAsync();
 
         var request = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
@@ -260,7 +328,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             ReturnEconomicResolutions.Refund, "Cash", "Cliente devuelve parcialmente",
             [new ConfirmSalesReturnLineRequest(
                 1, .5m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, null, "Other");
+            webSessionId, null, "Other");
         const string idempotencyKey = "sales-return-e2e-001";
         using var user = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Read, SalesReturnPermissionCodes.Create,

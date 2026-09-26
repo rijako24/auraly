@@ -14,9 +14,9 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export type PortfolioLedgerTab = "parties" | "invoices" | "payments";
-export type PartyRow={id:string;name:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number};
+export type PartyRow={id:string;name:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string};
 type PaymentRow={paymentId:string;paidAt:string;partyName:string|null;documentNumber:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string};
-type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding?:number;totalOverdue?:number;totalInvoiceCount?:number;totalSupplierCredit?:number};
+type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding?:number;totalOverdue?:number;totalInvoiceCount?:number;totalSupplierCredit?:number;currencyTotals?:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>};
 
 export function PortfolioLedgerTabs({
   direction,
@@ -58,8 +58,8 @@ export function PortfolioLedgerTabs({
     queryKey: [direction === "receivable" ? "receivable-customers" : "payable-suppliers",businessId, value === "parties" ? page : 1, search, partyId, status, overdue, from, to],
     queryFn: async () => {
       const filters = { page: value === "parties" ? page : 1, pageSize: 20, search, status, overdue: overdue || undefined, from, to };
-      if(direction === "receivable") { const result=await receivablesApi.customerPortfolio({...filters,customerId:partyId}); return {...result,items:result.items.map(item=>({id:item.customerId,name:item.customerName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:0}))}; }
-      const result=await payablesApi.supplierPortfolio({...filters,supplierId:partyId}); return {...result,items:result.items.map(item=>({id:item.supplierId,name:item.supplierName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:item.supplierCreditAmount}))};
+      if(direction === "receivable") { const result=await receivablesApi.customerPortfolio({...filters,customerId:partyId}); return {...result,items:result.items.map(item=>({id:item.customerId,name:item.customerName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:0,currencyCode:"COP"}))}; }
+      const result=await payablesApi.supplierPortfolio({...filters,supplierId:partyId}); return {...result,items:result.items.map(item=>({id:item.supplierId,name:item.supplierName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:item.supplierCreditAmount,currencyCode:item.currencyCode}))};
     },
     enabled: !!businessId && value === "parties",
     staleTime: 0,
@@ -87,6 +87,7 @@ export function PortfolioLedgerTabs({
   const summary={totalOutstanding:parties.data?.totalOutstanding??0,
     totalOverdue:parties.data?.totalOverdue??0,totalInvoiceCount:parties.data?.totalInvoiceCount??0,
     totalSupplierCredit:parties.data?.totalSupplierCredit??0};
+  const currencyTotals=direction==="payable"?parties.data?.currencyTotals:undefined;
   const paymentItems = payments.data?.items ?? [];
   const current = value === "parties" ? parties.data : payments.data;
   const loading = value === "parties" ? parties.isLoading : payments.isLoading;
@@ -94,8 +95,8 @@ export function PortfolioLedgerTabs({
 
   return <Tabs value={value} onValueChange={next => onValueChange(next as PortfolioLedgerTab)} className="space-y-4">
     {value === "parties" && <section className={`grid gap-3 ${direction === "payable" ? "md:grid-cols-4" : "md:grid-cols-3"}`} aria-label="Resumen de cartera">
-      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo pendiente</p><p className="mt-1 text-2xl font-semibold">{formatCurrency(summary.totalOutstanding)}</p></CardContent></Card>
-      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo vencido</p><p className="mt-1 text-2xl font-semibold text-destructive">{formatCurrency(summary.totalOverdue)}</p></CardContent></Card>
+      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo pendiente</p>{currencyTotals?.length?currencyTotals.map(item=><p key={item.currencyCode} className="mt-1 text-xl font-semibold">{item.currencyCode} {formatCurrency(item.outstandingAmount,item.currencyCode)}</p>):<p className="mt-1 text-2xl font-semibold">{formatCurrency(summary.totalOutstanding)}</p>}</CardContent></Card>
+      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo vencido</p>{currencyTotals?.length?currencyTotals.map(item=><p key={item.currencyCode} className="mt-1 text-xl font-semibold text-destructive">{item.currencyCode} {formatCurrency(item.overdueAmount,item.currencyCode)}</p>):<p className="mt-1 text-2xl font-semibold text-destructive">{formatCurrency(summary.totalOverdue)}</p>}</CardContent></Card>
       <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">{direction === "receivable" ? "Facturas encontradas" : "Obligaciones encontradas"}</p><p className="mt-1 text-2xl font-semibold">{summary.totalInvoiceCount}</p></CardContent></Card>
       {direction === "payable" && <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo a favor con proveedores</p><p className="mt-1 text-2xl font-semibold">{formatCurrency(summary.totalSupplierCredit)}</p></CardContent></Card>}
     </section>}
@@ -110,7 +111,7 @@ export function PortfolioLedgerTabs({
     <TabsContent value="parties" className="mt-0">
       <LedgerTable loading={loading} failed={failed} isEmpty={partyItems.length === 0} empty="No hay terceros con cartera para estos filtros.">
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">{direction === "receivable" ? "Cliente" : "Proveedor"}</th><th>Facturas</th><th>Valor original</th><th>Pagado</th><th>Saldo</th><th className="pr-3">Vencido</th>{direction === "payable" && <th className="pr-3">A favor</th>}</tr></thead>
-        <tbody>{partyItems.map(item => <tr key={item.id} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount)}</td><td>{formatCurrency(item.paidAmount)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount)}</td>{direction === "payable" && <td className="pr-3 font-semibold">{formatCurrency(item.supplierCreditAmount)}</td>}</tr>)}</tbody>
+        <tbody>{partyItems.map(item => <tr key={`${item.id}-${item.currencyCode}`} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}{direction==="payable"?` · ${item.currencyCode}`:""}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount,item.currencyCode)}</td><td>{formatCurrency(item.paidAmount,item.currencyCode)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount,item.currencyCode)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount,item.currencyCode)}</td>{direction === "payable" && <td className="pr-3 font-semibold">{formatCurrency(item.supplierCreditAmount,"COP")}</td>}</tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>
@@ -135,5 +136,5 @@ function Pager({page,pages,total,onPage}:{page:number;pages:number;total:number;
 }
 
 function paymentLabel(code: string) {
-  return ({ Cash: "Efectivo", BankTransfer: "Transferencia", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito" } as Record<string, string>)[code] ?? code;
+  return ({ Cash: "Efectivo", Transfer: "Transferencia", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito" } as Record<string, string>)[code] ?? code;
 }

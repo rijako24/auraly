@@ -43,7 +43,7 @@ INSERT @Options VALUES
 ('71300000-0000-0000-0000-000000000005',N'payroll-risk-class',N'V',N'Clase V',NULL,N'0.06960',50),
 ('71400000-0000-0000-0000-000000000001',N'payroll-worker-type',N'01',N'Dependiente',NULL,NULL,10),
 ('71500000-0000-0000-0000-000000000001',N'payroll-worker-subtype',N'00',N'No aplica subtipo',NULL,NULL,10),
-('71600000-0000-0000-0000-000000000001',N'payroll-payment-method',N'BankTransfer',N'Transferencia bancaria',NULL,N'Bank',10),
+('71600000-0000-0000-0000-000000000001',N'payroll-payment-method',N'Transfer',N'Transferencia bancaria',NULL,N'Bank',10),
 ('71600000-0000-0000-0000-000000000002',N'payroll-payment-method',N'Cash',N'Efectivo',NULL,N'Cash',20),
 ('71610000-0000-0000-0000-000000000001',N'payroll-bank-account-type',N'Savings',N'Cuenta de ahorros',NULL,N'Ahorros',10),
 ('71610000-0000-0000-0000-000000000002',N'payroll-bank-account-type',N'Checking',N'Cuenta corriente',NULL,N'Corriente',20),
@@ -134,6 +134,10 @@ INSERT @Options VALUES
 ('71F00000-0000-0000-0000-000000000011',N'payroll-rule-parameter',N'MaximumContributionBaseMinimumWages',N'Tope de IBC en salarios mínimos',NULL,N'Multiple',170),
 ('71F00000-0000-0000-0000-000000000012',N'payroll-rule-parameter',N'NonSalaryExclusionThresholdRate',N'Límite no salarial excluido del IBC',NULL,N'Rate',180);
 
+UPDATE payroll.CatalogOptions SET Code=N'Transfer'
+WHERE OptionId='71600000-0000-0000-0000-000000000001'
+  AND CatalogCode=N'payroll-payment-method' AND Code=N'BankTransfer';
+
 MERGE [payroll].[CatalogOptions] AS target
 USING @Options AS source
 ON target.[CatalogCode]=source.[CatalogCode] AND target.[Code]=source.[Code]
@@ -156,7 +160,7 @@ WHERE CatalogCode=N'payroll-pay-frequency' AND Code=N'Monthly';
 UPDATE payroll.CatalogOptions SET DianCode=N'4'
 WHERE CatalogCode=N'payroll-pay-frequency' AND Code=N'Semimonthly';
 UPDATE payroll.CatalogOptions SET DianCode=N'42'
-WHERE CatalogCode=N'payroll-payment-method' AND Code=N'BankTransfer';
+WHERE CatalogCode=N'payroll-payment-method' AND Code=N'Transfer';
 UPDATE payroll.CatalogOptions SET DianCode=N'10'
 WHERE CatalogCode=N'payroll-payment-method' AND Code=N'Cash';
 UPDATE payroll.CatalogOptions SET DianCode=Code
