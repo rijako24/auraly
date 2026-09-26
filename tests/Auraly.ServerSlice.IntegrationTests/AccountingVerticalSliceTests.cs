@@ -63,7 +63,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             activate.EnsureSuccessStatusCode();
 
         var adjustment = 0.40m * direction;
-        var source = fixture.CreateValidRequest(direction > 0 ? 9_918 : 9_919);
+        var source = fixture.CreateValidRequest(direction > 0 ? 9_918 : 9_920);
         var fiscal = source.FiscalSnapshot!;
         var payable = fiscal.PayableAmount + adjustment;
         var cufe = CufeCalculator.Calculate(new CufeInput(
