@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
 using Auraly.Application.Fiscal;
+using Auraly.Application.DocumentProcessing;
+using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Contracts.Fiscal;
@@ -12,6 +14,7 @@ using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -545,6 +548,269 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var page = await pageResponse.Content.ReadFromJsonAsync<FiscalDocumentPage>();
         Assert.NotNull(page);
         Assert.Contains(page.Items, item => item.DocumentId == returnId);
+    }
+
+    [Fact]
+    public async Task Accepted_duplicate_creates_one_fiscal_only_credit_note_without_second_sale()
+    {
+        fixture.DrainDocumentSignals();
+        var orderId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var order = new SqlCommand("""
+                INSERT dbo.Orders(OrderId,BusinessId,OrdersWarehouseId,Status,
+                  CustomerConfirmed,Subtotal,Total,CreatedAt)
+                VALUES(@OrderId,@BusinessId,@WarehouseId,2,1,10000,11900,SYSDATETIMEOFFSET());
+                """, connection);
+            order.Parameters.AddWithValue("@OrderId", orderId);
+            order.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            order.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            Assert.Equal(1, await order.ExecuteNonQueryAsync());
+        }
+        var retained = WithUblSnapshot(fixture.CreateValidRequest(9130) with
+        {
+            DeviceId = Guid.Empty,
+            SourceMode = SaleSourceModes.Online,
+            SourceOrderId = orderId
+        });
+        var duplicate = WithUblSnapshot(fixture.CreateValidRequest(9131) with
+        {
+            DeviceId = Guid.Empty,
+            SourceMode = SaleSourceModes.Online,
+            SourceOrderId = orderId
+        });
+        await SeedAcceptedOnlineSaleAsync(retained, blocked: false);
+        await SeedAcceptedOnlineSaleAsync(duplicate, blocked: true);
+        Assert.Equal("Posted", await ScalarStringAsync("""
+            SELECT Status FROM dbo.AccountingPostingJobs
+            WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=N'SalesInvoice'
+            """, retained.DocumentId));
+        Assert.Equal(0, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.SalesDocumentLines WHERE DocumentId=@DocumentId",
+            duplicate.DocumentId));
+
+        var originalDeliveryId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var delivery = new SqlCommand("""
+                INSERT dbo.TenantProvisioningOutboxMessages(
+                  MessageId,TenantId,Type,Payload,OccurredAt,AvailableAt)
+                VALUES(@MessageId,@TenantId,N'FiscalInvoiceDelivery',N'{}',
+                  SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+                UPDATE dbo.FiscalDocuments SET DeliveryOutboxMessageId=@MessageId,
+                  DeliveryEmail=N'duplicate@auraly.test'
+                WHERE DocumentId=@DocumentId;
+                """, connection);
+            delivery.Parameters.AddWithValue("@MessageId", originalDeliveryId);
+            delivery.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            delivery.Parameters.AddWithValue("@DocumentId", duplicate.DocumentId);
+            Assert.Equal(2, await delivery.ExecuteNonQueryAsync());
+        }
+
+        using (var denied = fixture.CreateAdminClient())
+        using (var response = await denied.PostAsJsonAsync(
+                   $"/api/commerce/v1/fiscal/documents/{duplicate.DocumentId}/correct-duplicate",
+                   new { RetainedDocumentId = retained.DocumentId }))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        using var admin = fixture.CreateAdminClient(FiscalPermissionCodes.Correct);
+        var requestTime = System.Diagnostics.Stopwatch.StartNew();
+        using var createdResponse = await admin.PostAsJsonAsync(
+            $"/api/commerce/v1/fiscal/documents/{duplicate.DocumentId}/correct-duplicate",
+            new { RetainedDocumentId = retained.DocumentId });
+        requestTime.Stop();
+        Assert.True(createdResponse.StatusCode == HttpStatusCode.OK,
+            await createdResponse.Content.ReadAsStringAsync());
+        Assert.True(requestTime.Elapsed < TimeSpan.FromSeconds(1),
+            $"La creación fiscal tardó {requestTime.Elapsed.TotalMilliseconds:N0} ms.");
+        var created = await createdResponse.Content
+            .ReadFromJsonAsync<DuplicateFiscalCorrectionResult>();
+        Assert.NotNull(created);
+        Assert.True(created.Created);
+        Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration, created.FiscalStatus);
+        var correctionId = created.CorrectionId;
+        Assert.Equal(1, await ScalarIntAsync("""
+            SELECT COUNT(*) FROM dbo.TenantProvisioningOutboxMessages
+            WHERE MessageId=@DocumentId AND ProcessedAt IS NOT NULL
+            """, originalDeliveryId));
+
+        var connections = new SqlServerConnectionFactory(
+            new AuralySqlConnectionSource(fixture.ConnectionString));
+        var ids = new TestIds();
+        var generatedAt = DateTimeOffset.UtcNow.AddMinutes(5);
+        var generator = CreateWorker(new SqlFiscalGenerationWorkStore(connections, ids),
+            new FixedTimeProvider(generatedAt));
+        var generated = await generator.ProcessAsync(fixture.BusinessId, correctionId,
+            "duplicate-generator");
+        Assert.True(generated, await ScalarStringAsync("""
+            SELECT CONCAT(Status,N': ',LastErrorMessage)
+            FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId
+            """, correctionId));
+        Assert.False(await generator.ProcessAsync(fixture.BusinessId, correctionId, "duplicate-generator"));
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(
+            await ArtifactAsync(correctionId, FiscalArtifactTypeCodes.UnsignedXml)));
+        Assert.Equal("CreditNote", xml.Root!.Name.LocalName);
+        Assert.Equal("2", xml.Descendants().Single(element =>
+            element.Name.LocalName == "ResponseCode").Value);
+        Assert.Contains(duplicate.FiscalSnapshot!.FiscalNumber,
+            xml.Descendants().Where(element => element.Name.LocalName == "ID")
+                .Select(element => element.Value));
+        Assert.Contains(duplicate.FiscalSnapshot.Cufe,
+            xml.Descendants().Where(element => element.Name.LocalName == "UUID")
+                .Select(element => element.Value));
+        var noteReceipt = new DianInvoicePdfRenderer().ReadReceipt(
+            await ArtifactAsync(correctionId, FiscalArtifactTypeCodes.SignedXml));
+        Assert.Equal(duplicate.Lines.Count, noteReceipt.Lines.Count);
+
+        var transport = new SequenceTransport(
+            new DianSubmissionResult(
+                DianSubmissionDisposition.Received, "duplicate-track", "Received", "Queued",
+                null, Encoding.UTF8.GetBytes("received"), true),
+            new DianSubmissionResult(
+                DianSubmissionDisposition.Accepted, "duplicate-track", "2",
+                "Set de prueba se encuentra Aceptado.",
+                Encoding.UTF8.GetBytes("<ApplicationResponse />"),
+                Encoding.UTF8.GetBytes("accepted"), true));
+        var submitter = new FiscalSubmissionWorker(
+            new SqlFiscalSubmissionWorkStore(connections, ids), transport, transport,
+            new FiscalSubmissionPackageBuilder(),
+            new FixedTimeProvider(generatedAt.AddSeconds(1)));
+        Assert.True((await submitter.ProcessAsync(
+            fixture.BusinessId, correctionId, "duplicate-submitter")).WorkFound);
+        var statusQuery = new FiscalSubmissionWorker(
+            new SqlFiscalSubmissionWorkStore(connections, ids), transport, transport,
+            new FiscalSubmissionPackageBuilder(),
+            new FixedTimeProvider(generatedAt.AddSeconds(10)));
+        Assert.True((await statusQuery.ProcessAsync(
+            fixture.BusinessId, correctionId, "duplicate-submitter")).WorkFound);
+        Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
+            await ScalarStringAsync("""
+                SELECT FiscalStatus FROM dbo.FiscalSaleCorrections
+                WHERE CorrectionId=@DocumentId
+                """, correctionId));
+
+        var noteDeliveryId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using (var delivery = new SqlCommand("""
+                INSERT dbo.TenantProvisioningOutboxMessages(
+                  MessageId,TenantId,Type,Payload,OccurredAt,AvailableAt)
+                VALUES(@MessageId,@TenantId,N'FiscalInvoiceDelivery',N'{}',
+                  SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+                UPDATE dbo.FiscalDocuments
+                SET DeliveryOutboxMessageId=@MessageId,
+                    DeliveryEmail=N'customer@auraly.test'
+                WHERE DocumentId=@DocumentId;
+                """, connection))
+            {
+                delivery.Parameters.AddWithValue("@MessageId", noteDeliveryId);
+                delivery.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                delivery.Parameters.AddWithValue("@DocumentId", correctionId);
+                Assert.Equal(2, await delivery.ExecuteNonQueryAsync());
+            }
+            await using var recipient = new SqlCommand(
+                "dbo.FiscalInvoiceDeliveryRecipientGet", connection)
+            {
+                CommandType = System.Data.CommandType.StoredProcedure
+            };
+            recipient.Parameters.AddWithValue("@DocumentId", correctionId);
+            recipient.Parameters.AddWithValue("@MessageId", noteDeliveryId);
+            recipient.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await using var reader = await recipient.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("FiscalSaleCorrection", reader.GetString(reader.GetOrdinal("DocumentType")));
+            Assert.Equal(duplicate.CommercialSnapshot.PayableAmount,
+                reader.GetDecimal(5));
+            Assert.NotEmpty(reader.GetFieldValue<byte[]>(6));
+            Assert.Contains(duplicate.FiscalSnapshot!.FiscalNumber,
+                reader.GetString(reader.GetOrdinal("SnapshotJson")));
+            Assert.False(await reader.ReadAsync());
+        }
+
+        using var replayResponse = await admin.PostAsJsonAsync(
+            $"/api/commerce/v1/fiscal/documents/{duplicate.DocumentId}/correct-duplicate",
+            new { RetainedDocumentId = retained.DocumentId });
+        Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
+        var replay = await replayResponse.Content
+            .ReadFromJsonAsync<DuplicateFiscalCorrectionResult>();
+        Assert.NotNull(replay);
+        Assert.False(replay.Created);
+        Assert.Equal(correctionId, replay.CorrectionId);
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalSaleCorrections WHERE OriginalDocumentId=@DocumentId",
+            duplicate.DocumentId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId",
+            duplicate.DocumentId));
+        Assert.Equal(0, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@DocumentId",
+            correctionId));
+        Assert.Equal(0, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@DocumentId",
+            correctionId));
+        Assert.Equal(0, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@DocumentId",
+            correctionId));
+    }
+
+    private async Task SeedAcceptedOnlineSaleAsync(PosSaleUploadRequest request, bool blocked)
+    {
+        using (var scope = fixture.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<IPosSaleServerStore>();
+            var verifier = scope.ServiceProvider.GetRequiredService<IFiscalSnapshotVerifier>();
+            var verified = await verifier.VerifyAsync(request, CancellationToken.None);
+            Assert.True(verified.IsVerified, verified.ConflictReason);
+            var stored = await store.StoreReceptionAsync(
+                new StorePosSaleReceptionCommand(
+                    request, $"online:{request.DocumentId:N}",
+                    PosSaleContractSerializer.Serialize(request),
+                    PosSaleContractSerializer.Hash(request),
+                    blocked ? verified with
+                    {
+                        IsVerified = false,
+                        ConflictReason = "Defecto histórico simulado"
+                    } : verified,
+                    DateTimeOffset.UtcNow), CancellationToken.None);
+            if (!blocked)
+            {
+                Assert.NotNull(stored.MovementId);
+                await fixture.DocumentSignals.PublishAsync(new DocumentProcessingSignal(
+                    stored.MovementId.Value, request.BusinessId, request.DocumentId,
+                    PosSaleDocumentTypes.Invoice));
+                Assert.Equal("Completed", await ScalarStringAsync(
+                    "SELECT ProcessingStatus FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId",
+                    request.DocumentId));
+            }
+            else Assert.Equal("Blocked", stored.ProcessingStatus);
+        }
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var accepted = new SqlCommand("""
+            UPDATE dbo.FiscalSnapshots
+            SET IntegrityStatus=N'FiscalVerified',VerifiedAt=SYSDATETIMEOFFSET(),ConflictReason=NULL
+            WHERE DocumentId=@DocumentId;
+            UPDATE dbo.SalesDocuments SET FiscalStatus=N'DianAccepted'
+            WHERE DocumentId=@DocumentId;
+            UPDATE dbo.FiscalDocuments SET FiscalStatus=N'DianAccepted'
+            WHERE DocumentId=@DocumentId;
+            UPDATE dbo.FiscalDocumentProcesses
+            SET Status=N'DianAccepted',TrackId=@TrackId
+            WHERE DocumentId=@DocumentId;
+            INSERT dbo.FiscalTransmissionAttempts(
+              FiscalTransmissionAttemptId,DocumentId,AttemptNumber,Operation,
+              CorrelationId,TrackId,StartedAt,CompletedAt,Disposition,
+              StatusCode,MayHaveReachedDian)
+            VALUES(NEWID(),@DocumentId,1,N'SendBillSync',@CorrelationId,@TrackId,
+              SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Accepted',N'00',1);
+            """, connection);
+        accepted.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        accepted.Parameters.AddWithValue("@TrackId", request.FiscalSnapshot!.Cufe);
+        accepted.Parameters.AddWithValue("@CorrelationId", $"test-{request.DocumentId:N}");
+        Assert.Equal(5, await accepted.ExecuteNonQueryAsync());
     }
 
     private FiscalGenerationWorker CreateWorker(IFiscalGenerationWorkStore store, TimeProvider clock) =>

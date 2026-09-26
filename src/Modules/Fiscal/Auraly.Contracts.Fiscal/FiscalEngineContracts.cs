@@ -5,6 +5,7 @@ public static class FiscalPermissionCodes
     public const string DocumentsRead = "fiscal.documents.read";
     public const string ArtifactsRead = "fiscal.artifacts.read";
     public const string Retry = "fiscal.retry";
+    public const string Correct = "fiscal.correct";
     public const string ConfigurationRead = "fiscal.configuration.read";
     public const string ConfigurationManage = "fiscal.configuration.manage";
 }

@@ -147,7 +147,7 @@ public sealed class PlatformEmailOutboxHostedService(
         if (invoice is null)
             throw new InvalidOperationException(
                 "El paquete del documento fiscal aceptado todavía no está listo.");
-        var isCreditNote = invoice.DocumentType == "SalesReturn";
+        var isCreditNote = invoice.DocumentType is "SalesReturn" or "FiscalSaleCorrection";
         var metadata = attachedDocuments.ReadMetadata(invoice.SignedXml);
         var signedAttachedDocument = invoice.SignedAttachedDocument;
         var signedAttachedDocumentFileName = invoice.SignedAttachedDocumentFileName;
@@ -646,7 +646,7 @@ public sealed class PlatformEmailOutboxHostedService(
         FiscalInvoiceRecipient invoice,
         DianAttachedDocumentMetadata metadata)
     {
-        var isCreditNote = invoice.DocumentType == "SalesReturn";
+        var isCreditNote = invoice.DocumentType is "SalesReturn" or "FiscalSaleCorrection";
         var title = isCreditNote ? "Tu nota crédito electrónica está lista" : "Tu factura electrónica está lista";
         var description = isCreditNote
             ? "emitió la nota crédito electrónica que encontrarás adjunta a este correo."

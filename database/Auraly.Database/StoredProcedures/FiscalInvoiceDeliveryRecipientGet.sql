@@ -6,9 +6,9 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT fiscal.BusinessId,fiscal.DeliveryEmail,
-           COALESCE(sale.DocumentNumber,returned.DocumentNumber),
+           COALESCE(sale.DocumentNumber,returned.DocumentNumber,fiscal.AuralyDocumentNumber),
            fiscal.FiscalNumber,fiscal.IssuedAt,
-           COALESCE(sale.PayableAmount,returned.TotalAmount),
+           COALESCE(sale.PayableAmount,returned.TotalAmount,originalSale.PayableAmount),
            signedXml.Content,applicationResponse.Content,
            attachedDocument.Content,attachedDocument.FileName,
            CAST(NULL AS VARBINARY(MAX)),CAST(NULL AS NVARCHAR(256)),
@@ -22,9 +22,10 @@ BEGIN
            COALESCE(sale.CreditAmount,0) AS CreditAmount,
            JSON_QUERY(payload.PayloadJson,'$.commercialSnapshot.withholding') AS WithholdingJson,
            sale.CreditDueDate,
-           COALESCE(creditSnapshot.SnapshotJson,payload.PayloadJson,
+           COALESCE(creditSnapshot.SnapshotJson,correction.SnapshotJson,payload.PayloadJson,
              serviceSnapshot.SnapshotJson) AS SnapshotJson,
-           COALESCE(sale.DocumentType,N'SalesReturn') AS DocumentType
+           COALESCE(sale.DocumentType,CASE WHEN correction.CorrectionId IS NOT NULL
+             THEN N'FiscalSaleCorrection' ELSE N'SalesReturn' END) AS DocumentType
     FROM dbo.FiscalDocuments fiscal
     JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
      AND business.TenantId=@TenantId
@@ -34,6 +35,13 @@ BEGIN
     LEFT JOIN dbo.SalesReturns returned ON returned.ReturnId=fiscal.DocumentId
      AND returned.BusinessId=fiscal.BusinessId
      AND fiscal.FiscalDocumentType=N'CreditNote'
+    LEFT JOIN dbo.FiscalSaleCorrections correction
+      ON correction.CorrectionId=fiscal.DocumentId
+     AND correction.BusinessId=fiscal.BusinessId
+     AND fiscal.FiscalDocumentType=N'CreditNote'
+    LEFT JOIN dbo.SalesDocuments originalSale
+      ON originalSale.DocumentId=correction.OriginalDocumentId
+     AND originalSale.BusinessId=correction.BusinessId
     LEFT JOIN dbo.DocumentProcessingPayloads payload
       ON payload.DocumentId=fiscal.DocumentId
      AND payload.DocumentType=COALESCE(sale.DocumentType,N'SalesReturn')
@@ -72,8 +80,9 @@ BEGIN
       AND fiscal.DeliveryOutboxMessageId=@MessageId
       AND fiscal.FiscalStatus=N'DianAccepted'
       AND fiscal.DeliveredAt IS NULL
-      AND (sale.DocumentId IS NOT NULL OR returned.ReturnId IS NOT NULL)
-      AND COALESCE(creditSnapshot.SnapshotJson,payload.PayloadJson,
+      AND (sale.DocumentId IS NOT NULL OR returned.ReturnId IS NOT NULL
+           OR correction.CorrectionId IS NOT NULL)
+      AND COALESCE(creditSnapshot.SnapshotJson,correction.SnapshotJson,payload.PayloadJson,
         serviceSnapshot.SnapshotJson) IS NOT NULL
       AND NULLIF(LTRIM(RTRIM(fiscal.DeliveryEmail)),N'') IS NOT NULL;
 END;

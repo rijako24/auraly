@@ -160,6 +160,10 @@ public sealed class SqlFiscalGenerationWorkStore(
             UPDATE dbo.SalesReturnFiscalSnapshots
             SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
             WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'CreditNote';
+            UPDATE dbo.FiscalSaleCorrections
+            SET FiscalStatus=@Status
+            WHERE CorrectionId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'CreditNote';
             UPDATE dbo.SalesDebitNoteFiscalSnapshots
             SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
             WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'DebitNote';
@@ -212,6 +216,10 @@ public sealed class SqlFiscalGenerationWorkStore(
             UPDATE dbo.SalesReturns
             SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'CreditNote';
+            UPDATE dbo.FiscalSaleCorrections
+            SET FiscalStatus=@Status
+            WHERE CorrectionId=@DocumentId AND BusinessId=@BusinessId
               AND @FiscalDocumentType=N'CreditNote';
             UPDATE dbo.SalesDebitNotes
             SET FiscalStatus=@Status
@@ -280,11 +288,14 @@ public sealed class SqlFiscalGenerationWorkStore(
                        AND existingArtifact.ArtifactType=N'SignedXml')
                      THEN 1 ELSE 0 END)
                    ,CONVERT(bit,CASE WHEN fd.SourceDocumentType=N'FiscalHabilitation'
-                     THEN 1 ELSE 0 END)
+                     THEN 1 ELSE 0 END),correction.SnapshotJson
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId
             LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesReturnFiscalSnapshots credit ON credit.DocumentId=p.DocumentId
+            LEFT JOIN dbo.FiscalSaleCorrections correction
+              ON correction.CorrectionId=p.DocumentId
+             AND correction.BusinessId=p.BusinessId
             LEFT JOIN dbo.SalesDebitNoteFiscalSnapshots debit ON debit.DocumentId=p.DocumentId
             LEFT JOIN fiscal.PurchaseSupportFiscalSnapshots support ON support.DocumentId=p.DocumentId
             LEFT JOIN payroll.ElectronicDocuments payrollDocument
@@ -322,6 +333,9 @@ public sealed class SqlFiscalGenerationWorkStore(
         var creditNote = reader.IsDBNull(4)
             ? null
             : SalesReturnCreditNoteSnapshotSerializer.Deserialize(reader.GetString(4));
+        var fiscalOnlyCreditNote = reader.IsDBNull(45)
+            ? null
+            : FiscalOnlyCreditNoteSnapshotSerializer.Deserialize(reader.GetString(45));
         var debitNote = reader.IsDBNull(35)
             ? null
             : SalesDebitNoteFiscalSnapshotSerializer.Deserialize(reader.GetString(35));
@@ -367,7 +381,7 @@ public sealed class SqlFiscalGenerationWorkStore(
                 supportDocument.Authorization.ValidUntil, supportDocument.Authorization.Prefix,
                 supportDocument.Authorization.RangeStart, supportDocument.Authorization.RangeEnd)),
             supportDocument, electronicPayroll, serviceInvoice, reader.GetBoolean(43),
-            reader.GetBoolean(44));
+            reader.GetBoolean(44), fiscalOnlyCreditNote);
     }
 
     private async Task InsertArtifactAsync(SqlConnection connection, SqlTransaction transaction,

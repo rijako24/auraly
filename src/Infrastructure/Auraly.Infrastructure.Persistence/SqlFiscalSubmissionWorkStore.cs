@@ -339,6 +339,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
             UPDATE dbo.SalesReturns SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
 
+            UPDATE dbo.FiscalSaleCorrections SET FiscalStatus=@Status
+            WHERE CorrectionId=@DocumentId AND BusinessId=@BusinessId;
+
             UPDATE dbo.SalesDebitNotes SET FiscalStatus=@Status
             WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId;
 
@@ -463,6 +466,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
             WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
             UPDATE dbo.SalesReturns SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
+            UPDATE dbo.FiscalSaleCorrections SET FiscalStatus=@Status
+            WHERE CorrectionId=@DocumentId AND BusinessId=@BusinessId;
             UPDATE dbo.SalesDebitNotes SET FiscalStatus=@Status
             WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId;
             UPDATE payroll.ElectronicDocuments
@@ -645,8 +650,13 @@ public sealed class SqlFiscalSubmissionWorkStore(
             LEFT JOIN dbo.SalesReturns returned ON returned.ReturnId=fiscal.DocumentId
              AND returned.BusinessId=fiscal.BusinessId
              AND fiscal.FiscalDocumentType=N'CreditNote'
+            LEFT JOIN dbo.FiscalSaleCorrections correction
+              ON correction.CorrectionId=fiscal.DocumentId
+             AND correction.BusinessId=fiscal.BusinessId
+             AND fiscal.FiscalDocumentType=N'CreditNote'
             JOIN dbo.SalesDocuments sale
-              ON sale.DocumentId=COALESCE(returned.OriginalDocumentId,fiscal.DocumentId)
+              ON sale.DocumentId=COALESCE(returned.OriginalDocumentId,
+                   correction.OriginalDocumentId,fiscal.DocumentId)
              AND sale.BusinessId=fiscal.BusinessId
              AND sale.DocumentType IN(N'SalesInvoice',N'ServiceInvoice')
             JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
@@ -658,7 +668,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
             WHERE fiscal.DocumentId=@DocumentId AND fiscal.BusinessId=@BusinessId
               AND fiscal.FiscalStatus=N'DianAccepted'
               AND (fiscal.FiscalDocumentType=N'Invoice' OR
-                   fiscal.FiscalDocumentType=N'CreditNote' AND returned.ReturnId IS NOT NULL)
+                   fiscal.FiscalDocumentType=N'CreditNote' AND
+                   (returned.ReturnId IS NOT NULL OR correction.CorrectionId IS NOT NULL))
               AND fiscal.DeliveryOutboxMessageId IS NULL
             ORDER BY contact.IsPrimary DESC,contact.CreatedAt,contact.PartyContactId;
             """;

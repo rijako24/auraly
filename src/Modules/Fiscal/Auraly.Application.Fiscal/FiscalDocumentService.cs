@@ -15,6 +15,22 @@ public sealed record AcceptedSaleRecoveryResult(
     string ProcessingStatus,
     bool Enqueued);
 
+public sealed record DuplicateFiscalCorrectionResult(
+    Guid CorrectionId,
+    Guid OriginalDocumentId,
+    Guid RetainedDocumentId,
+    string FiscalStatus,
+    bool Created);
+
+public interface IFiscalSaleCorrectionStore
+{
+    Task<DuplicateFiscalCorrectionResult> CreateDuplicateCorrectionAsync(
+        FiscalUserIdentity user,
+        Guid originalDocumentId,
+        Guid retainedDocumentId,
+        CancellationToken cancellationToken);
+}
+
 public interface IFiscalSaleRecovery
 {
     Task<bool> RecoverAsync(
@@ -39,7 +55,8 @@ public sealed class FiscalDocumentService(
     IFiscalDocumentStore store,
     TimeProvider timeProvider,
     FiscalProcessingCoordinator processing,
-    IFiscalSaleRecovery saleRecovery)
+    IFiscalSaleRecovery saleRecovery,
+    IFiscalSaleCorrectionStore corrections)
 {
     public Task<FiscalDocumentView?> GetAsync(
         FiscalUserIdentity user,
@@ -111,6 +128,21 @@ public sealed class FiscalDocumentService(
         Demand(user, FiscalPermissionCodes.Retry);
         return saleRecovery.RecoverAcceptedSaleAsync(
             user.BusinessId, documentId, cancellationToken);
+    }
+
+    public async Task<DuplicateFiscalCorrectionResult> CorrectDuplicateSaleAsync(
+        FiscalUserIdentity user,
+        Guid originalDocumentId,
+        Guid retainedDocumentId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.Correct);
+        var result = await corrections.CreateDuplicateCorrectionAsync(
+            user, originalDocumentId, retainedDocumentId, cancellationToken);
+        if (result.FiscalStatus == FiscalDocumentStatusCodes.PendingGeneration)
+            await processing.RequestGenerationAsync(
+                user.BusinessId, result.CorrectionId, cancellationToken);
+        return result;
     }
 
     private static void Demand(FiscalUserIdentity user, string permission)

@@ -15,7 +15,8 @@ BEGIN
     INSERT @Series VALUES
       (N'SalesInvoice',N'VTA'),(N'SalesReceipt',N'CVI'),(N'SalesDebitNote',N'NDB'),
       (N'GoodsReceipt',N'EMC'),(N'PurchaseOrder',N'OCP'),
-      (N'SalesReturn',N'DVT'),(N'PurchaseReturn',N'DCP'),
+      (N'SalesReturn',N'DVT'),(N'FiscalSaleCorrection',N'NCF'),
+      (N'PurchaseReturn',N'DCP'),
       (N'ReceivablePayment',N'RCC'),(N'PayablePayment',N'PGP'),
       (N'StockCount',N'CTI'),(N'InventoryAdjustment',N'AJI'),
       (N'WarehouseTransfer',N'TRB'),(N'ProductConversion',N'CNV'),(N'Damage',N'AVE');
