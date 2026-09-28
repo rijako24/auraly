@@ -137,6 +137,12 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(3, candidates.TotalCount);
         Assert.Equal(2, candidates.Items.Count);
         Assert.Equal(2, candidates.TotalPages);
+        var childByDisplayedCode = await client.GetFromJsonAsync<ProductConversionProductPage>(
+            $"/api/commerce/v1/inventory/conversion-products?warehouseId={fixture.WarehouseId:D}&search=O-{outputOne:N}&page=1&pageSize=10");
+        Assert.Equal(outputOne, Assert.Single(childByDisplayedCode!.Items).ProductId);
+        var rootByBarcode = await client.GetFromJsonAsync<ProductConversionProductPage>(
+            $"/api/commerce/v1/inventory/conversion-products?warehouseId={fixture.WarehouseId:D}&search=BAR-{source:N}&page=1&pageSize=10");
+        Assert.Equal(source, Assert.Single(rootByBarcode!.Items).ProductId);
 
         var reverseId = Guid.NewGuid();
         await SendAsync<ConfirmProductConversionRequest>(client,

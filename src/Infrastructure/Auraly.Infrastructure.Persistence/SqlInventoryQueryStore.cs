@@ -79,7 +79,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                     WHERE familyLink.BusinessId=@BusinessId AND familyLink.ParentProductId=p.ProductId
                       AND familyLink.AllowsConversion=1 AND familyLink.IsActive=1))
               AND (@FamilyRootProductId IS NULL OR root.ProductId=@FamilyRootProductId)
-              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS(
+              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Sku LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS(
                     SELECT 1 FROM dbo.ProductBarcodes barcode
                     WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId
                       AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))

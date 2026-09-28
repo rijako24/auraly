@@ -147,6 +147,53 @@ test("producto recupera creación y edición; cancelar elimina el borrador", asy
   await page.getByRole("dialog").getByRole("button", { name: "Cancelar" }).click();
 });
 
+test("la X de Productos conserva el último cambio y permite reabrir sin bloquear la página", async ({ page }) => {
+  await mockApi(page);
+  await authenticate(page);
+  await page.addInitScript(() => {
+    const originalPut = IDBObjectStore.prototype.put;
+    const counter = window as typeof window & { catalogDraftWrites: number };
+    counter.catalogDraftWrites = 0;
+    IDBObjectStore.prototype.put = function (...args) {
+      if (this.name === "catalog-drafts") counter.catalogDraftWrites++;
+      return originalPut.apply(this, args);
+    };
+  });
+  await page.goto("/dashboard/products");
+
+  for (let index = 0; index < 3; index++) {
+    await page.getByRole("button", { name: "Nuevo producto" }).click();
+    const createDialog = page.getByRole("dialog", { name: "Crear producto" });
+    if (index === 0) {
+      const writesBefore = await page.evaluate(() => (window as typeof window & { catalogDraftWrites: number }).catalogDraftWrites);
+      await createDialog.getByPlaceholder("Nombre claro para venta y búsqueda").pressSequentially("Producto rápido 0", { delay: 1 });
+      await createDialog.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(createDialog).toBeHidden();
+      const writesAfter = await page.evaluate(() => (window as typeof window & { catalogDraftWrites: number }).catalogDraftWrites);
+      expect(writesAfter - writesBefore).toBeLessThanOrEqual(3);
+      continue;
+    }
+    await createDialog.getByPlaceholder("Nombre claro para venta y búsqueda").fill(`Producto rápido ${index}`);
+    await createDialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(createDialog).toBeHidden();
+  }
+  await page.getByRole("button", { name: "Nuevo producto" }).click();
+  await expect(page.getByRole("dialog", { name: "Crear producto" }).getByPlaceholder("Nombre claro para venta y búsqueda")).toHaveValue("Producto rápido 2");
+  await page.getByRole("dialog", { name: "Crear producto" }).getByRole("button", { name: "Cancelar" }).click();
+
+  for (let index = 0; index < 3; index++) {
+    await page.getByRole("button", { name: "Editar" }).first().click();
+    const editDialog = page.getByRole("dialog");
+    await editDialog.locator("#product-reference").fill(`CAMBIO-RAPIDO-${index}`);
+    await editDialog.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(editDialog).toBeHidden();
+  }
+  await page.getByRole("button", { name: "Editar" }).first().click();
+  await expect(page.getByRole("dialog").locator("#product-reference")).toHaveValue("CAMBIO-RAPIDO-2");
+  await page.getByRole("dialog").getByRole("button", { name: "Cancelar" }).click();
+  await expectDraftRemoved(page, "product-edit:");
+});
+
 test("tercero recupera creación y edición sin persistir claves", async ({ page }) => {
   test.setTimeout(150_000);
   await mockApi(page);

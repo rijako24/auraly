@@ -107,7 +107,9 @@ export function ProductPicker({
     const messageClass = "p-4 text-sm text-muted-foreground";
     if (search.trim() !== debouncedSearch || query.isLoading) return <p className={`${messageClass} flex items-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>;
     if (query.isError) return <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>;
-    if (products.length === 0) return <p className={messageClass}>No hay productos activos que coincidan con la búsqueda.</p>;
+    if (products.length === 0) return <p className={messageClass}>{conversionOnly
+      ? "No hay productos habilitados para conversión que coincidan. Revisa la familia del producto principal y activa «Permitir conversión» en sus vínculos."
+      : "No hay productos activos que coincidan con la búsqueda."}</p>;
     return <>
       <div className="px-3 py-2 text-xs text-muted-foreground">{products.length.toLocaleString("es-CO")} de {totalCount.toLocaleString("es-CO")} productos</div>
       {products.map((product, index) => <button key={product.productId} type="button" role="option" data-product-option-index={index} aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 border-t px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}>
