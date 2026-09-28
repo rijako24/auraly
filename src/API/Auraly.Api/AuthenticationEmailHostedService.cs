@@ -10,6 +10,7 @@ using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Domain.Repositories;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Api;
@@ -31,6 +32,7 @@ public sealed class PlatformEmailOutboxHostedService(
     IFiscalXmlSigner fiscalXmlSigner,
     TimeProvider timeProvider,
     BlobServiceClient blobServiceClient,
+    IServiceScopeFactory scopeFactory,
     ILogger<PlatformEmailOutboxHostedService> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -249,20 +251,12 @@ public sealed class PlatformEmailOutboxHostedService(
         const int maximumLogoBytes = 1024 * 1024;
         try
         {
-            Guid? businessId;
-            string? mediaRef;
-            await using (var connection = connections.Create())
-            {
-                await connection.OpenAsync(cancellationToken);
-                await using var command = connection.CreateCommand();
-                command.CommandText = "SELECT PrimaryBusinessId,LogoMediaRef FROM dbo.TenantLegalProfiles WHERE TenantId=@TenantId";
-                command.Parameters.Add(new SqlParameter("@TenantId", SqlDbType.UniqueIdentifier) { Value = tenantId });
-                await using var reader = await command.ExecuteReaderAsync(
-                    CommandBehavior.SingleRow, cancellationToken);
-                if (!await reader.ReadAsync(cancellationToken)) return null;
-                businessId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
-                mediaRef = reader.IsDBNull(1) ? null : reader.GetString(1);
-            }
+            using var scope = scopeFactory.CreateScope();
+            var tenant = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>()
+                .Tenants.GetByIdAsync(tenantId, cancellationToken);
+            if (tenant is null) return null;
+            var businessId = tenant.PrimaryBusinessId;
+            var mediaRef = tenant.LogoMediaRef;
             if (string.IsNullOrWhiteSpace(mediaRef) || businessId is null) return null;
 
             // Tenant logos uploaded in Auraly are stored under the primary business.
