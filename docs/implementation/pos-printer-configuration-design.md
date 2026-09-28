@@ -188,7 +188,10 @@ El logo sigue teniendo una sola fuente de verdad: el archivo de marca del tenant
 en Blob Storage. La API entrega una URL de lectura temporal mediante SAS de
 delegación cuando usa identidad administrada. Al preparar una caja, Edge descarga
 esa imagen una vez y la guarda como `data:image` en el paquete de enrolamiento
-local protegido; si la descarga falla, no completa el guardado del paquete.
+local protegido. Primero conserva el checkpoint de identidad aceptada por el
+servidor; al descargar correctamente, sustituye la URL por los bytes locales.
+Si la descarga falla, informa el error y la identidad aceptada queda recuperable;
+el impresor nunca usa esa URL remota como sustituto de la imagen local.
 La impresión de la caja usa esa copia local incluso cuando una venta online
 incluye una URL temporal, tanto en tirilla como en formatos de hoja. No se guardan
 bytes de imagen en SQL ni se necesita red para imprimir una venta desconectada.

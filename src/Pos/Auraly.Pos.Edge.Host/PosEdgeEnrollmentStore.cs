@@ -328,8 +328,9 @@ public sealed class PosEdgeEnrollmentClient(
 
         package ??= await RedeemFromServerAsync(
             request, installationId, null, cancellationToken);
-        package = await CacheCompanyLogoAsync(package, cancellationToken);
         store.SaveForNewEnrollment(package, request.EnrollmentSessionId);
+        package = await CacheCompanyLogoAsync(package, cancellationToken);
+        store.Save(package);
         return Result(package);
     }
 
