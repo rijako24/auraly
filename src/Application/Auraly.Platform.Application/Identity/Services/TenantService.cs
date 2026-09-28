@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Application.Common.Exceptions;
@@ -37,10 +39,20 @@ public sealed class TenantService(
             tenant.VerificationDigit);
     }
 
-    public async Task<TenantBrandingDto> GetPrintBrandingAsync(Guid tenantId, CancellationToken ct)
+    public async Task<TenantBrandingDto> GetPrintBrandingAsync(Guid tenantId, CancellationToken ct) =>
+        (await GetConditionalPrintBrandingAsync(tenantId, null, ct)).Branding!;
+
+    public async Task<TenantPrintBrandingResponseDto> GetConditionalPrintBrandingAsync(
+        Guid tenantId, string? ifNoneMatch, CancellationToken ct)
     {
         var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
             ?? throw new NotFoundException(nameof(Tenant), tenantId);
+        var identity = string.Join('\u001f', tenant.TenantId, tenant.PrimaryBusinessId,
+            tenant.Name, tenant.LegalName, tenant.Nit, tenant.VerificationDigit,
+            tenant.LogoMediaRef);
+        var etag = $"\"{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))}\"";
+        if (string.Equals(ifNoneMatch, etag, StringComparison.Ordinal))
+            return new(etag, null);
         string? logoSource = null;
         if (tenant.PrimaryBusinessId is { } businessId &&
             tenant.LogoMediaRef is { Length: > 0 } mediaRef)
@@ -48,23 +60,31 @@ public sealed class TenantService(
             if (Uri.TryCreate(mediaRef, UriKind.Absolute, out var legacyLogo) &&
                 legacyLogo.Scheme == Uri.UriSchemeHttps)
             {
-                logoSource = mediaRef;
+                // Old profiles may hold a SAS URL. Resolve its path against our
+                // own business container instead of sending that URL to every print.
+                var containerPath = $"/business-{businessId:N}/";
+                if (legacyLogo.AbsolutePath.StartsWith(
+                        containerPath, StringComparison.OrdinalIgnoreCase))
+                    mediaRef = Uri.UnescapeDataString(
+                        legacyLogo.AbsolutePath[containerPath.Length..]);
+                else
+                    return new(etag, new TenantBrandingDto(
+                        tenant.TenantId, tenant.Name, tenant.LegalName,
+                        mediaRef, tenant.Nit, tenant.VerificationDigit));
             }
-            else
+            var contentType = Path.GetExtension(mediaRef).ToLowerInvariant() switch
             {
-                var contentType = Path.GetExtension(mediaRef).ToLowerInvariant() switch
-                {
-                    ".jpg" or ".jpeg" => "image/jpeg",
-                    ".png" => "image/png",
-                    ".webp" => "image/webp",
-                    _ => throw new InvalidOperationException("El formato del logo de la empresa no es válido.")
-                };
-                var bytes = await blobStorage.DownloadImageAsync(businessId, mediaRef, ct);
-                logoSource = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
-            }
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                _ => throw new InvalidOperationException("El formato del logo de la empresa no es válido.")
+            };
+            var bytes = await blobStorage.DownloadImageAsync(businessId, mediaRef, ct);
+            logoSource = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
         }
-        return new(tenant.TenantId, tenant.Name, tenant.LegalName,
-            logoSource, tenant.Nit, tenant.VerificationDigit);
+        return new(etag, new TenantBrandingDto(
+            tenant.TenantId, tenant.Name, tenant.LegalName,
+            logoSource, tenant.Nit, tenant.VerificationDigit));
     }
 
     public async Task<PagedResponse<TenantDto>> GetPagedAsync(PagedRequest request, CancellationToken ct)

@@ -775,6 +775,9 @@ public sealed class EscPosReceiptRendererTests
             InvoicePrintDetails = InvoiceDetails(),
             CustomerAddress = "Calle 10"
         };
+        var priorVersion = new SalesReceiptHtmlRenderer().Render(
+            receipt, width, templateVersion: 3, autoPrint: false);
+        Assert.Contains("style=\"grid-column:1/-1;min-width:0;display:block\"", priorVersion);
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         var page = await browser.NewPageAsync();

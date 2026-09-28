@@ -53,7 +53,12 @@ public sealed class TenantsController(
     public async Task<ActionResult<TenantBrandingDto>> GetPrintBranding(CancellationToken ct)
     {
         Response.Headers.CacheControl = "private, no-store";
-        return Ok(await tenantService.GetPrintBrandingAsync(User.GetTenantId(), ct));
+        var result = await tenantService.GetConditionalPrintBrandingAsync(
+            User.GetTenantId(), Request.Headers.IfNoneMatch.ToString(), ct);
+        Response.Headers.ETag = result.ETag;
+        if (result.Branding is null)
+            return StatusCode(StatusCodes.Status304NotModified);
+        return Ok(result.Branding);
     }
 
     [HttpPost]

@@ -86,7 +86,7 @@ public sealed class SalesReceiptHtmlRenderer
                     string.IsNullOrWhiteSpace(receipt.CustomerAddress)
                         ? invoiceDetails.CustomerAddress
                         : receipt.CustomerAddress,
-                    receipt.CustomerPhone, alignAddressRight: true)
+                    receipt.CustomerPhone, alignAddressRight: template.Version >= 4)
                 : string.Empty;
         var customerDetails = isOrder && template.Version >= 2
             ? customerContact

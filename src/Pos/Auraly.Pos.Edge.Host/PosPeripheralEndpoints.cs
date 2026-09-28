@@ -11,7 +11,8 @@ internal static class PosPeripheralModule
     public static IServiceCollection AddPosPeripherals(
         this IServiceCollection services,
         IConfiguration configuration,
-        string databasePath)
+        string databasePath,
+        Guid? preparedTenantId = null)
     {
         services.AddSingleton<EscPosReceiptRenderer>();
         services.AddSingleton<HtmlReceiptPreviewRenderer>();
@@ -21,6 +22,8 @@ internal static class PosPeripheralModule
         services.AddSingleton<IWindowsRenderedPrintJob, SystemWindowsRenderedPrintJob>();
         services.AddSingleton<IReceiptPreviewLauncher, ShellReceiptPreviewLauncher>();
         var dataDirectory = Path.GetDirectoryName(Path.GetFullPath(databasePath))!;
+        services.AddSingleton(new PosLocalPrintBrandingStore(
+            dataDirectory, preparedTenantId));
         var enrollmentPrinterMode = configuration["PosEdge:PrinterMode"]?.Trim();
         var enrollmentPrinterDefault = PosPrinterConfiguration.Default with
         {
@@ -53,6 +56,33 @@ internal static class PosPeripheralModule
     public static RouteGroupBuilder MapPosPeripheralEndpoints(
         this RouteGroupBuilder edge)
     {
+        edge.MapPost("/configuration/print-branding/prepare", (
+            PosLocalPrintBrandingPrepareRequest request,
+            PosLocalPrintBrandingStore logos) =>
+        {
+            if (!logos.AllowsTenant(request.TenantId)) return Results.Forbid();
+            logos.Prepare(request.TenantId);
+            return Results.Ok(new { hasLogo = logos.Get(request.TenantId) is not null });
+        });
+
+        edge.MapPut("/configuration/print-branding", (
+            PosLocalPrintBrandingRequest request,
+            PosLocalPrintBrandingStore logos) =>
+        {
+            if (!logos.AllowsTenant(request.TenantId))
+                return Results.Forbid();
+            try
+            {
+                logos.Save(request.TenantId, request.LogoDataUri);
+                return Results.NoContent();
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                    { [nameof(request)] = [exception.Message] });
+            }
+        });
+
         edge.MapGet("/configuration/printers", (
             PosPrinterConfigurationStore printers) =>
         {
@@ -115,6 +145,8 @@ internal static class PosPeripheralModule
             DirectPrintReceiptRequest request,
             string? workflow,
             ConfigurablePosReceiptPrinter printer,
+            PosLocalPrintBrandingStore logos,
+            ILogger<ConfigurablePosReceiptPrinter> logger,
             CancellationToken ct) =>
         {
             var orderTicketWorkflow = workflow == "order-tickets";
@@ -133,6 +165,23 @@ internal static class PosPeripheralModule
                 });
             try
             {
+                if (request.TenantId is { } tenantId && !logos.AllowsTenant(tenantId))
+                    return Results.Forbid();
+                string? localLogo = null;
+                if (request.TenantId is { } requestedTenant)
+                {
+                    try { localLogo = logos.Get(requestedTenant); }
+                    catch (Exception exception) when (
+                        exception is IOException or UnauthorizedAccessException)
+                    {
+                        logger.LogWarning(exception,
+                            "No se pudo leer el logo local del tenant {TenantId}; se imprimirá el nombre.",
+                            requestedTenant);
+                    }
+                }
+                var logoSource = request.TenantId is null
+                    ? request.CompanyLogoSource
+                    : localLogo ?? string.Empty;
                 var receipt = new PosReceipt(
                     Guid.NewGuid(),
                     new DocumentId(request.DocumentId),
@@ -150,11 +199,13 @@ internal static class PosPeripheralModule
                     80,
                     request.DocumentType,
                     request.CompanyName,
-                    request.CompanyLogoSource,
+                    logoSource,
                     CustomerName: request.CustomerName,
                     BusinessName: request.BusinessName,
                     WarehouseName: request.WarehouseName,
-                    CreditAcknowledgement: request.CreditAcknowledgement,
+                    CreditAcknowledgement: request.CreditAcknowledgement is { } acknowledgement
+                        ? acknowledgement with { CompanyLogoSource = logoSource }
+                        : null,
                     InvoicePrintDetails: request.InvoicePrintDetails);
                 if (orderTicketWorkflow)
                     await printer.PrintOrderAsync(receipt, ct);

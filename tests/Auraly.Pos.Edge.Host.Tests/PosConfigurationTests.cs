@@ -389,6 +389,39 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
+    public async Task Removed_tenant_logo_does_not_reuse_enrollment_logo()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "auraly-logo-removed-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"), Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw, "Factura POS", 80, "Media carta",
+                PosPrinterName: "Factura POS", PosOutputFormat: PrintTemplateFormats.HalfLetter,
+                OrderPrinterName: "Pedidos"));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurablePosReceiptPrinter(
+                store, new EscPosReceiptRenderer(), new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(), rendered,
+                new ConfigurableOrderDocumentPrinter(store, new HalfLetterDocumentRenderer(), rendered),
+                new CreditSaleAcknowledgementRenderer(),
+                new PosWorkstationIdentity("POS-1", "Sede", "Bodega", "Cajero", "Empresa",
+                    "data:image/png;base64,AA=="));
+
+            await printer.PrintAsync(Receipt() with { CompanyLogoSource = string.Empty });
+
+            Assert.Single(rendered.Documents);
+            Assert.DoesNotContain("data:image/png;base64,AA==", rendered.Documents[0]);
+            Assert.Contains("Empresa", rendered.Documents[0]);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Order_ticket_workflow_is_independent_and_batches_selected_sheet_orders()
     {
         var directory = Path.Combine(

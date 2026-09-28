@@ -378,6 +378,12 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             Assert.Equal(JsonValueKind.Null, value.GetProperty("verificationDigit").ValueKind);
         }
 
+        string brandingVersionBefore;
+        using (var scope = fixture.CreateScope())
+            brandingVersionBefore = (await scope.ServiceProvider.GetRequiredService<
+                Auraly.Platform.Application.Identity.Interfaces.ITenantService>()
+                .GetConditionalPrintBrandingAsync(result.TenantId, null)).ETag;
+
         using (var logo = new MultipartFormDataContent())
         using (var image = new ByteArrayContent([0x89, 0x50, 0x4E, 0x47]))
         {
@@ -397,6 +403,26 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             var printBranding = await tenantService.GetPrintBrandingAsync(result.TenantId);
             Assert.Equal("data:image/png;base64,AQID", printBranding.LogoUrl);
             Assert.Equal(result.TenantId, printBranding.TenantId);
+            var version = await tenantService.GetConditionalPrintBrandingAsync(result.TenantId, null);
+            Assert.NotEqual(brandingVersionBefore, version.ETag);
+            Assert.Null((await tenantService.GetConditionalPrintBrandingAsync(
+                result.TenantId, version.ETag)).Branding);
+        }
+
+        using (var first = await admin.GetAsync("/api/v1/tenants/branding/print"))
+        {
+            first.EnsureSuccessStatusCode();
+            // The platform administrator is authenticated in its own tenant;
+            // the endpoint must not expose the newly provisioned tenant's logo.
+            Assert.Null(
+                (await first.Content.ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("logoUrl").GetString());
+            using var conditional = new HttpRequestMessage(
+                HttpMethod.Get, "/api/v1/tenants/branding/print");
+            conditional.Headers.IfNoneMatch.ParseAdd(first.Headers.ETag!.ToString());
+            using var unchanged = await admin.SendAsync(conditional);
+            Assert.Equal(System.Net.HttpStatusCode.NotModified, unchanged.StatusCode);
+            Assert.Equal(first.Headers.ETag, unchanged.Headers.ETag);
         }
 
         var token = await ReadInvitationTokenAsync(result.TenantId);

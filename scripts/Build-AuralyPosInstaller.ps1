@@ -15,6 +15,7 @@ param(
     [ValidateSet('CurrentUser', 'LocalMachine')]
     [string]$SigningCertificateStoreLocation = 'CurrentUser',
     [string]$SignToolPath,
+    [string]$WebView2InstallerPath,
     [switch]$RequireSignature,
     [switch]$PayloadOnly
 )
@@ -279,11 +280,25 @@ Copy-Item -LiteralPath $builtMsi -Destination $msi
 Invoke-AuralySigning @($msi)
 
 $bundleProject = Join-Path $root 'src\Installer\Auraly.Pos.Bundle\Auraly.Pos.Bundle.wixproj'
+$webView2Installer = if ([string]::IsNullOrWhiteSpace($WebView2InstallerPath)) {
+    $downloadPath = Join-Path $artifacts 'MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
+    Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/?linkid=2124701' -OutFile $downloadPath
+    $downloadPath
+}
+else {
+    (Resolve-Path -LiteralPath $WebView2InstallerPath).Path
+}
+$webView2Signature = Get-AuthenticodeSignature -LiteralPath $webView2Installer
+if ($webView2Signature.Status -ne 'Valid' -or
+    $webView2Signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+    throw 'El instalador de WebView2 no tiene una firma válida de Microsoft.'
+}
 Invoke-WixProjectBuild `
     $bundleProject `
     @(
         '--configuration', $Configuration,
         "-p:MsiPath=$msi",
+        "-p:WebView2InstallerPath=$webView2Installer",
         "-p:BundleVersion=$msiProductVersion",
         "-p:IntermediateOutputPath=$bundleIntermediate\",
         "-p:OutputPath=$bundleBuild\") `

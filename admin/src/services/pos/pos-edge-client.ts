@@ -1020,6 +1020,18 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
+  savePrintBranding(tenantId: string, logoDataUri: string | null) {
+    return this.requestVoid("/edge/v1/configuration/print-branding", {
+      method: "PUT", body: JSON.stringify({ tenantId, logoDataUri }),
+    });
+  }
+
+  preparePrintBranding(tenantId: string) {
+    return this.request<{ hasLogo: boolean }>("/edge/v1/configuration/print-branding/prepare", {
+      method: "POST", body: JSON.stringify({ tenantId }),
+    }).then(result => result.hasLogo);
+  }
+
   openCashDrawer() {
     return this.requestVoid("/edge/v1/cash-drawer/open", { method: "POST" });
   }
@@ -1028,6 +1040,7 @@ export class PosEdgeClient implements PosClient {
     receipt: PosPrintableReceipt,
     branding?: TenantBranding | null,
     workflow: "pos" | "order-tickets" = "pos",
+    tenantId?: string | null,
   ) {
     return this.requestVoid(`/edge/v1/print/receipt?workflow=${workflow}`, {
       method: "POST",
@@ -1035,6 +1048,7 @@ export class PosEdgeClient implements PosClient {
         ...receipt,
         companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName ?? null,
         companyLogoSource: branding?.logoUrl ?? receipt.companyLogoSource ?? null,
+        tenantId: tenantId ?? null,
       }),
     });
   }

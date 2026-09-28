@@ -778,7 +778,9 @@ public sealed class ConfigurablePosReceiptPrinter(
     {
         CompanyName = string.IsNullOrWhiteSpace(receipt.CompanyName)
             ? string.IsNullOrWhiteSpace(workstation?.CompanyName)
-                ? "Auraly"
+                ? string.IsNullOrWhiteSpace(receipt.BusinessName)
+                    ? "Auraly"
+                    : receipt.BusinessName
                 : workstation.CompanyName
             : receipt.CompanyName,
         CompanyLogoSource = LocalLogoSource(receipt.CompanyLogoSource),
@@ -819,12 +821,15 @@ public sealed class ConfigurablePosReceiptPrinter(
 
     private string? LocalLogoSource(string? requestedSource)
     {
-        if (workstation is null) return requestedSource;
+        // An empty source is an explicit tenant-profile decision: do not reuse
+        // a logo captured earlier when this workstation was enrolled.
+        if (requestedSource == string.Empty) return null;
+        if (requestedSource?.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) == true)
+            return requestedSource;
+        if (workstation is null) return null;
         if (workstation.CompanyLogoSource?.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) == true)
             return workstation.CompanyLogoSource;
-        return requestedSource?.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) == true
-            ? requestedSource
-            : null;
+        return null;
     }
 
     private async Task PrintCreditAcknowledgementAsync(

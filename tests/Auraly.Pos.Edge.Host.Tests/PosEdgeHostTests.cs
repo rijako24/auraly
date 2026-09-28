@@ -682,6 +682,7 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
     {
         var enrollmentPath =
             Path.Combine(Path.GetTempPath(), $"auraly-enrollment-{Guid.NewGuid():N}.protected");
+        var printTenant = Guid.NewGuid();
         try
         {
             using var factory = new WebApplicationFactory<Program>()
@@ -719,6 +720,30 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
             using var printers = await client.GetAsync(
                 "/edge/v1/configuration/printers");
             printers.EnsureSuccessStatusCode();
+            using (var preparedLogo = await client.PostAsJsonAsync(
+                "/edge/v1/configuration/print-branding/prepare",
+                new PosLocalPrintBrandingPrepareRequest(printTenant)))
+            {
+                preparedLogo.EnsureSuccessStatusCode();
+                Assert.False((await preparedLogo.Content.ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("hasLogo").GetBoolean());
+            }
+            using (var cachedLogo = await client.PutAsJsonAsync(
+                "/edge/v1/configuration/print-branding",
+                new PosLocalPrintBrandingRequest(
+                    printTenant, "data:image/png;base64,AQID")))
+                Assert.Equal(HttpStatusCode.NoContent, cachedLogo.StatusCode);
+            Assert.Equal("data:image/png;base64,AQID",
+                factory.Services.GetRequiredService<PosLocalPrintBrandingStore>()
+                    .Get(printTenant));
+            using (var preparedCachedLogo = await client.PostAsJsonAsync(
+                "/edge/v1/configuration/print-branding/prepare",
+                new PosLocalPrintBrandingPrepareRequest(printTenant)))
+            {
+                preparedCachedLogo.EnsureSuccessStatusCode();
+                Assert.True((await preparedCachedLogo.Content.ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("hasLogo").GetBoolean());
+            }
             using var orderPrint = await client.PostAsJsonAsync(
                 "/edge/v1/print/receipt?workflow=orders",
                 new DirectPrintReceiptRequest(
@@ -761,6 +786,9 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         finally
         {
             if (File.Exists(enrollmentPath)) File.Delete(enrollmentPath);
+            var logoPath = Path.Combine(Path.GetTempPath(), "print-branding",
+                $"{printTenant:N}.logo");
+            if (File.Exists(logoPath)) File.Delete(logoPath);
         }
     }
 

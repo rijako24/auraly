@@ -9,6 +9,8 @@ test("repeated invoice prints reuse one logo load within the same session", asyn
   const first = await Promise.all([cache.get("session-one"), cache.get("session-one")]);
   assert.deepEqual(first, [{ logo: 1 }, { logo: 1 }]);
   assert.deepEqual(await cache.get("session-one"), { logo: 1 });
+  assert.deepEqual(cache.peek("session-one"), { logo: 1 });
+  assert.equal(cache.peek("session-two"), undefined);
   assert.equal(reads, 1);
 
   clock += 10 * 60 * 1000;

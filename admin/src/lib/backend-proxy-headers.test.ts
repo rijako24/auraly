@@ -14,6 +14,7 @@ describe("buildBackendProxyHeaders", () => {
       "X-Auraly-Draft-Id": "draft-1",
       "X-Auraly-Approval-Id": "approval-1",
       "X-Auraly-Operation-Id": "operation-1",
+      "If-None-Match": '"logo-version-1"',
       Cookie: "must-not-leak=true",
     });
 
@@ -32,6 +33,7 @@ describe("buildBackendProxyHeaders", () => {
       "X-Auraly-Draft-Id": "draft-1",
       "X-Auraly-Approval-Id": "approval-1",
       "X-Auraly-Operation-Id": "operation-1",
+      "If-None-Match": '"logo-version-1"',
     });
   });
 

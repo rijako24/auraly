@@ -35,3 +35,7 @@ public sealed record TenantBrandingDto(
     string? LogoUrl,
     string? Nit,
     string? VerificationDigit);
+
+public sealed record TenantPrintBrandingResponseDto(
+    string ETag,
+    TenantBrandingDto? Branding);
