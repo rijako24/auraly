@@ -23,7 +23,6 @@ export type PortfolioPaymentReceipt = {
   totalAmount: number;
   allocations: Array<{ documentNumber: string; amount: number }>;
   payments: Array<{ methodName: string; amount: number; reference: string | null }>;
-  tenantId?: string | null;
 };
 
 export async function printPortfolioPayment(

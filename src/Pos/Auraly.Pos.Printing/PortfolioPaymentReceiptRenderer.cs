@@ -25,8 +25,7 @@ public sealed record PortfolioPaymentReceipt(
     string ResponsibleName,
     decimal TotalAmount,
     IReadOnlyList<PortfolioPaymentReceiptAllocation> Allocations,
-    IReadOnlyList<PortfolioPaymentReceiptTender> Payments,
-    Guid? TenantId = null);
+    IReadOnlyList<PortfolioPaymentReceiptTender> Payments);
 
 public sealed class PortfolioPaymentReceiptRenderer
 {

@@ -79,8 +79,7 @@ internal static class PosSaleHostModule
         PosEdgeRuntimeContext runtime,
         PosDeviceCredentials device)
     {
-        services.AddPosPeripherals(configuration, databasePath,
-            runtime.TenantId.Value);
+        services.AddPosPeripherals(configuration, databasePath);
         var tenantId = new TenantId(RequiredGuid(configuration, "PosEdge:TenantId"));
         var fiscal = ReadFiscalSettings(configuration, runtime.DeviceId);
         var settings = new PosSaleHostSettings(

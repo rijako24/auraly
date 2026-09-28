@@ -7,9 +7,7 @@ public sealed class PosPortfolioPaymentTicketPrinter(
     PosPrinterConfigurationStore configuration,
     IWindowsRenderedPrintJob renderedPrintJob,
     PortfolioPaymentReceiptRenderer renderer,
-    PosWorkstationIdentity? workstation = null,
-    PosLocalPrintBrandingStore? logos = null,
-    ILogger<PosPortfolioPaymentTicketPrinter>? logger = null)
+    PosWorkstationIdentity? workstation = null)
 {
     public Task PrintAsync(PortfolioPaymentReceipt receipt, CancellationToken cancellationToken)
     {
@@ -19,30 +17,15 @@ public sealed class PosPortfolioPaymentTicketPrinter(
             throw new InvalidOperationException(
                 "Configura la impresora de facturación en formato tirilla para imprimir este comprobante.");
 
-        if (receipt.TenantId is { } tenantId && logos is not null &&
-            !logos.AllowsTenant(tenantId))
-            throw new InvalidOperationException("El comprobante pertenece a otra empresa.");
-        string? localLogo = null;
-        if (receipt.TenantId is { } selectedTenant)
-        {
-            try { localLogo = logos?.Get(selectedTenant); }
-            catch (Exception exception) when (
-                exception is IOException or UnauthorizedAccessException)
-            {
-                logger?.LogWarning(exception,
-                    "No se pudo leer el logo local del tenant {TenantId}; se imprimirá el nombre.",
-                    selectedTenant);
-            }
-        }
         var html = renderer.Render(receipt with
         {
             CompanyName = workstation?.CompanyName ?? receipt.CompanyName,
             LegalName = workstation?.CompanyLegalName ?? receipt.LegalName,
             Nit = workstation?.CompanyNit ?? receipt.Nit,
             VerificationDigit = workstation?.CompanyVerificationDigit ?? receipt.VerificationDigit,
-            CompanyLogoSource = receipt.TenantId is not null && logos is not null
-                ? localLogo
-                : workstation?.CompanyLogoSource ?? receipt.CompanyLogoSource,
+            CompanyLogoSource = receipt.CompanyLogoSource is not null
+                ? receipt.CompanyLogoSource
+                : workstation?.CompanyLogoSource,
             BusinessName = workstation?.BusinessName ?? receipt.BusinessName,
             BusinessAddress = workstation?.BusinessAddress ?? receipt.BusinessAddress,
             BusinessPhone = workstation?.BusinessPhone ?? receipt.BusinessPhone

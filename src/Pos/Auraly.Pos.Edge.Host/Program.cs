@@ -81,8 +81,7 @@ public sealed record DirectPrintReceiptRequest(
     string? BusinessName = null,
     string? WarehouseName = null,
     CreditSaleAcknowledgement? CreditAcknowledgement = null,
-    SalesInvoicePrintDetails? InvoicePrintDetails = null,
-    Guid? TenantId = null);
+    SalesInvoicePrintDetails? InvoicePrintDetails = null);
 
 public static class PosEdgeHostApplication
 {

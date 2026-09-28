@@ -169,15 +169,20 @@ function getPrintBranding(): Promise<TenantBranding> {
   return printBrandingCache.get(currentWebSessionVersion()).then(value => value.browser);
 }
 
-function getLocalPrintBranding(): Promise<TenantBranding> {
-  if (typeof window === "undefined")
-    return apiClient.get<TenantBranding>("/tenants/branding/print");
-  return printBrandingCache.get(currentWebSessionVersion()).then(value => value.raw);
-}
-
 function readyPrintBranding(): TenantBranding | null {
   if (typeof window === "undefined") return null;
-  return printBrandingCache.peek(currentWebSessionVersion())?.browser ?? null;
+  const value = printBrandingCache.peek(currentWebSessionVersion());
+  const tenantId = selectedPrintTenantId();
+  return value && (!tenantId || value.raw.tenantId === tenantId)
+    ? value.browser : null;
+}
+
+function readyLocalPrintBranding(): TenantBranding | null {
+  if (typeof window === "undefined") return null;
+  const value = printBrandingCache.peek(currentWebSessionVersion());
+  const tenantId = selectedPrintTenantId();
+  return value && (!tenantId || value.raw.tenantId === tenantId)
+    ? value.raw : null;
 }
 
 function clearPrintBranding(): void {
@@ -191,8 +196,8 @@ export const tenantsApi = {
   getById: (id: string) => apiClient.get<Tenant>(`/tenants/${id}`),
   getBranding: () => apiClient.get<TenantBranding>("/tenants/branding"),
   getPrintBranding,
-  getLocalPrintBranding,
   readyPrintBranding,
+  readyLocalPrintBranding,
   verifyPrintBrandingOnPosEntry: clearPrintBranding,
   create: (tenant: ProvisionTenantRequest, quote: TenantQuoteRequest) =>
     apiClient.post<ProvisionTenantResult>("/tenants", { tenant, quote }),

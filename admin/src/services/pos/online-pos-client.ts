@@ -426,34 +426,9 @@ export class OnlinePosClient implements PosClient {
       this.brandingPreparation = null;
     }
     if (!this.brandingPreparation) {
-      let localPrepared = false;
-      this.brandingPreparation = (async () => {
-        const tenantId = this.edgeSessionToken
-          ? currentPosStorageScope().tenantId
-          : null;
-        if (this.edgeSessionToken && tenantId) {
-          try {
-            localPrepared = await this.localEdge().preparePrintBranding(tenantId);
-          }
-          catch (error) {
-            console.warn("No se pudo leer el logo local al entrar al POS.", error);
-          }
-        }
-        const branding = this.edgeSessionToken
-          ? await tenantsApi.getLocalPrintBranding()
-          : await tenantsApi.getPrintBranding();
-        if (this.edgeSessionToken) {
-          if (!tenantId || tenantId !== branding.tenantId)
-            throw new Error("La empresa de la sesión no coincide con el logo de impresión.");
-          await this.localEdge().savePrintBranding(
-            tenantId,
-            branding.logoUrl?.startsWith("data:image/") ? branding.logoUrl : null,
-          );
-        }
-        return true;
-      })().catch(error => {
+      this.brandingPreparation = tenantsApi.getPrintBranding().then(() => true).catch(error => {
         console.warn("No se pudo actualizar el logo de impresión.", error);
-        return localPrepared;
+        return false;
       });
     }
     return this.brandingPreparation;
@@ -557,13 +532,16 @@ export class OnlinePosClient implements PosClient {
   ) {
     if (this.edgeSessionToken) {
       const edge = this.localEdge();
-      const tenantId = currentPosStorageScope().tenantId;
+      const branding = tenantsApi.readyLocalPrintBranding();
       for (const receipt of receipts) {
         await edge.printReceipt({
           ...receipt,
           businessName: this.context.businessName,
           warehouseName: this.context.warehouseName,
-        }, null, workflow, tenantId);
+          companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName,
+          companyLogoSource: branding?.logoUrl?.startsWith("data:image/")
+            ? branding.logoUrl : "",
+        }, null, workflow);
       }
       if (openDrawer) await edge.openCashDrawer();
       return;
@@ -699,8 +677,11 @@ export class OnlinePosClient implements PosClient {
   }
 
   async printPortfolioPayment(receipt: PortfolioPaymentReceipt) {
+    const branding = tenantsApi.readyLocalPrintBranding();
     return this.localEdge().printPortfolioPayment({
-      ...receipt, tenantId: currentPosStorageScope().tenantId,
+      ...receipt,
+      companyLogoSource: branding?.logoUrl?.startsWith("data:image/")
+        ? branding.logoUrl : "",
     });
   }
   async printCashDenominationCount(ticket: import("./pos-edge-client").PosCashDenominationCount) {
@@ -1423,7 +1404,7 @@ export class OnlinePosClient implements PosClient {
       ),
       printOne: installedPrinter && printAfterInvoice
         ? async (receipts) => {
-            const tenantId = currentPosStorageScope().tenantId;
+            const branding = tenantsApi.readyLocalPrintBranding();
             for (const receipt of orderReceiptsForPrinting(
               receipts,
               includeCreditAcknowledgement,
@@ -1432,7 +1413,10 @@ export class OnlinePosClient implements PosClient {
                 ...receipt,
                 businessName: this.context.businessName,
                 warehouseName: this.context.warehouseName,
-              }, null, "pos", tenantId);
+                companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName,
+                companyLogoSource: branding?.logoUrl?.startsWith("data:image/")
+                  ? branding.logoUrl : "",
+              }, null, "pos");
             }
           }
         : undefined,

@@ -196,11 +196,11 @@ La impresión de la caja usa esa copia local incluso cuando una venta online
 incluye una URL temporal, tanto en tirilla como en formatos de hoja. No se guardan
 bytes de imagen en SQL ni se necesita red para imprimir una venta desconectada.
 Después de cambiar el logo del tenant, se debe volver a preparar la caja para
-actualizar su copia local. En POS web, la entrada hace una petición condicional
-al endpoint de marca para impresión; Cache Storage conserva la imagen por tenant
-y el impresor usa una URL local de esa copia. En la aplicación instalada sin caja
-preparada, la entrada al POS carga la imagen desde la carpeta local y luego
-verifica si cambió; imprimir no consulta Blob, API ni disco. La tirilla v4 presenta
+actualizar su copia local. En POS web y en la aplicación instalada sin caja
+preparada, la entrada hace una petición condicional al endpoint de marca para
+impresión; Cache Storage conserva la imagen por tenant. La impresión web usa
+una URL local y la instalada entrega los bytes ya disponibles al servicio de
+impresión local. Imprimir no consulta Blob ni la API. La tirilla v4 presenta
 la dirección del cliente frente a su etiqueta,
 alineada a la derecha y con salto de línea dentro de la misma columna cuando
 no cabe. En media carta, medio oficio y carta v4, la dirección comparte fila

@@ -36,11 +36,12 @@ navegador conserva la respuesta por tenant y envía su ETag; el servidor devuelv
 304 sin leer Blob si la versión no cambió, o los bytes en esa misma petición si
 cambió o no hay copia. Si no hay logo, responde solo los datos del encabezado. Una
 sesión activa mantiene además una copia temporal de acceso rápido durante diez
-minutos. La aplicación instalada sin caja preparada guarda los bytes en una
-carpeta local por tenant y lee el archivo al entrar al POS. La caja preparada
-carga el paquete protegido al iniciar su servicio; un logo añadido después de
-enrolar exige volver a prepararla. Imprimir usa la imagen ya cargada y nunca lee
-disco. La verificación web empieza durante la
+minutos. La aplicación instalada sin caja preparada sigue la misma ruta web:
+verifica al entrar al POS y entrega al servicio local de impresión los bytes que
+ya están en la caché del navegador. Solo la caja preparada conserva una copia
+protegida en la carpeta local y la carga al iniciar su servicio; un logo añadido
+después de enrolar exige volver a prepararla. Imprimir nunca lee Blob ni la API.
+La verificación web empieza durante la
 entrada a POS y la pantalla espera como máximo 350 ms; si la descarga tarda más,
 termina en segundo plano. La impresión usa únicamente la copia disponible y,
 si falta o falla, muestra el nombre de la empresa sin demorar ni cancelar la
