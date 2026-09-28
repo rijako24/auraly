@@ -51,11 +51,11 @@ type PosCashDrawerKeyboardEvent = Pick<
 
 export function isPosCashDrawerShortcut(event: PosCashDrawerKeyboardEvent): boolean {
   return (
-    event.ctrlKey &&
-    !event.altKey &&
+    event.altKey &&
+    !event.ctrlKey &&
     !event.shiftKey &&
     !event.metaKey &&
-    event.key.toLowerCase() === "a"
+    event.key.toLowerCase() === "c"
   );
 }
 

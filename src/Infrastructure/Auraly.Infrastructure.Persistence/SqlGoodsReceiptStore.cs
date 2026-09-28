@@ -878,26 +878,26 @@ public sealed class SqlGoodsReceiptStore(
               SUM(CASE WHEN supplier.SupplierId IS NULL THEN 1 ELSE 0 END),
               SUM(CASE WHEN supplier.SupplierId IS NOT NULL AND party.PartyId IS NULL THEN 1 ELSE 0 END),
               (SELECT COUNT_BIG(*) FROM dbo.FiscalSeries series
-               JOIN dbo.FiscalAuthorizations authorization
-                 ON authorization.FiscalAuthorizationId=series.FiscalAuthorizationId
+               JOIN dbo.FiscalAuthorizations auth
+                 ON auth.FiscalAuthorizationId=series.FiscalAuthorizationId
                WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
                  AND series.EmitterKind=N'Server' AND series.DeviceId IS NULL AND series.IsActive=1
-                 AND authorization.IsActive=1
-                 AND authorization.ValidFrom<=CONVERT(date,@IssuedAt)
-                 AND authorization.ValidUntil>=CONVERT(date,@IssuedAt)),
+                 AND auth.IsActive=1
+                 AND auth.ValidFrom<=CONVERT(date,@IssuedAt)
+                 AND auth.ValidUntil>=CONVERT(date,@IssuedAt)),
               (SELECT COUNT_BIG(*) FROM dbo.FiscalSeries series
-               JOIN dbo.FiscalAuthorizations authorization
-                 ON authorization.FiscalAuthorizationId=series.FiscalAuthorizationId
+               JOIN dbo.FiscalAuthorizations auth
+                 ON auth.FiscalAuthorizationId=series.FiscalAuthorizationId
                JOIN dbo.FiscalIssuerConfigurations issuer
                  ON issuer.BusinessId=series.BusinessId AND issuer.IsActive=1
-                 AND issuer.Environment=authorization.Environment
+                 AND issuer.Environment=auth.Environment
                  AND issuer.ValidFrom<=@IssuedAt
                  AND (issuer.ValidTo IS NULL OR issuer.ValidTo>@IssuedAt)
                WHERE series.BusinessId=@BusinessId AND series.DocumentType=N'SupportDocument'
                  AND series.EmitterKind=N'Server' AND series.DeviceId IS NULL AND series.IsActive=1
-                 AND authorization.IsActive=1
-                 AND authorization.ValidFrom<=CONVERT(date,@IssuedAt)
-                 AND authorization.ValidUntil>=CONVERT(date,@IssuedAt))
+                 AND auth.IsActive=1
+                 AND auth.ValidFrom<=CONVERT(date,@IssuedAt)
+                 AND auth.ValidUntil>=CONVERT(date,@IssuedAt))
             FROM OPENJSON(@SupplierIds) requested
             LEFT JOIN dbo.Suppliers supplier
               ON supplier.SupplierId=TRY_CONVERT(uniqueidentifier,requested.value)

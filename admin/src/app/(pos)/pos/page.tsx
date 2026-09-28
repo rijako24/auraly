@@ -1196,7 +1196,8 @@ export default function PosPage() {
   const canReprintSales = activePosPermissions.includes("sales.reprint");
   const canCreateSalesReturns = activePosPermissions.includes("sales.returns.create");
   const canOpenCashDrawer = activePosPermissions
-    .includes("work-sessions.cash.drawer.open");
+    .includes("work-sessions.cash.drawer.open") &&
+    (client?.mode === "edge" || Boolean(edgeEnrollmentToken));
   const canReadProductAvailability = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.inventory.availability.read");
   const canReceivePortfolio=activePosPermissions.includes("pos.receivables.payments.create");
@@ -3851,7 +3852,7 @@ export default function PosPage() {
               workSessionId={workstation.workSessionId}
               posClient={client}
               permissions={activePosPermissions}
-              onCashRefundConfirmed={openCashDrawer}
+              onCashRefundConfirmed={canOpenCashDrawer ? openCashDrawer : undefined}
             />
           </main>
         </div>

@@ -1147,6 +1147,22 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                     Assert.Equal(1, await primary.ExecuteNonQueryAsync());
                 }
             }
+            using (var missingResolution = new HttpRequestMessage(HttpMethod.Post,
+                       "/api/commerce/v1/expenses/confirm")
+                   {
+                       Content = JsonContent.Create(expenseCommand with
+                       {
+                           IssuedAt = issuedAt.AddYears(20),
+                           DueDate = issuedAt.AddYears(20).AddDays(30)
+                       })
+                   })
+            {
+                missingResolution.Headers.Add("Idempotency-Key", $"expense-no-resolution-{supportExpenseId:N}");
+                using var rejected = await client.SendAsync(missingResolution);
+                Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+                Assert.Contains("resolución DIAN de documento soporte vigente",
+                    await rejected.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+            }
             using (var request = new HttpRequestMessage(HttpMethod.Post,
                        "/api/commerce/v1/expenses/confirm")
                    {

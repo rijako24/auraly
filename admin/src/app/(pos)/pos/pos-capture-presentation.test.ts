@@ -117,18 +117,21 @@ test("no interfiere con teclas que no pertenecen al POS", () => {
   assert.equal(cancelled, false);
 });
 
-test("abre el cajón únicamente con Control+A", () => {
+test("abre el cajón únicamente con Alt+C y deja Control+A para seleccionar texto", () => {
+  assert.equal(isPosCashDrawerShortcut({
+    key: "c", ctrlKey: false, altKey: true, shiftKey: false, metaKey: false,
+  }), true);
+  assert.equal(isPosCashDrawerShortcut({
+    key: "C", ctrlKey: false, altKey: true, shiftKey: false, metaKey: false,
+  }), true);
   assert.equal(isPosCashDrawerShortcut({
     key: "a", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false,
-  }), true);
-  assert.equal(isPosCashDrawerShortcut({
-    key: "A", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false,
-  }), true);
-  assert.equal(isPosCashDrawerShortcut({
-    key: "a", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
   }), false);
   assert.equal(isPosCashDrawerShortcut({
-    key: "a", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false,
+    key: "c", ctrlKey: false, altKey: true, shiftKey: true, metaKey: false,
+  }), false);
+  assert.equal(isPosCashDrawerShortcut({
+    key: "c", ctrlKey: true, altKey: true, shiftKey: false, metaKey: false,
   }), false);
 });
 
