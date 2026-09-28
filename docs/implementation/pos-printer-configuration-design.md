@@ -203,8 +203,11 @@ volver a preparar la caja. En POS web y en la aplicación instalada sin caja
 preparada, la entrada hace una petición condicional al endpoint de marca para
 impresión; Cache Storage conserva la imagen por tenant. La impresión web usa
 una URL local y la instalada entrega los bytes ya disponibles al servicio de
-impresión local. Imprimir no consulta Blob ni la API. La tirilla v4 presenta
-la dirección del cliente frente a su etiqueta,
+impresión local. Imprimir no consulta Blob ni la API.
+La vista de Pedidos comprueba la copia del navegador al abrirse solo en modo
+online; con caja preparada usa el paquete protegido para sus impresiones.
+
+La tirilla v4 presenta la dirección del cliente frente a su etiqueta,
 alineada a la derecha y con salto de línea dentro de la misma columna cuando
 no cabe. En media carta, medio oficio y carta v4, la dirección comparte fila
 con el teléfono; cada valor queda frente a su etiqueta, y el número DIAN aparece

@@ -87,6 +87,7 @@ import {
 } from "./pos-operational-context";
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
+import { localPrintLogoSource } from "./pos-local-print-logo";
 import { referenceOptionsApi } from "@/services/api/reference-options";
 import {
   realtimeReconnectDelay,
@@ -418,11 +419,12 @@ export class OnlinePosClient implements PosClient {
     private readonly userId: string,
     private readonly userDisplayName: string,
     private readonly edgeSessionToken: string | null = null,
+    private readonly preparedPrintBranding = false,
   ) {}
 
   preparePrintBranding(verifyCurrentVersion = false): Promise<boolean> {
     if (verifyCurrentVersion) {
-      tenantsApi.verifyPrintBrandingOnPosEntry();
+      tenantsApi.resetPrintBrandingForWorkspaceEntry();
       this.brandingPreparation = null;
     }
     if (!this.brandingPreparation) {
@@ -532,15 +534,16 @@ export class OnlinePosClient implements PosClient {
   ) {
     if (this.edgeSessionToken) {
       const edge = this.localEdge();
-      const branding = tenantsApi.readyLocalPrintBranding();
+      const branding = this.preparedPrintBranding
+        ? null : tenantsApi.readyLocalPrintBranding();
       for (const receipt of receipts) {
         await edge.printReceipt({
           ...receipt,
           businessName: this.context.businessName,
           warehouseName: this.context.warehouseName,
           companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName,
-          companyLogoSource: branding?.logoUrl?.startsWith("data:image/")
-            ? branding.logoUrl : "",
+          companyLogoSource: localPrintLogoSource(
+            branding, this.preparedPrintBranding),
         }, null, workflow);
       }
       if (openDrawer) await edge.openCashDrawer();
@@ -677,11 +680,12 @@ export class OnlinePosClient implements PosClient {
   }
 
   async printPortfolioPayment(receipt: PortfolioPaymentReceipt) {
-    const branding = tenantsApi.readyLocalPrintBranding();
+    const branding = this.preparedPrintBranding
+      ? null : tenantsApi.readyLocalPrintBranding();
     return this.localEdge().printPortfolioPayment({
       ...receipt,
-      companyLogoSource: branding?.logoUrl?.startsWith("data:image/")
-        ? branding.logoUrl : "",
+      companyLogoSource: localPrintLogoSource(
+        branding, this.preparedPrintBranding),
     });
   }
   async printCashDenominationCount(ticket: import("./pos-edge-client").PosCashDenominationCount) {
@@ -1404,7 +1408,8 @@ export class OnlinePosClient implements PosClient {
       ),
       printOne: installedPrinter && printAfterInvoice
         ? async (receipts) => {
-            const branding = tenantsApi.readyLocalPrintBranding();
+            const branding = this.preparedPrintBranding
+              ? null : tenantsApi.readyLocalPrintBranding();
             for (const receipt of orderReceiptsForPrinting(
               receipts,
               includeCreditAcknowledgement,
@@ -1414,8 +1419,8 @@ export class OnlinePosClient implements PosClient {
                 businessName: this.context.businessName,
                 warehouseName: this.context.warehouseName,
                 companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName,
-                companyLogoSource: branding?.logoUrl?.startsWith("data:image/")
-                  ? branding.logoUrl : "",
+                companyLogoSource: localPrintLogoSource(
+                  branding, this.preparedPrintBranding),
               }, null, "pos");
             }
           }

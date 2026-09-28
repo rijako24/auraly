@@ -45,6 +45,8 @@ consulta condicionalmente la versión, descarga los bytes solo si cambiaron y
 actualiza el paquete protegido y la copia activa; una reconexión recupera los
 cambios perdidos. No requiere volver a preparar la caja. Imprimir nunca lee
 Blob ni la API.
+La vista independiente de Pedidos hace esa comprobación al abrirse solo cuando
+opera online; una caja preparada conserva la ruta de impresión local.
 La verificación web empieza durante la
 entrada a POS y la pantalla espera como máximo 350 ms; si la descarga tarda más,
 termina en segundo plano. La impresión usa únicamente la copia disponible y,

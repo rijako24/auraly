@@ -68,6 +68,9 @@ facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscale
   misma peticion obtiene los bytes y actualiza Cache Storage del navegador; si
   no cambio, el servidor responde sin leer Blob. No hay revalidacion al facturar,
   devolver ni imprimir.
+- La vista independiente de pedidos prepara esa misma copia al abrirse cuando
+  trabaja online, antes de facturar o imprimir. Si la caja esta preparada usa
+  la copia protegida de Edge y no consulta la marca en el navegador.
 - La caja preparada guarda el logo en su paquete local al prepararse. Entrar al
   POS preparado no consulta ni valida el logo; el impresor toma la copia local
   al armar el comprobante. Los cambios posteriores llegan por la sincronizacion

@@ -26,11 +26,14 @@ import { routesApi, type SalesRouteListItem } from "@/services/api/routes";
 import { PosPrinterDialog } from "@/app/(pos)/pos/pos-printer-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
 import { sellerOrdersApi } from "@/services/api/seller-orders";
+import { tenantsApi } from "@/services/api/tenants";
+import { resolvePosExecutionMode } from "@/services/pos/pos-launch-session";
 import { SellerOrderCaptureDialog } from "@/components/orders/seller-order-capture-dialog";
 
 export default function OrdersPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
+  const userId = user?.userId;
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [workspaces, setWorkspaces] = useState<SalesWorkspaceOption[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -42,6 +45,30 @@ export default function OrdersPage() {
     const token = readEdgeTokenFromLaunch();
     return token ? new PosEdgeClient(token, readEdgeUserSession()) : null;
   });
+  const [preparedPrintBranding, setPreparedPrintBranding] = useState<boolean | null>(
+    printerClient ? null : false,
+  );
+  useEffect(() => {
+    if (!businessId || !userId) return;
+    let active = true;
+    setPreparedPrintBranding(printerClient ? null : false);
+    const prepare = async () => {
+      if (printerClient) {
+        const health = await printerClient.health().catch(() => null);
+        if (!active) return;
+        if (resolvePosExecutionMode(true, health) === "edge") {
+          setPreparedPrintBranding(true);
+          return;
+        }
+        setPreparedPrintBranding(false);
+      }
+      tenantsApi.resetPrintBrandingForWorkspaceEntry();
+      await tenantsApi.getPrintBranding().catch(error =>
+        console.warn("No se pudo actualizar el logo de impresión de pedidos.", error));
+    };
+    void prepare();
+    return () => { active = false; };
+  }, [businessId, userId, printerClient]);
   useEffect(() => {
     let active = true;
     void loadSalesWorkspaceOptions()
@@ -129,7 +156,7 @@ export default function OrdersPage() {
         } : undefined}
         onEditOrder={user?.permissions?.includes("orders.update") ? setEditingOrder : undefined}
         onPrintSelected={
-          workspace && user
+          workspace && user && preparedPrintBranding !== null
             ? async (orders) => {
                 const context = await selectSalesWorkspace(workspace);
                 return new OnlinePosClient(
@@ -137,6 +164,7 @@ export default function OrdersPage() {
                   user.userId,
                   `${user.firstName} ${user.lastName}`.trim() || user.username,
                   readEdgeTokenFromLaunch(),
+                  preparedPrintBranding,
                 ).printOrders(orders.map((order) => order.orderId));
               }
             : undefined
@@ -150,7 +178,7 @@ export default function OrdersPage() {
             : undefined
         }
         onInvoiceSelected={
-          workspace && user
+          workspace && user && preparedPrintBranding !== null
             ? async (orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges) => {
                 const edgeToken = readEdgeTokenFromLaunch();
                 const context = await selectSalesWorkspace(workspace);
@@ -159,6 +187,7 @@ export default function OrdersPage() {
                   user.userId,
                   `${user.firstName} ${user.lastName}`.trim() || user.username,
                   edgeToken,
+                  preparedPrintBranding,
                 );
                 const response = await client.invoiceOrders(
                   orders.map((order) => order.orderId),

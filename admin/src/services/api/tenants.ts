@@ -198,7 +198,7 @@ export const tenantsApi = {
   getPrintBranding,
   readyPrintBranding,
   readyLocalPrintBranding,
-  verifyPrintBrandingOnPosEntry: clearPrintBranding,
+  resetPrintBrandingForWorkspaceEntry: clearPrintBranding,
   create: (tenant: ProvisionTenantRequest, quote: TenantQuoteRequest) =>
     apiClient.post<ProvisionTenantResult>("/tenants", { tenant, quote }),
   update: async (id: string, data: Partial<Tenant>) => {
