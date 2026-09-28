@@ -84,6 +84,23 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.False(recovered.ReusesDevice);
         Assert.NotEqual(package.DeviceSecret, recovered.DeviceSecret);
 
+        using var deviceClient = fixture.CreateClient();
+        using (var brandingRequest = DeviceRequest(
+                   "/api/pos/v1/branding/print", recovered))
+        using (var branding = await deviceClient.SendAsync(brandingRequest))
+        {
+            branding.EnsureSuccessStatusCode();
+            var payload = await branding.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            Assert.Equal(fixture.TenantId,
+                payload.GetProperty("tenantId").GetGuid());
+            Assert.NotNull(branding.Headers.ETag);
+            using var unchangedRequest = DeviceRequest(
+                "/api/pos/v1/branding/print", recovered);
+            unchangedRequest.Headers.IfNoneMatch.Add(branding.Headers.ETag);
+            using var unchanged = await deviceClient.SendAsync(unchangedRequest);
+            Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+        }
+
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""

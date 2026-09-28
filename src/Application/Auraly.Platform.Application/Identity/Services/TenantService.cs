@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Application.Common.Exceptions;
@@ -35,6 +37,54 @@ public sealed class TenantService(
         return new(tenant.TenantId, tenant.Name, tenant.LegalName,
             await ResolveLogoUrlAsync(tenant, ct), tenant.Nit,
             tenant.VerificationDigit);
+    }
+
+    public async Task<TenantBrandingDto> GetPrintBrandingAsync(Guid tenantId, CancellationToken ct) =>
+        (await GetConditionalPrintBrandingAsync(tenantId, null, ct)).Branding!;
+
+    public async Task<TenantPrintBrandingResponseDto> GetConditionalPrintBrandingAsync(
+        Guid tenantId, string? ifNoneMatch, CancellationToken ct)
+    {
+        var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
+            ?? throw new NotFoundException(nameof(Tenant), tenantId);
+        var identity = string.Join('\u001f', tenant.TenantId, tenant.PrimaryBusinessId,
+            tenant.Name, tenant.LegalName, tenant.Nit, tenant.VerificationDigit,
+            tenant.LogoMediaRef);
+        var etag = $"\"{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))}\"";
+        if (string.Equals(ifNoneMatch, etag, StringComparison.Ordinal))
+            return new(etag, null);
+        string? logoSource = null;
+        if (tenant.PrimaryBusinessId is { } businessId &&
+            tenant.LogoMediaRef is { Length: > 0 } mediaRef)
+        {
+            if (Uri.TryCreate(mediaRef, UriKind.Absolute, out var legacyLogo) &&
+                legacyLogo.Scheme == Uri.UriSchemeHttps)
+            {
+                // Old profiles may hold a SAS URL. Resolve its path against our
+                // own business container instead of sending that URL to every print.
+                var containerPath = $"/business-{businessId:N}/";
+                if (legacyLogo.AbsolutePath.StartsWith(
+                        containerPath, StringComparison.OrdinalIgnoreCase))
+                    mediaRef = Uri.UnescapeDataString(
+                        legacyLogo.AbsolutePath[containerPath.Length..]);
+                else
+                    return new(etag, new TenantBrandingDto(
+                        tenant.TenantId, tenant.Name, tenant.LegalName,
+                        null, tenant.Nit, tenant.VerificationDigit));
+            }
+            var contentType = Path.GetExtension(mediaRef).ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                _ => throw new InvalidOperationException("El formato del logo de la empresa no es válido.")
+            };
+            var bytes = await blobStorage.DownloadImageAsync(businessId, mediaRef, ct);
+            logoSource = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+        }
+        return new(etag, new TenantBrandingDto(
+            tenant.TenantId, tenant.Name, tenant.LegalName,
+            logoSource, tenant.Nit, tenant.VerificationDigit));
     }
 
     public async Task<PagedResponse<TenantDto>> GetPagedAsync(PagedRequest request, CancellationToken ct)
@@ -165,9 +215,22 @@ public sealed class TenantService(
             throw new ArgumentException("Usa un logo JPG, PNG o WEBP.");
         var mediaRef = await blobStorage.UploadImageAsync(
             businessId, stream, $"tenant-branding/{Guid.NewGuid():N}{extension}");
-        if (!await unitOfWork.Tenants.UpdateLogoAsync(tenantId, mediaRef, DateTimeOffset.UtcNow, ct))
-            throw new ConflictException("El tenant no tiene un perfil legal editable.");
+        var affectedBusinessIds = await unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            if (!await unitOfWork.Tenants.UpdateLogoAsync(
+                    tenantId, mediaRef, DateTimeOffset.UtcNow, ct))
+                throw new ConflictException("El tenant no tiene un perfil legal editable.");
+            var businessIds = (await unitOfWork.Businesses.GetByTenantIdAsync(tenantId, ct))
+                .Where(business => business.IsActive)
+                .Select(business => business.BusinessId)
+                .ToArray();
+            await pricingSynchronization.EnqueueBusinessesAsync(businessIds, ct);
+            return businessIds;
+        }, ct);
         tenant.LogoMediaRef = mediaRef;
+        foreach (var affectedBusinessId in affectedBusinessIds)
+            await synchronization.DispatchPendingAsync(
+                tenantId, affectedBusinessId, CancellationToken.None);
         var expiration = (await unitOfWork.Tenants.GetFiscalCertificateExpirationsAsync(null, ct))
             .FirstOrDefault(value => value.TenantId == tenantId)?.ValidTo;
         return await MapToDtoWithBrandingAsync(tenant, expiration, ct);

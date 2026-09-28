@@ -141,7 +141,7 @@ export function establishWebSession(): void {
   activeRefresh = null;
 }
 
-function currentWebSessionVersion(): string {
+export function currentWebSessionVersion(): string {
   if (typeof window !== "undefined") {
     try {
       return window.localStorage.getItem(WEB_SESSION_VERSION_STORAGE_KEY)
@@ -242,6 +242,25 @@ class ApiClient {
       headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
     });
     return this.handleResponse<T>(response);
+  }
+
+  async getConditional<T>(path: string, etag: string | null): Promise<
+    { notModified: true } | { notModified: false; value: T; etag: string | null }
+  > {
+    const response = await fetchWithSessionRetry(this.buildUrl(path), {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
+        ...(etag ? { "If-None-Match": etag } : {}),
+      },
+    });
+    if (response.status === 304) return { notModified: true };
+    return {
+      notModified: false,
+      value: await this.handleResponse<T>(response),
+      etag: response.headers.get("ETag"),
+    };
   }
 
   async post<T>(path: string, body?: unknown): Promise<T> {

@@ -14,6 +14,20 @@ public static class PosEnrollmentApi
     public static IEndpointRouteBuilder MapPosEnrollmentApi(
         this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/pos/v1/branding/print", async (
+                HttpContext context, ITenantService tenants, CancellationToken ct) =>
+            {
+                context.Response.Headers.CacheControl = "private, no-store";
+                var result = await tenants.GetConditionalPrintBrandingAsync(
+                    context.User.ToPosDeviceIdentity().TenantId,
+                    context.Request.Headers.IfNoneMatch.ToString(), ct);
+                context.Response.Headers.ETag = result.ETag;
+                return result.Branding is null
+                    ? Results.StatusCode(StatusCodes.Status304NotModified)
+                    : Results.Ok(result.Branding);
+            })
+            .RequireAuthorization("pos.enrolled");
+
         endpoints.MapPost(
                 "/api/commerce/v1/pos/enrollments",
                 async (

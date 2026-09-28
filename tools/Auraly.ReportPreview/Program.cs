@@ -19,6 +19,7 @@ var details = new SalesInvoicePrintDetails(
     "FE", 1, 10000, "1", "10", new DateOnly(2026, 9, 18),
     "900123456", "Auraly");
 var online = BuildOnlineReceipt(details);
+var previewLogo = PreviewLogoSource(args);
 var thermalRenderer = new HtmlReceiptPreviewRenderer();
 var sheetRenderer = new HalfLetterDocumentRenderer();
 var pages = new List<(string FileName, string Label)>();
@@ -50,12 +51,13 @@ foreach (var direction in new[] { "Receivable", "Payable" })
 }
 
 foreach (var width in new[] { 58, 80 })
-foreach (var version in new[] { 2, 3 })
+foreach (var version in new[] { 2, 3, 4 })
 {
     var fileName = $"tirilla-{width}mm-v{version}.html";
     await File.WriteAllTextAsync(
         Path.Combine(output, fileName),
-        thermalRenderer.Render(BuildThermalReceipt(width, details), version, autoPrint: false),
+        thermalRenderer.Render(BuildThermalReceipt(width, details) with
+            { CompanyLogoSource = previewLogo }, version, autoPrint: false),
         Encoding.UTF8);
     pages.Add((fileName, $"Tirilla {width} mm · v{version}"));
 }
@@ -67,15 +69,41 @@ var formats = new[]
     (HalfLetterDocumentRenderer.Letter, "carta", "Carta")
 };
 foreach (var (format, slug, label) in formats)
-foreach (var version in new[] { 2, 3 })
+foreach (var version in new[] { 2, 3, 4 })
 {
     var fileName = $"{slug}-v{version}.html";
     await File.WriteAllTextAsync(
         Path.Combine(output, fileName),
-        sheetRenderer.Render([online], format, version, autoPrint: false),
+        sheetRenderer.Render([online with { CompanyLogoSource = previewLogo }],
+            format, version, autoPrint: false),
         Encoding.UTF8);
     pages.Add((fileName, $"{label} · v{version}"));
 }
+
+var salesReceipt = online with
+{
+    DocumentType = PosSaleDocumentTypes.Receipt,
+    DocumentNumber = "CVI01-00000042",
+    FiscalNumber = null,
+    Cufe = null,
+    QrPayload = null,
+    InvoicePrintDetails = null,
+    CompanyLogoSource = previewLogo
+};
+const string salesReceiptTicket = "comprobante-80mm-v3.html";
+await File.WriteAllTextAsync(Path.Combine(output, salesReceiptTicket),
+    new SalesReceiptHtmlRenderer().Render(salesReceipt, autoPrint: false), Encoding.UTF8);
+pages.Add((salesReceiptTicket, "Comprobante de venta · 80 mm · v3"));
+const string salesReceiptLetter = "comprobante-carta-v3.html";
+await File.WriteAllTextAsync(Path.Combine(output, salesReceiptLetter),
+    sheetRenderer.Render([salesReceipt], HalfLetterDocumentRenderer.Letter, autoPrint: false),
+    Encoding.UTF8);
+pages.Add((salesReceiptLetter, "Comprobante de venta · Carta · v3"));
+const string noLogoFile = "tirilla-80mm-v4-sin-logo.html";
+await File.WriteAllTextAsync(Path.Combine(output, noLogoFile),
+    thermalRenderer.Render(BuildThermalReceipt(80, details), 4, autoPrint: false),
+    Encoding.UTF8);
+pages.Add((noLogoFile, "Factura · sin logo · nombre alternativo"));
 
 var order = online with
 {
@@ -131,12 +159,13 @@ foreach (var (format, slug, label) in formats)
     pages.Add((file, $"Pedido · {label}"));
 }
 
-const string pdfName = "factura-correo-carta-v3.pdf";
+const string pdfName = "factura-correo-carta-v4.pdf";
 var invoicePdfRenderer = new DianInvoicePdfRenderer();
-var emailReceipt = invoicePdfRenderer.ReadReceipt(BuildUblInvoice()) with { Payments = online.Payments };
+var emailReceipt = invoicePdfRenderer.ReadReceipt(BuildUblInvoice()) with
+    { Payments = online.Payments, CompanyLogoSource = previewLogo };
 await File.WriteAllBytesAsync(Path.Combine(output, pdfName),
     await invoicePdfRenderer.RenderAsync(emailReceipt));
-pages.Add((pdfName, "PDF del correo · Carta v3"));
+pages.Add((pdfName, "PDF del correo · Carta v4"));
 
 var buttons = string.Join(Environment.NewLine, pages.Select((page, index) =>
     $"<button{(index == 0 ? " class=\"active\"" : "")} data-file=\"{WebUtility.HtmlEncode(page.FileName)}\">{WebUtility.HtmlEncode(page.Label)}</button>"));
@@ -162,7 +191,7 @@ var indexHtml = $$"""
       </style>
     </head>
     <body>
-      <header><h1>Visor de desarrollo · reportes reales</h1><p>El contenido del panel es la salida directa del mismo renderizador usado para imprimir o adjuntar.</p></header>
+      <header><h1>Visor de desarrollo · reportes reales</h1><p>El contenido del panel usa el mismo renderizador de impresión. Logo: {{(args.Contains("--logo-file", StringComparer.OrdinalIgnoreCase) ? "archivo local indicado" : "muestra ilustrativa")}}.</p></header>
       <main><nav>{{buttons}}</nav><iframe title="Reporte real" src="{{WebUtility.HtmlEncode(pages[0].FileName)}}"></iframe></main>
       <script>
         const frame = document.querySelector('iframe');
@@ -171,6 +200,10 @@ var indexHtml = $$"""
           button.classList.add('active');
           frame.src = button.dataset.file;
         }));
+        const requested = new URLSearchParams(location.search).get('file');
+        const selected = [...document.querySelectorAll('button')]
+          .find(button => button.dataset.file === requested);
+        if (selected) { selected.click(); selected.scrollIntoView({ block: 'nearest' }); }
       </script>
     </body>
     </html>
@@ -196,6 +229,26 @@ static string ResolveOutput(string[] arguments, string root)
     if (index < 0) return Path.Combine(root, "artifacts", "report-preview");
     if (index == arguments.Length - 1) throw new ArgumentException("--output requiere una ruta.");
     return Path.GetFullPath(arguments[index + 1], root);
+}
+
+static string PreviewLogoSource(string[] arguments)
+{
+    var index = Array.FindIndex(arguments, value => value.Equals("--logo-file", StringComparison.OrdinalIgnoreCase));
+    if (index >= 0)
+    {
+        if (index == arguments.Length - 1) throw new ArgumentException("--logo-file requiere una ruta.");
+        var path = Path.GetFullPath(arguments[index + 1]);
+        var mediaType = Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            _ => throw new ArgumentException("El logo debe ser PNG, JPEG o WebP.")
+        };
+        return $"data:{mediaType};base64,{Convert.ToBase64String(File.ReadAllBytes(path))}";
+    }
+    const string svg = "<svg xmlns='http://www.w3.org/2000/svg' width='680' height='150' viewBox='0 0 680 150'><rect width='680' height='150' rx='20' fill='#0f766e'/><path d='M45 100c25-65 65-65 82-46-10 37-39 57-82 46Zm9-7 58-37' fill='#8aefaa' stroke='#fff' stroke-width='5'/><text x='150' y='76' fill='white' font-family='Arial,sans-serif' font-size='34' font-weight='700'>COMERCIALIZADORA</text><text x='151' y='116' fill='#b8fff0' font-family='Arial,sans-serif' font-size='36' font-weight='700'>UNO</text></svg>";
+    return $"data:image/svg+xml;base64,{Convert.ToBase64String(Encoding.UTF8.GetBytes(svg))}";
 }
 
 static PosReceipt BuildThermalReceipt(int width, SalesInvoicePrintDetails details) =>

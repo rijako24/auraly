@@ -161,13 +161,13 @@ confirmarse el pago: después se despacha la impresión sin bloquear la caja ni
 volver a consultar el pago. Una respuesta de reintento idempotente no genera
 una segunda impresión automática. Las otras vistas de cartera no imprimen.
 
-La versión 2 de `sales-invoice` y la versión 2 activa de `sales-receipt` conservan el contenido
+La versión 2 de `sales-invoice` y la versión 2 de `sales-receipt` conservan el contenido
 de la versión 1 y agregan, cuando el pago en efectivo registró un valor entregado,
 `Efectivo recibido` y `Cambio` inmediatamente después del total. La versión 1
 permanece disponible e inmutable para reimpresiones históricas y nunca inventa
 un valor recibido a partir del importe aplicado.
 
-La versión 3 activa de `sales-invoice` agrega a tirilla, media carta, media oficio
+La versión 3 de `sales-invoice` agrega a tirilla, media carta, media oficio
 y carta la identificación legal del emisor, responsabilidad y dirección, nombre,
 identificación, dirección y teléfono disponible del adquirente, resolución,
 prefijo, rango y vigencia, y fabricante/proveedor del software. Cada línea muestra
@@ -175,12 +175,53 @@ solo nombre del producto, cantidad, precio unitario y total. Conserva impuestos,
 totales, CUFE y QR DIAN. La versión 2
 permanece seleccionable para comparar o hacer rollback sin alterar sus campos.
 
+La versión 4 activa de `sales-invoice` y la versión 3 activa de `sales-receipt`
+sitúan el logo del tenant al inicio del encabezado y lo usan como marca principal
+en tirilla, media carta, media oficio y carta. Si el logo no está disponible,
+se muestra el nombre de la empresa. Las versiones anteriores conservan su
+encabezado original. El PDF fiscal del correo usa Carta v4 para facturas y
+obtiene el logo del almacenamiento de marca del tenant como imagen incorporada;
+la nota crédito conserva Carta v3. Esta presentación no modifica el XML DIAN,
+las líneas, los impuestos ni los totales.
+
+El logo sigue teniendo una sola fuente de verdad: el archivo de marca del tenant
+en Blob Storage. La API entrega una URL de lectura temporal mediante SAS de
+delegación cuando usa identidad administrada. Al preparar una caja, Edge descarga
+esa imagen una vez y la guarda como `data:image` en el paquete de enrolamiento
+local protegido. Primero conserva el checkpoint de identidad aceptada por el
+servidor; al descargar correctamente, sustituye la URL por los bytes locales.
+Si la descarga falla, informa el error y la identidad aceptada queda recuperable;
+el impresor nunca usa esa URL remota como sustituto de la imagen local.
+La impresión de la caja usa esa copia local incluso cuando una venta online
+incluye una URL temporal, tanto en tirilla como en formatos de hoja. No se guardan
+bytes de imagen en SQL ni se necesita red para imprimir una venta desconectada.
+Después de cambiar el logo del tenant, el outbox de configuración avisa a la
+caja preparada. La sincronización de Edge consulta la versión del logo con la
+credencial del dispositivo y, si cambió, actualiza el paquete protegido y la
+copia en uso. Tras una desconexión, la puesta al día recupera ese cambio sin
+volver a preparar la caja. En POS web y en la aplicación instalada sin caja
+preparada, la entrada hace una petición condicional al endpoint de marca para
+impresión; Cache Storage conserva la imagen por tenant. La impresión web usa
+una URL local y la instalada entrega los bytes ya disponibles al servicio de
+impresión local. Imprimir no consulta Blob ni la API.
+La vista de Pedidos comprueba la copia del navegador al abrirse solo en modo
+online; con caja preparada usa el paquete protegido para sus impresiones.
+
+La tirilla v4 presenta la dirección del cliente frente a su etiqueta,
+alineada a la derecha y con salto de línea dentro de la misma columna cuando
+no cabe. En media carta, medio oficio y carta v4, la dirección comparte fila
+con el teléfono; cada valor queda frente a su etiqueta, y el número DIAN aparece
+debajo de ambos. Las versiones anteriores y los importes conservan su disposición.
+
 El visor de reportes es una herramienta de desarrollo, no una pantalla previa a
 la impresión para el cajero o el cliente. Se genera con:
 
 ```powershell
 dotnet run --project tools/Auraly.ReportPreview/Auraly.ReportPreview.csproj -- --open
 ```
+
+Para revisar con un logo PNG/JPEG/WebP real, agregar `--logo-file <ruta>` al
+comando del visor. El archivo se incorpora solo a los reportes de vista previa.
 
 El índice abre las salidas HTML y PDF producidas por los renderizadores reales y
 permite comparar versiones y formatos. Los cierres de sesión de 80 y 58 mm
@@ -301,10 +342,10 @@ snapshot. Web y aplicación instalada comparten esta regla; únicamente cambia e
 adaptador final (`BrowserPreview` o POS Edge/Windows).
 
 
-## Unificación de factura Carta v3 y correo
+## Unificación de factura Carta y correo
 
-Por solicitud expresa, el correo usa la misma Carta v3 del POS; se retira el diseño
-independiente de correo. La corrección del título fiscal se aplica a v3,
+Por solicitud expresa, el correo usa la misma plantilla Carta del POS; se retira el diseño
+independiente de correo. La corrección del título fiscal se conserva desde v3,
 conservando los medios de pago y la disponibilidad de v2. Por solicitud expresa,
 ningún formato incluye el bloque de forma de pago, plazo o vencimiento en el
 encabezado: tirilla, media carta, medio oficio, carta y PDF del correo conservan
@@ -320,7 +361,7 @@ El POS web envía la respuesta de venta que ya posee a
 comerciales, sin descargas separadas del QR y sin otra composición HTML en TS.
 El adaptador instalado conserva la generación local de los mismos renderizadores.
 
-Carta v3 distribuye filas completas entre páginas con CUFE/QR por página. Windows
+Carta v3 y v4 distribuyen filas completas entre páginas con CUFE/QR por página. Windows
 imprime estas hojas mediante WebView2 nativo, con texto vectorial y saltos de página,
 en lugar de comprimir toda la factura en una sola imagen. Tirillas conservan el
 transporte raster ESC/POS. Los archivos PDF históricos del correo no se regeneran.

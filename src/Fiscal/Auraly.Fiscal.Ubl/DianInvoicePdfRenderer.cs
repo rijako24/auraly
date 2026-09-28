@@ -19,7 +19,8 @@ public sealed class DianInvoicePdfRenderer
 
     public string RenderHtml(OnlineSalesReceipt receipt) =>
         new HalfLetterDocumentRenderer().Render([receipt], HalfLetterDocumentRenderer.Letter,
-            templateVersion: 3, autoPrint: false);
+            templateVersion: receipt.DocumentType == PosSaleDocumentTypes.Invoice ? 4 : 3,
+            autoPrint: false);
 
     public Task<byte[]> RenderAsync(ReadOnlyMemory<byte> signedInvoice, CancellationToken cancellationToken = default) =>
         RenderAsync(ReadReceipt(signedInvoice), cancellationToken);

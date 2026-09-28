@@ -33,8 +33,7 @@ internal sealed class PosFiscalProvisioningSynchronizer(
             await sales.DeactivateFiscalSeriesAsync(
                 new DeviceId(credentials.DeviceId), cancellationToken);
             settings.Clear();
-            if (enrollmentStore.Load() is { } packageWithNoAssignment)
-                enrollmentStore.Save(packageWithNoAssignment with { FiscalSeries = null });
+            enrollmentStore.TryUpdatePackage(package => package with { FiscalSeries = null });
             return;
         }
         response.EnsureSuccessStatusCode();
@@ -63,9 +62,7 @@ internal sealed class PosFiscalProvisioningSynchronizer(
             active.QrValidationUrl,
             activeEdge));
 
-        if (enrollmentStore.Load() is { } package)
-        {
-            enrollmentStore.Save(package with
+        enrollmentStore.TryUpdatePackage(package => package with
             {
                 FiscalSeries = new PosEnrollmentFiscalSeries(
                     active.SeriesId, active.FiscalAuthorizationId,
@@ -79,6 +76,5 @@ internal sealed class PosFiscalProvisioningSynchronizer(
                     active.RemainingNumberWarningThreshold,
                     active.ProductionActive)
             });
-        }
     }
 }

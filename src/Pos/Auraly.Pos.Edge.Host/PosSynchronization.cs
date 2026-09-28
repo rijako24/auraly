@@ -69,9 +69,40 @@ public sealed class PosSynchronizationSignal
     }
 }
 
+internal sealed class PosPreparedPrintBrandingSync(
+    HttpClient httpClient,
+    PosDeviceCredentials credentials,
+    PosEdgeEnrollmentStore enrollments,
+    PosWorkstationIdentity workstation)
+{
+    public async Task SynchronizeAsync(CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            "api/pos/v1/branding/print");
+        request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
+        request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
+        if (enrollments.LoadPrintBrandingVersion() is { Length: > 0 } version)
+            request.Headers.TryAddWithoutValidation("If-None-Match", version);
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotModified) return;
+        response.EnsureSuccessStatusCode();
+        var etag = response.Headers.ETag?.ToString()
+            ?? throw new InvalidDataException("El servidor no entregó la versión del logo.");
+        var branding = await response.Content.ReadFromJsonAsync<PrintBrandingSnapshot>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidDataException("El servidor no entregó la marca de impresión.");
+        enrollments.SavePrintBranding(branding.TenantId, branding.LogoUrl, etag);
+        workstation.UpdatePrintLogoSource(branding.LogoUrl);
+    }
+
+    private sealed record PrintBrandingSnapshot(Guid TenantId, string? LogoUrl);
+}
+
 internal sealed class PosSynchronizationWork(
     PosIdentitySynchronizer identities,
     PosCatalogSynchronizer catalog,
+    PosPreparedPrintBrandingSync branding,
     PosCustomerServerClient customerDirectory,
     PosEdgeOutboxUploader uploader,
     PosCashMovementServerClient cashMovements,
@@ -162,6 +193,19 @@ internal sealed class PosSynchronizationWork(
                                 cashMovements.RefreshReasonsAsync,
                                 catalog.SynchronizeAsync,
                                 cancellationToken);
+                            // The tenant may change its logo after redemption but
+                            // before this durable preparation finishes.
+                            try
+                            {
+                                await branding.SynchronizeAsync(cancellationToken);
+                            }
+                            catch (Exception exception) when (exception is not OperationCanceledException)
+                            {
+                                events.Record("Warning", "Synchronization",
+                                    "El logo no se actualizó durante la preparación",
+                                    exception.Message);
+                                signal.Signal(PosSynchronizationTrigger.Configuration);
+                            }
                             return;
                         }
                         await catalog.SynchronizeAsync(cancellationToken);
@@ -175,6 +219,7 @@ internal sealed class PosSynchronizationWork(
                     async () =>
                     {
                         await catalog.SynchronizeConfigurationAsync(cancellationToken);
+                        await branding.SynchronizeAsync(cancellationToken);
                         await customerDirectory.RefreshGeographyAsync(cancellationToken);
                         await cashMovements.RefreshReasonsAsync(cancellationToken);
                     }));

@@ -9,6 +9,8 @@ using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Domain.Repositories;
+using Auraly.Platform.Application.Services;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Api;
@@ -29,6 +31,7 @@ public sealed class PlatformEmailOutboxHostedService(
     DianSchemaValidator fiscalSchemaValidator,
     IFiscalXmlSigner fiscalXmlSigner,
     TimeProvider timeProvider,
+    IServiceScopeFactory scopeFactory,
     ILogger<PlatformEmailOutboxHostedService> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -215,6 +218,11 @@ public sealed class PlatformEmailOutboxHostedService(
                 ? invoicePdfs.ReadReceipt(invoice.SignedXml)
                 : SalesInvoicePresentationMapper.FromSnapshot(
                     invoice.DocumentType, invoice.SnapshotJson, "DianAccepted");
+            receipt = receipt with
+            {
+                CompanyLogoSource = await LoadCompanyLogoSourceAsync(
+                    message.TenantId, cancellationToken)
+            };
             var pdf = await invoicePdfs.RenderAsync(receipt, cancellationToken);
             var pdfFileName =
                 $"RepresentacionGrafica-{SafeFileName(invoice.FiscalNumber)}.pdf";
@@ -235,6 +243,47 @@ public sealed class PlatformEmailOutboxHostedService(
         await SendAsync(client, invoice.Email, subject, html, plain, cancellationToken,
             [new(attachmentFileName,
                 "application/zip", new BinaryData(container))]);
+    }
+
+    private async Task<string?> LoadCompanyLogoSourceAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        const int maximumLogoBytes = 1024 * 1024;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var tenant = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>()
+                .Tenants.GetByIdAsync(tenantId, cancellationToken);
+            if (tenant is null) return null;
+            var businessId = tenant.PrimaryBusinessId;
+            var mediaRef = tenant.LogoMediaRef;
+            if (string.IsNullOrWhiteSpace(mediaRef) || businessId is null) return null;
+
+            // Tenant logos uploaded in Auraly are stored under the primary business.
+            // Keep the fiscal PDF self-contained; its renderer intentionally blocks network requests.
+            if (!mediaRef.StartsWith("tenant-branding/", StringComparison.Ordinal) ||
+                Uri.TryCreate(mediaRef, UriKind.Absolute, out _))
+                throw new InvalidDataException("El logo no usa el almacenamiento de marca del tenant.");
+            var mediaType = Path.GetExtension(mediaRef).ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                _ => throw new InvalidDataException("El logo no tiene un formato de imagen admitido.")
+            };
+            // Resolve storage only while preparing email delivery, outside the sale transaction.
+            var image = await scope.ServiceProvider.GetRequiredService<IBlobStorageService>()
+                .DownloadImageAsync(businessId.Value, mediaRef, cancellationToken);
+            if (image.Length > maximumLogoBytes)
+                throw new InvalidDataException("El logo supera el tamaño admitido para el PDF.");
+            return $"data:{mediaType};base64,{Convert.ToBase64String(image)}";
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception,
+                "No se pudo incorporar el logo del tenant {TenantId} al PDF fiscal; se mostrará el nombre.",
+                tenantId);
+            return null;
+        }
     }
 
     private async Task SendAsync(EmailClient client, string recipient, string subject,

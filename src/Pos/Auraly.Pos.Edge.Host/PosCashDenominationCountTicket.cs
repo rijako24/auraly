@@ -38,7 +38,7 @@ public sealed class PosCashDenominationCountTicketPrinter(
 
         var name = $"Conteo-efectivo-{ticket.CountedAt:yyyyMMdd-HHmmss}";
         if (WindowsPrinterOutput.RequiresRenderedDocument(printerName) ||
-            !string.IsNullOrWhiteSpace(workstation?.CompanyLogoSource))
+            !string.IsNullOrWhiteSpace(workstation?.PrintLogoSource))
             return renderedPrintJob.PrintAsync(
                 printerName, name,
                 RenderHtml(ticket, workstation, settings.ReceiptPaperWidthMillimeters),
@@ -99,9 +99,10 @@ public sealed class PosCashDenominationCountTicketPrinter(
             throw new ArgumentOutOfRangeException(nameof(paperWidthMillimeters));
         var rows = string.Join(string.Empty, ticket.Lines.Select(line =>
             $"<tr><td>{Encode(line.Label)}</td><td>{line.Quantity}</td><td>{Money(line.Value)}</td><th>{Money(line.Subtotal)}</th></tr>"));
-        var logo = string.IsNullOrWhiteSpace(workstation?.CompanyLogoSource)
+        var logoSource = workstation?.PrintLogoSource;
+        var logo = string.IsNullOrWhiteSpace(logoSource)
             ? string.Empty
-            : $"<img src=\"{Encode(workstation.CompanyLogoSource)}\" alt=\"Logo\">";
+            : $"<img src=\"{Encode(logoSource)}\" alt=\"Logo\">";
         return $$"""
 <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Conteo de efectivo</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:4mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters - 8}}mm;margin:auto;font:10px/1.4 Arial,sans-serif;color:#111}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:7px}h1{font-size:15px;margin:3px 0;font-weight:800}p{margin:3px 0}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{padding:4px 1px;border-bottom:1px dashed #999;text-align:left}td:nth-child(n+2),th{text-align:right}.total{display:flex;justify-content:space-between;border-block:2px solid #111;margin-top:10px;padding:8px 0;font-size:14px;font-weight:800}</style></head><body><header>{{logo}}<h1>{{Encode(workstation?.CompanyName ?? ticket.BusinessName)}}</h1><p><strong>Conteo de efectivo</strong></p><p>Sede: <strong>{{Encode(ticket.BusinessName)}}</strong></p><p>Responsable: <strong>{{Encode(ticket.UserName)}}</strong></p><p>Fecha: <strong>{{ticket.CountedAt.ToLocalTime():dd/MM/yyyy HH:mm}}</strong></p></header><table><thead><tr><th>Denom.</th><th>Cant.</th><th>Valor</th><th>Subtotal</th></tr></thead><tbody>{{rows}}</tbody></table><div class="total"><span>Total contado</span><strong>{{Money(ticket.Total)}}</strong></div></body></html>
 """;

@@ -4,11 +4,25 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Pos.Edge.Infrastructure;
+using Microsoft.Playwright;
 
 namespace Auraly.Foundation.Tests;
 
 public sealed class EscPosReceiptRendererTests
 {
+    [Fact]
+    public void Browser_portfolio_receipt_renders_the_cached_company_logo()
+    {
+        var receipt = new PortfolioPaymentReceipt(
+            Guid.NewGuid(), "Receivable", "RC-1", DateTimeOffset.UtcNow,
+            "Empresa", null, "900123456", "7", "blob:https://app.auraly.test/logo-local",
+            "Sede", null, null, "Cliente", "123", "Cajero", 1_000m,
+            [new PortfolioPaymentReceiptAllocation("FV-1", 1_000m)],
+            [new PortfolioPaymentReceiptTender("Efectivo", 1_000m, null)]);
+        var html = new PortfolioPaymentReceiptRenderer().Render(receipt, 80);
+        Assert.Contains("src=\"blob:https://app.auraly.test/logo-local\"", html);
+    }
+
     [Fact]
     public void Rendered_thermal_receipts_use_only_one_feed_line_before_cut()
     {
@@ -257,7 +271,7 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("Comprobante de venta", html);
         Assert.Contains("CVI03-00000042", html);
         Assert.Contains("data-auraly-report=\"sales-receipt\"", html);
-        Assert.Contains("data-auraly-report-version=\"2\"", html);
+        Assert.Contains("data-auraly-report-version=\"3\"", html);
         Assert.Contains("font: 11px/1.35", html);
         Assert.Contains("font-size: 12px", html);
         Assert.DoesNotContain("Número DIAN", html);
@@ -421,7 +435,7 @@ public sealed class EscPosReceiptRendererTests
 
         Assert.Contains("Comprobante de venta", html);
         Assert.Contains("data-auraly-report=\"sales-receipt\"", html);
-        Assert.Contains("data-auraly-report-version=\"2\"", html);
+        Assert.Contains("data-auraly-report-version=\"3\"", html);
         Assert.Contains("Representación gráfica del comprobante de venta", html);
         Assert.Contains("Comprobante emitido por Auraly", html);
         Assert.DoesNotContain("Factura electrónica de venta", html);
@@ -580,7 +594,7 @@ public sealed class EscPosReceiptRendererTests
     [InlineData(HalfLetterDocumentRenderer.HalfLetter)]
     [InlineData(HalfLetterDocumentRenderer.HalfLegal)]
     [InlineData(HalfLetterDocumentRenderer.Letter)]
-    public void Invoice_v3_places_customer_contact_in_header_and_keeps_product_rows_minimal(
+    public void Current_invoice_places_customer_contact_in_header_and_keeps_product_rows_minimal(
         string format)
     {
         var details = new SalesInvoicePrintDetails(
@@ -612,7 +626,7 @@ public sealed class EscPosReceiptRendererTests
                 }], format);
         }
 
-        Assert.Contains("data-auraly-report-version=\"3\"", value);
+        Assert.Contains("data-auraly-report-version=\"4\"", value);
         Assert.Contains("Comercializadora Uno SAS", value);
         Assert.Contains("900123456", value);
         Assert.Contains("Cliente prueba", value);
@@ -723,6 +737,161 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("data-auraly-report-version=\"3\"", current);
         Assert.Contains("18760000001", current);
     }
+
+    [Theory]
+    [InlineData("Receipt")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal)]
+    [InlineData(HalfLetterDocumentRenderer.Letter)]
+    public void Current_invoice_header_uses_logo_instead_of_company_name(string format)
+    {
+        var receipt = OnlineReceipt() with { InvoicePrintDetails = InvoiceDetails() };
+        var html = RenderSalesReport(receipt, format);
+
+        Assert.Contains("data-auraly-report-version=\"4\"", html);
+        Assert.Contains("class=\"brand-logo\" src=\"data:image/png;base64,AA==\"", html);
+        Assert.DoesNotContain("<div class=\"brand\">Comercializadora Uno</div>", html);
+        Assert.DoesNotContain("<h1>Comercializadora Uno</h1>", html);
+        Assert.Contains("NIT 900123456", html);
+
+        var browserLogo = RenderSalesReport(receipt with
+            { CompanyLogoSource = "blob:https://app.auraly.test/logo-local" }, format);
+        Assert.Contains("class=\"brand-logo\" src=\"blob:https://app.auraly.test/logo-local\"", browserLogo);
+
+        var withoutLogo = RenderSalesReport(receipt with { CompanyLogoSource = null }, format);
+        Assert.DoesNotContain("<img class=\"brand-logo\"", withoutLogo);
+        Assert.Contains(format == "Receipt"
+            ? "<div class=\"brand\">Comercializadora Uno</div>"
+            : "<h1>Comercializadora Uno</h1>", withoutLogo);
+    }
+
+    [Theory]
+    [InlineData(58)]
+    [InlineData(80)]
+    public async Task Thermal_invoice_address_starts_beside_label_and_wraps_right(int width)
+    {
+        var receipt = OnlineReceipt() with
+        {
+            InvoicePrintDetails = InvoiceDetails(),
+            CustomerAddress = "Calle 10"
+        };
+        var priorVersion = new SalesReceiptHtmlRenderer().Render(
+            receipt, width, templateVersion: 3, autoPrint: false);
+        Assert.Contains("style=\"grid-column:1/-1;min-width:0;display:block\"", priorVersion);
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
+        var page = await browser.NewPageAsync();
+        await page.SetContentAsync(new SalesReceiptHtmlRenderer().Render(
+            receipt, width, autoPrint: false));
+        Assert.True(await page.EvaluateAsync<bool>("""
+            () => {
+              const row = [...document.querySelectorAll('.pair')]
+                .find(element => element.querySelector(':scope > span')?.textContent === 'Dirección');
+              const label = row.querySelector('span').getBoundingClientRect();
+              const value = row.querySelector('strong').getBoundingClientRect();
+              return Math.abs(label.top - value.top) < 2 &&
+                Math.abs(row.getBoundingClientRect().right - value.right) < 2;
+            }
+            """));
+
+        await page.SetContentAsync(new SalesReceiptHtmlRenderer().Render(
+            receipt with { CustomerAddress = "Carrera 4 # 5-06, Valledupar, edificio Los Almendros, apartamento 402" },
+            width, autoPrint: false));
+        Assert.True(await page.EvaluateAsync<bool>("""
+            () => {
+              const row = [...document.querySelectorAll('.pair')]
+                .find(element => element.querySelector(':scope > span')?.textContent === 'Dirección');
+              const label = row.querySelector('span').getBoundingClientRect();
+              const value = row.querySelector('strong').getBoundingClientRect();
+              const lineHeight = parseFloat(getComputedStyle(row.querySelector('strong')).lineHeight);
+              return Math.abs(label.top - value.top) < 2 && value.height > lineHeight * 1.5 &&
+                Math.abs(row.getBoundingClientRect().right - value.right) < 2;
+            }
+            """));
+    }
+
+    [Theory]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal)]
+    [InlineData(HalfLetterDocumentRenderer.Letter)]
+    public async Task Sheet_invoice_aligns_address_and_phone_above_dian_number(string format)
+    {
+        var receipt = OnlineReceipt() with
+        {
+            InvoicePrintDetails = InvoiceDetails(),
+            CustomerAddress = "Carrera 4 # 5-06, Valledupar, edificio Los Almendros, apartamento 402",
+            CustomerPhone = "300 123 4567"
+        };
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
+        var page = await browser.NewPageAsync();
+        await page.SetContentAsync(new HalfLetterDocumentRenderer().Render(
+            [receipt], format, autoPrint: false));
+        Assert.True(await page.EvaluateAsync<bool>("""
+            () => {
+              const rows = [...document.querySelector('.document .meta').querySelectorAll('.pair')];
+              const find = label => rows.find(row => row.querySelector('span')?.textContent === label);
+              const address = find('Dirección');
+              const phone = find('Teléfono');
+              const dian = find('Número DIAN');
+              const value = address.querySelector('strong');
+              const label = address.querySelector('span');
+              return Math.abs(address.offsetTop - phone.offsetTop) < 2 &&
+                dian.offsetTop >= address.offsetTop + address.offsetHeight &&
+                Math.abs(label.offsetTop - value.offsetTop) < 2 &&
+                Math.abs(address.offsetLeft + address.offsetWidth - value.offsetLeft - value.offsetWidth) < 2;
+            }
+            """));
+    }
+
+    [Theory]
+    [InlineData("Receipt")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal)]
+    [InlineData(HalfLetterDocumentRenderer.Letter)]
+    public void Current_sales_receipt_header_uses_logo_instead_of_company_name(string format)
+    {
+        var receipt = OnlineReceipt() with { DocumentType = PosSaleDocumentTypes.Receipt };
+        var html = RenderSalesReport(receipt, format);
+
+        Assert.Contains("data-auraly-report-version=\"3\"", html);
+        Assert.Contains("class=\"brand-logo\" src=\"data:image/png;base64,AA==\"", html);
+        Assert.DoesNotContain("<div class=\"brand\">Comercializadora Uno</div>", html);
+        Assert.DoesNotContain("<h1>Comercializadora Uno</h1>", html);
+
+        var withoutLogo = RenderSalesReport(receipt with { CompanyLogoSource = null }, format);
+        Assert.Contains(format == "Receipt"
+            ? "<div class=\"brand\">Comercializadora Uno</div>"
+            : "<h1>Comercializadora Uno</h1>", withoutLogo);
+    }
+
+    [Fact]
+    public void Previous_invoice_and_receipt_versions_preserve_the_company_name_beside_the_logo()
+    {
+        var invoice = OnlineReceipt() with { InvoicePrintDetails = InvoiceDetails() };
+        var receipt = invoice with { DocumentType = PosSaleDocumentTypes.Receipt };
+
+        var oldInvoice = new SalesReceiptHtmlRenderer().Render(invoice, templateVersion: 3);
+        var oldReceipt = new HalfLetterDocumentRenderer().Render([receipt],
+            HalfLetterDocumentRenderer.Letter, templateVersion: 2);
+
+        Assert.Contains("data-auraly-report-version=\"3\"", oldInvoice);
+        Assert.Contains("<div class=\"brand\">Comercializadora Uno</div>", oldInvoice);
+        Assert.Contains("data-auraly-report-version=\"2\"", oldReceipt);
+        Assert.Contains("<h1>Comercializadora Uno</h1>", oldReceipt);
+    }
+
+    private static string RenderSalesReport(OnlineSalesReceipt receipt, string format) =>
+        format == "Receipt"
+            ? new SalesReceiptHtmlRenderer().Render(receipt, autoPrint: false)
+            : new HalfLetterDocumentRenderer().Render([receipt], format, autoPrint: false);
+
+    private static SalesInvoicePrintDetails InvoiceDetails() => new(
+        "Comercializadora Uno SAS", "900123456", "R-99-PN",
+        "Calle 10 # 20-30", "Carrera 4 # 5-06", "18760000001",
+        new DateOnly(2026, 1, 1), new DateOnly(2027, 12, 31),
+        "FE", 1, 10000, "1", "10", new DateOnly(2026, 9, 18),
+        "900123456", "Auraly");
 
     private static OnlineSalesReceipt OnlineReceipt() =>
         new(

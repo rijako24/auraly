@@ -191,7 +191,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var signedXml = await ArtifactAsync(request.DocumentId, FiscalArtifactTypeCodes.SignedXml);
         var graphical = new DianInvoicePdfRenderer().RenderHtml(signedXml);
         Assert.Contains("Letter portrait", graphical);
-        Assert.Contains("data-auraly-report-version=\"3\"", graphical);
+        Assert.Contains("data-auraly-report-version=\"4\"", graphical);
         Assert.Contains("EMISOR HISTORICO", graphical);
         Assert.Contains("CLIENTE HISTORICO", graphical);
         Assert.DoesNotContain("MAESTRO CAMBIADO", graphical);

@@ -45,6 +45,9 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
     {
         try
         {
+            // Check the runtime before launching local services so a missing
+            // prerequisite fails immediately with an actionable message.
+            _ = CoreWebView2Environment.GetAvailableBrowserVersionString();
             splash.SetStage("Iniciando servicios locales", 0);
             Program.StopStaleLocalComponents(root);
             var web = Program.StartWeb(root, configuration, data, webOrigin);
@@ -86,6 +89,15 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
         catch (OperationCanceledException)
         {
             ExitThread();
+        }
+        catch (WebView2RuntimeNotFoundException exception)
+        {
+            var log = Path.Combine(data, "logs", "desktop-error.log");
+            await File.AppendAllTextAsync(log,
+                $"{DateTimeOffset.Now:O} {exception}{Environment.NewLine}");
+            splash.ShowFailure("Falta el motor visual de Auraly",
+                "Instala nuevamente Auraly con el instalador actualizado. " +
+                $"Este equipo no tiene Microsoft Edge WebView2 Runtime. Detalle: {log}");
         }
         catch (Exception exception)
         {

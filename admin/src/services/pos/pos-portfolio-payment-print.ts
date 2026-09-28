@@ -34,17 +34,15 @@ export async function printPortfolioPayment(
     await printerClient.printPortfolioPayment(receipt);
     return;
   }
-  const [branding, business] = await Promise.all([
-    tenantsApi.getBranding(),
-    businessesApi.getById(businessId),
-  ]);
+  const branding = tenantsApi.readyPrintBranding();
+  const business = await businessesApi.getById(businessId);
   const complete = {
     ...receipt,
-    companyName: branding.displayName || branding.legalName || receipt.companyName,
-    legalName: branding.legalName,
-    nit: branding.nit,
-    verificationDigit: branding.verificationDigit,
-    companyLogoSource: branding.logoUrl,
+    companyName: branding?.displayName || branding?.legalName || receipt.companyName,
+    legalName: branding?.legalName ?? receipt.legalName,
+    nit: branding?.nit ?? receipt.nit,
+    verificationDigit: branding?.verificationDigit ?? receipt.verificationDigit,
+    companyLogoSource: branding?.logoUrl ?? null,
     businessName: business.name,
     businessAddress: business.address,
     businessPhone: business.phone,

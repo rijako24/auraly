@@ -19,6 +19,7 @@ export function buildBackendProxyHeaders(
     "X-Auraly-Draft-Id",
     "X-Auraly-Approval-Id",
     "X-Auraly-Operation-Id",
+    "If-None-Match",
   ]) {
     const value = requestHeaders.get(name);
     if (value) headers[name] = value;

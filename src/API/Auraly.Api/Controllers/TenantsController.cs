@@ -49,6 +49,18 @@ public sealed class TenantsController(
     public async Task<ActionResult<TenantBrandingDto>> GetBranding(CancellationToken ct) =>
         Ok(await tenantService.GetBrandingAsync(User.GetTenantId(), ct));
 
+    [HttpGet("branding/print")]
+    public async Task<ActionResult<TenantBrandingDto>> GetPrintBranding(CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "private, no-store";
+        var result = await tenantService.GetConditionalPrintBrandingAsync(
+            User.GetTenantId(), Request.Headers.IfNoneMatch.ToString(), ct);
+        Response.Headers.ETag = result.ETag;
+        if (result.Branding is null)
+            return StatusCode(StatusCodes.Status304NotModified);
+        return Ok(result.Branding);
+    }
+
     [HttpPost]
     [PermissionAuthorize("tenants.create")]
     public async Task<ActionResult<ProvisionTenantResult>> Create(

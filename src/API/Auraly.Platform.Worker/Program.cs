@@ -344,7 +344,7 @@ services.AddScoped<ServiceSelectionResolver>();
 
         services.AddScoped<IPaymentConfirmationHandler, PaymentConfirmationHandler>();
 
-        services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
+        services.AddSingleton<IMediaUrlResolver, BlobMediaUrlResolver>();
 
         services.AddScoped<IOutboundMessageDispatcher, OutboundMessageDispatcher>();
         services.AddScoped<ConversationFollowUpService>();

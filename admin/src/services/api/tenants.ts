@@ -1,4 +1,6 @@
-import { apiClient, withPagedDefaults } from "./client";
+import { apiClient, currentWebSessionVersion, withPagedDefaults } from "./client";
+import { createTenantPrintBrandingCache } from "./tenant-print-branding-cache";
+import { loadTenantPrintBrandingFromBrowserStore } from "./tenant-print-branding-browser-store";
 import type { PagedRequest, PagedResponse } from "@/types/api";
 import type { Tenant } from "@/types/entities";
 
@@ -133,19 +135,83 @@ export interface RecordTenantSubscriptionPayment {
   reference: string; paidAt: string; note: string | null;
 }
 
+function selectedPrintTenantId(): string | null {
+  try { return window.localStorage.getItem("selected_tenant_id"); }
+  catch { return null; }
+}
+
+const printBrandingCache = createTenantPrintBrandingCache(async () => {
+  const branding = typeof window === "undefined"
+    ? await apiClient.get<TenantBranding>("/tenants/branding/print")
+    : await loadTenantPrintBrandingFromBrowserStore(
+        selectedPrintTenantId(),
+        etag => apiClient.getConditional<TenantBranding>(
+          "/tenants/branding/print", etag),
+        typeof caches === "undefined" ? undefined : caches,
+        window.location.origin,
+      );
+  if (!branding.logoUrl?.startsWith("data:image/"))
+    return { raw: branding, browser: branding };
+  // A single browser-local object URL keeps multi-page print requests small.
+  const image = await fetch(branding.logoUrl);
+  return {
+    raw: branding,
+    browser: { ...branding, logoUrl: URL.createObjectURL(await image.blob()) },
+  };
+}, Date.now, value => {
+  if (value.browser.logoUrl?.startsWith("blob:"))
+    window.setTimeout(() => URL.revokeObjectURL(value.browser.logoUrl!), 120_000);
+});
+
+function getPrintBranding(): Promise<TenantBranding> {
+  if (typeof window === "undefined")
+    return apiClient.get<TenantBranding>("/tenants/branding/print");
+  return printBrandingCache.get(currentWebSessionVersion()).then(value => value.browser);
+}
+
+function readyPrintBranding(): TenantBranding | null {
+  if (typeof window === "undefined") return null;
+  const value = printBrandingCache.peek(currentWebSessionVersion());
+  const tenantId = selectedPrintTenantId();
+  return value && (!tenantId || value.raw.tenantId === tenantId)
+    ? value.browser : null;
+}
+
+function readyLocalPrintBranding(): TenantBranding | null {
+  if (typeof window === "undefined") return null;
+  const value = printBrandingCache.peek(currentWebSessionVersion());
+  const tenantId = selectedPrintTenantId();
+  return value && (!tenantId || value.raw.tenantId === tenantId)
+    ? value.raw : null;
+}
+
+function clearPrintBranding(): void {
+  printBrandingCache.clear();
+}
+
 export const tenantsApi = {
   list: (params?: Partial<PagedRequest>) => apiClient.get<PagedResponse<Tenant>>("/tenants", withPagedDefaults(params)),
   fiscalCertificateExpiryAlerts: () =>
     apiClient.get<FiscalCertificateExpiryAlert[]>("/tenants/fiscal-certificate-expiry-alerts"),
   getById: (id: string) => apiClient.get<Tenant>(`/tenants/${id}`),
   getBranding: () => apiClient.get<TenantBranding>("/tenants/branding"),
+  getPrintBranding,
+  readyPrintBranding,
+  readyLocalPrintBranding,
+  resetPrintBrandingForWorkspaceEntry: clearPrintBranding,
   create: (tenant: ProvisionTenantRequest, quote: TenantQuoteRequest) =>
     apiClient.post<ProvisionTenantResult>("/tenants", { tenant, quote }),
-  update: (id: string, data: Partial<Tenant>) => apiClient.put<Tenant>(`/tenants/${id}`, data),
-  uploadLogo: (id: string, file: File) => {
+  update: async (id: string, data: Partial<Tenant>) => {
+    const tenant = await apiClient.put<Tenant>(`/tenants/${id}`, data);
+    clearPrintBranding();
+    return tenant;
+  },
+  uploadLogo: async (id: string, file: File) => {
     const body = new FormData();
     body.append("file", file);
-    return apiClient.postForm<Tenant>(`/tenants/${id}/logo`, body);
+    const tenant = await apiClient.postForm<Tenant>(`/tenants/${id}/logo`, body);
+    clearPrintBranding();
+    return tenant;
   },
   deactivate: (id: string) => apiClient.delete(`/tenants/${id}`),
   activate: (id: string) => apiClient.post(`/tenants/${id}/activate`, {}),

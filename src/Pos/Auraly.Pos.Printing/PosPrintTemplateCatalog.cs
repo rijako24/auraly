@@ -8,9 +8,11 @@ public static class PosPrintTemplateCatalog
 {
     public static readonly PosPrintTemplateVersion SalesInvoiceV1 = new("sales-invoice", 1);
     public static readonly PosPrintTemplateVersion SalesInvoiceV2 = new("sales-invoice", 2);
-    public static readonly PosPrintTemplateVersion SalesInvoice = new("sales-invoice", 3);
+    public static readonly PosPrintTemplateVersion SalesInvoiceV3 = new("sales-invoice", 3);
+    public static readonly PosPrintTemplateVersion SalesInvoice = new("sales-invoice", 4);
     public static readonly PosPrintTemplateVersion SalesReceiptV1 = new("sales-receipt", 1);
-    public static readonly PosPrintTemplateVersion SalesReceipt = new("sales-receipt", 2);
+    public static readonly PosPrintTemplateVersion SalesReceiptV2 = new("sales-receipt", 2);
+    public static readonly PosPrintTemplateVersion SalesReceipt = new("sales-receipt", 3);
     public static readonly PosPrintTemplateVersion OrderV1 = new("order", 1);
     public static readonly PosPrintTemplateVersion Order = new("order", 2);
     public static readonly PosPrintTemplateVersion WorkSessionClosureV1 = new("work-session-closure", 1);
@@ -43,6 +45,14 @@ public static class PosPrintTemplateCatalog
     {
         1 => OrderV1,
         2 or null => Order,
+        _ => throw new ArgumentOutOfRangeException(nameof(version))
+    };
+
+    public static PosPrintTemplateVersion ForReceipt(int? version) => version switch
+    {
+        1 => SalesReceiptV1,
+        2 => SalesReceiptV2,
+        3 or null => SalesReceipt,
         _ => throw new ArgumentOutOfRangeException(nameof(version))
     };
 }

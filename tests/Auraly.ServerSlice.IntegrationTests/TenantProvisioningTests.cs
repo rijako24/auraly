@@ -378,6 +378,13 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             Assert.Equal(JsonValueKind.Null, value.GetProperty("verificationDigit").ValueKind);
         }
 
+        var configurationNoticesBefore = await CountTenantConfigurationNoticesAsync(result.TenantId);
+        string brandingVersionBefore;
+        using (var scope = fixture.CreateScope())
+            brandingVersionBefore = (await scope.ServiceProvider.GetRequiredService<
+                Auraly.Platform.Application.Identity.Interfaces.ITenantService>()
+                .GetConditionalPrintBrandingAsync(result.TenantId, null)).ETag;
+
         using (var logo = new MultipartFormDataContent())
         using (var image = new ByteArrayContent([0x89, 0x50, 0x4E, 0x47]))
         {
@@ -388,6 +395,37 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             uploaded.EnsureSuccessStatusCode();
             var value = await uploaded.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Contains("tenant-branding", value.GetProperty("logoUrl").GetString());
+        }
+
+        using (var scope = fixture.CreateScope())
+        {
+            var tenantService = scope.ServiceProvider.GetRequiredService<
+                Auraly.Platform.Application.Identity.Interfaces.ITenantService>();
+            var printBranding = await tenantService.GetPrintBrandingAsync(result.TenantId);
+            Assert.Equal("data:image/png;base64,AQID", printBranding.LogoUrl);
+            Assert.Equal(result.TenantId, printBranding.TenantId);
+            var version = await tenantService.GetConditionalPrintBrandingAsync(result.TenantId, null);
+            Assert.NotEqual(brandingVersionBefore, version.ETag);
+            Assert.Null((await tenantService.GetConditionalPrintBrandingAsync(
+                result.TenantId, version.ETag)).Branding);
+        }
+        Assert.True(await CountTenantConfigurationNoticesAsync(result.TenantId)
+            > configurationNoticesBefore);
+
+        using (var first = await admin.GetAsync("/api/v1/tenants/branding/print"))
+        {
+            first.EnsureSuccessStatusCode();
+            // The platform administrator is authenticated in its own tenant;
+            // the endpoint must not expose the newly provisioned tenant's logo.
+            Assert.Null(
+                (await first.Content.ReadFromJsonAsync<JsonElement>())
+                    .GetProperty("logoUrl").GetString());
+            using var conditional = new HttpRequestMessage(
+                HttpMethod.Get, "/api/v1/tenants/branding/print");
+            conditional.Headers.IfNoneMatch.ParseAdd(first.Headers.ETag!.ToString());
+            using var unchanged = await admin.SendAsync(conditional);
+            Assert.Equal(System.Net.HttpStatusCode.NotModified, unchanged.StatusCode);
+            Assert.Equal(first.Headers.ETag, unchanged.Headers.ETag);
         }
 
         var token = await ReadInvitationTokenAsync(result.TenantId);
@@ -1055,6 +1093,19 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@ProductId", productId);
         return Convert.ToDecimal(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountTenantConfigurationNoticesAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages notification
+            JOIN dbo.Businesses business ON business.BusinessId=notification.BusinessId
+            WHERE business.TenantId=@TenantId AND notification.Stream=N'Configuration';
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private async Task<int> CountActiveBusinessesWithoutPriceAsync(

@@ -51,7 +51,15 @@ public sealed record PosWorkstationIdentity(
     string? CompanyNit = null,
     string? CompanyVerificationDigit = null,
     string? BusinessAddress = null,
-    string? BusinessPhone = null);
+    string? BusinessPhone = null)
+{
+    private string? currentPrintLogoSource = CompanyLogoSource;
+
+    public string? PrintLogoSource => Volatile.Read(ref currentPrintLogoSource);
+
+    public void UpdatePrintLogoSource(string? source) =>
+        Volatile.Write(ref currentPrintLogoSource, source);
+}
 
 public sealed record CaptureRequest(string Value, Guid? CustomerId, decimal? Quantity = null);
 public sealed record QuantityRequest(decimal Quantity);
@@ -279,6 +287,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<IPosFiscalStatusClient, HttpPosFiscalStatusClient>();
         builder.Services.AddSingleton<PosFiscalStatusSynchronizer>();
         builder.Services.AddSingleton<PosFiscalProvisioningSynchronizer>();
+        builder.Services.AddSingleton<PosPreparedPrintBrandingSync>();
         builder.Services.AddSingleton<PosSynchronizationSignal>();
         builder.Services.AddSingleton<PosUiStateSignal>();
         builder.Services.AddSingleton<IPosSynchronizationProgressSink>(sp =>

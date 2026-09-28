@@ -54,7 +54,7 @@ public sealed class DianInvoicePdfRendererTests
     }
 
     [Fact]
-    public void Email_uses_exactly_the_shared_letter_v3_html_and_signed_values()
+    public void Email_uses_exactly_the_shared_letter_v4_html_and_signed_values()
     {
         var invoice = CreateInvoice();
         var xml = new DianInvoiceUblBuilder().Build(invoice).Xml;
@@ -62,7 +62,7 @@ public sealed class DianInvoicePdfRendererTests
         var renderer = new DianInvoicePdfRenderer();
         var receipt = renderer.ReadReceipt(xml);
         Assert.Equal(new HalfLetterDocumentRenderer().Render([receipt], HalfLetterDocumentRenderer.Letter,
-            templateVersion: 3, autoPrint: false), renderer.RenderHtml(xml));
+            templateVersion: 4, autoPrint: false), renderer.RenderHtml(xml));
         Assert.Equal(original, xml);
         Assert.Equal(invoice.Cufe, receipt.Cufe);
         Assert.Equal(invoice.PayableAmount, receipt.PayableAmount);
@@ -70,7 +70,11 @@ public sealed class DianInvoicePdfRendererTests
         Assert.Equal("900123456-8", receipt.InvoicePrintDetails!.SupplierIdentification);
         Assert.Equal("Calle 10 # 20-30", receipt.CustomerAddress);
         Assert.Equal("3001234567", receipt.CustomerPhone);
-        Assert.Contains("data-auraly-report-version=\"3\"", renderer.RenderHtml(xml));
+        Assert.Contains("data-auraly-report-version=\"4\"", renderer.RenderHtml(xml));
+        var logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5L8N8AAAAASUVORK5CYII=";
+        var branded = renderer.RenderHtml(receipt with { CompanyLogoSource = logo });
+        Assert.Contains($"class=\"brand-logo\" src=\"{logo}\"", branded);
+        Assert.DoesNotContain($"<h1>{receipt.CompanyName}</h1>", branded);
         Assert.DoesNotContain("Forma de pago", renderer.RenderHtml(xml));
         Assert.DoesNotContain("Plazo", renderer.RenderHtml(xml));
         Assert.DoesNotContain("Vencimiento", renderer.RenderHtml(xml));

@@ -152,9 +152,10 @@ public sealed class PosCashMovementTicketPrinter(
     {
         if (paperWidthMillimeters is not (58 or 80))
             throw new ArgumentOutOfRangeException(nameof(paperWidthMillimeters));
-        var logo = string.IsNullOrWhiteSpace(workstation?.CompanyLogoSource)
+        var logoSource = workstation?.PrintLogoSource;
+        var logo = string.IsNullOrWhiteSpace(logoSource)
             ? string.Empty
-            : $"<img src=\"{Encode(workstation.CompanyLogoSource)}\" alt=\"Logo\">";
+            : $"<img src=\"{Encode(logoSource)}\" alt=\"Logo\">";
         var companyName = workstation?.CompanyName ?? "Auraly";
         var scope = Scope(workstation?.BusinessName, includeWarehouse,
             workstation?.WarehouseName);

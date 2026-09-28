@@ -49,12 +49,13 @@ public sealed class SalesReceiptHtmlRenderer
             ? templateVersion switch
             {
                 2 => PosPrintTemplateCatalog.SalesInvoiceV2,
-                3 => PosPrintTemplateCatalog.SalesInvoice,
+                3 => PosPrintTemplateCatalog.SalesInvoiceV3,
+                4 => PosPrintTemplateCatalog.SalesInvoice,
                 null when receipt.InvoicePrintDetails is null => PosPrintTemplateCatalog.SalesInvoiceV2,
                 null => PosPrintTemplateCatalog.SalesInvoice,
                 _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
             }
-            : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
+            : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForReceipt(templateVersion);
         var bodyFontSize = isFiscal ? 12 : 11;
         var issuedBy = isFiscal
             ? "Factura emitida por Auraly"
@@ -85,7 +86,7 @@ public sealed class SalesReceiptHtmlRenderer
                     string.IsNullOrWhiteSpace(receipt.CustomerAddress)
                         ? invoiceDetails.CustomerAddress
                         : receipt.CustomerAddress,
-                    receipt.CustomerPhone)
+                    receipt.CustomerPhone, alignAddressRight: template.Version >= 4)
                 : string.Empty;
         var customerDetails = isOrder && template.Version >= 2
             ? customerContact
@@ -147,6 +148,8 @@ public sealed class SalesReceiptHtmlRenderer
         var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
             ? string.Empty
             : $"<img class=\"brand-logo\" src=\"{Encode(receipt.CompanyLogoSource)}\" alt=\"Logo de {companyName}\">";
+        var showLogoInsteadOfName = !string.IsNullOrWhiteSpace(companyLogo) &&
+            (isFiscal ? template.Version >= 4 : !isOrder && template.Version >= 3);
         var start = $$"""
             <!doctype html>
             <html lang="es" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}">
@@ -170,7 +173,7 @@ public sealed class SalesReceiptHtmlRenderer
                 .center { text-align: center; }
                 header > * + * { margin-top: 4px; }
                 .brand { font: 800 {{(paperWidthMillimeters == 58 ? 18 : 23)}}px/1.1 system-ui, sans-serif; letter-spacing: -.04em; text-transform: uppercase; overflow-wrap: anywhere; }
-                .brand-logo { display: block; max-width: 48mm; max-height: 18mm; object-fit: contain; margin: 0 auto 3mm; }
+                .brand-logo { display: block; max-width: {{(showLogoInsteadOfName ? (paperWidthMillimeters == 58 ? 38 : 52) : 48)}}mm; max-height: {{(showLogoInsteadOfName ? 22 : 18)}}mm; object-fit: contain; margin: 0 auto 3mm; }
                 .title { margin-top: 6px; font-size: 13px; font-weight: 800; text-transform: uppercase; }
                 .ticket-number { font-size: 12px; }
                 .scope { margin-top: 4px; overflow-wrap: anywhere; }
@@ -226,7 +229,7 @@ public sealed class SalesReceiptHtmlRenderer
               <main class="receipt">
                 <header class="center">
                   {{companyLogo}}
-                  <div class="brand">{{companyName}}</div>
+                  {{(showLogoInsteadOfName ? string.Empty : $"<div class=\"brand\">{companyName}</div>")}}
                   {{documentHeader}}
                   <div class="muted">{{Encode(DianFiscalDateTime.InColombia(receipt.IssuedAt).ToString("dd/MM/yyyy, h:mm:ss tt", ColombianCulture))}}</div>
                   {{(string.IsNullOrWhiteSpace(scope) ? string.Empty : $"<div class=\"scope muted\">{Encode(scope)}</div>")}}

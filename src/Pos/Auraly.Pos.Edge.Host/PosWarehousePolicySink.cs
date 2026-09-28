@@ -20,13 +20,10 @@ public sealed class PosWarehousePolicySink(
         try
         {
             if (runtime.WarehouseAllowsNegativeStock == allowsNegativeStock) return;
-            var enrollment = enrollmentStore.Load()
-                ?? throw new InvalidOperationException(
+            if (!enrollmentStore.TryUpdatePackage(package => package with
+                { WarehouseAllowsNegativeStock = allowsNegativeStock }))
+                throw new InvalidOperationException(
                     "The enrolled warehouse policy cannot be persisted without its enrollment package.");
-            enrollmentStore.Save(enrollment with
-            {
-                WarehouseAllowsNegativeStock = allowsNegativeStock
-            });
             runtime.ApplyWarehousePolicy(allowsNegativeStock);
             events.Record(
                 "Success",

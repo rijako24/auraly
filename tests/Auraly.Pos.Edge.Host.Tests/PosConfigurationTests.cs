@@ -7,6 +7,9 @@ using Auraly.Pos.Edge.Infrastructure;
 using Auraly.Pos.Printing;
 using Microsoft.Data.Sqlite;
 using System.IO.Ports;
+using System.Net;
+using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -336,6 +339,179 @@ public sealed class PosConfigurationTests
             Assert.Empty(raw.PrinterNames);
             Assert.Equal(["Factura POS"], rendered.PrinterNames);
             Assert.Contains("Comprobante de venta", rendered.Documents.Single());
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Prepared_box_updates_logo_on_configuration_sync_and_keeps_it_offline()
+    {
+        var directory = Path.Combine(Path.GetTempPath(),
+            "auraly-prepared-logo-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var package = EnrollmentPackage(allowsNegativeStock: false) with
+            { CompanyLogoSource = "data:image/png;base64,AA==" };
+            var store = new PosEdgeEnrollmentStore(
+                Path.Combine(directory, "enrollment.protected"),
+                Path.Combine(directory, "keys"), Path.Combine(directory, "auraly-pos.db"));
+            store.Save(package);
+            var workstation = new PosWorkstationIdentity(
+                "POS-1", "Sede", "Bodega", "Cajero", "Empresa",
+                package.CompanyLogoSource);
+            var version = "\"logo-one\"";
+            var requests = 0;
+            var downloads = 0;
+            using var client = new HttpClient(new BrandingResponseHandler(request =>
+            {
+                requests++;
+                Assert.Equal(package.DeviceId.ToString("D"),
+                    request.Headers.GetValues("X-Auraly-Device-Id").Single());
+                Assert.Equal(package.DeviceSecret,
+                    request.Headers.GetValues("X-Auraly-Device-Secret").Single());
+                var unchanged = request.Headers.IfNoneMatch.Any(tag => tag.Tag == version);
+                if (unchanged) return new HttpResponseMessage(HttpStatusCode.NotModified);
+                downloads++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Headers = { ETag = new EntityTagHeaderValue(version) },
+                    Content = JsonContent.Create(new
+                    {
+                        package.TenantId, DisplayName = "Empresa", LegalName = "Empresa",
+                        LogoUrl = downloads == 1
+                            ? "data:image/png;base64,AQ=="
+                            : "data:image/png;base64,Ag==",
+                        Nit = (string?)null, VerificationDigit = (string?)null
+                    })
+                };
+            })) { BaseAddress = new Uri("https://auraly.test/") };
+            var sync = new PosPreparedPrintBrandingSync(client,
+                new PosDeviceCredentials(package.DeviceId, package.DeviceSecret),
+                store, workstation);
+
+            await sync.SynchronizeAsync(CancellationToken.None);
+            Assert.Equal("data:image/png;base64,AQ==", workstation.PrintLogoSource);
+            Assert.Equal(version, store.LoadPrintBrandingVersion());
+            await sync.SynchronizeAsync(CancellationToken.None);
+            Assert.Equal(2, requests);
+            Assert.Equal(1, downloads);
+
+            version = "\"logo-two\"";
+            await sync.SynchronizeAsync(CancellationToken.None);
+            Assert.Equal("data:image/png;base64,Ag==", workstation.PrintLogoSource);
+            Assert.Equal(workstation.PrintLogoSource, store.Load()!.CompanyLogoSource);
+            Assert.Equal(version, store.LoadPrintBrandingVersion());
+            Assert.True(store.TryUpdatePackage(current => current with
+                { WarehouseAllowsNegativeStock = true }));
+            Assert.True(store.Load()!.WarehouseAllowsNegativeStock);
+            Assert.Equal(version, store.LoadPrintBrandingVersion());
+            Assert.Equal(workstation.PrintLogoSource, store.Load()!.CompanyLogoSource);
+
+            var settings = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"), Path.Combine(directory, "receipts"));
+            settings.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw, "Factura POS", 80, "Media carta",
+                PosPrinterName: "Factura POS",
+                PosOutputFormat: PrintTemplateFormats.HalfLetter,
+                OrderPrinterName: "Pedidos"));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurablePosReceiptPrinter(settings,
+                new EscPosReceiptRenderer(), new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(), rendered,
+                new ConfigurableOrderDocumentPrinter(
+                    settings, new HalfLetterDocumentRenderer(), rendered),
+                new CreditSaleAcknowledgementRenderer(), workstation);
+            await printer.PrintAsync(Receipt());
+            Assert.Contains("data:image/png;base64,Ag==", Assert.Single(rendered.Documents));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class BrandingResponseHandler(
+        Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(respond(request));
+    }
+
+    [Theory]
+    [InlineData(PrintTemplateFormats.Receipt)]
+    [InlineData(PrintTemplateFormats.HalfLetter)]
+    public async Task Prepared_pos_prints_cached_tenant_logo_instead_of_remote_url(string format)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "auraly-logo-print-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"), Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw, "Factura POS", 80, "Media carta",
+                PosPrinterName: "Factura POS", PosOutputFormat: format,
+                OrderPrinterName: "Pedidos"));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurablePosReceiptPrinter(
+                store, new EscPosReceiptRenderer(), new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(), rendered,
+                new ConfigurableOrderDocumentPrinter(store, new HalfLetterDocumentRenderer(), rendered),
+                new CreditSaleAcknowledgementRenderer(),
+                new PosWorkstationIdentity("POS-1", "Sede", "Bodega", "Cajero", "Empresa",
+                    "data:image/png;base64,AA=="));
+            var receipt = Receipt();
+            await printer.PrintSalesDocumentsAsync([new OnlineSalesReceipt(
+                receipt.DocumentId.Value, receipt.DocumentType, receipt.DocumentNumber,
+                receipt.FiscalNumber, receipt.IssuedAt, receipt.CustomerIdentification,
+                receipt.Lines.Select(line => new OnlineSalesReceiptLine(
+                    line.ProductCode, line.Description, line.Quantity, line.UnitPrice,
+                    line.Discount, line.Tax, line.Total)).ToArray(),
+                receipt.Payments.Select(payment => new OnlineSalesPayment(
+                    payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
+                receipt.UntaxedAmount, receipt.TaxAmount, receipt.PayableAmount,
+                receipt.Cufe, receipt.QrPayload, null, "Cliente",
+                CompanyLogoSource: "https://example.com/logo.png")]);
+
+            Assert.Single(rendered.Documents);
+            Assert.Contains("data:image/png;base64,AA==", rendered.Documents[0]);
+            Assert.DoesNotContain("https://example.com/logo.png", rendered.Documents[0]);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Removed_tenant_logo_does_not_reuse_enrollment_logo()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "auraly-logo-removed-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"), Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw, "Factura POS", 80, "Media carta",
+                PosPrinterName: "Factura POS", PosOutputFormat: PrintTemplateFormats.HalfLetter,
+                OrderPrinterName: "Pedidos"));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurablePosReceiptPrinter(
+                store, new EscPosReceiptRenderer(), new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(), rendered,
+                new ConfigurableOrderDocumentPrinter(store, new HalfLetterDocumentRenderer(), rendered),
+                new CreditSaleAcknowledgementRenderer(),
+                new PosWorkstationIdentity("POS-1", "Sede", "Bodega", "Cajero", "Empresa",
+                    "data:image/png;base64,AA=="));
+
+            await printer.PrintAsync(Receipt() with { CompanyLogoSource = string.Empty });
+
+            Assert.Single(rendered.Documents);
+            Assert.DoesNotContain("data:image/png;base64,AA==", rendered.Documents[0]);
+            Assert.Contains("Empresa", rendered.Documents[0]);
         }
         finally
         {
