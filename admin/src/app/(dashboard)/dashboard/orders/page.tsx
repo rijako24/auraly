@@ -56,7 +56,8 @@ export default function OrdersPage() {
       if (printerClient) {
         const health = await printerClient.health().catch(() => null);
         if (!active) return;
-        if (resolvePosExecutionMode(true, health) === "edge") {
+        if (resolvePosExecutionMode(true, health) === "edge" &&
+            health?.businessId === businessId) {
           setPreparedPrintBranding(true);
           return;
         }
