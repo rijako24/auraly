@@ -261,6 +261,33 @@ test("cada operación de inventario conserva combos, productos y captura local",
   }
 });
 
+test("conversión busca por el código mostrado en su catálogo elegible", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/commerce/v1/inventory/conversion-products?**", route => {
+    const search = new URL(route.request().url()).searchParams.get("search");
+    return json(route, {
+      items: search === "PRESENTACION-123" ? [{
+        productId, productCode: "PRESENTACION-123", reference: null,
+        productName: "Arroz presentación", unitCode: "EA", quantityOnHand: 25,
+        familyRootProductId: productId, conversionFactor: 1, maximumLossPercent: 10,
+      }] : [],
+      page: 1, pageSize: 10, totalCount: search === "PRESENTACION-123" ? 1 : 0,
+      totalPages: search === "PRESENTACION-123" ? 1 : 0,
+    });
+  });
+  await authenticate(page);
+  await page.goto("/dashboard/inventory");
+  await page.getByRole("button", { name: "Nueva operación" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Conversión" }).click();
+  await select(page, field(dialog, "Bodega").getByRole("combobox"), "Principal");
+  const search = dialog.getByTestId("product-picker-search");
+  await search.fill("PRESENTACION-123");
+  await expect(dialog.getByRole("option", { name: /Arroz presentación/ })).toBeVisible();
+  await search.fill("SIN-CONVERSION");
+  await expect(dialog.getByText(/No hay productos habilitados para conversión/)).toBeVisible();
+});
+
 test("despachar limpia el traslado y abre desde su fila una entrada editable", async ({ page }) => {
   await mockApi(page, { transferWorkflow: true });
   await authenticate(page);
