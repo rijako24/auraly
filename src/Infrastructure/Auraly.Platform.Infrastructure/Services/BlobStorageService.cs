@@ -88,4 +88,24 @@ public class BlobStorageService : IBlobStorageService
             return false;
         }
     }
+
+    public async Task<byte[]> DownloadImageAsync(Guid businessId, string fileName, CancellationToken ct = default)
+    {
+        var blob = _blobServiceClient.GetBlobContainerClient(GetContainerName(businessId))
+            .GetBlobClient(fileName);
+        var download = await blob.DownloadStreamingAsync(cancellationToken: ct);
+        await using var source = download.Value.Content;
+        using var image = new MemoryStream();
+        var buffer = new byte[81920];
+        int count;
+        while ((count = await source.ReadAsync(buffer, ct)) != 0)
+        {
+            if (image.Length > 4 * 1024 * 1024 - count)
+                throw new InvalidOperationException("El logo de la empresa supera el tamaño permitido.");
+            image.Write(buffer, 0, count);
+        }
+        if (image.Length == 0)
+            throw new InvalidOperationException("El logo de la empresa está vacío.");
+        return image.ToArray();
+    }
 }

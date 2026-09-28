@@ -4,13 +4,13 @@ using System.Net;
 using System.Text.Json;
 using Azure;
 using Azure.Communication.Email;
-using Azure.Storage.Blobs;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Platform.Domain.Repositories;
+using Auraly.Platform.Application.Services;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Api;
@@ -31,7 +31,6 @@ public sealed class PlatformEmailOutboxHostedService(
     DianSchemaValidator fiscalSchemaValidator,
     IFiscalXmlSigner fiscalXmlSigner,
     TimeProvider timeProvider,
-    BlobServiceClient blobServiceClient,
     IServiceScopeFactory scopeFactory,
     ILogger<PlatformEmailOutboxHostedService> logger) : BackgroundService
 {
@@ -271,21 +270,12 @@ public sealed class PlatformEmailOutboxHostedService(
                 ".webp" => "image/webp",
                 _ => throw new InvalidDataException("El logo no tiene un formato de imagen admitido.")
             };
-            var container = blobServiceClient.GetBlobContainerClient(
-                $"business-{businessId.Value:N}".ToLowerInvariant());
-            var download = await container.GetBlobClient(mediaRef)
-                .DownloadStreamingAsync(cancellationToken: cancellationToken);
-            await using var source = download.Value.Content;
-            using var image = new MemoryStream();
-            var buffer = new byte[81920];
-            int count;
-            while ((count = await source.ReadAsync(buffer, cancellationToken)) != 0)
-            {
-                if (image.Length > maximumLogoBytes - count)
-                    throw new InvalidDataException("El logo supera el tamaño admitido para el PDF.");
-                image.Write(buffer, 0, count);
-            }
-            return $"data:{mediaType};base64,{Convert.ToBase64String(image.ToArray())}";
+            // Resolve storage only while preparing email delivery, outside the sale transaction.
+            var image = await scope.ServiceProvider.GetRequiredService<IBlobStorageService>()
+                .DownloadImageAsync(businessId.Value, mediaRef, cancellationToken);
+            if (image.Length > maximumLogoBytes)
+                throw new InvalidDataException("El logo supera el tamaño admitido para el PDF.");
+            return $"data:{mediaType};base64,{Convert.ToBase64String(image)}";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

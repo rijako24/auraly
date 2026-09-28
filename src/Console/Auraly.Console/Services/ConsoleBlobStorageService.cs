@@ -33,4 +33,7 @@ public class ConsoleBlobStorageService : IBlobStorageService
         _logger.LogDebug("[MOCK] ImageExistsAsync llamado para business {BusinessId}: {FileName}", businessId, fileName);
         return Task.FromResult(false);
     }
+
+    public Task<byte[]> DownloadImageAsync(Guid businessId, string fileName, CancellationToken ct = default) =>
+        Task.FromException<byte[]>(new NotSupportedException("La consola no descarga logos de tenant."));
 }

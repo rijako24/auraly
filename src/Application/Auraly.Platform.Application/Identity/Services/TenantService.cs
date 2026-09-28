@@ -37,6 +37,36 @@ public sealed class TenantService(
             tenant.VerificationDigit);
     }
 
+    public async Task<TenantBrandingDto> GetPrintBrandingAsync(Guid tenantId, CancellationToken ct)
+    {
+        var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
+            ?? throw new NotFoundException(nameof(Tenant), tenantId);
+        string? logoSource = null;
+        if (tenant.PrimaryBusinessId is { } businessId &&
+            tenant.LogoMediaRef is { Length: > 0 } mediaRef)
+        {
+            if (Uri.TryCreate(mediaRef, UriKind.Absolute, out var legacyLogo) &&
+                legacyLogo.Scheme == Uri.UriSchemeHttps)
+            {
+                logoSource = mediaRef;
+            }
+            else
+            {
+                var contentType = Path.GetExtension(mediaRef).ToLowerInvariant() switch
+                {
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    ".png" => "image/png",
+                    ".webp" => "image/webp",
+                    _ => throw new InvalidOperationException("El formato del logo de la empresa no es válido.")
+                };
+                var bytes = await blobStorage.DownloadImageAsync(businessId, mediaRef, ct);
+                logoSource = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+            }
+        }
+        return new(tenant.TenantId, tenant.Name, tenant.LegalName,
+            logoSource, tenant.Nit, tenant.VerificationDigit);
+    }
+
     public async Task<PagedResponse<TenantDto>> GetPagedAsync(PagedRequest request, CancellationToken ct)
     {
         var (items, totalCount) = await unitOfWork.Tenants.GetPagedAsync(request.Page, request.PageSize, request.Search, ct);

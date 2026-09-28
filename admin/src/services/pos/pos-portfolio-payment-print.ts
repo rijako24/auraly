@@ -35,7 +35,7 @@ export async function printPortfolioPayment(
     return;
   }
   const [branding, business] = await Promise.all([
-    tenantsApi.getBranding(),
+    tenantsApi.getPrintBranding(),
     businessesApi.getById(businessId),
   ]);
   const complete = {

@@ -49,6 +49,13 @@ public sealed class TenantsController(
     public async Task<ActionResult<TenantBrandingDto>> GetBranding(CancellationToken ct) =>
         Ok(await tenantService.GetBrandingAsync(User.GetTenantId(), ct));
 
+    [HttpGet("branding/print")]
+    public async Task<ActionResult<TenantBrandingDto>> GetPrintBranding(CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "private, no-store";
+        return Ok(await tenantService.GetPrintBrandingAsync(User.GetTenantId(), ct));
+    }
+
     [HttpPost]
     [PermissionAuthorize("tenants.create")]
     public async Task<ActionResult<ProvisionTenantResult>> Create(

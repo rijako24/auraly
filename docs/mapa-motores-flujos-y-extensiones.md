@@ -27,6 +27,16 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Entregar factura aceptada | transición `DianAccepted` → outbox de entrega → contenedor `AttachedDocument`/respuesta DIAN + representación PDF del almacén fiscal | enviar antes de aceptación, regenerar XML en la plantilla o reenviar DIAN desde correo |
 | Resolver precio comercial de productos | `CommercePriceResolver` compone los calculadores canónicos de canal y promoción con las líneas del documento ya cargadas | recalcular en SQL, SQLite, pedido, endpoint o UI |
 | Imprimir pedidos | `OrderService` autoriza y solicita el snapshot capturado; `SqlOrderStore` lo carga en lote; `PosPrintTemplateCatalog.Order` y el pipeline de impresión existente lo representan | consultar cada pedido/línea por separado, convertirlo en venta o crear otro renderer/servicio de impresión |
+
+El logo de los comprobantes se toma del perfil del tenant. La caja preparada lo
+descarga al enrolarse y lo conserva como imagen protegida en el equipo; imprimir
+sin conexión no consulta Blob Storage. En POS web, el endpoint autenticado de
+marca para impresión entrega los bytes una vez y el cliente los reutiliza en
+memoria por sesión durante diez minutos. La precarga se inicia al abrir POS y
+no forma parte de la confirmación de la factura. Un cambio del perfil o del logo
+invalida esa copia en el navegador que hizo el cambio; una sesión nueva vuelve a
+cargarla. Los correos fiscales leen el logo al preparar la entrega, fuera de la
+transacción de venta.
 | Consultar o editar la empresa propia | `tenant.profile.read/update` → `TenantsController` limita el recurso a `User.TenantId` → `TenantService`; el plan se proyecta en solo lectura desde la suscripción canónica | conceder `tenants.*` al administrador cliente, confiar en el `tenantId` del navegador o duplicar el perfil empresarial |
 | Cargos de facturación | catálogo versionado `InvoiceChargeService`/`SqlInvoiceChargeStore` → `InvoiceChargeCalculation` compartido por borrador online y Edge → snapshot de la venta → writer común de Gastos | otro medio de pago, producto ficticio, cálculo en UI o tabla paralela de cargos emitidos |
 | Gasto manual o asociado a una factura | `ExpenseService` o handler de venta → `SqlExpenseStore.PersistAcceptedAsync` → fuentes/trabajos financieros canónicos → `SqlAccountingPostingProcessor` abre CxP y marca el gasto procesado | consumir cursor operativo para gastos nuevos, abrir CxP desde POS o volver a registrar gasto al pagar al proveedor |

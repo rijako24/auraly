@@ -87,7 +87,7 @@ public sealed class PortfolioPaymentReceiptRenderer
             </style></head><body><header class="brand">
             """);
         if (Uri.TryCreate(receipt.CompanyLogoSource, UriKind.Absolute, out var logo) &&
-            (logo.Scheme == Uri.UriSchemeHttps || logo.Scheme == "data"))
+            (logo.Scheme == Uri.UriSchemeHttps || logo.Scheme == "data" || logo.Scheme == "blob"))
             html.Append($"<img src=\"{E(receipt.CompanyLogoSource!)}\" alt=\"Logo de la empresa\">");
         html.Append($"<h1>{E(receipt.CompanyName)}</h1>");
         if (!string.IsNullOrWhiteSpace(receipt.LegalName) &&

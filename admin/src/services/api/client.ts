@@ -141,7 +141,7 @@ export function establishWebSession(): void {
   activeRefresh = null;
 }
 
-function currentWebSessionVersion(): string {
+export function currentWebSessionVersion(): string {
   if (typeof window !== "undefined") {
     try {
       return window.localStorage.getItem(WEB_SESSION_VERSION_STORAGE_KEY)

@@ -417,7 +417,10 @@ export class OnlinePosClient implements PosClient {
     private readonly userId: string,
     private readonly userDisplayName: string,
     private readonly edgeSessionToken: string | null = null,
-  ) {}
+  ) {
+    if (!edgeSessionToken && typeof window !== "undefined")
+      void tenantsApi.getPrintBranding().catch(() => undefined);
+  }
 
   async openWorkSession() {
     const session = await openOnlineWorkSession(this.context.businessId, this.context.warehouseId);
@@ -517,13 +520,12 @@ export class OnlinePosClient implements PosClient {
   ) {
     if (this.edgeSessionToken) {
       const edge = this.localEdge();
-      const branding = await tenantsApi.getBranding().catch(() => null);
       for (const receipt of receipts) {
         await edge.printReceipt({
           ...receipt,
           businessName: this.context.businessName,
           warehouseName: this.context.warehouseName,
-        }, branding, workflow);
+        }, null, workflow);
       }
       if (openDrawer) await edge.openCashDrawer();
       return;
@@ -1226,7 +1228,9 @@ export class OnlinePosClient implements PosClient {
       input.paymentCounts, input.note);
     const [closure, branding] = await Promise.all([
       request<PosWorkSessionClosure>(requestDefinition.path, requestDefinition.init),
-      tenantsApi.getBranding().catch(() => null),
+      this.edgeSessionToken
+        ? Promise.resolve(null)
+        : tenantsApi.getPrintBranding().catch(() => null),
     ]);
     const printableClosure = {
       ...closure,
@@ -1345,9 +1349,6 @@ export class OnlinePosClient implements PosClient {
     const installedPrinter = printRoute === "installed-app"
       ? this.localEdge()
       : null;
-    const branding = installedPrinter
-      ? await tenantsApi.getBranding().catch(() => null)
-      : null;
     const invoiceRequest = (requestedOrderIds: string[]) => ({
       workSessionId: this.context.workSessionId,
       warehouseId: this.context.warehouseId,
@@ -1393,7 +1394,7 @@ export class OnlinePosClient implements PosClient {
                 ...receipt,
                 businessName: this.context.businessName,
                 warehouseName: this.context.warehouseName,
-              }, branding, "pos");
+              }, null, "pos");
             }
           }
         : undefined,
@@ -1452,7 +1453,7 @@ export class OnlinePosClient implements PosClient {
         return { printedCount: receipts.length };
       }
       const configuration = loadBrowserPrinterConfiguration();
-      const branding = await tenantsApi.getBranding();
+      const branding = await tenantsApi.getPrintBranding();
       const rendered = await request<{ html: string; printedCount: number }>(
         "/api/commerce/v1/orders/print-batch/render",
         this.post({
@@ -1690,7 +1691,7 @@ async function renderSharedSalesDocument(
 ) {
   if (!receipts.length) { closePrintPreview(preview); return; }
   if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
-  const branding = await tenantsApi.getBranding();
+  const branding = await tenantsApi.getPrintBranding();
   // Reuse the authoritative checkout/history response; rendering never reloads a sale or QR.
   const rendered = await request<{ html: string }>(
     "/api/commerce/v1/pos/drafts/sales/receipts/render",

@@ -1260,6 +1260,8 @@ internal sealed class TestExecutionAccessResolver(
 
 internal sealed class TestBlobStorageService : IBlobStorageService
 {
+    public Task<byte[]> DownloadImageAsync(Guid businessId, string fileName, CancellationToken ct = default) =>
+        Task.FromResult(new byte[] { 1, 2, 3 });
     public Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName) =>
         Task.FromResult(fileName);
 

@@ -11,6 +11,19 @@ namespace Auraly.Foundation.Tests;
 public sealed class EscPosReceiptRendererTests
 {
     [Fact]
+    public void Browser_portfolio_receipt_renders_the_cached_company_logo()
+    {
+        var receipt = new PortfolioPaymentReceipt(
+            Guid.NewGuid(), "Receivable", "RC-1", DateTimeOffset.UtcNow,
+            "Empresa", null, "900123456", "7", "blob:https://app.auraly.test/logo-local",
+            "Sede", null, null, "Cliente", "123", "Cajero", 1_000m,
+            [new PortfolioPaymentReceiptAllocation("FV-1", 1_000m)],
+            [new PortfolioPaymentReceiptTender("Efectivo", 1_000m, null)]);
+        var html = new PortfolioPaymentReceiptRenderer().Render(receipt, 80);
+        Assert.Contains("src=\"blob:https://app.auraly.test/logo-local\"", html);
+    }
+
+    [Fact]
     public void Rendered_thermal_receipts_use_only_one_feed_line_before_cut()
     {
         Assert.Equal(
@@ -740,6 +753,10 @@ public sealed class EscPosReceiptRendererTests
         Assert.DoesNotContain("<div class=\"brand\">Comercializadora Uno</div>", html);
         Assert.DoesNotContain("<h1>Comercializadora Uno</h1>", html);
         Assert.Contains("NIT 900123456", html);
+
+        var browserLogo = RenderSalesReport(receipt with
+            { CompanyLogoSource = "blob:https://app.auraly.test/logo-local" }, format);
+        Assert.Contains("class=\"brand-logo\" src=\"blob:https://app.auraly.test/logo-local\"", browserLogo);
 
         var withoutLogo = RenderSalesReport(receipt with { CompanyLogoSource = null }, format);
         Assert.DoesNotContain("<img class=\"brand-logo\"", withoutLogo);

@@ -390,6 +390,15 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             Assert.Contains("tenant-branding", value.GetProperty("logoUrl").GetString());
         }
 
+        using (var scope = fixture.CreateScope())
+        {
+            var tenantService = scope.ServiceProvider.GetRequiredService<
+                Auraly.Platform.Application.Identity.Interfaces.ITenantService>();
+            var printBranding = await tenantService.GetPrintBrandingAsync(result.TenantId);
+            Assert.Equal("data:image/png;base64,AQID", printBranding.LogoUrl);
+            Assert.Equal(result.TenantId, printBranding.TenantId);
+        }
+
         var token = await ReadInvitationTokenAsync(result.TenantId);
         var invitationWindow = await ReadInvitationWindowAsync(result.TenantId);
         Assert.Equal(TimeSpan.FromDays(3), invitationWindow.ExpiresAt - invitationWindow.CreatedAt);
