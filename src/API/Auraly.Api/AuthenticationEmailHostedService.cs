@@ -4,6 +4,7 @@ using System.Net;
 using System.Text.Json;
 using Azure;
 using Azure.Communication.Email;
+using Azure.Storage.Blobs;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
@@ -29,6 +30,7 @@ public sealed class PlatformEmailOutboxHostedService(
     DianSchemaValidator fiscalSchemaValidator,
     IFiscalXmlSigner fiscalXmlSigner,
     TimeProvider timeProvider,
+    BlobServiceClient blobServiceClient,
     ILogger<PlatformEmailOutboxHostedService> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -215,6 +217,11 @@ public sealed class PlatformEmailOutboxHostedService(
                 ? invoicePdfs.ReadReceipt(invoice.SignedXml)
                 : SalesInvoicePresentationMapper.FromSnapshot(
                     invoice.DocumentType, invoice.SnapshotJson, "DianAccepted");
+            receipt = receipt with
+            {
+                CompanyLogoSource = await LoadCompanyLogoSourceAsync(
+                    message.TenantId, cancellationToken)
+            };
             var pdf = await invoicePdfs.RenderAsync(receipt, cancellationToken);
             var pdfFileName =
                 $"RepresentacionGrafica-{SafeFileName(invoice.FiscalNumber)}.pdf";
@@ -235,6 +242,64 @@ public sealed class PlatformEmailOutboxHostedService(
         await SendAsync(client, invoice.Email, subject, html, plain, cancellationToken,
             [new(attachmentFileName,
                 "application/zip", new BinaryData(container))]);
+    }
+
+    private async Task<string?> LoadCompanyLogoSourceAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        const int maximumLogoBytes = 1024 * 1024;
+        try
+        {
+            Guid? businessId;
+            string? mediaRef;
+            await using (var connection = connections.Create())
+            {
+                await connection.OpenAsync(cancellationToken);
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT PrimaryBusinessId,LogoMediaRef FROM dbo.TenantLegalProfiles WHERE TenantId=@TenantId";
+                command.Parameters.Add(new SqlParameter("@TenantId", SqlDbType.UniqueIdentifier) { Value = tenantId });
+                await using var reader = await command.ExecuteReaderAsync(
+                    CommandBehavior.SingleRow, cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken)) return null;
+                businessId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
+                mediaRef = reader.IsDBNull(1) ? null : reader.GetString(1);
+            }
+            if (string.IsNullOrWhiteSpace(mediaRef) || businessId is null) return null;
+
+            // Tenant logos uploaded in Auraly are stored under the primary business.
+            // Keep the fiscal PDF self-contained; its renderer intentionally blocks network requests.
+            if (!mediaRef.StartsWith("tenant-branding/", StringComparison.Ordinal) ||
+                Uri.TryCreate(mediaRef, UriKind.Absolute, out _))
+                throw new InvalidDataException("El logo no usa el almacenamiento de marca del tenant.");
+            var mediaType = Path.GetExtension(mediaRef).ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                _ => throw new InvalidDataException("El logo no tiene un formato de imagen admitido.")
+            };
+            var container = blobServiceClient.GetBlobContainerClient(
+                $"business-{businessId.Value:N}".ToLowerInvariant());
+            var download = await container.GetBlobClient(mediaRef)
+                .DownloadStreamingAsync(cancellationToken: cancellationToken);
+            await using var source = download.Value.Content;
+            using var image = new MemoryStream();
+            var buffer = new byte[81920];
+            int count;
+            while ((count = await source.ReadAsync(buffer, cancellationToken)) != 0)
+            {
+                if (image.Length > maximumLogoBytes - count)
+                    throw new InvalidDataException("El logo supera el tamaño admitido para el PDF.");
+                image.Write(buffer, 0, count);
+            }
+            return $"data:{mediaType};base64,{Convert.ToBase64String(image.ToArray())}";
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception,
+                "No se pudo incorporar el logo del tenant {TenantId} al PDF fiscal; se mostrará el nombre.",
+                tenantId);
+            return null;
+        }
     }
 
     private async Task SendAsync(EmailClient client, string recipient, string subject,

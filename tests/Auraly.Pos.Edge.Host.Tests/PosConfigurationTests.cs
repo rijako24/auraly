@@ -343,6 +343,51 @@ public sealed class PosConfigurationTests
         }
     }
 
+    [Theory]
+    [InlineData(PrintTemplateFormats.Receipt)]
+    [InlineData(PrintTemplateFormats.HalfLetter)]
+    public async Task Prepared_pos_prints_cached_tenant_logo_instead_of_remote_url(string format)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "auraly-logo-print-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"), Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw, "Factura POS", 80, "Media carta",
+                PosPrinterName: "Factura POS", PosOutputFormat: format,
+                OrderPrinterName: "Pedidos"));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurablePosReceiptPrinter(
+                store, new EscPosReceiptRenderer(), new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(), rendered,
+                new ConfigurableOrderDocumentPrinter(store, new HalfLetterDocumentRenderer(), rendered),
+                new CreditSaleAcknowledgementRenderer(),
+                new PosWorkstationIdentity("POS-1", "Sede", "Bodega", "Cajero", "Empresa",
+                    "data:image/png;base64,AA=="));
+            var receipt = Receipt();
+            await printer.PrintSalesDocumentsAsync([new OnlineSalesReceipt(
+                receipt.DocumentId.Value, receipt.DocumentType, receipt.DocumentNumber,
+                receipt.FiscalNumber, receipt.IssuedAt, receipt.CustomerIdentification,
+                receipt.Lines.Select(line => new OnlineSalesReceiptLine(
+                    line.ProductCode, line.Description, line.Quantity, line.UnitPrice,
+                    line.Discount, line.Tax, line.Total)).ToArray(),
+                receipt.Payments.Select(payment => new OnlineSalesPayment(
+                    payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
+                receipt.UntaxedAmount, receipt.TaxAmount, receipt.PayableAmount,
+                receipt.Cufe, receipt.QrPayload, null, "Cliente",
+                CompanyLogoSource: "https://example.com/logo.png")]);
+
+            Assert.Single(rendered.Documents);
+            Assert.Contains("data:image/png;base64,AA==", rendered.Documents[0]);
+            Assert.DoesNotContain("https://example.com/logo.png", rendered.Documents[0]);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Order_ticket_workflow_is_independent_and_batches_selected_sheet_orders()
     {

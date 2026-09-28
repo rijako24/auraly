@@ -714,6 +714,7 @@ public sealed class ConfigurablePosReceiptPrinter(
     {
         if (receipts.Count == 0) return;
         var configuration = settings.LoadForPosPrinting();
+        receipts = receipts.Select(PrepareOnlineReceipt).ToArray();
         if (receipts.Any(receipt => receipt.CreditAcknowledgement is not null))
         {
             // Each credit sale intentionally produces two physical jobs so the
@@ -780,9 +781,7 @@ public sealed class ConfigurablePosReceiptPrinter(
                 ? "Auraly"
                 : workstation.CompanyName
             : receipt.CompanyName,
-        CompanyLogoSource = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
-            ? workstation?.CompanyLogoSource
-            : receipt.CompanyLogoSource,
+        CompanyLogoSource = LocalLogoSource(receipt.CompanyLogoSource),
         BusinessName = string.IsNullOrWhiteSpace(receipt.BusinessName)
             ? workstation?.BusinessName
             : receipt.BusinessName,
@@ -802,9 +801,7 @@ public sealed class ConfigurablePosReceiptPrinter(
             CompanyName = string.IsNullOrWhiteSpace(value.CompanyName)
                 ? receipt.CompanyName
                 : value.CompanyName,
-            CompanyLogoSource = string.IsNullOrWhiteSpace(value.CompanyLogoSource)
-                ? receipt.CompanyLogoSource
-                : value.CompanyLogoSource,
+            CompanyLogoSource = LocalLogoSource(value.CompanyLogoSource),
             BusinessName = string.IsNullOrWhiteSpace(value.BusinessName)
                 ? receipt.BusinessName
                 : value.BusinessName,
@@ -812,6 +809,22 @@ public sealed class ConfigurablePosReceiptPrinter(
                 ? receipt.WarehouseName
                 : value.WarehouseName
         };
+    }
+
+    private Auraly.Contracts.Sales.OnlineSalesReceipt PrepareOnlineReceipt(
+        Auraly.Contracts.Sales.OnlineSalesReceipt receipt) => receipt with
+    {
+        CompanyLogoSource = LocalLogoSource(receipt.CompanyLogoSource)
+    };
+
+    private string? LocalLogoSource(string? requestedSource)
+    {
+        if (workstation is null) return requestedSource;
+        if (workstation.CompanyLogoSource?.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) == true)
+            return workstation.CompanyLogoSource;
+        return requestedSource?.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) == true
+            ? requestedSource
+            : null;
     }
 
     private async Task PrintCreditAcknowledgementAsync(

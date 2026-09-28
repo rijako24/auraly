@@ -328,9 +328,8 @@ public sealed class PosEdgeEnrollmentClient(
 
         package ??= await RedeemFromServerAsync(
             request, installationId, null, cancellationToken);
-        store.SaveForNewEnrollment(package, request.EnrollmentSessionId);
         package = await CacheCompanyLogoAsync(package, cancellationToken);
-        store.Save(package);
+        store.SaveForNewEnrollment(package, request.EnrollmentSessionId);
         return Result(package);
     }
 
@@ -411,13 +410,16 @@ public sealed class PosEdgeEnrollmentClient(
                 "El logo de la empresa no tiene una dirección HTTPS válida.");
 
         using var client = new HttpClient();
-        using var response = await client.GetAsync(uri, cancellationToken);
+        using var response = await client.GetAsync(
+            uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
         var mediaType = response.Content.Headers.ContentType?.MediaType;
         if (string.IsNullOrWhiteSpace(mediaType) ||
             !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException(
                 "El archivo configurado como logo de la empresa no es una imagen válida.");
+        await response.Content.LoadIntoBufferAsync(4 * 1024 * 1024);
+        cancellationToken.ThrowIfCancellationRequested();
         var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
         return package with
         {

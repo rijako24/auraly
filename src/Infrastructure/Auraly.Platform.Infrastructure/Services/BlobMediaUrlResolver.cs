@@ -1,4 +1,5 @@
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using Azure.Storage.Sas;
 using Microsoft.Extensions.Logging;
 using Auraly.Platform.Application.Services;
@@ -14,6 +15,9 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
 
     private readonly BlobServiceClient _blobServiceClient;
     private readonly ILogger<BlobMediaUrlResolver> _logger;
+    private readonly SemaphoreSlim _delegationKeyGate = new(1, 1);
+    private DelegationKeySnapshot? _delegationKey;
+    private sealed record DelegationKeySnapshot(UserDelegationKey Key, DateTimeOffset ExpiresAt);
 
     public BlobMediaUrlResolver(
         BlobServiceClient blobServiceClient,
@@ -49,19 +53,61 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
             throw new InvalidOperationException($"Blob no encontrado: {mediaRef}");
         }
 
-        if (!blobClient.CanGenerateSasUri)
+        var expiresOn = DateTimeOffset.UtcNow.Add(SasExpiry);
+        Uri sasUri;
+        if (blobClient.CanGenerateSasUri)
         {
-            _logger.LogWarning(
-                "BlobClient no puede generar SAS (¿credenciales Shared Key?). MediaRef={MediaRef}",
-                mediaRef);
-            throw new InvalidOperationException(
-                "El almacenamiento configurado no soporta generación de SAS. Use URLs públicas para MediaRef.");
+            sasUri = blobClient.GenerateSasUri(BlobSasPermissions.Read, expiresOn);
         }
-
-        var sasUri = blobClient.GenerateSasUri(BlobSasPermissions.Read, DateTimeOffset.UtcNow.Add(SasExpiry));
+        else
+        {
+            // App Service authenticates to Blob Storage with managed identity. A
+            // user delegation SAS lets the browser read the same private blob.
+            var startsOn = DateTimeOffset.UtcNow.AddMinutes(-5);
+            var key = await GetDelegationKeyAsync(ct);
+            var sas = new BlobSasBuilder
+            {
+                BlobContainerName = containerName,
+                BlobName = mediaRef,
+                Resource = "b",
+                StartsOn = startsOn,
+                ExpiresOn = expiresOn
+            };
+            sas.SetPermissions(BlobSasPermissions.Read);
+            sasUri = new BlobUriBuilder(blobClient.Uri)
+            {
+                Sas = sas.ToSasQueryParameters(key, _blobServiceClient.AccountName)
+            }.ToUri();
+        }
         _logger.LogInformation(
             "SAS generado correctamente para BlobPath={MediaRef}, expira en {Minutes} min",
             mediaRef, SasExpiry.TotalMinutes);
         return sasUri.ToString();
+    }
+
+    private async Task<UserDelegationKey> GetDelegationKeyAsync(CancellationToken ct)
+    {
+        if (Volatile.Read(ref _delegationKey) is { } current &&
+            current.ExpiresAt > DateTimeOffset.UtcNow.AddMinutes(20))
+            return current.Key;
+
+        await _delegationKeyGate.WaitAsync(ct);
+        try
+        {
+            if (Volatile.Read(ref _delegationKey) is { } cached &&
+                cached.ExpiresAt > DateTimeOffset.UtcNow.AddMinutes(20))
+                return cached.Key;
+
+            var now = DateTimeOffset.UtcNow;
+            var expiresAt = now.AddHours(1);
+            var key = await _blobServiceClient.GetUserDelegationKeyAsync(
+                now.AddMinutes(-5), expiresAt, ct);
+            Volatile.Write(ref _delegationKey, new DelegationKeySnapshot(key.Value, expiresAt));
+            return key.Value;
+        }
+        finally
+        {
+            _delegationKeyGate.Release();
+        }
     }
 }

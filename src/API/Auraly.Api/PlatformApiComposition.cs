@@ -348,7 +348,7 @@ public static class PlatformApiComposition
 
         builder.Services.AddScoped<IPaidCheckoutFulfillmentHandler, OrderPaidCheckoutFulfillmentHandler>();
 
-        builder.Services.AddScoped<IMediaUrlResolver, BlobMediaUrlResolver>();
+        builder.Services.AddSingleton<IMediaUrlResolver, BlobMediaUrlResolver>();
 
         builder.Services.AddScoped<IMessageSequenceResolver, MessageSequenceResolver>();
 

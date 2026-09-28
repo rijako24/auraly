@@ -70,12 +70,15 @@ public sealed class HalfLetterDocumentRenderer
                 .top { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 5mm; border-bottom: .25mm solid #0f766e; padding-bottom: 1.7mm; }
                 .brand-lockup { display: flex; align-items: center; gap: 2.5mm; min-width: 0; }
                 .brand-logo { max-width: 28mm; max-height: 13mm; object-fit: contain; }
+                .document.logo-primary .brand-logo { max-width: 52mm; max-height: 20mm; }
                 h1 { margin: 0; font-size: 13pt; font-weight: 500; color: #065f5b; overflow-wrap: anywhere; }
                 h2 { margin: .8mm 0 0; font-size: 8.5pt; }
                 .number { text-align: right; white-space: nowrap; }
                 .meta { display: grid; grid-template-columns: 1.2fr 1fr; gap: .8mm 4mm; margin: 1.5mm 0 1mm; }
                 .pair { display: flex; justify-content: space-between; gap: 2.5mm; }
                 .pair span { color: #475569; }
+                .document[data-auraly-report='sales-invoice'][data-auraly-report-version='4'] .meta .pair { min-width: 0; }
+                .document[data-auraly-report='sales-invoice'][data-auraly-report-version='4'] .meta .pair strong { min-width: 0; overflow-wrap: anywhere; text-align: right; }
                 .fiscal-compliance { padding: 1.2mm 0; border-top: .2mm solid #cbd5e1; border-bottom: .2mm solid #cbd5e1; font-size: 6.2pt; line-height: 1.3; }
                 .fiscal-compliance > div + div { margin-top: .45mm; }
                 table { width: 100%; border-collapse: collapse; margin-top: 1mm; }
@@ -118,7 +121,7 @@ public sealed class HalfLetterDocumentRenderer
               await document.fonts.ready;
               paginateLetters();
               for (const documentElement of document.querySelectorAll('.document')) {
-                if (documentElement.closest('.sheet.letter') && documentElement.dataset.auralyReport === 'sales-invoice' && documentElement.dataset.auralyReportVersion === '3') continue;
+                if (documentElement.closest('.sheet.letter') && documentElement.dataset.auralyReport === 'sales-invoice' && Number(documentElement.dataset.auralyReportVersion) >= 3) continue;
                 const content = documentElement.querySelector('.document-content');
                 const available = documentElement.clientHeight;
                 if (content.scrollHeight > available) {
@@ -155,12 +158,13 @@ public sealed class HalfLetterDocumentRenderer
             ? templateVersion switch
             {
                 2 => PosPrintTemplateCatalog.SalesInvoiceV2,
-                3 => PosPrintTemplateCatalog.SalesInvoice,
+                3 => PosPrintTemplateCatalog.SalesInvoiceV3,
+                4 => PosPrintTemplateCatalog.SalesInvoice,
                 null when receipt.InvoicePrintDetails is null && !isCreditNote => PosPrintTemplateCatalog.SalesInvoiceV2,
-                null => PosPrintTemplateCatalog.SalesInvoice,
+                null => isCreditNote ? PosPrintTemplateCatalog.SalesInvoiceV3 : PosPrintTemplateCatalog.SalesInvoice,
                 _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
             }
-            : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForDocument(receipt.DocumentType);
+            : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForReceipt(templateVersion);
         var customerContact = isOrder && template.Version >= 2
             ? OrderContactPresentation.Html(receipt.CustomerName, receipt.CustomerIdentification,
                 receipt.CustomerAddress, receipt.CustomerPhone)
@@ -169,7 +173,7 @@ public sealed class HalfLetterDocumentRenderer
                     string.IsNullOrWhiteSpace(receipt.CustomerAddress)
                         ? invoiceDetails.CustomerAddress
                         : receipt.CustomerAddress,
-                    receipt.CustomerPhone)
+                    receipt.CustomerPhone, alignAddressRight: template.Version >= 4)
                 : isCreditNote
                     ? OrderContactPresentation.OptionalHtml(receipt.CustomerAddress, receipt.CustomerPhone)
                 : string.Empty;
@@ -205,7 +209,7 @@ public sealed class HalfLetterDocumentRenderer
             : "Comprobante emitido por Auraly";
         var fiscalNumber = !(isInvoice || isCreditNote) || string.IsNullOrWhiteSpace(receipt.FiscalNumber)
             ? string.Empty
-            : $"<div class=\"pair\"><span>Número DIAN</span><strong>{Encode(receipt.FiscalNumber)}</strong></div>";
+            : $"<div class=\"pair\"{(isInvoice && template.Version >= 4 ? " style=\"grid-column:1/-1\"" : string.Empty)}><span>Número DIAN</span><strong>{Encode(receipt.FiscalNumber)}</strong></div>";
         var rows = string.Join("", receipt.Lines.Select(line =>
         {
             var identity = Encode(line.Description);
@@ -250,6 +254,8 @@ public sealed class HalfLetterDocumentRenderer
         var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
             ? string.Empty
             : $"<img class=\"brand-logo\" src=\"{Encode(receipt.CompanyLogoSource)}\" alt=\"Logo de {companyName}\">";
+        var showLogoInsteadOfName = !string.IsNullOrWhiteSpace(companyLogo) &&
+            (isInvoice ? template.Version >= 4 : !isCreditNote && !isOrder && template.Version >= 3);
         var issuedAt = DianFiscalDateTime.InColombia(receipt.IssuedAt).ToString("d/M/yyyy, h:mm:ss tt", ColombianCulture);
         var detailSection = isOrder
             ? $"<section class=\"details\"><div><div class=\"caption\">Detalle del pedido · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div></div></div></section>"
@@ -258,8 +264,8 @@ public sealed class HalfLetterDocumentRenderer
             : $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section><section class=\"breakdown\"><div class=\"breakdown-title\">Medios de pago</div>{payments}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Subtotal factura</span><strong>{Money(invoiceSubtotal)}</strong></div>{rounding}{grossTotal}{withholdingTotals}<div class=\"pair total\"><span>Total a pagar</span><strong>{Money(netPayable)}</strong></div>{cashTender}{qr}</div></div></section>";
 
         return $$"""
-          <article class="document" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
-            <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>{{(isCreditNote ? "Número de nota" : "N.º de ticket")}}</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
+          <article class="document{{(showLogoInsteadOfName ? " logo-primary" : string.Empty)}}" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
+            <header class="top"><div><div class="brand-lockup">{{companyLogo}}{{(showLogoInsteadOfName ? string.Empty : $"<h1>{companyName}</h1>")}}</div><h2>{{documentName}}</h2></div><div class="number"><span>{{(isCreditNote ? "Número de nota" : "N.º de ticket")}}</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
             <section class="meta">{{customerDetails}}{{fiscalNumber}}</section>
             {{fiscalDetails}}
             <table><thead><tr><th>Producto</th><th class="numeric">{{(isCreditNote ? "Cantidad devuelta" : "Cant.")}}</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
@@ -275,7 +281,7 @@ public sealed class HalfLetterDocumentRenderer
         function paginateLetters() {
           for (const original of document.querySelectorAll('.sheet.letter')) {
             const report = original.querySelector('.document');
-            if (report?.dataset.auralyReport !== 'sales-invoice' || report.dataset.auralyReportVersion !== '3') continue;
+            if (report?.dataset.auralyReport !== 'sales-invoice' || Number(report.dataset.auralyReportVersion) < 3) continue;
             const rows = Array.from(report.querySelector('tbody').children);
             const prototype = original.cloneNode(true);
             prototype.querySelector('tbody').replaceChildren();
@@ -288,14 +294,14 @@ public sealed class HalfLetterDocumentRenderer
               body.append(row);
               if (fits()) continue;
               row.remove();
-              if (!body.children.length) throw new Error('Una línea supera el espacio disponible de Carta v3.');
+              if (!body.children.length) throw new Error('Una línea supera el espacio disponible de Carta.');
               const next = prototype.cloneNode(true);
               current.after(next);
               current = next;
               pages.push(next);
               body = next.querySelector('tbody');
               body.append(row);
-              if (!fits()) throw new Error('Una línea supera el espacio disponible de Carta v3.');
+              if (!fits()) throw new Error('Una línea supera el espacio disponible de Carta.');
             }
             pages.forEach((page, index) => {
               page.querySelector('.page-number').textContent = `Página ${index + 1} de ${pages.length}`;
