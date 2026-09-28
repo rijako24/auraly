@@ -739,17 +739,13 @@ export default function PosPage() {
               displayName,
               edgeToken,
             );
-            setSetupNotice("Verificando el logo de impresión…");
             const logoCheck = onlineClient.preparePrintBranding(true);
-            void logoCheck.then(ready => {
-              if (active && !ready) setMessage(
-                "El logo no está disponible. Los comprobantes se imprimirán con el nombre de la empresa.",
-              );
-            });
-            await Promise.race([logoCheck, new Promise<void>(resolve =>
-              window.setTimeout(resolve, 350))]);
+            const logoReady = await Promise.race([logoCheck, new Promise<undefined>(resolve =>
+              window.setTimeout(() => resolve(undefined), 350))]);
             if (!active) return;
-            setSetupNotice(null);
+            if (logoReady === false) setMessage(
+              "El logo no está disponible. Los comprobantes se imprimirán con el nombre de la empresa.",
+            );
             setClient(onlineClient);
           }
         }
@@ -2821,16 +2817,12 @@ export default function PosPage() {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectSalesWorkspace(option, workspaceChanging);
       const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName, edgeEnrollmentToken);
-      setSetupNotice("Verificando el logo de impresión…");
       const logoCheck = onlineClient.preparePrintBranding(true);
-      void logoCheck.then(ready => {
-        if (!ready) setMessage(
-          "El logo no está disponible. Los comprobantes se imprimirán con el nombre de la empresa.",
-        );
-      });
-      await Promise.race([logoCheck, new Promise<void>(resolve =>
-        window.setTimeout(resolve, 350))]);
-      setSetupNotice(null);
+      const logoReady = await Promise.race([logoCheck, new Promise<undefined>(resolve =>
+        window.setTimeout(() => resolve(undefined), 350))]);
+      if (logoReady === false) setMessage(
+        "El logo no está disponible. Los comprobantes se imprimirán con el nombre de la empresa.",
+      );
       setDraft(null);
       setTemporaries([]);
       setSelectedCustomer(null);

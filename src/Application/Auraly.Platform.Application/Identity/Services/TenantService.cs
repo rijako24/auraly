@@ -70,7 +70,7 @@ public sealed class TenantService(
                 else
                     return new(etag, new TenantBrandingDto(
                         tenant.TenantId, tenant.Name, tenant.LegalName,
-                        mediaRef, tenant.Nit, tenant.VerificationDigit));
+                        null, tenant.Nit, tenant.VerificationDigit));
             }
             var contentType = Path.GetExtension(mediaRef).ToLowerInvariant() switch
             {

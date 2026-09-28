@@ -54,6 +54,31 @@ Si aparece una nueva capacidad con semantica realmente distinta, primero se regi
 - Un nuevo documento fiscal extiende el snapshot/contrato y las reglas del motor existente. No crea tablas paralelas de folios, estados, intentos o artefactos.
 - Reintentos, timeouts ambiguos, track IDs, firma, CUFE/CUDE y estados DIAN se resuelven en el motor fiscal, nunca en controllers o UI.
 
+### Facturacion y marca de los comprobantes
+
+La bandeja de facturacion y las devoluciones son rutas criticas. Los cambios visuales
+de comprobantes deben ser quirurgicos: no alteran la confirmacion de la venta,
+facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscales.
+
+- Las API que confirman ventas, pedidos o devoluciones no consultan ni reciben el
+  logo. El dato de marca se incorpora exclusivamente al armar la impresion o la
+  representacion grafica, despues de la confirmacion autoritativa.
+- En POS web y aplicacion instalada sin caja preparada, la entrada al POS inicia
+  una sola comprobacion condicional del logo por tenant. Si falta o cambio, esa
+  misma peticion obtiene los bytes y actualiza Cache Storage del navegador; si
+  no cambio, el servidor responde sin leer Blob. No hay revalidacion al facturar,
+  devolver ni imprimir.
+- La caja preparada guarda el logo en su paquete local al prepararse. Entrar al
+  POS preparado no consulta ni valida el logo; el impresor toma la copia local
+  al armar el comprobante.
+- Al imprimir se toma la imagen ya disponible para ese tenant. Si falta, se
+  presenta el nombre de la empresa. Un fallo de marca o de impresora nunca
+  cancela ni repite una operacion ya confirmada.
+- Toda modificacion de esta frontera exige una regresion que compruebe los
+  caminos web, instalada online y preparada, el aislamiento por tenant, el
+  numero de peticiones y la independencia de la confirmacion respecto de la
+  impresion. Se mide por separado el tiempo de confirmacion y el de impresion.
+
 ## 5. Motor financiero-contable
 
 - Todo asiento automatico converge en `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor`.

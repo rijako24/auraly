@@ -47,8 +47,8 @@ termina en segundo plano. La impresión usa únicamente la copia disponible y,
 si falta o falla, muestra el nombre de la empresa sin demorar ni cancelar la
 factura. Los correos fiscales leen el logo al preparar la entrega, fuera de la
 transacción de venta. Los perfiles antiguos con un enlace externo ajeno al Blob
-del negocio conservan ese enlace; se deben volver a cargar desde el perfil para
-obtener una copia local y una impresión sin dependencia de esa URL.
+del negocio imprimen el nombre hasta volver a cargar el logo desde el perfil;
+la impresión no consulta esa URL.
 | Consultar o editar la empresa propia | `tenant.profile.read/update` → `TenantsController` limita el recurso a `User.TenantId` → `TenantService`; el plan se proyecta en solo lectura desde la suscripción canónica | conceder `tenants.*` al administrador cliente, confiar en el `tenantId` del navegador o duplicar el perfil empresarial |
 | Cargos de facturación | catálogo versionado `InvoiceChargeService`/`SqlInvoiceChargeStore` → `InvoiceChargeCalculation` compartido por borrador online y Edge → snapshot de la venta → writer común de Gastos | otro medio de pago, producto ficticio, cálculo en UI o tabla paralela de cargos emitidos |
 | Gasto manual o asociado a una factura | `ExpenseService` o handler de venta → `SqlExpenseStore.PersistAcceptedAsync` → fuentes/trabajos financieros canónicos → `SqlAccountingPostingProcessor` abre CxP y marca el gasto procesado | consumir cursor operativo para gastos nuevos, abrir CxP desde POS o volver a registrar gasto al pagar al proveedor |

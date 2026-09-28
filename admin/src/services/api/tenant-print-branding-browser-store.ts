@@ -1,4 +1,4 @@
-const CACHE_NAME = "auraly-print-branding-v1";
+const CACHE_NAME = "auraly-print-branding-v2";
 
 export type ConditionalBranding<T> =
   | { notModified: true }
