@@ -215,9 +215,22 @@ public sealed class TenantService(
             throw new ArgumentException("Usa un logo JPG, PNG o WEBP.");
         var mediaRef = await blobStorage.UploadImageAsync(
             businessId, stream, $"tenant-branding/{Guid.NewGuid():N}{extension}");
-        if (!await unitOfWork.Tenants.UpdateLogoAsync(tenantId, mediaRef, DateTimeOffset.UtcNow, ct))
-            throw new ConflictException("El tenant no tiene un perfil legal editable.");
+        var affectedBusinessIds = await unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            if (!await unitOfWork.Tenants.UpdateLogoAsync(
+                    tenantId, mediaRef, DateTimeOffset.UtcNow, ct))
+                throw new ConflictException("El tenant no tiene un perfil legal editable.");
+            var businessIds = (await unitOfWork.Businesses.GetByTenantIdAsync(tenantId, ct))
+                .Where(business => business.IsActive)
+                .Select(business => business.BusinessId)
+                .ToArray();
+            await pricingSynchronization.EnqueueBusinessesAsync(businessIds, ct);
+            return businessIds;
+        }, ct);
         tenant.LogoMediaRef = mediaRef;
+        foreach (var affectedBusinessId in affectedBusinessIds)
+            await synchronization.DispatchPendingAsync(
+                tenantId, affectedBusinessId, CancellationToken.None);
         var expiration = (await unitOfWork.Tenants.GetFiscalCertificateExpirationsAsync(null, ct))
             .FirstOrDefault(value => value.TenantId == tenantId)?.ValidTo;
         return await MapToDtoWithBrandingAsync(tenant, expiration, ct);

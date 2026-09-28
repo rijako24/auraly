@@ -30,7 +30,43 @@ public sealed class PosEdgeEnrollmentStore(
     string keyDirectory,
     string databasePath)
 {
+    private readonly object writeGate = new();
+
     public PosEnrollmentPackage? Load() => ReadStored()?.Package;
+
+    public string? LoadPrintBrandingVersion() => ReadStored()?.PrintBrandingVersion;
+
+    public void SavePrintBranding(Guid tenantId, string? logoSource, string version)
+    {
+        lock (writeGate)
+        {
+            var stored = ReadStored()
+                ?? throw new InvalidOperationException("La caja no tiene un enrolamiento protegido.");
+            if (stored.Package.TenantId != tenantId)
+                throw new InvalidOperationException("El logo pertenece a otra empresa.");
+            if (logoSource is not null &&
+                !logoSource.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("El logo sincronizado no es una imagen local.");
+            SaveStored(stored with
+            {
+                Package = stored.Package with { CompanyLogoSource = logoSource },
+                PrintBrandingVersion = version
+            });
+        }
+    }
+
+    public bool TryUpdatePackage(Func<PosEnrollmentPackage, PosEnrollmentPackage?> update)
+    {
+        lock (writeGate)
+        {
+            var stored = ReadStored();
+            if (stored is null) return false;
+            var package = update(stored.Package);
+            if (package is null) return false;
+            SaveStored(stored with { Package = package });
+            return true;
+        }
+    }
 
     public Guid? LoadDeviceIdForReuse()
     {
@@ -66,21 +102,27 @@ public sealed class PosEdgeEnrollmentStore(
         var sessionId = document.RootElement.TryGetProperty("LocalEnrollmentSessionId", out var session)
             && session.ValueKind == JsonValueKind.String ? session.GetGuid() : (Guid?)null;
         var reset = document.RootElement.TryGetProperty("ResetLocalStorage", out var pending) && pending.GetBoolean();
-        return new StoredEnrollment(package, sessionId, reset);
+        var printBrandingVersion = document.RootElement.TryGetProperty("LocalPrintBrandingVersion", out var version)
+            && version.ValueKind == JsonValueKind.String ? version.GetString() : null;
+        return new StoredEnrollment(package, sessionId, reset, printBrandingVersion);
     }
 
     public void Save(PosEnrollmentPackage package)
     {
         ArgumentNullException.ThrowIfNull(package);
-        var prior = ReadStored();
-        SaveStored(new StoredEnrollment(package, prior?.EnrollmentSessionId, prior?.ResetLocalStorage ?? false));
+        lock (writeGate)
+        {
+            var prior = ReadStored();
+            SaveStored(new StoredEnrollment(package, prior?.EnrollmentSessionId,
+                prior?.ResetLocalStorage ?? false, prior?.PrintBrandingVersion));
+        }
     }
 
     public void SaveForNewEnrollment(PosEnrollmentPackage package, Guid sessionId)
     {
         ArgumentNullException.ThrowIfNull(package);
         PosStorageBootstrap.ValidateEnrollmentContinuity(databasePath, package);
-        SaveStored(new StoredEnrollment(package, sessionId, true));
+        SaveStored(new StoredEnrollment(package, sessionId, true, null));
     }
 
     public void ResetLocalStorageIfRequired(string databasePath)
@@ -92,7 +134,8 @@ public sealed class PosEdgeEnrollmentStore(
     }
 
     private sealed record StoredEnrollment(
-        PosEnrollmentPackage Package, Guid? EnrollmentSessionId, bool ResetLocalStorage);
+        PosEnrollmentPackage Package, Guid? EnrollmentSessionId, bool ResetLocalStorage,
+        string? PrintBrandingVersion);
 
     private void SaveStored(StoredEnrollment stored)
     {
@@ -100,6 +143,7 @@ public sealed class PosEdgeEnrollmentStore(
         var payload = JsonSerializer.SerializeToNode(stored.Package)!.AsObject();
         payload["LocalEnrollmentSessionId"] = stored.EnrollmentSessionId;
         payload["ResetLocalStorage"] = stored.ResetLocalStorage;
+        payload["LocalPrintBrandingVersion"] = stored.PrintBrandingVersion;
         var json = payload.ToJsonString();
         var directory = Path.GetDirectoryName(Path.GetFullPath(packagePath));
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
@@ -263,13 +307,15 @@ public sealed class PosEnrollmentSessionCompleter(
         await gate.WaitAsync(cancellationToken);
         try
         {
-            var package = enrollments.Load();
-            if (package?.InitialOfflineAccess is not { } access) return;
-            if (access.User.UserId != userId) return;
-            enrollments.Save(package with
+            enrollments.TryUpdatePackage(package =>
             {
-                InitialOfflineAccess = null,
-                InitialIdentitySnapshot = null
+                if (package.InitialOfflineAccess is not { } access ||
+                    access.User.UserId != userId) return null;
+                return package with
+                {
+                    InitialOfflineAccess = null,
+                    InitialIdentitySnapshot = null
+                };
             });
         }
         finally

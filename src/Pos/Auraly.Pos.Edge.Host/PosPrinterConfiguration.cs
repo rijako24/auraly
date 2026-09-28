@@ -827,8 +827,9 @@ public sealed class ConfigurablePosReceiptPrinter(
         if (requestedSource?.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) == true)
             return requestedSource;
         if (workstation is null) return null;
-        if (workstation.CompanyLogoSource?.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) == true)
-            return workstation.CompanyLogoSource;
+        var localSource = workstation.PrintLogoSource;
+        if (localSource?.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) == true)
+            return localSource;
         return null;
     }
 

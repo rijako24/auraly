@@ -378,6 +378,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             Assert.Equal(JsonValueKind.Null, value.GetProperty("verificationDigit").ValueKind);
         }
 
+        var configurationNoticesBefore = await CountTenantConfigurationNoticesAsync(result.TenantId);
         string brandingVersionBefore;
         using (var scope = fixture.CreateScope())
             brandingVersionBefore = (await scope.ServiceProvider.GetRequiredService<
@@ -408,6 +409,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             Assert.Null((await tenantService.GetConditionalPrintBrandingAsync(
                 result.TenantId, version.ETag)).Branding);
         }
+        Assert.True(await CountTenantConfigurationNoticesAsync(result.TenantId)
+            > configurationNoticesBefore);
 
         using (var first = await admin.GetAsync("/api/v1/tenants/branding/print"))
         {
@@ -1090,6 +1093,19 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@ProductId", productId);
         return Convert.ToDecimal(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountTenantConfigurationNoticesAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages notification
+            JOIN dbo.Businesses business ON business.BusinessId=notification.BusinessId
+            WHERE business.TenantId=@TenantId AND notification.Stream=N'Configuration';
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private async Task<int> CountActiveBusinessesWithoutPriceAsync(

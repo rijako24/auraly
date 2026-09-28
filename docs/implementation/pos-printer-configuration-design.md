@@ -195,8 +195,11 @@ el impresor nunca usa esa URL remota como sustituto de la imagen local.
 La impresión de la caja usa esa copia local incluso cuando una venta online
 incluye una URL temporal, tanto en tirilla como en formatos de hoja. No se guardan
 bytes de imagen en SQL ni se necesita red para imprimir una venta desconectada.
-Después de cambiar el logo del tenant, se debe volver a preparar la caja para
-actualizar su copia local. En POS web y en la aplicación instalada sin caja
+Después de cambiar el logo del tenant, el outbox de configuración avisa a la
+caja preparada. La sincronización de Edge consulta la versión del logo con la
+credencial del dispositivo y, si cambió, actualiza el paquete protegido y la
+copia en uso. Tras una desconexión, la puesta al día recupera ese cambio sin
+volver a preparar la caja. En POS web y en la aplicación instalada sin caja
 preparada, la entrada hace una petición condicional al endpoint de marca para
 impresión; Cache Storage conserva la imagen por tenant. La impresión web usa
 una URL local y la instalada entrega los bytes ya disponibles al servicio de

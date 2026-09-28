@@ -211,7 +211,7 @@ public sealed class PosWorkSessionClosurePrinter(
         return Auraly.Pos.Printing.WorkSessionClosureReceiptRenderer.RenderHtml(
             closure,
             workstation?.CompanyName ?? closure.BusinessName,
-            workstation?.CompanyLogoSource,
+            workstation?.PrintLogoSource,
             settings.ReceiptPaperWidthMillimeters);
     }
 

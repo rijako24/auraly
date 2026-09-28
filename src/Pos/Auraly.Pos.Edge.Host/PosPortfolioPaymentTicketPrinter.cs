@@ -25,7 +25,7 @@ public sealed class PosPortfolioPaymentTicketPrinter(
             VerificationDigit = workstation?.CompanyVerificationDigit ?? receipt.VerificationDigit,
             CompanyLogoSource = receipt.CompanyLogoSource is not null
                 ? receipt.CompanyLogoSource
-                : workstation?.CompanyLogoSource,
+                : workstation?.PrintLogoSource,
             BusinessName = workstation?.BusinessName ?? receipt.BusinessName,
             BusinessAddress = workstation?.BusinessAddress ?? receipt.BusinessAddress,
             BusinessPhone = workstation?.BusinessPhone ?? receipt.BusinessPhone

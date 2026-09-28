@@ -70,7 +70,9 @@ facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscale
   devolver ni imprimir.
 - La caja preparada guarda el logo en su paquete local al prepararse. Entrar al
   POS preparado no consulta ni valida el logo; el impresor toma la copia local
-  al armar el comprobante.
+  al armar el comprobante. Los cambios posteriores llegan por la sincronizacion
+  de configuracion existente, se guardan en el mismo paquete protegido y
+  actualizan la copia activa. Una reconexion recupera la version pendiente.
 - Al imprimir se toma la imagen ya disponible para ese tenant. Si falta, se
   presenta el nombre de la empresa. Un fallo de marca o de impresora nunca
   cancela ni repite una operacion ya confirmada.

@@ -39,8 +39,12 @@ sesión activa mantiene además una copia temporal de acceso rápido durante die
 minutos. La aplicación instalada sin caja preparada sigue la misma ruta web:
 verifica al entrar al POS y entrega al servicio local de impresión los bytes que
 ya están en la caché del navegador. Solo la caja preparada conserva una copia
-protegida en la carpeta local y la carga al iniciar su servicio; un logo añadido
-después de enrolar exige volver a prepararla. Imprimir nunca lee Blob ni la API.
+protegida en la carpeta local y la carga al iniciar su servicio. Un cambio del
+logo publica una invalidación en el flujo de configuración existente. Edge
+consulta condicionalmente la versión, descarga los bytes solo si cambiaron y
+actualiza el paquete protegido y la copia activa; una reconexión recupera los
+cambios perdidos. No requiere volver a preparar la caja. Imprimir nunca lee
+Blob ni la API.
 La verificación web empieza durante la
 entrada a POS y la pantalla espera como máximo 350 ms; si la descarga tarda más,
 termina en segundo plano. La impresión usa únicamente la copia disponible y,
