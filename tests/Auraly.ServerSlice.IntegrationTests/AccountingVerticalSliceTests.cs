@@ -3306,7 +3306,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             [AccountingCategories.AccountsReceivable] = ("130505", "Clientes", "Asset"),
             [AccountingCategories.AccountsPayable] = ("220505", "Proveedores", "Liability"),
             [AccountingCategories.SupplierCreditsReceivable] = ("13809506", "Saldos a favor con proveedores", "Asset"),
-            [AccountingCategories.InputVat] = ("240810", "IVA descontable", "Asset"),
+            [AccountingCategories.InputVat] = ("240810", "IVA descontable", "Liability"),
             [AccountingCategories.PurchasesExpense] = ("519595", "Compras no inventariables", "Expense"),
             [AccountingCategories.SalesRevenue] = ("413595", "Ingresos por ventas", "Revenue"),
             [AccountingCategories.SalesReturns] = ("417595", "Devoluciones en ventas", "ContraRevenue"),
