@@ -23,6 +23,16 @@ public class TenantRepository : ITenantRepository
         return tenant;
     }
 
+    public Task<TenantPrintBrandingProfile?> GetPrintBrandingProfileAsync(
+        Guid tenantId, CancellationToken ct = default) => _context.Database
+        .SqlQuery<TenantPrintBrandingProfile>($"""
+            SELECT tenant.TenantId,tenant.Name,profile.LegalName,profile.Nit,
+                   profile.VerificationDigit,profile.PrimaryBusinessId,profile.LogoMediaRef
+            FROM dbo.Tenants tenant
+            LEFT JOIN dbo.TenantLegalProfiles profile ON profile.TenantId=tenant.TenantId
+            WHERE tenant.TenantId={tenantId}
+            """).SingleOrDefaultAsync(ct);
+
     public Task<Tenant?> GetByIdForCapacityUpdateAsync(Guid tenantId, CancellationToken ct = default) =>
         _context.Tenants
             .FromSqlInterpolated($"SELECT * FROM dbo.Tenants WITH (UPDLOCK,HOLDLOCK) WHERE TenantId={tenantId}")
