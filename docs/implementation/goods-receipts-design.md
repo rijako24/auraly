@@ -176,7 +176,7 @@ La generación fiscal de la factura principal y de cada costo adicional sólo pu
 
 Un comprobante interno adicional aplica la misma restricción que la factura principal: no acredita IVA descontable por sí solo. Si el impuesto es no recuperable y el costo es directamente atribuible a la mercancía, se clasifica como mayor valor del inventario; en caso contrario se lleva al gasto correspondiente.
 
-Con el PUC semilla, inventario usa `143505`, IVA descontable `240810` y proveedores `220505`; las retenciones van a las categorías `236540`, `236701` y `236805` según la regla tributaria. Un flete que no se capitaliza usa `513550`; seguro `513025`, aduanas `519525`, manejo `513595` y otros costos directos `519596`. Las empresas pueden configurar las cuentas de esas categorías y conceptos sin cambiar el proceso. La factura principal de mercancía reconoce su propio inventario y su propia cuenta por pagar; los documentos adicionales solo agregan su costo atribuible o gasto y su obligación independiente.
+Con el PUC semilla, inventario usa `143505`, IVA descontable `240810` y proveedores `220505`; las retenciones van a las categorías `236570`, `236701` y `236805` según la regla tributaria. Un flete que no se capitaliza usa `513550`; seguro de compra `513095`, aduanas `514020`, manejo `513595` y otros costos directos el auxiliar `51959501`. Las empresas pueden configurar las cuentas de esas categorías y conceptos sin cambiar el proceso. La factura principal de mercancía reconoce su propio inventario y su propia cuenta por pagar; los documentos adicionales solo agregan su costo atribuible o gasto y su obligación independiente.
 
 #### `purchasing.GoodsReceiptCostLines`
 

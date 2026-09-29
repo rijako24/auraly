@@ -31,6 +31,116 @@ public sealed class AccountingSliceCollection : ICollectionFixture<ServerSliceFi
 public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Default_accounting_profile_keeps_customs_and_aseo_in_their_correct_puc_codes()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT Category,AccountCode,AccountType
+            FROM dbo.AccountingConfigurationProfileAccounts
+            WHERE ProfileCode=N'AURALY_CO'
+              AND Category IN(N'CustomsExpense',N'OperatingExpense',N'InputVat',
+                              N'DebitCardClearing',N'PurchaseInsuranceExpense');
+            """, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        var accounts = new Dictionary<string, (string Code, string Type)>();
+        while (await reader.ReadAsync())
+            accounts.Add(reader.GetString(0), (reader.GetString(1), reader.GetString(2)));
+
+        Assert.Equal(("514020", "Expense"), accounts["CustomsExpense"]);
+        Assert.Equal(("51959502", "Expense"), accounts["OperatingExpense"]);
+        Assert.Equal(("240810", "Liability"), accounts["InputVat"]);
+        Assert.Equal(("13809501", "Asset"), accounts["DebitCardClearing"]);
+        Assert.Equal(("513095", "Expense"), accounts["PurchaseInsuranceExpense"]);
+    }
+
+    [Fact]
+    public async Task Default_puc_cutover_is_idempotent_and_preserves_the_prior_mapping()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        try
+        {
+            await using (var setup = new SqlCommand("""
+                DELETE FROM dbo.AccountingAccountMappings
+                WHERE TenantId=@TenantId AND BusinessId IS NULL AND Category=N'CustomsExpense';
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'519525')
+                  INSERT dbo.AccountingAccounts(AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
+                  VALUES(NEWID(),@TenantId,N'519525',N'Gastos legales y aduaneros',N'Expense',1,0,1,SYSDATETIMEOFFSET());
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'514020')
+                  INSERT dbo.AccountingAccounts(AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
+                  VALUES(NEWID(),@TenantId,N'514020',N'Gastos aduaneros',N'Expense',1,0,1,SYSDATETIMEOFFSET());
+                UPDATE dbo.AccountingAccounts SET Name=N'Gastos legales y aduaneros'
+                WHERE TenantId=@TenantId AND Code=N'519525';
+                UPDATE dbo.AccountingAccounts SET Name=N'Gastos aduaneros',IsActive=1,AllowsPosting=1
+                WHERE TenantId=@TenantId AND Code=N'514020';
+                INSERT dbo.AccountingAccountMappings(MappingId,TenantId,BusinessId,Category,AccountId,EffectiveFrom,EffectiveTo,CreatedAt)
+                SELECT NEWID(),@TenantId,NULL,N'CustomsExpense',AccountId,CONVERT(date,'20000101'),NULL,SYSDATETIMEOFFSET()
+                FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'519525';
+                """, connection, transaction))
+            {
+                setup.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                await setup.ExecuteNonQueryAsync();
+            }
+
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Auraly.Commerce.sln")))
+                directory = directory.Parent;
+            Assert.NotNull(directory);
+            var script = await File.ReadAllTextAsync(Path.Combine(directory.FullName,
+                "database", "Auraly.Database", "Scripts", "Migrations", "20260928_CorrectDefaultPucMappings.sql"));
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                await using var migrate = new SqlCommand(script, connection, transaction) { CommandTimeout = 60 };
+                await migrate.ExecuteNonQueryAsync();
+            }
+
+            await using var check = new SqlCommand("""
+                SELECT account.Code,mapping.EffectiveFrom,mapping.EffectiveTo
+                FROM dbo.AccountingAccountMappings mapping
+                JOIN dbo.AccountingAccounts account ON account.AccountId=mapping.AccountId
+                WHERE mapping.TenantId=@TenantId AND mapping.BusinessId IS NULL
+                  AND mapping.Category=N'CustomsExpense'
+                ORDER BY mapping.EffectiveFrom;
+                """, connection, transaction);
+            check.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await using var reader = await check.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("519525", reader.GetString(0));
+            Assert.Equal(new DateTime(2000, 1, 1), reader.GetDateTime(1));
+            Assert.False(reader.IsDBNull(2));
+            var priorEnd = reader.GetDateTime(2);
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("514020", reader.GetString(0));
+            Assert.Equal(priorEnd.AddDays(1), reader.GetDateTime(1));
+            Assert.True(reader.IsDBNull(2));
+            Assert.False(await reader.ReadAsync());
+            await reader.DisposeAsync();
+
+            await using (var wrongName = new SqlCommand("""
+                DELETE dbo.AccountingAccountMappings
+                WHERE TenantId=@TenantId AND BusinessId IS NULL AND Category=N'CustomsExpense';
+                UPDATE dbo.AccountingAccounts SET Name=N'Elementos de aseo y cafetería'
+                WHERE TenantId=@TenantId AND Code=N'514020';
+                EXEC dbo.AccountingDefaultsProvision @TenantId,@BusinessId,@Now;
+                SELECT COUNT(*) FROM dbo.AccountingAccountMappings
+                WHERE TenantId=@TenantId AND BusinessId IS NULL AND Category=N'CustomsExpense';
+                """, connection, transaction))
+            {
+                wrongName.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                wrongName.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                wrongName.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
+                Assert.Equal(0, Convert.ToInt32(await wrongName.ExecuteScalarAsync()));
+            }
+        }
+        finally
+        {
+            await transaction.RollbackAsync();
+        }
+    }
+
+    [Fact]
     public async Task Accounting_document_type_catalog_matches_the_processing_policy()
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read);

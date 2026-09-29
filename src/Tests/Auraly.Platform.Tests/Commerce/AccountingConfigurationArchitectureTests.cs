@@ -70,6 +70,42 @@ public sealed class AccountingConfigurationArchitectureTests
         dispatchStore.Should().NotContain("dispatch.DispatchReasons");
     }
 
+    [Fact]
+    public void Default_accounting_profile_uses_distinct_codes_and_puc_compatible_natures()
+    {
+        var root = FindSolutionRoot();
+        var seed = Read(root, "database/Auraly.Database/Scripts/Seeds/SeedAccountingDefaults.sql");
+        var accountRows = seed.Split("MERGE dbo.AccountingConfigurationProfileExpenseConcepts", StringSplitOptions.None)[0];
+        var rows = Regex.Matches(accountRows,
+            @"\(N'(?<category>[^']+)',N'[^']+',N'(?<code>\d+)',N'[^']+',N'(?<type>[^']+)'",
+            RegexOptions.CultureInvariant)
+            .Select(match => (Category: match.Groups["category"].Value,
+                Code: match.Groups["code"].Value, Type: match.Groups["type"].Value))
+            .ToArray();
+
+        rows.Should().HaveCount(59);
+        rows.Select(row => row.Code).Should().OnlyHaveUniqueItems();
+        foreach (var row in rows)
+        {
+            row.Code.Length.Should().BeGreaterThanOrEqualTo(6, row.Category);
+            var expected = row.Code[0] switch
+            {
+                '1' => "Asset",
+                '2' => "Liability",
+                '3' => "Equity",
+                '4' => row.Category == "SalesReturns" ? "ContraRevenue" : "Revenue",
+                '5' or '6' => "Expense",
+                _ => throw new InvalidOperationException($"Unexpected PUC class for {row.Category}.")
+            };
+            row.Type.Should().Be(expected, row.Category);
+        }
+
+        rows.Single(row => row.Category == "CustomsExpense").Code.Should().Be("514020");
+        rows.Single(row => row.Category == "OperatingExpense").Code.Should().StartWith("519595");
+        rows.Single(row => row.Category == "PurchaseInsuranceExpense").Code.Should().StartWith("513095");
+        rows.Single(row => row.Category == "InputVat").Type.Should().Be("Liability");
+    }
+
     private static string Read(string root, string relativePath) =>
         File.ReadAllText(Path.Combine(root,
             relativePath.Replace('/', Path.DirectorySeparatorChar)));

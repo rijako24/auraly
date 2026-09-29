@@ -349,7 +349,8 @@ public sealed class SqlAccountingStore(
                        CONVERT(date,'20000101'),NULL,@Now
                 FROM dbo.AccountingConfigurationProfileAccounts d
                 INNER JOIN dbo.AccountingAccounts a
-                  ON a.TenantId=@TenantId AND a.Code=d.AccountCode AND a.IsActive=1 AND a.AllowsPosting=1
+                  ON a.TenantId=@TenantId AND a.Code=d.AccountCode AND a.Name=d.AccountName
+                    AND a.AccountType=d.AccountType AND a.IsActive=1 AND a.AllowsPosting=1
                 WHERE d.ProfileCode=@ProfileCode AND
                   NOT EXISTS(SELECT 1 FROM dbo.AccountingAccountMappings m WITH(UPDLOCK,HOLDLOCK)
                   WHERE m.TenantId=@TenantId AND m.BusinessId IS NULL AND m.Category=d.Category);

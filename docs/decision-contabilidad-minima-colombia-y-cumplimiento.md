@@ -90,6 +90,25 @@ dígito también debe ser compatible con la naturaleza configurada. Esto no
 convierte la plantilla en un PUC rígido: los nombres, auxiliares y mappings
 siguen perteneciendo a cada tenant.
 
+La plantilla `AURALY_CO` se contrasta con el [catálogo de cuentas del Decreto
+2650 de 1993](https://gestornormativo.creg.gov.co/gestor/entorno/docs/decreto_2650_1993.htm).
+Los códigos de seis dígitos conservan el concepto publicado; las separaciones
+propias (por ejemplo, tarjetas pendientes de conciliación o mermas) se crean
+como auxiliares de ocho dígitos bajo una subcuenta compatible. En particular,
+aduanas no capitalizadas usa `514020` y `519525` corresponde a elementos de
+aseo y cafetería. El IVA descontable `240810` es de clase 2 aunque su saldo
+sea débito. Una cuenta de gasto genérica no se presenta con el código oficial
+de libros y suscripciones (`519510`).
+
+Las correcciones de la plantilla solo cambian los futuros aprovisionamientos.
+Para tenants existentes, la migración de 2026-09-28 cambia con vigencia los
+mapeos predeterminados que aún tengan el código **y** nombre antiguos; conserva
+mapeos personalizados, asientos contabilizados y los saldos de las cuentas
+anteriores. Los conceptos de gasto de plantilla se actualizan solo si no fueron
+editados. Las cuentas `240810` ya usadas en asientos o saldos de apertura no se
+reclasifican automáticamente, porque eso modificaría la presentación histórica;
+requieren revisión contable expresa antes de una corrección en producción.
+
 Las reglas se versionan por vigencia y pueden depender de tipo documental, categoría de producto, impuesto, medio de pago, tercero y negocio.
 
 ## 8. Centros de costos
