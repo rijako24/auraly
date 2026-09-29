@@ -192,6 +192,8 @@
     ,"src/lib/inventory-operation-launch.test.ts"
     ,"src/lib/operation-draft-store.ts"
     ,"src/lib/operation-draft-store.test.ts"
+    ,"src/lib/local-draft-coordinator.ts"
+    ,"src/lib/local-draft-coordinator.test.ts"
     ,"src/lib/party-user-role-selection.ts"
     ,"src/lib/party-user-role-selection.test.ts"
     ,"src/lib/party-identification.ts"

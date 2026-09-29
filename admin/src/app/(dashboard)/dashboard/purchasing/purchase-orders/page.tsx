@@ -25,17 +25,28 @@ import type { GoodsReceiptProduct } from "@/services/api/goods-receipts";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { formatCurrency,formatDateTime } from "@/lib/utils";
+import { createLocalDraftCoordinator } from "@/lib/local-draft-coordinator";
+import {
+  loadPurchaseOrderDraft, purchaseOrderDraftKey, removePurchaseOrderDraft, savePurchaseOrderDraft,
+} from "@/lib/purchasing-draft-store";
 
 type Draft={id:string;warehouseId:string;supplierId:string;orderedAt:string;expectedAt:string;targetCoverageDays:number;notes:string;token:string|null;lines:PurchaseOrderLineRequest[];suggestionsInitialized?:boolean};
 const labels:Record<PurchaseOrderStatus,string>={Draft:"Borrador",Open:"Abierta",PartiallyReceived:"Recibida parcialmente",Received:"Recibida",Closed:"Cerrada",Cancelled:"Cancelada"};
 
 export default function PurchaseOrdersPage(){
-  const businessId=useBusinessContextStore(s=>s.selectedBusinessId);const permissions=useAuthStore(s=>new Set(s.user?.permissions??[]));
+  const businessId=useBusinessContextStore(s=>s.selectedBusinessId);const userId=useAuthStore(s=>s.user?.userId);const permissions=useAuthStore(s=>new Set(s.user?.permissions??[]));
   const [page,setPage]=useState(1),[search,setSearch]=useState(""),[status,setStatus]=useState<PurchaseOrderStatus|"all">("all");
   const [draft,setDraft]=useState<Draft>(),[detail,setDetail]=useState<PurchaseOrderDetail>();
   const [draftOrigin,setDraftOrigin]=useState<"local"|"server">("local");
   const list=usePurchaseOrders({page,pageSize:25,search:search||undefined,status:status==="all"?undefined:status});
-  const localDraftKey=businessId?`auraly.purchase-order.entry.${businessId}`:null;
+  const localDraftKey=businessId&&userId?purchaseOrderDraftKey(userId,businessId):null;
+  const legacyDraftKey=businessId?`auraly.purchase-order.entry.${businessId}`:null;
+  const localDrafts=useMemo(()=>createLocalDraftCoordinator<Draft>({
+    load:key=>loadPurchaseOrderDraft<Draft>(key),
+    save:savePurchaseOrderDraft,
+    remove:removePurchaseOrderDraft,
+  },()=>toast.error("No fue posible guardar la recuperación automática de esta orden.")),[]);
+  useEffect(()=>()=>{void localDrafts.flushAll().catch(()=>toast.error("No fue posible guardar la recuperación local de esta orden."))},[localDrafts]);
   const columns=useMemo<ColumnDef<PurchaseOrderListItem>[]>(()=>[
     {accessorKey:"documentNumber",header:"Orden",cell:({row})=><div><b>{row.original.documentNumber??"Borrador sin numerar"}</b><p className="text-xs text-muted-foreground">{formatDateTime(row.original.orderedAt)}</p></div>},
     {accessorKey:"supplierName",header:"Proveedor",cell:({row})=>row.original.supplierName??"Por seleccionar"},
@@ -47,22 +58,52 @@ export default function PurchaseOrdersPage(){
   const rememberDraft=(next:Draft)=>{
     setDraft(next);
     if(!localDraftKey||draftOrigin!=="local")return;
-    if(next.token){localStorage.removeItem(localDraftKey);setDraftOrigin("server");return}
-    // Igual que recepción de compra: conserva la captura únicamente en este
-    // navegador. La API solo recibe datos cuando el usuario guarda o confirma.
-    localStorage.setItem(localDraftKey,JSON.stringify(next));
+    if(next.token){
+      void localDrafts.remove(localDraftKey).catch(()=>{
+        // If the deletion failed, retain the authoritative server version for recovery.
+        localDrafts.update(localDraftKey,next);
+        toast.error("No fue posible limpiar la recuperación local de esta orden.");
+      });
+      setDraftOrigin("server");return;
+    }
+    localDrafts.update(localDraftKey,next);
   };
-  const newOrder=()=>{if(!localDraftKey){setDraftOrigin("local");setDraft(empty());return}try{const saved=localStorage.getItem(localDraftKey);if(saved){const restored=JSON.parse(saved) as Partial<Draft>;setDraftOrigin("local");setDraft({...empty(),...restored,targetCoverageDays:restored.targetCoverageDays??7} as Draft);return}}catch{localStorage.removeItem(localDraftKey)}const next=empty();localStorage.setItem(localDraftKey,JSON.stringify(next));setDraftOrigin("local");setDraft(next)};
+  const newOrder=async()=>{
+    if(!localDraftKey)return;
+    try{
+      let stored=await localDrafts.load(localDraftKey);
+      if(!stored&&legacyDraftKey){
+        const legacy=localStorage.getItem(legacyDraftKey);
+        if(legacy){
+          stored=JSON.parse(legacy) as Draft;
+          await savePurchaseOrderDraft(localDraftKey,stored);
+          localStorage.removeItem(legacyDraftKey);
+        }
+      }
+      if(stored){
+        setDraftOrigin(stored.token?"server":"local");
+        setDraft({...empty(),...stored,targetCoverageDays:stored.targetCoverageDays??7});
+        if(stored.token)void localDrafts.remove(localDraftKey).catch(()=>toast.error("No fue posible limpiar la recuperación local de esta orden."));
+        return;
+      }
+      const next=empty();setDraftOrigin("local");setDraft(next);localDrafts.update(localDraftKey,next);
+    }catch{toast.error("No fue posible recuperar la orden guardada en este dispositivo.")}
+  };
   const open=async(item:PurchaseOrderListItem)=>{try{const value=await purchaseOrdersApi.get(item.purchaseOrderId);if(value.status==="Draft"&&permissions.has("purchasing.purchase-orders.create")){setDraftOrigin("server");setDraft(fromDetail(value))}else setDetail(value);}catch{toast.error("No fue posible recuperar la orden.")}};
-  const confirmed=()=>{if(localDraftKey&&draftOrigin==="local")localStorage.removeItem(localDraftKey);setDraft(undefined)};
-  const discard=()=>{if(localDraftKey&&draftOrigin==="local")localStorage.removeItem(localDraftKey);setDraft(undefined)};
-  return <div className="space-y-6"><header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-medium text-primary">Compras</p><h1 className="text-3xl font-semibold">Órdenes de compra</h1><p className="text-muted-foreground">Planea el abastecimiento con inventario, pedidos en camino y rotación persistida por bodega.</p></div>{permissions.has("purchasing.purchase-orders.create")&&<Button onClick={newOrder}><Plus className="mr-2 h-4 w-4"/>Nueva orden</Button>}</header>
+  const clearLocal=async()=>{
+    if(localDraftKey&&(draftOrigin==="local"||(draft&&((await localDrafts.load(localDraftKey))?.id===draft.id))))
+      await localDrafts.remove(localDraftKey);
+    setDraft(undefined);
+  };
+  const confirmed=async()=>{try{await clearLocal()}catch{toast.error("No fue posible limpiar la recuperación local de esta orden.")}};
+  const discard=async()=>{try{await clearLocal()}catch{toast.error("No fue posible descartar la captura local.")}};
+  return <div className="space-y-6"><header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-medium text-primary">Compras</p><h1 className="text-3xl font-semibold">Órdenes de compra</h1><p className="text-muted-foreground">Planea el abastecimiento con inventario, pedidos en camino y rotación persistida por bodega.</p></div>{permissions.has("purchasing.purchase-orders.create")&&<Button onClick={()=>void newOrder()}><Plus className="mr-2 h-4 w-4"/>Nueva orden</Button>}</header>
     <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[1fr_15rem]"><ServerSearchInput value={search} onSearch={value=>{setSearch(value);setPage(1)}} isSearching={list.isFetching} placeholder="Número o proveedor"/><Select value={status} onValueChange={v=>setStatus(v as PurchaseOrderStatus|"all")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem>{Object.entries(labels).map(([value,label])=><SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></section>
     <DataTable columns={columns} data={list.data?.items??[]} isLoading={list.isLoading} page={list.data?.page} pageSize={25} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} onPaginationChange={setPage} onRowClick={open} enableRowSelection={false}/>
-    {draft&&businessId&&<OrderEditor draft={draft} businessId={businessId} onChange={rememberDraft} onClose={()=>setDraft(undefined)} onDiscard={discard} onConfirmed={confirmed}/>} {detail&&<OrderDetail detail={detail} canClose={permissions.has("purchasing.purchase-orders.close")} onClose={()=>setDetail(undefined)} onRefresh={async()=>setDetail(await purchaseOrdersApi.get(detail.purchaseOrderId))}/>}</div>;
+    {draft&&businessId&&<OrderEditor draft={draft} businessId={businessId} onChange={rememberDraft} onClose={()=>{if(localDraftKey)void localDrafts.flush(localDraftKey).catch(()=>toast.error("No fue posible guardar la recuperación local de esta orden."));setDraft(undefined)}} onDiscard={discard} onConfirmed={confirmed}/>} {detail&&<OrderDetail detail={detail} canClose={permissions.has("purchasing.purchase-orders.close")} onClose={()=>setDetail(undefined)} onRefresh={async()=>setDetail(await purchaseOrdersApi.get(detail.purchaseOrderId))}/>}</div>;
 }
 
-function OrderEditor({draft,businessId,onChange,onClose,onDiscard,onConfirmed}:{draft:Draft;businessId:string;onChange:(v:Draft)=>void;onClose:()=>void;onDiscard:()=>void;onConfirmed:()=>void}){
+function OrderEditor({draft,businessId,onChange,onClose,onDiscard,onConfirmed}:{draft:Draft;businessId:string;onChange:(v:Draft)=>void;onClose:()=>void;onDiscard:()=>Promise<void>;onConfirmed:()=>Promise<void>}){
   const options=useGoodsReceiptOptions(),save=useSavePurchaseOrder(),remove=useDeletePurchaseOrderDraft(),confirm=useConfirmPurchaseOrder();
   const [includeUnassociated,setIncludeUnassociated]=useState(false);
   const [suggestedDaysInput,setSuggestedDaysInput]=useState(String(draft.targetCoverageDays));
@@ -88,8 +129,8 @@ function OrderEditor({draft,businessId,onChange,onClose,onDiscard,onConfirmed}:{
   const request=()=>({purchaseOrderId:draft.id,businessId,warehouseId:draft.warehouseId||null,supplierId:draft.supplierId||null,orderedAt:new Date(draft.orderedAt).toISOString(),expectedAt:draft.expectedAt?new Date(draft.expectedAt).toISOString():null,currencyCode:"COP",notes:draft.notes||null,lines:draft.lines,concurrencyToken:draft.token});
   const hasInvalidQuantity=draft.lines.some(line=>line.orderedQuantity<=0);
   const persist=async()=>{if(hasInvalidQuantity){toast.error("Ajusta o quita los productos cuya cantidad sugerida es cero.");return null}try{const result=await save.mutateAsync(request());onChange(fromDetail(result));toast.success("Borrador guardado");return result}catch(error){toast.error("No se pudo guardar el borrador",{description:purchaseOrderError(error)});return null}};
-  const discard=async()=>{if(!draft.token){onDiscard();return}try{await remove.mutateAsync({id:draft.id,token:draft.token});toast.success("El borrador fue eliminado.");onDiscard()}catch(error){toast.error("No se pudo eliminar el borrador",{description:purchaseOrderError(error)})}};
-  const finish=async()=>{if(!draft.warehouseId||!draft.supplierId||!draft.lines.length)return toast.error("Selecciona proveedor, bodega y productos.");if(hasInvalidQuantity)return toast.error("Ajusta o quita los productos cuya cantidad sugerida es cero.");try{await confirm.mutateAsync({...request(),warehouseId:draft.warehouseId,supplierId:draft.supplierId,draftConcurrencyToken:null});toast.success("Orden de compra confirmada");onConfirmed()}catch(error){toast.error("No fue posible confirmar la orden",{description:purchaseOrderError(error)})}};
+  const discard=async()=>{if(!draft.token){await onDiscard();return}try{await remove.mutateAsync({id:draft.id,token:draft.token});toast.success("El borrador fue eliminado.");await onDiscard()}catch(error){toast.error("No se pudo eliminar el borrador",{description:purchaseOrderError(error)})}};
+  const finish=async()=>{if(!draft.warehouseId||!draft.supplierId||!draft.lines.length)return toast.error("Selecciona proveedor, bodega y productos.");if(hasInvalidQuantity)return toast.error("Ajusta o quita los productos cuya cantidad sugerida es cero.");try{await confirm.mutateAsync({...request(),warehouseId:draft.warehouseId,supplierId:draft.supplierId,draftConcurrencyToken:null});toast.success("Orden de compra confirmada");await onConfirmed()}catch(error){toast.error("No fue posible confirmar la orden",{description:purchaseOrderError(error)})}};
   return <><Dialog open onOpenChange={v=>!v&&onClose()}><DialogContent className="flex max-h-[94dvh] w-[96vw] max-w-[90rem] flex-col overflow-hidden p-0"><DialogHeader className="border-b px-6 py-5"><DialogTitle>{draft.token?"Editar borrador":"Nueva orden de compra"}</DialogTitle><DialogDescription>Las cantidades podrán diferir en la recepción; una orden confirmada conserva el plan original.</DialogDescription></DialogHeader><div className="space-y-5 overflow-y-auto p-6"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5"><Field label="Proveedor"><PartyRoleSelect role="Supplier" value={draft.supplierId} onChange={requestSupplierChange} placeholder="Buscar proveedor"/></Field><Field label="Bodega"><Select value={draft.warehouseId} onValueChange={v=>patch({warehouseId:v})}><SelectTrigger><SelectValue placeholder="Seleccionar"/></SelectTrigger><SelectContent>{(options.data?.warehouses??[]).map(w=><SelectItem key={w.warehouseId} value={w.warehouseId}>{w.name}</SelectItem>)}</SelectContent></Select></Field><Field label="Fecha de orden"><DateTimePicker value={draft.orderedAt} onChange={orderedAt=>patch({orderedAt})}/></Field><Field label="Entrega esperada"><DateTimePicker value={draft.expectedAt} onChange={expectedAt=>patch({expectedAt})}/></Field><Field label="Días sugeridos"><Input inputMode="numeric" value={suggestedDaysInput} onChange={event=>{const value=event.target.value;if(/^\d{0,2}$/.test(value))setSuggestedDaysInput(value)}} onBlur={()=>setSuggestedDaysInput(String(targetCoverageDays))}/><p className="text-xs text-muted-foreground">Entre 1 y 90. Por defecto: 7 días.</p></Field></div>
     <div className="rounded-xl border p-4"><SupplierProductPicker ref={productSearchRef} supplierId={draft.supplierId||undefined} includeUnassociated={includeUnassociated} onIncludeUnassociatedChange={setIncludeUnassociated} onSelect={add}/></div>
     <div data-testid="purchase-order-lines" className="overflow-hidden rounded-xl border"><div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/30 px-4 py-3"><p className="text-sm text-muted-foreground">El sugerido cubre {targetCoverageDays} días y se monta automáticamente al agregar cada producto.</p><Button type="button" size="sm" variant="outline" disabled={suggestionsLoading||!Object.keys(suggestions).length} onClick={applyAllSuggestions}>Aplicar todos los sugeridos</Button></div><table className="w-full table-fixed text-sm"><thead className="bg-muted/50"><tr><th className="w-[18%] p-3 text-left">Producto</th><th className="w-[9%] px-2 text-right" title="70 % de la rotación diaria de 30 días + 30 % de la rotación diaria de 90 días">Demanda diaria</th><th className="w-[11%] px-2 text-right">Stock + en camino</th><th className="w-[17%] px-2 text-center">Sugerido · {targetCoverageDays} días</th><th className="w-[9%]">Cantidad</th><th className="w-[11%]">Costo</th><th className="w-[10%]">Descuento</th><th className="w-[10%]">Total</th><th className="w-[5%]"/></tr></thead><tbody>{draft.lines.map(line=>{const suggestion=suggestions[line.productId];return <tr className="border-t align-top" key={line.lineId}><td className="break-words p-3">{line.description}<p className="text-xs text-muted-foreground">{line.presentationName} · {line.unitsPerPresentation} unidad(es)</p></td><td className="px-2 pt-4 text-right tabular-nums">{suggestion?suggestion.forecastDailyDemand.toLocaleString("es-CO",{maximumFractionDigits:2}):suggestionsLoading?"…":"0"}</td><td className="px-2 pt-4 text-right tabular-nums">{suggestion?<>{suggestion.currentStock.toLocaleString("es-CO")} + {suggestion.incomingQuantity.toLocaleString("es-CO")}</>:suggestionsLoading?"…":"0 + 0"}</td><td className="px-2 py-3 text-center">{suggestion?<><Button type="button" size="sm" variant="outline" onClick={()=>applySuggestion(line)} title="Aplicar la cantidad sugerida"><b>{suggestion.suggestedPresentationQuantity.toLocaleString("es-CO")}</b><span className="ml-1 text-xs text-muted-foreground">{suggestion.presentationName}</span></Button><details className="mt-1 text-left text-xs text-muted-foreground"><summary className="cursor-pointer text-center text-primary">Ver sugerido</summary><p className="mt-1">Demanda proyectada con rotación de 30 días ({suggestion.rotation30Days.toLocaleString("es-CO")}) y 90 días ({suggestion.rotation90Days.toLocaleString("es-CO")}): {suggestion.forecastDailyDemand.toLocaleString("es-CO",{maximumFractionDigits:2})} por día × {targetCoverageDays} días, menos {suggestion.currentStock.toLocaleString("es-CO")} en stock y {suggestion.incomingQuantity.toLocaleString("es-CO")} en camino. Se redondea a empaques de {suggestion.unitsPerPresentation.toLocaleString("es-CO")}.</p></details></>:<span className="text-xs text-muted-foreground">{suggestionsLoading?"Calculando…":"Sin datos"}</span>}</td><td className="p-2"><Input type="number" min="0" value={line.presentationQuantity}

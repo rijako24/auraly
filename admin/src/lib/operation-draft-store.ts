@@ -102,15 +102,6 @@ export async function removeInventoryOperationDraft(key: string) {
   await transaction("readwrite", (store) => store.delete(key));
 }
 
-export async function removeInventoryOperationDraftForDocument(
-  key: string,
-  documentId: string,
-) {
-  const draft = await loadInventoryOperationDraft(key);
-  if (!draft || draft.documentId === documentId)
-    await removeInventoryOperationDraft(key);
-}
-
 export async function loadActiveInventoryOperationKind(businessId: string) {
   const key = inventoryActiveKindKey(businessId);
   const selection = await transaction("readonly", (store) => store.get(key)) as

@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -54,11 +55,9 @@ import {
   inventoryDraftKey,
   type DurableInventoryOperationDraft,
   loadActiveInventoryOperationKind,
-  loadInventoryOperationDraft,
-  removeInventoryOperationDraft,
   saveActiveInventoryOperationKind,
-  saveInventoryOperationDraft,
 } from "@/lib/operation-draft-store";
+import type { LocalDraftCoordinator } from "@/lib/local-draft-coordinator";
 import {
   defaultInventoryOperationKind,
   type InventoryOperationKind,
@@ -142,6 +141,7 @@ export function InventoryOperationWorkspace({
   permissions,
   initialKind = defaultInventoryOperationKind,
   physicalCountDraft,
+  localDrafts,
   onCancel,
   onCompleted,
 }: {
@@ -150,6 +150,7 @@ export function InventoryOperationWorkspace({
   permissions: Set<string>;
   initialKind?: InventoryOperationKind;
   physicalCountDraft?: PhysicalCountDraftSelection;
+  localDrafts: LocalDraftCoordinator<DurableInventoryOperationDraft>;
   onCancel: () => void;
   onCompleted: (
     inventoryDestination?: "documents" | "drafts",
@@ -168,8 +169,6 @@ export function InventoryOperationWorkspace({
   const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [activeKindHydrated, setActiveKindHydrated] = useState(Boolean(physicalCountDraft));
-  const latestDraft = useRef<DurableInventoryOperationDraft | null>(null);
-  const pendingDraftSave = useRef<Promise<void>>(Promise.resolve());
   const suppressDraftPersistence = useRef(false);
 
   const selected = operationOptions.find((option) => option.id === kind)!;
@@ -195,27 +194,25 @@ export function InventoryOperationWorkspace({
     warehouseId || destinationId || reason || notes.trim() || lines.length,
   );
 
-  latestDraft.current = !suppressDraftPersistence.current && hydratedKey === draftKey && hasLocalCapture ? {
-    key: draftKey,
-    businessId,
-    kind,
-    documentId,
-    warehouseId,
-    destinationId,
-    reason,
-    notes,
-    countDocumentId: null,
-    conversionType,
-    valuationBasis,
-    lines,
-    updatedAt: new Date().toISOString(),
-  } : null;
-
-  useEffect(() => () => {
-    const pendingDraft = latestDraft.current;
-    if (pendingDraft)
-      void saveInventoryOperationDraft(pendingDraft);
-  }, []);
+  const localSnapshot = useMemo<DurableInventoryOperationDraft | undefined>(() => {
+    if (hydratedKey !== draftKey || !hasLocalCapture) return undefined;
+    return {
+      key: draftKey,
+      businessId,
+      kind,
+      documentId,
+      warehouseId,
+      destinationId,
+      reason,
+      notes,
+      countDocumentId: null,
+      conversionType,
+      valuationBasis,
+      lines,
+      updatedAt: new Date().toISOString(),
+    };
+  }, [businessId, conversionType, destinationId, documentId, draftKey,
+    hasLocalCapture, hydratedKey, kind, lines, notes, reason, valuationBasis, warehouseId]);
 
   useEffect(() => {
     let active = true;
@@ -249,7 +246,7 @@ export function InventoryOperationWorkspace({
     if (!activeKindHydrated) return;
     let active = true;
     setHydratedKey(null);
-    void loadInventoryOperationDraft(draftKey)
+    void localDrafts.load(draftKey)
       .then((draft) => {
         if (!active) return;
         if (draft) {
@@ -279,7 +276,7 @@ export function InventoryOperationWorkspace({
         toast.error("No fue posible recuperar el borrador local de inventario.");
       });
     return () => { active = false; };
-  }, [activeKindHydrated, draftKey, initialWarehouseId, warehouseIdsKey]);
+  }, [activeKindHydrated, draftKey, initialWarehouseId, warehouseIdsKey, localDrafts]);
 
   function selectKind(nextKind: OperationKind) {
     setKind(nextKind);
@@ -287,47 +284,16 @@ export function InventoryOperationWorkspace({
       .catch(() => toast.error("No fue posible guardar el tipo de operación."));
   }
 
-  useEffect(() => {
-    if (hydratedKey !== draftKey) return;
-    const timer = window.setTimeout(() => {
-      if (suppressDraftPersistence.current) return;
-      if (!hasLocalCapture) {
-        void removeInventoryOperationDraft(draftKey);
-        return;
-      }
-      pendingDraftSave.current = saveInventoryOperationDraft({
-        key: draftKey,
-        businessId,
-        kind,
-        documentId,
-        warehouseId,
-        destinationId,
-        reason,
-        notes,
-        countDocumentId: null,
-        conversionType,
-        valuationBasis,
-        lines,
-        updatedAt: new Date().toISOString(),
-      }).catch(() => {
-        toast.error("No fue posible guardar el avance local.");
-      });
-    }, 120);
-    return () => window.clearTimeout(timer);
+  useLayoutEffect(() => {
+    if (physicalCountDraft || hydratedKey !== draftKey) return;
+    if (!suppressDraftPersistence.current)
+      localDrafts.update(draftKey, localSnapshot);
   }, [
-    businessId,
-    conversionType,
-    destinationId,
-    valuationBasis,
-    documentId,
     draftKey,
     hydratedKey,
-    hasLocalCapture,
-    kind,
-    lines,
-    notes,
-    reason,
-    warehouseId,
+    localSnapshot,
+    localDrafts,
+    physicalCountDraft,
   ]);
 
   useEffect(() => {
@@ -410,11 +376,9 @@ export function InventoryOperationWorkspace({
   }
 
   async function discardDraft() {
-    suppressDraftPersistence.current = true;
-    latestDraft.current = null;
     try {
-      await pendingDraftSave.current;
-      await removeInventoryOperationDraft(draftKey);
+      await localDrafts.remove(draftKey);
+      suppressDraftPersistence.current = true;
       onCancel();
     } catch {
       toast.error("No fue posible descartar el borrador local.");
@@ -422,12 +386,12 @@ export function InventoryOperationWorkspace({
   }
 
   async function saveDraftAndClose() {
-    const pendingDraft = latestDraft.current;
+    const pendingDraft = localSnapshot;
     if (!pendingDraft) return;
     try {
-      await saveInventoryOperationDraft(pendingDraft);
+      localDrafts.update(draftKey, pendingDraft);
+      await localDrafts.flush(draftKey);
       suppressDraftPersistence.current = true;
-      latestDraft.current = null;
       toast.success("Borrador guardado en este dispositivo.");
       onCancel();
     } catch {
@@ -507,9 +471,11 @@ export function InventoryOperationWorkspace({
         });
       }
       suppressDraftPersistence.current = true;
-      latestDraft.current = null;
-      await pendingDraftSave.current;
-      await removeInventoryOperationDraft(draftKey);
+      try {
+        await localDrafts.remove(draftKey);
+      } catch {
+        toast.error("La operación se confirmó, pero no fue posible limpiar su borrador local.");
+      }
       return result;
     },
     onSuccess: (result) => {
@@ -604,12 +570,14 @@ export function InventoryOperationWorkspace({
               value={physicalCountDraft}
               businessId={businessId}
               permissions={permissions}
+              localDrafts={localDrafts}
               onCompleted={onCompleted}
             />
           : <PhysicalCountCreationForm
               businessId={businessId}
               warehouses={warehouses}
               permissions={permissions}
+              localDrafts={localDrafts}
               onCancel={onCancel}
               onCompleted={onCompleted}
             />
