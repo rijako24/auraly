@@ -389,4 +389,12 @@ test("confirmar un movimiento elimina su borrador solo tras aceptarlo", async ({
   await expect.poll(() => attempts).toBe(2);
   await expect(dialog).toBeHidden();
   expect(await readInventoryDraft(page, key)).toBeNull();
+
+  await page.getByRole("button", { name: "Nueva operación" }).click();
+  await dialog.getByRole("button", { name: /Movimientos de mercancía/ }).click();
+  await dialog.locator("textarea").fill("Captura para descartar");
+  await dialog.getByRole("button", { name: "Descartar borrador" }).click();
+  await expect(dialog).toBeHidden();
+  await page.reload();
+  expect(await readInventoryDraft(page, key)).toBeNull();
 });
