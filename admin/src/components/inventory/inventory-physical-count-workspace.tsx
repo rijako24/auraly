@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  useCallback,
   useEffect,
+  useLayoutEffect,
   useDeferredValue,
   useMemo,
   useRef,
@@ -54,11 +54,9 @@ import {
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import {
   inventoryDraftKey,
-  loadInventoryOperationDraft,
-  removeInventoryOperationDraft,
-  removeInventoryOperationDraftForDocument,
-  saveInventoryOperationDraft,
+  type DurableInventoryOperationDraft,
 } from "@/lib/operation-draft-store";
+import type { LocalDraftCoordinator } from "@/lib/local-draft-coordinator";
 
 type Warehouse = { id: string; name: string };
 type ReconciliationSection = "Counted" | "Uncounted";
@@ -222,12 +220,14 @@ export function PhysicalCountCreationForm({
   businessId,
   warehouses,
   permissions,
+  localDrafts,
   onCancel,
   onCompleted,
 }: {
   businessId: string;
   warehouses: Warehouse[];
   permissions: Set<string>;
+  localDrafts: LocalDraftCoordinator<DurableInventoryOperationDraft>;
   onCancel: () => void;
   onCompleted: (destination: "documents" | "drafts") => void;
 }) {
@@ -240,8 +240,6 @@ export function PhysicalCountCreationForm({
   const [captureStage, setCaptureStage] = useState<CountCaptureStage>("Count");
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const documentId = useRef(crypto.randomUUID());
-  const persistOnUnmount = useRef(true);
-  const latestPersistence = useRef<() => Promise<void>>(async () => undefined);
   const countRefs = useRef(new Map<string, HTMLInputElement>());
   const recountRefs = useRef(new Map<string, HTMLInputElement>());
   const reasons = useQuery({
@@ -263,7 +261,7 @@ export function PhysicalCountCreationForm({
   useEffect(() => {
     let active = true;
     setHydratedKey(null);
-    void loadInventoryOperationDraft(localDraftKey)
+    void localDrafts.load(localDraftKey)
       .then(draft => {
         if (!active) return;
         const storedWarehouse = warehouseIdsKey.split("|").includes(draft?.warehouseId ?? "")
@@ -300,12 +298,12 @@ export function PhysicalCountCreationForm({
         toast.error("No fue posible recuperar el avance local del conteo.");
       });
     return () => { active = false; };
-  }, [initialWarehouseId, localDraftKey, warehouseIdsKey]);
+  }, [initialWarehouseId, localDraftKey, warehouseIdsKey, localDrafts]);
 
-  const persistLocalCapture = useCallback(() => {
+  const localSnapshot = useMemo<DurableInventoryOperationDraft | undefined>(() => {
     if (!warehouse && !reason && lines.length === 0 && notes.trim() === "")
-      return removeInventoryOperationDraft(localDraftKey);
-    return saveInventoryOperationDraft({
+      return undefined;
+    return {
       key: localDraftKey,
       businessId,
       kind: "count",
@@ -332,32 +330,19 @@ export function PhysicalCountCreationForm({
         systemQuantity: line.systemQuantity,
       })),
       updatedAt: new Date().toISOString(),
-    });
+    };
   }, [businessId, captureStage, lines, localDraftKey, notes, reason, warehouse]);
 
-  latestPersistence.current = persistLocalCapture;
-
-  useEffect(() => () => {
-    if (persistOnUnmount.current)
-      void latestPersistence.current();
-  }, []);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (hydratedKey !== localDraftKey) return;
-    const timer = window.setTimeout(() => {
-      void persistLocalCapture().catch(() =>
-        toast.error("No fue posible guardar el avance local del conteo."));
-    }, 120);
-    return () => window.clearTimeout(timer);
-  }, [hydratedKey, localDraftKey, persistLocalCapture]);
+    localDrafts.update(localDraftKey, localSnapshot);
+  }, [hydratedKey, localDraftKey, localDrafts, localSnapshot]);
 
   async function discardLocalCapture() {
-    persistOnUnmount.current = false;
     try {
-      await removeInventoryOperationDraft(localDraftKey);
+      await localDrafts.remove(localDraftKey);
       onCancel();
     } catch {
-      persistOnUnmount.current = true;
       toast.error("No fue posible descartar el borrador local del conteo.");
     }
   }
@@ -397,8 +382,11 @@ export function PhysicalCountCreationForm({
       });
     },
     onSuccess: async () => {
-      persistOnUnmount.current = false;
-      await removeInventoryOperationDraft(localDraftKey);
+      try {
+        await localDrafts.remove(localDraftKey);
+      } catch {
+        toast.error("El conteo se guardó, pero no fue posible limpiar su captura local.");
+      }
       toast.success(captureStage === "Recount" && !recountsComplete ? "Borrador guardado para continuar el reconteo." : "Borrador guardado y listo para conciliar.");
       setDraftDialogOpen(false);
       onCompleted("drafts");
@@ -421,8 +409,11 @@ export function PhysicalCountCreationForm({
       })),
     }),
     onSuccess: async value => {
-      persistOnUnmount.current = false;
-      await removeInventoryOperationDraft(localDraftKey);
+      try {
+        await localDrafts.remove(localDraftKey);
+      } catch {
+        toast.error("El conteo se aplicó, pero no fue posible limpiar su captura local.");
+      }
       toast.success(`${value.documentNumber} fue enviado para aplicar.`);
       onCompleted("documents");
     },
@@ -636,11 +627,13 @@ export function PhysicalCountDraftEditForm({
   value,
   businessId,
   permissions,
+  localDrafts,
   onCompleted,
 }: {
   value: PhysicalCountDraftSelection;
   businessId: string;
   permissions: Set<string>;
+  localDrafts: LocalDraftCoordinator<DurableInventoryOperationDraft>;
   onCompleted: (destination: "documents" | "drafts") => void;
 }) {
   const draft = value?.count.drafts.find(item => item.draftId === value.draftId);
@@ -740,10 +733,14 @@ export function PhysicalCountDraftEditForm({
         draft!.draftId,
         { businessId, version: draft!.version },
       );
-      await removeInventoryOperationDraftForDocument(
-        inventoryDraftKey(businessId, "count"),
-        value!.count.inventoryPhysicalCountId,
-      );
+      try {
+        const key = inventoryDraftKey(businessId, "count");
+        const local = await localDrafts.load(key);
+        if (!local || local.documentId === value!.count.inventoryPhysicalCountId)
+          await localDrafts.remove(key);
+      } catch {
+        toast.error("El borrador se descartó en el servidor, pero no fue posible limpiar la copia local.");
+      }
     },
     onSuccess: () => {
       toast.success("Borrador de conteo descartado.");

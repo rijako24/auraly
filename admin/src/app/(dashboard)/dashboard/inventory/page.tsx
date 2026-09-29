@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Boxes, CheckCircle2, ChevronDown, ChevronUp, History, Plus, RefreshCw, SlidersHorizontal, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -23,6 +23,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { canConfirmWarehouseTransferReceipt, defaultInventoryOperationKind, inventoryDocumentLabel, inventoryDocumentTypeForKind, inventoryMovementLabel } from "@/lib/inventory-operation-launch";
+import { createLocalDraftCoordinator } from "@/lib/local-draft-coordinator";
+import {
+  loadInventoryOperationDraft, removeInventoryOperationDraft, saveInventoryOperationDraft,
+  type DurableInventoryOperationDraft,
+} from "@/lib/operation-draft-store";
 
 const fmt=(value:number)=>new Intl.NumberFormat("es-CO",{maximumFractionDigits:6}).format(value);
 const statusLabels:Record<string,string>={Draft:"Borrador",Accepted:"En proceso",Processed:"Procesado",DispatchPending:"Confirmando salida",Dispatched:"Pendiente de entrada",ReceiptPending:"Confirmando entrada",PartiallyReceived:"Entrada parcial",Received:"Recibido",Confirmed:"Confirmado",Failed:"Con error"};
@@ -34,6 +39,12 @@ const localDateValue=()=>{const date=new Date();const offset=date.getTimezoneOff
 export default function InventoryPage(){
  const businessId=useBusinessContextStore(s=>s.selectedBusinessId);
  const queryClient=useQueryClient();
+ const [localDrafts]=useState(()=>createLocalDraftCoordinator<DurableInventoryOperationDraft>({
+  load:loadInventoryOperationDraft,
+  save:(_key,draft)=>saveInventoryOperationDraft(draft),
+  remove:removeInventoryOperationDraft,
+ },()=>toast.error("No fue posible guardar el avance local de inventario.")));
+ useEffect(()=>()=>{void localDrafts.flushAll().catch(()=>toast.error("No fue posible guardar el avance local de inventario."))},[localDrafts]);
  const permissions=new Set(useAuthStore(s=>s.user?.permissions??[]));
  const [search,setSearch]=useState("");
  const [warehouseId,setWarehouseId]=useState("all"); const [activeTab,setActiveTab]=useState("balances"); const [operationType,setOperationType]=useState("all");
@@ -86,7 +97,7 @@ export default function InventoryPage(){
   {operationType!=="StockCount"&&operationFilters}
   {operationType==="StockCount"?<div className="space-y-4"><Tabs value={inventoryView} onValueChange={setInventoryView} className="space-y-4"><TabsList className="grid h-auto w-full grid-cols-2 rounded-2xl p-1"><TabsTrigger value="documents" className="rounded-xl py-2.5">Documentos de inventario</TabsTrigger><TabsTrigger value="drafts" className="rounded-xl py-2.5">Borradores</TabsTrigger></TabsList><TabsContent value="documents" className="space-y-4">{operationFilters}{standardOperationHistory}</TabsContent><TabsContent value="drafts" className="space-y-4"><InventoryPhysicalCountWorkspace businessId={businessId} warehouses={warehouses} permissions={permissions} onReconciled={setReconciliationResult} onEditDraft={value=>{setEditingPhysicalCountDraft(value);setCreatingOperation(true)}}/></TabsContent></Tabs></div>:operationType==="ProductConversion"?<><SimpleTable headers={["Fecha","Documento","Bodega","Entrada equivalente","Salida equivalente","Merma","Tolerancia","Estado"]} rows={(operations.data?.items??[]).map(x=>[formatDateTime(x.occurredAt),x.documentNumber??"Borrador",x.warehouseName,x.conversionInputEquivalent==null?"—":fmt(x.conversionInputEquivalent),x.conversionOutputEquivalent==null?"—":fmt(x.conversionOutputEquivalent),x.conversionLossPercent==null?"—":`${fmt(x.conversionLossQuantity??0)} · ${fmt(x.conversionLossPercent)} %`,x.conversionMaximumLossPercent==null?"—":`${fmt(x.conversionMaximumLossPercent)} %`,humanLabel(x.status,statusLabels)])} loading={operations.isLoading} onRowClick={index=>void openOperationDetail(operations.data?.items[index])}/><Pager page={pages.operations} pageSize={pageSize} total={operations.data?.totalPages??0} totalItems={operations.data?.totalCount??0} setPage={page=>setPages(current=>({...current,operations:page}))} setPageSize={setPageSize}/></>:standardOperationHistory}
  </TabsContent></Tabs>
- {creatingOperation&&<Dialog open onOpenChange={v=>{if(!v){setCreatingOperation(false);setEditingPhysicalCountDraft(undefined)}}}><DialogContent className="flex max-h-[94dvh] max-w-6xl flex-col overflow-y-auto"><DialogHeader><DialogTitle>{editingPhysicalCountDraft?"Editar borrador":"Nueva operación"}</DialogTitle><DialogDescription>{editingPhysicalCountDraft?"Continúa el conteo o reconteo exactamente donde quedó guardado.":"Comienza con un conteo físico o cambia de operación sin cerrar esta ventana."}</DialogDescription></DialogHeader><InventoryOperationWorkspace businessId={businessId} warehouses={warehouses} permissions={permissions} initialKind={editingPhysicalCountDraft?"count":defaultInventoryOperationKind} physicalCountDraft={editingPhysicalCountDraft} onCancel={()=>{setCreatingOperation(false);setEditingPhysicalCountDraft(undefined)}} onCompleted={(destination,completedKind)=>{setCreatingOperation(false);setEditingPhysicalCountDraft(undefined);setActiveTab("operations");setOperationType(completedKind?inventoryDocumentTypeForKind(completedKind):"StockCount");setInventoryView(destination??"documents");void Promise.all([queryClient.invalidateQueries({queryKey:["inventory-physical-counts"]}),queryClient.invalidateQueries({queryKey:["inventory-physical-count-drafts"]}),queryClient.invalidateQueries({queryKey:["inventory-operations"]})])}}/></DialogContent></Dialog>}
+ {creatingOperation&&<Dialog open onOpenChange={v=>{if(!v){void localDrafts.flushAll().catch(()=>toast.error("No fue posible guardar el avance local de inventario."));setCreatingOperation(false);setEditingPhysicalCountDraft(undefined)}}}><DialogContent className="flex max-h-[94dvh] max-w-6xl flex-col overflow-y-auto"><DialogHeader><DialogTitle>{editingPhysicalCountDraft?"Editar borrador":"Nueva operación"}</DialogTitle><DialogDescription>{editingPhysicalCountDraft?"Continúa el conteo o reconteo exactamente donde quedó guardado.":"Comienza con un conteo físico o cambia de operación sin cerrar esta ventana."}</DialogDescription></DialogHeader><InventoryOperationWorkspace businessId={businessId} warehouses={warehouses} permissions={permissions} localDrafts={localDrafts} initialKind={editingPhysicalCountDraft?"count":defaultInventoryOperationKind} physicalCountDraft={editingPhysicalCountDraft} onCancel={()=>{void localDrafts.flushAll().catch(()=>toast.error("No fue posible guardar el avance local de inventario."));setCreatingOperation(false);setEditingPhysicalCountDraft(undefined)}} onCompleted={(destination,completedKind)=>{setCreatingOperation(false);setEditingPhysicalCountDraft(undefined);setActiveTab("operations");setOperationType(completedKind?inventoryDocumentTypeForKind(completedKind):"StockCount");setInventoryView(destination??"documents");void Promise.all([queryClient.invalidateQueries({queryKey:["inventory-physical-counts"]}),queryClient.invalidateQueries({queryKey:["inventory-physical-count-drafts"]}),queryClient.invalidateQueries({queryKey:["inventory-operations"]})])}}/></DialogContent></Dialog>}
  <InventoryReconciliationDialog open={Boolean(reconciliationResult)} businessId={businessId} value={reconciliationResult} onClose={()=>setReconciliationResult(undefined)}/>
  <WarehouseTransferReceiptDialog businessId={businessId} transferId={receivingTransferId} onClose={()=>setReceivingTransferId(null)}/>
  {detailLoading&&<Dialog open onOpenChange={()=>setDetailLoading(false)}><DialogContent><div className="flex items-center justify-center gap-2 p-10 text-muted-foreground"><RefreshCw className="h-5 w-5 animate-spin"/>Cargando detalle…</div></DialogContent></Dialog>}<InventoryDetailDialog detail={detail} onClose={()=>setDetail(undefined)}/></div>

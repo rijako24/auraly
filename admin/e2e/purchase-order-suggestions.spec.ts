@@ -32,6 +32,27 @@ async function authenticate(page: Page) {
   }, { tenant: tenantId, business: businessId, user: userId, granted: permissions });
 }
 
+async function readLocalOrder(page: Page) {
+  return page.evaluate(async (key) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("auraly-purchasing-work");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      if (!database.objectStoreNames.contains("purchase-order-drafts")) return null;
+      return await new Promise<{ value: { lines: unknown[] } } | null>((resolve, reject) => {
+        const request = database.transaction("purchase-order-drafts", "readonly")
+          .objectStore("purchase-order-drafts").get(key);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error);
+      });
+    } finally {
+      database.close();
+    }
+  }, `purchase-order:${userId}:${businessId}`);
+}
+
 test("la orden precarga y explica el sugerido semanal y permite recalcularlo", async ({ page }) => {
   const partyRequests: URL[] = [];
   const productSearches: string[] = [];
@@ -119,10 +140,7 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await expect(quantity).toHaveValue("4");
   const selectedOrderDate = await orderDate.textContent();
   const selectedExpectedDate = await expectedDate.textContent();
-  await expect.poll(() => page.evaluate(({ key }) => {
-    const stored = localStorage.getItem(key);
-    return stored ? (JSON.parse(stored) as { lines: unknown[] }).lines.length : 0;
-  }, { key: `auraly.purchase-order.entry.${businessId}` })).toBe(1);
+  await expect.poll(async () => (await readLocalOrder(page))?.value.lines.length ?? 0).toBe(1);
 
   await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByRole("button", { name: "Nueva orden" }).click();
@@ -145,7 +163,5 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await expect(restored.locator("tbody tr")).toHaveCount(0);
   await restored.getByRole("button", { name: "Descartar captura" }).click();
   await expect(restored).toBeHidden();
-  await expect.poll(() => page.evaluate(({ key }) => localStorage.getItem(key), {
-    key: `auraly.purchase-order.entry.${businessId}`,
-  })).toBeNull();
+  await expect.poll(() => readLocalOrder(page)).toBeNull();
 });

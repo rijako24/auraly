@@ -186,6 +186,18 @@ Los catalogos globales/oficiales se cargan mediante seeds idempotentes del proye
 - Los tests expresan expectativas y contratos, pero no copian el algoritmo productivo para calcular el mismo resultado.
 - Una migracion temporal de ruta exige telemetria, compatibilidad definida y condicion de retiro. No quedan dos rutas activas indefinidamente "por seguridad".
 
+La recuperación local de formularios de inventario, órdenes de compra y recepciones
+de compra pertenece a IndexedDB. La página propietaria serializa las escrituras
+por clave, conserva solo la última captura pendiente y la vacía al cerrar la
+ventana; abrir el formulario espera esa escritura antes de leer. El cierre de la
+ventana no espera a IndexedDB ni envía un borrador al servidor. Las acciones que
+guardan o confirman en el servidor usan su caso de uso y retiran la copia local
+después de la aceptación; «Guardar borrador» de las otras operaciones de
+inventario sigue siendo una acción local. Las claves de compras aíslan usuario y
+negocio; el antiguo borrador
+de `localStorage` se importa una sola vez al abrirlo y se elimina únicamente tras
+guardar la copia en IndexedDB.
+
 ### Autorizacion administrativa
 
 - Cada permiso nuevo se registra en el catalogo canónico y queda asignado al rol

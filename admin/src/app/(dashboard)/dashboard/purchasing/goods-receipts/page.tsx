@@ -58,7 +58,8 @@ import {
 } from "@/lib/goods-receipt-calculator";
 import {
   goodsReceiptDraftKey, loadGoodsReceiptDraft, removeGoodsReceiptDraft, saveGoodsReceiptDraft,
-} from "@/lib/goods-receipt-draft-store";
+} from "@/lib/purchasing-draft-store";
+import { createLocalDraftCoordinator } from "@/lib/local-draft-coordinator";
 import {
   discardGoodsReceiptDraft,
   goodsReceiptConfirmationReceivedAt,
@@ -131,40 +132,37 @@ export default function GoodsReceiptsPage() {
   });
   const localDraftKey = businessId && userId ? goodsReceiptDraftKey(userId, businessId) : null;
   const legacyLocalDraftKey = businessId ? `auraly.goods-receipt.entry.${businessId}` : null;
-  const localWriteQueue = useRef(Promise.resolve());
   const localStorageFailureShown = useRef(false);
+  const localDrafts = useMemo(() => createLocalDraftCoordinator<EditorDraft>({
+    load: key => loadGoodsReceiptDraft<EditorDraft>(key),
+    save: saveGoodsReceiptDraft,
+    remove: removeGoodsReceiptDraft,
+  }, () => {
+    if (localStorageFailureShown.current) return;
+    localStorageFailureShown.current = true;
+    toast.error("No fue posible guardar la recuperación automática en este dispositivo.");
+  }), []);
+  useEffect(() => () => { void localDrafts.flushAll().catch(() => {
+    toast.error("No fue posible guardar la recuperación local de esta recepción.");
+  }); }, [localDrafts]);
 
   const rememberLocalDraft = (next: EditorDraft) => {
     setEditor(next);
+    if (localDraftKey) localDrafts.update(localDraftKey, next);
   };
   const clearLocalDraft = async () => {
     if (!localDraftKey) {
       setEditor(undefined);
       return;
     }
-    const cleanup = localWriteQueue.current
-      .then(() => removeGoodsReceiptDraft(localDraftKey));
-    localWriteQueue.current = cleanup.catch(() => undefined);
     try {
-      await cleanup;
+      await localDrafts.remove(localDraftKey);
       setEditor(undefined);
     } catch (error) {
       toast.error("No fue posible limpiar la recuperación local de esta recepción.");
       throw error;
     }
   };
-
-  useEffect(() => {
-    if (!editor || !localDraftKey) return;
-    localWriteQueue.current = localWriteQueue.current
-      .then(() => saveGoodsReceiptDraft(localDraftKey, editor))
-      .catch(() => {
-        if (!localStorageFailureShown.current) {
-          localStorageFailureShown.current = true;
-          toast.error("No fue posible guardar la recuperación automática en este dispositivo.");
-        }
-      });
-  }, [editor, localDraftKey]);
 
   const columns = useMemo<ColumnDef<GoodsReceiptListItem>[]>(() => [
     {
@@ -205,11 +203,11 @@ export default function GoodsReceiptsPage() {
   const newEntry = async () => {
     if (!businessId || !localDraftKey) return;
     try {
-      let stored = await loadGoodsReceiptDraft<Partial<EditorDraft>>(localDraftKey);
+      let stored = await localDrafts.load(localDraftKey);
       if (!stored && legacyLocalDraftKey) {
         const legacy = localStorage.getItem(legacyLocalDraftKey);
         if (legacy) {
-          stored = JSON.parse(legacy) as Partial<EditorDraft>;
+          stored = { ...emptyDraft(), ...JSON.parse(legacy) as Partial<EditorDraft> };
           await saveGoodsReceiptDraft(localDraftKey, stored);
           localStorage.removeItem(legacyLocalDraftKey);
         }
@@ -221,6 +219,7 @@ export default function GoodsReceiptsPage() {
       }
     } catch {
       toast.error("No fue posible recuperar la captura guardada en este dispositivo.");
+      return;
     }
     rememberLocalDraft(emptyDraft());
   };
@@ -228,7 +227,7 @@ export default function GoodsReceiptsPage() {
   const openEntry = async (item: GoodsReceiptListItem) => {
     try {
       if (item.status === "Draft") {
-        setEditor(fromDraft(await goodsReceiptsApi.getDraft(item.documentId)));
+        rememberLocalDraft(fromDraft(await goodsReceiptsApi.getDraft(item.documentId)));
       } else {
         setDetail(await goodsReceiptsApi.getDetail(item.documentId));
       }
@@ -281,7 +280,11 @@ export default function GoodsReceiptsPage() {
 
     <ReceiptEditor key={editor?.draftId ?? "closed"} open={!!editor} draft={editor} businessId={businessId}
       canConfirm={canConfirm} canAssociateProducts={canAssociateProducts} onChange={rememberLocalDraft}
-      onClose={() => setEditor(undefined)} onClear={clearLocalDraft} />
+      onClose={() => {
+        if (localDraftKey) void localDrafts.flush(localDraftKey).catch(() =>
+          toast.error("No fue posible guardar la recuperación local de esta recepción."));
+        setEditor(undefined);
+      }} onClear={clearLocalDraft} />
     <ReceiptDetailDialog detail={detail} onClose={() => {setDetail(undefined);if(new URLSearchParams(window.location.search).has("receiptId"))router.replace("/dashboard/purchasing/goods-receipts")}} />
 
   </div>;
