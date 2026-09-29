@@ -87,7 +87,7 @@ import {
 } from "./pos-operational-context";
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
-import { localPrintLogoSource } from "./pos-local-print-logo";
+import { localPrintCompanyName, localPrintLogoSource } from "./pos-local-print-logo";
 import { referenceOptionsApi } from "@/services/api/reference-options";
 import {
   realtimeReconnectDelay,
@@ -541,7 +541,9 @@ export class OnlinePosClient implements PosClient {
           ...receipt,
           businessName: this.context.businessName,
           warehouseName: this.context.warehouseName,
-          companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName,
+          companyName: localPrintCompanyName(
+            branding, receipt.companyName, this.context.businessName,
+            this.preparedPrintBranding),
           companyLogoSource: localPrintLogoSource(
             branding, this.preparedPrintBranding),
         }, null, workflow);
@@ -1418,7 +1420,9 @@ export class OnlinePosClient implements PosClient {
                 ...receipt,
                 businessName: this.context.businessName,
                 warehouseName: this.context.warehouseName,
-                companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName,
+                companyName: localPrintCompanyName(
+                  branding, receipt.companyName, this.context.businessName,
+                  this.preparedPrintBranding),
                 companyLogoSource: localPrintLogoSource(
                   branding, this.preparedPrintBranding),
               }, null, "pos");
