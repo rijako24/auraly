@@ -78,8 +78,10 @@ facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscale
   de configuracion existente, se guardan en el mismo paquete protegido y
   actualizan la copia activa. Una reconexion recupera la version pendiente.
 - Al imprimir se toma la imagen ya disponible para ese tenant. Si falta, se
-  presenta el nombre de la empresa. Un fallo de marca o de impresora nunca
-  cancela ni repite una operacion ya confirmada.
+  presenta el nombre de la empresa. La consulta existente del nombre del tenant
+  al imprimir se conserva en las rutas online; la caja preparada usa sus datos
+  locales. Esa consulta no descarga ni valida el logo. Un fallo de marca o de
+  impresora nunca cancela ni repite una operacion ya confirmada.
 - Toda modificacion de esta frontera exige una regresion que compruebe los
   caminos web, instalada online y preparada, el aislamiento por tenant, el
   numero de peticiones y la independencia de la confirmacion respecto de la
