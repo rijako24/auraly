@@ -40,6 +40,7 @@ test("cash movement version two remains unchanged", () => {
   assert.match(html, /Sede: AURALY · Bodega de venta Auraly/);
   assert.match(html, /margin-top:38px/);
   assert.match(html, /border-block:2px solid #111/);
+  assert.match(html, /window\.print\(\)/);
 });
 
 test("cash movement version one remains unchanged", () => {
@@ -51,6 +52,20 @@ test("cash movement version one remains unchanged", () => {
 
   assert.match(html, /margin-top:72px/);
   assert.doesNotMatch(html, /data-auraly-report-version/);
+  assert.match(html, /window\.print\(\)/);
+});
+
+test("current web cash entry and exit leave printing to the browser adapter", () => {
+  for (const direction of ["In", "Out"] as const) {
+    const html = cashMovementTicketHtml({
+      documentId: `movement-${direction}`, direction, reasonName: "Movimiento de caja",
+      amount: 10000, occurredAt: "2026-09-29T14:30:00-05:00",
+      reference: null, notes: null, responsibleName: "Cajero",
+    }, "Empresa");
+
+    assert.match(html, /data-auraly-report-version="3"/);
+    assert.doesNotMatch(html, /window\.print\s*\(/);
+  }
 });
 
 test("cash movement receipt escapes user-controlled content", () => {
@@ -65,9 +80,10 @@ test("cash movement receipt escapes user-controlled content", () => {
   assert.match(html, /REF&lt;&amp;&gt;/);
 });
 
-test("web cash movements use an internal print frame instead of a popup", async () => {
+test("web cash movements request printing once even when the dialog is cancelled", async () => {
   let printCalls = 0;
   let popupCalls = 0;
+  let afterPrint: (() => void) | null = null;
   const frame = {
     setAttribute() {},
     style: {},
@@ -75,9 +91,14 @@ test("web cash movements use an internal print frame instead of a popup", async 
     onload: null as null | (() => void),
     srcdoc: "",
     contentWindow: {
-      addEventListener() {},
+      addEventListener(event: string, callback: () => void) {
+        if (event === "afterprint") afterPrint = callback;
+      },
       focus() {},
-      print() { printCalls += 1; },
+      print() {
+        printCalls += 1;
+        afterPrint?.();
+      },
     },
   };
   const originalWindow = globalThis.window;
@@ -93,10 +114,15 @@ test("web cash movements use an internal print frame instead of a popup", async 
     },
   });
   try {
-    await printCashMovementTicket("<html><body>ticket</body></html>");
+    const html = cashMovementTicketHtml({
+      documentId: "movement-web", direction: "In", reasonName: "Base inicial",
+      amount: 10000, occurredAt: "2026-09-29T14:30:00-05:00",
+      reference: null, notes: null, responsibleName: "Cajero",
+    }, "Empresa");
+    await printCashMovementTicket(html);
     assert.equal(printCalls, 1);
     assert.equal(popupCalls, 0);
-    assert.match(frame.srcdoc, /ticket/);
+    assert.equal(frame.srcdoc, html);
   } finally {
     Object.assign(globalThis, { window: originalWindow, document: originalDocument });
   }
