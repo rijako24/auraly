@@ -282,9 +282,9 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Employees WHERE EmployeeId = @EmployeeId)
 
 BEGIN
 
-    INSERT INTO dbo.Employees (EmployeeId, BusinessId, Name, IsActive, CreatedAt)
+    INSERT INTO dbo.Employees (EmployeeId, TenantId, Name, IsActive, CreatedAt)
 
-    VALUES (@EmployeeId, @BusinessId, N'Equipo Rada Concept', 1, GETUTCDATE());
+    VALUES (@EmployeeId, @TenantId, N'Equipo Rada Concept', 1, GETUTCDATE());
 
 END
 
@@ -294,7 +294,7 @@ BEGIN
 
     UPDATE dbo.Employees
 
-    SET BusinessId = @BusinessId,
+    SET TenantId = @TenantId,
 
         Name = N'Equipo Rada Concept',
 

@@ -83,12 +83,12 @@ public sealed partial class SqlPartyStore(
             {
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.Customers
-                      (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
-                    VALUES (@CustomerId,@PartyId,@BusinessId,@RequiresElectronicInvoice,1,@ActorId,@Now);
+                      (CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+                    VALUES (@CustomerId,@PartyId,@TenantId,@RequiresElectronicInvoice,1,@ActorId,@Now);
                     """,
                     [
                         P("@CustomerId", resolvedCustomerId), P("@PartyId", resolvedPartyId),
-                        P("@BusinessId", actor.BusinessId),
+                        P("@TenantId", actor.TenantId),
                         P("@RequiresElectronicInvoice", request.RequiresElectronicInvoice),
                         P("@ActorId", actor.ActorId), P("@Now", now)
                     ],
@@ -103,17 +103,21 @@ public sealed partial class SqlPartyStore(
                     await InsertPricingAsync(
                         connection, transaction, actor, resolvedCustomerId, request.Pricing, now, ct);
                 await ExecuteAsync(connection, transaction, """
-                    DECLARE @Cursor BIGINT;
-                    SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
-                    FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
-                    WHERE BusinessId=@BusinessId AND Stream=N'Customers';
                     INSERT dbo.PosSynchronizationOutboxMessages
                       (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,
                        EntityType,EntityId,ChangeKind)
-                    VALUES(@NotificationId,@BusinessId,N'Customers',@Cursor,@Now,
-                           N'Customer',@CustomerId,N'Upsert');
+                    SELECT NEWID(),business.BusinessId,N'Customers',ISNULL(latest.CursorValue,0)+1,@Now,
+                           N'Customer',@CustomerId,N'Upsert'
+                    FROM dbo.Businesses business
+                    OUTER APPLY
+                    (
+                      SELECT MAX(AvailableThroughCursor) CursorValue
+                      FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+                      WHERE BusinessId=business.BusinessId AND Stream=N'Customers'
+                    ) latest
+                    WHERE business.TenantId=@TenantId AND business.IsActive=1;
                     """,
-                    [P("@NotificationId", ids.NewId()), P("@BusinessId", actor.BusinessId),
+                    [P("@TenantId", actor.TenantId),
                      P("@CustomerId", resolvedCustomerId), P("@Now", now)],
                     ct);
             }
@@ -158,8 +162,8 @@ public sealed partial class SqlPartyStore(
         command.CommandText = """
             SELECT c.CustomerId
             FROM dbo.Parties p
-            JOIN dbo.Customers c ON c.PartyId=p.PartyId AND c.BusinessId=@BusinessId
-            JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
+            JOIN dbo.Customers c ON c.PartyId=p.PartyId AND c.TenantId=@TenantId
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId
             WHERE p.TenantId=@TenantId AND p.IdentificationCountryId=@CountryId
               AND p.IdentificationTypeCode=@IdentificationType
               AND p.NormalizedIdentification=@Normalized;
@@ -197,8 +201,8 @@ public sealed partial class SqlPartyStore(
             SELECT COUNT_BIG(1)
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
-            JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
-            WHERE c.BusinessId=@BusinessId
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId
+            WHERE c.TenantId=@TenantId
               AND (@Active IS NULL OR c.IsActive=@Active)
               AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%'
                    OR p.NormalizedIdentification LIKE @Search+N'%');
@@ -206,8 +210,8 @@ public sealed partial class SqlPartyStore(
             SELECT c.CustomerId
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
-            JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
-            WHERE c.BusinessId=@BusinessId
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId
+            WHERE c.TenantId=@TenantId
               AND (@Active IS NULL OR c.IsActive=@Active)
               AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%'
                    OR p.NormalizedIdentification LIKE @Search+N'%')
@@ -271,9 +275,9 @@ public sealed partial class SqlPartyStore(
             partyCommand.Transaction = transaction;
             partyCommand.CommandText = """
                 SELECT c.PartyId FROM dbo.Customers c
-                JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
+                JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId
                 JOIN dbo.Parties p ON p.PartyId=c.PartyId
-                WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId;
+                WHERE c.CustomerId=@CustomerId AND c.TenantId=@TenantId;
                 """;
             partyCommand.Parameters.AddRange(
             [
@@ -338,7 +342,7 @@ public sealed partial class SqlPartyStore(
             await ValidateScopeAndGeographyAsync(connection, transaction, actor, request.Site, ct);
             var rowVersion = Convert.FromBase64String(request.RowVersion);
             await using var command = new SqlCommand("""
-                DECLARE @PartyId uniqueidentifier=(SELECT c.PartyId FROM dbo.Customers c JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId);
+                DECLARE @PartyId uniqueidentifier=(SELECT c.PartyId FROM dbo.Customers c JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId WHERE c.CustomerId=@CustomerId AND c.TenantId=@TenantId);
                 IF @PartyId IS NULL THROW 51030,'Customer is outside the authenticated business.',1;
                 IF EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND Identification=N'222222222222' AND DisplayName=N'Consumidor final')
                   THROW 51037,'Consumidor final is a protected system customer and cannot be changed.',1;
@@ -558,7 +562,7 @@ public sealed partial class SqlPartyStore(
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT c.CustomerId,p.PartyId,c.BusinessId,p.PartyType,p.IdentificationTypeCode,
+            SELECT c.CustomerId,p.PartyId,@BusinessId,p.PartyType,p.IdentificationTypeCode,
               p.Identification,p.NormalizedIdentification,p.VerificationDigit,p.DisplayName,
               p.LegalName,p.FirstName,p.LastName,
               (SELECT TOP(1) Value FROM dbo.PartyContacts x
@@ -570,9 +574,9 @@ public sealed partial class SqlPartyStore(
               ps.PriceChannelId,c.RequiresElectronicInvoice,c.IsActive
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
-            JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId
             LEFT JOIN dbo.CustomerPricingSettings ps ON ps.CustomerId=c.CustomerId
-            WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId;
+            WHERE c.CustomerId=@CustomerId AND c.TenantId=@TenantId;
 
             SELECT s.PartySiteId,s.Code,s.Name,co.CountryId,co.Code,co.Name,
               d.AdministrativeDivisionId,d.Code,d.Name,ci.CityId,ci.Code,ci.Name,
@@ -582,7 +586,7 @@ public sealed partial class SqlPartyStore(
             JOIN dbo.Countries co ON co.CountryId=s.CountryId
             JOIN dbo.AdministrativeDivisions d ON d.AdministrativeDivisionId=s.AdministrativeDivisionId
             JOIN dbo.Cities ci ON ci.CityId=s.CityId
-            WHERE c.BusinessId=@BusinessId ORDER BY s.IsPrimary DESC,s.Name;
+            WHERE c.TenantId=@TenantId ORDER BY s.IsPrimary DESC,s.Name;
             """;
         command.Parameters.AddRange(
         [
@@ -721,7 +725,8 @@ public sealed partial class SqlPartyStore(
         command.Transaction = transaction;
         command.CommandText = """
             SELECT CustomerId FROM dbo.Customers WITH (UPDLOCK,HOLDLOCK)
-            WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+            WHERE PartyId=@PartyId
+              AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             """;
         command.Parameters.AddRange([P("@PartyId", partyId), P("@BusinessId", businessId)]);
         return await command.ExecuteScalarAsync(ct) as Guid?;
@@ -796,8 +801,10 @@ public sealed partial class SqlPartyStore(
         command.Transaction = transaction;
         command.CommandText = """
             IF @PriceChannelId IS NOT NULL AND NOT EXISTS (
-              SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@PriceChannelId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51035,'Price channel is outside the customer business.',1;
+              SELECT 1 FROM dbo.PriceChannels channelValue
+              JOIN dbo.Businesses businessValue ON businessValue.TenantId=channelValue.TenantId
+              WHERE channelValue.PriceChannelId=@PriceChannelId AND businessValue.BusinessId=@BusinessId AND channelValue.IsActive=1)
+              THROW 51035,'Price channel is outside the customer tenant.',1;
             INSERT dbo.CustomerPricingSettings
               (CustomerId,PriceChannelId,ValidFrom,ValidUntil,UpdatedBy,UpdatedAt)
             VALUES(@CustomerId,@PriceChannelId,COALESCE(@ValidFrom,@Now),@ValidUntil,@ActorId,@Now);

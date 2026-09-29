@@ -256,6 +256,8 @@ public sealed class CatalogService(
             throw new CatalogValidationException("Every supplier presentation requires a name and a positive conversion factor.");
         if (request.Suppliers.GroupBy(supplier => supplier.Identification.Trim(), StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
             throw new CatalogValidationException("A supplier cannot be repeated for the same product.");
+        if (request.Suppliers.GroupBy(supplier => supplier.SupplierId).Any(group => group.Count() > 1))
+            throw new CatalogValidationException("A supplier cannot be repeated for the same product.");
         if (request.Barcodes.Any(barcode => string.IsNullOrWhiteSpace(barcode.Value)))
             throw new CatalogValidationException("Barcodes cannot be empty.");
         if (request.Scale is { ValueStart: < 0 } or { ValueLength: <= 0 } or { DecimalPlaces: < 0 or > 6 })

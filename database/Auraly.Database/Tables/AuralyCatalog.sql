@@ -1,6 +1,6 @@
 CREATE TABLE [dbo].[TaxProfiles] (
     [TaxProfileId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [Code] NVARCHAR(32) NOT NULL,
     [DianTaxCode] NVARCHAR(8) NOT NULL CONSTRAINT [DF_TaxProfiles_DianTaxCode] DEFAULT N'01',
     [Name] NVARCHAR(120) NOT NULL,
@@ -8,23 +8,24 @@ CREATE TABLE [dbo].[TaxProfiles] (
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [FK_TaxProfiles_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [UQ_TaxProfiles_Business_Code] UNIQUE ([BusinessId], [Code]),
+    CONSTRAINT [FK_TaxProfiles_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
+    CONSTRAINT [UQ_TaxProfiles_Tenant_Code] UNIQUE ([TenantId], [Code]),
+    CONSTRAINT [UQ_TaxProfiles_Tenant_Profile] UNIQUE ([TenantId], [TaxProfileId]),
     CONSTRAINT [CK_TaxProfiles_Rate] CHECK ([Rate] BETWEEN 0 AND 100)
 );
 GO
 
 CREATE TABLE [dbo].[ProductBarcodes] (
     [ProductBarcodeId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [Barcode] NVARCHAR(64) NOT NULL,
     [IsPrimary] BIT NOT NULL,
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [FK_ProductBarcodes_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [UQ_ProductBarcodes_Business_Barcode] UNIQUE ([BusinessId], [Barcode])
+    CONSTRAINT [FK_ProductBarcodes_Products] FOREIGN KEY ([TenantId], [ProductId]) REFERENCES [dbo].[Products] ([TenantId], [ProductId]),
+    CONSTRAINT [UQ_ProductBarcodes_Tenant_Barcode] UNIQUE ([TenantId], [Barcode])
 );
 GO
 CREATE INDEX [IX_ProductBarcodes_Product] ON [dbo].[ProductBarcodes] ([ProductId], [IsActive]);
@@ -32,14 +33,14 @@ GO
 
 CREATE TABLE [dbo].[ProductIdentifiers] (
     [ProductIdentifierId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [IdentifierType] NVARCHAR(32) NOT NULL,
     [Value] NVARCHAR(120) NOT NULL,
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
-    CONSTRAINT [FK_ProductIdentifiers_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [UQ_ProductIdentifiers_Business_Type_Value] UNIQUE ([BusinessId], [IdentifierType], [Value])
+    CONSTRAINT [FK_ProductIdentifiers_Products] FOREIGN KEY ([TenantId], [ProductId]) REFERENCES [dbo].[Products] ([TenantId], [ProductId]),
+    CONSTRAINT [UQ_ProductIdentifiers_Tenant_Type_Value] UNIQUE ([TenantId], [IdentifierType], [Value])
 );
 GO
 
@@ -61,7 +62,7 @@ GO
 
 CREATE TABLE [dbo].[PriceChannels] (
     [PriceChannelId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [Code] NVARCHAR(32) NOT NULL,
     [Name] NVARCHAR(120) NOT NULL,
     [Strategy] NVARCHAR(48) NOT NULL CONSTRAINT [DF_PriceChannels_Strategy] DEFAULT N'TieredProductPrice',
@@ -69,10 +70,10 @@ CREATE TABLE [dbo].[PriceChannels] (
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [FK_PriceChannels_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
+    CONSTRAINT [FK_PriceChannels_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [CK_PriceChannels_Strategy] CHECK ([Strategy] IN (N'TieredProductPrice',N'PercentageOverBasePrice',N'MarginOverLatestCost',N'FixedMarginOverAverageCost',N'SellAtAverageCost',N'ProductMarginAdjustment')),
     CONSTRAINT [CK_PriceChannels_Value] CHECK (([Strategy] IN (N'TieredProductPrice',N'SellAtAverageCost') AND [Value] IS NULL) OR ([Strategy]=N'PercentageOverBasePrice' AND [Value] BETWEEN -100 AND 1000) OR ([Strategy]=N'MarginOverLatestCost' AND [Value] BETWEEN 0 AND 99.999999) OR ([Strategy]=N'FixedMarginOverAverageCost' AND [Value] BETWEEN 0 AND 99.999999) OR ([Strategy]=N'ProductMarginAdjustment' AND [Value] BETWEEN -99.999999 AND 99.999999)),
-    CONSTRAINT [UQ_PriceChannels_Business_Code] UNIQUE ([BusinessId], [Code])
+    CONSTRAINT [UQ_PriceChannels_Tenant_Code] UNIQUE ([TenantId], [Code])
 );
 GO
 
@@ -113,7 +114,7 @@ GO
 
 CREATE TABLE [dbo].[Suppliers] (
     [SupplierId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [PartyId] UNIQUEIDENTIFIER NULL,
     [Identification] NVARCHAR(40) NOT NULL,
     [Name] NVARCHAR(200) NOT NULL,
@@ -122,21 +123,22 @@ CREATE TABLE [dbo].[Suppliers] (
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [FK_Suppliers_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_Suppliers_Parties] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
-    CONSTRAINT [UQ_Suppliers_Business_Identification] UNIQUE ([BusinessId], [Identification]),
+    CONSTRAINT [FK_Suppliers_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
+    CONSTRAINT [FK_Suppliers_Parties] FOREIGN KEY ([TenantId], [PartyId]) REFERENCES [dbo].[Parties] ([TenantId], [PartyId]),
+    CONSTRAINT [UQ_Suppliers_Tenant_Identification] UNIQUE ([TenantId], [Identification]),
+    CONSTRAINT [UQ_Suppliers_Tenant_Supplier] UNIQUE ([TenantId], [SupplierId]),
     CONSTRAINT [CK_Suppliers_DefaultPaymentDueDays] CHECK ([DefaultPaymentDueDays] BETWEEN 0 AND 3650),
     CONSTRAINT [CK_Suppliers_PurchaseEvidencePolicy] CHECK ([PurchaseEvidencePolicy] IS NULL OR [PurchaseEvidencePolicy] IN
       (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher'))
 );
 GO
-CREATE UNIQUE INDEX [UX_Suppliers_Business_Party]
-    ON [dbo].[Suppliers] ([BusinessId], [PartyId]) WHERE [PartyId] IS NOT NULL;
+CREATE UNIQUE INDEX [UX_Suppliers_Tenant_Party]
+    ON [dbo].[Suppliers] ([TenantId], [PartyId]) WHERE [PartyId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[SupplierProducts] (
     [SupplierProductId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierProductCode] NVARCHAR(120) NULL,
@@ -145,13 +147,14 @@ CREATE TABLE [dbo].[SupplierProducts] (
     [IsPrimary] BIT NOT NULL,
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
-    CONSTRAINT [FK_SupplierProducts_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [FK_SupplierProducts_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
-    CONSTRAINT [UQ_SupplierProducts_Business_Product_Supplier] UNIQUE ([BusinessId], [ProductId], [SupplierId]),
+    CONSTRAINT [FK_SupplierProducts_Products] FOREIGN KEY ([TenantId], [ProductId]) REFERENCES [dbo].[Products] ([TenantId], [ProductId]),
+    CONSTRAINT [FK_SupplierProducts_Suppliers] FOREIGN KEY ([TenantId], [SupplierId]) REFERENCES [dbo].[Suppliers] ([TenantId], [SupplierId]),
+    CONSTRAINT [UQ_SupplierProducts_Tenant_Product_Supplier] UNIQUE ([TenantId], [ProductId], [SupplierId]),
+    CONSTRAINT [UQ_SupplierProducts_Product_Supplier] UNIQUE ([ProductId], [SupplierId]),
     CONSTRAINT [CK_SupplierProducts_UnitsPerPresentation] CHECK ([UnitsPerPresentation] > 0)
 );
 GO
-CREATE UNIQUE INDEX [UX_SupplierProducts_Primary] ON [dbo].[SupplierProducts] ([BusinessId], [ProductId])
+CREATE UNIQUE INDEX [UX_SupplierProducts_Primary] ON [dbo].[SupplierProducts] ([TenantId], [ProductId])
     WHERE [IsPrimary] = 1 AND [IsActive] = 1;
 GO
 

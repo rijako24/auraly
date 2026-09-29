@@ -233,8 +233,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
                   IsActive,CreatedBy,CreatedAt)
                 VALUES(@PartyId,@TenantId,N'Organization',N'Cliente pedido web',
                   N'Cliente pedido web',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
-                INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-                VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+                INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+                VALUES(@CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
                 INSERT dbo.PartySites(
                   PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
                   CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
@@ -357,10 +357,10 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             await using var seed = new SqlCommand(
                 """
                 INSERT dbo.Products
-                  (ProductId,TenantId,BusinessId,Source,Sku,Name,
+                  (ProductId,TenantId,Source,Sku,Name,
                    Currency,ManageStock,IsGenericProduct,IsActive,CreatedAt)
                 VALUES
-                  (@ProductId,@TenantId,@BusinessId,0,@Code,N'Producto genérico',
+                  (@ProductId,@TenantId,0,@Code,N'Producto genérico',
                    N'COP',0,1,1,SYSUTCDATETIME());
                 INSERT dbo.ProductPrices
                   (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,

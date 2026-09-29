@@ -70,7 +70,7 @@ public sealed class ProductAdminServiceTests
         var category = new ProductCategory
         {
             ProductCategoryId = Guid.NewGuid(),
-            BusinessId = businessId,
+            TenantId = tenantId,
             Name = "Categoria",
             IsActive = true,
             IsBrowsable = true,

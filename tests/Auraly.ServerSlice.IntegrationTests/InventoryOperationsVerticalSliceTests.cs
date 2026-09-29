@@ -963,7 +963,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             """
             SELECT COUNT(*)
             FROM dbo.Warehouses warehouse
-            INNER JOIN dbo.Products product ON product.BusinessId=warehouse.BusinessId
+            INNER JOIN dbo.Businesses businessValue ON businessValue.BusinessId=warehouse.BusinessId
+            INNER JOIN dbo.Products product ON product.TenantId=businessValue.TenantId
             LEFT JOIN dbo.InventoryBalances balance
               ON balance.BusinessId=warehouse.BusinessId
              AND balance.WarehouseId=warehouse.WarehouseId
@@ -1027,24 +1028,24 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsActive,CreatedAt)
             VALUES(@Destination,@BusinessId,@WarehouseCode,N'Bodega destino',0,1,SYSDATETIMEOFFSET());
             INSERT dbo.TaxProfiles(
-                TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'IVA de prueba',19,1,SYSDATETIMEOFFSET());
-            INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,Currency,ManageStock,ConversionMaximumLossPercent,IsActive,CreatedAt)
-            VALUES(@First,@TenantId,@BusinessId,@FirstSku,@FirstReference,N'EA',@TaxProfileId,0,@FirstSku,N'Insumo',N'COP',1,0,1,SYSUTCDATETIME()),
-                  (@Second,@TenantId,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@SecondSku,N'Salida uno',N'COP',1,NULL,1,SYSUTCDATETIME()),
-                  (@Third,@TenantId,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@ThirdSku,N'Salida dos',N'COP',1,NULL,1,SYSUTCDATETIME());
+                TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'IVA de prueba',19,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,Currency,ManageStock,ConversionMaximumLossPercent,IsActive,CreatedAt)
+            VALUES(@First,@TenantId,@FirstSku,@FirstReference,N'EA',@TaxProfileId,0,@FirstSku,N'Insumo',N'COP',1,0,1,SYSUTCDATETIME()),
+                  (@Second,@TenantId,NULL,NULL,N'EA',@TaxProfileId,0,@SecondSku,N'Salida uno',N'COP',1,NULL,1,SYSUTCDATETIME()),
+                  (@Third,@TenantId,NULL,NULL,N'EA',@TaxProfileId,0,@ThirdSku,N'Salida dos',N'COP',1,NULL,1,SYSUTCDATETIME());
             INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
-            SELECT product.BusinessId,warehouse.WarehouseId,product.ProductId,0,0,0,
+            SELECT @BusinessId,warehouse.WarehouseId,product.ProductId,0,0,0,
                    COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),SYSDATETIMEOFFSET()
             FROM dbo.Products product
-            INNER JOIN dbo.Warehouses warehouse ON warehouse.BusinessId=product.BusinessId
-            WHERE product.ProductId IN(@First,@Second,@Third)
-              AND NOT EXISTS(SELECT 1 FROM dbo.InventoryBalances balance WHERE balance.BusinessId=product.BusinessId AND balance.WarehouseId=warehouse.WarehouseId AND balance.ProductId=product.ProductId);
-            INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,@Second,@First,NULL,NULL,1,0,0,1,1,SYSUTCDATETIME()),
-                  (NEWID(),@BusinessId,@Third,@First,NULL,NULL,2,0,0,1,1,SYSUTCDATETIME());
-            INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,@First,@FirstBarcode,1,1,SYSUTCDATETIME());
+            INNER JOIN dbo.Warehouses warehouse ON warehouse.BusinessId=@BusinessId
+            WHERE product.TenantId=@TenantId AND product.ProductId IN(@First,@Second,@Third)
+              AND NOT EXISTS(SELECT 1 FROM dbo.InventoryBalances balance WHERE balance.BusinessId=@BusinessId AND balance.WarehouseId=warehouse.WarehouseId AND balance.ProductId=product.ProductId);
+            INSERT dbo.ProductLinks(ProductLinkId,TenantId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+            VALUES(NEWID(),@TenantId,@Second,@First,NULL,NULL,1,0,0,1,1,SYSUTCDATETIME()),
+                  (NEWID(),@TenantId,@Third,@First,NULL,NULL,2,0,0,1,1,SYSUTCDATETIME());
+            INSERT dbo.ProductBarcodes(ProductBarcodeId,TenantId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+            VALUES(NEWID(),@TenantId,@First,@FirstBarcode,1,1,SYSUTCDATETIME());
             IF NOT EXISTS(
                 SELECT 1 FROM dbo.DocumentSeries
                 WHERE BusinessId=@BusinessId AND DocumentType=N'StockCount'
@@ -1071,9 +1072,9 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     private async Task SeedAdditionalInventoryProductAsync(Guid productId)
     {
         const string sql = """
-            INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,Currency,ManageStock,IsActive,CreatedAt)
-            SELECT @ProductId,@TenantId,@BusinessId,@Sku,@Sku,N'EA',MIN(TaxProfileId),0,@Sku,N'Producto agregado después del conteo',N'COP',1,1,SYSUTCDATETIME()
-            FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId;
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,Currency,ManageStock,IsActive,CreatedAt)
+            SELECT @ProductId,@TenantId,@Sku,@Sku,N'EA',MIN(TaxProfileId),0,@Sku,N'Producto agregado después del conteo',N'COP',1,1,SYSUTCDATETIME()
+            FROM dbo.TaxProfiles WHERE TenantId=@TenantId;
             INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
             SELECT @BusinessId,warehouse.WarehouseId,@ProductId,0,0,0,
                    COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),SYSDATETIMEOFFSET()

@@ -209,7 +209,7 @@ public sealed class ProductAdminService : IProductAdminService
             category = new ProductCategory
             {
                 ProductCategoryId = Guid.NewGuid(),
-                BusinessId = product.BusinessId,
+                TenantId = product.TenantId,
                 IntegrationConnectionId = product.IntegrationConnectionId,
                 Name = categoryName,
                 DisplayOrder = 0,
@@ -257,7 +257,7 @@ public sealed class ProductAdminService : IProductAdminService
         var category = new ProductCategory
         {
             ProductCategoryId = Guid.NewGuid(),
-            BusinessId = businessId,
+            TenantId = tenantId,
             ParentProductCategoryId = request.ParentProductCategoryId,
             Name = name,
             DisplayOrder = request.DisplayOrder,

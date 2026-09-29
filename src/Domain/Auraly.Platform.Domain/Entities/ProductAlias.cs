@@ -5,7 +5,7 @@ namespace Auraly.Platform.Domain.Entities;
 public sealed class ProductAlias
 {
     public Guid ProductAliasId { get; set; }
-    public Guid BusinessId { get; set; }
+    public Guid TenantId { get; set; }
     public Guid ProductId { get; set; }
     public ProductAliasScope Scope { get; set; }
     public string CustomerKey { get; set; } = string.Empty;
@@ -22,5 +22,4 @@ public sealed class ProductAlias
     public byte[] RowVersion { get; set; } = [];
 
     public Product Product { get; set; } = null!;
-    public Business Business { get; set; } = null!;
 }

@@ -245,24 +245,24 @@ public sealed partial class SqlOnlineSalesDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             DECLARE @SelectedPriceChannelId UNIQUEIDENTIFIER;
+            DECLARE @TenantId UNIQUEIDENTIFIER=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             SELECT @SelectedPriceChannelId=CASE WHEN (setting.ValidFrom IS NULL OR setting.ValidFrom<=SYSDATETIMEOFFSET())
                               AND (setting.ValidUntil IS NULL OR setting.ValidUntil>SYSDATETIMEOFFSET())
                         THEN setting.PriceChannelId END
             FROM dbo.Customers customer
             LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=customer.CustomerId
-            WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+            WHERE customer.CustomerId=@CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND customer.IsActive=1;
 
             SELECT @SelectedPriceChannelId;
 
             SELECT PriceChannelId,Strategy,Value FROM dbo.PriceChannels
-            WHERE BusinessId=@BusinessId AND IsActive=1
-              AND PriceChannelId=@SelectedPriceChannelId;
+            WHERE IsActive=1 AND TenantId=@TenantId AND PriceChannelId=@SelectedPriceChannelId;
 
             SELECT item.PriceChannelId,item.ProductId,item.MinimumQuantity,item.Amount,item.CurrencyCode
             FROM dbo.PriceChannelItems item
             JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=item.PriceChannelId
-            WHERE channelValue.BusinessId=@BusinessId AND channelValue.IsActive=1 AND item.IsActive=1
+            WHERE channelValue.TenantId=@TenantId AND channelValue.IsActive=1 AND item.IsActive=1
               AND item.PriceChannelId=@SelectedPriceChannelId
               AND item.ProductId IN (
                 SELECT TRY_CONVERT(UNIQUEIDENTIFIER,[value]) FROM OPENJSON(@ProductIdsJson));
@@ -271,7 +271,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                    exclusion.ProductCategoryId,exclusion.ProductBrandId
             FROM dbo.PriceChannelExclusions exclusion
             JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=exclusion.PriceChannelId
-            WHERE channelValue.BusinessId=@BusinessId AND channelValue.IsActive=1
+            WHERE channelValue.TenantId=@TenantId AND channelValue.IsActive=1
               AND exclusion.PriceChannelId=@SelectedPriceChannelId
               AND (exclusion.ProductId IS NULL OR exclusion.ProductId IN (
                 SELECT TRY_CONVERT(UNIQUEIDENTIFIER,[value]) FROM OPENJSON(@ProductIdsJson)));

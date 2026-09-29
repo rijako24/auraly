@@ -51,11 +51,9 @@ public sealed class SqlTenantRenewalOrderStore(ApplicationDbContext db) : ITenan
                 WHERE app.TenantId=@TenantId AND app.IsActive=1
                   AND NOT EXISTS(
                     SELECT 1 FROM dbo.CommerceSellers seller
-                    JOIN dbo.Businesses businessValue ON businessValue.BusinessId=seller.BusinessId
-                    WHERE businessValue.TenantId=@TenantId AND seller.PartyId=app.PartyId AND seller.IsActive=1);
+                    WHERE seller.TenantId=@TenantId AND seller.PartyId=app.PartyId AND seller.IsActive=1);
                 SELECT @SellerUsed=COUNT(*) FROM dbo.CommerceSellers seller
-                JOIN dbo.Businesses businessValue ON businessValue.BusinessId=seller.BusinessId
-                WHERE businessValue.TenantId=@TenantId AND seller.IsActive=1;
+                WHERE seller.TenantId=@TenantId AND seller.IsActive=1;
                 SELECT @PosUsed=COUNT(*) FROM dbo.EnrolledDevices WHERE TenantId=@TenantId AND IsActive=1;
                 SELECT @PayrollUsed=COUNT(*) FROM payroll.Employments WHERE TenantId=@TenantId AND IsActive=1;
 
@@ -133,10 +131,10 @@ public sealed class SqlTenantRenewalOrderStore(ApplicationDbContext db) : ITenan
                renewal.FullUserLimit,renewal.SellerUserLimit,renewal.PosDeviceLimit,
                renewal.DianDocumentMonthlyLimit,renewal.PayrollEmployeeLimit,renewal.LinesJson,
                (SELECT COUNT(*) FROM dbo.AppUsers app WHERE app.TenantId=subscription.TenantId AND app.IsActive=1
-                  AND NOT EXISTS(SELECT 1 FROM dbo.CommerceSellers seller JOIN dbo.Businesses businessValue ON businessValue.BusinessId=seller.BusinessId
-                    WHERE businessValue.TenantId=subscription.TenantId AND seller.PartyId=app.PartyId AND seller.IsActive=1)),
-               (SELECT COUNT(*) FROM dbo.CommerceSellers seller JOIN dbo.Businesses businessValue ON businessValue.BusinessId=seller.BusinessId
-                  WHERE businessValue.TenantId=subscription.TenantId AND seller.IsActive=1),
+                  AND NOT EXISTS(SELECT 1 FROM dbo.CommerceSellers seller
+                    WHERE seller.TenantId=subscription.TenantId AND seller.PartyId=app.PartyId AND seller.IsActive=1)),
+               (SELECT COUNT(*) FROM dbo.CommerceSellers seller
+                  WHERE seller.TenantId=subscription.TenantId AND seller.IsActive=1),
                (SELECT COUNT(*) FROM dbo.EnrolledDevices deviceValue WHERE deviceValue.TenantId=subscription.TenantId AND deviceValue.IsActive=1),
                (SELECT COUNT(*) FROM payroll.Employments employment WHERE employment.TenantId=subscription.TenantId AND employment.IsActive=1)
         FROM billing.TenantSubscriptionRenewalOrders renewal

@@ -2218,12 +2218,12 @@ IF (SELECT COUNT(*) FROM dbo.BusinessSubscriptions WHERE BusinessId = @BusinessI
 -- Kellogg's Colombia lists these as Kellogg's brands. The alias is intentionally
 -- SuggestOnly because one brand query can match several active SKUs.
 INSERT INTO dbo.ProductAliases
-    (ProductAliasId, BusinessId, ProductId, Scope, CustomerKey, Alias, NormalizedAlias,
+    (ProductAliasId, TenantId, ProductId, Scope, CustomerKey, Alias, NormalizedAlias,
      Kind, ResolutionMode, Source, Status, UsageCount, CreatedAt)
-SELECT NEWID(), @BusinessId, product.ProductId, 0, N'', N'Kellogg''s', N'kellogg',
+SELECT NEWID(), @TenantId, product.ProductId, 0, N'', N'Kellogg''s', N'kellogg',
        1, 0, 1, 1, 0, GETUTCDATE()
 FROM dbo.Products product
-WHERE product.BusinessId = @BusinessId
+WHERE product.TenantId = @TenantId
   AND product.IntegrationConnectionId = @XionCommerceConnectionId
   AND product.IsActive = 1
   AND (
@@ -2239,7 +2239,7 @@ WHERE product.BusinessId = @BusinessId
   AND NOT EXISTS (
       SELECT 1
       FROM dbo.ProductAliases alias
-      WHERE alias.BusinessId = @BusinessId
+      WHERE alias.TenantId = @TenantId
         AND alias.ProductId = product.ProductId
         AND alias.Scope = 0
         AND alias.CustomerKey = N''

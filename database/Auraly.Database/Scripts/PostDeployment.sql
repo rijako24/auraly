@@ -168,7 +168,6 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Seeds\SeedTransporterRole.sql
 :r .\Seeds\SeedSalesDocumentSeries.sql
 :r .\Seeds\SeedProductMerchandisingMasters.sql
-:r .\Migrations\NormalizeLegacyProductCodesAndPricing.sql
 :r .\Seeds\SeedDefaultBusinessRoles.sql
 :r .\Migrations\MigrateEmployeesAndUsersToParties.sql
 :r .\Seeds\EnsureFinalConsumer.sql
@@ -179,6 +178,5 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Seeds\SeedComplianceReportDefinitions.sql
 :r .\Seeds\SeedDispatchReasons.sql
 :r .\Migrations\BackfillCanonicalInventoryBalances.sql
-:r .\Migrations\MigrateTenantProductsAndBusinessPrices.sql
 :r .\Migrations\BackfillGoodsReceiptFunctionalCurrency.sql
 :r .\Migrations\ClassifySystemWarehouses.sql

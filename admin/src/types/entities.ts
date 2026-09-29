@@ -194,7 +194,7 @@ export interface ServiceResourceUsage {
 
 export interface Employee {
   employeeId: string;
-  businessId: string;
+  tenantId: string;
   partyId?: string | null;
   name: string;
   isActive: boolean;

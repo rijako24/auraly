@@ -24,7 +24,7 @@ public sealed class ProductSearchIndexMaintenanceServiceTests
         var alias = new ProductAlias
         {
             ProductAliasId = Guid.NewGuid(),
-            BusinessId = businessId,
+            TenantId = businessId,
             ProductId = product.ProductId,
             Alias = "Alcaparras en vinagre",
             NormalizedAlias = string.Empty,

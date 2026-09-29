@@ -231,7 +231,7 @@ CREATE TABLE [dbo].[SupplierProductLatestCosts]
     [ObservedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_SupplierProductLatestCosts] PRIMARY KEY CLUSTERED ([BusinessId], [SupplierId], [ProductId]),
-    CONSTRAINT [FK_SupplierProductLatestCosts_Association] FOREIGN KEY ([BusinessId], [ProductId], [SupplierId]) REFERENCES [dbo].[SupplierProducts] ([BusinessId], [ProductId], [SupplierId]),
+    CONSTRAINT [FK_SupplierProductLatestCosts_Association] FOREIGN KEY ([ProductId], [SupplierId]) REFERENCES [dbo].[SupplierProducts] ([ProductId], [SupplierId]),
     CONSTRAINT [FK_SupplierProductLatestCosts_ReceiptLine] FOREIGN KEY ([SourceDocumentId], [SourceLineNumber]) REFERENCES [dbo].[GoodsReceiptLines] ([GoodsReceiptId], [LineNumber]),
     CONSTRAINT [CK_SupplierProductLatestCosts_Cost] CHECK ([LatestUnitCost] >= 0 AND ([PreviousUnitCost] IS NULL OR [PreviousUnitCost] >= 0))
 );

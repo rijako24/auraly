@@ -127,7 +127,7 @@ END;
 
 MERGE dbo.Products AS target
 USING @Catalog AS source
-ON target.BusinessId = @BusinessId AND target.Sku = source.Sku
+ON target.TenantId = @TenantId AND target.Sku = source.Sku
 WHEN MATCHED THEN UPDATE SET
     [Name] = source.[Name],
     [Description] = source.TechnicalDescription,
@@ -137,10 +137,10 @@ WHEN MATCHED THEN UPDATE SET
     IsActive = 1,
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
-    (ProductId, TenantId, BusinessId, Source, Sku, [Name], [Description], CategoryName,
+    (ProductId, TenantId, Source, Sku, [Name], [Description], CategoryName,
      Currency, ManageStock, IsActive, CreatedAt)
 VALUES
-    (NEWID(), @TenantId, @BusinessId, 0, source.Sku, source.[Name],
+    (NEWID(), @TenantId, 0, source.Sku, source.[Name],
      source.TechnicalDescription,
      N'iPhone ' + CONVERT(NVARCHAR(10), source.Generation),
      N'COP', 0, 1, SYSUTCDATETIME());
@@ -149,7 +149,7 @@ MERGE dbo.ProductPrices AS target
 USING (
     SELECT product.ProductId, catalog.UsedPrice AS Amount
     FROM @Catalog catalog
-    JOIN dbo.Products product ON product.BusinessId=@BusinessId AND product.Sku=catalog.Sku
+    JOIN dbo.Products product ON product.TenantId=@TenantId AND product.Sku=catalog.Sku
 ) AS source
 ON target.BusinessId=@BusinessId AND target.ProductId=source.ProductId AND target.IsActive=1
 WHEN NOT MATCHED THEN INSERT
@@ -170,11 +170,11 @@ DECLARE @Offers TABLE
 INSERT INTO @Offers (ProductId, Condition, StorageGb, UnitPrice, MinimumBatteryHealthPercent, SourceUrl)
 SELECT p.ProductId, N'used', c.StorageGb, c.UsedPrice, 91, c.UsedSource
 FROM @Catalog c
-JOIN dbo.Products p ON p.BusinessId = @BusinessId AND p.Sku = c.Sku
+JOIN dbo.Products p ON p.TenantId = @TenantId AND p.Sku = c.Sku
 UNION ALL
 SELECT p.ProductId, N'new', c.StorageGb, c.NewPrice, NULL, c.NewSource
 FROM @Catalog c
-JOIN dbo.Products p ON p.BusinessId = @BusinessId AND p.Sku = c.Sku;
+JOIN dbo.Products p ON p.TenantId = @TenantId AND p.Sku = c.Sku;
 
 MERGE dbo.ProductOffers AS target
 USING @Offers AS source
@@ -192,10 +192,10 @@ WHEN MATCHED THEN UPDATE SET
     PriceObservedAtUtc = CONVERT(DATETIME2, '2026-07-27T00:00:00'),
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
-    (ProductOfferId, ProductId, BusinessId, Condition, StorageGb, Color, UnitPrice, Currency,
+    (ProductOfferId, ProductId, TenantId, Condition, StorageGb, Color, UnitPrice, Currency,
      MinimumBatteryHealthPercent, IsAvailable, IsActive, PriceSourceUrl, PriceObservedAtUtc, CreatedAt)
 VALUES
-    (NEWID(), source.ProductId, @BusinessId, source.Condition, source.StorageGb, NULL,
+    (NEWID(), source.ProductId, @TenantId, source.Condition, source.StorageGb, NULL,
      source.UnitPrice, N'COP', source.MinimumBatteryHealthPercent, 1, 1, source.SourceUrl,
      CONVERT(DATETIME2, '2026-07-27T00:00:00'), SYSUTCDATETIME());
 
@@ -203,7 +203,7 @@ MERGE dbo.ProductImages AS target
 USING (
     SELECT p.ProductId, c.ImageUrl, c.[Name]
     FROM @Catalog c
-    JOIN dbo.Products p ON p.BusinessId = @BusinessId AND p.Sku = c.Sku
+    JOIN dbo.Products p ON p.TenantId = @TenantId AND p.Sku = c.Sku
 ) AS source
 ON target.ProductId = source.ProductId
 AND target.ProductOfferId IS NULL
@@ -216,10 +216,10 @@ WHEN MATCHED THEN UPDATE SET
     IsActive = 1,
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
-    (ProductImageId, ProductId, BusinessId, ProductOfferId, MediaUrl, AltText,
+    (ProductImageId, ProductId, TenantId, ProductOfferId, MediaUrl, AltText,
      DisplayOrder, IsPrimary, IsActive, CreatedAt)
 VALUES
-    (NEWID(), source.ProductId, @BusinessId, NULL, source.ImageUrl, source.[Name],
+    (NEWID(), source.ProductId, @TenantId, NULL, source.ImageUrl, source.[Name],
      0, 1, 1, SYSUTCDATETIME());
 
 DECLARE @AccessoryCatalog TABLE
@@ -238,23 +238,23 @@ VALUES
 
 MERGE dbo.Products AS target
 USING @AccessoryCatalog AS source
-ON target.BusinessId = @BusinessId AND target.Sku = source.Sku
+ON target.TenantId = @TenantId AND target.Sku = source.Sku
 WHEN MATCHED THEN UPDATE SET
     [Name] = source.[Name], [Description] = source.[Description], CategoryName = N'Accesorios',
     Currency = N'COP', ManageStock = 0, IsActive = 1,
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
-    (ProductId, TenantId, BusinessId, Source, Sku, [Name], [Description], CategoryName,
+    (ProductId, TenantId, Source, Sku, [Name], [Description], CategoryName,
      Currency, ManageStock, IsActive, CreatedAt)
 VALUES
-    (NEWID(), @TenantId, @BusinessId, 0, source.Sku, source.[Name], source.[Description],
+    (NEWID(), @TenantId, 0, source.Sku, source.[Name], source.[Description],
      N'Accesorios', N'COP', 0, 1, SYSUTCDATETIME());
 
 MERGE dbo.ProductPrices AS target
 USING (
     SELECT product.ProductId, accessory.UnitPrice AS Amount
     FROM @AccessoryCatalog accessory
-    JOIN dbo.Products product ON product.BusinessId=@BusinessId AND product.Sku=accessory.Sku
+    JOIN dbo.Products product ON product.TenantId=@TenantId AND product.Sku=accessory.Sku
 ) AS source
 ON target.BusinessId=@BusinessId AND target.ProductId=source.ProductId AND target.IsActive=1
 WHEN NOT MATCHED THEN INSERT
@@ -266,22 +266,22 @@ MERGE dbo.ProductOffers AS target
 USING (
     SELECT p.ProductId, a.UnitPrice
     FROM @AccessoryCatalog a
-    JOIN dbo.Products p ON p.BusinessId = @BusinessId AND p.Sku = a.Sku
+    JOIN dbo.Products p ON p.TenantId = @TenantId AND p.Sku = a.Sku
 ) AS source
 ON target.ProductId = source.ProductId AND target.Condition = N'new'
    AND target.StorageGb IS NULL AND target.Color IS NULL AND target.VariantLabel IS NULL
 WHEN MATCHED THEN UPDATE SET UnitPrice = source.UnitPrice, Currency = N'COP',
     IsAvailable = 1, IsActive = 1, UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
-    (ProductOfferId, ProductId, BusinessId, Condition, StorageGb, Color, VariantLabel,
+    (ProductOfferId, ProductId, TenantId, Condition, StorageGb, Color, VariantLabel,
      UnitPrice, Currency, IsAvailable, IsActive, CreatedAt)
 VALUES
-    (NEWID(), source.ProductId, @BusinessId, N'new', NULL, NULL, NULL,
+    (NEWID(), source.ProductId, @TenantId, N'new', NULL, NULL, NULL,
      source.UnitPrice, N'COP', 1, 1, SYSUTCDATETIME());
 DECLARE @ChargerProductId UNIQUEIDENTIFIER =
 (
     SELECT ProductId FROM dbo.Products
-    WHERE BusinessId = @BusinessId AND Sku = N'ACC-CUBO-20W' AND IsActive = 1
+    WHERE TenantId = @TenantId AND Sku = N'ACC-CUBO-20W' AND IsActive = 1
 );
 
 IF @ChargerProductId IS NULL
@@ -305,7 +305,7 @@ VALUES
 
 MERGE dbo.ProductRecommendationRules AS target
 USING @PhoneRecommendationRules AS source
-ON target.BusinessId = @BusinessId
+ON target.TenantId = @TenantId
 AND target.ProductRecommendationRuleId = source.ProductRecommendationRuleId
 WHEN MATCHED THEN UPDATE SET
     IntegrationConnectionId = NULL, MatchType = 1, SourceProductId = NULL,
@@ -316,12 +316,12 @@ WHEN MATCHED THEN UPDATE SET
     Reason = N'Para acompañar este iPhone con una carga adecuada, te recomiendo el cubo original de 20W.',
     IsActive = 1, StartsAtUtc = NULL, EndsAtUtc = NULL, UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
-    (ProductRecommendationRuleId, BusinessId, IntegrationConnectionId, MatchType,
+    (ProductRecommendationRuleId, TenantId, IntegrationConnectionId, MatchType,
      SourceProductId, SourceValue, RecommendedProductId, RecommendedExternalProductId,
      RecommendedSku, RecommendedSearchText, RecommendationType, Priority, Reason,
      IsActive, StartsAtUtc, EndsAtUtc, CreatedAt)
 VALUES
-    (source.ProductRecommendationRuleId, @BusinessId, NULL, 1,
+    (source.ProductRecommendationRuleId, @TenantId, NULL, 1,
      NULL, source.CategoryName, @ChargerProductId, NULL,
      N'ACC-CUBO-20W', N'cubo original 20W', 0, 100,
      N'Para acompañar este iPhone con una carga adecuada, te recomiendo el cubo original de 20W.',

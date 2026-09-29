@@ -5,6 +5,7 @@ CREATE PROCEDURE [purchasing].[PurchaseOrderGet]
 AS
 BEGIN
     SET NOCOUNT ON;
+    DECLARE @TenantId UNIQUEIDENTIFIER=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
 
     SELECT PurchaseOrderId,DocumentNumber,Status,WarehouseId,WarehouseName,SupplierId,SupplierName,
         OrderedAt,ExpectedAt,CurrencyCode,Notes,NetAmount,TaxAmount,GrandTotal,UpdatedAt,ConcurrencyToken,IsDraft
@@ -18,7 +19,7 @@ BEGIN
                 'varchar(64)') ConcurrencyToken,CONVERT(bit,1) IsDraft
         FROM purchasing.PurchaseOrderDrafts d
         LEFT JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId AND w.BusinessId=d.BusinessId
-        LEFT JOIN dbo.Suppliers s ON s.SupplierId=d.SupplierId AND s.BusinessId=d.BusinessId
+        LEFT JOIN dbo.Suppliers s ON s.SupplierId=d.SupplierId AND s.TenantId=@TenantId
         WHERE d.BusinessId=@BusinessId AND d.PurchaseOrderId=@PurchaseOrderId AND @ReceiptOnly=0
         UNION ALL
         SELECT o.PurchaseOrderId,o.DocumentNumber,o.Status,o.WarehouseId,w.Name,o.SupplierId,s.Name,o.OrderedAt,o.ExpectedAt,o.CurrencyCode,o.Notes,
@@ -28,7 +29,7 @@ BEGIN
                 'varchar(64)'),CONVERT(bit,0)
         FROM purchasing.PurchaseOrders o
         JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.BusinessId=o.BusinessId
-        JOIN dbo.Suppliers s ON s.SupplierId=o.SupplierId AND s.BusinessId=o.BusinessId
+        JOIN dbo.Suppliers s ON s.SupplierId=o.SupplierId AND s.TenantId=@TenantId
         WHERE o.BusinessId=@BusinessId AND o.PurchaseOrderId=@PurchaseOrderId
           AND (@ReceiptOnly=0 OR o.Status IN(N'Open',N'PartiallyReceived'))
     ) source;

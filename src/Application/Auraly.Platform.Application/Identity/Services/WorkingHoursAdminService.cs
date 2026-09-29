@@ -41,20 +41,20 @@ public class WorkingHoursAdminService : IWorkingHoursAdminService
         return await GetBusinessWorkingHoursAsync(tenantId, businessId, ct);
     }
 
-    public async Task<EmployeeWorkingHoursDto> GetEmployeeWorkingHoursAsync(Guid tenantId, Guid employeeId, CancellationToken ct = default)
+    public async Task<EmployeeWorkingHoursDto> GetEmployeeWorkingHoursAsync(Guid tenantId, Guid businessId, Guid employeeId, CancellationToken ct = default)
     {
-        var employee = await GetEmployeeForTenantAsync(tenantId, employeeId, ct);
-        var hours = await _unitOfWork.EmployeeWorkingHours.GetByEmployeeIdAsync(employeeId, ct);
+        await GetEmployeeForBusinessAsync(tenantId, businessId, employeeId, ct);
+        var hours = await _unitOfWork.EmployeeWorkingHours.GetByEmployeeIdAsync(businessId, employeeId, ct);
         return new EmployeeWorkingHoursDto(employeeId, hours.Count == 0, hours.Select(Map).ToList());
     }
 
-    public async Task<EmployeeWorkingHoursDto> UpdateEmployeeWorkingHoursAsync(Guid tenantId, Guid employeeId, UpdateWorkingHoursRequest request, CancellationToken ct = default)
+    public async Task<EmployeeWorkingHoursDto> UpdateEmployeeWorkingHoursAsync(Guid tenantId, Guid businessId, Guid employeeId, UpdateWorkingHoursRequest request, CancellationToken ct = default)
     {
-        var employee = await GetEmployeeForTenantAsync(tenantId, employeeId, ct);
+        await GetEmployeeForBusinessAsync(tenantId, businessId, employeeId, ct);
         var hours = request.WorkingHours.Select(h => new EmployeeWorkingHour
         {
             EmployeeWorkingHourId = Guid.NewGuid(),
-            BusinessId = employee.BusinessId,
+            BusinessId = businessId,
             EmployeeId = employeeId,
             DayOfWeek = ToDayOfWeek(h.DayOfWeek),
             OpenTime = ParseTime(h.OpenTime),
@@ -63,9 +63,9 @@ public class WorkingHoursAdminService : IWorkingHoursAdminService
             CreatedAt = DateTime.UtcNow
         }).Where(h => h.OpenTime < h.CloseTime).ToList();
 
-        await _unitOfWork.EmployeeWorkingHours.ReplaceForEmployeeAsync(employeeId, hours, ct);
+        await _unitOfWork.EmployeeWorkingHours.ReplaceForEmployeeAsync(businessId, employeeId, hours, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        return await GetEmployeeWorkingHoursAsync(tenantId, employeeId, ct);
+        return await GetEmployeeWorkingHoursAsync(tenantId, businessId, employeeId, ct);
     }
 
     public async Task<IReadOnlyList<BusinessAvailabilityBlockDto>> GetBusinessAvailabilityBlocksAsync(Guid tenantId, Guid businessId, DateOnly? startDate, DateOnly? endDate, CancellationToken ct = default)
@@ -144,21 +144,21 @@ public class WorkingHoursAdminService : IWorkingHoursAdminService
         await _unitOfWork.SaveChangesAsync(ct);
     }
 
-    public async Task<IReadOnlyList<EmployeeScheduleExceptionDto>> GetEmployeeScheduleExceptionsAsync(Guid tenantId, Guid employeeId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<EmployeeScheduleExceptionDto>> GetEmployeeScheduleExceptionsAsync(Guid tenantId, Guid businessId, Guid employeeId, CancellationToken ct = default)
     {
-        await GetEmployeeForTenantAsync(tenantId, employeeId, ct);
-        var exceptions = await _unitOfWork.EmployeeScheduleExceptions.GetByEmployeeIdAsync(employeeId, ct);
+        await GetEmployeeForBusinessAsync(tenantId, businessId, employeeId, ct);
+        var exceptions = await _unitOfWork.EmployeeScheduleExceptions.GetByEmployeeIdAsync(businessId, employeeId, ct);
         return exceptions.Select(Map).ToList();
     }
 
-    public async Task<EmployeeScheduleExceptionDto> CreateEmployeeScheduleExceptionAsync(Guid tenantId, Guid employeeId, UpsertEmployeeScheduleExceptionRequest request, CancellationToken ct = default)
+    public async Task<EmployeeScheduleExceptionDto> CreateEmployeeScheduleExceptionAsync(Guid tenantId, Guid businessId, Guid employeeId, UpsertEmployeeScheduleExceptionRequest request, CancellationToken ct = default)
     {
-        var employee = await GetEmployeeForTenantAsync(tenantId, employeeId, ct);
+        await GetEmployeeForBusinessAsync(tenantId, businessId, employeeId, ct);
         var (openTime, closeTime) = ParseExceptionTimes(request);
         var exception = new EmployeeScheduleException
         {
             EmployeeScheduleExceptionId = Guid.NewGuid(),
-            BusinessId = employee.BusinessId,
+            BusinessId = businessId,
             EmployeeId = employeeId,
             Date = ParseDate(request.Date),
             OpenTime = openTime,
@@ -173,12 +173,12 @@ public class WorkingHoursAdminService : IWorkingHoursAdminService
         return Map(exception);
     }
 
-    public async Task<EmployeeScheduleExceptionDto> UpdateEmployeeScheduleExceptionAsync(Guid tenantId, Guid employeeId, Guid exceptionId, UpsertEmployeeScheduleExceptionRequest request, CancellationToken ct = default)
+    public async Task<EmployeeScheduleExceptionDto> UpdateEmployeeScheduleExceptionAsync(Guid tenantId, Guid businessId, Guid employeeId, Guid exceptionId, UpsertEmployeeScheduleExceptionRequest request, CancellationToken ct = default)
     {
-        var employee = await GetEmployeeForTenantAsync(tenantId, employeeId, ct);
+        await GetEmployeeForBusinessAsync(tenantId, businessId, employeeId, ct);
         var exception = await _unitOfWork.EmployeeScheduleExceptions.GetByIdAsync(exceptionId, ct)
             ?? throw new NotFoundException(nameof(EmployeeScheduleException), exceptionId);
-        if (exception.EmployeeId != employeeId || exception.BusinessId != employee.BusinessId)
+        if (exception.EmployeeId != employeeId || exception.BusinessId != businessId)
             throw new NotFoundException(nameof(EmployeeScheduleException), exceptionId);
 
         var (openTime, closeTime) = ParseExceptionTimes(request);
@@ -194,23 +194,25 @@ public class WorkingHoursAdminService : IWorkingHoursAdminService
         return Map(exception);
     }
 
-    public async Task DeleteEmployeeScheduleExceptionAsync(Guid tenantId, Guid employeeId, Guid exceptionId, CancellationToken ct = default)
+    public async Task DeleteEmployeeScheduleExceptionAsync(Guid tenantId, Guid businessId, Guid employeeId, Guid exceptionId, CancellationToken ct = default)
     {
-        var employee = await GetEmployeeForTenantAsync(tenantId, employeeId, ct);
+        await GetEmployeeForBusinessAsync(tenantId, businessId, employeeId, ct);
         var exception = await _unitOfWork.EmployeeScheduleExceptions.GetByIdAsync(exceptionId, ct)
             ?? throw new NotFoundException(nameof(EmployeeScheduleException), exceptionId);
-        if (exception.EmployeeId != employeeId || exception.BusinessId != employee.BusinessId)
+        if (exception.EmployeeId != employeeId || exception.BusinessId != businessId)
             throw new NotFoundException(nameof(EmployeeScheduleException), exceptionId);
 
         await _unitOfWork.EmployeeScheduleExceptions.DeleteAsync(exception, ct);
         await _unitOfWork.SaveChangesAsync(ct);
     }
 
-    private async Task<Employee> GetEmployeeForTenantAsync(Guid tenantId, Guid employeeId, CancellationToken ct)
+    private async Task<Employee> GetEmployeeForBusinessAsync(Guid tenantId, Guid businessId, Guid employeeId, CancellationToken ct)
     {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
         var employee = await _unitOfWork.Employees.GetByIdAsync(employeeId)
             ?? throw new NotFoundException(nameof(Employee), employeeId);
-        await EnsureBusinessBelongsToTenantAsync(tenantId, employee.BusinessId, ct);
+        if (employee.TenantId != tenantId)
+            throw new NotFoundException(nameof(Employee), employeeId);
         return employee;
     }
 
@@ -227,7 +229,8 @@ public class WorkingHoursAdminService : IWorkingHoursAdminService
         if (!employeeId.HasValue) return;
         var employee = await _unitOfWork.Employees.GetByIdAsync(employeeId.Value)
             ?? throw new NotFoundException(nameof(Employee), employeeId.Value);
-        if (employee.BusinessId != businessId)
+        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId);
+        if (business is null || employee.TenantId != business.TenantId)
             throw new NotFoundException(nameof(Employee), employeeId.Value);
     }
 

@@ -232,7 +232,7 @@ public sealed record ProductWarehouseAvailabilityItem(
     bool IsCurrentBusiness);
 
 public sealed record TaxProfileSummary(
-    Guid TaxProfileId, Guid BusinessId, string Code, string DianTaxCode, string Name,
+    Guid TaxProfileId, Guid TenantId, string Code, string DianTaxCode, string Name,
     decimal Rate, bool IsActive);
 
 public sealed record SaveTaxProfileRequest(

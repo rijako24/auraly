@@ -1,7 +1,6 @@
 CREATE TABLE [dbo].[Products] (
     [ProductId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [ProductCode] NVARCHAR(64) NULL,
     [Reference] NVARCHAR(120) NULL,
     [BaseUnitCode] NVARCHAR(24) NULL,
@@ -34,21 +33,19 @@ CREATE TABLE [dbo].[Products] (
     [CreatedByUserId] UNIQUEIDENTIFIER NULL,
     [UpdatedByUserId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [FK_Products_TaxProfiles] FOREIGN KEY ([TaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TaxProfileId]),
-    CONSTRAINT [FK_Products_PurchaseTaxProfiles] FOREIGN KEY ([PurchaseTaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TaxProfileId]),
+    CONSTRAINT [FK_Products_TaxProfiles] FOREIGN KEY ([TenantId], [TaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TenantId], [TaxProfileId]),
+    CONSTRAINT [FK_Products_PurchaseTaxProfiles] FOREIGN KEY ([TenantId], [PurchaseTaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TenantId], [TaxProfileId]),
     CONSTRAINT [CK_Products_PurchaseTaxTreatment] CHECK ([PurchaseTaxTreatment] IN (N'DeductibleInputVat',N'CapitalizedCost',N'NotApplicable')),
-    CONSTRAINT [FK_Products_Businesses] FOREIGN KEY ([BusinessId])
-        REFERENCES [dbo].[Businesses] ([BusinessId])
-        ON DELETE NO ACTION,
     CONSTRAINT [FK_Products_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
+    CONSTRAINT [UQ_Products_Tenant_Product] UNIQUE ([TenantId], [ProductId]),
     CONSTRAINT [FK_Products_IntegrationConnections] FOREIGN KEY ([IntegrationConnectionId])
         REFERENCES [dbo].[IntegrationConnections] ([IntegrationConnectionId])
         ON DELETE NO ACTION,
-    CONSTRAINT [FK_Products_ProductCategories] FOREIGN KEY ([ProductCategoryId])
-        REFERENCES [dbo].[ProductCategories] ([ProductCategoryId])
+    CONSTRAINT [FK_Products_ProductCategories] FOREIGN KEY ([TenantId], [ProductCategoryId])
+        REFERENCES [dbo].[ProductCategories] ([TenantId], [ProductCategoryId])
         ON DELETE NO ACTION,
-    CONSTRAINT [FK_Products_ProductBrands] FOREIGN KEY ([ProductBrandId])
-        REFERENCES [dbo].[ProductBrands] ([ProductBrandId])
+    CONSTRAINT [FK_Products_ProductBrands] FOREIGN KEY ([TenantId], [ProductBrandId])
+        REFERENCES [dbo].[ProductBrands] ([TenantId], [ProductBrandId])
         ON DELETE NO ACTION,
     CONSTRAINT [CK_Products_Source] CHECK ([Source] IN (0, 1)),
     CONSTRAINT [CK_Products_WeighableFractional] CHECK ([IsWeighable] = 0 OR [AllowsFractionalSale] = 1),
@@ -62,30 +59,15 @@ CREATE TABLE [dbo].[Products] (
 
 GO
 
-CREATE INDEX [IX_Products_BusinessId] ON [dbo].[Products] ([BusinessId]);
-GO
 CREATE UNIQUE INDEX [UX_Products_Tenant_ProductCode] ON [dbo].[Products] ([TenantId], [ProductCode]) WHERE [TenantId] IS NOT NULL AND [ProductCode] IS NOT NULL;
-GO
-CREATE UNIQUE INDEX [UX_Products_Business_ProductCode] ON [dbo].[Products] ([BusinessId], [ProductCode]) WHERE [ProductCode] IS NOT NULL;
-GO
-CREATE INDEX [IX_Products_BusinessId_Name] ON [dbo].[Products] ([BusinessId], [Name]);
-GO
-CREATE INDEX [IX_Products_BusinessId_CategoryName] ON [dbo].[Products] ([BusinessId], [CategoryName]);
-GO
-CREATE INDEX [IX_Products_BusinessId_Sku] ON [dbo].[Products] ([BusinessId], [Sku]);
-GO
-CREATE INDEX [IX_Products_BusinessId_Active_Name]
-    ON [dbo].[Products] ([BusinessId], [IsActive], [Name], [ProductId])
-    INCLUDE ([TenantId], [ProductCode], [Sku], [Reference], [BaseUnitCode],
-             [TaxProfileId], [IsWeighable], [AllowsFractionalSale]);
 GO
 CREATE INDEX [IX_Products_TenantId_Active_Name]
     ON [dbo].[Products] ([TenantId], [IsActive], [Name], [ProductId])
-    INCLUDE ([BusinessId], [ProductCode], [Sku], [Reference], [BaseUnitCode],
+    INCLUDE ([ProductCode], [Sku], [Reference], [BaseUnitCode],
              [TaxProfileId], [PurchaseTaxProfileId], [PurchaseTaxTreatment],
              [UnitGrossWeightKg]);
 GO
-CREATE UNIQUE INDEX [IX_Products_BusinessId_Connection_ExternalProductId]
-    ON [dbo].[Products] ([BusinessId], [IntegrationConnectionId], [ExternalProductId])
+CREATE UNIQUE INDEX [IX_Products_TenantId_Connection_ExternalProductId]
+    ON [dbo].[Products] ([TenantId], [IntegrationConnectionId], [ExternalProductId])
     WHERE [IntegrationConnectionId] IS NOT NULL AND [ExternalProductId] IS NOT NULL;
 GO

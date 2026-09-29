@@ -4,7 +4,7 @@ import type { Business } from "@/types/entities";
 
 export type BusinessContextOption = Pick<
   Business,
-  "businessId" | "tenantId" | "name"
+  "businessId" | "tenantId" | "name" | "sharesProductPrices"
 >;
 
 interface BusinessContextState {

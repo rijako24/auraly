@@ -1,6 +1,6 @@
 CREATE TABLE [dbo].[ProductRecommendationRules] (
     [ProductRecommendationRuleId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [IntegrationConnectionId] UNIQUEIDENTIFIER NULL,
     [MatchType] INT NOT NULL,
     [SourceProductId] UNIQUEIDENTIFIER NULL,
@@ -17,14 +17,14 @@ CREATE TABLE [dbo].[ProductRecommendationRules] (
     [EndsAtUtc] DATETIME2 NULL,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,
-    CONSTRAINT [FK_ProductRecommendationRules_Businesses] FOREIGN KEY ([BusinessId])
-        REFERENCES [dbo].[Businesses] ([BusinessId]) ON DELETE NO ACTION,
+    CONSTRAINT [FK_ProductRecommendationRules_Tenants] FOREIGN KEY ([TenantId])
+        REFERENCES [dbo].[Tenants] ([TenantId]) ON DELETE NO ACTION,
     CONSTRAINT [FK_ProductRecommendationRules_IntegrationConnections] FOREIGN KEY ([IntegrationConnectionId])
         REFERENCES [dbo].[IntegrationConnections] ([IntegrationConnectionId]) ON DELETE NO ACTION,
-    CONSTRAINT [FK_ProductRecommendationRules_SourceProducts] FOREIGN KEY ([SourceProductId])
-        REFERENCES [dbo].[Products] ([ProductId]) ON DELETE NO ACTION,
-    CONSTRAINT [FK_ProductRecommendationRules_RecommendedProducts] FOREIGN KEY ([RecommendedProductId])
-        REFERENCES [dbo].[Products] ([ProductId]) ON DELETE NO ACTION,
+    CONSTRAINT [FK_ProductRecommendationRules_SourceProducts] FOREIGN KEY ([TenantId], [SourceProductId])
+        REFERENCES [dbo].[Products] ([TenantId], [ProductId]) ON DELETE NO ACTION,
+    CONSTRAINT [FK_ProductRecommendationRules_RecommendedProducts] FOREIGN KEY ([TenantId], [RecommendedProductId])
+        REFERENCES [dbo].[Products] ([TenantId], [ProductId]) ON DELETE NO ACTION,
     CONSTRAINT [CK_ProductRecommendationRules_MatchType] CHECK ([MatchType] IN (0, 1, 2, 3, 4)),
     CONSTRAINT [CK_ProductRecommendationRules_RecommendationType] CHECK ([RecommendationType] IN (0, 1, 2)),
     CONSTRAINT [CK_ProductRecommendationRules_Source] CHECK (
@@ -39,8 +39,8 @@ CREATE TABLE [dbo].[ProductRecommendationRules] (
 
 GO
 
-CREATE INDEX [IX_ProductRecommendationRules_BusinessId_Active]
-    ON [dbo].[ProductRecommendationRules] ([BusinessId], [IsActive], [Priority]);
+CREATE INDEX [IX_ProductRecommendationRules_TenantId_Active]
+    ON [dbo].[ProductRecommendationRules] ([TenantId], [IsActive], [Priority]);
 
 GO
 

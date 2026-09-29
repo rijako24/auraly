@@ -338,7 +338,7 @@ public sealed class SqlSalesReportingProjectionWriter(
             LEFT JOIN dbo.AppUsers app ON app.PartyId=seller.PartyId
             LEFT JOIN dbo.Orders sourceOrder
               ON sourceOrder.OrderId=@SourceOrderId AND sourceOrder.BusinessId=@BusinessId
-            WHERE seller.BusinessId=@BusinessId
+            WHERE seller.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND ((@SourceOrderId IS NOT NULL AND seller.SellerId=sourceOrder.SellerId)
                 OR (@SourceOrderId IS NULL AND app.UserId=@SoldByUserId))
             ORDER BY CASE WHEN sourceOrder.SellerId=seller.SellerId THEN 0 ELSE 1 END,seller.SellerId;
@@ -455,8 +455,8 @@ public sealed class SqlSalesReportingProjectionWriter(
             INNER JOIN dbo.Products p ON p.ProductId=sourceLine.ProductId
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
-              INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=@BusinessId
-              WHERE sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId AND sp.IsActive=1 AND s.IsActive=1
+              INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.TenantId=@TenantId
+              WHERE sp.ProductId=p.ProductId AND sp.TenantId=@TenantId AND sp.IsActive=1 AND s.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId) supplier
             WHERE p.TenantId=@TenantId;
             """;
@@ -650,8 +650,8 @@ public sealed class SqlSalesReportingProjectionWriter(
             FROM dbo.Products p
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
-              INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=@BusinessId
-              WHERE sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId AND sp.IsActive=1 AND s.IsActive=1
+              INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.TenantId=@TenantId
+              WHERE sp.ProductId=p.ProductId AND sp.TenantId=@TenantId AND sp.IsActive=1 AND s.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId) supplier
             WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId;
             """;

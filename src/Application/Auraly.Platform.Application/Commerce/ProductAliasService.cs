@@ -203,7 +203,7 @@ public sealed class ProductAliasService : IProductAliasService
                 var newAlias = new ProductAlias
                 {
                     ProductAliasId = Guid.NewGuid(),
-                    BusinessId = businessId,
+                    TenantId = product.TenantId,
                     ProductId = product.ProductId,
                     Scope = item.Scope,
                     CustomerKey = customerKey,
@@ -264,7 +264,7 @@ public sealed class ProductAliasService : IProductAliasService
         }
         else
         {
-            await EnsureResolutionIsSafeAsync(alias, request.ResolutionMode, ct);
+            await EnsureResolutionIsSafeAsync(businessId, alias, request.ResolutionMode, ct);
             alias.Status = ProductAliasStatus.Active;
             alias.ResolutionMode = request.ResolutionMode;
         }
@@ -301,7 +301,7 @@ public sealed class ProductAliasService : IProductAliasService
             globalAlias = new ProductAlias
             {
                 ProductAliasId = Guid.NewGuid(),
-                BusinessId = businessId,
+                TenantId = product.TenantId,
                 ProductId = productId,
                 Scope = ProductAliasScope.Business,
                 CustomerKey = string.Empty,
@@ -315,7 +315,7 @@ public sealed class ProductAliasService : IProductAliasService
                 LastConfirmedAt = customerAlias.LastConfirmedAt,
                 CreatedAt = DateTime.UtcNow
             };
-            await EnsureResolutionIsSafeAsync(globalAlias, request.ResolutionMode, ct);
+            await EnsureResolutionIsSafeAsync(businessId, globalAlias, request.ResolutionMode, ct);
             await _unitOfWork.ProductAliases.CreateAsync(globalAlias, ct);
         }
         else
@@ -323,7 +323,7 @@ public sealed class ProductAliasService : IProductAliasService
             if (globalAlias.Source != ProductAliasSource.Learned)
                 return ToDto(globalAlias, product.Name);
 
-            await EnsureResolutionIsSafeAsync(globalAlias, request.ResolutionMode, ct);
+            await EnsureResolutionIsSafeAsync(businessId, globalAlias, request.ResolutionMode, ct);
             globalAlias.Alias = customerAlias.Alias;
             globalAlias.Kind = customerAlias.Kind;
             globalAlias.Source = ProductAliasSource.Learned;
@@ -411,6 +411,7 @@ public sealed class ProductAliasService : IProductAliasService
     }
 
     private async Task EnsureResolutionIsSafeAsync(
+        Guid businessId,
         ProductAlias alias,
         ProductAliasResolutionMode resolutionMode,
         CancellationToken ct)
@@ -419,7 +420,7 @@ public sealed class ProductAliasService : IProductAliasService
             return;
 
         var conflicts = await _unitOfWork.ProductAliases.FindConflictsAsync(
-            alias.BusinessId,
+            businessId,
             alias.Scope,
             alias.CustomerKey,
             alias.NormalizedAlias,
@@ -427,7 +428,7 @@ public sealed class ProductAliasService : IProductAliasService
             ct);
         if (conflicts.Any(conflict => conflict.Status == ProductAliasStatus.Active))
             throw new DomainValidationException("ResolutionMode", "El alias no puede resolver automaticamente a varios productos activos en el mismo alcance.");
-        if (await HasNativeIdentityConflictAsync(alias.BusinessId, alias.NormalizedAlias, alias.ProductId, ct))
+        if (await HasNativeIdentityConflictAsync(businessId, alias.NormalizedAlias, alias.ProductId, ct))
             throw new DomainValidationException("ResolutionMode", "El alias no puede coincidir con la identidad nativa de otro producto.");
     }
 
@@ -447,9 +448,11 @@ public sealed class ProductAliasService : IProductAliasService
                 scope == ProductAliasScope.Customer
                 && status == ProductAliasStatus.Active
                 && mode == ProductAliasResolutionMode.AutoResolve;
+            var product = await _unitOfWork.Products.GetByIdAsync(businessId, productId, ct)
+                ?? throw new NotFoundException(nameof(Product), productId);
             await _unitOfWork.ProductAliases.CreateAsync(new ProductAlias
             {
-                ProductAliasId = Guid.NewGuid(), BusinessId = businessId, ProductId = productId,
+                ProductAliasId = Guid.NewGuid(), TenantId = product.TenantId, ProductId = productId,
                 Scope = scope, CustomerKey = customerKey, Alias = rawAlias.Trim(),
                 NormalizedAlias = normalizedAlias, Kind = ProductAliasKind.Alias,
                 ResolutionMode = requiresSecondCustomerConfirmation

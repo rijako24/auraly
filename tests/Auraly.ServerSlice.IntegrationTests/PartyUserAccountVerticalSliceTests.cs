@@ -148,8 +148,8 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
             """
             INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES(@PartyId,@TenantId,N'Organization',N'Vendedor acceso',N'Vendedor acceso',N'Complete',1,@ActorId,SYSDATETIMEOFFSET());
-            INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
-            VALUES(@SellerId,@BusinessId,@PartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@TenantId,@PartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
             IF NOT EXISTS(SELECT 1 FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName=N'SELLER')
               INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
               VALUES(@RoleId,@TenantId,N'Vendedor',N'SELLER',N'Integration seller role',1,0,SYSDATETIMEOFFSET());
@@ -269,8 +269,8 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
         using var response=await admin.PostAsJsonAsync("/api/commerce/v1/sellers",request);
         Assert.Equal(HttpStatusCode.Created,response.StatusCode);
         Assert.Equal(1,await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.CommerceSellers WHERE BusinessId=@BusinessId AND PartyId=@PartyId;",
-            new SqlParameter("@BusinessId",fixture.BusinessId),new SqlParameter("@PartyId",partyId)));
+            "SELECT COUNT(*) FROM dbo.CommerceSellers WHERE TenantId=@TenantId AND PartyId=@PartyId;",
+            new SqlParameter("@TenantId",fixture.TenantId),new SqlParameter("@PartyId",partyId)));
         Assert.Equal(1,await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.Parties WHERE TenantId=@TenantId AND NormalizedIdentification=@Identification;",
             new SqlParameter("@TenantId",fixture.TenantId),new SqlParameter("@Identification",identification)));

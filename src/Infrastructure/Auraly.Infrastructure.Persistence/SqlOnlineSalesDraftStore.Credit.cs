@@ -76,7 +76,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                         ELSE N'El valor seleccionado supera el cupo disponible del cliente.' END Reason
             FROM Eligible eligible
             LEFT JOIN dbo.Customers customer
-              ON customer.CustomerId=eligible.CustomerId AND customer.BusinessId=@BusinessId
+              ON customer.CustomerId=eligible.CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
              AND customer.IsActive=1
             LEFT JOIN dbo.CustomerCreditProfiles profile
               ON profile.CustomerId=eligible.CustomerId AND profile.BusinessId=@BusinessId

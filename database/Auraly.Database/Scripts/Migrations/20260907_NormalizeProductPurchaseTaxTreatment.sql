@@ -7,7 +7,7 @@ END
 FROM dbo.Products product
 JOIN dbo.TaxProfiles purchaseTax
   ON purchaseTax.TaxProfileId=COALESCE(product.PurchaseTaxProfileId,product.TaxProfileId)
- AND purchaseTax.BusinessId=product.BusinessId
+ AND purchaseTax.TenantId=product.TenantId
 WHERE (purchaseTax.Rate=0 AND COALESCE(product.PurchaseTaxTreatment,N'')<>N'NotApplicable')
    OR (purchaseTax.Rate>0 AND (product.PurchaseTaxTreatment=N'NotApplicable'
        OR product.PurchaseTaxTreatment IS NULL));

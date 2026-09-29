@@ -2,6 +2,8 @@ using Auraly.Platform.Domain.Entities;
 
 namespace Auraly.Platform.Domain.Repositories;
 
+public sealed record ExternalCommerceCustomerKey(string ExternalAccountId, string ExternalCustomerId);
+
 public interface IExternalCommerceCustomerRepository
 {
     Task<IReadOnlyList<ExternalCommerceCustomer>> FindActiveByPhoneAsync(
@@ -17,11 +19,21 @@ public interface IExternalCommerceCustomerRepository
         string externalCustomerId,
         CancellationToken ct = default);
 
+    Task<IReadOnlyList<ExternalCommerceCustomer>> GetByExternalKeysAsync(
+        Guid businessId,
+        Guid integrationConnectionId,
+        IReadOnlyCollection<ExternalCommerceCustomerKey> keys,
+        CancellationToken ct = default);
+
     Task<ExternalCommerceCustomer> CreateAsync(
         ExternalCommerceCustomer customer,
         CancellationToken ct = default);
 
+    Task CreateManyAsync(IReadOnlyCollection<ExternalCommerceCustomer> customers, CancellationToken ct = default);
+
     Task<ExternalCommerceCustomer> UpdateAsync(
         ExternalCommerceCustomer customer,
         CancellationToken ct = default);
+
+    Task UpdateManyAsync(IReadOnlyCollection<ExternalCommerceCustomer> customers, CancellationToken ct = default);
 }

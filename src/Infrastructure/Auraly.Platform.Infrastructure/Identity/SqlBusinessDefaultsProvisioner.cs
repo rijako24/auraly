@@ -67,15 +67,6 @@ public sealed class SqlBusinessDefaultsProvisioner(
             INNER JOIN dbo.ReasonTemplates t ON t.ProfileCode=p.ProfileCode
             WHERE p.IsDefault=1 AND p.IsActive=1 AND t.IsActive=1;
 
-            INSERT dbo.ProductUnits(
-                ProductUnitId,BusinessId,Code,Name,Symbol,
-                AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
-            VALUES
-              (NEWID(),@BusinessId,N'EA',N'Unidad',N'und',0,0,1,@Now),
-              (NEWID(),@BusinessId,N'KG',N'Kilogramo',N'kg',1,3,1,@Now),
-              (NEWID(),@BusinessId,N'M',N'Metro',N'm',1,3,1,@Now),
-              (NEWID(),@BusinessId,N'L',N'Litro',N'L',1,3,1,@Now);
-
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
                CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,
@@ -106,27 +97,6 @@ public sealed class SqlBusinessDefaultsProvisioner(
             WHERE product.TenantId=@TenantId AND product.ManageStock=1
               AND warehouse.BusinessId=@BusinessId;
 
-            INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
-            SELECT NEWID(),@BusinessId,source.ProductId,source.Barcode,source.IsPrimary,source.IsActive,@Now
-            FROM (
-              SELECT barcode.ProductId,barcode.Barcode,MAX(CONVERT(INT,barcode.IsPrimary)) IsPrimary,
-                     MAX(CONVERT(INT,barcode.IsActive)) IsActive
-              FROM dbo.ProductBarcodes barcode
-              INNER JOIN dbo.Products product ON product.ProductId=barcode.ProductId
-              WHERE product.TenantId=@TenantId
-              GROUP BY barcode.ProductId,barcode.Barcode
-            ) source;
-
-            INSERT dbo.ProductIdentifiers(ProductIdentifierId,BusinessId,ProductId,IdentifierType,Value,IsActive,CreatedAt)
-            SELECT NEWID(),@BusinessId,source.ProductId,source.IdentifierType,source.Value,source.IsActive,@Now
-            FROM (
-              SELECT identifier.ProductId,identifier.IdentifierType,identifier.Value,
-                     MAX(CONVERT(INT,identifier.IsActive)) IsActive
-              FROM dbo.ProductIdentifiers identifier
-              INNER JOIN dbo.Products product ON product.ProductId=identifier.ProductId
-              WHERE product.TenantId=@TenantId
-              GROUP BY identifier.ProductId,identifier.IdentifierType,identifier.Value
-            ) source;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);

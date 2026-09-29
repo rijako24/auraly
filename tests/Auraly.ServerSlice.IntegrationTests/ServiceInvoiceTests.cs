@@ -478,8 +478,8 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
             INSERT dbo.TaxProfiles
-              (TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'01',N'IVA 19%',19,1,@Now);
+              (TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'01',N'IVA 19%',19,1,@Now);
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
                Identification,NormalizedIdentification,VerificationDigit,DisplayName,LegalName,
@@ -489,8 +489,8 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
                N'Complete',1,@UserId,@Now
             FROM dbo.Countries country WHERE country.Code='CO';
             INSERT dbo.Customers
-              (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@CustomerPartyId,@BusinessId,1,1,@UserId,@Now);
+              (CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@CustomerPartyId,@TenantId,1,1,@UserId,@Now);
             INSERT dbo.PartySites(
               PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
               AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)

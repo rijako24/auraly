@@ -50,12 +50,12 @@ public sealed class SqlCustomerCreditValidator(
                    COALESCE((
                        SELECT SUM(r.OutstandingAmount)
                        FROM dbo.Receivables r WITH(UPDLOCK,HOLDLOCK)
-                       WHERE r.CustomerId=c.CustomerId AND r.BusinessId=c.BusinessId
+                       WHERE r.CustomerId=c.CustomerId AND r.BusinessId=@BusinessId
                          AND r.Status IN(N'Open',N'PartiallyPaid')),0) +
                    COALESCE((
                        SELECT SUM(d.CreditAmount)
                        FROM dbo.SalesDocuments d WITH(UPDLOCK,HOLDLOCK)
-                       WHERE d.CustomerId=c.CustomerId AND d.BusinessId=c.BusinessId
+                       WHERE d.CustomerId=c.CustomerId AND d.BusinessId=@BusinessId
                          AND d.CreditAmount>0
                          AND d.ProcessingStatus IN(N'Received',N'Processing')),0),
                    CAST(CASE WHEN @PartySiteId IS NOT NULL AND EXISTS(
@@ -64,15 +64,13 @@ public sealed class SqlCustomerCreditValidator(
                        THEN 1 ELSE 0 END AS bit)
             FROM dbo.Customers c WITH(UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.CustomerCreditProfiles cp WITH(UPDLOCK,HOLDLOCK)
-              ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId
-            WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId AND c.IsActive=1
-              AND (@TenantId IS NULL OR EXISTS(
-                    SELECT 1 FROM dbo.Businesses b
-                    WHERE b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
-                      AND b.IsActive=1))
+              ON cp.CustomerId=c.CustomerId AND cp.BusinessId=@BusinessId
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId AND b.IsActive=1
+            WHERE c.CustomerId=@CustomerId AND c.IsActive=1
+              AND (@TenantId IS NULL OR c.TenantId=@TenantId)
               AND (@DeviceId IS NULL OR EXISTS(
                     SELECT 1 FROM dbo.DocumentSeries ds
-                    WHERE ds.DeviceId=@DeviceId AND ds.BusinessId=c.BusinessId
+                    WHERE ds.DeviceId=@DeviceId AND ds.BusinessId=@BusinessId
                       AND ds.IsActive=1))
             """, connection, transaction);
         command.Parameters.AddWithValue("@CustomerId", customerId);

@@ -308,10 +308,10 @@ public sealed class SqlReceivablesStore(
         await using var command=new SqlCommand("""
             SELECT cp.CreditLimit,cp.DefaultDueDays,cp.IsCreditEnabled,
                    COALESCE(SUM(CASE WHEN r.Status IN(N'Open',N'PartiallyPaid') THEN r.OutstandingAmount ELSE 0 END),0)
-            FROM dbo.Customers c INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
-            LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId
-            LEFT JOIN dbo.Receivables r ON r.CustomerId=c.CustomerId AND r.BusinessId=c.BusinessId
-            WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId AND b.TenantId=@TenantId
+            FROM dbo.Customers c INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId
+            LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=@BusinessId
+            LEFT JOIN dbo.Receivables r ON r.CustomerId=c.CustomerId AND r.BusinessId=@BusinessId
+            WHERE c.CustomerId=@CustomerId AND c.TenantId=@TenantId
             GROUP BY cp.CreditLimit,cp.DefaultDueDays,cp.IsCreditEnabled;
             """,connection);
         command.Parameters.AddWithValue("@CustomerId",customerId); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@TenantId",user.TenantId);
@@ -329,12 +329,12 @@ public sealed class SqlReceivablesStore(
             SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
             BEGIN TRANSACTION;
             BEGIN TRY
-            IF NOT EXISTS(SELECT 1 FROM dbo.Customers c INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
-                          WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId AND b.TenantId=@TenantId)
+            IF NOT EXISTS(SELECT 1 FROM dbo.Customers c INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId
+                          WHERE c.CustomerId=@CustomerId AND c.TenantId=@TenantId)
                 THROW 51300,'The customer is outside the authenticated business.',1;
-            IF EXISTS(SELECT 1 FROM dbo.CustomerCreditProfiles WITH(UPDLOCK,HOLDLOCK) WHERE CustomerId=@CustomerId)
+            IF EXISTS(SELECT 1 FROM dbo.CustomerCreditProfiles WITH(UPDLOCK,HOLDLOCK) WHERE CustomerId=@CustomerId AND BusinessId=@BusinessId)
                 UPDATE dbo.CustomerCreditProfiles SET CreditLimit=@Limit,DefaultDueDays=@Days,IsCreditEnabled=@Enabled,
-                    UpdatedByUserId=@UserId,UpdatedAt=@Now WHERE CustomerId=@CustomerId;
+                    UpdatedByUserId=@UserId,UpdatedAt=@Now WHERE CustomerId=@CustomerId AND BusinessId=@BusinessId;
             ELSE
                 INSERT dbo.CustomerCreditProfiles(CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,UpdatedByUserId,UpdatedAt)
                 VALUES(@CustomerId,@BusinessId,@Limit,@Days,@Enabled,@UserId,@Now);
@@ -407,20 +407,20 @@ public sealed class SqlReceivablesStore(
                 IF EXISTS(SELECT 1 FROM @Input GROUP BY DocumentNumber HAVING COUNT(*)>1)
                   THROW 51326,N'La plantilla contiene números de factura duplicados.',1;
                 IF EXISTS(SELECT 1 FROM @Input i OUTER APPLY(SELECT TOP(1)c.CustomerId,c.PartyId FROM dbo.Customers c
-                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.BusinessId=@BusinessId AND c.IsActive=1
+                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.TenantId=@TenantId AND c.IsActive=1
                     AND ((i.CustomerId IS NOT NULL AND c.CustomerId=i.CustomerId) OR (i.CustomerId IS NULL
                       AND (p.Identification=i.CustomerIdentification OR p.NormalizedIdentification=i.CustomerIdentification)))) c
                   WHERE c.CustomerId IS NULL)
                   THROW 51321,N'Un cliente no pertenece al negocio o está inactivo.',1;
                 IF EXISTS(SELECT 1 FROM @Input i CROSS APPLY(SELECT TOP(1)c.CustomerId,c.PartyId FROM dbo.Customers c
-                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.BusinessId=@BusinessId AND c.IsActive=1
+                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.TenantId=@TenantId AND c.IsActive=1
                     AND ((i.CustomerId IS NOT NULL AND c.CustomerId=i.CustomerId) OR (i.CustomerId IS NULL
                       AND (p.Identification=i.CustomerIdentification OR p.NormalizedIdentification=i.CustomerIdentification)))) c
                   LEFT JOIN dbo.PartySites site ON site.PartySiteId=i.PartySiteId AND site.PartyId=c.PartyId AND site.IsActive=1
                   WHERE i.PartySiteId IS NOT NULL AND site.PartySiteId IS NULL)
                   THROW 51322,N'Una sede no pertenece al cliente indicado.',1;
                 IF EXISTS(SELECT 1 FROM @Input i CROSS APPLY(SELECT TOP(1)c.PartyId FROM dbo.Customers c
-                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.BusinessId=@BusinessId AND c.IsActive=1
+                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.TenantId=@TenantId AND c.IsActive=1
                     AND ((i.CustomerId IS NOT NULL AND c.CustomerId=i.CustomerId) OR (i.CustomerId IS NULL
                       AND (p.Identification=i.CustomerIdentification OR p.NormalizedIdentification=i.CustomerIdentification)))) c
                   WHERE i.PartySiteId IS NULL AND NOT EXISTS(SELECT 1 FROM dbo.PartySites site
@@ -435,7 +435,7 @@ public sealed class SqlReceivablesStore(
                   WHERE r.ReceivableId<>i.ReceivableId OR r.SourceDocumentType<>N'PreexistingReceivable')
                   THROW 51324,N'La factura ya existe en cartera.',1;
                 SELECT i.ReceivableId,c.CustomerId,site.PartySiteId FROM @Input i CROSS APPLY(SELECT TOP(1)c.CustomerId,c.PartyId FROM dbo.Customers c
-                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.BusinessId=@BusinessId AND c.IsActive=1
+                  JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE c.TenantId=@TenantId AND c.IsActive=1
                     AND ((i.CustomerId IS NOT NULL AND c.CustomerId=i.CustomerId) OR (i.CustomerId IS NULL
                       AND (p.Identification=i.CustomerIdentification OR p.NormalizedIdentification=i.CustomerIdentification)))) c
                   CROSS APPLY(SELECT TOP(1)site.PartySiteId FROM dbo.PartySites site

@@ -47,8 +47,8 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
                 VALUES(@PartyId,@TenantId,N'NaturalPerson',N'Administrador vendedor',N'Administrador',N'Vendedor',N'Complete',1,@ActorId,SYSDATETIMEOFFSET());
                 INSERT dbo.AppUsers(UserId,TenantId,PartyId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,AccessFailedCount,EmailConfirmed,IsActive,CreatedAt)
                 VALUES(@UserId,@TenantId,@PartyId,@Username,UPPER(@Username),@Email,UPPER(@Email),N'Administrador',N'Vendedor',0,1,1,SYSUTCDATETIME());
-                INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
-                VALUES(@SellerId,@BusinessId,@PartyId,@Code,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+                INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+                VALUES(@SellerId,@TenantId,@PartyId,@Code,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
                 """;
             command.Parameters.AddWithValue("@PartyId",partyId);command.Parameters.AddWithValue("@SellerId",sellerId);
             command.Parameters.AddWithValue("@UserId",userId);command.Parameters.AddWithValue("@TenantId",fixture.TenantId);

@@ -229,21 +229,20 @@ public sealed class SqlGoodsReceiptDocumentHandler(
               ON tenant.TenantId=business.TenantId
             INNER JOIN dbo.SupplierProducts sp WITH (UPDLOCK,HOLDLOCK)
               ON sp.ProductId=p.ProductId AND sp.SupplierId=@SupplierId
-             AND sp.BusinessId=@BusinessId AND sp.IsActive=1
+             AND sp.TenantId=business.TenantId AND sp.IsActive=1
             INNER JOIN dbo.Products inventoryProduct WITH (UPDLOCK,HOLDLOCK)
              ON inventoryProduct.ProductId=@InventoryProductId
-             AND (inventoryProduct.TenantId=business.TenantId
-                  OR (inventoryProduct.TenantId IS NULL AND inventoryProduct.BusinessId=@BusinessId))
-            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.BusinessId=@BusinessId
+             AND inventoryProduct.TenantId=business.TenantId
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.TenantId=business.TenantId
             INNER JOIN dbo.ProductPrices pp WITH (UPDLOCK,HOLDLOCK)
               ON pp.ProductId=p.ProductId AND pp.BusinessId=@BusinessId AND pp.IsActive=1
             LEFT JOIN dbo.SupplierProductLatestCosts lc WITH (UPDLOCK,HOLDLOCK)
               ON lc.BusinessId=@BusinessId AND lc.SupplierId=@SupplierId AND lc.ProductId=p.ProductId
             LEFT JOIN dbo.ProductLinks costLink WITH (UPDLOCK,HOLDLOCK)
-              ON costLink.BusinessId=@BusinessId AND costLink.ChildProductId=p.ProductId
+              ON costLink.TenantId=business.TenantId AND costLink.ChildProductId=p.ProductId
              AND costLink.SharesPrice=1 AND costLink.IsActive=1
             WHERE p.ProductId=@ProductId
-              AND (p.TenantId=business.TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
+              AND p.TenantId=business.TenantId;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);

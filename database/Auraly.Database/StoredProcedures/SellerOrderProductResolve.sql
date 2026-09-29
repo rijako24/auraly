@@ -51,7 +51,7 @@ BEGIN
     FROM requested
     JOIN dbo.Products p ON p.ProductId=requested.ProductId
     LEFT JOIN dbo.ProductLinks inventoryLink
-      ON inventoryLink.BusinessId=@BusinessId
+      ON inventoryLink.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
      AND inventoryLink.ChildProductId=p.ProductId
      AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
     LEFT JOIN dbo.InventoryBalances balance

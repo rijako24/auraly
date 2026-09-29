@@ -792,7 +792,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             SELECT NULLIF(p.Identification,N'')
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
-            WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId
+            WHERE c.CustomerId=@CustomerId AND c.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND c.IsActive=1 AND p.IsActive=1;
             """;
         command.Parameters.AddRange([

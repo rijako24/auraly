@@ -31,7 +31,7 @@ BEGIN
         OR p.Name LIKE @Pattern OR o.DocumentNumber LIKE @Pattern
         OR m.DocumentType LIKE @Pattern OR m.MovementType LIKE @Pattern
         OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode
-                   WHERE barcode.BusinessId=m.BusinessId AND barcode.ProductId=p.ProductId
+                   WHERE barcode.TenantId=p.TenantId AND barcode.ProductId=p.ProductId
                      AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1));
 
     SELECT m.InventoryMovementId,m.WarehouseId,w.Name,m.ProductId,COALESCE(p.ProductCode,N''),p.Name,
@@ -54,7 +54,7 @@ BEGIN
         OR p.Name LIKE @Pattern OR o.DocumentNumber LIKE @Pattern
         OR m.DocumentType LIKE @Pattern OR m.MovementType LIKE @Pattern
         OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode
-                   WHERE barcode.BusinessId=m.BusinessId AND barcode.ProductId=p.ProductId
+                   WHERE barcode.TenantId=p.TenantId AND barcode.ProductId=p.ProductId
                      AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
     ORDER BY m.ProcessingSequence DESC,m.LineNumber
     OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;

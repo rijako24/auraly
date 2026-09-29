@@ -6,8 +6,9 @@ CREATE PROCEDURE [purchasing].[PurchaseOrderSuggestionsGet]
 AS
 BEGIN
     SET NOCOUNT ON;
+    DECLARE @TenantId UNIQUEIDENTIFIER=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId AND IsActive=1);
     IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1)
-       OR NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE BusinessId=@BusinessId AND SupplierId=@SupplierId AND IsActive=1)
+       OR NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE TenantId=@TenantId AND SupplierId=@SupplierId AND IsActive=1)
         THROW 51220,'The warehouse or supplier is outside the authenticated business.',1;
 
     DECLARE @ProductIds TABLE(ProductId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY);
@@ -21,12 +22,12 @@ BEGIN
     FROM @ProductIds ids
     JOIN dbo.Products p ON p.ProductId=ids.ProductId
     JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
-      AND (p.TenantId=business.TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
+      AND p.TenantId=business.TenantId
     OUTER APPLY
     (
       SELECT TOP(1) supplierProduct.PurchasePresentationName,supplierProduct.UnitsPerPresentation
       FROM dbo.SupplierProducts supplierProduct
-      WHERE supplierProduct.BusinessId=@BusinessId AND supplierProduct.SupplierId=@SupplierId
+      WHERE supplierProduct.TenantId=@TenantId AND supplierProduct.SupplierId=@SupplierId
         AND supplierProduct.ProductId=p.ProductId AND supplierProduct.IsActive=1
       ORDER BY supplierProduct.IsPrimary DESC,supplierProduct.SupplierProductId
     ) sp

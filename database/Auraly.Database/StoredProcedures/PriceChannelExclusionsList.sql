@@ -7,7 +7,7 @@ BEGIN
 
     IF NOT EXISTS (
         SELECT 1 FROM dbo.PriceChannels
-        WHERE PriceChannelId = @Id AND BusinessId = @BusinessId)
+        WHERE PriceChannelId = @Id AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId))
     BEGIN
         THROW 51004, 'Price channel not found', 1;
     END
@@ -18,7 +18,7 @@ BEGIN
                category.Name, CONVERT(INT, 0) AS Depth,
                CONVERT(NVARCHAR(MAX), category.Name) AS [Path]
         FROM dbo.ProductCategories category
-        WHERE category.BusinessId = @BusinessId
+        WHERE category.TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
           AND category.ParentProductCategoryId IS NULL
         UNION ALL
         SELECT child.ProductCategoryId, child.ParentProductCategoryId,
@@ -27,7 +27,7 @@ BEGIN
         FROM dbo.ProductCategories child
         JOIN CategoryTree parent
           ON parent.ProductCategoryId = child.ParentProductCategoryId
-        WHERE child.BusinessId = @BusinessId
+        WHERE child.TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
     )
     SELECT exclusion.PriceChannelExclusionId,
            exclusion.ScopeType,
@@ -42,7 +42,7 @@ BEGIN
     LEFT JOIN CategoryTree category
       ON category.ProductCategoryId = exclusion.ProductCategoryId
     LEFT JOIN dbo.ProductBrands brand
-      ON brand.ProductBrandId = exclusion.ProductBrandId AND brand.BusinessId = @BusinessId
+      ON brand.ProductBrandId = exclusion.ProductBrandId AND brand.TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
     WHERE exclusion.PriceChannelId = @Id
     ORDER BY exclusion.ScopeType, ScopeName, exclusion.PriceChannelExclusionId;
 END

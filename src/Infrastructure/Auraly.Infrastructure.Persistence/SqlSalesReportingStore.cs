@@ -536,8 +536,8 @@ public sealed class SqlSalesReportingStore(
         await using var command=new SqlCommand("""
           SELECT seller.SellerId,supplier.SupplierId
           FROM dbo.AppUsers app
-          LEFT JOIN dbo.CommerceSellers seller ON seller.PartyId=app.PartyId AND seller.BusinessId=@BusinessId AND seller.IsActive=1
-          LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=app.PartyId AND supplier.BusinessId=@BusinessId AND supplier.IsActive=1
+          LEFT JOIN dbo.CommerceSellers seller ON seller.PartyId=app.PartyId AND seller.TenantId=@TenantId AND seller.IsActive=1
+          LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=app.PartyId AND supplier.TenantId=@TenantId AND supplier.IsActive=1
           WHERE app.UserId=@UserId AND app.TenantId=@TenantId AND app.IsActive=1;
           """,connection);
         command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@TenantId",user.TenantId);

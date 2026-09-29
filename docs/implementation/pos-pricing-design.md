@@ -23,8 +23,10 @@ auditoría
 No contiene tenant, lista, canal, costo ni inventario. La publicación vendible
 exige un precio base vigente.
 
-Las listas (`PriceLists`, `PriceListItems`) y los canales (`PriceChannels`,
-`PriceChannelItems`, `PriceChannelExclusions`) pertenecen al negocio.
+Las listas (`PriceLists`, `PriceListItems`) pertenecen al negocio. La definición
+de un canal (`PriceChannels`, `PriceChannelItems`, `PriceChannelExclusions`)
+pertenece al tenant y aplica en todas sus sedes. La sede seleccionada aporta
+su precio base.
 La vigencia del canal se configura únicamente en su asignación al cliente
 mediante `CustomerPricingSettings`; los precios por producto y cantidad no
 tienen un rango de vigencia propio.

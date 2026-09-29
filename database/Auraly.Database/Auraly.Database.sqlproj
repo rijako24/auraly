@@ -56,8 +56,11 @@
     <Build Include="StoredProcedures\SellerUserAccessCreate.sql" />
     <Build Include="StoredProcedures\ExecutionTenantsList.sql" />
     <Build Include="StoredProcedures\ExecutionBusinessesList.sql" />
+    <Build Include="StoredProcedures\ExecutionBusinessesPermissionCheck.sql" />
     <Build Include="StoredProcedures\ExecutionAccessResolve.sql" />
     <Build Include="StoredProcedures\PriceSegmentsList.sql" />
+    <Build Include="StoredProcedures\PriceChannelBusinessIdsList.sql" />
+    <Build Include="StoredProcedures\PriceChannelDefaultBusinessesList.sql" />
     <Build Include="StoredProcedures\PosPricingSnapshotGet.sql" />
     <Build Include="StoredProcedures\PriceSegmentCreate.sql" />
     <Build Include="StoredProcedures\PriceSegmentItemsList.sql" />

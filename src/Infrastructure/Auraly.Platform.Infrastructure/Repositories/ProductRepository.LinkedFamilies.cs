@@ -12,9 +12,10 @@ public sealed partial class ProductRepository
     {
         var seeds = productIds.Distinct().ToArray();
         if (seeds.Length == 0) return [];
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
 
         var roots = await _context.ProductLinks.AsNoTracking()
-            .Where(link => link.BusinessId == businessId
+            .Where(link => link.TenantId == tenantId
                 && link.IsActive
                 && (seeds.Contains(link.ChildProductId) || seeds.Contains(link.ParentProductId)))
             .Select(link => link.ParentProductId)
@@ -26,7 +27,7 @@ public sealed partial class ProductRepository
         if (roots.Count > 0)
         {
             var children = await _context.ProductLinks.AsNoTracking()
-                .Where(link => link.BusinessId == businessId
+                .Where(link => link.TenantId == tenantId
                     && link.IsActive
                     && roots.Contains(link.ParentProductId))
                 .Select(link => link.ChildProductId)
@@ -35,7 +36,6 @@ public sealed partial class ProductRepository
         }
 
         var now = DateTimeOffset.UtcNow;
-        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var ids = familyIds.ToArray();
         var products = await _context.Products.AsNoTracking()
             .Where(product => product.TenantId == tenantId

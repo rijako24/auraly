@@ -182,11 +182,11 @@ public sealed partial class SqlOnlineSalesDraftStore
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             JOIN dbo.PartySites site ON site.PartyId=p.PartyId AND site.IsActive=1
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
-            LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId
+            LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=@BusinessId
             OUTER APPLY(SELECT SUM(r.OutstandingAmount) Outstanding FROM dbo.Receivables r
-                        WHERE r.CustomerId=c.CustomerId AND r.BusinessId=c.BusinessId
+                        WHERE r.CustomerId=c.CustomerId AND r.BusinessId=@BusinessId
                           AND r.Status IN(N'Open',N'PartiallyPaid')) balance
-            WHERE c.BusinessId=@BusinessId AND c.IsActive=1 AND p.IsActive=1
+            WHERE c.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND c.IsActive=1 AND p.IsActive=1
               AND (@Search=N'' OR NOT EXISTS(
                    SELECT 1 FROM STRING_SPLIT(@Search,N' ') term
                    WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL

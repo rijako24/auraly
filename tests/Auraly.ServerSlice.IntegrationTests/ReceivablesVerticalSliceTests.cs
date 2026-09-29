@@ -804,8 +804,8 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                   N'Cliente crédito E2E',N'Cliente crédito E2E',N'Complete',1,
                   @UserId,SYSDATETIMEOFFSET());
                 INSERT dbo.Customers(
-                  CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-                VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+                  CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+                VALUES(@CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
                 DECLARE @CountryId uniqueidentifier,@DivisionId uniqueidentifier,@CityId uniqueidentifier;
                 SELECT TOP(1) @CountryId=country.CountryId,
                               @DivisionId=division.AdministrativeDivisionId,

@@ -95,10 +95,10 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                   @SeriesCode,8,1,99999999,1,1,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Products(
-                  ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
+                  ProductId,TenantId,Source,Sku,Name,Currency,
                   ManageStock,IsActive,CreatedAt)
                 VALUES(
-                  @ProductId,@TenantId,@BusinessId,0,@Sku,N'Producto documentos sin pedido',N'COP',
+                  @ProductId,@TenantId,0,@Sku,N'Producto documentos sin pedido',N'COP',
                   1,1,SYSUTCDATETIME());
 
                 INSERT dbo.InventoryBalances(

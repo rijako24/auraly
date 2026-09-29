@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.Application.Routes;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Routes;
@@ -20,7 +21,7 @@ public sealed class SqlRouteStore(
         const string source = """
             FROM dbo.SalesRoutes route
             INNER JOIN dbo.Businesses business ON business.BusinessId=route.BusinessId
-            INNER JOIN dbo.CommerceSellers seller ON seller.SellerId=route.SellerId AND seller.BusinessId=route.BusinessId
+            INNER JOIN dbo.CommerceSellers seller ON seller.SellerId=route.SellerId AND seller.TenantId=business.TenantId
             INNER JOIN dbo.Parties sellerParty ON sellerParty.PartyId=seller.PartyId
             LEFT JOIN dbo.SalesZones zone ON zone.ZoneId=route.ZoneId AND zone.BusinessId=route.BusinessId
             OUTER APPLY(SELECT COUNT(*) StopCount FROM dbo.SalesRouteStops stop WHERE stop.RouteId=route.RouteId AND stop.IsActive=1) stops
@@ -36,7 +37,7 @@ public sealed class SqlRouteStore(
               AND (@PreparationStatus IS NULL OR @PreparationStatus=CASE WHEN schedules.ScheduleCount>0 AND stops.StopCount>0 THEN N'Ready' ELSE N'Draft' END)
               AND (@ReadAll=1 OR EXISTS(
                     SELECT 1 FROM dbo.AppUsers currentUser
-                    INNER JOIN dbo.CommerceSellers currentSeller ON currentSeller.PartyId=currentUser.PartyId AND currentSeller.BusinessId=@BusinessId AND currentSeller.IsActive=1
+                    INNER JOIN dbo.CommerceSellers currentSeller ON currentSeller.PartyId=currentUser.PartyId AND currentSeller.TenantId=@TenantId AND currentSeller.IsActive=1
                     WHERE currentUser.UserId=@UserId AND currentUser.TenantId=@TenantId AND currentSeller.SellerId=route.SellerId))
             """;
         int total;
@@ -84,7 +85,7 @@ public sealed class SqlRouteStore(
                    THEN N'Ready' ELSE N'Draft' END
             FROM dbo.SalesRoutes route
             INNER JOIN dbo.Businesses business ON business.BusinessId=route.BusinessId AND business.TenantId=@TenantId
-            INNER JOIN dbo.CommerceSellers seller ON seller.SellerId=route.SellerId AND seller.BusinessId=route.BusinessId
+            INNER JOIN dbo.CommerceSellers seller ON seller.SellerId=route.SellerId AND seller.TenantId=business.TenantId
             INNER JOIN dbo.Parties sellerParty ON sellerParty.PartyId=seller.PartyId
             LEFT JOIN dbo.SalesZones zone ON zone.ZoneId=route.ZoneId
             WHERE route.RouteId=@RouteId AND route.BusinessId=@BusinessId;
@@ -98,7 +99,7 @@ public sealed class SqlRouteStore(
               COALESCE(site.Phone,phone.Value),site.GoogleMapsUrl,site.Latitude,site.Longitude,
               stop.PlannedVisitTime,stop.VisitNote,stop.RowVersion
             FROM dbo.SalesRouteStops stop
-            INNER JOIN dbo.Customers customer ON customer.CustomerId=stop.CustomerId AND customer.BusinessId=@BusinessId
+            INNER JOIN dbo.Customers customer ON customer.CustomerId=stop.CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             INNER JOIN dbo.PartySites site ON site.PartySiteId=stop.PartySiteId AND site.PartyId=party.PartyId
             INNER JOIN dbo.Cities city ON city.CityId=site.CityId
@@ -152,9 +153,9 @@ public sealed class SqlRouteStore(
         await using var command = new SqlCommand("""
             SELECT seller.SellerId,seller.Code,party.DisplayName
             FROM dbo.CommerceSellers seller
-            INNER JOIN dbo.Businesses business ON business.BusinessId=seller.BusinessId AND business.TenantId=@TenantId
+            INNER JOIN dbo.Businesses business ON business.BusinessId=@BusinessId AND business.TenantId=seller.TenantId
             INNER JOIN dbo.Parties party ON party.PartyId=seller.PartyId
-            WHERE seller.BusinessId=@BusinessId AND seller.IsActive=1 AND 1=0 ORDER BY party.DisplayName;
+            WHERE seller.TenantId=@TenantId AND seller.IsActive=1 AND 1=0 ORDER BY party.DisplayName;
             SELECT zone.ZoneId,zone.Code,zone.Name,zone.IsActive,zone.RowVersion
             FROM dbo.SalesZones zone
             INNER JOIN dbo.Businesses business ON business.BusinessId=zone.BusinessId AND business.TenantId=@TenantId
@@ -179,7 +180,7 @@ public sealed class SqlRouteStore(
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=@TenantId
             INNER JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
             INNER JOIN dbo.Cities city ON city.CityId=site.CityId
-            WHERE customer.BusinessId=@BusinessId AND customer.IsActive=1 AND party.IsActive=1
+            WHERE customer.TenantId=@TenantId AND customer.IsActive=1 AND party.IsActive=1
               AND (@RouteId IS NULL OR EXISTS(SELECT 1 FROM dbo.SalesRoutes route WHERE route.RouteId=@RouteId AND route.BusinessId=@BusinessId))
               AND (@Search IS NULL OR party.DisplayName LIKE '%'+@Search+'%' OR party.Identification LIKE '%'+@Search+'%'
                    OR site.Name LIKE '%'+@Search+'%' OR site.AddressLine LIKE '%'+@Search+'%' OR site.Phone LIKE '%'+@Search+'%')
@@ -495,7 +496,7 @@ public sealed class SqlRouteStore(
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
             SELECT COUNT(*) FROM dbo.AppUsers currentUser
-            INNER JOIN dbo.CommerceSellers seller ON seller.PartyId=currentUser.PartyId AND seller.BusinessId=@BusinessId AND seller.IsActive=1
+            INNER JOIN dbo.CommerceSellers seller ON seller.PartyId=currentUser.PartyId AND seller.TenantId=@TenantId AND seller.IsActive=1
             WHERE currentUser.UserId=@UserId AND currentUser.TenantId=@TenantId AND seller.SellerId=@SellerId;
             """, connection);
         AddScope(command, actor);
@@ -522,29 +523,30 @@ public sealed class SqlRouteStore(
 
     private async Task ValidateReferencesAndScheduleAsync(SqlConnection connection, SqlTransaction transaction, RouteActorIdentity actor, Guid routeId, Guid sellerId, Guid? zoneId, IReadOnlyCollection<RouteScheduleInput> schedules, CancellationToken ct)
     {
-        foreach (var schedule in schedules)
-        {
-            await using var command = new SqlCommand("""
-                IF NOT EXISTS(SELECT 1 FROM dbo.CommerceSellers WHERE SellerId=@SellerId AND BusinessId=@BusinessId AND IsActive=1)
-                  THROW 51702,'El vendedor no está activo en este negocio.',1;
-                IF @ZoneId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.SalesZones WHERE ZoneId=@ZoneId AND BusinessId=@BusinessId AND IsActive=1)
-                  THROW 51702,'La zona de ventas no está activa en este negocio.',1;
-                IF EXISTS(SELECT 1 FROM dbo.SalesRoutes otherRoute WITH(UPDLOCK,HOLDLOCK)
-                          INNER JOIN dbo.SalesRouteSchedules otherSchedule ON otherSchedule.RouteId=otherRoute.RouteId AND otherSchedule.IsActive=1
-                          WHERE otherRoute.BusinessId=@BusinessId AND otherRoute.SellerId=@SellerId AND otherRoute.IsActive=1
-                            AND otherRoute.RouteId<>@RouteId AND otherSchedule.DayOfWeek=@DayOfWeek AND otherSchedule.RunOrder=@RunOrder)
-                  THROW 51705,'El vendedor ya tiene otra ruta con el mismo día y orden de recorrido.',1;
-                """, connection, transaction);
-            AddScope(command, actor); command.Parameters.AddWithValue("@RouteId", routeId); command.Parameters.AddWithValue("@SellerId", sellerId);
-            command.Parameters.AddWithValue("@ZoneId", (object?)zoneId ?? DBNull.Value); command.Parameters.AddWithValue("@DayOfWeek", schedule.DayOfWeek); command.Parameters.AddWithValue("@RunOrder", schedule.RunOrder);
-            await command.ExecuteNonQueryAsync(ct);
-        }
+        await using var command = new SqlCommand("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.CommerceSellers WHERE SellerId=@SellerId AND TenantId=@TenantId AND IsActive=1)
+              THROW 51702,'El vendedor no está activo en este negocio.',1;
+            IF @ZoneId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.SalesZones WHERE ZoneId=@ZoneId AND BusinessId=@BusinessId AND IsActive=1)
+              THROW 51702,'La zona de ventas no está activa en este negocio.',1;
+            IF EXISTS(SELECT 1 FROM dbo.SalesRoutes otherRoute WITH(UPDLOCK,HOLDLOCK)
+                      INNER JOIN dbo.SalesRouteSchedules otherSchedule ON otherSchedule.RouteId=otherRoute.RouteId AND otherSchedule.IsActive=1
+                      INNER JOIN OPENJSON(@Schedules) WITH (DayOfWeek INT '$.DayOfWeek',RunOrder INT '$.RunOrder') requested
+                        ON requested.DayOfWeek=otherSchedule.DayOfWeek AND requested.RunOrder=otherSchedule.RunOrder
+                      WHERE otherRoute.BusinessId=@BusinessId AND otherRoute.SellerId=@SellerId AND otherRoute.IsActive=1
+                        AND otherRoute.RouteId<>@RouteId)
+              THROW 51705,'El vendedor ya tiene otra ruta con el mismo día y orden de recorrido.',1;
+            """, connection, transaction);
+        AddScope(command, actor); command.Parameters.AddWithValue("@RouteId", routeId);
+        command.Parameters.AddWithValue("@SellerId", sellerId);
+        command.Parameters.AddWithValue("@ZoneId", (object?)zoneId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Schedules", JsonSerializer.Serialize(schedules));
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task ValidateStopAsync(SqlConnection connection, SqlTransaction transaction, RouteActorIdentity actor, Guid routeId, Guid customerId, Guid partySiteId, CancellationToken ct)
     {
         await using var command = new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.Customers customer INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=@TenantId AND party.IsActive=1 INNER JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.PartySiteId=@PartySiteId AND site.IsActive=1 WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId AND customer.IsActive=1)
+            IF NOT EXISTS(SELECT 1 FROM dbo.Customers customer INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=@TenantId AND party.IsActive=1 INNER JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.PartySiteId=@PartySiteId AND site.IsActive=1 WHERE customer.CustomerId=@CustomerId AND customer.TenantId=@TenantId AND customer.IsActive=1)
               THROW 51702,'El establecimiento del cliente no está activo en este negocio.',1;
             IF EXISTS(SELECT 1 FROM dbo.SalesRouteStops WHERE RouteId=@RouteId AND PartySiteId=@PartySiteId AND IsActive=1)
               THROW 51706,'Este establecimiento ya pertenece a esta ruta.',1;
@@ -575,12 +577,17 @@ public sealed class SqlRouteStore(
     {
         await using (var deactivate = new SqlCommand("UPDATE dbo.SalesRouteSchedules SET IsActive=0,UpdatedBy=@UserId,UpdatedAt=@Now WHERE RouteId=@RouteId AND IsActive=1;", connection, transaction))
         { deactivate.Parameters.AddWithValue("@UserId", actor.UserId); deactivate.Parameters.AddWithValue("@Now", now); deactivate.Parameters.AddWithValue("@RouteId", routeId); await deactivate.ExecuteNonQueryAsync(ct); }
-        foreach (var schedule in schedules)
-        {
-            await using var insert = new SqlCommand("INSERT dbo.SalesRouteSchedules(RouteScheduleId,RouteId,DayOfWeek,RunOrder,PlannedStartTime,IsActive,CreatedBy,CreatedAt) VALUES(@Id,@RouteId,@Day,@Order,@Time,1,@UserId,@Now);", connection, transaction);
-            insert.Parameters.AddWithValue("@Id", ids.NewId()); insert.Parameters.AddWithValue("@RouteId", routeId); insert.Parameters.AddWithValue("@Day", schedule.DayOfWeek); insert.Parameters.AddWithValue("@Order", schedule.RunOrder); insert.Parameters.AddWithValue("@Time", schedule.PlannedStartTime?.ToTimeSpan() ?? (object)DBNull.Value); insert.Parameters.AddWithValue("@UserId", actor.UserId); insert.Parameters.AddWithValue("@Now", now);
-            await insert.ExecuteNonQueryAsync(ct);
-        }
+        await using var insert = new SqlCommand("""
+            INSERT dbo.SalesRouteSchedules(RouteScheduleId,RouteId,DayOfWeek,RunOrder,PlannedStartTime,IsActive,CreatedBy,CreatedAt)
+            SELECT NEWID(),@RouteId,requested.DayOfWeek,requested.RunOrder,requested.PlannedStartTime,1,@UserId,@Now
+            FROM OPENJSON(@Schedules) WITH (
+              DayOfWeek INT '$.DayOfWeek',RunOrder INT '$.RunOrder',PlannedStartTime TIME(0) '$.PlannedStartTime') requested;
+            """, connection, transaction);
+        insert.Parameters.AddWithValue("@RouteId", routeId);
+        insert.Parameters.AddWithValue("@UserId", actor.UserId);
+        insert.Parameters.AddWithValue("@Now", now);
+        insert.Parameters.AddWithValue("@Schedules", JsonSerializer.Serialize(schedules));
+        await insert.ExecuteNonQueryAsync(ct);
     }
 
     private async Task<RouteMutationResult> MutationAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct)

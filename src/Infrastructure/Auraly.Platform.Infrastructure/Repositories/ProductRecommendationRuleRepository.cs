@@ -21,7 +21,7 @@ public sealed class ProductRecommendationRuleRepository : IProductRecommendation
             .AsNoTracking()
             .Include(rule => rule.SourceProduct)
             .Include(rule => rule.RecommendedProduct)
-            .Where(rule => rule.BusinessId == businessId
+            .Where(rule => _context.Businesses.Any(b => b.BusinessId == businessId && b.TenantId == rule.TenantId)
                            && rule.IsActive
                            && (!rule.IntegrationConnectionId.HasValue
                                || rule.IntegrationConnectionId == integrationConnectionId)

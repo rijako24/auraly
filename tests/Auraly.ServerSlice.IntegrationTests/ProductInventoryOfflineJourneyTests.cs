@@ -184,11 +184,11 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
     {
         const string sql = """
             IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@Tax)
-              INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-              VALUES(@Tax,@Business,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
+              INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+              VALUES(@Tax,@Tenant,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Channel)
-              INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,IsActive,CreatedAt)
-              VALUES(@Channel,@Business,N'POS',N'Punto de venta',1,SYSDATETIMEOFFSET());
+              INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,IsActive,CreatedAt)
+              VALUES(@Channel,@Tenant,N'POS',N'Punto de venta',1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@Business AND DocumentType=N'StockCount' AND IsActive=1)
               INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
               VALUES(NEWID(),@Business,NULL,N'StockCount',N'CTI',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
@@ -199,6 +199,7 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@Tenant", fixture.TenantId);
         command.Parameters.AddWithValue("@Business", fixture.BusinessId);
         command.Parameters.AddWithValue("@Tax", fixture.TaxProfileId);
         command.Parameters.AddWithValue("@Channel", fixture.PriceChannelId);

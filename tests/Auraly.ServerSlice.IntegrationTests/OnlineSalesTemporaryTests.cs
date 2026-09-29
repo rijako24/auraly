@@ -102,9 +102,9 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         await ExecuteAsync(
             """
             INSERT dbo.Products(
-              ProductId,TenantId,BusinessId,Sku,
+              ProductId,TenantId,Sku,
               Name,Currency,ManageStock,IsActive,CreatedAt)
-            SELECT input.ProductId,@TenantId,@BusinessId,input.Code,
+            SELECT input.ProductId,@TenantId,input.Code,
                    input.Name,N'COP',0,1,SYSUTCDATETIME()
             FROM OPENJSON(@ProductsJson) WITH(
               ProductId uniqueidentifier '$.ProductId',Code nvarchar(64) '$.Code',
@@ -202,9 +202,9 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
               @PartyId,@TenantId,N'NaturalPerson',N'Cliente espera online',
               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
-              CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+              CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
             VALUES(
-              @CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+              @CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PartySites(
               PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
               CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)

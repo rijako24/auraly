@@ -28,7 +28,7 @@ public sealed class AvailabilityServiceTests
             DurationMinutes = 45,
             IsActive = true
         };
-        var employee = new Employee { BusinessId = businessId, EmployeeId = employeeId, Name = "Luis", IsActive = true };
+        var employee = new Employee { TenantId = businessId, EmployeeId = employeeId, Name = "Luis", IsActive = true };
         var reservations = new List<Reservation>
         {
             new()
@@ -132,7 +132,7 @@ public sealed class AvailabilityServiceTests
             DurationMinutes = 45,
             IsActive = true
         };
-        var employee = new Employee { BusinessId = businessId, EmployeeId = employeeId, Name = "Luis", IsActive = true };
+        var employee = new Employee { TenantId = businessId, EmployeeId = employeeId, Name = "Luis", IsActive = true };
 
         var unitOfWork = new Mock<IUnitOfWork>();
         var services = new Mock<IServiceRepository>();

@@ -36,14 +36,14 @@ public sealed class OrderRecoveryTests(
               PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES(@CustomerPartyId,@TenantId,N'Organization',N'Cliente pedido administrativo',
               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@CustomerPartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto pedido administrativo',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@CustomerPartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'Sin impuesto pedido administrativo',0,1,SYSDATETIMEOFFSET());
             INSERT dbo.Products(
-              ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,
+              ProductId,TenantId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,
               ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
-            VALUES(@ProductId,@TenantId,@BusinessId,@ProductCode,@ProductCode,
+            VALUES(@ProductId,@TenantId,@ProductCode,@ProductCode,
               N'Producto pedido administrativo',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(
               ProductPriceId,BusinessId,ProductId,Amount,CostBasisAmount,CurrencyCode,ValidFrom,
@@ -215,22 +215,22 @@ public sealed class OrderRecoveryTests(
               (@SellerPartyId,@TenantId,N'NaturalPerson',N'Vendedor precios pedido',
                N'Complete',1,@UserId,SYSDATETIMEOFFSET());
             UPDATE dbo.AppUsers SET PartyId=@SellerPartyId WHERE UserId=@UserId;
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.CommerceSellers(
-              SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
-            VALUES(@SellerId,@BusinessId,@SellerPartyId,@SellerCode,
+              SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@TenantId,@SellerPartyId,@SellerCode,
               N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
 
-            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto pedido',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'Sin impuesto pedido',0,1,SYSDATETIMEOFFSET());
 
             INSERT dbo.Products(
-              ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,
+              ProductId,TenantId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,
               ManageStock,IsWeighable,IsGenericProduct,IsActive,Source,Currency,CreatedAt)
             VALUES
-              (@FirstProductId,@TenantId,@BusinessId,@FirstCode,@FirstCode,N'Producto disparador',N'EA',@TaxProfileId,0,0,1,1,0,N'COP',SYSDATETIMEOFFSET()),
-              (@SecondProductId,@TenantId,@BusinessId,@SecondCode,@SecondCode,N'Producto beneficiado',N'EA',@TaxProfileId,0,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
+              (@FirstProductId,@TenantId,@FirstCode,@FirstCode,N'Producto disparador',N'EA',@TaxProfileId,0,0,1,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@SecondProductId,@TenantId,@SecondCode,@SecondCode,N'Producto beneficiado',N'EA',@TaxProfileId,0,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(
               ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
               RoundingIncrement,RoundingMode,IsActive,CreatedAt)
@@ -410,16 +410,16 @@ public sealed class OrderRecoveryTests(
               (@CustomerPartyId,@TenantId,N'Organization',@CountryId,N'31',@CustomerIdentification,@CustomerIdentification,N'Cliente revisión',N'Cliente revisión',N'Complete',1,@UserId,SYSDATETIMEOFFSET()),
               (@SellerPartyId,@TenantId,N'NaturalPerson',NULL,NULL,NULL,NULL,N'Vendedor revisión',N'Vendedor revisión',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
             UPDATE dbo.AppUsers SET PartyId=@SellerPartyId WHERE UserId=@UserId;
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@CustomerPartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
-            VALUES(@SellerId,@BusinessId,@SellerPartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
-            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'IVA revisión',0,1,SYSDATETIMEOFFSET());
-            INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@CustomerPartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@TenantId,@SellerPartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'IVA revisión',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
             VALUES
-              (@FirstProductId,@TenantId,@BusinessId,@FirstCode,@FirstCode,N'Producto suficiente',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
-              (@SecondProductId,@TenantId,@BusinessId,@SecondCode,@SecondCode,N'Producto insuficiente',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET());
+              (@FirstProductId,@TenantId,@FirstCode,@FirstCode,N'Producto suficiente',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@SecondProductId,@TenantId,@SecondCode,@SecondCode,N'Producto insuficiente',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
             VALUES
               (NEWID(),@BusinessId,@FirstProductId,1000,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET()),
@@ -932,18 +932,18 @@ public sealed class OrderRecoveryTests(
               (@PartyId,@TenantId,N'Organization',N'Cliente familia inventario',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
               (@SellerPartyId,@TenantId,N'NaturalPerson',N'Vendedor familia inventario',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
             UPDATE dbo.AppUsers SET PartyId=@SellerPartyId WHERE UserId=@UserId;
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
-            VALUES(@SellerId,@BusinessId,@SellerPartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
-            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto familia',0,1,SYSDATETIMEOFFSET());
-            INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@TenantId,@SellerPartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'Sin impuesto familia',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
             VALUES
-              (@ParentProductId,@TenantId,@BusinessId,@ParentCode,@ParentCode,N'Unidad padre',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
-              (@ChildProductId,@TenantId,@BusinessId,@ChildCode,@ChildCode,N'Media unidad',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
-            INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,@ChildProductId,@ParentProductId,0.5,1,0,0,1,SYSDATETIMEOFFSET());
+              (@ParentProductId,@TenantId,@ParentCode,@ParentCode,N'Unidad padre',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@ChildProductId,@TenantId,@ChildCode,@ChildCode,N'Media unidad',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
+            INSERT dbo.ProductLinks(ProductLinkId,TenantId,ChildProductId,ParentProductId,InventoryFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+            VALUES(NEWID(),@TenantId,@ChildProductId,@ParentProductId,0.5,1,0,0,1,SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
             VALUES
               (NEWID(),@BusinessId,@ParentProductId,1000,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET()),
@@ -1057,9 +1057,9 @@ public sealed class OrderRecoveryTests(
               @PartyId,@TenantId,N'Organization',N'Cliente de ruta',N'Incomplete',
               1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
-              CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+              CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
             VALUES(
-              @CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+              @CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
             """,
             new("@PartyId", customerPartyId),
             new("@CustomerId", customerId),
@@ -1177,10 +1177,10 @@ public sealed class OrderRecoveryTests(
                N'Vendedor edición',N'Vendedor edición',
                N'Complete',1,@UserId,SYSDATETIMEOFFSET());
 
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
             VALUES
-              (@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET()),
-              (@UpdatedCustomerId,@UpdatedPartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+              (@CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET()),
+              (@UpdatedCustomerId,@UpdatedPartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
 
             INSERT dbo.PartySites(
               PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
@@ -1198,8 +1198,8 @@ public sealed class OrderRecoveryTests(
               @UpdatedCustomerId,@BusinessId,500000,30,1,@UserId,SYSDATETIMEOFFSET());
 
             INSERT dbo.CommerceSellers(
-              SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
-            VALUES(@SellerId,@BusinessId,@SellerPartyId,@SellerCode,
+              SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@TenantId,@SellerPartyId,@SellerCode,
               N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
 
             MERGE dbo.InventoryBalances AS target
@@ -1528,12 +1528,12 @@ public sealed class OrderRecoveryTests(
               3500,0,4358.62,N'{"PriceSource":"Captured","TaxCode":"01","TaxRate":0}',DATEADD(day,-4,SYSUTCDATETIME()));
 
             INSERT dbo.TaxProfiles(
-              TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+              TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
             VALUES(
-              @TaxProfileId,@BusinessId,N'IVA-5-PEDIDO',N'IVA vigente al facturar',5,1,SYSDATETIMEOFFSET());
+              @TaxProfileId,@TenantId,N'IVA-5-PEDIDO',N'IVA vigente al facturar',5,1,SYSDATETIMEOFFSET());
             UPDATE dbo.Products
             SET TaxProfileId=@TaxProfileId
-            WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
+            WHERE ProductId=@ProductId AND TenantId=@TenantId;
             """,
             new("@UserId", userId),
             new("@TenantId", fixture.TenantId),

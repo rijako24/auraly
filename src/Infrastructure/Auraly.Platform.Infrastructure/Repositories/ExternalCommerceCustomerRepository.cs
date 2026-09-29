@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Repositories;
@@ -39,17 +40,41 @@ public sealed class ExternalCommerceCustomerRepository : IExternalCommerceCustom
             && customer.ExternalCustomerId == externalCustomerId,
             ct);
 
+    public async Task<IReadOnlyList<ExternalCommerceCustomer>> GetByExternalKeysAsync(
+        Guid businessId, Guid integrationConnectionId,
+        IReadOnlyCollection<ExternalCommerceCustomerKey> keys, CancellationToken ct = default)
+    {
+        if (keys.Count == 0) return [];
+        var keysJson = JsonSerializer.Serialize(keys.DistinctBy(key => new ExternalCommerceCustomerKey(
+            key.ExternalAccountId.ToUpperInvariant(), key.ExternalCustomerId.ToUpperInvariant())));
+        return await _context.ExternalCommerceCustomers.FromSqlInterpolated($"""
+            SELECT customer.*
+            FROM dbo.ExternalCommerceCustomers customer
+            JOIN OPENJSON({keysJson}) WITH (
+              ExternalAccountId NVARCHAR(150) '$.ExternalAccountId',
+              ExternalCustomerId NVARCHAR(150) '$.ExternalCustomerId') requested
+              ON requested.ExternalAccountId=customer.ExternalAccountId
+             AND requested.ExternalCustomerId=customer.ExternalCustomerId
+            WHERE customer.BusinessId={businessId}
+              AND customer.IntegrationConnectionId={integrationConnectionId}
+            """).ToListAsync(ct);
+    }
+
     public Task<ExternalCommerceCustomer> CreateAsync(
         ExternalCommerceCustomer customer,
         CancellationToken ct = default)
     {
-        customer.ReconciliationStatus = "Pending";
-        customer.ReconciliationError = null;
-        customer.ReconciledAt = null;
-        customer.ReconciledBy = null;
-        customer.ReconciliationOrigin = null;
+        ResetPendingReconciliation(customer);
         _context.ExternalCommerceCustomers.Add(customer);
         return Task.FromResult(customer);
+    }
+
+    public Task CreateManyAsync(IReadOnlyCollection<ExternalCommerceCustomer> customers, CancellationToken ct = default)
+    {
+        foreach (var customer in customers)
+            ResetPendingReconciliation(customer);
+        _context.ExternalCommerceCustomers.AddRange(customers);
+        return Task.CompletedTask;
     }
 
     public Task<ExternalCommerceCustomer> UpdateAsync(
@@ -60,11 +85,27 @@ public sealed class ExternalCommerceCustomerRepository : IExternalCommerceCustom
         if (string.Equals(customer.ReconciliationStatus, "Linked", StringComparison.Ordinal))
             return Task.FromResult(customer);
 
+        ResetPendingReconciliation(customer);
+        return Task.FromResult(customer);
+    }
+
+    public Task UpdateManyAsync(IReadOnlyCollection<ExternalCommerceCustomer> customers, CancellationToken ct = default)
+    {
+        foreach (var customer in customers)
+        {
+            if (string.Equals(customer.ReconciliationStatus, "Linked", StringComparison.Ordinal)) continue;
+            ResetPendingReconciliation(customer);
+        }
+        _context.ExternalCommerceCustomers.UpdateRange(customers);
+        return Task.CompletedTask;
+    }
+
+    private static void ResetPendingReconciliation(ExternalCommerceCustomer customer)
+    {
         customer.ReconciliationStatus = "Pending";
         customer.ReconciliationError = null;
         customer.ReconciledAt = null;
         customer.ReconciledBy = null;
         customer.ReconciliationOrigin = null;
-        return Task.FromResult(customer);
     }
 }

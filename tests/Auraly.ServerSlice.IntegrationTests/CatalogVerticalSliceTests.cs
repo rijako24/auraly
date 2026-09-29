@@ -53,11 +53,11 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         await ExecuteAsync(
             """
             INSERT dbo.TaxProfiles(
-                TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-            VALUES(@Tax,@Business,@Code,N'01',N'IVA compra 0 %',0,1,SYSDATETIMEOFFSET());
+                TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+            VALUES(@Tax,@Tenant,@Code,N'01',N'IVA compra 0 %',0,1,SYSDATETIMEOFFSET());
             """,
             new SqlParameter("@Tax", zeroTaxProfileId),
-            new SqlParameter("@Business", fixture.BusinessId),
+            new SqlParameter("@Tenant", fixture.TenantId),
             new SqlParameter("@Code", ($"VAT0-{zeroTaxProfileId:N}")[..16]));
         using var admin = fixture.CreateAdminClient(
             CatalogPermissionCodes.Create,
@@ -180,8 +180,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/products/{generic.ProductId:D}", ordinaryWithFamily);
         Assert.True(familyUpdate.IsSuccessStatusCode, await familyUpdate.Content.ReadAsStringAsync());
         Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE BusinessId=@Business AND ParentProductId=@Product AND IsActive=1;",
-            new SqlParameter("@Business", fixture.BusinessId),
+            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE TenantId=@Tenant AND ParentProductId=@Product AND IsActive=1;",
+            new SqlParameter("@Tenant", fixture.TenantId),
             new SqlParameter("@Product", generic.ProductId)));
 
         using var genericAgainUpdate = await admin.PutAsJsonAsync(
@@ -202,8 +202,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.SupplierProducts WHERE ProductId=@Product AND IsActive=1;",
             new SqlParameter("@Product", generic.ProductId)));
         Assert.Equal(0, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE BusinessId=@Business AND IsActive=1 AND (ParentProductId=@Product OR ChildProductId=@Product);",
-            new SqlParameter("@Business", fixture.BusinessId),
+            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE TenantId=@Tenant AND IsActive=1 AND (ParentProductId=@Product OR ChildProductId=@Product);",
+            new SqlParameter("@Tenant", fixture.TenantId),
             new SqlParameter("@Product", generic.ProductId)));
     }
 
@@ -264,16 +264,16 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
         await ExecuteAsync(
             """
-            INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,ParentProductCategoryId,Name,DisplayOrder,IsActive,IsBrowsable,CreatedAt)
+            INSERT dbo.ProductCategories(ProductCategoryId,TenantId,ParentProductCategoryId,Name,DisplayOrder,IsActive,IsBrowsable,CreatedAt)
             VALUES
-              (@Area,@Business,NULL,N'Área profundidad',0,1,1,SYSUTCDATETIME()),
-              (@Line,@Business,@Area,N'Línea profundidad',0,1,1,SYSUTCDATETIME()),
-              (@Group,@Business,@Line,N'Grupo profundidad',0,1,1,SYSUTCDATETIME()),
-              (@Subgroup,@Business,@Group,N'Subgrupo profundidad',0,1,1,SYSUTCDATETIME());
+              (@Area,@Tenant,NULL,N'Área profundidad',0,1,1,SYSUTCDATETIME()),
+              (@Line,@Tenant,@Area,N'Línea profundidad',0,1,1,SYSUTCDATETIME()),
+              (@Group,@Tenant,@Line,N'Grupo profundidad',0,1,1,SYSUTCDATETIME()),
+              (@Subgroup,@Tenant,@Group,N'Subgrupo profundidad',0,1,1,SYSUTCDATETIME());
             """,
             new SqlParameter("@Area", ids[0]), new SqlParameter("@Line", ids[1]),
             new SqlParameter("@Group", ids[2]), new SqlParameter("@Subgroup", ids[3]),
-            new SqlParameter("@Business", fixture.BusinessId));
+            new SqlParameter("@Tenant", fixture.TenantId));
         try
         {
             using var client = fixture.CreateAdminClient("products.read");
@@ -379,14 +379,14 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var brandId = Guid.NewGuid();
         await ExecuteAsync(
             """
-            INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,Name,DisplayOrder,IsActive,IsBrowsable,CreatedAt)
-              VALUES(@Category,@Business,N'Aceites',0,1,1,SYSUTCDATETIME());
-            INSERT dbo.ProductBrands(ProductBrandId,BusinessId,Name,IsActive,CreatedAt)
-              VALUES(@Brand,@Business,N'Marca prueba',1,SYSDATETIMEOFFSET());
+            INSERT dbo.ProductCategories(ProductCategoryId,TenantId,Name,DisplayOrder,IsActive,IsBrowsable,CreatedAt)
+              VALUES(@Category,@Tenant,N'Aceites',0,1,1,SYSUTCDATETIME());
+            INSERT dbo.ProductBrands(ProductBrandId,TenantId,Name,IsActive,CreatedAt)
+              VALUES(@Brand,@Tenant,N'Marca prueba',1,SYSDATETIMEOFFSET());
             """,
             new SqlParameter("@Category", categoryId),
             new SqlParameter("@Brand", brandId),
-            new SqlParameter("@Business", fixture.BusinessId));
+            new SqlParameter("@Tenant", fixture.TenantId));
 
         using var admin = fixture.CreateAdminClient(
             CatalogPermissionCodes.Create,
@@ -686,14 +686,14 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT CountryId FROM dbo.Countries WHERE Code=N'CO';");
         await ExecuteAsync(
             """
-            INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
-              VALUES(@TierChannel,@Business,N'VIP',N'VIP',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
+            INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,Strategy,IsActive,CreatedAt)
+              VALUES(@TierChannel,@Tenant,N'VIP',N'VIP',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
             INSERT dbo.PriceChannelItems
               (PriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
               VALUES(@TierItem,@TierChannel,@Product,1,11000,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
             UPDATE dbo.PriceChannels
               SET Strategy=N'PercentageOverBasePrice',Value=10
-              WHERE PriceChannelId=@Channel AND BusinessId=@Business;
+              WHERE PriceChannelId=@Channel AND TenantId=@Tenant;
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
                Identification,NormalizedIdentification,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
@@ -702,10 +702,10 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                N'Tier channel customer',N'Complete',1,@User,SYSDATETIMEOFFSET()),
               (@ChannelParty,@Tenant,N'NaturalPerson',@Country,N'CC',N'1002',N'1002',
                N'Channel customer',N'Complete',1,@User,SYSDATETIMEOFFSET());
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
               VALUES
-              (@TierCustomer,@TierParty,@Business,1,@User,SYSDATETIMEOFFSET()),
-              (@ChannelCustomer,@ChannelParty,@Business,1,@User,SYSDATETIMEOFFSET());
+              (@TierCustomer,@TierParty,@Tenant,1,@User,SYSDATETIMEOFFSET()),
+              (@ChannelCustomer,@ChannelParty,@Tenant,1,@User,SYSDATETIMEOFFSET());
             INSERT dbo.CustomerPricingSettings(CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
               VALUES
               (@TierCustomer,@TierChannel,@User,SYSDATETIMEOFFSET()),
@@ -895,8 +895,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             """
             INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES(@Party,@Tenant,N'Organization',N'Proveedor alterno',N'Proveedor alterno',N'Incomplete',1,@User,SYSDATETIMEOFFSET());
-            INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
-            VALUES(@Supplier,@Business,@Party,@Identification,N'Proveedor alterno',1,SYSDATETIMEOFFSET());
+            INSERT dbo.Suppliers(SupplierId,TenantId,PartyId,Identification,Name,IsActive,CreatedAt)
+            VALUES(@Supplier,@Tenant,@Party,@Identification,N'Proveedor alterno',1,SYSDATETIMEOFFSET());
             """,
             new SqlParameter("@Party", secondPartyId), new SqlParameter("@Tenant", fixture.TenantId),
             new SqlParameter("@User", fixture.UserId), new SqlParameter("@Supplier", secondSupplierId),
@@ -907,8 +907,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             var changed = request with
             {
                 Prices = [request.Prices.Single() with { PreparedAmount = 14_900m, InputMode = "SalePrice" }],
-                Suppliers = [new SupplierCostInput(secondSupplierId, $"ALT-{secondSupplierId:N}",
-                    "Proveedor alterno", "ALT-CODE", 8_400m, true, "Caja", 12m)]
+                Suppliers = [request.Suppliers.Single() with { IsPrimary = false },
+                    new SupplierCostInput(secondSupplierId, $"ALT-{secondSupplierId:N}",
+                        "Proveedor alterno", "ALT-CODE", 8_400m, true, "Caja", 12m)]
             };
             using var response = await admin.PutAsJsonAsync(
                 $"/api/commerce/v1/products/{created.ProductId:D}", changed);
@@ -919,6 +920,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(1, await ScalarAsync<int>(
                 "SELECT COUNT(*) FROM dbo.SupplierProducts WHERE ProductId=@Product AND SupplierId=@Supplier AND IsPrimary=1 AND IsActive=1;",
                 new SqlParameter("@Product", created.ProductId), new SqlParameter("@Supplier", secondSupplierId)));
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.SupplierProducts WHERE ProductId=@Product AND SupplierId=@Supplier AND IsPrimary=0 AND IsActive=1;",
+                new SqlParameter("@Product", created.ProductId), new SqlParameter("@Supplier", fixture.SupplierId)));
             Assert.Equal(14_900m, await ScalarAsync<decimal>(
                 "SELECT PreparedAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending';",
                 new SqlParameter("@Product", created.ProductId)));
@@ -1097,12 +1101,113 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task New_product_keeps_one_tenant_ficha_and_independent_business_price_rows()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var secondBusinessId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
+            VALUES(@OtherBusiness,@Tenant,N'Sede de prueba',N'Precios independientes',N'Bogotá',N'3000000000',
+              @Email,N'https://auraly.test',1,SYSUTCDATETIME());
+            DECLARE @RoleId UNIQUEIDENTIFIER=(SELECT TOP(1) RoleId FROM dbo.UserRoles WHERE UserId=@UserId);
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            VALUES(NEWID(),@UserId,@RoleId,@OtherBusiness,SYSUTCDATETIME());
+            """,
+            new SqlParameter("@OtherBusiness", secondBusinessId),
+            new SqlParameter("@Tenant", fixture.TenantId),
+            new SqlParameter("@UserId", fixture.UserId),
+            new SqlParameter("@Email", $"branch-{secondBusinessId:N}@auraly.test"));
+        try
+        {
+            using var admin = fixture.CreateAdminClient(
+                CatalogPermissionCodes.Create, CatalogPermissionCodes.Read,
+                CatalogPermissionCodes.ManagePrices, CatalogPermissionCodes.ManageCosts);
+            var barcode = $"TENANT-{Guid.NewGuid():N}";
+            var firstRequest = ProductRequest(taxProfileId,
+                [new ProductPriceInput(10_000m)], [new ProductBarcodeInput(barcode, true)]);
+            using var firstResponse = await admin.PostAsJsonAsync(
+                "/api/commerce/v1/products", firstRequest);
+            Assert.True(firstResponse.IsSuccessStatusCode, await firstResponse.Content.ReadAsStringAsync());
+            var first = (await firstResponse.Content.ReadFromJsonAsync<ProductDetail>())!;
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.Products WHERE ProductId=@Product AND TenantId=@Tenant;",
+                new SqlParameter("@Product", first.ProductId), new SqlParameter("@Tenant", fixture.TenantId)));
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId=@OtherBusiness;",
+                new SqlParameter("@Product", first.ProductId), new SqlParameter("@OtherBusiness", secondBusinessId)));
+            await ExecuteAsync(
+                "UPDATE dbo.ProductPrices SET Amount=15000,PreparedAmount=15000 WHERE BusinessId=@OtherBusiness AND ProductId=@Product;",
+                new SqlParameter("@OtherBusiness", secondBusinessId), new SqlParameter("@Product", first.ProductId));
+            Assert.Equal(10_000m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId=@Business;",
+                new SqlParameter("@Product", first.ProductId), new SqlParameter("@Business", fixture.BusinessId)));
+
+            using var secondAdmin = fixture.CreateAdminClientWithBusinessHeader(secondBusinessId,
+                CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+                CatalogPermissionCodes.ManagePrices, CatalogPermissionCodes.ReadCosts,
+                CatalogPermissionCodes.ManageCosts);
+            var secondDetail = await secondAdmin.GetFromJsonAsync<ProductDetail>(
+                $"/api/commerce/v1/products/{first.ProductId:D}");
+            Assert.NotNull(secondDetail);
+            Assert.Equal(first.ProductId, secondDetail.ProductId);
+            Assert.Equal(secondBusinessId, secondDetail.BusinessId);
+            Assert.Equal(firstRequest.Name, secondDetail.Name);
+            Assert.Equal(taxProfileId, secondDetail.SalesTaxProfileId);
+            Assert.Equal(taxProfileId, secondDetail.PurchaseTaxProfileId);
+            Assert.Contains(barcode, secondDetail.Barcodes);
+            Assert.Contains(secondDetail.Suppliers!, supplier => supplier.SupplierId == fixture.SupplierId);
+            Assert.Equal(15_000m, Assert.Single(secondDetail.Prices).Amount);
+
+            using var editedFromSecond = await secondAdmin.PutAsJsonAsync(
+                $"/api/commerce/v1/products/{first.ProductId:D}",
+                firstRequest with {
+                    BusinessId = secondBusinessId,
+                    Name = "Coffee 500 g actualizado",
+                    Prices = [firstRequest.Prices.Single() with { Amount = 15_000m }]
+                });
+            Assert.True(editedFromSecond.IsSuccessStatusCode,
+                await editedFromSecond.Content.ReadAsStringAsync());
+            var firstDetail = await admin.GetFromJsonAsync<ProductDetail>(
+                $"/api/commerce/v1/products/{first.ProductId:D}");
+            Assert.NotNull(firstDetail);
+            Assert.Equal("Coffee 500 g actualizado", firstDetail.Name);
+            Assert.Equal(10_000m, Assert.Single(firstDetail.Prices).Amount);
+
+            await ExecuteAsync(
+                "UPDATE dbo.Businesses SET SharesProductPrices=1 WHERE BusinessId IN (@Business,@OtherBusiness);",
+                new SqlParameter("@Business", fixture.BusinessId),
+                new SqlParameter("@OtherBusiness", secondBusinessId));
+            using var secondResponse = await admin.PostAsJsonAsync(
+                "/api/commerce/v1/products",
+                ProductRequest(taxProfileId, [new ProductPriceInput(12_000m)], []));
+            Assert.True(secondResponse.IsSuccessStatusCode, await secondResponse.Content.ReadAsStringAsync());
+            var second = (await secondResponse.Content.ReadFromJsonAsync<ProductDetail>())!;
+            Assert.Equal(2, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId IN (@Business,@OtherBusiness) AND IsActive=1;",
+                new SqlParameter("@Product", second.ProductId),
+                new SqlParameter("@Business", fixture.BusinessId),
+                new SqlParameter("@OtherBusiness", secondBusinessId)));
+        }
+        finally
+        {
+            await ExecuteAsync(
+                """
+                UPDATE dbo.Businesses SET SharesProductPrices=0 WHERE BusinessId=@Business;
+                DELETE dbo.UserRoles WHERE BusinessId=@OtherBusiness;
+                UPDATE dbo.Businesses SET IsActive=0,SharesProductPrices=0 WHERE BusinessId=@OtherBusiness;
+                """,
+                new SqlParameter("@Business", fixture.BusinessId),
+                new SqlParameter("@OtherBusiness", secondBusinessId));
+        }
+    }
+
+    [Fact]
     public async Task Warehouse_availability_uses_stable_product_identity_and_hides_system_warehouses()
     {
         await ConfigureCatalogAsync();
         var currentProductId = Guid.NewGuid();
         var otherBusinessId = Guid.NewGuid();
-        var otherTaxProfileId = Guid.NewGuid();
         var otherWarehouseId = Guid.NewGuid();
         var otherSystemWarehouseId = Guid.NewGuid();
         var barcode = $"AVAIL-{Guid.NewGuid():N}";
@@ -1115,18 +1220,14 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
                 VALUES(@OtherBusiness,@Tenant,N'Sede secundaria',N'Prueba de disponibilidad',N'Bogotá',N'3000000000',
                   @Email,N'https://auraly.test',1,SYSUTCDATETIME());
-                INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-                VALUES(@OtherTax,@OtherBusiness,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
                 INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
                 VALUES
                   (@OtherWarehouse,@OtherBusiness,N'PUBLIC',N'Bodega pública',0,0,1,1,1,1,SYSDATETIMEOFFSET()),
                   (@OtherSystemWarehouse,@OtherBusiness,N'AVE',N'Averías',0,1,0,0,0,1,SYSDATETIMEOFFSET());
-                INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,BaseUnitCode,TaxProfileId,Name,ManageStock,IsActive)
-                VALUES(@CurrentProduct,@Tenant,@Business,@ProductCode,N'EA',@CurrentTax,N'Producto tenant',1,1);
-                INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
-                VALUES
-                  (NEWID(),@Business,@CurrentProduct,@Barcode,1,1,SYSDATETIMEOFFSET()),
-                  (NEWID(),@OtherBusiness,@CurrentProduct,@Barcode,1,1,SYSDATETIMEOFFSET());
+                INSERT dbo.Products(ProductId,TenantId,ProductCode,BaseUnitCode,TaxProfileId,Name,ManageStock,IsActive)
+                VALUES(@CurrentProduct,@Tenant,@ProductCode,N'EA',@CurrentTax,N'Producto tenant',1,1);
+                INSERT dbo.ProductBarcodes(ProductBarcodeId,TenantId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+                VALUES(NEWID(),@Tenant,@CurrentProduct,@Barcode,1,1,SYSDATETIMEOFFSET());
                 INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
                 VALUES
                   (@Business,@CurrentWarehouse,@CurrentProduct,-3,10,-30,1,SYSDATETIMEOFFSET()),
@@ -1139,7 +1240,6 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 new SqlParameter("@CurrentTax", fixture.TaxProfileId),
                 new SqlParameter("@CurrentProduct", currentProductId),
                 new SqlParameter("@OtherBusiness", otherBusinessId),
-                new SqlParameter("@OtherTax", otherTaxProfileId),
                 new SqlParameter("@OtherWarehouse", otherWarehouseId),
                 new SqlParameter("@OtherSystemWarehouse", otherSystemWarehouseId),
                 new SqlParameter("@ProductCode", productCode),
@@ -1182,7 +1282,6 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 DELETE dbo.ProductBarcodes WHERE ProductId=@CurrentProduct;
                 DELETE dbo.Products WHERE ProductId=@CurrentProduct;
                 DELETE dbo.Warehouses WHERE BusinessId=@OtherBusiness;
-                DELETE dbo.TaxProfiles WHERE BusinessId=@OtherBusiness;
                 DELETE dbo.Businesses WHERE BusinessId=@OtherBusiness;
                 """,
                 new SqlParameter("@CurrentProduct", currentProductId),
@@ -1196,24 +1295,25 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var channel = fixture.PriceChannelId;
         var second = Guid.Parse("019ad230-6e45-7a28-a71e-25584f52bd65");
         const string sql = """
-            IF NOT EXISTS (SELECT 1 FROM dbo.ProductUnits WHERE BusinessId=@Business AND Code=N'EA')
-              INSERT dbo.ProductUnits(ProductUnitId,BusinessId,Code,Name,Symbol,AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
-              VALUES(NEWID(),@Business,N'EA',N'Unidad',N'und',0,0,1,SYSDATETIMEOFFSET());
+            IF NOT EXISTS (SELECT 1 FROM dbo.ProductUnits WHERE TenantId=@Tenant AND Code=N'EA')
+              INSERT dbo.ProductUnits(ProductUnitId,TenantId,Code,Name,Symbol,AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
+              VALUES(NEWID(),@Tenant,N'EA',N'Unidad',N'und',0,0,1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@Tax)
-              INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-              VALUES(@Tax,@Business,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
+              INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+              VALUES(@Tax,@Tenant,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Channel)
-              INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,IsActive,CreatedAt)
-              VALUES(@Channel,@Business,N'POS',N'POS',1,SYSDATETIMEOFFSET());
+              INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,IsActive,CreatedAt)
+              VALUES(@Channel,@Tenant,N'POS',N'POS',1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Second)
-              INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,IsActive,CreatedAt)
-              VALUES(@Second,@Business,N'WHOLESALE',N'Wholesale',1,SYSDATETIMEOFFSET());
+              INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,IsActive,CreatedAt)
+              VALUES(@Second,@Tenant,N'WHOLESALE',N'Wholesale',1,SYSDATETIMEOFFSET());
             """;
         await ExecuteAsync(
             sql,
             new SqlParameter("@Tax", tax),
             new SqlParameter("@Channel", channel),
             new SqlParameter("@Second", second),
+            new SqlParameter("@Tenant", fixture.TenantId),
             new SqlParameter("@Business", fixture.BusinessId));
         return (tax, channel, second);
     }

@@ -108,9 +108,9 @@ public sealed class SalesDebitNoteProcessingTests(ServerSliceFixture fixture)
               CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES(@PartyId,@TenantId,N'Organization',N'Cliente nota débito',N'Cliente nota débito',
               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,RequiresElectronicInvoice,
               IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+            VALUES(@CustomerId,@PartyId,@TenantId,1,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PartySites(
               PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
               AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)

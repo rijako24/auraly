@@ -142,11 +142,11 @@ public sealed partial class ProductRepository : IProductRepository
             query = query.Where(product => product.IsWeighable == isWeighable);
         if (filter?.SupplierId is { } supplierId)
         {
-            var supplierProductIds = await _context.Database.SqlQuery<Guid>($"""
+            var supplierProductIds = _context.Database.SqlQuery<Guid>($"""
                 SELECT sp.ProductId AS Value
                 FROM dbo.SupplierProducts sp
-                WHERE sp.BusinessId={businessId} AND sp.SupplierId={supplierId} AND sp.IsActive=1
-                """).ToListAsync(ct);
+                WHERE sp.TenantId={tenantId} AND sp.SupplierId={supplierId} AND sp.IsActive=1
+                """);
             query = query.Where(product => supplierProductIds.Contains(product.ProductId));
         }
         if (!string.IsNullOrWhiteSpace(search))
@@ -189,38 +189,66 @@ public sealed partial class ProductRepository : IProductRepository
         return product;
     }
 
+    public async Task<IReadOnlyList<Product>> GetByExternalIdsAsync(
+        Guid businessId, Guid integrationConnectionId, IReadOnlyCollection<string> externalProductIds,
+        CancellationToken ct = default)
+    {
+        var ids = externalProductIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (ids.Length == 0) return [];
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
+        var products = await _context.Products.AsNoTracking()
+            .Where(product => product.TenantId == tenantId
+                && product.IntegrationConnectionId == integrationConnectionId
+                && product.ExternalProductId != null && ids.Contains(product.ExternalProductId))
+            .ToListAsync(ct);
+        await ApplyPublishedPricesAsync(products, businessId, ct);
+        return products;
+    }
+
     public async Task<Product> CreateAsync(Product product, CancellationToken ct = default)
     {
-        var tenantId = await ResolveTenantIdAsync(product.BusinessId, ct);
-        product.TenantId = tenantId;
-        var amount = product.UnitPrice;
-        var currency = product.Currency;
-        product.UnitPrice = 0m;
-        product.Currency = "COP";
-        _context.Products.Add(product);
+        await CreateManyAsync([product], ct);
+        return product;
+    }
+
+    public async Task CreateManyAsync(IReadOnlyCollection<Product> products, CancellationToken ct = default)
+    {
+        if (products.Count == 0) return;
+        var sourceBusinesses = products.Select(product => product.BusinessId).Distinct().ToArray();
+        if (sourceBusinesses.Length != 1)
+            throw new InvalidOperationException("A product import page must belong to one business.");
+        var tenantId = await ResolveTenantIdAsync(sourceBusinesses[0], ct);
         var businessIds = await _context.Businesses.AsNoTracking()
             .Where(business => business.TenantId == tenantId && business.IsActive)
             .Select(business => business.BusinessId)
             .ToListAsync(ct);
-        AddInitialPublishedPrices(product, businessIds, amount, currency, DateTimeOffset.UtcNow);
         var warehouseIds = await _context.InventoryWarehouseScopes
             .AsNoTracking()
             .Where(warehouse => businessIds.Contains(warehouse.BusinessId))
             .Select(warehouse => new { warehouse.BusinessId, warehouse.WarehouseId })
             .ToListAsync(ct);
         var now = DateTimeOffset.UtcNow;
-        _context.InventoryBalances.AddRange(warehouseIds.Select(warehouse => new InventoryBalanceRow
+        foreach (var product in products)
         {
-            BusinessId = warehouse.BusinessId,
-            WarehouseId = warehouse.WarehouseId,
-            ProductId = product.ProductId,
-            QuantityOnHand = 0m,
-            AverageUnitCost = 0m,
-            InventoryValue = 0m,
-            LastProcessingSequence = 0,
-            UpdatedAt = now
-        }));
-        return product;
+            product.TenantId = tenantId;
+            var amount = product.UnitPrice;
+            var currency = product.Currency;
+            product.UnitPrice = 0m;
+            product.Currency = "COP";
+            _context.Products.Add(product);
+            AddInitialPublishedPrices(product, businessIds, amount, currency, now);
+            _context.InventoryBalances.AddRange(warehouseIds.Select(warehouse => new InventoryBalanceRow
+            {
+                BusinessId = warehouse.BusinessId,
+                WarehouseId = warehouse.WarehouseId,
+                ProductId = product.ProductId,
+                QuantityOnHand = 0m,
+                AverageUnitCost = 0m,
+                InventoryValue = 0m,
+                LastProcessingSequence = 0,
+                UpdatedAt = now
+            }));
+        }
     }
 
     public async Task UpdateCategoryNameAsync(
@@ -240,11 +268,18 @@ public sealed partial class ProductRepository : IProductRepository
             product.UpdatedAt = DateTime.UtcNow;
         }
     }
-    public async Task<Product> UpdateAsync(Product product, CancellationToken ct = default)
+    public Task<Product> UpdateAsync(Product product, CancellationToken ct = default)
     {
-        await ReplacePublishedPriceIfChangedAsync(product, DateTimeOffset.UtcNow, ct);
         _context.Products.Update(product);
         _context.Entry(product).Property(item => item.Currency).IsModified = false;
-        return product;
+        return Task.FromResult(product);
+    }
+
+    public Task UpdateManyAsync(IReadOnlyCollection<Product> products, CancellationToken ct = default)
+    {
+        _context.Products.UpdateRange(products);
+        foreach (var product in products)
+            _context.Entry(product).Property(item => item.Currency).IsModified = false;
+        return Task.CompletedTask;
     }
 }

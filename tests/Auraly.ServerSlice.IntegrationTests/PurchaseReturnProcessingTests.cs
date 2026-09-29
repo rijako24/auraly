@@ -146,9 +146,9 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
         await connection.OpenAsync();await using var command=connection.CreateCommand();
         command.CommandText="""
             INSERT dbo.Products
-              (ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
+              (ProductId,TenantId,Source,Sku,Name,Currency,
                ManageStock,IsActive,CreatedAt)
-            VALUES(@ProductId,@TenantId,@BusinessId,0,@Sku,N'Producto devolución',
+            VALUES(@ProductId,@TenantId,0,@Sku,N'Producto devolución',
                N'COP',1,1,SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,
@@ -157,9 +157,9 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
             VALUES(NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',
                20,1,N'Nearest',1,SYSDATETIMEOFFSET());
             INSERT dbo.SupplierProducts
-              (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,
+              (SupplierProductId,TenantId,ProductId,SupplierId,SupplierProductCode,
                IsPrimary,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,@ProductId,@SupplierId,@Sku,1,1,
+            VALUES(NEWID(),@TenantId,@ProductId,@SupplierId,@Sku,1,1,
                SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@ProductId",productId);

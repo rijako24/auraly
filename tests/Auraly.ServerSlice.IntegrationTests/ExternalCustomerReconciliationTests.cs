@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Contracts.Parties;
 using Auraly.Platform.Application.Commerce;
 using Auraly.Platform.Domain.Enums;
+using Auraly.Platform.Domain.Repositories;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -11,6 +12,28 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class ExternalCustomerReconciliationTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Customer_identity_batch_reads_only_requested_account_customer_pairs()
+    {
+        var integrationId = await CreateIntegrationAsync("Customer identity batch");
+        var first = await CreateExternalAsync(integrationId, "account-a", "customer-a",
+            "Cliente A", "300 100 0001", "3001000001");
+        var second = await CreateExternalAsync(integrationId, "account-b", "customer-b",
+            "Cliente B", "300 100 0002", "3001000002");
+        await CreateExternalAsync(integrationId, "account-a", "customer-b",
+            "Cliente cruzado", "300 100 0003", "3001000003");
+
+        using var scope = fixture.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<IUnitOfWork>()
+            .ExternalCommerceCustomers;
+        var results = await repository.GetByExternalKeysAsync(fixture.BusinessId,
+            integrationId, [new("account-a", "customer-a"), new("account-b", "customer-b")]);
+
+        Assert.Equal(2, results.Count);
+        Assert.True(results.Select(customer => customer.ExternalCommerceCustomerId)
+            .ToHashSet().SetEquals([first, second]));
+    }
+
     [Fact]
     public async Task Explicit_sync_reconciles_immediately_and_bot_reads_canonical_customer()
     {
@@ -110,9 +133,9 @@ public sealed class ExternalCustomerReconciliationTests(ServerSliceFixture fixtu
         Assert.Equal(linked.CustomerId, second.CustomerId);
         Assert.Equal(1, await ScalarAsync<int>("""
             SELECT COUNT(*) FROM dbo.Customers
-            WHERE BusinessId=@BusinessId AND PartyId=@PartyId;
+            WHERE TenantId=@TenantId AND PartyId=@PartyId;
             """,
-            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@TenantId", fixture.TenantId),
             new SqlParameter("@PartyId", linked.PartyId)));
 
         var page = await admin.GetFromJsonAsync<ExternalCustomerReconciliationPage>(
@@ -213,8 +236,8 @@ public sealed class ExternalCustomerReconciliationTests(ServerSliceFixture fixtu
         Assert.Null(conflict.PartyId);
         Assert.Contains("more than one Party", conflict.Error);
         Assert.Equal(0, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.Customers WHERE BusinessId=@BusinessId AND PartyId IN (@First,@Second);",
-            new SqlParameter("@BusinessId", fixture.BusinessId),
+            "SELECT COUNT(*) FROM dbo.Customers WHERE TenantId=@TenantId AND PartyId IN (@First,@Second);",
+            new SqlParameter("@TenantId", fixture.TenantId),
             new SqlParameter("@First", firstParty),
             new SqlParameter("@Second", secondParty)));
 

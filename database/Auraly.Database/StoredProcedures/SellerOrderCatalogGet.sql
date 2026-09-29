@@ -16,7 +16,7 @@ BEGIN
         SELECT 1
         FROM dbo.Businesses b
         INNER JOIN dbo.Warehouses w ON w.BusinessId = b.BusinessId
-        INNER JOIN dbo.Customers c ON c.BusinessId = b.BusinessId
+        INNER JOIN dbo.Customers c ON c.TenantId = b.TenantId
         WHERE b.BusinessId = @BusinessId AND b.TenantId = @TenantId
           AND w.WarehouseId = @WarehouseId AND w.IsActive = 1 AND w.UseForSales = 1
           AND c.CustomerId = @CustomerId AND c.IsActive = 1)
@@ -40,7 +40,7 @@ BEGIN
       ORDER BY price.ValidFrom DESC,price.ProductPriceId
     ) activePrice
     LEFT JOIN dbo.ProductLinks inventoryLink
-      ON inventoryLink.BusinessId=@BusinessId
+      ON inventoryLink.TenantId=@TenantId
      AND inventoryLink.ChildProductId=p.ProductId
      AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
     LEFT JOIN dbo.InventoryBalances balance

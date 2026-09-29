@@ -290,7 +290,7 @@ public sealed class SqlTenantSubscriptionSettlementService(
               JOIN dbo.PartySites site
                 ON site.PartyId=customer.PartyId AND site.IsActive=1
               WHERE customer.CustomerId=subscription.BillingCustomerId
-                AND customer.BusinessId=billing.BusinessId AND customer.IsActive=1
+                AND customer.TenantId=billing.TenantId AND customer.IsActive=1
               ORDER BY site.IsPrimary DESC,site.CreatedAt,site.PartySiteId) customerSite
             WHERE payment.PaymentTransactionId=@PaymentId
               AND payment.SubjectType=N'TenantSubscription' AND payment.SubjectId=@OrderId

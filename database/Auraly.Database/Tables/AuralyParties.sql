@@ -121,7 +121,7 @@ GO
 CREATE TABLE [dbo].[Customers] (
     [CustomerId] UNIQUEIDENTIFIER NOT NULL,
     [PartyId] UNIQUEIDENTIFIER NOT NULL,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [RequiresElectronicInvoice] BIT NOT NULL CONSTRAINT [DF_Customers_RequiresElectronicInvoice] DEFAULT (0),
     [IsActive] BIT NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NULL,
@@ -130,12 +130,13 @@ CREATE TABLE [dbo].[Customers] (
     [UpdatedAt] DATETIMEOFFSET(7) NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_Customers] PRIMARY KEY ([CustomerId]),
-    CONSTRAINT [FK_Customers_Parties] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
-    CONSTRAINT [FK_Customers_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [UQ_Customers_Party_Business] UNIQUE ([PartyId], [BusinessId])
+    CONSTRAINT [FK_Customers_Parties] FOREIGN KEY ([TenantId], [PartyId]) REFERENCES [dbo].[Parties] ([TenantId], [PartyId]),
+    CONSTRAINT [FK_Customers_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
+    CONSTRAINT [UQ_Customers_Party_Tenant] UNIQUE ([TenantId], [PartyId]),
+    CONSTRAINT [UQ_Customers_Tenant_Customer] UNIQUE ([TenantId], [CustomerId])
 );
 GO
-CREATE INDEX [IX_Customers_Business_Party] ON [dbo].[Customers] ([BusinessId], [PartyId]);
+CREATE INDEX [IX_Customers_Tenant_Party] ON [dbo].[Customers] ([TenantId], [PartyId]);
 GO
 
 CREATE TABLE [dbo].[PartySites] (

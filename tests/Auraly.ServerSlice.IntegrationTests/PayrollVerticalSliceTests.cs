@@ -412,8 +412,8 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
               N'1032456799',N'EMPLEADA CERTIFICACIÓN',N'EMPLEADA',N'CERTIFICACIÓN',
               N'Complete',1,@UserId,SYSUTCDATETIME()
             FROM dbo.Countries WHERE Code=N'CO';
-            INSERT dbo.Employees(EmployeeId,BusinessId,PartyId,Name,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,@PartyId,N'EMPLEADA CERTIFICACIÓN',1,SYSUTCDATETIME());
+            INSERT dbo.Employees(EmployeeId,TenantId,PartyId,Name,IsActive,CreatedAt)
+            VALUES(NEWID(),@TenantId,@PartyId,N'EMPLEADA CERTIFICACIÓN',1,SYSUTCDATETIME());
             """;
         command.Parameters.AddWithValue("@PartyId", id);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);

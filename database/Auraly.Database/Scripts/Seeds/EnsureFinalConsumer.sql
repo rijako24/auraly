@@ -60,13 +60,12 @@ SET IsActive=1,UpdatedAt=@Now
 FROM dbo.Customers c
 JOIN @FinalConsumers f ON f.PartyId=c.PartyId;
 
-INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedAt)
-SELECT NEWID(),f.PartyId,b.BusinessId,1,@Now
-FROM dbo.Businesses b
-JOIN @FinalConsumers f ON f.TenantId=b.TenantId
+INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedAt)
+SELECT NEWID(),f.PartyId,f.TenantId,1,@Now
+FROM @FinalConsumers f
 WHERE NOT EXISTS(
     SELECT 1 FROM dbo.Customers c
-    WHERE c.PartyId=f.PartyId AND c.BusinessId=b.BusinessId);
+    WHERE c.PartyId=f.PartyId AND c.TenantId=f.TenantId);
 
 ;WITH Candidate AS(
     SELECT s.PartySiteId,profile.CountryId TargetCountryId,

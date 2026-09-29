@@ -97,17 +97,17 @@ public sealed partial class SqlPartyWorkspaceStore
               ORDER BY ps.IsPrimary DESC,ps.CreatedAt
             ) site
             LEFT JOIN dbo.Customers customer
-              ON customer.PartyId=p.PartyId AND customer.BusinessId=@BusinessId
+              ON customer.PartyId=p.PartyId AND customer.TenantId=@TenantId
             LEFT JOIN dbo.CustomerPricingSettings pricing
               ON pricing.CustomerId=customer.CustomerId
             LEFT JOIN dbo.Suppliers supplier
-              ON supplier.PartyId=p.PartyId AND supplier.BusinessId=@BusinessId
+              ON supplier.PartyId=p.PartyId AND supplier.TenantId=@TenantId
             LEFT JOIN dbo.CommerceSellers seller
-              ON seller.PartyId=p.PartyId AND seller.BusinessId=@BusinessId
+              ON seller.PartyId=p.PartyId AND seller.TenantId=@TenantId
             LEFT JOIN dbo.Carriers carrier
-              ON carrier.PartyId=p.PartyId AND carrier.BusinessId=@BusinessId
+              ON carrier.PartyId=p.PartyId AND carrier.TenantId=@TenantId
             LEFT JOIN dbo.Employees employee
-              ON employee.PartyId=p.PartyId AND employee.BusinessId=@BusinessId
+              ON employee.PartyId=p.PartyId AND employee.TenantId=@TenantId
             LEFT JOIN dbo.AppUsers appUser
               ON appUser.PartyId=p.PartyId AND appUser.TenantId=@TenantId
             WHERE p.TenantId=@TenantId

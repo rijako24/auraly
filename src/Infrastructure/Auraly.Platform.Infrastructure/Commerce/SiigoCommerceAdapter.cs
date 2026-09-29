@@ -44,9 +44,43 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter, IAuthoritativeComme
 
         if (settings.Catalog.CacheProducts)
         {
+            var connectionId = ctx.Connection?.IntegrationConnectionId
+                ?? throw new InvalidOperationException("Siigo product snapshot requires a connection.");
+            var existing = await _unitOfWork.Products.GetByExternalIdsAsync(ctx.BusinessId, connectionId,
+                filtered.Select(product => product.ExternalProductId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id!).ToArray(), ct);
+            var byExternalId = existing.ToDictionary(product => product.ExternalProductId!, StringComparer.OrdinalIgnoreCase);
             var cached = new List<ProductReference>(filtered.Count);
-            foreach (var product in filtered)
-                cached.Add(await UpsertSnapshotAsync(ctx, product, ct));
+            var createdProducts = new List<Product>();
+            var updatedProducts = new List<Product>();
+            var publications = new List<ProductPricePublication>();
+            var touchedExisting = new HashSet<Guid>();
+            foreach (var reference in filtered)
+            {
+                if (string.IsNullOrWhiteSpace(reference.ExternalProductId))
+                {
+                    cached.Add(reference);
+                    continue;
+                }
+                if (!byExternalId.TryGetValue(reference.ExternalProductId, out var product))
+                {
+                    product = CreateSnapshot(ctx.BusinessId, connectionId, reference);
+                    byExternalId[reference.ExternalProductId] = product;
+                    createdProducts.Add(product);
+                }
+                else if (touchedExisting.Add(product.ProductId) && !createdProducts.Contains(product))
+                {
+                    UpdateSnapshot(product, reference);
+                    if (product.UnitPrice != reference.UnitPrice ||
+                        !string.Equals(product.Currency, reference.Currency, StringComparison.OrdinalIgnoreCase))
+                        publications.Add(new ProductPricePublication(product, reference.UnitPrice, reference.Currency));
+                    updatedProducts.Add(product);
+                }
+                cached.Add(WithProductId(reference, product.ProductId));
+            }
+            await _unitOfWork.Products.CreateManyAsync(createdProducts, ct);
+            await _unitOfWork.Products.PublishPricesAsync(publications, ct);
+            await _unitOfWork.Products.UpdateManyAsync(updatedProducts, ct);
             await _unitOfWork.SaveChangesAsync(ct);
             filtered = cached;
         }
@@ -131,20 +165,12 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter, IAuthoritativeComme
         return token?.AccessToken ?? throw new InvalidOperationException("Siigo auth response did not include access_token.");
     }
 
-    private async Task<ProductReference> UpsertSnapshotAsync(CommerceAdapterContext ctx, ProductReference reference, CancellationToken ct)
+    private static Product CreateSnapshot(Guid businessId, Guid connectionId, ProductReference reference)
     {
-        var connectionId = ctx.Connection?.IntegrationConnectionId
-            ?? throw new InvalidOperationException("Siigo product snapshot requires a connection.");
-        if (string.IsNullOrWhiteSpace(reference.ExternalProductId))
-            return reference;
-
-        var existing = await _unitOfWork.Products.GetByExternalIdAsync(ctx.BusinessId, connectionId, reference.ExternalProductId, ct);
-        if (existing is null)
+        return new Product
         {
-            var product = new Product
-            {
                 ProductId = Guid.NewGuid(),
-                BusinessId = ctx.BusinessId,
+                BusinessId = businessId,
                 IntegrationConnectionId = connectionId,
                 ExternalProductId = reference.ExternalProductId,
                 Source = ProductSource.External,
@@ -160,24 +186,20 @@ public sealed class SiigoCommerceAdapter : ICommerceAdapter, IAuthoritativeComme
                 RawPayloadJson = reference.RawPayloadJson,
                 LastSyncedAt = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.Products.CreateAsync(product, ct);
-            return WithProductId(reference, product.ProductId);
-        }
+        };
+    }
 
-        existing.Sku = reference.Sku;
-        existing.Name = reference.Name;
-        existing.Description = reference.Description;
-        existing.CategoryName = reference.CategoryName;
-        existing.UnitPrice = reference.UnitPrice;
-        existing.Currency = reference.Currency;
-        existing.StockQuantity = reference.StockQuantity;
-        existing.IsActive = reference.IsActive;
-        existing.RawPayloadJson = reference.RawPayloadJson;
-        existing.LastSyncedAt = DateTime.UtcNow;
-        existing.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.Products.UpdateAsync(existing, ct);
-        return WithProductId(reference, existing.ProductId);
+    private static void UpdateSnapshot(Product product, ProductReference reference)
+    {
+        product.Sku = reference.Sku;
+        product.Name = reference.Name;
+        product.Description = reference.Description;
+        product.CategoryName = reference.CategoryName;
+        product.StockQuantity = reference.StockQuantity;
+        product.IsActive = reference.IsActive;
+        product.RawPayloadJson = reference.RawPayloadJson;
+        product.LastSyncedAt = DateTime.UtcNow;
+        product.UpdatedAt = DateTime.UtcNow;
     }
 
     private static ProductReference WithProductId(ProductReference reference, Guid productId) =>

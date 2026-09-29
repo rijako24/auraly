@@ -27,6 +27,7 @@ public sealed partial class SqlPartyStore
 
     public async Task<PartyUserAccountLink> LinkUserAccountAsync(
         Guid tenantId,
+        Guid businessId,
         Guid partyId,
         Guid userId,
         Guid assignedByUserId,
@@ -66,15 +67,17 @@ public sealed partial class SqlPartyStore
                 WHERE UserId=@UserId AND TenantId=@TenantId;
 
                 INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
-                SELECT NEWID(),@UserId,role.RoleId,seller.BusinessId,@Now,@AssignedByUserId
+                SELECT NEWID(),@UserId,role.RoleId,@BusinessId,@Now,@AssignedByUserId
                 FROM dbo.CommerceSellers seller
+                JOIN dbo.Businesses businessValue ON businessValue.BusinessId=@BusinessId
+                  AND businessValue.TenantId=seller.TenantId AND businessValue.IsActive=1
                 JOIN dbo.AppRoles role ON role.TenantId=@TenantId
                   AND role.NormalizedName=N'SELLER' AND role.IsActive=1
-                WHERE seller.PartyId=@PartyId AND seller.IsActive=1
+                WHERE seller.PartyId=@PartyId AND seller.TenantId=@TenantId AND seller.IsActive=1
                   AND NOT EXISTS(
                     SELECT 1 FROM dbo.UserRoles assigned
                     WHERE assigned.UserId=@UserId AND assigned.RoleId=role.RoleId
-                      AND assigned.BusinessId=seller.BusinessId);
+                      AND assigned.BusinessId=@BusinessId);
 
                 SELECT UserId,PartyId,Username,Email,IsActive
                 FROM dbo.AppUsers
@@ -83,6 +86,7 @@ public sealed partial class SqlPartyStore
             command.Parameters.AddRange(
             [
                 P("@TenantId", tenantId),
+                P("@BusinessId", businessId),
                 P("@PartyId", partyId),
                 P("@UserId", userId),
                 P("@AssignedByUserId", assignedByUserId),
@@ -132,7 +136,7 @@ public sealed partial class SqlPartyStore
             FROM dbo.UserRoles assignment
             JOIN dbo.AppUsers app ON app.UserId=assignment.UserId AND app.PartyId=@PartyId AND app.TenantId=@TenantId
             JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
-            JOIN dbo.CommerceSellers seller ON seller.PartyId=@PartyId AND seller.BusinessId=assignment.BusinessId;
+            JOIN dbo.CommerceSellers seller ON seller.PartyId=@PartyId AND seller.TenantId=@TenantId;
 
             UPDATE dbo.AppUsers
             SET PartyId=NULL,UpdatedAt=@Now

@@ -1,17 +1,14 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PackageCheck } from "lucide-react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
-import { goodsReceiptsApi } from "@/services/api/goods-receipts";
 import { productsApi } from "@/services/api/products";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export interface ProductSupplierEditorValue {
   supplierId: string;
@@ -22,17 +19,16 @@ export interface ProductSupplierEditorValue {
   unitsPerPresentation: number;
 }
 export interface ProductSupplierEditorDraft { supplierId: string; selectedSupplier: { name: string; identification: string } | null; supplierProductCode: string; packageName: string; unitsPerPackage: string }
-export interface ProductSupplierEditorHandle { getValue: () => ProductSupplierEditorValue; validate: () => void; save: () => Promise<void> }
+export interface ProductSupplierEditorHandle { getValue: () => ProductSupplierEditorValue; validate: () => void }
 
 export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   embedded?: boolean;
   productId: string;
-  productName: string;
   saleUnitName?: string;
   initialDraft?: ProductSupplierEditorDraft;
   onDraftChange?: (draft: ProductSupplierEditorDraft) => void;
-}>(function ProductSupplierEditor({ productId, productName, saleUnitName = "unidad de venta", embedded = false, initialDraft, onDraftChange }, ref) {
-  const client = useQueryClient();
+}>(function ProductSupplierEditor({ productId, saleUnitName = "unidad de venta", embedded = false, initialDraft, onDraftChange }, ref) {
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const purchasePresentations = useReferenceOptions("purchase-presentation");
   const [supplierId, setSupplierId] = useState("");
   const [selectedSupplier, setSelectedSupplier] = useState<{ name: string; identification: string } | null>(null);
@@ -42,8 +38,9 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   const [validationError, setValidationError] = useState<string>();
 
   const catalogProduct = useQuery({
-    queryKey: ["catalog-product", productId],
+    queryKey: ["catalog-product", businessId, productId],
     queryFn: () => productsApi.getCatalog(productId),
+    enabled: !!businessId,
   });
 
   useEffect(() => {
@@ -63,18 +60,9 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   }, [initialDraft]);
   useEffect(() => { onDraftChange?.({ supplierId, selectedSupplier, supplierProductCode, packageName, unitsPerPackage }); }, [onDraftChange, packageName, selectedSupplier, supplierId, supplierProductCode, unitsPerPackage]);
 
-  const relation = useQuery({
-    queryKey: ["product-supplier-relation", supplierId, productId],
-    queryFn: async () => {
-      const page = await goodsReceiptsApi.products(supplierId, productName, true, 1, 100);
-      return page.items.find((item) => item.productId === productId) ?? null;
-    },
-    enabled: Boolean(supplierId),
-  });
-
   useEffect(() => {
-    if (initialDraft) return;
-    const current = relation.data;
+    if (initialDraft || !supplierId || !catalogProduct.data) return;
+    const current = catalogProduct.data.suppliers?.find((supplier) => supplier.supplierId === supplierId);
     if (!current) {
       setSupplierProductCode("");
       setPackageName("Unidad");
@@ -84,24 +72,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
     setSupplierProductCode(current.supplierProductCode ?? "");
     setPackageName(current.purchasePresentationName || "Unidad");
     setUnitsPerPackage(String(current.unitsPerPresentation || 1));
-  }, [initialDraft, relation.data]);
-
-  const save = useMutation({
-    mutationFn: () => goodsReceiptsApi.associateProduct({
-      supplierId,
-      productId,
-      supplierProductCode: supplierProductCode.trim() || null,
-      isPrimary: true,
-      purchasePresentationName: packageName,
-      unitsPerPresentation: Number(unitsPerPackage),
-    }),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["product-supplier-relation", supplierId, productId] });
-      await client.invalidateQueries({ queryKey: ["products"] });
-      toast.success("Proveedor y empaque actualizados.");
-    },
-    onError: () => toast.error("No fue posible guardar la relación con el proveedor."),
-  });
+  }, [catalogProduct.data, initialDraft, supplierId]);
 
   useImperativeHandle(ref, () => ({
     getValue: () => {
@@ -130,13 +101,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
       }
       setValidationError(undefined);
     },
-    save: async () => {
-      if (!supplierId) throw new Error("Selecciona el proveedor principal del producto.");
-      if (!packageName || Number(unitsPerPackage) <= 0) throw new Error("Revisa el empaque del proveedor.");
-      await save.mutateAsync();
-    },
-  }), [packageName, save, selectedSupplier, supplierId, supplierProductCode, unitsPerPackage]);
-  const valid = Boolean(supplierId && packageName) && Number(unitsPerPackage) > 0;
+  }), [packageName, selectedSupplier, supplierId, supplierProductCode, unitsPerPackage]);
   const directUnit = Number(unitsPerPackage) === 1 && packageName.toLocaleLowerCase("es-CO") === "unidad";
 
   return <section className={`space-y-4 ${embedded ? "" : "rounded-xl border bg-muted/15 p-4"}`}>
@@ -187,9 +152,6 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
       <span>{directUnit
         ? `Entrega directa: 1 empaque equivale a 1 ${saleUnitName}.`
         : `1 ${packageName} equivale a ${Number(unitsPerPackage) || 0} ${saleUnitName}.`}</span>
-      {!embedded && <Button type="button" size="sm" disabled={!valid || save.isPending} onClick={() => save.mutate()}>
-        <PackageCheck className="mr-2 h-4 w-4" /> Guardar proveedor
-      </Button>}
     </div>
   </section>;
 });

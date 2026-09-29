@@ -53,7 +53,7 @@ export function PriceSegmentsManager() {
   const [report, setReport] = useState<PriceChannelProductReport | null>(null);
   const [loadingReportId, setLoadingReportId] = useState<string | null>(null);
 
-  const segments = useQuery({ queryKey: ["price-segments"], queryFn: priceSegmentsApi.list });
+  const segments = useQuery({ queryKey: ["price-segments", businessId], queryFn: priceSegmentsApi.list, enabled: !!businessId });
   const items = useQuery({
     queryKey: ["price-segments", selected?.id],
     queryFn: () => priceSegmentsApi.items(selected!.id),

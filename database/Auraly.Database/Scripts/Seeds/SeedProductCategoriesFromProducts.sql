@@ -3,19 +3,19 @@ DECLARE @CategoryBackfillNow DATETIME2 = SYSUTCDATETIME();
 ;WITH SourceCategories AS
 (
     SELECT
-        product.BusinessId,
+        product.TenantId,
         product.IntegrationConnectionId,
         LTRIM(RTRIM(product.CategoryName)) AS [Name]
     FROM dbo.Products product
     WHERE NULLIF(LTRIM(RTRIM(product.CategoryName)), N'') IS NOT NULL
     GROUP BY
-        product.BusinessId,
+        product.TenantId,
         product.IntegrationConnectionId,
         LTRIM(RTRIM(product.CategoryName))
 )
 MERGE dbo.ProductCategories AS target
 USING SourceCategories AS source
-ON target.BusinessId = source.BusinessId
+ON target.TenantId = source.TenantId
    AND (target.IntegrationConnectionId = source.IntegrationConnectionId
         OR target.IntegrationConnectionId IS NULL AND source.IntegrationConnectionId IS NULL)
    AND target.[Name] = source.[Name]
@@ -23,7 +23,7 @@ WHEN NOT MATCHED BY TARGET THEN
     INSERT
     (
         ProductCategoryId,
-        BusinessId,
+        TenantId,
         IntegrationConnectionId,
         ExternalCategoryId,
         [Name],
@@ -36,7 +36,7 @@ WHEN NOT MATCHED BY TARGET THEN
     VALUES
     (
         NEWID(),
-        source.BusinessId,
+        source.TenantId,
         source.IntegrationConnectionId,
         NULL,
         source.[Name],
@@ -54,7 +54,7 @@ SET
     product.UpdatedAt = @CategoryBackfillNow
 FROM dbo.Products product
 INNER JOIN dbo.ProductCategories category
-    ON category.BusinessId = product.BusinessId
+    ON category.TenantId = product.TenantId
    AND (category.IntegrationConnectionId = product.IntegrationConnectionId
         OR category.IntegrationConnectionId IS NULL AND product.IntegrationConnectionId IS NULL)
    AND category.[Name] = LTRIM(RTRIM(product.CategoryName))

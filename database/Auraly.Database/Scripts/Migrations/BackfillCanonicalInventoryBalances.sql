@@ -5,14 +5,15 @@ SET NOCOUNT ON;
 INSERT dbo.InventoryBalances
   (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
    InventoryValue,LastProcessingSequence,UpdatedAt)
-SELECT product.BusinessId,warehouse.WarehouseId,product.ProductId,0,0,0,
+SELECT warehouse.BusinessId,warehouse.WarehouseId,product.ProductId,0,0,0,
        COALESCE(processingCursor.LastCompletedSequence,0),SYSDATETIMEOFFSET()
-FROM dbo.Products product
-INNER JOIN dbo.Warehouses warehouse ON warehouse.BusinessId=product.BusinessId
-LEFT JOIN dbo.BusinessProcessingCursors processingCursor ON processingCursor.BusinessId=product.BusinessId
+FROM dbo.Warehouses warehouse
+JOIN dbo.Businesses business ON business.BusinessId=warehouse.BusinessId
+JOIN dbo.Products product ON product.TenantId=business.TenantId
+LEFT JOIN dbo.BusinessProcessingCursors processingCursor ON processingCursor.BusinessId=warehouse.BusinessId
 WHERE NOT EXISTS (
   SELECT 1
   FROM dbo.InventoryBalances balance
-  WHERE balance.BusinessId=product.BusinessId
+  WHERE balance.BusinessId=warehouse.BusinessId
     AND balance.WarehouseId=warehouse.WarehouseId
     AND balance.ProductId=product.ProductId);

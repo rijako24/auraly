@@ -28,15 +28,15 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new SqlParameter("@BusinessId", fixture.BusinessId));
         await ExecuteAsync(
             """
-            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto promoción offline',0,1,SYSDATETIMEOFFSET());
-            INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,Name,IsActive,IsBrowsable,CreatedAt)
-            VALUES(@ProductCategoryId,@BusinessId,N'Categoría promoción offline',1,1,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'Sin impuesto promoción offline',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.ProductCategories(ProductCategoryId,TenantId,Name,IsActive,IsBrowsable,CreatedAt)
+            VALUES(@ProductCategoryId,@TenantId,N'Categoría promoción offline',1,1,SYSDATETIMEOFFSET());
             INSERT dbo.Products(
-              ProductId,TenantId,BusinessId,ProductCategoryId,CategoryName,ProductCode,Reference,Sku,Name,
+              ProductId,TenantId,ProductCategoryId,CategoryName,ProductCode,Reference,Sku,Name,
               BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
             VALUES(
-              @ProductId,@TenantId,@BusinessId,@ProductCategoryId,N'Categoría promoción offline',@ProductCode,@ProductCode,@ProductCode,
+              @ProductId,@TenantId,@ProductCategoryId,N'Categoría promoción offline',@ProductCode,@ProductCode,@ProductCode,
               N'Producto promoción offline',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(
               ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
@@ -302,18 +302,18 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               @PartyId,@TenantId,N'NaturalPerson',N'Cliente canal online',
               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
-              CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+              CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
             VALUES(
-              @CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+              @CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PartySites(
               PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
               CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
             VALUES(@PartySiteId,@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,
               @DivisionId,@CityId,N'Calle prueba 1',1,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PriceChannels(
-              PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
+              PriceChannelId,TenantId,Code,Name,Strategy,IsActive,CreatedAt)
             VALUES(
-              @PriceChannelId,@BusinessId,@ChannelCode,N'Canal online',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
+              @PriceChannelId,@TenantId,@ChannelCode,N'Canal online',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
             INSERT dbo.PriceChannelItems(
               PriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,
               CurrencyCode,ValidFrom,ValidUntil,IsActive,CreatedAt)
@@ -330,23 +330,23 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
             VALUES(
               @CustomerId,@PriceChannelId,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,Name,CreatedAt)
-            VALUES(@AreaId,@BusinessId,N'Área excluible',SYSUTCDATETIME());
+            INSERT dbo.ProductCategories(ProductCategoryId,TenantId,Name,CreatedAt)
+            VALUES(@AreaId,@TenantId,N'Área excluible',SYSUTCDATETIME());
             INSERT dbo.ProductCategories(
-              ProductCategoryId,BusinessId,ParentProductCategoryId,Name,CreatedAt)
-            VALUES(@SubgroupId,@BusinessId,@AreaId,N'Subgrupo excluible',SYSUTCDATETIME());
-            INSERT dbo.ProductBrands(ProductBrandId,BusinessId,Name,IsActive,CreatedAt)
-            VALUES(@BrandId,@BusinessId,N'Marca excluible',1,SYSDATETIMEOFFSET());
-            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'IVA prueba canal',0,1,SYSDATETIMEOFFSET());
+              ProductCategoryId,TenantId,ParentProductCategoryId,Name,CreatedAt)
+            VALUES(@SubgroupId,@TenantId,@AreaId,N'Subgrupo excluible',SYSUTCDATETIME());
+            INSERT dbo.ProductBrands(ProductBrandId,TenantId,Name,IsActive,CreatedAt)
+            VALUES(@BrandId,@TenantId,N'Marca excluible',1,SYSDATETIMEOFFSET());
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'IVA prueba canal',0,1,SYSDATETIMEOFFSET());
             UPDATE dbo.Products
             SET ProductCode=N'P-E2E',BaseUnitCode=N'EA',TaxProfileId=@TaxProfileId,
                 ProductCategoryId=@SubgroupId, ProductBrandId=@BrandId
-            WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
+            WHERE ProductId=@ProductId AND TenantId=@TenantId;
             INSERT dbo.ProductBarcodes(
-              ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+              ProductBarcodeId,TenantId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
             VALUES(
-              @BarcodeId,@BusinessId,@ProductId,@Barcode,1,1,SYSDATETIMEOFFSET());
+              @BarcodeId,@TenantId,@ProductId,@Barcode,1,1,SYSDATETIMEOFFSET());
             UPDATE dbo.Tenants SET AllowPromotionChannelCombination=0 WHERE TenantId=@TenantId;
             INSERT dbo.Promotions(PromotionId,TenantId,Name,IsActive,Priority,IsCombinable,CreatedAt)
             VALUES(@PromotionId,@TenantId,N'Promoción online 10',1,100,0,SYSUTCDATETIME());
@@ -434,6 +434,23 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             Assert.Equal(8_000m, product.UnitPrice);
             Assert.Equal("PriceChannel", product.PriceSource);
         }
+
+        await ExecuteAsync(
+            "UPDATE dbo.PriceChannels SET IsActive=0 WHERE PriceChannelId=@PriceChannelId;",
+            new SqlParameter("@PriceChannelId", priceChannelId));
+        using (var inactiveChannelSearch = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/pos/drafts/products/search",
+                   new SearchOnlineSalesRequest(context, "P-E2E", 0, 50, customerId)))
+        {
+            inactiveChannelSearch.EnsureSuccessStatusCode();
+            var products = await inactiveChannelSearch.Content.ReadFromJsonAsync<OnlineSalesProductPage>();
+            var product = Assert.Single(products!.Items, item => item.ProductId == fixture.ProductId);
+            Assert.Equal(10_000m, product.UnitPrice);
+            Assert.Equal("Base", product.PriceSource);
+        }
+        await ExecuteAsync(
+            "UPDATE dbo.PriceChannels SET IsActive=1 WHERE PriceChannelId=@PriceChannelId;",
+            new SqlParameter("@PriceChannelId", priceChannelId));
 
         using (var catalogResponse = await client.PostAsJsonAsync(
                    "/api/commerce/v1/seller-orders/catalog",
@@ -787,14 +804,14 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,IsActive,CreatedAt)
             VALUES(@UserId,@TenantId,@Username,UPPER(@Username),CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Venta',N'Familia',1,SYSDATETIMEOFFSET());
             UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;
-            INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto familia online',0,1,SYSDATETIMEOFFSET());
-            INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'Sin impuesto familia online',0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,Sku,Name,BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
             VALUES
-              (@ParentProductId,@TenantId,@BusinessId,@ParentCode,@ParentCode,N'Padre online',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
-              (@ChildProductId,@TenantId,@BusinessId,@ChildCode,@ChildCode,N'Media unidad online',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
-            INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,@ChildProductId,@ParentProductId,0.5,1,0,0,1,SYSDATETIMEOFFSET());
+              (@ParentProductId,@TenantId,@ParentCode,@ParentCode,N'Padre online',N'EA',@TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET()),
+              (@ChildProductId,@TenantId,@ChildCode,@ChildCode,N'Media unidad online',N'EA',@TaxProfileId,0,0,1,0,N'COP',SYSDATETIMEOFFSET());
+            INSERT dbo.ProductLinks(ProductLinkId,TenantId,ChildProductId,ParentProductId,InventoryFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+            VALUES(NEWID(),@TenantId,@ChildProductId,@ParentProductId,0.5,1,0,0,1,SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
             VALUES
               (NEWID(),@BusinessId,@ParentProductId,1000,N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,N'Nearest',1,SYSDATETIMEOFFSET()),
@@ -915,9 +932,9 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),
               N'Código',N'DIAN',1,SYSDATETIMEOFFSET());
             INSERT dbo.TaxProfiles(
-              TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+              TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
             VALUES(
-              @TaxProfileId,@BusinessId,@TaxCode,N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
+              @TaxProfileId,@TenantId,@TaxCode,N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
             UPDATE dbo.Products
             SET TaxProfileId=@TaxProfileId
             WHERE ProductId=@ProductId;

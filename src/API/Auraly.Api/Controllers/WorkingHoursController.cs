@@ -75,33 +75,34 @@ public class WorkingHoursController : ControllerBase
 
     [HttpGet("api/v1/employees/{employeeId:guid}/working-hours")]
     [PermissionAuthorize("employees.read")]
-    public async Task<ActionResult<EmployeeWorkingHoursDto>> GetEmployeeWorkingHours(Guid employeeId, CancellationToken ct)
+    public async Task<ActionResult<EmployeeWorkingHoursDto>> GetEmployeeWorkingHours(Guid employeeId, [FromHeader(Name = "X-Business-Id")] Guid businessId, CancellationToken ct)
     {
-        return Ok(await _service.GetEmployeeWorkingHoursAsync(User.GetTenantId(), employeeId, ct));
+        return Ok(await _service.GetEmployeeWorkingHoursAsync(User.GetTenantId(), businessId, employeeId, ct));
     }
 
     [HttpPut("api/v1/employees/{employeeId:guid}/working-hours")]
     [PermissionAuthorize("employees.update")]
-    public async Task<ActionResult<EmployeeWorkingHoursDto>> UpdateEmployeeWorkingHours(Guid employeeId, [FromBody] UpdateWorkingHoursRequest request, CancellationToken ct)
+    public async Task<ActionResult<EmployeeWorkingHoursDto>> UpdateEmployeeWorkingHours(Guid employeeId, [FromHeader(Name = "X-Business-Id")] Guid businessId, [FromBody] UpdateWorkingHoursRequest request, CancellationToken ct)
     {
-        return Ok(await _service.UpdateEmployeeWorkingHoursAsync(User.GetTenantId(), employeeId, request, ct));
+        return Ok(await _service.UpdateEmployeeWorkingHoursAsync(User.GetTenantId(), businessId, employeeId, request, ct));
     }
 
     [HttpGet("api/v1/employees/{employeeId:guid}/schedule-exceptions")]
     [PermissionAuthorize("employees.read")]
-    public async Task<ActionResult<IReadOnlyList<EmployeeScheduleExceptionDto>>> GetEmployeeScheduleExceptions(Guid employeeId, CancellationToken ct)
+    public async Task<ActionResult<IReadOnlyList<EmployeeScheduleExceptionDto>>> GetEmployeeScheduleExceptions(Guid employeeId, [FromHeader(Name = "X-Business-Id")] Guid businessId, CancellationToken ct)
     {
-        return Ok(await _service.GetEmployeeScheduleExceptionsAsync(User.GetTenantId(), employeeId, ct));
+        return Ok(await _service.GetEmployeeScheduleExceptionsAsync(User.GetTenantId(), businessId, employeeId, ct));
     }
 
     [HttpPost("api/v1/employees/{employeeId:guid}/schedule-exceptions")]
     [PermissionAuthorize("employees.update")]
     public async Task<ActionResult<EmployeeScheduleExceptionDto>> CreateEmployeeScheduleException(
         Guid employeeId,
+        [FromHeader(Name = "X-Business-Id")] Guid businessId,
         [FromBody] UpsertEmployeeScheduleExceptionRequest request,
         CancellationToken ct)
     {
-        var result = await _service.CreateEmployeeScheduleExceptionAsync(User.GetTenantId(), employeeId, request, ct);
+        var result = await _service.CreateEmployeeScheduleExceptionAsync(User.GetTenantId(), businessId, employeeId, request, ct);
         return CreatedAtAction(nameof(GetEmployeeScheduleExceptions), new { employeeId }, result);
     }
 
@@ -110,17 +111,18 @@ public class WorkingHoursController : ControllerBase
     public async Task<ActionResult<EmployeeScheduleExceptionDto>> UpdateEmployeeScheduleException(
         Guid employeeId,
         Guid exceptionId,
+        [FromHeader(Name = "X-Business-Id")] Guid businessId,
         [FromBody] UpsertEmployeeScheduleExceptionRequest request,
         CancellationToken ct)
     {
-        return Ok(await _service.UpdateEmployeeScheduleExceptionAsync(User.GetTenantId(), employeeId, exceptionId, request, ct));
+        return Ok(await _service.UpdateEmployeeScheduleExceptionAsync(User.GetTenantId(), businessId, employeeId, exceptionId, request, ct));
     }
 
     [HttpDelete("api/v1/employees/{employeeId:guid}/schedule-exceptions/{exceptionId:guid}")]
     [PermissionAuthorize("employees.update")]
-    public async Task<IActionResult> DeleteEmployeeScheduleException(Guid employeeId, Guid exceptionId, CancellationToken ct)
+    public async Task<IActionResult> DeleteEmployeeScheduleException(Guid employeeId, Guid exceptionId, [FromHeader(Name = "X-Business-Id")] Guid businessId, CancellationToken ct)
     {
-        await _service.DeleteEmployeeScheduleExceptionAsync(User.GetTenantId(), employeeId, exceptionId, ct);
+        await _service.DeleteEmployeeScheduleExceptionAsync(User.GetTenantId(), businessId, employeeId, exceptionId, ct);
         return NoContent();
     }
 }

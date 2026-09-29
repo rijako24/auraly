@@ -39,12 +39,12 @@ public sealed partial class SqlOnlineSalesDraftStore
               AND s.ValidFrom<=SYSDATETIMEOFFSET()
               AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
             LEFT JOIN dbo.CustomerCreditProfiles cp
-              ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId
+              ON cp.CustomerId=c.CustomerId AND cp.BusinessId=@BusinessId
             OUTER APPLY(SELECT SUM(r.OutstandingAmount) Outstanding
                         FROM dbo.Receivables r
-                        WHERE r.CustomerId=c.CustomerId AND r.BusinessId=c.BusinessId
+                        WHERE r.CustomerId=c.CustomerId AND r.BusinessId=@BusinessId
                           AND r.Status IN(N'Open',N'PartiallyPaid')) balance
-            WHERE c.BusinessId=@BusinessId AND c.IsActive=1 AND p.IsActive=1
+            WHERE c.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND c.IsActive=1 AND p.IsActive=1
               AND (@Search=N'' OR NOT EXISTS(
                    SELECT 1 FROM STRING_SPLIT(@Search,N' ') term
                    WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
@@ -102,15 +102,15 @@ public sealed partial class SqlOnlineSalesDraftStore
                    p.IsActive,p.IsWeighable,p.AllowsFractionalSale
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
-              ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=@BusinessId AND t.IsActive=1
-            WHERE p.TenantId=@TenantId AND p.BusinessId=@BusinessId AND p.IsActive=1
+              ON t.TaxProfileId=p.TaxProfileId AND t.TenantId=p.TenantId AND t.IsActive=1
+            WHERE p.TenantId=@TenantId AND p.IsActive=1
               AND(@Search=N'' OR p.Name LIKE @Contains OR p.ProductCode LIKE @Prefix
                   OR p.Sku LIKE @Prefix OR p.Reference LIKE @Prefix
                   OR EXISTS(SELECT 1 FROM dbo.ProductBarcodes barcode
-                    WHERE barcode.ProductId=p.ProductId AND barcode.BusinessId=@BusinessId
+                    WHERE barcode.ProductId=p.ProductId AND barcode.TenantId=p.TenantId
                       AND barcode.IsActive=1 AND barcode.Barcode LIKE @Prefix)
                   OR EXISTS(SELECT 1 FROM dbo.ProductIdentifiers identifier
-                    WHERE identifier.ProductId=p.ProductId AND identifier.BusinessId=@BusinessId
+                    WHERE identifier.ProductId=p.ProductId AND identifier.TenantId=p.TenantId
                       AND identifier.IsActive=1 AND identifier.Value LIKE @Prefix))
             ORDER BY CASE WHEN p.ProductCode=@Search OR p.Sku=@Search OR p.Reference=@Search
                           THEN 0 ELSE 1 END,p.Name,p.ProductId

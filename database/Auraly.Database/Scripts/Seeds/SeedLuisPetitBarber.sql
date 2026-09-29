@@ -287,13 +287,13 @@ WHERE s.BusinessId = @BusinessId
   AND NOT EXISTS (SELECT 1 FROM @Services src WHERE src.ServiceName = s.ServiceName);
 IF NOT EXISTS (SELECT 1 FROM dbo.Employees WHERE EmployeeId = @EmployeeId)
 BEGIN
-    INSERT INTO dbo.Employees (EmployeeId, BusinessId, Name, IsActive, CreatedAt)
-    VALUES (@EmployeeId, @BusinessId, N'Luis Petit', 1, GETUTCDATE());
+    INSERT INTO dbo.Employees (EmployeeId, TenantId, Name, IsActive, CreatedAt)
+    VALUES (@EmployeeId, @TenantId, N'Luis Petit', 1, GETUTCDATE());
 END
 ELSE
 BEGIN
     UPDATE dbo.Employees
-    SET BusinessId = @BusinessId,
+    SET TenantId = @TenantId,
         Name = N'Luis Petit',
         IsActive = 1,
         UpdatedAt = GETUTCDATE()

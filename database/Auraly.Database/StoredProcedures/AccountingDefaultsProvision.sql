@@ -65,9 +65,9 @@ BEGIN
     WHERE concept.ProfileCode=@ProfileCode AND concept.IsActive=1 AND NOT EXISTS(
       SELECT 1 FROM dbo.ExpenseConcepts currentConcept WHERE currentConcept.BusinessId=@BusinessId AND currentConcept.Code=concept.Code);
 
-    IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE BusinessId=@BusinessId AND Identification=N'OCASIONAL')
-      INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
-      VALUES(NEWID(),@BusinessId,NULL,N'OCASIONAL',N'Gasto ocasional / sin proveedor',1,@Now);
+    IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE TenantId=@TenantId AND Identification=N'OCASIONAL')
+      INSERT dbo.Suppliers(SupplierId,TenantId,PartyId,Identification,Name,IsActive,CreatedAt)
+      VALUES(NEWID(),@TenantId,NULL,N'OCASIONAL',N'Gasto ocasional / sin proveedor',1,@Now);
 
     INSERT dbo.BusinessReasons(
       ReasonId,BusinessId,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,

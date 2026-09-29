@@ -39,6 +39,8 @@ internal static class SqlSaleUblPartyReader
                    city.Code,city.Name,site.AddressLine,
                    email.Value,phone.Value
             FROM dbo.Customers c
+            JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
+              AND business.TenantId=c.TenantId AND business.IsActive=1
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             JOIN dbo.PartySites site
               ON site.PartyId=p.PartyId AND site.IsActive=1
@@ -55,7 +57,7 @@ internal static class SqlSaleUblPartyReader
               SELECT TOP(1) value.Value FROM dbo.PartyContacts value
               WHERE value.PartyId=p.PartyId AND value.ContactType=N'Phone'
                 AND value.IsActive=1 ORDER BY value.IsPrimary DESC,value.CreatedAt) phone
-            WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId
+            WHERE c.CustomerId=@CustomerId
               AND c.IsActive=1 AND p.IsActive=1;
             """;
         command.Parameters.AddWithValue("@CustomerId", customerId.Value);

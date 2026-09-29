@@ -38,7 +38,7 @@ BEGIN
       SELECT ROW_NUMBER() OVER(ORDER BY CASE
                WHEN p.ProductCode=@Search OR p.Sku=@Search OR p.Reference=@Search OR EXISTS(
                  SELECT 1 FROM dbo.ProductBarcodes exactBarcode
-                 WHERE exactBarcode.ProductId=p.ProductId AND exactBarcode.BusinessId=@BusinessId
+                 WHERE exactBarcode.ProductId=p.ProductId AND exactBarcode.TenantId=@TenantId
                    AND exactBarcode.IsActive=1 AND exactBarcode.Barcode=@Search) THEN 0 ELSE 1 END,
                p.Name,p.ProductId) SortOrder,
              p.ProductId,COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N'') ProductCode,
@@ -51,7 +51,7 @@ BEGIN
              COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent) TargetMarginPercent
       FROM dbo.Products p
       LEFT JOIN dbo.TaxProfiles t
-        ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=@BusinessId AND t.IsActive=1
+        ON t.TaxProfileId=p.TaxProfileId AND t.TenantId=@TenantId AND t.IsActive=1
       CROSS APPLY(SELECT TOP(1) pp.Amount,pp.CurrencyCode,pp.CostBasisAmount,
                    pp.TargetMarginPercent,pp.EffectiveMarginPercent
         FROM dbo.ProductPrices pp
@@ -66,14 +66,14 @@ BEGIN
         FROM dbo.SupplierProductLatestCosts cost
         WHERE cost.BusinessId=@BusinessId AND cost.ProductId=p.ProductId
         ORDER BY cost.ObservedAt DESC,cost.SupplierId) latest
-      WHERE p.TenantId=@TenantId AND p.BusinessId=@BusinessId AND p.IsActive=1
+      WHERE p.TenantId=@TenantId AND p.IsActive=1
         AND(@Search=N'' OR p.Name LIKE @Contains OR p.ProductCode LIKE @Prefix
           OR p.Sku LIKE @Prefix OR p.Reference LIKE @Prefix
           OR EXISTS(SELECT 1 FROM dbo.ProductBarcodes barcode
-            WHERE barcode.ProductId=p.ProductId AND barcode.BusinessId=@BusinessId
+            WHERE barcode.ProductId=p.ProductId AND barcode.TenantId=@TenantId
               AND barcode.IsActive=1 AND barcode.Barcode LIKE @Prefix)
           OR EXISTS(SELECT 1 FROM dbo.ProductIdentifiers identifier
-            WHERE identifier.ProductId=p.ProductId AND identifier.BusinessId=@BusinessId
+            WHERE identifier.ProductId=p.ProductId AND identifier.TenantId=@TenantId
               AND identifier.IsActive=1 AND identifier.Value LIKE @Prefix)))
     INSERT @Candidates
     SELECT SortOrder,ProductId,ProductCode,Reference,Name,UnitCode,TaxCode,TaxRate,
@@ -86,12 +86,12 @@ BEGIN
       SELECT candidate.ProductId RootProductId,category.ProductCategoryId,category.ParentProductCategoryId
       FROM @Candidates candidate
       JOIN dbo.ProductCategories category ON category.ProductCategoryId=candidate.ProductCategoryId
-      WHERE category.BusinessId=@BusinessId
+      WHERE category.TenantId=@TenantId
       UNION ALL
       SELECT child.RootProductId,parent.ProductCategoryId,parent.ParentProductCategoryId
       FROM Ancestors child JOIN dbo.ProductCategories parent
         ON parent.ProductCategoryId=child.ParentProductCategoryId
-      WHERE parent.BusinessId=@BusinessId)
+      WHERE parent.TenantId=@TenantId)
     SELECT candidate.*,
            COALESCE((SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),ancestor.ProductCategoryId),N',')
              FROM Ancestors ancestor WHERE ancestor.RootProductId=candidate.ProductId),N'') AncestorIds
@@ -104,24 +104,25 @@ BEGIN
       THEN setting.PriceChannelId END
     FROM dbo.Customers customer
     LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=customer.CustomerId
-    WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId AND customer.IsActive=1;
+    WHERE customer.CustomerId=@CustomerId AND customer.TenantId=@TenantId AND customer.IsActive=1;
     SELECT @SelectedPriceChannelId;
 
     SELECT PriceChannelId,Strategy,Value FROM dbo.PriceChannels
-    WHERE BusinessId=@BusinessId AND IsActive=1 AND PriceChannelId=@SelectedPriceChannelId;
+    WHERE IsActive=1 AND PriceChannelId=@SelectedPriceChannelId
+      AND TenantId=@TenantId;
 
     SELECT item.PriceChannelId,item.ProductId,item.MinimumQuantity,item.Amount,item.CurrencyCode
     FROM dbo.PriceChannelItems item
     JOIN @Candidates candidate ON candidate.ProductId=item.ProductId
     JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=item.PriceChannelId
-    WHERE channelValue.BusinessId=@BusinessId AND channelValue.IsActive=1 AND item.IsActive=1
+    WHERE channelValue.TenantId=@TenantId AND channelValue.IsActive=1 AND item.IsActive=1
       AND item.PriceChannelId=@SelectedPriceChannelId;
 
     SELECT exclusion.PriceChannelId,exclusion.ProductId,
            exclusion.ProductCategoryId,exclusion.ProductBrandId
     FROM dbo.PriceChannelExclusions exclusion
     JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=exclusion.PriceChannelId
-    WHERE channelValue.BusinessId=@BusinessId AND channelValue.IsActive=1
+    WHERE channelValue.TenantId=@TenantId AND channelValue.IsActive=1
       AND exclusion.PriceChannelId=@SelectedPriceChannelId
       AND(exclusion.ProductId IS NULL OR EXISTS(
         SELECT 1 FROM @Candidates candidate WHERE candidate.ProductId=exclusion.ProductId));

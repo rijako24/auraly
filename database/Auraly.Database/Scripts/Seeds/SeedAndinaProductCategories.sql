@@ -9,6 +9,7 @@ END;
 
 -- Authoritative Xion Familia1 catalog supplied by Andina Santander.
 DECLARE @AndinaBusinessId UNIQUEIDENTIFIER = 'A7D1AA00-0000-0000-0000-000000000010';
+DECLARE @AndinaTenantId UNIQUEIDENTIFIER = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId = @AndinaBusinessId);
 DECLARE @XionConnectionId UNIQUEIDENTIFIER = 'A7D1AA00-0000-0000-0000-000000000030';
 DECLARE @CategoryNow DATETIME2 = SYSUTCDATETIME();
 
@@ -256,7 +257,7 @@ VALUES
 
 MERGE dbo.ProductCategories AS target
 USING @SourceCategories AS source
-ON target.BusinessId = @AndinaBusinessId
+ON target.TenantId = @AndinaTenantId
    AND target.IntegrationConnectionId = @XionConnectionId
    AND target.ExternalCategoryId = source.ExternalCategoryId
 WHEN MATCHED THEN
@@ -268,5 +269,5 @@ WHEN MATCHED THEN
         LastSyncedAt = @CategoryNow,
         UpdatedAt = @CategoryNow
 WHEN NOT MATCHED BY TARGET THEN
-    INSERT (ProductCategoryId, BusinessId, IntegrationConnectionId, ExternalCategoryId, [Name], DisplayOrder, IsActive, IsBrowsable, LastSyncedAt, CreatedAt)
-    VALUES (NEWID(), @AndinaBusinessId, @XionConnectionId, source.ExternalCategoryId, source.[Name], source.DisplayOrder, source.IsActive, source.IsBrowsable, @CategoryNow, @CategoryNow);
+    INSERT (ProductCategoryId, TenantId, IntegrationConnectionId, ExternalCategoryId, [Name], DisplayOrder, IsActive, IsBrowsable, LastSyncedAt, CreatedAt)
+    VALUES (NEWID(), @AndinaTenantId, @XionConnectionId, source.ExternalCategoryId, source.[Name], source.DisplayOrder, source.IsActive, source.IsBrowsable, @CategoryNow, @CategoryNow);

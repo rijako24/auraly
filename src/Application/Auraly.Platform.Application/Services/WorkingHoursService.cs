@@ -60,7 +60,7 @@ public class WorkingHoursService : IWorkingHoursService
         CancellationToken ct)
     {
         var exceptions = await _unitOfWork.EmployeeScheduleExceptions
-            .GetByEmployeeIdsAndDateAsync([employeeId], date, ct);
+            .GetByEmployeeIdsAndDateAsync(businessId, [employeeId], date, ct);
 
         if (exceptions.Count > 0)
         {
@@ -74,7 +74,7 @@ public class WorkingHoursService : IWorkingHoursService
                 .ToList();
         }
 
-        var employeeHours = await _unitOfWork.EmployeeWorkingHours.GetByEmployeeIdAsync(employeeId, ct);
+        var employeeHours = await _unitOfWork.EmployeeWorkingHours.GetByEmployeeIdAsync(businessId, employeeId, ct);
         if (employeeHours.Count > 0)
         {
             return employeeHours

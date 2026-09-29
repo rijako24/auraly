@@ -16,7 +16,7 @@ export const employeesApi = {
       withPagedDefaults(params)
     ),
   getById: (id: string) => apiClient.get<Employee>(`/employees/${id}`),
-  create: (data: Partial<Employee>) =>
+  create: (data: Partial<Employee> & { businessId: string }) =>
     apiClient.post<Employee>("/employees", data),
   update: (id: string, data: Partial<Employee>) =>
     apiClient.put<Employee>(`/employees/${id}`, data),

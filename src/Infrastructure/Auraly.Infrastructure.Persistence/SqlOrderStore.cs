@@ -211,7 +211,7 @@ public sealed class SqlOrderStore(
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.Customers customer
-              ON customer.CustomerId=o.CustomerId AND customer.BusinessId=o.BusinessId
+              ON customer.CustomerId=o.CustomerId AND customer.TenantId=b.TenantId
             LEFT JOIN dbo.PaymentTransactions pt
               ON pt.PaymentTransactionId=o.PaymentTransactionId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
@@ -376,7 +376,7 @@ public sealed class SqlOrderStore(
             INNER JOIN dbo.Orders o ON o.OrderId=selected.OrderId
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.Customers customer
-              ON customer.CustomerId=o.CustomerId AND customer.BusinessId=o.BusinessId
+              ON customer.CustomerId=o.CustomerId AND customer.TenantId=b.TenantId
             LEFT JOIN dbo.PaymentTransactions pt ON pt.PaymentTransactionId=o.PaymentTransactionId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             LEFT JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId

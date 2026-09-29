@@ -26,7 +26,7 @@ public interface IPartyStore
     Task<PartyUserAccountLink?> GetUserAccountAsync(
         Guid tenantId, Guid partyId, CancellationToken ct);
     Task<PartyUserAccountLink> LinkUserAccountAsync(
-        Guid tenantId, Guid partyId, Guid userId, Guid assignedByUserId, DateTimeOffset now, CancellationToken ct);
+        Guid tenantId, Guid businessId, Guid partyId, Guid userId, Guid assignedByUserId, DateTimeOffset now, CancellationToken ct);
     Task UnlinkUserAccountAsync(Guid tenantId, Guid partyId, DateTimeOffset now, CancellationToken ct);
     Task<IReadOnlyCollection<CountryItem>> CountriesAsync(bool includeInactive, CancellationToken ct);
     Task<IReadOnlyCollection<AdministrativeDivisionItem>> DivisionsAsync(
@@ -161,7 +161,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
         if (partyId == Guid.Empty || request.UserId == Guid.Empty)
             throw new PartyValidationException("PartyId and UserId are required.");
         return store.LinkUserAccountAsync(
-            actor.TenantId, partyId, request.UserId, actor.ActorId, time.GetUtcNow(), ct);
+            actor.TenantId, actor.BusinessId, partyId, request.UserId, actor.ActorId, time.GetUtcNow(), ct);
     }
 
     public Task UnlinkUserAccountAsync(

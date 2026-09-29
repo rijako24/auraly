@@ -26,13 +26,14 @@ CREATE PROCEDURE [dbo].[SellerOrderCreate]
 AS
 BEGIN
     SET NOCOUNT ON;
+    DECLARE @TenantId UNIQUEIDENTIFIER=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId AND IsActive=1);
     SET XACT_ABORT ON;
 
     DECLARE @SellerId UNIQUEIDENTIFIER=(
       SELECT seller.SellerId
       FROM dbo.AppUsers appUser
       INNER JOIN dbo.CommerceSellers seller
-        ON seller.PartyId=appUser.PartyId AND seller.BusinessId=@BusinessId AND seller.IsActive=1
+        ON seller.PartyId=appUser.PartyId AND seller.TenantId=@TenantId AND seller.IsActive=1
       WHERE appUser.UserId=@CapturedByUserId);
     IF @RouteId IS NOT NULL
     BEGIN
@@ -51,7 +52,7 @@ BEGIN
       FROM dbo.Customers customer
       INNER JOIN dbo.PartySites site
         ON site.PartyId=customer.PartyId AND site.PartySiteId=@PartySiteId AND site.IsActive=1
-      WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+      WHERE customer.CustomerId=@CustomerId AND customer.TenantId=@TenantId
         AND customer.IsActive=1)
       THROW 51300,'La sede del pedido no pertenece al cliente seleccionado.',1;
     IF @RouteStopId IS NOT NULL AND NOT EXISTS(

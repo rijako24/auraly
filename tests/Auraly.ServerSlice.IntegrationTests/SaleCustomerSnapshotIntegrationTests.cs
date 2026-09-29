@@ -8,7 +8,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Sale_assigns_a_visiting_party_to_the_business_without_changing_the_snapshot()
+    public async Task Sale_uses_the_tenant_customer_across_businesses_without_changing_the_snapshot()
     {
         var countryId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
@@ -31,8 +31,8 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
               (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
             VALUES(@OtherBusinessId,@TenantId,N'Otro negocio',N'Prueba de aislamiento',
               N'Calle 1',N'3000000000',@OtherBusinessEmail,N'https://other.auraly.test',1,SYSUTCDATETIME());
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@OtherCustomerId,@PartyId,@OtherBusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@OtherCustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PartySites(
               PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
               AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
@@ -67,13 +67,13 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
             "SELECT CustomerId FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId;",
             new SqlParameter("@DocumentId", request.DocumentId));
         Assert.NotNull(storedCustomerId);
-        Assert.NotEqual(otherCustomerId, storedCustomerId.Value);
+        Assert.Equal(otherCustomerId, storedCustomerId.Value);
         Assert.Equal(1, await ScalarAsync<int>(
             """
             SELECT COUNT(*) FROM dbo.Customers
-            WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+            WHERE PartyId=@PartyId AND TenantId=@TenantId;
             """,
-            new SqlParameter("@PartyId", partyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+            new SqlParameter("@PartyId", partyId), new SqlParameter("@TenantId", fixture.TenantId)));
         var snapshotJson = await ScalarAsync<string>(
             "SELECT SnapshotJson FROM dbo.FiscalSnapshots WHERE DocumentId=@DocumentId;",
             new SqlParameter("@DocumentId", request.DocumentId));

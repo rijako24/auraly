@@ -10,5 +10,6 @@ public interface IEmployeeServiceRepository
     Task<bool> ExistsAsync(Guid employeeId, Guid serviceId);
     Task<EmployeeService> CreateAsync(EmployeeService employeeService);
     Task DeleteAsync(Guid employeeServiceId);
+    void DeleteMany(IEnumerable<EmployeeService> employeeServices);
     Task<int> GetServiceCountByEmployeeIdAsync(Guid employeeId);
 }

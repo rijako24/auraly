@@ -183,7 +183,7 @@ VALUES
     ('D3E4A700-0000-0000-0000-000000000150', N'MD-POWERLED-LX', N'Lampara de fotocurado 3G PowerLED LX', N'Lampara LED de fotocurado y aceleracion de blanqueamiento, intensidad de 1200 a 1400 mW/cm2, longitud de onda de 420 a 480 nm y tiempos configurables de 5 a 40 segundos.', N'Fotocurado', 0, N'COP', NULL, 1);
 MERGE dbo.Products AS target
 USING @Products AS source
-   ON target.BusinessId = @BusinessId
+   ON target.TenantId = @TenantId
   AND target.Sku = source.Sku
 WHEN MATCHED THEN
     UPDATE SET
@@ -200,10 +200,10 @@ WHEN MATCHED THEN
         RawPayloadJson = NULL,
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
-    INSERT (ProductId, TenantId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
+    INSERT (ProductId, TenantId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
             [Description], CategoryName, Currency, ManageStock, StockQuantity,
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
-    VALUES (source.ProductId, @TenantId, @BusinessId, @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
+    VALUES (source.ProductId, @TenantId, @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
             source.[Description], source.CategoryName, source.Currency, 0, source.StockQuantity,
             source.IsActive, NULL, NULL, GETUTCDATE());
 
@@ -216,7 +216,7 @@ VALUES
     (NEWID(),@BusinessId,source.ProductId,source.UnitPrice,source.UnitPrice,source.Currency,N'SalePrice',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
 
 DELETE FROM dbo.Products
-WHERE BusinessId = @BusinessId
+WHERE TenantId = @TenantId
   AND Source = 0
   AND NOT EXISTS (
       SELECT 1
@@ -289,7 +289,7 @@ VALUES
     (N'MD-POWERLED-LX', N'lampara fotocurado polimerizacion powerled lx blanqueamiento');
 
 DELETE FROM dbo.ProductSearchTerms
-WHERE BusinessId = @BusinessId;
+WHERE TenantId = @TenantId;
 
 ;WITH CatalogText AS
 (
@@ -303,12 +303,12 @@ WHERE BusinessId = @BusinessId;
         ) AS SearchText
     FROM dbo.Products p
     INNER JOIN @ProductVocabulary v ON v.Sku = p.Sku
-    WHERE p.BusinessId = @BusinessId
+    WHERE p.TenantId = @TenantId
 ),
 NormalizedTerms AS
 (
     SELECT DISTINCT
-        @BusinessId AS BusinessId,
+        @TenantId AS TenantId,
         c.ProductId,
         CONVERT(NVARCHAR(100), LTRIM(RTRIM(tokens.[value]))) AS Term
     FROM CatalogText c
@@ -323,8 +323,8 @@ NormalizedTerms AS
            N'incluye', N'presentacion', N'protocolo', N'segun', N'unidad', N'unidades',
            N'vario', N'varios', N'md')
 )
-INSERT INTO dbo.ProductSearchTerms (BusinessId, ProductId, Term, CreatedAt)
-SELECT BusinessId, ProductId, Term, GETUTCDATE()
+INSERT INTO dbo.ProductSearchTerms (TenantId, ProductId, Term, CreatedAt)
+SELECT TenantId, ProductId, Term, GETUTCDATE()
 FROM NormalizedTerms;
 
 DECLARE @AliasDefinitions TABLE
@@ -418,14 +418,14 @@ VALUES
         d.ResolutionMode
     FROM @AliasDefinitions d
     INNER JOIN dbo.Products p
-        ON p.BusinessId = @BusinessId
+        ON p.TenantId = @TenantId
        AND p.Sku = d.Sku
     LEFT JOIN @AliasNormalization n
         ON n.Alias = d.Alias
 )
 MERGE dbo.ProductAliases AS target
 USING AliasSource AS source
-   ON target.BusinessId = @BusinessId
+   ON target.TenantId = @TenantId
   AND target.ProductId = source.ProductId
   AND target.Scope = 0
   AND target.CustomerKey = N''
@@ -440,13 +440,13 @@ WHEN MATCHED THEN
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
     INSERT
-        (ProductAliasId, BusinessId, ProductId, Scope, CustomerKey, Alias,
+        (ProductAliasId, TenantId, ProductId, Scope, CustomerKey, Alias,
          NormalizedAlias, Kind, ResolutionMode, Source, Status, UsageCount, CreatedAt)
     VALUES
-        (NEWID(), @BusinessId, source.ProductId, 0, N'', source.Alias,
+        (NEWID(), @TenantId, source.ProductId, 0, N'', source.Alias,
          source.NormalizedAlias, source.Kind, source.ResolutionMode, 1, 1, 0, GETUTCDATE())
 WHEN NOT MATCHED BY SOURCE
-     AND target.BusinessId = @BusinessId
+     AND target.TenantId = @TenantId
      AND target.Scope = 0
      AND target.Source = 1 THEN
     DELETE;
@@ -456,7 +456,7 @@ IF EXISTS
 (
     SELECT 1
     FROM dbo.ProductAliases
-    WHERE BusinessId = @BusinessId
+    WHERE TenantId = @TenantId
       AND Scope = 0
       AND Status = 1
       AND ResolutionMode = 1
@@ -469,13 +469,13 @@ IF EXISTS
 (
     SELECT 1
     FROM dbo.Products p
-    WHERE p.BusinessId = @BusinessId
+    WHERE p.TenantId = @TenantId
       AND p.IsActive = 1
       AND NOT EXISTS
       (
           SELECT 1
           FROM dbo.ProductSearchTerms t
-          WHERE t.BusinessId = p.BusinessId
+          WHERE t.TenantId = p.TenantId
             AND t.ProductId = p.ProductId
       )
 )
@@ -496,7 +496,7 @@ DECLARE @RecommendationRules TABLE
 
 MERGE dbo.ProductRecommendationRules AS target
 USING @RecommendationRules AS source
-   ON target.BusinessId = @BusinessId
+   ON target.TenantId = @TenantId
   AND target.ProductRecommendationRuleId = source.ProductRecommendationRuleId
 WHEN MATCHED THEN
     UPDATE SET
@@ -517,17 +517,17 @@ WHEN MATCHED THEN
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
     INSERT
-        (ProductRecommendationRuleId, BusinessId, IntegrationConnectionId, MatchType,
+        (ProductRecommendationRuleId, TenantId, IntegrationConnectionId, MatchType,
          SourceProductId, SourceValue, RecommendedProductId, RecommendedExternalProductId,
          RecommendedSku, RecommendationType, Priority, Reason, IsActive, StartsAtUtc,
          EndsAtUtc, CreatedAt)
     VALUES
-        (source.ProductRecommendationRuleId, @BusinessId, @LocalCommerceConnectionId,
+        (source.ProductRecommendationRuleId, @TenantId, @LocalCommerceConnectionId,
          source.MatchType, NULL, source.SourceValue, NULL, source.RecommendedExternalProductId,
          source.RecommendedSku, source.RecommendationType, source.Priority, source.Reason,
          1, NULL, NULL, GETUTCDATE())
 WHEN NOT MATCHED BY SOURCE
-     AND target.BusinessId = @BusinessId
+     AND target.TenantId = @TenantId
      AND target.IntegrationConnectionId = @LocalCommerceConnectionId THEN
     DELETE;
 

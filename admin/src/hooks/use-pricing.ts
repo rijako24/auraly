@@ -54,12 +54,12 @@ export const useRejectPrice = () =>
 
 export const usePublishPrices = () =>
   usePricingMutation((request: PublishPricesRequest) => pricingApi.publish(request));
-export function useProductPricingContext(productId?: string) {
+export function useProductPricingContext(productId?: string, enabled = true) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
     queryKey: ["product-pricing", businessId, productId],
     queryFn: () => pricingApi.getProductContext(productId!),
-    enabled: !!businessId && !!productId,
+    enabled: enabled && !!businessId && !!productId,
   });
 }
 

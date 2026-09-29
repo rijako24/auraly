@@ -104,7 +104,7 @@ public sealed class SqlPayrollStore(
             SELECT p.PartyId,e.EmployeeId,p.Identification,
                    COALESCE(p.DisplayName,CONCAT(p.FirstName,N' ',p.LastName))
             FROM dbo.Parties p
-            JOIN dbo.Employees e ON e.PartyId=p.PartyId AND e.BusinessId=@BusinessId AND e.IsActive=1
+            JOIN dbo.Employees e ON e.PartyId=p.PartyId AND e.TenantId=@TenantId AND e.IsActive=1
             JOIN payroll.CatalogOptions idtype
               ON idtype.CatalogCode=N'payroll-identification-type'
              AND idtype.Code=p.IdentificationTypeCode AND idtype.IsActive=1
@@ -432,7 +432,7 @@ public sealed class SqlPayrollStore(
                     THROW 51701,N'El trabajador debe ser una persona natural activa con identificación y nombres completos.',1;
                 DECLARE @ResolvedEmployeeId uniqueidentifier=(
                     SELECT EmployeeId FROM dbo.Employees
-                    WHERE BusinessId=@BusinessId AND PartyId=@PartyId AND IsActive=1);
+                    WHERE TenantId=@TenantId AND PartyId=@PartyId AND IsActive=1);
                 IF @ResolvedEmployeeId IS NULL OR
                    (@EmployeeId IS NOT NULL AND @EmployeeId<>@ResolvedEmployeeId)
                     THROW 51702,N'El tercero no tiene un rol de empleado activo en la empresa.',1;

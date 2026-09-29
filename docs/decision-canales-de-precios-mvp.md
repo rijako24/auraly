@@ -76,20 +76,18 @@ vuelve a implementar la aritmética.
 ```text
 PriceChannelId
 TenantId
-BusinessId
-Name
 Code
+Name
 Strategy
 Value
-Priority
 IsActive
-ValidFromUtc
-ValidToUtc
-Version
-CreatedAtUtc
-UpdatedAtUtc
+CreatedAt
 RowVersion
 ```
+
+El canal pertenece al tenant y aplica automáticamente en todas sus sedes,
+incluidas las que se creen después. `BusinessId` se usa al resolver el precio
+base publicado de la venta, no para delimitar el canal.
 
 ### Estrategias iniciales
 
@@ -298,7 +296,7 @@ Las reglas dirigidas a categorías guardan `ProductCategoryId` o
 `ServiceCategoryId` como única identidad. No copian `CategoryName`: la interfaz
 consulta el nombre vigente en el catálogo propietario. El resolvedor compara
 exclusivamente el identificador y la administración valida que la categoría
-esté activa y pertenezca a la sede desde la que se configura la promoción.
+esté activa y pertenezca al tenant desde el que se configura la promoción.
 
 ---
 
@@ -307,7 +305,7 @@ esté activa y pertenezca a la sede desde la que se configura la promoción.
 La primera sincronización incluye:
 
 - precio base efectivo;
-- canales accesibles para esa caja;
+- canales activos del tenant de esa caja;
 - asignaciones relevantes;
 - tramos por cantidad configurados explícitamente;
 - exclusiones configuradas;

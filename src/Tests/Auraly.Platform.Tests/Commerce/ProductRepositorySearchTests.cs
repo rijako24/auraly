@@ -51,7 +51,7 @@ public sealed class ProductRepositorySearchTests
         Publish(context, activeLocal, 10m);
         context.ProductSearchTerms.Add(new ProductSearchTerm
         {
-            BusinessId = businessId,
+            TenantId = businessId,
             ProductId = inactiveExternal.ProductId,
             Product = inactiveExternal,
             Term = "tocineta"
@@ -79,7 +79,7 @@ public sealed class ProductRepositorySearchTests
         Publish(context, nativeProduct, 10m);
         context.ProductSearchTerms.Add(new ProductSearchTerm
         {
-            BusinessId = businessId,
+            TenantId = businessId,
             ProductId = keywordProduct.ProductId,
             Product = keywordProduct,
             Term = "papa"
@@ -318,6 +318,41 @@ public sealed class ProductRepositorySearchTests
     }
 
     [Fact]
+    public async Task Publishing_external_price_updates_the_shared_group_and_keeps_independent_price()
+    {
+        await using var context = CreateContext();
+        var tenantId = Guid.NewGuid();
+        var sharedOne = Guid.NewGuid();
+        var sharedTwo = Guid.NewGuid();
+        var independent = Guid.NewGuid();
+        context.Businesses.AddRange(
+            new Business { BusinessId = sharedOne, TenantId = tenantId, Name = "Shared one", SharesProductPrices = true, IsActive = true },
+            new Business { BusinessId = sharedTwo, TenantId = tenantId, Name = "Shared two", SharesProductPrices = true, IsActive = true },
+            new Business { BusinessId = independent, TenantId = tenantId, Name = "Independent", IsActive = true });
+        var product = Product(sharedOne, "EXTERNAL", "EXT-PRICE", active: true);
+        product.TenantId = tenantId;
+        context.Products.Add(product);
+        foreach (var businessId in new[] { sharedOne, sharedTwo, independent })
+            context.PublishedProductPrices.Add(new PublishedProductPriceRow
+            {
+                ProductPriceId = Guid.NewGuid(), BusinessId = businessId,
+                ProductId = product.ProductId, Amount = 10m, CurrencyCode = "COP",
+                ValidFrom = DateTimeOffset.UtcNow.AddMinutes(-1), IsActive = true,
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        await context.SaveChangesAsync();
+
+        await new ProductRepository(context).PublishPriceAsync(product, 15m, "COP");
+        await context.SaveChangesAsync();
+
+        var prices = await context.PublishedProductPrices.Where(price =>
+            price.ProductId == product.ProductId && price.IsActive).ToDictionaryAsync(price => price.BusinessId);
+        prices[sharedOne].Amount.Should().Be(15m);
+        prices[sharedTwo].Amount.Should().Be(15m);
+        prices[independent].Amount.Should().Be(10m);
+    }
+
+    [Fact]
     public async Task GetLinkedFamily_ReturnsEveryOptionWithItsIndependentPriceAndStock()
     {
         await using var context = CreateContext();
@@ -350,7 +385,7 @@ public sealed class ProductRepositorySearchTests
     private static ProductLink FamilyLink(Guid businessId, Guid parentId, Guid childId) => new()
     {
         ProductLinkId = Guid.NewGuid(),
-        BusinessId = businessId,
+        TenantId = businessId,
         ParentProductId = parentId,
         ChildProductId = childId,
         SharesInventory = false,

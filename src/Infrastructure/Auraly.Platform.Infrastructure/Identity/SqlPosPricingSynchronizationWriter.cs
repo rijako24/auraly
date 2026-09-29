@@ -1,5 +1,5 @@
 using System.Data;
-using Auraly.BuildingBlocks.Domain.Identifiers;
+using System.Text.Json;
 using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Platform.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -8,36 +8,41 @@ using Microsoft.EntityFrameworkCore.Storage;
 namespace Auraly.Platform.Infrastructure.Identity;
 
 public sealed class SqlPosPricingSynchronizationWriter(
-    ApplicationDbContext context,
-    IAuralyIdGenerator ids) : IPosPricingSynchronizationWriter
+    ApplicationDbContext context) : IPosPricingSynchronizationWriter
 {
     public async Task EnqueueBusinessesAsync(
         IReadOnlyCollection<Guid> businessIds,
         CancellationToken cancellationToken = default)
     {
+        var distinctBusinessIds = businessIds.Distinct().ToArray();
+        if (distinctBusinessIds.Length == 0) return;
         var transaction = context.Database.CurrentTransaction;
         var ownsTransaction = transaction is null;
         transaction ??= await context.Database.BeginTransactionAsync(cancellationToken);
         var connection = context.Database.GetDbConnection();
         try
         {
-            foreach (var businessId in businessIds.Distinct())
-            {
-                await using var command = connection.CreateCommand();
-                command.Transaction = transaction.GetDbTransaction();
-                command.CommandText = """
-                    DECLARE @Cursor BIGINT;
-                    SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
-                    FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
-                    WHERE BusinessId=@BusinessId AND Stream=N'Configuration';
-                    INSERT dbo.PosSynchronizationOutboxMessages(
-                      NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-                    VALUES(@NotificationId,@BusinessId,N'Configuration',@Cursor,SYSDATETIMEOFFSET());
-                    """;
-                Add(command, "@NotificationId", ids.NewId());
-                Add(command, "@BusinessId", businessId);
-                await command.ExecuteNonQueryAsync(cancellationToken);
-            }
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction.GetDbTransaction();
+            command.CommandText = """
+                DECLARE @Target TABLE(BusinessId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY);
+                INSERT @Target SELECT DISTINCT TRY_CONVERT(UNIQUEIDENTIFIER,[value])
+                FROM OPENJSON(@BusinessIdsJson);
+                INSERT dbo.PosSynchronizationOutboxMessages(
+                  NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+                SELECT NEWID(),target.BusinessId,N'Configuration',ISNULL(latest.CursorValue,0)+1,SYSDATETIMEOFFSET()
+                FROM @Target target
+                OUTER APPLY(
+                  SELECT MAX(AvailableThroughCursor) CursorValue
+                  FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+                  WHERE BusinessId=target.BusinessId AND Stream=N'Configuration') latest;
+                """;
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@BusinessIdsJson";
+            parameter.DbType = DbType.String;
+            parameter.Value = JsonSerializer.Serialize(distinctBusinessIds);
+            command.Parameters.Add(parameter);
+            await command.ExecuteNonQueryAsync(cancellationToken);
             if (ownsTransaction)
                 await transaction.CommitAsync(cancellationToken);
         }
@@ -48,12 +53,4 @@ public sealed class SqlPosPricingSynchronizationWriter(
         }
     }
 
-    private static void Add(IDbCommand command, string name, Guid value)
-    {
-        var parameter = command.CreateParameter();
-        parameter.ParameterName = name;
-        parameter.DbType = DbType.Guid;
-        parameter.Value = value;
-        command.Parameters.Add(parameter);
-    }
 }

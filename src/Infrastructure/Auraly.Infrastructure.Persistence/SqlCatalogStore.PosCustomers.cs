@@ -42,16 +42,16 @@ public sealed partial class SqlCatalogStore
             JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=@TenantId
             LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=customer.CustomerId
             LEFT JOIN dbo.CounterpartyTaxProfiles taxProfile
-              ON taxProfile.BusinessId=customer.BusinessId AND taxProfile.CounterpartyId=customer.CustomerId
+              ON taxProfile.TenantId=@TenantId AND taxProfile.CounterpartyId=customer.CustomerId
             LEFT JOIN dbo.CustomerCreditProfiles credit
-              ON credit.BusinessId=customer.BusinessId AND credit.CustomerId=customer.CustomerId
+              ON credit.BusinessId=@BusinessId AND credit.CustomerId=customer.CustomerId
             OUTER APPLY(
               SELECT SUM(receivable.OutstandingAmount) Outstanding
               FROM dbo.Receivables receivable
-              WHERE receivable.BusinessId=customer.BusinessId
+              WHERE receivable.BusinessId=@BusinessId
                 AND receivable.CustomerId=customer.CustomerId
                 AND receivable.Status IN(N'Open',N'PartiallyPaid')) balance
-            WHERE customer.BusinessId=@BusinessId AND party.IsActive=1
+            WHERE customer.TenantId=@TenantId AND party.IsActive=1
               AND (@After IS NULL OR customer.CustomerId>@After)
             ORDER BY customer.CustomerId;
             """;
@@ -89,17 +89,17 @@ public sealed partial class SqlCatalogStore
                    {PosCustomerColumns}
             FROM dbo.PosSynchronizationOutboxMessages change
             LEFT JOIN dbo.Customers customer
-              ON customer.CustomerId=change.EntityId AND customer.BusinessId=change.BusinessId
+              ON customer.CustomerId=change.EntityId AND customer.TenantId=@TenantId
             LEFT JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=@TenantId
             LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=customer.CustomerId
             LEFT JOIN dbo.CounterpartyTaxProfiles taxProfile
-              ON taxProfile.BusinessId=customer.BusinessId AND taxProfile.CounterpartyId=customer.CustomerId
+              ON taxProfile.TenantId=@TenantId AND taxProfile.CounterpartyId=customer.CustomerId
             LEFT JOIN dbo.CustomerCreditProfiles credit
-              ON credit.BusinessId=customer.BusinessId AND credit.CustomerId=customer.CustomerId
+              ON credit.BusinessId=@BusinessId AND credit.CustomerId=customer.CustomerId
             OUTER APPLY(
               SELECT SUM(receivable.OutstandingAmount) Outstanding
               FROM dbo.Receivables receivable
-              WHERE receivable.BusinessId=customer.BusinessId
+              WHERE receivable.BusinessId=@BusinessId
                 AND receivable.CustomerId=customer.CustomerId
                 AND receivable.Status IN(N'Open',N'PartiallyPaid')) balance
             WHERE change.BusinessId=@BusinessId AND change.Stream=N'Customers'
