@@ -308,7 +308,7 @@ Reglas:
 - si la factura incluía un cargo facturado por un proveedor, su devolución
   reversa el gasto original y el IVA/retenciones correspondientes. La porción
   aún pendiente reduce CxP (220505); la ya pagada crea `SupplierCredits` y
-  debita `SupplierCreditsReceivable` (133595). La suma de ambas debe coincidir
+  debita `SupplierCreditsReceivable` (auxiliar semilla `13809506`). La suma de ambas debe coincidir
   con la cuenta por pagar original del cargo;
 - `SupplierCredits.AvailableAmount` se muestra por proveedor en Cuentas por pagar
   como saldo a favor separado del saldo pendiente; mostrarlo no lo aplica ni

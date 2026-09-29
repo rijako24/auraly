@@ -40,6 +40,8 @@ BEGIN
     SELECT NEWID(),@TenantId,NULL,a.Category,account.AccountId,@StartsOn,NULL,@Now
     FROM dbo.AccountingConfigurationProfileAccounts a
     INNER JOIN dbo.AccountingAccounts account ON account.TenantId=@TenantId AND account.Code=a.AccountCode
+      AND account.Name=a.AccountName AND account.AccountType=a.AccountType
+      AND account.IsActive=1 AND account.AllowsPosting=1
     WHERE a.ProfileCode=@ProfileCode AND
       NOT EXISTS (SELECT 1 FROM dbo.AccountingAccountMappings mapping
                       WHERE mapping.TenantId=@TenantId AND mapping.BusinessId IS NULL
@@ -58,6 +60,8 @@ BEGIN
       ON definition.ProfileCode=concept.ProfileCode AND definition.Category=concept.ExpenseAccountCategory
     INNER JOIN dbo.AccountingAccounts account
       ON account.TenantId=@TenantId AND account.Code=definition.AccountCode
+      AND account.Name=definition.AccountName AND account.AccountType=definition.AccountType
+      AND account.IsActive=1 AND account.AllowsPosting=1
     WHERE concept.ProfileCode=@ProfileCode AND concept.IsActive=1 AND NOT EXISTS(
       SELECT 1 FROM dbo.ExpenseConcepts currentConcept WHERE currentConcept.BusinessId=@BusinessId AND currentConcept.Code=concept.Code);
 

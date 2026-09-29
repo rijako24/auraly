@@ -250,7 +250,7 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.Equal(firstCharge.Amount, await AccountAmountAsync(
             returnId, "519595", debit: false));
         Assert.Equal(firstCharge.Amount, await AccountAmountAsync(
-            returnId, "133595", debit: true));
+            returnId, "13809506", debit: true));
         Assert.Equal(0, await AccountAmountAsync(
             returnId, "220505", debit: true));
         Assert.Equal(firstCharge.Amount, await ScalarAsync<decimal>("""
@@ -299,7 +299,7 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.Equal(companyCharge.Amount, await AccountAmountAsync(
             companyReturnId, "220505", debit: true));
         Assert.Equal(0, await AccountAmountAsync(
-            companyReturnId, "133595", debit: true));
+            companyReturnId, "13809506", debit: true));
         Assert.Equal(companyCharge.Amount, await ScalarAsync<decimal>("""
             SELECT PayableCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
             WHERE ReturnId=@Id;
@@ -407,7 +407,7 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.Equal(partialCharge.Amount - paidPart, await AccountAmountAsync(
             partialReturnId, "220505", debit: true));
         Assert.Equal(paidPart, await AccountAmountAsync(
-            partialReturnId, "133595", debit: true));
+            partialReturnId, "13809506", debit: true));
 
         using var cancellationUser = fixture.CreateAdminClient(
             ExpensePermissionCodes.Read, ExpensePermissionCodes.Cancel);
