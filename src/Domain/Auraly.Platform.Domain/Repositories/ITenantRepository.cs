@@ -5,6 +5,8 @@ namespace Auraly.Platform.Domain.Repositories;
 public interface ITenantRepository
 {
     Task<Tenant?> GetByIdAsync(Guid tenantId, CancellationToken ct = default);
+    Task<TenantPrintBrandingProfile?> GetPrintBrandingProfileAsync(
+        Guid tenantId, CancellationToken ct = default);
     Task<Tenant?> GetByIdForCapacityUpdateAsync(Guid tenantId, CancellationToken ct = default);
     Task<(IReadOnlyList<Tenant> Items, int TotalCount)> GetPagedAsync(int page, int pageSize, string? search, CancellationToken ct = default);
     Task AddAsync(Tenant tenant, CancellationToken ct = default);
@@ -21,3 +23,7 @@ public interface ITenantRepository
 
 public sealed record TenantFiscalCertificateExpiry(
     Guid TenantId, string TenantName, DateTimeOffset ValidTo);
+
+public sealed record TenantPrintBrandingProfile(
+    Guid TenantId, string Name, string? LegalName, string? Nit,
+    string? VerificationDigit, Guid? PrimaryBusinessId, string? LogoMediaRef);

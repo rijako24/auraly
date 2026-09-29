@@ -45,7 +45,7 @@ public sealed class TenantService(
     public async Task<TenantPrintBrandingResponseDto> GetConditionalPrintBrandingAsync(
         Guid tenantId, string? ifNoneMatch, CancellationToken ct)
     {
-        var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
+        var tenant = await unitOfWork.Tenants.GetPrintBrandingProfileAsync(tenantId, ct)
             ?? throw new NotFoundException(nameof(Tenant), tenantId);
         var identity = string.Join('\u001f', tenant.TenantId, tenant.PrimaryBusinessId,
             tenant.Name, tenant.LegalName, tenant.Nit, tenant.VerificationDigit,
