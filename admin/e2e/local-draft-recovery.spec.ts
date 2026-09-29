@@ -7,6 +7,7 @@ const warehouseId = "44444444-4444-4444-4444-444444444444";
 const permissions = [
   "dashboard.read", "inventory.read", "inventory.physical-counts.manage",
   "inventory.physical-counts.capture", "inventory.counts.confirm",
+  "inventory.adjustments.confirm",
   "purchasing.goods-receipts.read", "purchasing.goods-receipts.create",
   "purchasing.goods-receipts.confirm",
   "purchasing.purchase-orders.read", "purchasing.purchase-orders.create",
@@ -351,6 +352,40 @@ test("aplicar un conteo conserva la captura ante fallo y la borra al aceptar", a
   await expect(dialog).toBeVisible();
   expect(await readInventoryDraft(page, key)).toMatchObject({ documentId: id });
   await dialog.getByRole("button", { name: "Aplicar inventario" }).click();
+  await expect.poll(() => attempts).toBe(2);
+  await expect(dialog).toBeHidden();
+  expect(await readInventoryDraft(page, key)).toBeNull();
+});
+
+test("confirmar un movimiento elimina su borrador solo tras aceptarlo", async ({ page }) => {
+  await prepare(page);
+  await page.goto("/dashboard/inventory");
+  const key = `inventory:${businessId}:adjustment`;
+  const id = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+  await writeInventoryDraft(page, key, {
+    businessId, kind: "adjustment", documentId: id, warehouseId, destinationId: "",
+    reason: "PHYSICAL_COUNT", notes: "Ajuste de prueba", countDocumentId: null,
+    conversionType: "SPLIT", valuationBasis: "Cost", updatedAt: new Date().toISOString(),
+    lines: [{ productId: "99999999-9999-9999-9999-999999999999", productCode: "P1",
+      productName: "Producto de prueba", unitCode: "UND", stock: 1, quantity: "-1",
+      cost: "", direction: "INPUT", systemQuantity: null }],
+  });
+  let attempts = 0;
+  await page.route("**/api/commerce/v1/inventory-adjustments/confirm", route => {
+    attempts++;
+    return attempts === 1
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "Fallo simulado" }) })
+      : json(route, { documentId: id, documentNumber: "AJ-1", status: "Accepted" });
+  });
+  await page.getByRole("button", { name: "Nueva operación" }).click();
+  const dialog = page.getByRole("dialog", { name: "Nueva operación" });
+  await dialog.getByRole("button", { name: /Movimientos de mercancía/ }).click();
+  await expect(dialog.locator("textarea")).toHaveValue("Ajuste de prueba");
+  await dialog.getByRole("button", { name: "Confirmar movimientos de mercancía" }).click();
+  await expect.poll(() => attempts).toBe(1);
+  await expect(dialog).toBeVisible();
+  expect(await readInventoryDraft(page, key)).toMatchObject({ documentId: id });
+  await dialog.getByRole("button", { name: "Confirmar movimientos de mercancía" }).click();
   await expect.poll(() => attempts).toBe(2);
   await expect(dialog).toBeHidden();
   expect(await readInventoryDraft(page, key)).toBeNull();
