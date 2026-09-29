@@ -127,8 +127,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "110505", false));
         Assert.Equal(10_000m, await AccountAmountAsync(
             payment.PaymentId, bankAccount.AccountingAccountCode, false));
-        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "130510", false));
-        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "130515", false));
+        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "13809501", false));
+        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "13809502", false));
 
         var paymentDate = DateOnly.FromDateTime(payment.PaidAt.UtcDateTime).ToString("yyyy-MM-dd");
         var createdDate = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");

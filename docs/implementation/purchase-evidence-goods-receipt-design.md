@@ -70,7 +70,7 @@ para estas líneas reutiliza las cuentas del asiento original aunque el mapeo
 PUC haya cambiado desde entonces. También reversa en su cuenta original el
 saldo no pagado de la cuenta por pagar y reconoce el importe ya
 pagado como saldo a favor del proveedor en la categoría PUC
-`SupplierCreditsReceivable` (semilla `133595`). El saldo a favor se registra en
+`SupplierCreditsReceivable` (auxiliar semilla `13809506`). El saldo a favor se registra en
 `SupplierCredits` para su posterior devolución o compensación documentada. No se
 requiere otra categoría PUC. La aceptación bloquea pagos pendientes de aplicar
 y nuevos pagos contra el gasto durante el procesamiento de la anulación.
