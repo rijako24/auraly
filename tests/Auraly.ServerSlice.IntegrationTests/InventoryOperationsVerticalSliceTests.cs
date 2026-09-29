@@ -100,7 +100,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal("Posted", await ScalarAsync<string>(
             "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'WarehouseTransferReceipt'", receiptId));
         Assert.Equal(5m, await ScalarAsync<decimal>(
-            "SELECT SUM(line.Debit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND account.Code=N'529598'", receiptId));
+            "SELECT SUM(line.Debit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND account.Code=N'52959503'", receiptId));
 
         var conversionId = Guid.NewGuid();
         await SendAsync<ConfirmProductConversionRequest>(client,
@@ -770,7 +770,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal("DamagedInventoryExpense", await ScalarAsync<string>(
             "SELECT JSON_VALUE(PayloadJson,'$.counterpartAccountingCategory') FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=N'Damage'", damageId));
         Assert.Equal(15m, await ScalarAsync<decimal>(
-            "SELECT SUM(line.Debit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'Damage' AND account.Code=N'529596'", damageId));
+            "SELECT SUM(line.Debit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'Damage' AND account.Code=N'52959501'", damageId));
         Assert.Equal(15m, await ScalarAsync<decimal>(
             "SELECT SUM(line.Credit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'Damage' AND account.Code=N'143505'", damageId));
         var balances = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");

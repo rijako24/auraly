@@ -218,7 +218,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(payable, await AccountAmountAsync(
             invoice.DocumentId, "110505", debit: true));
         Assert.Equal(decimal.Abs(adjustment), await AccountAmountAsync(
-            invoice.DocumentId, adjustment > 0 ? "429598" : "539598",
+            invoice.DocumentId, adjustment > 0 ? "429581" : "53959503",
             debit: adjustment < 0));
 
         var sessionId = await fixture.OpenWebWorkSessionAsync();
@@ -244,7 +244,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(payable, await AccountAmountAsync(
             returned.ReturnId, "110505", debit: false));
         Assert.Equal(decimal.Abs(adjustment), await AccountAmountAsync(
-            returned.ReturnId, adjustment > 0 ? "429598" : "539598",
+            returned.ReturnId, adjustment > 0 ? "429581" : "53959503",
             debit: adjustment > 0));
     }
 
@@ -346,7 +346,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(collected, await AccountAmountAsync(
             invoice.DocumentId, "110505", debit: true));
         Assert.Equal(roundingAdjustment, await AccountAmountAsync(
-            invoice.DocumentId, "429598", debit: false));
+            invoice.DocumentId, "429581", debit: false));
     }
 
     [Fact]
@@ -928,8 +928,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
 
         await AssertBalancedAsync(request.DocumentId);
         Assert.Equal(1_900m, await AccountAmountAsync(request.DocumentId, "110505", true));
-        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "130510", true));
-        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "130515", true));
+        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "13809501", true));
+        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "13809502", true));
         Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "111005", true));
         Assert.Equal(4_000m, await AccountAmountAsync(request.DocumentId, "130505", true));
         Assert.Equal("TR-2000|Pago recibido en la cuenta seleccionada", await ScalarAsync<string>(
@@ -1478,7 +1478,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             Assert.Equal(-1_000m, closure.CashDifference);
             await AssertBalancedAsync(closure.WorkSessionClosureId);
             Assert.Equal(1_000m, await AccountAmountAsync(
-                closure.WorkSessionClosureId, "139995", debit: true));
+                closure.WorkSessionClosureId, "13809505", debit: true));
             Assert.Equal(1_000m, await AccountAmountAsync(
                 closure.WorkSessionClosureId, "110505", debit: false));
 
@@ -1509,7 +1509,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             Assert.Equal(1_000m, await AccountAmountAsync(
                 secondClosure.WorkSessionClosureId, "110505", debit: true));
             Assert.Equal(1_000m, await AccountAmountAsync(
-                secondClosure.WorkSessionClosureId, "139995", debit: false));
+                secondClosure.WorkSessionClosureId, "13809505", debit: false));
 
             using var differencesResponse = await cashier.GetAsync(
                 "/api/commerce/v1/work-sessions/cash-differences?from=2026-01-01&to=2026-12-31");
@@ -1881,7 +1881,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(100_000m, await AccountAmountAsync(expenseId, "519595", debit: true));
         Assert.Equal(19_000m, await AccountAmountAsync(expenseId, "240810", debit: true));
         Assert.Equal(112_650m, await AccountAmountAsync(expenseId, "220505", debit: false));
-        Assert.Equal(2_500m, await AccountAmountAsync(expenseId, "236540", debit: false));
+        Assert.Equal(2_500m, await AccountAmountAsync(expenseId, "236570", debit: false));
         Assert.Equal(2_850m, await AccountAmountAsync(expenseId, "236701", debit: false));
         Assert.Equal(1_000m, await AccountAmountAsync(expenseId, "236805", debit: false));
         using (var expenseList = await expenseUser.GetAsync(
@@ -1960,7 +1960,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(112_650m, await AccountAmountAsync(
             withheldReceipt.DocumentId, "220505", debit: false));
         Assert.Equal(2_500m, await AccountAmountAsync(
-            withheldReceipt.DocumentId, "236540", debit: false));
+            withheldReceipt.DocumentId, "236570", debit: false));
         Assert.Equal(2_850m, await AccountAmountAsync(
             withheldReceipt.DocumentId, "236701", debit: false));
         Assert.Equal(1_000m, await AccountAmountAsync(
@@ -2262,14 +2262,14 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                     "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", cancellation.CancellationId));
                 await AssertBalancedAsync(cancellation.CancellationId);
                 Assert.Equal(72_650m, await AccountAmountAsync(cancellation.CancellationId, "220505", debit: true));
-                Assert.Equal(40_000m, await AccountAmountAsync(cancellation.CancellationId, "133595", debit: true));
+                Assert.Equal(40_000m, await AccountAmountAsync(cancellation.CancellationId, "13809506", debit: true));
                 Assert.Equal(100_000m, await AccountAmountAsync(cancellation.CancellationId, "519595", debit: false));
                 Assert.Equal(19_000m, await AccountAmountAsync(cancellation.CancellationId, "240810", debit: false));
                 Assert.Equal(6_350m, await ScalarAsync<decimal>("""
                     SELECT SUM(l.Debit) FROM dbo.AccountingEntries e
                     JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
                     JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
-                    WHERE e.SourceDocumentId=@Id AND a.Code IN(N'236540',N'236701',N'236805');
+                    WHERE e.SourceDocumentId=@Id AND a.Code IN(N'236570',N'236701',N'236805');
                     """, cancellation.CancellationId));
                 Assert.Equal("Cancelled", await ScalarAsync<string>(
                     "SELECT Status FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
@@ -2331,7 +2331,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         await AssertBalancedAsync(fullCancellation.CancellationId);
         Assert.Equal(0m, await AccountAmountAsync(fullCancellation.CancellationId, "220505", debit: true));
-        Assert.Equal(112_650m, await AccountAmountAsync(fullCancellation.CancellationId, "133595", debit: true));
+        Assert.Equal(112_650m, await AccountAmountAsync(fullCancellation.CancellationId, "13809506", debit: true));
         Assert.Equal("Paid", await ScalarAsync<string>(
             "SELECT Status FROM dbo.Payables WHERE PayableId=@Id", fullyPaidPayableId));
         Assert.Equal("Cancelled", await ScalarAsync<string>(
@@ -3060,7 +3060,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             await SetWarehouseNegativeSalesPolicyAsync(true);
         }
         await AssertBalancedAsync(sale.DocumentId);
-        Assert.Equal(grossCardPayment, await AccountAmountAsync(sale.DocumentId, "130515", true));
+        Assert.Equal(grossCardPayment, await AccountAmountAsync(sale.DocumentId, "13809502", true));
 
         var voucherId = Guid.NewGuid();
         using (var voucher = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers",
@@ -3075,7 +3075,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                        ])))
             Assert.Equal(HttpStatusCode.Accepted, voucher.StatusCode);
         await AssertBalancedAsync(voucherId);
-        Assert.Equal(grossCardPayment, await AccountAmountAsync(voucherId, "130515", false));
+        Assert.Equal(grossCardPayment, await AccountAmountAsync(voucherId, "13809502", false));
         Assert.Equal(0, await ScalarAsync<int>("""
             SELECT COUNT(*) FROM dbo.AccountingEntries e
             JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
@@ -3296,16 +3296,16 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             [AccountingCategories.DebitCardClearing] = ("111005", "Tarjetas debito por cobrar", "Asset"),
             [AccountingCategories.Bank] = ("111020", "Bancos", "Asset"),
             [AccountingCategories.OtherIncome] = ("429595", "Otros ingresos de caja", "Revenue"),
-            [AccountingCategories.CashOverageIncome] = ("429596", "Sobrantes de caja", "Revenue"),
+            [AccountingCategories.CashOverageIncome] = ("429553", "Sobrantes de caja", "Revenue"),
             [AccountingCategories.OwnerContributions] = ("311505", "Aportes del propietario", "Equity"),
-            [AccountingCategories.OperatingExpense] = ("519510", "Gastos operativos", "Expense"),
+            [AccountingCategories.OperatingExpense] = ("51959502", "Gastos operativos", "Expense"),
             [AccountingCategories.OtherExpense] = ("539595", "Otras salidas de caja", "Expense"),
-            [AccountingCategories.CashShortageExpense] = ("539596", "Faltantes de caja", "Expense"),
+            [AccountingCategories.CashShortageExpense] = ("53959501", "Faltantes de caja", "Expense"),
             [AccountingCategories.CreditCardClearing] = ("111010", "Tarjetas credito por cobrar", "Asset"),
             [AccountingCategories.TransferClearing] = ("111015", "Transferencias por conciliar", "Asset"),
             [AccountingCategories.AccountsReceivable] = ("130505", "Clientes", "Asset"),
             [AccountingCategories.AccountsPayable] = ("220505", "Proveedores", "Liability"),
-            [AccountingCategories.SupplierCreditsReceivable] = ("133595", "Saldos a favor con proveedores", "Asset"),
+            [AccountingCategories.SupplierCreditsReceivable] = ("13809506", "Saldos a favor con proveedores", "Asset"),
             [AccountingCategories.InputVat] = ("240810", "IVA descontable", "Asset"),
             [AccountingCategories.PurchasesExpense] = ("519595", "Compras no inventariables", "Expense"),
             [AccountingCategories.SalesRevenue] = ("413595", "Ingresos por ventas", "Revenue"),
@@ -3314,7 +3314,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             [AccountingCategories.Inventory] = ("143505", "Inventarios", "Asset"),
             [AccountingCategories.CostOfGoodsSold] = ("613595", "Costo de ventas", "Expense"),
             [AccountingCategories.CustomerCreditsPayable] = ("238095", "Saldos a favor de clientes", "Liability"),
-            [AccountingCategories.WithholdingIncomeTaxPayable] = ("236540", "Retencion en la fuente por pagar", "Liability"),
+            [AccountingCategories.WithholdingIncomeTaxPayable] = ("236570", "Retencion en la fuente por pagar", "Liability"),
             [AccountingCategories.WithholdingVatPayable] = ("236701", "Retencion de IVA por pagar", "Liability"),
             [AccountingCategories.WithholdingIcaPayable] = ("236805", "Retencion de ICA por pagar", "Liability")
         };
@@ -3625,9 +3625,9 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Contains(
             accountCode,
             new[] { "143505", "240805", "240810", "413595", "519595", "613595", "220505",
-                "236540", "236701", "236805", "110505", "111005", "130505",
-                "130510", "130515", "130520", "133595", "139995", "429595", "429596",
-                "429598", "539595", "539596", "539598" });
+                "236570", "236701", "236805", "110505", "111005", "130505",
+                "13809501", "13809502", "13809503", "13809506", "13809505", "429595", "429553",
+                "429581", "539595", "53959501", "53959503" });
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
