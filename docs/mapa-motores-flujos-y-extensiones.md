@@ -44,7 +44,8 @@ logo publica una invalidación en el flujo de configuración existente. Edge
 consulta condicionalmente la versión, descarga los bytes solo si cambiaron y
 actualiza el paquete protegido y la copia activa; una reconexión recupera los
 cambios perdidos. No requiere volver a preparar la caja. Imprimir nunca lee
-Blob ni la API.
+Blob ni la API del logo. La consulta existente del nombre del tenant se hace
+al imprimir online; la caja preparada usa sus datos locales.
 La vista independiente de Pedidos hace esa comprobación al abrirse solo cuando
 opera online; una caja preparada conserva la ruta de impresión local.
 La verificación web empieza durante la

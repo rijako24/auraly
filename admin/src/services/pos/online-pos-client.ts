@@ -535,16 +535,17 @@ export class OnlinePosClient implements PosClient {
     if (this.edgeSessionToken) {
       const edge = this.localEdge();
       const branding = this.preparedPrintBranding
+        ? null : await tenantsApi.getBranding().catch(() => null);
+      const logoBranding = this.preparedPrintBranding
         ? null : tenantsApi.readyLocalPrintBranding();
       for (const receipt of receipts) {
         await edge.printReceipt({
           ...receipt,
           businessName: this.context.businessName,
           warehouseName: this.context.warehouseName,
-          companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName,
           companyLogoSource: localPrintLogoSource(
-            branding, this.preparedPrintBranding),
-        }, null, workflow);
+            logoBranding, this.preparedPrintBranding),
+        }, branding ? { ...branding, logoUrl: null } : null, workflow);
       }
       if (openDrawer) await edge.openCashDrawer();
       return;
@@ -1251,13 +1252,15 @@ export class OnlinePosClient implements PosClient {
       this.context.workSessionId, input.operationId, input.draftId,
       input.authorization?.approvalRequestId, input.countedCash,
       input.paymentCounts, input.note);
-    const closure = await request<PosWorkSessionClosure>(
-      requestDefinition.path, requestDefinition.init);
-    const branding = this.edgeSessionToken ? null : tenantsApi.readyPrintBranding();
+    const [closure, nameBranding] = await Promise.all([
+      request<PosWorkSessionClosure>(requestDefinition.path, requestDefinition.init),
+      this.preparedPrintBranding ? Promise.resolve(null) : tenantsApi.getBranding().catch(() => null),
+    ]);
+    const logoBranding = this.edgeSessionToken ? null : tenantsApi.readyPrintBranding();
     const printableClosure = {
       ...closure,
-      companyName: branding?.displayName ?? branding?.legalName ?? closure.businessName,
-      logoUrl: branding?.logoUrl ?? null,
+      companyName: nameBranding?.displayName ?? nameBranding?.legalName ?? closure.businessName,
+      logoUrl: logoBranding?.logoUrl ?? null,
     };
     if (this.edgeSessionToken) {
       try {
@@ -1371,6 +1374,9 @@ export class OnlinePosClient implements PosClient {
     const installedPrinter = printRoute === "installed-app"
       ? this.localEdge()
       : null;
+    const branding = installedPrinter && !this.preparedPrintBranding
+      ? await tenantsApi.getBranding().catch(() => null)
+      : null;
     const invoiceRequest = (requestedOrderIds: string[]) => ({
       workSessionId: this.context.workSessionId,
       warehouseId: this.context.warehouseId,
@@ -1408,7 +1414,7 @@ export class OnlinePosClient implements PosClient {
       ),
       printOne: installedPrinter && printAfterInvoice
         ? async (receipts) => {
-            const branding = this.preparedPrintBranding
+            const logoBranding = this.preparedPrintBranding
               ? null : tenantsApi.readyLocalPrintBranding();
             for (const receipt of orderReceiptsForPrinting(
               receipts,
@@ -1418,10 +1424,9 @@ export class OnlinePosClient implements PosClient {
                 ...receipt,
                 businessName: this.context.businessName,
                 warehouseName: this.context.warehouseName,
-                companyName: branding?.displayName ?? branding?.legalName ?? receipt.companyName,
                 companyLogoSource: localPrintLogoSource(
-                  branding, this.preparedPrintBranding),
-              }, null, "pos");
+                  logoBranding, this.preparedPrintBranding),
+              }, branding ? { ...branding, logoUrl: null } : null, "pos");
             }
           }
         : undefined,
@@ -1480,15 +1485,16 @@ export class OnlinePosClient implements PosClient {
         return { printedCount: receipts.length };
       }
       const configuration = loadBrowserPrinterConfiguration();
-      const branding = tenantsApi.readyPrintBranding();
+      const nameBranding = await tenantsApi.getBranding();
+      const logoBranding = tenantsApi.readyPrintBranding();
       const rendered = await request<{ html: string; printedCount: number }>(
         "/api/commerce/v1/orders/print-batch/render",
         this.post({
           orderIds,
           format: configuration.orderOutputFormat ?? "HalfLetter",
           paperWidthMillimeters: configuration.orderReceiptPaperWidthMillimeters ?? 80,
-          companyName: branding?.displayName ?? branding?.legalName ?? this.context.businessName,
-          companyLogoSource: branding?.logoUrl ?? null,
+          companyName: nameBranding.displayName ?? nameBranding.legalName,
+          companyLogoSource: logoBranding?.logoUrl ?? null,
           businessName: this.context.businessName,
         }),
       );
@@ -1718,14 +1724,15 @@ async function renderSharedSalesDocument(
 ) {
   if (!receipts.length) { closePrintPreview(preview); return; }
   if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
-  const branding = tenantsApi.readyPrintBranding();
+  const nameBranding = await tenantsApi.getBranding();
+  const logoBranding = tenantsApi.readyPrintBranding();
   // Reuse the authoritative checkout/history response; rendering never reloads a sale or QR.
   const rendered = await request<{ html: string }>(
     "/api/commerce/v1/pos/drafts/sales/receipts/render",
     { method: "POST", body: JSON.stringify({
       receipts: receipts.map(receipt => ({ ...receipt,
-        companyName: branding?.displayName ?? receipt.companyName ?? context.businessName,
-        companyLogoSource: branding?.logoUrl ?? null,
+        companyName: nameBranding.displayName ?? receipt.companyName,
+        companyLogoSource: logoBranding?.logoUrl ?? null,
       })),
       format, paperWidthMillimeters, businessName: context.businessName, autoPrint,
     }) },
