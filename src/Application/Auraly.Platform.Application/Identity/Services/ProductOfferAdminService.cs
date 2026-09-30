@@ -84,7 +84,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         var result = new List<ProductImageDto>(images.Count);
         foreach (var image in images)
         {
-            var resolvedUrl = await _mediaUrlResolver.ResolveAsync(businessId, image.MediaUrl, ct);
+            var resolvedUrl = await _mediaUrlResolver.ResolveTenantAsync(tenantId, image.MediaUrl, ct);
             result.Add(MapImage(image, resolvedUrl));
         }
         return result;
@@ -124,7 +124,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         if (extension is not (".jpg" or ".jpeg" or ".png" or ".webp"))
             throw new DomainValidationException("file", "Use una imagen JPG, PNG o WEBP.");
         var blobName = $"products/{productId:N}/{Guid.NewGuid():N}{extension}";
-        var url = await _blobStorage.UploadImageAsync(businessId, stream, blobName);
+        var url = await _blobStorage.UploadTenantImageAsync(tenantId, stream, blobName);
         return await AddImageAsync(tenantId, businessId, productId, productOfferId, url, altText, 0, isPrimary, ct);
     }
 
@@ -141,7 +141,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         if (extension is not (".jpg" or ".jpeg" or ".png" or ".webp"))
             throw new DomainValidationException("file", "Use una imagen JPG, PNG o WEBP.");
         var blobName = $"products/{productId:N}/{Guid.NewGuid():N}{extension}";
-        return new StagedProductImageDto(await _blobStorage.UploadImageAsync(businessId, stream, blobName));
+        return new StagedProductImageDto(await _blobStorage.UploadTenantImageAsync(tenantId, stream, blobName));
     }
 
     public async Task DeleteImageAsync(

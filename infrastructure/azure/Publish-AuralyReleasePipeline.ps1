@@ -378,6 +378,11 @@ function Publish-Database {
         $accessToken = if ($tokenResponse.accessToken) { $tokenResponse.accessToken } else { $tokenResponse.token }
         if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'Azure no devolvio token para SQL.' }
 
+        if (-not $ValidateOnly) {
+            & (Join-Path $repoRoot 'infrastructure/azure/Copy-ProductImagesToTenantStorage.ps1') `
+                -Environment $Environment -AccessToken $accessToken
+        }
+
         # Toda transformación del esquema existente se ejecuta antes de calcular
         # el plan. El predeployment del DACPAC queda mecánico y no vuelve a enlazar
         # columnas legacy mientras SQLPackage aplica un plan ya calculado.
