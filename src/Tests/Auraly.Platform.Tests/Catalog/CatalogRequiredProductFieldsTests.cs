@@ -139,8 +139,8 @@ public sealed class CatalogRequiredProductFieldsTests
         var ids = new Mock<IAuralyIdGenerator>();
         ids.Setup(value => value.NewId()).Returns(Guid.NewGuid());
         var synchronization = new Mock<IPosSynchronizationOutboxDispatcher>();
-        synchronization.Setup(value => value.DispatchPendingAsync(
-                It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+        synchronization.Setup(value => value.DispatchTenantPendingAsync(
+                It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var permissions = new HashSet<string>
         {

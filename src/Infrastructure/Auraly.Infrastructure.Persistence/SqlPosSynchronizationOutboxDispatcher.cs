@@ -30,6 +30,14 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
         return Task.CompletedTask;
     }
 
+    public async Task DispatchTenantPendingAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken = default)
+    {
+        foreach (var scope in await ReadPersistedScopesAsync(cancellationToken, tenantId))
+            signals.Writer.TryWrite(scope);
+    }
+
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         foreach (var scope in await ReadPersistedScopesAsync(cancellationToken))
@@ -83,17 +91,29 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
     }
 
     private async Task<IReadOnlyCollection<Scope>> ReadPersistedScopesAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? tenantId = null)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT DISTINCT b.TenantId,o.BusinessId
-            FROM dbo.PosSynchronizationOutboxMessages o
-            JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
-            WHERE o.PublishedAt IS NULL;
-            """;
+        command.CommandText = tenantId is null
+            ? """
+              SELECT DISTINCT b.TenantId,o.BusinessId
+              FROM dbo.PosSynchronizationOutboxMessages o
+              JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
+              WHERE o.PublishedAt IS NULL;
+              """
+            : """
+              SELECT b.TenantId,b.BusinessId
+              FROM dbo.Businesses b
+              WHERE b.TenantId=@TenantId AND b.IsActive=1
+                AND EXISTS (
+                  SELECT 1 FROM dbo.PosSynchronizationOutboxMessages o
+                  WHERE o.BusinessId=b.BusinessId AND o.PublishedAt IS NULL);
+              """;
+        if (tenantId is not null)
+            command.Parameters.Add(Parameter("@TenantId", tenantId.Value));
         var scopes = new List<Scope>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))

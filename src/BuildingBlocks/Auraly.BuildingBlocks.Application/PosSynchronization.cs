@@ -60,4 +60,8 @@ public interface IPosSynchronizationOutboxDispatcher
         Guid tenantId,
         Guid businessId,
         CancellationToken cancellationToken = default);
+
+    Task DispatchTenantPendingAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken = default);
 }

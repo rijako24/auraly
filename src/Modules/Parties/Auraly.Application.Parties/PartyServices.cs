@@ -97,7 +97,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
             : ids.NewId();
         var customer = await store.CreateCustomerAsync(
             actor, ids.NewId(), customerId, request.RequestedPrimarySiteId ?? ids.NewId(), request, normalized, time.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
         return customer;
     }
     public Task<CustomerDetail?> FindCustomerAsync(

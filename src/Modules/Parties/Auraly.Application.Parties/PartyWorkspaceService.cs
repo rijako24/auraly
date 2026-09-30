@@ -209,7 +209,7 @@ public sealed class PartyWorkspaceService(
                 throw new PartyValidationException("Transportation mode is invalid.");
         }
         var updated = await store.UpdateAsync(actor, partyId, request, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
         return updated;
     }
 
@@ -219,7 +219,7 @@ public sealed class PartyWorkspaceService(
         Require(actor, PartyWorkspacePermissionCodes.Deactivate);
         if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
         var updated = await store.SetStatusAsync(actor, partyId, request, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
         return updated;
     }
 

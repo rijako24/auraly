@@ -43,10 +43,12 @@ todas las sedes activas del tenant.
 - El IVA y demás metadatos de una venta nueva se toman de la ficha compartida;
   las líneas ya preparadas o confirmadas conservan sus snapshots.
 - Una modificación de catálogo que afecte POS emite cambios para cada sede
-  activa del tenant, en conjunto. Una publicación de precio emite cambios solo
+  activa del tenant, en conjunto, y despierta el despachador de esas sedes con
+  una lectura acotada del outbox. Una publicación de precio emite cambios solo
   para las sedes cuyo precio cambió.
 - Crear o modificar un tercero en una sede lo hace visible en todas las sedes
-  del tenant. Los roles de un tercero no se duplican al crear sedes.
+  del tenant y señala sus cambios POS sin esperar otro evento. Los roles de un
+  tercero no se duplican al crear sedes.
 
 ## Cutover de datos
 

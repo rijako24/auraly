@@ -58,8 +58,8 @@ public sealed class CatalogService(
         Validate(request);
         var product = await store.CreateAsync(
             user, ids.NewId(), request, timeProvider.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(
-            user.TenantId, user.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(
+            user.TenantId, CancellationToken.None);
         return product;
     }
 
@@ -76,8 +76,8 @@ public sealed class CatalogService(
         Validate(request);
         var product = await store.UpdateAsync(
             user, productId, request, timeProvider.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(
-            user.TenantId, user.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(
+            user.TenantId, CancellationToken.None);
         return product;
     }
 
@@ -90,8 +90,8 @@ public sealed class CatalogService(
     {
         Require(user, isActive ? CatalogPermissionCodes.Update : CatalogPermissionCodes.Deactivate);
         await store.SetStatusAsync(user, productId, isActive, timeProvider.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(
-            user.TenantId, user.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(
+            user.TenantId, CancellationToken.None);
     }
 
     public Task<ProductDetail?> GetAsync(CatalogUserIdentity user, Guid productId, CancellationToken ct)
