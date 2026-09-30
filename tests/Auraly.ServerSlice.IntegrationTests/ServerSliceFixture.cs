@@ -1278,6 +1278,8 @@ internal sealed class TestBlobStorageService : IBlobStorageService
         Task.FromResult(new byte[] { 1, 2, 3 });
     public Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName) =>
         Task.FromResult(fileName);
+    public Task<string> UploadTenantImageAsync(Guid tenantId, Stream imageStream, string fileName) =>
+        Task.FromResult(fileName);
 
     public Task<string> GetImageUrlAsync(Guid businessId, string fileName) =>
         Task.FromResult($"https://media.auraly.test/{businessId:D}/{fileName}");
@@ -1293,6 +1295,12 @@ internal sealed class TestMediaUrlResolver : IMediaUrlResolver
         string mediaRef,
         CancellationToken ct = default) =>
         Task.FromResult($"https://media.auraly.test/{businessId:D}/{mediaRef}");
+
+    public Task<string> ResolveTenantAsync(
+        Guid tenantId,
+        string mediaRef,
+        CancellationToken ct = default) =>
+        Task.FromResult($"https://media.auraly.test/tenant/{tenantId:D}/{mediaRef}");
 }
 
 internal sealed class TestFiscalSigningCertificateProvider :
