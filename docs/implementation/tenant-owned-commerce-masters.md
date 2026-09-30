@@ -64,6 +64,10 @@ Las copias de proveedor con igual identificación y configuración comercial se
 consolidan solo si la copia posterior no tiene referencias; se conserva el
 proveedor original y la ficha `Party` de la copia. Un proveedor con datos
 distintos o referencias propias detiene la migración para revisión.
+Las copias de cliente que apuntan al mismo `PartyId` en un tenant se reconcilian
+antes del DACPAC: se conserva el rol más antiguo y solo se elimina una copia
+con la misma configuración de factura electrónica y estado, sin referencias
+por clave foránea. Una diferencia o una referencia propia detiene el despliegue.
 
 La migración se ejecuta antes del plan DACPAC mediante el pipeline de release.
 La aplicación y el esquema se publican juntos desde un commit integrado en
