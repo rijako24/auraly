@@ -6,12 +6,14 @@ BEGIN
     -- La columna puede no existir al compilar este mismo batch. El SQL dinamico
     -- difiere la resolucion del nombre hasta despues del ALTER y permite que el
     -- DACPAC haga posteriormente el cambio canonico a NOT NULL.
-    EXEC sys.sp_executesql N'
-        UPDATE product SET TenantId=business.TenantId
-        FROM dbo.Products product
-        INNER JOIN dbo.Businesses business ON business.BusinessId=product.BusinessId
-        WHERE product.TenantId IS NULL;
+    IF COL_LENGTH(N'dbo.Products', N'BusinessId') IS NOT NULL
+        EXEC sys.sp_executesql N'
+            UPDATE product SET TenantId=business.TenantId
+            FROM dbo.Products product
+            INNER JOIN dbo.Businesses business ON business.BusinessId=product.BusinessId
+            WHERE product.TenantId IS NULL;';
 
+    EXEC sys.sp_executesql N'
         IF EXISTS(SELECT 1 FROM dbo.Products WHERE TenantId IS NULL)
             THROW 51089,''No fue posible asignar tenant a todos los productos existentes.'',1;';
 

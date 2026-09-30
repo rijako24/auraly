@@ -68,6 +68,9 @@ Las copias de cliente que apuntan al mismo `PartyId` en un tenant se reconcilian
 antes del DACPAC: se conserva el rol más antiguo y solo se elimina una copia
 con la misma configuración de factura electrónica y estado, sin referencias
 por clave foránea. Una diferencia o una referencia propia detiene el despliegue.
+La publicación puede reintentarse si el DACPAC falla después del cutover:
+el backfill de tenant de productos reconoce la ausencia de `BusinessId`, y el
+backfill histórico de sedes de cliente se omite una vez retirada esa columna.
 
 La migración se ejecuta antes del plan DACPAC mediante el pipeline de release.
 La aplicación y el esquema se publican juntos desde un commit integrado en
