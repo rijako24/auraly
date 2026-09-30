@@ -728,6 +728,60 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             allowsNegative ? "NotRequired" : available >= request.Quantity ? "Available" : "Insufficient");
     }
 
+    public async Task<IReadOnlyList<InventoryAvailabilityResponse>> AvailabilityBatchAsync(
+        Guid deviceId, Guid tenantId, Guid businessId,
+        InventoryAvailabilityBatchRequest request, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            WITH requested AS (
+              SELECT CONVERT(INT,[key]) Ordinal,
+                     TRY_CONVERT(UNIQUEIDENTIFIER,JSON_VALUE([value],'$.ProductId')) ProductId,
+                     TRY_CONVERT(DECIMAL(19,6),JSON_VALUE([value],'$.Quantity')) Quantity
+              FROM OPENJSON(@Items)
+            )
+            SELECT requested.ProductId,requested.Quantity,w.AllowNegativeStockSales,
+                   COALESCE(balance.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
+            FROM dbo.EnrolledDevices d
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
+              AND b.TenantId=d.TenantId AND b.IsActive=1
+            JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId AND w.IsActive=1 AND w.UseForSales=1
+              AND w.BusinessId=b.BusinessId
+            CROSS JOIN requested
+            JOIN dbo.Products p ON p.ProductId=requested.ProductId AND p.TenantId=@TenantId
+            LEFT JOIN dbo.ProductLinks link
+              ON link.TenantId=p.TenantId AND link.ChildProductId=p.ProductId
+             AND link.SharesInventory=1 AND link.IsActive=1
+            LEFT JOIN dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
+              ON balance.BusinessId=@BusinessId AND balance.WarehouseId=w.WarehouseId
+             AND balance.ProductId=COALESCE(link.ParentProductId,p.ProductId)
+            WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1
+            ORDER BY requested.Ordinal;
+            """;
+        command.Parameters.AddRange([
+            P("@DeviceId", deviceId), P("@TenantId", tenantId), P("@BusinessId", businessId),
+            P("@WarehouseId", request.WarehouseId), P("@Items", JsonSerializer.Serialize(request.Items))
+        ]);
+        var results = new List<InventoryAvailabilityResponse>(request.Items.Count);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var productId = reader.GetGuid(0);
+            var quantity = reader.GetDecimal(1);
+            var allowsNegative = reader.GetBoolean(2);
+            var available = reader.GetDecimal(3);
+            results.Add(new InventoryAvailabilityResponse(
+                productId, request.WarehouseId, quantity, available,
+                !allowsNegative, allowsNegative || available >= quantity,
+                allowsNegative ? "NotRequired" : available >= quantity ? "Available" : "Insufficient"));
+        }
+        if (results.Count != request.Items.Count)
+            throw new CatalogForbiddenException("The warehouse or one of the products is not available to this device.");
+        return results;
+    }
+
     public async Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
         Guid? deviceId,
         Guid tenantId,

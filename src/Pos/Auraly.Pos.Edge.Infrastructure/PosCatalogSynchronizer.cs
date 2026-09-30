@@ -285,6 +285,15 @@ public sealed class PosCatalogSynchronizer(
             JsonContent.Create(request),
             cancellationToken);
 
+    public async Task<IReadOnlyList<InventoryAvailabilityResponse>> CheckAvailabilityBatchAsync(
+        InventoryAvailabilityBatchRequest request,
+        CancellationToken cancellationToken = default) =>
+        await SendAsync<IReadOnlyList<InventoryAvailabilityResponse>>(
+            HttpMethod.Post,
+            $"api/pos/v1/inventory/availability-batch?businessId={scope.BusinessId:D}",
+            JsonContent.Create(request),
+            cancellationToken);
+
     private string ScopeQuery =>
         $"businessId={scope.BusinessId:D}&warehouseId={scope.WarehouseId:D}";
 

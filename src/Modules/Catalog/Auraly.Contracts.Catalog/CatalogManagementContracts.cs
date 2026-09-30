@@ -211,6 +211,9 @@ public sealed record CatalogDelta(long Version, string Kind, PosCatalogItem Prod
 public sealed record CatalogDeltaPage(long FromCursor, long ToCursor, bool HasMore, IReadOnlyCollection<CatalogDelta> Changes);
 
 public sealed record InventoryAvailabilityRequest(Guid ProductId, Guid WarehouseId, decimal Quantity, Guid OperationId);
+public sealed record InventoryAvailabilityBatchItem(Guid ProductId, decimal Quantity);
+public sealed record InventoryAvailabilityBatchRequest(
+    Guid WarehouseId, Guid OperationId, IReadOnlyList<InventoryAvailabilityBatchItem> Items);
 public sealed record InventoryAvailabilityResponse(
     Guid ProductId,
     Guid WarehouseId,

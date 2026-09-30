@@ -21,12 +21,12 @@ import {
   type SalesWorkspaceOption,
 } from "@/services/pos/online-pos-client";
 import { useAuthStore } from "@/stores/auth-store";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { routesApi, type SalesRouteListItem } from "@/services/api/routes";
 import { PosPrinterDialog } from "@/app/(pos)/pos/pos-printer-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
 import { sellerOrdersApi } from "@/services/api/seller-orders";
-import { tenantsApi } from "@/services/api/tenants";
 import { resolvePosExecutionMode } from "@/services/pos/pos-launch-session";
 import { SellerOrderCaptureDialog } from "@/components/orders/seller-order-capture-dialog";
 
@@ -34,6 +34,8 @@ export default function OrdersPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
   const userId = user?.userId;
+  const tenantName = useTenantContextStore((state) =>
+    state.tenants.find((tenant) => tenant.tenantId === state.selectedTenantId)?.name ?? null);
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [workspaces, setWorkspaces] = useState<SalesWorkspaceOption[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -63,9 +65,6 @@ export default function OrdersPage() {
         }
         setPreparedPrintBranding(false);
       }
-      tenantsApi.resetPrintBrandingForWorkspaceEntry();
-      await tenantsApi.getPrintBranding().catch(error =>
-        console.warn("No se pudo actualizar el logo de impresión de pedidos.", error));
     };
     void prepare();
     return () => { active = false; };
@@ -166,6 +165,7 @@ export default function OrdersPage() {
                   `${user.firstName} ${user.lastName}`.trim() || user.username,
                   readEdgeTokenFromLaunch(),
                   preparedPrintBranding,
+                  tenantName,
                 ).printOrders(orders.map((order) => order.orderId));
               }
             : undefined
@@ -189,6 +189,7 @@ export default function OrdersPage() {
                   `${user.firstName} ${user.lastName}`.trim() || user.username,
                   edgeToken,
                   preparedPrintBranding,
+                  tenantName,
                 );
                 const response = await client.invoiceOrders(
                   orders.map((order) => order.orderId),

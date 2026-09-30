@@ -28,6 +28,7 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useRouter } from "next/navigation";
+import { tenantsApi } from "@/services/api/tenants";
 import {
   canOpenPosAdministrativeMenu,
   posAdministrativeMenuTarget,
@@ -475,7 +476,7 @@ export default function PosPage() {
   const [ordersExpanded, setOrdersExpanded] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<
-    | { kind: "line"; lineId: string; productName: string }
+    | { kind: "line"; lineId: string; productName: string; revalidateInventory: boolean }
     | { kind: "temporary"; draftId: string; name: string }
     | { kind: "sale"; sourceOrderNumber: string | null }
     | { kind: "order-save"; orderNumber: string }
@@ -738,14 +739,11 @@ export default function PosPage() {
               serverBootstrap.userId,
               displayName,
               edgeToken,
+              false,
+              serverBootstrap.tenantName,
             );
-            const logoCheck = onlineClient.preparePrintBranding(true);
-            const logoReady = await Promise.race([logoCheck, new Promise<undefined>(resolve =>
-              window.setTimeout(() => resolve(undefined), 350))]);
+            tenantsApi.resetPrintBrandingForWorkspaceEntry();
             if (!active) return;
-            if (logoReady === false) setMessage(
-              "El logo no está disponible. Los comprobantes se imprimirán con el nombre de la empresa.",
-            );
             setClient(onlineClient);
           }
         }
@@ -1074,7 +1072,7 @@ export default function PosPage() {
     restartSale: requestCancelSale,
   };
 
-  async function requestRemoveLine(lineId: string) {
+  async function requestRemoveLine(lineId: string, revalidateInventory = false) {
     const line = draft?.lines.find((candidate) => candidate.lineId === lineId);
     if (!line || busy) return;
     if (removingLastRecoveredOrderLineCancelsOrder({
@@ -1091,7 +1089,7 @@ export default function PosPage() {
         { action: "OpenRemoveLine", product: line.description, quantity: line.quantity },
         async (authorization) => {
           lineRemovalAuthorization.current = authorization;
-          setConfirmation({ kind: "line", lineId, productName: line.description });
+          setConfirmation({ kind: "line", lineId, productName: line.description, revalidateInventory });
         },
       );
     } catch (caught) {
@@ -1631,7 +1629,7 @@ export default function PosPage() {
       if (result.status === "Added") {
         if (result.draft) setDraft(result.draft);
         if (inventoryResolution && result.draft)
-          await validateRecoveredInventory(result.draft.draftId.value);
+          await validateCurrentInventory(result.draft.draftId.value);
         setMessage("Cantidad actualizada");
       } else {
         const confirmed = draft.lines.find((line) => line.lineId === lineId);
@@ -2001,7 +1999,7 @@ export default function PosPage() {
     }
   }
 
-  async function removeLine(lineId: string) {
+  async function removeLine(lineId: string, revalidateInventory = false) {
     if (!client || !draft) return;
     setBusy(true);
     try {
@@ -2016,8 +2014,8 @@ export default function PosPage() {
           lineRemovalAuthorization.current = null;
           setConfirmation(null);
           setDraft(updated);
-          if (inventoryResolution)
-            await validateRecoveredInventory(updated.draftId.value);
+          if (revalidateInventory || inventoryResolution)
+            await validateCurrentInventory(updated.draftId.value);
           setSelectedLineId(updated.lines.at(-1)?.lineId ?? null);
           setMessage("Producto retirado");
         },
@@ -2045,6 +2043,7 @@ export default function PosPage() {
           restartAuthorization.current = null;
           setConfirmation(null);
           setDraft(next);
+          setInventoryResolution(null);
           setSelectedLineId(null);
           setSelectedCustomer(null);
           setScan("");
@@ -2205,7 +2204,7 @@ export default function PosPage() {
   async function confirmDestructiveAction() {
     if (!confirmation) return;
     if (confirmation.kind === "line") {
-      await removeLine(confirmation.lineId);
+      await removeLine(confirmation.lineId, confirmation.revalidateInventory);
       lineRemovalAuthorization.current = null;
     } else if (confirmation.kind === "temporary") {
       await deleteTemporary(confirmation.draftId);
@@ -2241,7 +2240,7 @@ export default function PosPage() {
     try {
       const recovered = await client.recoverTemporary(id);
       setDraft(recovered);
-      requiresResolution = !(await validateRecoveredInventory(recovered.draftId.value));
+      requiresResolution = !(await validateCurrentInventory(recovered.draftId.value));
       await refreshTemporaries();
       setMessage(requiresResolution ? "Venta recuperada: corrige el inventario" : "Venta en espera recuperada");
     } catch (caught) {
@@ -2252,10 +2251,14 @@ export default function PosPage() {
     }
   }
 
-  async function validateRecoveredInventory(draftId: string) {
+  async function validateCurrentInventory(draftId: string) {
     if (!client) return false;
     const validation = await client.validateDraftInventory(draftId);
     setInventoryResolution(validation.isValid ? null : validation);
+    if (!validation.isValid) {
+      setPaymentOpen(false);
+      setSaleSettlement(null);
+    }
     return validation.isValid;
   }
 
@@ -2295,13 +2298,10 @@ export default function PosPage() {
 
   async function openPayment() {
     if (!client || !draft?.lines.length || busy) return;
-    if (inventoryResolution) {
-      setError("Resuelve primero los productos con inventario insuficiente.");
-      return;
-    }
     setError(null);
     setBusy(true);
     try {
+      if (!await validateCurrentInventory(draft.draftId.value)) return;
       const settlement = await client.previewSettlement(draft.draftId.value);
       setSaleSettlement(settlement);
       setPaymentOpen(true);
@@ -2439,6 +2439,7 @@ export default function PosPage() {
                 warehouseId: workstation.warehouseId,
                 warehouseName: workstation.warehouseName,
                 workSessionId: workstation.workSessionId ?? "",
+                tenantName: onlineTenantName,
               },
             );
           }
@@ -2476,7 +2477,7 @@ export default function PosPage() {
       showError(caught);
       if (caught instanceof Error && caught.message.toLocaleLowerCase("es-CO").includes("inventario")) {
         setPaymentOpen(false);
-        await validateRecoveredInventory(draft.draftId.value).catch(() => undefined);
+        await validateCurrentInventory(draft.draftId.value).catch(() => undefined);
       }
     } finally {
       setBusy(false);
@@ -2816,13 +2817,8 @@ export default function PosPage() {
     try {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectSalesWorkspace(option, workspaceChanging);
-      const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName, edgeEnrollmentToken);
-      const logoCheck = onlineClient.preparePrintBranding(true);
-      const logoReady = await Promise.race([logoCheck, new Promise<undefined>(resolve =>
-        window.setTimeout(() => resolve(undefined), 350))]);
-      if (logoReady === false) setMessage(
-        "El logo no está disponible. Los comprobantes se imprimirán con el nombre de la empresa.",
-      );
+      const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName, edgeEnrollmentToken, false, onlineTenantName);
+      tenantsApi.resetPrintBrandingForWorkspaceEntry();
       setDraft(null);
       setTemporaries([]);
       setSelectedCustomer(null);
@@ -3959,10 +3955,17 @@ export default function PosPage() {
           value={inventoryResolution}
           busy={busy}
           onChangeQuantity={(lineId, quantity) => changeQuantity(lineId, quantity, false)}
-          onRemove={(lineId) => { void requestRemoveLine(lineId); }}
-          onRetry={() => validateRecoveredInventory(draft.draftId.value).then(() => undefined)}
+          onRemove={(lineId) => {
+            setInventoryResolution(null);
+            setPaymentOpen(false);
+            setSaleSettlement(null);
+            void requestRemoveLine(lineId, true);
+          }}
+          onRetry={() => validateCurrentInventory(draft.draftId.value).then(() => undefined)}
           onCancel={() => {
             setInventoryResolution(null);
+            setPaymentOpen(false);
+            setSaleSettlement(null);
             focusScanner();
           }}
         />

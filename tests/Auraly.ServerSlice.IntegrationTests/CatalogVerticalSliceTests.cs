@@ -1095,6 +1095,20 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             new InventoryAvailabilityRequest(created.ProductId, fixture.WarehouseId, 1m, Guid.NewGuid()));
         Assert.True(blocked.ValidationRequired);
         Assert.False(blocked.IsAvailable);
+        var batch = await sync.CheckAvailabilityBatchAsync(
+            new InventoryAvailabilityBatchRequest(fixture.WarehouseId, Guid.NewGuid(),
+            [new(created.ProductId, 1m), new(secondProduct.ProductId, 1m)]));
+        Assert.Equal([created.ProductId, secondProduct.ProductId], batch.Select(item => item.ProductId));
+        Assert.All(batch, item =>
+        {
+            Assert.True(item.ValidationRequired);
+            Assert.False(item.IsAvailable);
+        });
+        var outsideProduct = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            sync.CheckAvailabilityBatchAsync(new InventoryAvailabilityBatchRequest(
+                fixture.WarehouseId, Guid.NewGuid(),
+                [new(created.ProductId, 1m), new(Guid.NewGuid(), 1m)])));
+        Assert.Equal(HttpStatusCode.Forbidden, outsideProduct.StatusCode);
         await ExecuteAsync(
             "UPDATE dbo.Warehouses SET AllowNegativeStockSales=1 WHERE WarehouseId=@Id;",
             new SqlParameter("@Id", fixture.WarehouseId));

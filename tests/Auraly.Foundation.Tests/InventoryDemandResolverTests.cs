@@ -40,4 +40,28 @@ public sealed class InventoryDemandResolverTests
         Assert.True(allocations[1].CanReserve);
         Assert.Equal(2m, allocations[1].RequiredInventoryQuantity);
     }
+
+    [Fact]
+    public void Reports_every_unavailable_product_in_a_single_validation_batch()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        var available = Guid.NewGuid();
+
+        var allocations = InventoryDemandResolver.AllocateWholeLines(
+        [
+            new(first, first, first, 1m, 2m, true),
+            new(second, second, second, 1m, 1m, true),
+            new(available, available, available, 1m, 1m, true)
+        ], new Dictionary<Guid, decimal>
+        {
+            [first] = 0m,
+            [second] = 0m,
+            [available] = 1m
+        });
+
+        Assert.Equal([first, second], allocations
+            .Where(allocation => !allocation.CanReserve)
+            .Select(allocation => allocation.Line.LineId));
+    }
 }

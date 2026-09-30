@@ -90,6 +90,22 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
             ct);
     }
 
+    public Task<IReadOnlyList<InventoryAvailabilityResponse>> AvailabilityBatchAsync(
+        CatalogDeviceIdentity device,
+        InventoryAvailabilityBatchRequest request,
+        CancellationToken ct)
+    {
+        ValidateEnrolledScope(device);
+        if (request.WarehouseId != device.WarehouseId)
+            throw new CatalogForbiddenException("The requested warehouse is not available in this operational context.");
+        if (request.OperationId == Guid.Empty || request.Items is null or { Count: < 1 or > 500 } ||
+            request.Items.Any(item => item is null || item.ProductId == Guid.Empty || item.Quantity <= 0) ||
+            request.Items.Select(item => item.ProductId).Distinct().Count() != request.Items.Count)
+            throw new CatalogValidationException("Provide 1 to 500 distinct products with positive quantities and an operation.");
+        return store.AvailabilityBatchAsync(
+            device.DeviceId, device.TenantId, device.BusinessId, request, ct);
+    }
+
     public Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
         CatalogDeviceIdentity device,
         Guid productId,

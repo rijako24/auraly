@@ -11,6 +11,9 @@ public interface IPosInventoryAvailabilityClient
     Task<InventoryAvailabilityResponse> CheckAvailabilityAsync(
         InventoryAvailabilityRequest request,
         CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<InventoryAvailabilityResponse>> CheckAvailabilityBatchAsync(
+        InventoryAvailabilityBatchRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public static class PosCaptureStatus
@@ -61,30 +64,45 @@ public sealed class PosCaptureService(
                 descriptor.ManagesStock || descriptor.InventoryProductId != line.ProductId.Value);
         }).ToArray();
         var lineById = draft.Lines.ToDictionary(line => line.LineId);
+        var demands = InventoryDemandResolver.Resolve(facts).ToArray();
+        if (demands.Length == 0)
+            return new OnlineSalesInventoryValidation(true, true, []);
+        var availabilityResults = new List<InventoryAvailabilityResponse>(demands.Length);
+        try
+        {
+            foreach (var batch in demands.Chunk(500))
+            {
+                var result = await availability.CheckAvailabilityBatchAsync(
+                    new InventoryAvailabilityBatchRequest(draft.Scope.WarehouseId.Value, operationId,
+                        batch.Select(demand =>
+                        {
+                            var representative = demand.Lines[0];
+                            return new InventoryAvailabilityBatchItem(
+                                representative.ProductId,
+                                InventoryDemandResolver.InProductUnits(
+                                    demand.RequiredInventoryQuantity,
+                                    representative.InventoryFactor));
+                        }).ToArray()), cancellationToken);
+                availabilityResults.AddRange(result);
+            }
+        }
+        catch (HttpRequestException error) when (error.StatusCode is null)
+        {
+            return new OnlineSalesInventoryValidation(true, false, []);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new OnlineSalesInventoryValidation(true, false, []);
+        }
+        if (availabilityResults.Count != demands.Length)
+            throw new InvalidOperationException("The inventory response does not match the requested products.");
+        var availabilityByProduct = availabilityResults.ToDictionary(result => result.ProductId);
         var issues = new List<OnlineSalesInventoryIssue>();
-        foreach (var demand in InventoryDemandResolver.Resolve(facts))
+        foreach (var demand in demands)
         {
             var representative = demand.Lines[0];
-            InventoryAvailabilityResponse availabilityResult;
-            try
-            {
-                availabilityResult = await availability.CheckAvailabilityAsync(
-                    new InventoryAvailabilityRequest(
-                        representative.ProductId, draft.Scope.WarehouseId.Value,
-                        InventoryDemandResolver.InProductUnits(
-                            demand.RequiredInventoryQuantity,
-                            representative.InventoryFactor), operationId),
-                    cancellationToken);
-            }
-            catch (HttpRequestException)
-            {
-                return new OnlineSalesInventoryValidation(true, false, []);
-            }
-            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                return new OnlineSalesInventoryValidation(true, false, []);
-            }
-
+            if (!availabilityByProduct.TryGetValue(representative.ProductId, out var availabilityResult))
+                throw new InvalidOperationException("The inventory response does not match the requested products.");
             var allocations = InventoryDemandResolver.AllocateWholeLines(
                 demand.Lines,
                 new Dictionary<Guid, decimal>
@@ -283,7 +301,7 @@ public sealed class PosCaptureService(
                 ? (PosCaptureStatus.Added, response)
                 : (PosCaptureStatus.InsufficientInventory, response);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException error) when (error.StatusCode is null)
         {
             return (PosCaptureStatus.Added, null);
         }

@@ -167,6 +167,12 @@ public static class CatalogApi
             await Handle(async () => Results.Ok(await service.AvailabilityAsync(
                 context.User.ToCatalogDeviceIdentity(businessId, request.WarehouseId), request, ct))));
 
+        pos.MapPost("/inventory/availability-batch", async (
+            HttpContext context, PosCatalogService service, Guid businessId,
+            InventoryAvailabilityBatchRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.AvailabilityBatchAsync(
+                context.User.ToCatalogDeviceIdentity(businessId, request.WarehouseId), request, ct))));
+
         pos.MapGet("/inventory/products/{productId:guid}/warehouse-availability", async (
             HttpContext context, PosCatalogService service, Guid productId,
             Guid businessId, bool? includeOtherBusinesses, CancellationToken ct) =>

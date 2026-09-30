@@ -19,6 +19,9 @@ public interface ICatalogStore
     Task<InventoryAvailabilityResponse> AvailabilityAsync(
         Guid deviceId, Guid tenantId, Guid businessId,
         InventoryAvailabilityRequest request, CancellationToken ct);
+    Task<IReadOnlyList<InventoryAvailabilityResponse>> AvailabilityBatchAsync(
+        Guid deviceId, Guid tenantId, Guid businessId,
+        InventoryAvailabilityBatchRequest request, CancellationToken ct);
     Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
         Guid? deviceId, Guid tenantId, Guid businessId, Guid productId,
         bool includeOtherBusinesses, CancellationToken ct);
