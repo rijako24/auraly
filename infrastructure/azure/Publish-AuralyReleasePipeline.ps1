@@ -403,7 +403,8 @@ function Publish-Database {
             '20260921_PreserveOrderItemQuantityPrecision.sql',
             '20260907_AlignReceivablesWithAccountingSource.sql',
             '20260922_MigratePortfolioPaymentTenders.sql',
-            '20260929_MoveCommerceMastersToTenant.sql')
+            '20260929_MoveCommerceMastersToTenant.sql',
+            '20260930_ReconcileTenantCustomerCopies.sql')
         if (-not $ValidateOnly) {
             foreach ($migration in $reviewedMigrations) {
                 Invoke-ReviewedPreDacpacMigration `
