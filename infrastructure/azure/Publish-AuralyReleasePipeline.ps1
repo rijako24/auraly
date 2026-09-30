@@ -289,6 +289,17 @@ function Invoke-ReviewedPreDacpacMigration {
     $connection.AccessToken = $AccessToken
     try {
         $connection.Open()
+        if ((Split-Path $MigrationPath -Leaf) -eq '20260914_BackfillSellerOrderSites.sql') {
+            # This historical backfill references Customers.BusinessId in static SQL.
+            # A previous release attempt can finish the tenant cutover before
+            # SQLPackage fails; do not compile the retired business-scoped batch.
+            $guard = $connection.CreateCommand()
+            $guard.CommandText = "SELECT COL_LENGTH(N'dbo.Customers',N'BusinessId')"
+            if ($guard.ExecuteScalar() -is [DBNull]) {
+                Write-Information 'Migracion de sedes de cliente ya aplicada; se omite en esquema tenant.' -InformationAction Continue
+                return
+            }
+        }
         $contents = Get-Content -LiteralPath $MigrationPath -Raw
         $batches = [Text.RegularExpressions.Regex]::Split(
             $contents,
