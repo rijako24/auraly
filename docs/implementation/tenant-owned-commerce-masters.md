@@ -68,6 +68,9 @@ Las copias de cliente que apuntan al mismo `PartyId` en un tenant se reconcilian
 antes del DACPAC: se conserva el rol más antiguo y solo se elimina una copia
 con la misma configuración de factura electrónica y estado, sin referencias
 por clave foránea. Una diferencia o una referencia propia detiene el despliegue.
+Los perfiles de IVA duplicados por código y tenant siguen la misma regla:
+se conserva el más antiguo, y solo se retira una copia con configuración
+idéntica sin referencias, incluidas ambas columnas tributarias de `Products`.
 La publicación puede reintentarse si el DACPAC falla después del cutover:
 el backfill de tenant de productos reconoce la ausencia de `BusinessId`, y el
 backfill histórico de sedes de cliente se omite una vez retirada esa columna.
