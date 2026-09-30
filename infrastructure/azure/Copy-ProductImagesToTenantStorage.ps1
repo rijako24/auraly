@@ -157,7 +157,19 @@ ORDER BY i.ProductImageId;
             }
         }
         Write-Output "Product image tenant $tenantId`: referenced=$($images[$tenantId].Count), source=$($sourceInventory.Count), missing=$($missing.Count)."
-        if ($DryRun -or $missing.Count -eq 0) { continue }
+        if ($DryRun) {
+            if ($missing.Count -gt 0) {
+                foreach ($source in $sources) {
+                    & az storage blob copy start-batch --account-name $configuration.Storage `
+                        --auth-mode login --only-show-errors --output none --dryrun `
+                        --destination-container $destination `
+                        --source-container $source.Container --pattern 'products/*'
+                    if ($LASTEXITCODE -ne 0) { throw 'Product image batch dry run failed.' }
+                }
+            }
+            continue
+        }
+        if ($missing.Count -eq 0) { continue }
 
         [void](Invoke-Storage -Arguments @('container','create','--name',$destination))
         foreach ($source in $sources) {
