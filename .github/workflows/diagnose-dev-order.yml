@@ -70,6 +70,32 @@ jobs:
               }
               $reader.Close()
               $command.CommandText = @'
+          SELECT s.SupplierId,p.PartyType,p.IdentificationTypeCode,
+                 CONVERT(varchar(64),HASHBYTES('SHA2_256',COALESCE(p.NormalizedIdentification,N'')),2) PartyIdentityHash,
+                 CONVERT(varchar(64),HASHBYTES('SHA2_256',COALESCE(p.DisplayName,N'')),2) DisplayNameHash,
+                 p.IsActive,
+                 (SELECT COUNT(*) FROM dbo.PartyContacts c WHERE c.PartyId=p.PartyId) ContactCount,
+                 (SELECT COUNT(*) FROM dbo.PartySites site WHERE site.PartyId=p.PartyId) SiteCount
+          FROM dbo.Suppliers s JOIN dbo.Parties p ON p.PartyId=s.PartyId
+          JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
+          WHERE EXISTS (
+            SELECT 1 FROM dbo.Suppliers other
+            JOIN dbo.Businesses otherBusiness ON otherBusiness.BusinessId=other.BusinessId
+            WHERE otherBusiness.TenantId=b.TenantId AND other.Identification=s.Identification
+              AND other.SupplierId<>s.SupplierId);
+          '@
+              $reader = $command.ExecuteReader()
+              while ($reader.Read()) {
+                [ordered]@{
+                  supplierId = $reader['SupplierId']; partyType = $reader['PartyType'];
+                  identificationType = $reader['IdentificationTypeCode'];
+                  partyIdentityHash = $reader['PartyIdentityHash']; displayNameHash = $reader['DisplayNameHash'];
+                  partyActive = $reader['IsActive']; contactCount = $reader['ContactCount'];
+                  siteCount = $reader['SiteCount']
+                } | ConvertTo-Json -Compress | Write-Output
+              }
+              $reader.Close()
+              $command.CommandText = @'
           SELECT OBJECT_SCHEMA_NAME(fk.parent_object_id) ParentSchema,
                  OBJECT_NAME(fk.parent_object_id) ParentTable,
                  COL_NAME(col.parent_object_id,col.parent_column_id) ParentColumn
