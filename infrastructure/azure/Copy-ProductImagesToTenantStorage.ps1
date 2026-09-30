@@ -32,7 +32,8 @@ function Get-BlobInventory {
         if ($marker) { $args += @('--marker',$marker) }
         $page = Invoke-Storage -Arguments $args
         if ($page -is [array]) {
-            throw 'Azure CLI did not return a continuation marker for blob inventory.'
+            $lastKeys = if ($page.Count -gt 0) { @($page[-1].PSObject.Properties.Name) -join ',' } else { '(empty)' }
+            throw "Azure CLI blob list shape is an array of $($page.Count) entries; final keys: $lastKeys."
         }
         $items = @($page.items)
         foreach ($blob in $items) {
