@@ -1,7 +1,11 @@
+using Azure.Storage;
+using Azure.Storage.Blobs;
 using Auraly.Platform.Application.Identity.Services;
 using Auraly.Platform.Application.Services;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Repositories;
+using Auraly.Platform.Infrastructure.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
@@ -9,6 +13,22 @@ namespace Auraly.Platform.Tests.Identity;
 
 public sealed class ProductImageTenantStorageTests
 {
+    [Fact]
+    public async Task Tenant_image_resolver_signs_the_tenant_container_without_a_blob_read()
+    {
+        var tenantId = Guid.NewGuid();
+        var client = new BlobServiceClient(
+            new Uri("https://testing.blob.core.windows.net"),
+            new StorageSharedKeyCredential("testing", Convert.ToBase64String(new byte[32])));
+        var resolver = new BlobMediaUrlResolver(client, NullLogger<BlobMediaUrlResolver>.Instance);
+
+        var url = await resolver.ResolveTenantAsync(tenantId, "products/photo.png");
+
+        Assert.StartsWith(
+            $"https://testing.blob.core.windows.net/tenant-{tenantId:N}/products/photo.png?",
+            url, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Two_businesses_in_one_tenant_resolve_the_same_product_image_from_tenant_storage()
     {
