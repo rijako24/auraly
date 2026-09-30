@@ -28,7 +28,7 @@ function Get-BlobInventory {
     $marker = $null
     do {
         $args = @('blob','list','--container-name',$Container,'--prefix','products/',
-            '--num-results','500','--show-next-marker')
+            '--include','c','--num-results','500','--show-next-marker')
         if ($marker) { $args += @('--marker',$marker) }
         $page = Invoke-Storage -Arguments $args
         if ($page -is [array]) {
