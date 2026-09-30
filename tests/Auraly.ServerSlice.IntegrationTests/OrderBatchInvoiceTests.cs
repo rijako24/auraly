@@ -849,9 +849,9 @@ public sealed class OrderBatchInvoiceTests(
                   N'Cliente crédito lote',N'Complete',1,@UserId,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Customers(
-                  CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+                  CustomerId,PartyId,TenantId,RequiresElectronicInvoice,
                   IsActive,CreatedBy,CreatedAt)
-                VALUES(@CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+                VALUES(@CustomerId,@PartyId,@TenantId,1,1,@UserId,SYSDATETIMEOFFSET());
 
                 INSERT dbo.PartySites(
                   PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,

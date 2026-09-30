@@ -9,7 +9,7 @@ BEGIN
     (
         SELECT 1 FROM dbo.Products product JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
         WHERE product.ProductId=@ProductId AND business.TenantId=@TenantId
-          AND (product.TenantId=@TenantId OR product.BusinessId=@BusinessId)
+          AND product.TenantId=@TenantId
     ) THROW 51010,'Product not found.',1;
 
     SELECT warehouse.WarehouseId,warehouse.Code,warehouse.Name,rotation.GrossUnitsSold30Days,

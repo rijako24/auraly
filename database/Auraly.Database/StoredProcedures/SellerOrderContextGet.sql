@@ -21,6 +21,6 @@ BEGIN
       ON sourceWarehouse.WarehouseId=@WarehouseId
      AND sourceWarehouse.BusinessId=@BusinessId
      AND sourceWarehouse.IsActive=1
-    INNER JOIN dbo.Businesses business ON business.BusinessId=customer.BusinessId AND business.TenantId=@TenantId
-    WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId AND customer.IsActive=1;
+    INNER JOIN dbo.Businesses business ON business.BusinessId=@BusinessId AND business.TenantId=customer.TenantId
+    WHERE customer.CustomerId=@CustomerId AND customer.TenantId=@TenantId AND customer.IsActive=1;
 END

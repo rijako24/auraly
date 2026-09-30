@@ -273,7 +273,7 @@ export default function ProductsPage() {
       const supplier = capabilities.supplier ? supplierEditorRef.current!.getValue() : null;
       const images = imageEditorRef.current ? await imageEditorRef.current.stage() : [];
       const aliases = recognitionEditorRef.current?.getValue().map((alias) => ({ alias })) ?? [];
-      await productsApi.updateCatalog(selectedProduct.productId, {
+      const savedProduct = await productsApi.updateCatalog(selectedProduct.productId, {
         businessId,
         productCode: selectedProduct.productCode ?? selectedProduct.sku ?? "",
         reference: form.reference.trim() || null,
@@ -310,13 +310,16 @@ export default function ProductsPage() {
         aliases,
         images,
       });
+      await cancelModal();
       await Promise.all([
-        refetch(),
-        queryClient.invalidateQueries({ queryKey: ["product-merchandising"] }),
+        queryClient.invalidateQueries({ queryKey: ["products"] }),
+        queryClient.invalidateQueries({ queryKey: ["catalog-product"], refetchType: "none" }),
+        queryClient.invalidateQueries({ queryKey: ["product-merchandising"], refetchType: "none" }),
+        queryClient.invalidateQueries({ queryKey: ["product-pricing"], refetchType: "none" }),
       ]);
+      queryClient.setQueryData(["catalog-product", businessId, selectedProduct.productId], savedProduct);
       setProductValidationError(undefined);
       toast.success("Producto guardado completamente");
-      await cancelModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo guardar el producto";
       setProductValidationError(message);
@@ -569,7 +572,7 @@ export default function ProductsPage() {
                 <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} initialDraft={restoredEditDraft?.merchandising} onDraftChange={setMerchandisingDraft} />
 
                 {editCapabilities.supplier && <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
-                  <ProductSupplierEditor ref={supplierEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} initialDraft={restoredEditDraft?.supplier} onDraftChange={setSupplierDraft} />
+                  <ProductSupplierEditor ref={supplierEditorRef} embedded productId={selectedProduct.productId} initialDraft={restoredEditDraft?.supplier} onDraftChange={setSupplierDraft} />
                 </ProductFormSection>}
 
                 <ProductFormSection id="product-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decisión explícita.">

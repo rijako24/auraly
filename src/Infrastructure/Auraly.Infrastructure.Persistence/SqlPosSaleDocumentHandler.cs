@@ -177,12 +177,12 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               SELECT TOP(1) s.SupplierId,s.Name
               FROM dbo.SupplierProducts sp
               INNER JOIN dbo.Suppliers s
-                ON s.SupplierId=sp.SupplierId AND s.BusinessId=sp.BusinessId AND s.IsActive=1
-              WHERE sp.BusinessId=@BusinessId AND sp.ProductId=input.ProductId AND sp.IsActive=1
+                ON s.SupplierId=sp.SupplierId AND s.TenantId=sp.TenantId AND s.IsActive=1
+              WHERE sp.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                AND sp.ProductId=input.ProductId AND sp.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId
             ) supplier
-            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
+            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);

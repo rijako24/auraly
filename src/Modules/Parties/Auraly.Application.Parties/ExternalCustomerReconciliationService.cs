@@ -71,7 +71,16 @@ public sealed class ExternalCustomerReconciliationService(
         Require(actor, ExternalCustomerReconciliationPermissionCodes.Reconcile);
         if (externalCommerceCustomerId == Guid.Empty)
             throw new PartyValidationException("ExternalCommerceCustomerId is required.");
-        var result = await store.ReconcileAsync(
+        var result = await ReconcileCoreAsync(actor, externalCommerceCustomerId, cancellationToken);
+        if (result.Status == ExternalCustomerReconciliationStatuses.Linked && !result.IdempotentReplay)
+            await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
+        return result;
+    }
+
+    private Task<ExternalCustomerReconciliationResult> ReconcileCoreAsync(
+        PartyActorIdentity actor, Guid externalCommerceCustomerId, CancellationToken cancellationToken)
+    {
+        return store.ReconcileAsync(
             new ExternalCustomerReconciliationExecution(
                 actor.TenantId,
                 actor.BusinessId,
@@ -84,12 +93,6 @@ public sealed class ExternalCustomerReconciliationService(
             ids.NewId(),
             timeProvider.GetUtcNow(),
             cancellationToken);
-        if (result.Status == ExternalCustomerReconciliationStatuses.Linked && !result.IdempotentReplay)
-            await synchronization.DispatchPendingAsync(
-                actor.TenantId,
-                actor.BusinessId,
-                CancellationToken.None);
-        return result;
     }
 
     public async Task<ReconcilePendingExternalCustomersResult> ReconcilePendingAsync(
@@ -106,11 +109,13 @@ public sealed class ExternalCustomerReconciliationService(
         var replayed = 0;
         foreach (var id in pending)
         {
-            var result = await ReconcileAsync(actor, id, cancellationToken);
+            var result = await ReconcileCoreAsync(actor, id, cancellationToken);
             if (result.IdempotentReplay) replayed++;
             else if (result.Status == ExternalCustomerReconciliationStatuses.Linked) linked++;
             else if (result.Status == ExternalCustomerReconciliationStatuses.Conflict) conflicts++;
         }
+        if (linked > 0)
+            await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
         return new ReconcilePendingExternalCustomersResult(
             pending.Count,
             linked,

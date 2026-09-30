@@ -594,8 +594,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                 VALUES(NEWID(),@PartyId,N'PRINCIPAL',N'Principal',@CountryId,@DivisionId,@CityId,
                        N'Dirección anterior',1,1,@ActorId,@Now);
                 INSERT dbo.Customers
-                  (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
-                VALUES(NEWID(),@PartyId,@BusinessId,0,1,@ActorId,@Now);
+                  (CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+                VALUES(NEWID(),@PartyId,@TenantId,0,1,@ActorId,@Now);
                 """, connection);
             command.Parameters.AddWithValue("@PartyId", existingPartyId);
             command.Parameters.AddWithValue("@TenantId", tenant.TenantId);
@@ -630,7 +630,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                 SELECT
                   (SELECT COUNT(*) FROM dbo.Parties WHERE TenantId=@TenantId AND NormalizedIdentification=@Identification),
                   (SELECT PartyId FROM dbo.AppUsers WHERE UserId=@UserId),
-                  (SELECT COUNT(*) FROM dbo.Customers WHERE PartyId=@PartyId AND BusinessId=@BusinessId AND IsActive=1),
+                  (SELECT COUNT(*) FROM dbo.Customers WHERE PartyId=@PartyId AND TenantId=@TenantId AND IsActive=1),
                   (SELECT COUNT(*) FROM dbo.UserRoles ur JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId
                    WHERE ur.UserId=@UserId AND r.NormalizedName=N'ADMINISTRATOR'),
                   (SELECT COUNT(*) FROM dbo.PartyContacts WHERE PartyId=@PartyId AND ContactType=N'Email'
@@ -788,11 +788,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             """
             IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId)
               INSERT dbo.TaxProfiles(
-                  TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-              VALUES(@TaxProfileId,@BusinessId,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
+                  TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+              VALUES(@TaxProfileId,@TenantId,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
             """,
             new SqlParameter("@TaxProfileId", fixture.TaxProfileId),
-            new SqlParameter("@BusinessId", fixture.BusinessId));
+            new SqlParameter("@TenantId", fixture.TenantId));
         var productPrice = 27_350m;
         var productCode = $"MULTI-{Guid.NewGuid():N}";
         using var catalog = fixture.CreateAdminClient(
@@ -881,7 +881,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.Businesses WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.Warehouses w INNER JOIN dbo.Businesses b ON b.BusinessId=w.BusinessId WHERE b.TenantId=@TenantId AND w.Code IN(N'VEN',N'PED')),
               (SELECT COUNT(*) FROM dbo.BusinessReasons r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId WHERE b.TenantId=@TenantId),
-              (SELECT COUNT(*) FROM dbo.ProductUnits u INNER JOIN dbo.Businesses b ON b.BusinessId=u.BusinessId WHERE b.TenantId=@TenantId),
+              (SELECT COUNT(*) FROM dbo.ProductUnits u WHERE u.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.Customers c INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE p.TenantId=@TenantId AND p.DisplayName=N'Consumidor final'),
               (SELECT COUNT(*) FROM dbo.AccountingAccounts WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.AccountingAccountMappings WHERE TenantId=@TenantId AND BusinessId IS NULL),
@@ -1036,13 +1036,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                WHERE partyValue.TenantId=@TenantId
                  AND partyValue.DisplayName=N'Consumidor final'),
               (SELECT COUNT(*) FROM dbo.Suppliers supplierValue
-               JOIN dbo.Businesses businessValue ON businessValue.BusinessId=supplierValue.BusinessId
-               WHERE businessValue.TenantId=@TenantId
+               WHERE supplierValue.TenantId=@TenantId
                  AND supplierValue.Identification=N'OCASIONAL'
                  AND supplierValue.Name=N'Gasto ocasional / sin proveedor'),
               (SELECT COUNT(*) FROM dbo.Employees employeeValue
-               JOIN dbo.Businesses businessValue ON businessValue.BusinessId=employeeValue.BusinessId
-               WHERE businessValue.TenantId=@TenantId),
+               WHERE employeeValue.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.Parties WHERE TenantId=@TenantId);
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);

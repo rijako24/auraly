@@ -14,10 +14,9 @@ public sealed partial class SqlCatalogStore
         await connection.OpenAsync(ct);
         await EnsureDefaultTaxProfilesAsync(connection, user, ct);
         await using var command = new SqlCommand("""
-            SELECT t.TaxProfileId,t.BusinessId,t.Code,t.DianTaxCode,t.Name,t.Rate,t.IsActive
+            SELECT t.TaxProfileId,t.TenantId,t.Code,t.DianTaxCode,t.Name,t.Rate,t.IsActive
             FROM dbo.TaxProfiles t
-            INNER JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
-            WHERE t.BusinessId=@BusinessId AND b.TenantId=@TenantId
+            WHERE t.TenantId=@TenantId
               AND (@IncludeInactive=1 OR t.IsActive=1)
             ORDER BY t.Rate,t.Name,t.Code;
             """, connection);
@@ -47,21 +46,38 @@ public sealed partial class SqlCatalogStore
                 IF NOT EXISTS(SELECT 1 FROM dbo.Businesses
                   WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                   THROW 51021,'The business is outside the authenticated tenant.',1;
+                IF @IsActive=0 AND EXISTS(
+                  SELECT 1 FROM dbo.Products
+                  WHERE TenantId=@TenantId AND IsActive=1
+                    AND (TaxProfileId=@TaxProfileId OR PurchaseTaxProfileId=@TaxProfileId))
+                  THROW 51024,'The VAT profile is assigned to active products.',1;
 
                 IF @Create=1
                   INSERT dbo.TaxProfiles
-                    (TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-                  VALUES(@TaxProfileId,@BusinessId,@Code,@DianTaxCode,@Name,@Rate,@IsActive,@Now);
+                    (TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+                  VALUES(@TaxProfileId,@TenantId,@Code,@DianTaxCode,@Name,@Rate,@IsActive,@Now);
                 ELSE
                 BEGIN
                   UPDATE dbo.TaxProfiles
                   SET Code=@Code,DianTaxCode=@DianTaxCode,Name=@Name,Rate=@Rate,IsActive=@IsActive
-                  WHERE TaxProfileId=@TaxProfileId AND BusinessId=@BusinessId;
+                  WHERE TaxProfileId=@TaxProfileId AND TenantId=@TenantId;
                   IF @@ROWCOUNT=0 THROW 51010,'The VAT master was not found.',1;
                 END;
 
-                SELECT TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive
-                FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId;
+                DECLARE @Change TABLE(BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
+                INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+                  OUTPUT inserted.BusinessId,inserted.CatalogChangeId INTO @Change
+                  SELECT businessValue.BusinessId,product.ProductId,N'Upsert',@Now
+                  FROM dbo.Products product
+                  JOIN dbo.Businesses businessValue ON businessValue.TenantId=product.TenantId AND businessValue.IsActive=1
+                  WHERE product.TenantId=@TenantId
+                    AND (product.TaxProfileId=@TaxProfileId OR product.PurchaseTaxProfileId=@TaxProfileId);
+                INSERT dbo.PosSynchronizationOutboxMessages
+                  (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+                  SELECT NEWID(),BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
+
+                SELECT TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive
+                FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId AND TenantId=@TenantId;
                 """, connection, transaction);
             command.Parameters.AddWithValue("@Create", !taxProfileId.HasValue);
             command.Parameters.AddWithValue("@TaxProfileId", id);
@@ -85,7 +101,12 @@ public sealed partial class SqlCatalogStore
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(CancellationToken.None);
-            throw new CatalogConflictException("Ya existe un IVA con este código en el negocio.");
+            throw new CatalogConflictException("Ya existe un IVA con este código en el tenant.");
+        }
+        catch (SqlException exception) when (exception.Number == 51024)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new CatalogValidationException(exception.Message);
         }
     }
 
@@ -95,15 +116,15 @@ public sealed partial class SqlCatalogStore
         await using var command = new SqlCommand("""
             IF EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
             BEGIN
-              IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId AND Rate=0 AND DianTaxCode=N'01')
-                INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-                VALUES(@ZeroId,@BusinessId,N'IVA-0',N'01',N'IVA 0%',0,1,@Now);
-              IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId AND Rate=5 AND DianTaxCode=N'01')
-                INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-                VALUES(@FiveId,@BusinessId,N'IVA-5',N'01',N'IVA 5%',5,1,@Now);
-              IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId AND Rate=19 AND DianTaxCode=N'01')
-                INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-                VALUES(@NineteenId,@BusinessId,N'IVA-19',N'01',N'IVA 19%',19,1,@Now);
+              IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@TenantId AND Rate=0 AND DianTaxCode=N'01')
+                INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+                VALUES(@ZeroId,@TenantId,N'IVA-0',N'01',N'IVA 0%',0,1,@Now);
+              IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@TenantId AND Rate=5 AND DianTaxCode=N'01')
+                INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+                VALUES(@FiveId,@TenantId,N'IVA-5',N'01',N'IVA 5%',5,1,@Now);
+              IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@TenantId AND Rate=19 AND DianTaxCode=N'01')
+                INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+                VALUES(@NineteenId,@TenantId,N'IVA-19',N'01',N'IVA 19%',19,1,@Now);
             END
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
@@ -129,7 +150,7 @@ public sealed partial class SqlCatalogStore
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles purchaseTax
               ON purchaseTax.TaxProfileId=p.PurchaseTaxProfileId
-             AND purchaseTax.BusinessId=@BusinessId
+             AND purchaseTax.TenantId=@TenantId
             WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId
               AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId);
             """, connection);
@@ -163,16 +184,16 @@ public sealed partial class SqlCatalogStore
             var purchaseTaxTreatment = isGenericProduct ? "NotApplicable" : request.PurchaseTaxTreatment;
             await using var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles
-                  WHERE TaxProfileId=@SalesTaxProfileId AND BusinessId=@BusinessId AND IsActive=1)
+                  WHERE TaxProfileId=@SalesTaxProfileId AND TenantId=@TenantId AND IsActive=1)
                   THROW 51021,'The sales VAT profile is invalid.',1;
                 IF @IsGenericProduct=0 AND (@PurchaseTaxProfileId IS NULL OR NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles
-                  WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND IsActive=1)
+                  WHERE TaxProfileId=@PurchaseTaxProfileId AND TenantId=@TenantId AND IsActive=1)
                 )
                   THROW 51021,'The purchase VAT profile is invalid.',1;
 
-                IF @IsGenericProduct=0 AND EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND Rate=0) AND @PurchaseTaxTreatment<>N'NotApplicable'
+                IF @IsGenericProduct=0 AND EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND TenantId=@TenantId AND Rate=0) AND @PurchaseTaxTreatment<>N'NotApplicable'
                   THROW 51024,'A zero-rated purchase VAT profile must use NotApplicable treatment.',1;
-                IF @IsGenericProduct=0 AND EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND Rate>0) AND @PurchaseTaxTreatment=N'NotApplicable'
+                IF @IsGenericProduct=0 AND EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND TenantId=@TenantId AND Rate>0) AND @PurchaseTaxTreatment=N'NotApplicable'
                   THROW 51024,'A positive purchase VAT profile must use DeductibleInputVat or CapitalizedCost treatment.',1;
 
                 UPDATE p SET TaxProfileId=@SalesTaxProfileId,
@@ -184,13 +205,15 @@ public sealed partial class SqlCatalogStore
                   AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId);
                 IF @@ROWCOUNT=0 THROW 51010,'The product was not found.',1;
 
-                DECLARE @Change TABLE(CatalogChangeId BIGINT NOT NULL);
+                DECLARE @Change TABLE(BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
                 INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
-                  OUTPUT inserted.CatalogChangeId INTO @Change
-                  VALUES(@BusinessId,@ProductId,N'Upsert',@Now);
+                  OUTPUT inserted.BusinessId,inserted.CatalogChangeId INTO @Change
+                  SELECT businessValue.BusinessId,@ProductId,N'Upsert',@Now
+                  FROM dbo.Businesses businessValue
+                  WHERE businessValue.TenantId=@TenantId AND businessValue.IsActive=1;
                 INSERT dbo.PosSynchronizationOutboxMessages
                   (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-                  SELECT @NotificationId,@BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
+                  SELECT NEWID(),BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
                 """, connection, transaction);
             command.Parameters.AddWithValue("@SalesTaxProfileId", request.SalesTaxProfileId);
             command.Parameters.AddWithValue("@PurchaseTaxProfileId", (object?)purchaseTaxProfileId ?? DBNull.Value);
@@ -200,7 +223,6 @@ public sealed partial class SqlCatalogStore
             command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             command.Parameters.AddWithValue("@TenantId", user.TenantId);
             command.Parameters.AddWithValue("@UserId", user.UserId);
-            command.Parameters.AddWithValue("@NotificationId", ids.NewId());
             command.Parameters.AddWithValue("@Now", now);
             await command.ExecuteNonQueryAsync(ct);
             await transaction.CommitAsync(ct);

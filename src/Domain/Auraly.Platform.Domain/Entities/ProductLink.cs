@@ -3,7 +3,7 @@ namespace Auraly.Platform.Domain.Entities;
 public sealed class ProductLink
 {
     public Guid ProductLinkId { get; set; }
-    public Guid BusinessId { get; set; }
+    public Guid TenantId { get; set; }
     public Guid ChildProductId { get; set; }
     public Guid ParentProductId { get; set; }
     public decimal? InventoryFactor { get; set; }

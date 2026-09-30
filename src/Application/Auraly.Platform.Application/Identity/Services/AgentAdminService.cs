@@ -417,7 +417,8 @@ public sealed class AgentAdminService : IAgentAdminService
 
         var employee = await _unitOfWork.Employees.GetByIdAsync(employeeId.Value)
             ?? throw new DomainValidationException("EmployeeId", "El empleado no existe.");
-        if (employee.BusinessId != businessId)
+        var business = await _unitOfWork.Businesses.GetByIdAsync(businessId);
+        if (business is null || employee.TenantId != business.TenantId)
             throw new DomainValidationException("EmployeeId", "El empleado no pertenece al negocio.");
     }
 

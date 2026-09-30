@@ -22,7 +22,7 @@ export async function loadTenantPrintBrandingFromBrowserStore<T extends { tenant
     if (saved) {
       const entry = await saved.json() as { etag?: string; branding?: T };
       if (entry.etag && entry.branding &&
-          (!expectedTenantId || entry.branding.tenantId === expectedTenantId))
+          (!expectedTenantId || entry.branding.tenantId.toLowerCase() === expectedTenantId.toLowerCase()))
         previous = { etag: entry.etag, branding: entry.branding };
     }
   } catch {
@@ -36,7 +36,7 @@ export async function loadTenantPrintBrandingFromBrowserStore<T extends { tenant
     return previous.branding;
   }
   const branding = response.value;
-  if (expectedTenantId && branding.tenantId !== expectedTenantId)
+  if (expectedTenantId && branding.tenantId.toLowerCase() !== expectedTenantId.toLowerCase())
     throw new Error("La sesión de impresión cambió de empresa. Vuelve a abrir el punto de venta.");
   if (cache && response.etag) {
     try {

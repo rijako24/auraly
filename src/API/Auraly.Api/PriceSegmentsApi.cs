@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Auraly.Contracts.Pricing;
 using Auraly.Application.Pricing;
 using Auraly.BuildingBlocks.Application.Synchronization;
@@ -49,6 +50,7 @@ public static class PriceSegmentsApi
     private static async Task<IResult> SaveAsync(
         HttpContext context, SavePriceSegmentRequest request,
         SqlServerConnectionFactory connections,
+        IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
         CancellationToken ct)
@@ -61,6 +63,10 @@ public static class PriceSegmentsApi
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+        var businessIds = await GetDefaultBusinessIdsAsync(connection, transaction, identity.BusinessId, ct);
+        if (!await access.HasPermissionForBusinessesAsync(
+                identity.UserId, identity.TenantId, businessIds, "pricing.segments.manage", ct))
+            return Results.Forbid();
         var id = Guid.NewGuid();
         var code = $"CNL-{id:N}".ToUpperInvariant()[..12];
         var requestedItems = request.Items ?? [];
@@ -87,34 +93,12 @@ public static class PriceSegmentsApi
         command.Parameters.AddWithValue("@Name", name);
         command.Parameters.AddWithValue("@Strategy", (object?)strategy ?? DBNull.Value);
         command.Parameters.AddWithValue("@Value", (object?)channelValue ?? DBNull.Value);
+        command.Parameters.AddWithValue("@ItemsJson", JsonSerializer.Serialize(
+            strategy == PriceChannelStrategies.TieredProductPrice ? requestedItems : []));
+        command.Parameters.AddWithValue("@ExclusionsJson", JsonSerializer.Serialize(requestedExclusions));
         try
         {
             await command.ExecuteNonQueryAsync(ct);
-            if (strategy == PriceChannelStrategies.TieredProductPrice)
-            {
-                foreach (var item in requestedItems)
-                {
-                    await using var itemCommand = Procedure("dbo.PriceSegmentItemSave", connection, transaction);
-                    itemCommand.Parameters.AddWithValue("@Id", id);
-                    itemCommand.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
-                    itemCommand.Parameters.AddWithValue("@ProductId", item.ProductId);
-                    itemCommand.Parameters.AddWithValue("@MinimumQuantity", item.MinimumQuantity);
-                    itemCommand.Parameters.AddWithValue("@Amount", item.Amount);
-                    await itemCommand.ExecuteNonQueryAsync(ct);
-                }
-            }
-            foreach (var exclusion in requestedExclusions)
-            {
-                TryNormalizeExclusionScope(exclusion.ScopeType, out var scopeType);
-                await using var exclusionCommand = Procedure(
-                    "dbo.PriceChannelExclusionSave", connection, transaction);
-                exclusionCommand.Parameters.AddWithValue("@ExclusionId", Guid.NewGuid());
-                exclusionCommand.Parameters.AddWithValue("@Id", id);
-                exclusionCommand.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
-                exclusionCommand.Parameters.AddWithValue("@ScopeType", scopeType);
-                exclusionCommand.Parameters.AddWithValue("@ScopeId", exclusion.ScopeId);
-                await exclusionCommand.ExecuteNonQueryAsync(ct);
-            }
             await transaction.CommitAsync(ct);
         }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
@@ -122,10 +106,15 @@ public static class PriceSegmentsApi
             await transaction.RollbackAsync(ct);
             return Results.Problem("Ya existe una condición igual para ese producto.", statusCode: 409);
         }
-        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+        catch (SqlException exception) when (exception.Number is 51004 or 51005)
+        {
+            await transaction.RollbackAsync(ct);
+            return Results.Problem(exception.Message, statusCode: 400);
+        }
+        await SynchronizeAsync(identity.TenantId, businessIds,
             pricingSynchronization, synchronization, ct);
         return Results.Ok(new PriceSegmentSummary(id, code, name, true,
-            DateTimeOffset.UtcNow, requestedItems.Select(item => item.ProductId).Distinct().Count(), 0,
+            DateTimeOffset.UtcNow, strategy == PriceChannelStrategies.TieredProductPrice ? requestedItems.Count : 0, 0,
             strategy!, channelValue));
     }
 
@@ -173,6 +162,7 @@ public static class PriceSegmentsApi
     private static async Task<IResult> SaveItemAsync(
         HttpContext context, Guid id, Guid productId,
         SavePriceSegmentItemRequest request, SqlServerConnectionFactory connections,
+        IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
         CancellationToken ct)
@@ -183,6 +173,10 @@ public static class PriceSegmentsApi
             return Results.Problem("Precio y cantidad mínima deben ser mayores que cero.", statusCode: 400);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
+        var businessIds = await GetChannelBusinessIdsAsync(connection, id, identity.BusinessId, ct);
+        if (businessIds.Length == 0) return Results.NotFound();
+        if (!await access.HasPermissionForBusinessesAsync(identity.UserId, identity.TenantId,
+                businessIds, "pricing.segments.manage", ct)) return Results.Forbid();
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
         await using var command = Procedure("dbo.PriceSegmentItemSave", connection, transaction);
         command.Parameters.AddWithValue("@Id", id);
@@ -193,7 +187,7 @@ public static class PriceSegmentsApi
         try { await command.ExecuteNonQueryAsync(ct); await transaction.CommitAsync(ct); }
         catch (SqlException exception) when (exception.Number == 51004)
         { await transaction.RollbackAsync(ct); return Results.NotFound(); }
-        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+        await SynchronizeAsync(identity.TenantId, businessIds,
             pricingSynchronization, synchronization, ct);
         return Results.NoContent();
     }
@@ -229,6 +223,7 @@ public static class PriceSegmentsApi
     private static async Task<IResult> SaveExclusionAsync(
         HttpContext context, Guid id, SavePriceChannelExclusionRequest request,
         SqlServerConnectionFactory connections,
+        IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
         CancellationToken ct)
@@ -244,6 +239,10 @@ public static class PriceSegmentsApi
         var exclusionId = Guid.NewGuid();
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
+        var businessIds = await GetChannelBusinessIdsAsync(connection, id, identity.BusinessId, ct);
+        if (businessIds.Length == 0) return Results.NotFound();
+        if (!await access.HasPermissionForBusinessesAsync(identity.UserId, identity.TenantId,
+                businessIds, "pricing.segments.manage", ct)) return Results.Forbid();
         await using var command = Procedure("dbo.PriceChannelExclusionSave", connection);
         command.Parameters.AddWithValue("@ExclusionId", exclusionId);
         command.Parameters.AddWithValue("@Id", id);
@@ -253,7 +252,7 @@ public static class PriceSegmentsApi
         try
         {
             await command.ExecuteNonQueryAsync(ct);
-            await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+            await SynchronizeAsync(identity.TenantId, businessIds,
                 pricingSynchronization, synchronization, ct);
             return Results.Created($"/api/commerce/v1/pricing/segments/{id:D}/exclusions/{exclusionId:D}",
                 new { exclusionId });
@@ -271,6 +270,7 @@ public static class PriceSegmentsApi
     private static async Task<IResult> DeleteExclusionAsync(
         HttpContext context, Guid id, Guid exclusionId,
         SqlServerConnectionFactory connections,
+        IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
         CancellationToken ct)
@@ -279,19 +279,31 @@ public static class PriceSegmentsApi
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
+        var businessIds = await GetChannelBusinessIdsAsync(connection, id, identity.BusinessId, ct);
+        if (businessIds.Length == 0) return Results.NotFound();
+        if (!await access.HasPermissionForBusinessesAsync(identity.UserId, identity.TenantId,
+                businessIds, "pricing.segments.manage", ct)) return Results.Forbid();
         await using var command = Procedure("dbo.PriceChannelExclusionDelete", connection);
         command.Parameters.AddWithValue("@ExclusionId", exclusionId);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
-        await command.ExecuteNonQueryAsync(ct);
-        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
-            pricingSynchronization, synchronization, ct);
-        return Results.NoContent();
+        try
+        {
+            if (Convert.ToInt32(await command.ExecuteScalarAsync(ct)) > 0)
+                await SynchronizeAsync(identity.TenantId, businessIds,
+                    pricingSynchronization, synchronization, ct);
+            return Results.NoContent();
+        }
+        catch (SqlException exception) when (exception.Number == 51004)
+        {
+            return Results.NotFound();
+        }
     }
 
     private static async Task<IResult> SaveChannelSettingsAsync(
         HttpContext context, Guid id, SavePriceChannelSettingsRequest request,
         SqlServerConnectionFactory connections,
+        IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
         CancellationToken ct)
@@ -307,6 +319,11 @@ public static class PriceSegmentsApi
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+        var businessIds = await GetChannelBusinessIdsAsync(connection, id, identity.BusinessId, ct, transaction);
+        if (businessIds.Length == 0) return Results.NotFound();
+        if (!await access.HasPermissionForBusinessesAsync(
+                identity.UserId, identity.TenantId, businessIds, "pricing.segments.manage", ct))
+            return Results.Forbid();
         await using var command = Procedure("dbo.PriceChannelSettingsUpdate", connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@Id", id);
@@ -323,7 +340,7 @@ public static class PriceSegmentsApi
             await transaction.RollbackAsync(ct);
             return Results.NotFound();
         }
-        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
+        await SynchronizeAsync(identity.TenantId, businessIds,
             pricingSynchronization, synchronization, ct);
         return Results.NoContent();
     }
@@ -331,6 +348,7 @@ public static class PriceSegmentsApi
     private static async Task<IResult> DeleteItemAsync(
         HttpContext context, Guid id, Guid productId, decimal? minimumQuantity,
         SqlServerConnectionFactory connections,
+        IExecutionAccessResolver access,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
         CancellationToken ct)
@@ -339,27 +357,69 @@ public static class PriceSegmentsApi
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
+        var businessIds = await GetChannelBusinessIdsAsync(connection, id, identity.BusinessId, ct);
+        if (businessIds.Length == 0) return Results.NotFound();
+        if (!await access.HasPermissionForBusinessesAsync(identity.UserId, identity.TenantId,
+                businessIds, "pricing.segments.manage", ct)) return Results.Forbid();
         await using var command = Procedure("dbo.PriceSegmentItemDelete", connection);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@MinimumQuantity", minimumQuantity ?? 1m);
-        await command.ExecuteNonQueryAsync(ct);
-        await SynchronizeAsync(identity.TenantId, identity.BusinessId,
-            pricingSynchronization, synchronization, ct);
-        return Results.NoContent();
+        try
+        {
+            if (Convert.ToInt32(await command.ExecuteScalarAsync(ct)) > 0)
+                await SynchronizeAsync(identity.TenantId, businessIds,
+                    pricingSynchronization, synchronization, ct);
+            return Results.NoContent();
+        }
+        catch (SqlException exception) when (exception.Number == 51004)
+        {
+            return Results.NotFound();
+        }
     }
 
-    private static async Task SynchronizeAsync(
+    private static async Task<Guid[]> GetChannelBusinessIdsAsync(
+        SqlConnection connection, Guid channelId, Guid currentBusinessId, CancellationToken ct,
+        SqlTransaction? transaction = null)
+    {
+        await using var command = Procedure("dbo.PriceChannelBusinessIdsList", connection, transaction);
+        command.Parameters.AddWithValue("@Id", channelId);
+        command.Parameters.AddWithValue("@BusinessId", currentBusinessId);
+        var result = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) result.Add(reader.GetGuid(0));
+        return result.ToArray();
+    }
+
+    private static async Task<Guid[]> GetDefaultBusinessIdsAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid currentBusinessId, CancellationToken ct)
+    {
+        await using var command = Procedure("dbo.PriceChannelDefaultBusinessesList", connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", currentBusinessId);
+        var result = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) result.Add(reader.GetGuid(0));
+        return result.ToArray();
+    }
+
+    private static Task SynchronizeAsync(
         Guid tenantId,
         Guid businessId,
         IPosPricingSynchronizationWriter pricingSynchronization,
         IPosSynchronizationOutboxDispatcher synchronization,
+        CancellationToken ct) => SynchronizeAsync(tenantId, [businessId], pricingSynchronization, synchronization, ct);
+
+    private static async Task SynchronizeAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Guid> businessIds,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization,
         CancellationToken ct)
     {
-        await pricingSynchronization.EnqueueBusinessesAsync([businessId], ct);
-        await synchronization.DispatchPendingAsync(
-            tenantId, businessId, CancellationToken.None);
+        await pricingSynchronization.EnqueueBusinessesAsync(businessIds, ct);
+        foreach (var businessId in businessIds)
+            await synchronization.DispatchPendingAsync(tenantId, businessId, CancellationToken.None);
     }
 
     private static bool TryNormalizeChannelStrategy(string? strategy, out string normalized)

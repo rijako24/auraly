@@ -50,7 +50,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             ORDER BY Name,Code;
             SELECT SupplierId,Identification,Name,PurchaseEvidencePolicy
             FROM dbo.Suppliers
-            WHERE BusinessId=@BusinessId AND IsActive=1 AND 1=0
+            WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1
             ORDER BY Name,Identification;
             SELECT Code,Label,Description
             FROM reference.Options
@@ -138,32 +138,31 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         const string sql = """
             SET NOCOUNT ON;
 
-            IF NOT EXISTS (
-              SELECT 1 FROM dbo.Suppliers
-              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51120,'El proveedor no está activo en esta sede.',1;
-
             DECLARE @TenantId UNIQUEIDENTIFIER,@SharesProductPrices BIT;
             SELECT @TenantId=TenantId,@SharesProductPrices=SharesProductPrices
             FROM dbo.Businesses
             WHERE BusinessId=@BusinessId;
 
+            IF NOT EXISTS (
+              SELECT 1 FROM dbo.Suppliers
+              WHERE SupplierId=@SupplierId AND TenantId=@TenantId AND IsActive=1)
+              THROW 51120,'El proveedor no está activo en este tenant.',1;
+
             SELECT COUNT(*)
             FROM dbo.Products p
             LEFT JOIN dbo.SupplierProducts sp
-              ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
+              ON sp.ProductId=p.ProductId AND sp.TenantId=@TenantId
              AND sp.SupplierId=@SupplierId AND sp.IsActive=1
-            WHERE (p.TenantId=@TenantId
-                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
+            WHERE p.TenantId=@TenantId AND p.IsActive=1
               AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
-                             WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
+                             WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId
                                AND link.SharesInventory=1 AND link.IsActive=1)
               AND (@IncludeUnassociated=1 OR sp.SupplierProductId IS NOT NULL)
               AND (@Search IS NULL OR p.ProductCode LIKE N'%'+@Search+N'%'
                    OR p.Reference LIKE N'%'+@Search+N'%' OR p.Name LIKE N'%'+@Search+N'%'
                    OR sp.SupplierProductCode LIKE N'%'+@Search+N'%'
                    OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes pb
-                              WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId
+                              WHERE pb.ProductId=p.ProductId AND pb.TenantId=@TenantId
                                 AND pb.IsActive=1 AND pb.Barcode LIKE N'%'+@Search+N'%'))
             OPTION (RECOMPILE);
 
@@ -175,19 +174,18 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             SELECT p.ProductId
             FROM dbo.Products p
             LEFT JOIN dbo.SupplierProducts sp
-              ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
+              ON sp.ProductId=p.ProductId AND sp.TenantId=@TenantId
              AND sp.SupplierId=@SupplierId AND sp.IsActive=1
-            WHERE (p.TenantId=@TenantId
-                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
+            WHERE p.TenantId=@TenantId AND p.IsActive=1
               AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
-                             WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
+                             WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId
                                AND link.SharesInventory=1 AND link.IsActive=1)
               AND (@IncludeUnassociated=1 OR sp.SupplierProductId IS NOT NULL)
               AND (@Search IS NULL OR p.ProductCode LIKE N'%'+@Search+N'%'
                    OR p.Reference LIKE N'%'+@Search+N'%' OR p.Name LIKE N'%'+@Search+N'%'
                    OR sp.SupplierProductCode LIKE N'%'+@Search+N'%'
                    OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes pb
-                              WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId
+                              WHERE pb.ProductId=p.ProductId AND pb.TenantId=@TenantId
                                 AND pb.IsActive=1 AND pb.Barcode LIKE N'%'+@Search+N'%'))
             ORDER BY CASE WHEN sp.SupplierProductId IS NULL THEN 1 ELSE 0 END,p.Name,p.ProductId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
@@ -205,11 +203,11 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             FROM #RequestedProducts requested
             INNER JOIN dbo.Products p ON p.ProductId=requested.ProductId
             LEFT JOIN dbo.SupplierProducts sp
-              ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
+              ON sp.ProductId=p.ProductId AND sp.TenantId=@TenantId
              AND sp.SupplierId=@SupplierId AND sp.IsActive=1
             LEFT JOIN dbo.TaxProfiles tp
               ON tp.TaxProfileId=COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId)
-             AND tp.BusinessId=@BusinessId
+             AND tp.TenantId=@TenantId
             LEFT JOIN dbo.SupplierProductLatestCosts latest
               ON latest.BusinessId=@BusinessId AND latest.SupplierId=@SupplierId
              AND latest.ProductId=p.ProductId
@@ -227,7 +225,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             OUTER APPLY (
               SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),pb.Barcode),N'|') AS Barcodes
               FROM dbo.ProductBarcodes pb
-              WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId AND pb.IsActive=1
+              WHERE pb.ProductId=p.ProductId AND pb.TenantId=@TenantId AND pb.IsActive=1
             ) b
             ORDER BY CASE WHEN sp.SupplierProductId IS NULL THEN 1 ELSE 0 END,p.Name,p.ProductId
             OPTION (RECOMPILE);
@@ -266,35 +264,35 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         try
         {
             const string sql = """
+                DECLARE @TenantId uniqueidentifier=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
                 IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers
-                               WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
+                               WHERE SupplierId=@SupplierId AND TenantId=@TenantId AND IsActive=1)
                   THROW 51120,'El proveedor no está activo en esta sede.',1;
                 IF NOT EXISTS (SELECT 1 FROM dbo.Products
                                WHERE ProductId=@ProductId AND IsActive=1
-                                 AND (TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                                      OR (TenantId IS NULL AND BusinessId=@BusinessId)))
+                                 AND TenantId=@TenantId)
                   THROW 51125,'El producto no pertenece a esta sede.',1;
                 IF EXISTS (SELECT 1 FROM dbo.ProductLinks
-                           WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId
+                           WHERE TenantId=@TenantId AND ChildProductId=@ProductId
                              AND SharesInventory=1 AND IsActive=1)
                   THROW 51125,'Los productos vinculados al inventario deben recibirse mediante su producto principal.',1;
 
                 IF @IsPrimary=1
                   UPDATE dbo.SupplierProducts SET IsPrimary=0
-                  WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+                  WHERE TenantId=@TenantId AND ProductId=@ProductId AND IsActive=1;
 
                 IF EXISTS (SELECT 1 FROM dbo.SupplierProducts WITH (UPDLOCK,HOLDLOCK)
-                           WHERE BusinessId=@BusinessId AND SupplierId=@SupplierId AND ProductId=@ProductId)
+                           WHERE TenantId=@TenantId AND SupplierId=@SupplierId AND ProductId=@ProductId)
                   UPDATE dbo.SupplierProducts
                   SET SupplierProductCode=COALESCE(@SupplierProductCode,SupplierProductCode),
                       PurchasePresentationName=@PresentationName,UnitsPerPresentation=@UnitsPerPresentation,
                       IsPrimary=@IsPrimary,IsActive=1
-                  WHERE BusinessId=@BusinessId AND SupplierId=@SupplierId AND ProductId=@ProductId;
+                  WHERE TenantId=@TenantId AND SupplierId=@SupplierId AND ProductId=@ProductId;
                 ELSE
                   INSERT dbo.SupplierProducts
-                    (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,PurchasePresentationName,UnitsPerPresentation,IsPrimary,IsActive,CreatedAt)
+                    (SupplierProductId,TenantId,ProductId,SupplierId,SupplierProductCode,PurchasePresentationName,UnitsPerPresentation,IsPrimary,IsActive,CreatedAt)
                   VALUES
-                    (@SupplierProductId,@BusinessId,@ProductId,@SupplierId,@SupplierProductCode,@PresentationName,@UnitsPerPresentation,@IsPrimary,1,@Now);
+                    (@SupplierProductId,@TenantId,@ProductId,@SupplierId,@SupplierProductCode,@PresentationName,@UnitsPerPresentation,@IsPrimary,1,@Now);
 
                 SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,
                        sp.SupplierProductCode,latest.LatestUnitCost,averageCost.AverageUnitCost,
@@ -304,11 +302,12 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                        sp.PurchasePresentationName,sp.UnitsPerPresentation,sp.IsPrimary,p.UnitGrossWeightKg
                 FROM dbo.Products p
                 INNER JOIN dbo.SupplierProducts sp
-                  ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
+                  ON sp.ProductId=p.ProductId
+                 AND sp.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
                  AND sp.SupplierId=@SupplierId AND sp.IsActive=1
                 LEFT JOIN dbo.TaxProfiles tp
                   ON tp.TaxProfileId=COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId)
-                 AND tp.BusinessId=@BusinessId
+                 AND tp.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
                 LEFT JOIN dbo.SupplierProductLatestCosts latest
                   ON latest.BusinessId=@BusinessId AND latest.SupplierId=@SupplierId
                  AND latest.ProductId=p.ProductId
@@ -327,11 +326,11 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 OUTER APPLY (
                   SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),pb.Barcode),N'|') AS Barcodes
                   FROM dbo.ProductBarcodes pb
-                  WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId AND pb.IsActive=1
+                  WHERE pb.ProductId=p.ProductId
+                    AND pb.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND pb.IsActive=1
                 ) b
                 WHERE p.ProductId=@ProductId
-                  AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                       OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
+                  AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
                 """;
             await using var command = new SqlCommand(sql, connection, transaction);
             command.Parameters.AddWithValue("@SupplierProductId", ids.NewId());
@@ -681,12 +680,14 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 AND IsActive=1 AND IsSystem=0 AND UseForGoodsReceipts=1)
               THROW 51122,'La bodega no pertenece a esta sede.',1;
             IF @SupplierId IS NOT NULL AND NOT EXISTS (
-              SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
+              SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId
+                AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1)
               THROW 51123,'El proveedor no está activo en esta sede.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId') x
-              LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId AND s.IsActive=1
+              LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId
+                AND s.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND s.IsActive=1
               WHERE s.SupplierId IS NULL)
               THROW 51127,'Un proveedor de costo adicional no está activo en esta sede.',1;
             IF @CurrencyCode<>N'COP' AND NOT EXISTS (
@@ -705,7 +706,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId',PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
               INNER JOIN dbo.Suppliers supplier
-                ON supplier.SupplierId=x.SupplierId AND supplier.BusinessId=@BusinessId AND supplier.IsActive=1
+                ON supplier.SupplierId=x.SupplierId
+               AND supplier.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND supplier.IsActive=1
               WHERE NOT (
                 x.PurchaseEvidenceType IN (N'ForeignCommercialInvoice',N'ImportDeclaration')
                 OR supplier.PurchaseEvidencePolicy IS NULL
@@ -715,7 +717,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
               THROW 51130,'El tipo de soporte de un documento adicional no está permitido para su proveedor.',1;
             IF @SupplierId IS NOT NULL AND @PurchaseEvidenceType IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers
-              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1
+              WHERE SupplierId=@SupplierId AND TenantId=@TenantId AND IsActive=1
                 AND (@PurchaseEvidenceType=N'ForeignCommercialInvoice' OR PurchaseEvidencePolicy IS NULL
                   OR PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND @PurchaseEvidenceType=N'InternalReceiptVoucher'
                   OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
@@ -727,7 +729,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
               LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.IsActive=1
                 AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               LEFT JOIN dbo.SupplierProducts sp ON sp.ProductId=x.ProductId AND sp.SupplierId=@SupplierId
-                    AND sp.BusinessId=@BusinessId AND sp.IsActive=1
+                    AND sp.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND sp.IsActive=1
               WHERE p.ProductId IS NULL OR sp.SupplierProductId IS NULL)
               THROW 51124,'Cada producto debe estar activo y asociado con el proveedor seleccionado.',1;
             """;

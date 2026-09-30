@@ -1,3 +1,4 @@
+using System.Net;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Platform.Domain.Enums;
@@ -80,7 +81,39 @@ public sealed class PosCaptureServiceTests
             Assert.Equal(captured.Draft.Lines.Single().LineId, issue.LineId);
             Assert.Equal(1m, issue.RequestedQuantity);
             Assert.Equal(0m, issue.AvailableQuantity);
+            Assert.Single(availability.BatchRequests);
+            Assert.Single(availability.BatchRequests[0].Items);
         });
+    }
+
+    [Fact]
+    public async Task Recovered_draft_checks_multiple_products_in_one_server_request()
+    {
+        var secondProductId = Guid.NewGuid();
+        await WithServiceAsync(async (service, _, scope, firstProductId, customerId, availability) =>
+        {
+            var first = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            await service.CaptureAsync("770124", scope, customerId, false, Guid.NewGuid());
+            availability.BatchAvailable[firstProductId] = 0m;
+            availability.BatchAvailable[secondProductId] = 0m;
+
+            var validation = await service.ValidateDraftInventoryAsync(
+                first.Draft!.DraftId, false, Guid.NewGuid());
+
+            Assert.False(validation.IsValid);
+            Assert.Equal(2, validation.Issues.Count);
+            var request = Assert.Single(availability.BatchRequests);
+            Assert.Equal(2, request.Items.Count);
+            Assert.Equal([firstProductId, secondProductId], request.Items.Select(item => item.ProductId));
+        }, additionalItemsFactory: _ =>
+        [
+            new PosCatalogItem(
+                secondProductId, "P-2", "REF-2", "Second product", "EA", "VAT19", 19m,
+                100m, "COP", IsActive: true, IsWeighable: false,
+                AllowsFractionalSale: false, Scale: null, Barcodes: ["770124"],
+                Identifiers: [], UnitCost: 0m, ManagesStock: true)
+        ]);
     }
 
     [Fact]
@@ -151,6 +184,36 @@ public sealed class PosCaptureServiceTests
 
             Assert.True(changed.Added);
             Assert.Equal(7m, Assert.Single(changed.Draft!.Lines).Quantity);
+        });
+    }
+
+    [Fact]
+    public async Task Server_rejection_does_not_bypass_checkout_inventory_validation()
+    {
+        await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>
+        {
+            var captured = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            availability.Failure = new HttpRequestException(
+                "Forbidden", null, HttpStatusCode.Forbidden);
+
+            await Assert.ThrowsAsync<HttpRequestException>(() =>
+                service.ValidateDraftInventoryAsync(
+                    captured.Draft!.DraftId, false, Guid.NewGuid()));
+        });
+    }
+
+    [Fact]
+    public async Task Server_rejection_does_not_bypass_capture_inventory_validation()
+    {
+        await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>
+        {
+            availability.Failure = new HttpRequestException(
+                "Forbidden", null, HttpStatusCode.Forbidden);
+
+            await Assert.ThrowsAsync<HttpRequestException>(() =>
+                service.CaptureAsync(
+                    "770123", scope, customerId, false, Guid.NewGuid()));
         });
     }
 
@@ -422,6 +485,10 @@ public sealed class PosCaptureServiceTests
 
             Assert.True(result.Added);
             Assert.Empty(availability.Requests);
+            var validation = await service.ValidateDraftInventoryAsync(
+                result.Draft!.DraftId, true, Guid.NewGuid());
+            Assert.True(validation.IsValid);
+            Assert.Empty(availability.BatchRequests);
         });
     }
 
@@ -535,8 +602,29 @@ public sealed class PosCaptureServiceTests
     private sealed class RecordingAvailabilityClient : IPosInventoryAvailabilityClient
     {
         public List<InventoryAvailabilityRequest> Requests { get; } = [];
+        public List<InventoryAvailabilityBatchRequest> BatchRequests { get; } = [];
+        public Dictionary<Guid, decimal> BatchAvailable { get; } = [];
         public InventoryAvailabilityResponse? Response { get; set; }
         public Exception? Failure { get; set; }
+
+        public Task<IReadOnlyList<InventoryAvailabilityResponse>> CheckAvailabilityBatchAsync(
+            InventoryAvailabilityBatchRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            BatchRequests.Add(request);
+            if (Failure is not null)
+                return Task.FromException<IReadOnlyList<InventoryAvailabilityResponse>>(Failure);
+            return Task.FromResult<IReadOnlyList<InventoryAvailabilityResponse>>(
+                request.Items.Select(item =>
+                {
+                    var available = BatchAvailable.TryGetValue(item.ProductId, out var configured)
+                        ? configured : Response?.AvailableQuantity ?? item.Quantity;
+                    return new InventoryAvailabilityResponse(
+                        item.ProductId, request.WarehouseId, item.Quantity, available,
+                        true, available >= item.Quantity,
+                        available >= item.Quantity ? "Available" : "Insufficient");
+                }).ToArray());
+        }
 
         public Task<InventoryAvailabilityResponse> CheckAvailabilityAsync(
             InventoryAvailabilityRequest request,

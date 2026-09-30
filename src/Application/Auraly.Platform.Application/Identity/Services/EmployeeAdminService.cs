@@ -29,7 +29,7 @@ public class EmployeeAdminService : IEmployeeAdminService
     {
         var employee = await _unitOfWork.Employees.GetByIdAsync(employeeId)
             ?? throw new NotFoundException(nameof(Employee), employeeId);
-        await EnsureBusinessBelongsToTenantAsync(tenantId, employee.BusinessId, ct);
+        EnsureEmployeeBelongsToTenant(tenantId, employee);
         return MapToDto(employee);
     }
 
@@ -57,7 +57,7 @@ public class EmployeeAdminService : IEmployeeAdminService
         var employee = new Employee
         {
             EmployeeId = Guid.NewGuid(),
-            BusinessId = request.BusinessId,
+            TenantId = tenantId,
             PartyId = request.PartyId,
             Name = request.Name,
             IsActive = true,
@@ -66,15 +66,18 @@ public class EmployeeAdminService : IEmployeeAdminService
 
         await _unitOfWork.Employees.CreateAsync(employee);
 
-        foreach (var serviceId in request.ServiceIds ?? [])
+        var selectedServiceIds = (request.ServiceIds ?? []).Distinct().ToArray();
+        if (selectedServiceIds.Length > 200)
+            throw new ArgumentException("An employee cannot have more than 200 services.");
+        var selectedServices = await _unitOfWork.Services.GetByIdsAsync(tenantId, selectedServiceIds, ct);
+        foreach (var service in selectedServices)
         {
-            var service = await _unitOfWork.Services.GetByIdAsync(serviceId);
-            if (service is null || service.BusinessId != request.BusinessId) continue;
+            if (service.BusinessId != request.BusinessId) continue;
             await _unitOfWork.EmployeeServices.CreateAsync(new EmployeeService
             {
                 EmployeeServiceId = Guid.NewGuid(),
                 EmployeeId = employee.EmployeeId,
-                ServiceId = serviceId,
+                ServiceId = service.ServiceId,
                 CreatedAt = DateTime.UtcNow
             });
         }
@@ -91,7 +94,7 @@ public class EmployeeAdminService : IEmployeeAdminService
     {
         var employee = await _unitOfWork.Employees.GetByIdAsync(employeeId)
             ?? throw new NotFoundException(nameof(Employee), employeeId);
-        await EnsureBusinessBelongsToTenantAsync(tenantId, employee.BusinessId, ct);
+        EnsureEmployeeBelongsToTenant(tenantId, employee);
 
         var oldState = MapToDto(employee);
 
@@ -103,20 +106,20 @@ public class EmployeeAdminService : IEmployeeAdminService
             var current = await _unitOfWork.EmployeeServices.GetByEmployeeIdAsync(employeeId);
             var currentIds = current.Select(es => es.ServiceId).ToHashSet();
             var newIds = request.ServiceIds.ToHashSet();
+            if (newIds.Count > 200)
+                throw new ArgumentException("An employee cannot have more than 200 services.");
 
-            foreach (var es in current.Where(es => !newIds.Contains(es.ServiceId)))
-                await _unitOfWork.EmployeeServices.DeleteAsync(es.EmployeeServiceId);
+            _unitOfWork.EmployeeServices.DeleteMany(current.Where(es => !newIds.Contains(es.ServiceId)));
 
-            foreach (var serviceId in newIds.Where(id => !currentIds.Contains(id)))
+            var addedServices = await _unitOfWork.Services.GetByIdsAsync(
+                tenantId, newIds.Where(id => !currentIds.Contains(id)).ToArray(), ct);
+            foreach (var service in addedServices)
             {
-                var service = await _unitOfWork.Services.GetByIdAsync(serviceId);
-                if (service is null || service.BusinessId != employee.BusinessId) continue;
-                if (await _unitOfWork.EmployeeServices.ExistsAsync(employeeId, serviceId)) continue;
                 await _unitOfWork.EmployeeServices.CreateAsync(new EmployeeService
                 {
                     EmployeeServiceId = Guid.NewGuid(),
                     EmployeeId = employeeId,
-                    ServiceId = serviceId,
+                    ServiceId = service.ServiceId,
                     CreatedAt = DateTime.UtcNow
                 });
             }
@@ -132,7 +135,7 @@ public class EmployeeAdminService : IEmployeeAdminService
     {
         var employee = await _unitOfWork.Employees.GetByIdAsync(employeeId)
             ?? throw new NotFoundException(nameof(Employee), employeeId);
-        await EnsureBusinessBelongsToTenantAsync(tenantId, employee.BusinessId, ct);
+        EnsureEmployeeBelongsToTenant(tenantId, employee);
 
         employee.IsActive = false;
         employee.UpdatedAt = DateTime.UtcNow;
@@ -148,8 +151,14 @@ public class EmployeeAdminService : IEmployeeAdminService
             throw new NotFoundException(nameof(Business), businessId);
     }
 
+    private static void EnsureEmployeeBelongsToTenant(Guid tenantId, Employee employee)
+    {
+        if (employee.TenantId != tenantId)
+            throw new NotFoundException(nameof(Employee), employee.EmployeeId);
+    }
+
     private static EmployeeDto MapToDto(Employee e) => new(
-        e.EmployeeId, e.BusinessId, e.PartyId, e.Name, e.IsActive,
+        e.EmployeeId, e.TenantId, e.PartyId, e.Name, e.IsActive,
         e.EmployeeServices?.Select(es => es.ServiceId).ToList() ?? [],
         e.CreatedAt);
 }

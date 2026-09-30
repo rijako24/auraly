@@ -19,8 +19,7 @@ public sealed class SqlProductMerchandisingStore(
         command.CommandText = """
             SELECT x.ProductBrandId,x.Name,x.IsActive
             FROM dbo.ProductBrands x
-            JOIN dbo.Businesses b ON b.BusinessId=x.BusinessId AND b.TenantId=@TenantId
-            WHERE x.BusinessId=@BusinessId AND (@IncludeInactive=1 OR x.IsActive=1)
+            WHERE x.TenantId=@TenantId AND (@IncludeInactive=1 OR x.IsActive=1)
             ORDER BY x.Name;
             """;
         command.Parameters.AddRange([P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@IncludeInactive", includeInactive)]);
@@ -40,10 +39,10 @@ public sealed class SqlProductMerchandisingStore(
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51021,'The business is outside the authenticated tenant.',1;
             IF @Create=1
-              INSERT dbo.ProductBrands(ProductBrandId,BusinessId,Name,IsActive,CreatedAt) VALUES(@Id,@BusinessId,@Name,@Active,@Now);
+              INSERT dbo.ProductBrands(ProductBrandId,TenantId,Name,IsActive,CreatedAt) VALUES(@Id,@TenantId,@Name,@Active,@Now);
             ELSE
             BEGIN
-              UPDATE dbo.ProductBrands SET Name=@Name,IsActive=@Active,UpdatedAt=@Now WHERE ProductBrandId=@Id AND BusinessId=@BusinessId;
+              UPDATE dbo.ProductBrands SET Name=@Name,IsActive=@Active,UpdatedAt=@Now WHERE ProductBrandId=@Id AND TenantId=@TenantId;
               IF @@ROWCOUNT=0 THROW 51010,'Product brand was not found.',1;
             END
             SELECT ProductBrandId,Name,IsActive FROM dbo.ProductBrands WHERE ProductBrandId=@Id;
@@ -66,8 +65,7 @@ public sealed class SqlProductMerchandisingStore(
         command.CommandText = """
             SELECT x.ProductUnitId,x.Code,x.Name,x.Symbol,x.AllowsFractionalQuantity,x.DecimalPlaces,x.IsActive
             FROM dbo.ProductUnits x
-            JOIN dbo.Businesses b ON b.BusinessId=x.BusinessId AND b.TenantId=@TenantId
-            WHERE x.BusinessId=@BusinessId AND (@IncludeInactive=1 OR x.IsActive=1)
+            WHERE x.TenantId=@TenantId AND (@IncludeInactive=1 OR x.IsActive=1)
             ORDER BY x.Name;
             """;
         command.Parameters.AddRange([P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@IncludeInactive", includeInactive)]);
@@ -87,12 +85,12 @@ public sealed class SqlProductMerchandisingStore(
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51021,'The business is outside the authenticated tenant.',1;
             IF @Create=1
-              INSERT dbo.ProductUnits(ProductUnitId,BusinessId,Code,Name,Symbol,AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
-              VALUES(@Id,@BusinessId,@Code,@Name,@Symbol,@Fractional,@Decimals,@Active,@Now);
+              INSERT dbo.ProductUnits(ProductUnitId,TenantId,Code,Name,Symbol,AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
+              VALUES(@Id,@TenantId,@Code,@Name,@Symbol,@Fractional,@Decimals,@Active,@Now);
             ELSE
             BEGIN
               UPDATE dbo.ProductUnits SET Code=@Code,Name=@Name,Symbol=@Symbol,AllowsFractionalQuantity=@Fractional,DecimalPlaces=@Decimals,IsActive=@Active,UpdatedAt=@Now
-              WHERE ProductUnitId=@Id AND BusinessId=@BusinessId;
+              WHERE ProductUnitId=@Id AND TenantId=@TenantId;
               IF @@ROWCOUNT=0 THROW 51010,'Sale unit was not found.',1;
             END
             SELECT ProductUnitId,Code,Name,Symbol,AllowsFractionalQuantity,DecimalPlaces,IsActive FROM dbo.ProductUnits WHERE ProductUnitId=@Id;
@@ -125,19 +123,19 @@ public sealed class SqlProductMerchandisingStore(
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
-            await EnsureBarcodesAvailableAsync(connection, transaction, user.BusinessId, productId, request.Barcodes.Select(value => value.Value), ct);
+            await EnsureBarcodesAvailableAsync(connection, transaction, user.TenantId, productId, request.Barcodes.Select(value => value.Value), ct);
             await using (var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.Products p WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId
                   AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId))
                   THROW 51010,'Product was not found.',1;
-                IF NOT EXISTS(SELECT 1 FROM dbo.ProductUnits WHERE BusinessId=@BusinessId AND Code=@UnitCode AND IsActive=1)
+                IF NOT EXISTS(SELECT 1 FROM dbo.ProductUnits WHERE TenantId=@TenantId AND Code=@UnitCode AND IsActive=1)
                   THROW 51020,'The selected sale unit is invalid.',1;
-                IF @CategoryId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.ProductCategories WHERE ProductCategoryId=@CategoryId AND BusinessId=@BusinessId AND IsActive=1)
+                IF @CategoryId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.ProductCategories WHERE ProductCategoryId=@CategoryId AND TenantId=@TenantId AND IsActive=1)
                   THROW 51020,'The selected product category is invalid.',1;
-                IF @BrandId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.ProductBrands WHERE ProductBrandId=@BrandId AND BusinessId=@BusinessId AND IsActive=1)
+                IF @BrandId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.ProductBrands WHERE ProductBrandId=@BrandId AND TenantId=@TenantId AND IsActive=1)
                   THROW 51020,'The selected product brand is invalid.',1;
                 UPDATE dbo.Products SET ProductCategoryId=@CategoryId,CategoryName=(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@CategoryId),ProductBrandId=@BrandId,BaseUnitCode=@UnitCode,ManageStock=@ManageInventory,IsGenericProduct=@IsGenericProduct,UnitGrossWeightKg=@UnitGrossWeightKg,ConversionMaximumLossPercent=@MaximumLoss,AllowsFractionalSale=@Fractional,IsWeighable=@Weighable,UpdatedAt=@Now,UpdatedByUserId=@UserId WHERE ProductId=@ProductId;
-                DELETE dbo.ProductBarcodes WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
+                DELETE dbo.ProductBarcodes WHERE ProductId=@ProductId AND TenantId=@TenantId;
                 DELETE dbo.ProductScaleConfigurations WHERE ProductId=@ProductId;
                 """, connection, transaction))
             {
@@ -145,29 +143,34 @@ public sealed class SqlProductMerchandisingStore(
                 await command.ExecuteNonQueryAsync(ct);
             }
 
-            foreach (var barcode in request.Barcodes)
-                await ExecuteAsync(connection, transaction, "INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt) VALUES(@Id,@BusinessId,@ProductId,@Barcode,@Primary,1,@Now);", [P("@Id", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Barcode", barcode.Value.Trim()), P("@Primary", barcode.IsPrimary), P("@Now", now)], ct);
+            await ExecuteAsync(connection, transaction, """
+                INSERT dbo.ProductBarcodes(ProductBarcodeId,TenantId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+                SELECT NEWID(),@TenantId,@ProductId,barcode.Value,barcode.IsPrimary,1,@Now
+                FROM OPENJSON(@Barcodes) WITH (Value NVARCHAR(64) '$.Value',IsPrimary BIT '$.IsPrimary') barcode;
+                """, [P("@TenantId", user.TenantId), P("@ProductId", productId),
+                    P("@Barcodes", JsonSerializer.Serialize(request.Barcodes.Select(barcode => new { Value = barcode.Value.Trim(), barcode.IsPrimary }))),
+                    P("@Now", now)], ct);
 
             if (request.Scale is { } scale)
                 await ExecuteAsync(connection, transaction, "INSERT dbo.ProductScaleConfigurations(ProductId,ScaleCode,BarcodePrefix,EmbeddedValueType,ValueStart,ValueLength,DecimalPlaces,IsActive) VALUES(@ProductId,@Code,@Prefix,@Type,@Start,@Length,@Decimals,1);", [P("@ProductId", productId), P("@Code", scale.ScaleCode), P("@Prefix", scale.BarcodePrefix), P("@Type", scale.EmbeddedValueType), P("@Start", scale.ValueStart), P("@Length", scale.ValueLength), P("@Decimals", scale.DecimalPlaces)], ct);
 
-            await ExecuteAsync(connection, transaction, "UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId AND IsActive=1;", [P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
+            await ExecuteAsync(connection, transaction, "UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now WHERE TenantId=@TenantId AND ChildProductId=@ProductId AND IsActive=1;", [P("@TenantId", user.TenantId), P("@ProductId", productId), P("@Now", now)], ct);
             if (request.Link is { } link)
             {
                 await ExecuteAsync(connection, transaction, """
                     IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ParentId AND TenantId=@TenantId AND IsActive=1)
                       THROW 51020,'The parent product is outside the business or inactive.',1;
-                    IF @SharesInventory=1 AND EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND QuantityOnHand<>0)
+                    IF @SharesInventory=1 AND EXISTS(SELECT 1 FROM dbo.InventoryBalances balance JOIN dbo.Businesses businessValue ON businessValue.BusinessId=balance.BusinessId WHERE businessValue.TenantId=@TenantId AND balance.ProductId=@ProductId AND balance.QuantityOnHand<>0)
                       THROW 51020,'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.',1;
                     IF @AllowsConversion=1 AND NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ParentId AND TenantId=@TenantId AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
                       THROW 51020,'The parent product must manage inventory and define a maximum conversion loss.',1;
-                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ParentId AND IsActive=1)
-                       OR EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ParentProductId=@ProductId AND IsActive=1)
+                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE TenantId=@TenantId AND ChildProductId=@ParentId AND IsActive=1)
+                       OR EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE TenantId=@TenantId AND ParentProductId=@ProductId AND IsActive=1)
                       THROW 51020,'Linked products must point directly to one root product; chains and cycles are not allowed.',1;
-                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId)
-                      UPDATE dbo.ProductLinks SET ParentProductId=@ParentId,SharesInventory=@SharesInventory,InventoryFactor=@InventoryFactor,SharesPrice=@SharesPrice,PriceFactor=@PriceFactor,AllowsConversion=@AllowsConversion,ConversionFactor=@ConversionFactor,IsActive=1,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId;
+                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE TenantId=@TenantId AND ChildProductId=@ProductId)
+                      UPDATE dbo.ProductLinks SET ParentProductId=@ParentId,SharesInventory=@SharesInventory,InventoryFactor=@InventoryFactor,SharesPrice=@SharesPrice,PriceFactor=@PriceFactor,AllowsConversion=@AllowsConversion,ConversionFactor=@ConversionFactor,IsActive=1,UpdatedAt=@Now WHERE TenantId=@TenantId AND ChildProductId=@ProductId;
                     ELSE
-                      INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt) VALUES(@Id,@BusinessId,@ProductId,@ParentId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
+                      INSERT dbo.ProductLinks(ProductLinkId,TenantId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt) VALUES(@Id,@TenantId,@ProductId,@ParentId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
                     UPDATE dbo.Products SET ManageStock=CASE WHEN @SharesInventory=1 THEN 0 WHEN @AllowsConversion=1 THEN 1 ELSE ManageStock END,UpdatedAt=@Now WHERE ProductId=@ProductId AND TenantId=@TenantId;
                     """, [P("@Id", ids.NewId()), P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@ParentId", link.ParentProductId), P("@SharesInventory", link.SharesInventory), P("@InventoryFactor", link.SharesInventory ? link.InventoryFactor : null), P("@SharesPrice", link.SharesPrice), P("@PriceFactor", link.SharesPrice ? link.PriceFactor : null), P("@AllowsConversion", link.AllowsConversion), P("@ConversionFactor", link.AllowsConversion ? link.ConversionFactor : null), P("@Now", now)], ct);
                 if (link.SharesPrice)
@@ -175,57 +178,44 @@ public sealed class SqlProductMerchandisingStore(
                         link.ParentProductId, productId, user.UserId, now, ct);
             }
 
-            await ExecuteAsync(connection, transaction, """
-                INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
-                SELECT @BusinessId,ChildProductId,N'Upsert',@Now
-                FROM dbo.ProductLinks
-                WHERE BusinessId=@BusinessId AND ParentProductId=@ProductId AND IsActive=1;
+            var affectedCatalogProducts = new HashSet<Guid>();
+            await using (var deactivateLinks = new SqlCommand("""
                 UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now
-                WHERE BusinessId=@BusinessId AND ParentProductId=@ProductId AND IsActive=1;
-                """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
-
-            foreach (var child in request.LinkedProducts)
+                OUTPUT deleted.ChildProductId
+                WHERE TenantId=@TenantId AND ParentProductId=@ProductId AND IsActive=1;
+                """, connection, transaction))
             {
-                await ExecuteAsync(connection, transaction, """
-                    IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ChildId AND TenantId=@TenantId AND IsActive=1)
-                      THROW 51020,'The linked product is outside the business or inactive.',1;
-                    IF @SharesInventory=1 AND EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ChildId AND QuantityOnHand<>0)
-                      THROW 51020,'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.',1;
-                    IF @AllowsConversion=1 AND NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=@TenantId AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
-                      THROW 51020,'A convertible family must manage inventory and define a maximum conversion loss.',1;
-                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ParentProductId=@ChildId AND IsActive=1)
-                      THROW 51020,'Linked products cannot contain other linked products.',1;
-                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ChildId AND ParentProductId<>@ProductId AND IsActive=1)
-                      THROW 51020,'The product is already linked to another root product.',1;
-                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ChildId)
-                      UPDATE dbo.ProductLinks
-                      SET ParentProductId=@ProductId,SharesInventory=@SharesInventory,InventoryFactor=@InventoryFactor,
-                          SharesPrice=@SharesPrice,PriceFactor=@PriceFactor,AllowsConversion=@AllowsConversion,
-                          ConversionFactor=@ConversionFactor,IsActive=1,UpdatedAt=@Now
-                      WHERE BusinessId=@BusinessId AND ChildProductId=@ChildId;
-                    ELSE
-                      INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
-                      VALUES(@Id,@BusinessId,@ChildId,@ProductId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
-                    INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
-                    VALUES(@BusinessId,@ChildId,N'Upsert',@Now);
-                    UPDATE dbo.Products SET ManageStock=CASE WHEN @SharesInventory=1 THEN 0 WHEN @AllowsConversion=1 THEN 1 ELSE ManageStock END,UpdatedAt=@Now WHERE ProductId=@ChildId AND TenantId=@TenantId;
-                    """, [P("@Id", ids.NewId()), P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
-                    P("@ChildId", child.ChildProductId), P("@SharesInventory", child.SharesInventory),
-                    P("@InventoryFactor", child.SharesInventory ? child.InventoryFactor : null),
-                    P("@SharesPrice", child.SharesPrice), P("@PriceFactor", child.SharesPrice ? child.PriceFactor : null),
-                    P("@AllowsConversion", child.AllowsConversion), P("@ConversionFactor", child.AllowsConversion ? child.ConversionFactor : null),
-                    P("@Now", now)], ct);
+                deactivateLinks.Parameters.AddRange([
+                    P("@TenantId", user.TenantId), P("@ProductId", productId), P("@Now", now)
+                ]);
+                await using var reader = await deactivateLinks.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                    affectedCatalogProducts.Add(reader.GetGuid(0));
             }
+
+            await SqlProductLinksWriter.SaveChildrenAsync(
+                connection, transaction, user.TenantId, productId,
+                request.LinkedProducts, now, false, 51020, ct);
+            affectedCatalogProducts.UnionWith(
+                request.LinkedProducts.Select(child => child.ChildProductId));
             if (request.LinkedProducts.Any(child => child.SharesPrice))
                 await SqlLinkedProductCostPreparation.PrepareFamilyAsync(
                     connection, transaction, user.BusinessId, productId, null, null,
                     user.UserId, now, ct);
 
             await ExecuteAsync(connection, transaction, """
-                DECLARE @Change TABLE(CatalogChangeId BIGINT NOT NULL);
-                INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt) OUTPUT inserted.CatalogChangeId INTO @Change VALUES(@BusinessId,@ProductId,N'Upsert',@Now);
-                INSERT dbo.PosSynchronizationOutboxMessages(NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt) SELECT @NotificationId,@BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
-                """, [P("@NotificationId", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
+                DECLARE @Change TABLE(BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
+                INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+                  OUTPUT inserted.BusinessId,inserted.CatalogChangeId INTO @Change
+                  SELECT business.BusinessId,affected.ProductId,N'Upsert',@Now
+                  FROM dbo.Businesses business
+                  CROSS JOIN (SELECT @ProductId ProductId
+                              UNION SELECT TRY_CONVERT(UNIQUEIDENTIFIER,[value]) FROM OPENJSON(@AffectedProductIds)) affected
+                  WHERE business.TenantId=@TenantId AND business.IsActive=1;
+                INSERT dbo.PosSynchronizationOutboxMessages(NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+                  SELECT NEWID(),BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
+                """, [P("@TenantId", user.TenantId), P("@ProductId", productId),
+                    P("@AffectedProductIds", JsonSerializer.Serialize(affectedCatalogProducts)), P("@Now", now)], ct);
             await transaction.CommitAsync(ct);
         }
         catch (SqlException ex) when (ex.Number is 51020 or 51021 or 51022 or 51024)
@@ -244,37 +234,39 @@ public sealed class SqlProductMerchandisingStore(
     }
 
     private static async Task EnsureBarcodesAvailableAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid productId,
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId, Guid productId,
         IEnumerable<string> values, CancellationToken ct)
     {
-        foreach (var barcode in values.Select(value => value.Trim()).Where(value => value.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            await using var command = new SqlCommand("""
-                SELECT TOP(1) p.Name FROM dbo.ProductBarcodes b WITH (UPDLOCK,HOLDLOCK)
-                JOIN dbo.Products p ON p.ProductId=b.ProductId
-                WHERE b.BusinessId=@BusinessId AND b.Barcode=@Barcode AND b.ProductId<>@ProductId;
-                """, connection, transaction);
-            command.Parameters.AddWithValue("@BusinessId", businessId);
-            command.Parameters.AddWithValue("@ProductId", productId);
-            command.Parameters.AddWithValue("@Barcode", barcode);
-            var owner = await command.ExecuteScalarAsync(ct) as string;
-            if (owner is not null)
-                throw new CatalogConflictException($"El código de barras '{barcode}' ya está asignado al producto '{owner}' y no puede reutilizarse.");
-        }
+        var barcodes = values.Select(value => value.Trim()).Where(value => value.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (barcodes.Length == 0) return;
+        await using var command = new SqlCommand("""
+            SELECT TOP(1) requested.Barcode,p.Name
+            FROM OPENJSON(@Barcodes) WITH (Barcode NVARCHAR(64) '$') requested
+            JOIN dbo.ProductBarcodes b WITH (UPDLOCK,HOLDLOCK)
+              ON b.TenantId=@TenantId AND b.Barcode=requested.Barcode AND b.ProductId<>@ProductId
+            JOIN dbo.Products p ON p.ProductId=b.ProductId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@Barcodes", JsonSerializer.Serialize(barcodes));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+            throw new CatalogConflictException($"El código de barras '{reader.GetString(0)}' ya está asignado al producto '{reader.GetString(1)}' y no puede reutilizarse.");
     }
 
     private const string SelectConfiguration = """
         SELECT p.ProductId,p.ProductCategoryId,p.ProductBrandId,COALESCE(p.BaseUnitCode,N'EA'),p.ManageStock,p.AllowsFractionalSale,p.IsWeighable,
           s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces,
-          (SELECT Barcode AS Value,IsPrimary FROM dbo.ProductBarcodes WHERE ProductId=p.ProductId AND BusinessId=@BusinessId AND IsActive=1 ORDER BY IsPrimary DESC,Barcode FOR JSON PATH),
+          (SELECT Barcode AS Value,IsPrimary FROM dbo.ProductBarcodes WHERE ProductId=p.ProductId AND TenantId=@TenantId AND IsActive=1 ORDER BY IsPrimary DESC,Barcode FOR JSON PATH),
           l.ParentProductId,COALESCE(parent.ProductCode,parent.Sku),parent.Name,l.SharesInventory,l.InventoryFactor,l.SharesPrice,l.PriceFactor,
           (SELECT child.ProductId AS ChildProductId,COALESCE(child.ProductCode,child.Sku) AS ChildProductCode,child.Name AS ChildProductName,
                   links.SharesInventory,links.InventoryFactor,links.SharesPrice,links.PriceFactor,links.AllowsConversion,links.ConversionFactor
-             FROM dbo.ProductLinks links JOIN dbo.Products child ON child.ProductId=links.ChildProductId AND child.TenantId=p.TenantId WHERE links.BusinessId=@BusinessId AND links.ParentProductId=p.ProductId AND links.IsActive=1 ORDER BY child.Name FOR JSON PATH)
+             FROM dbo.ProductLinks links JOIN dbo.Products child ON child.ProductId=links.ChildProductId AND child.TenantId=p.TenantId WHERE links.TenantId=@TenantId AND links.ParentProductId=p.ProductId AND links.IsActive=1 ORDER BY child.Name FOR JSON PATH)
           ,l.AllowsConversion,l.ConversionFactor,p.ConversionMaximumLossPercent,p.UnitGrossWeightKg,p.IsGenericProduct
         FROM dbo.Products p
         LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
-        LEFT JOIN dbo.ProductLinks l ON l.ChildProductId=p.ProductId AND l.BusinessId=@BusinessId AND l.IsActive=1
+        LEFT JOIN dbo.ProductLinks l ON l.ChildProductId=p.ProductId AND l.TenantId=@TenantId AND l.IsActive=1
         LEFT JOIN dbo.Products parent ON parent.ProductId=l.ParentProductId AND parent.TenantId=p.TenantId
         WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId
           AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId);

@@ -1373,11 +1373,11 @@ public sealed class SqlAccountingStore(
                         SELECT COUNT_BIG(1)
                         FROM dbo.Parties p
                         WHERE p.PartyId=@PartyId AND p.TenantId=@TenantId AND p.IsActive=1
-                          AND (EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
-                               OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
-                               OR EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
-                               OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
-                               OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId)
+                          AND (EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId)
+                               OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId)
+                               OR EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId)
+                               OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId)
+                               OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId)
                                OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId));
                         """, connection, transaction);
                     party.Parameters.AddWithValue("@PartyId", partyId);
@@ -1498,11 +1498,11 @@ public sealed class SqlAccountingStore(
                 LEFT JOIN dbo.Parties p ON p.PartyId=l.PartyId AND p.TenantId=@TenantId AND p.IsActive=1
                 LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.BusinessId=@BusinessId AND c.IsActive=1
                 CROSS APPLY(SELECT CONVERT(bit,CASE WHEN l.PartyId IS NULL
-                    OR EXISTS(SELECT 1 FROM dbo.Customers customer WHERE customer.PartyId=l.PartyId AND customer.BusinessId=@BusinessId)
-                    OR EXISTS(SELECT 1 FROM dbo.Suppliers supplier WHERE supplier.PartyId=l.PartyId AND supplier.BusinessId=@BusinessId)
-                    OR EXISTS(SELECT 1 FROM dbo.CommerceSellers seller WHERE seller.PartyId=l.PartyId AND seller.BusinessId=@BusinessId)
-                    OR EXISTS(SELECT 1 FROM dbo.Carriers carrier WHERE carrier.PartyId=l.PartyId AND carrier.BusinessId=@BusinessId)
-                    OR EXISTS(SELECT 1 FROM dbo.Employees employee WHERE employee.PartyId=l.PartyId AND employee.BusinessId=@BusinessId)
+                    OR EXISTS(SELECT 1 FROM dbo.Customers customer WHERE customer.PartyId=l.PartyId AND customer.TenantId=@TenantId)
+                    OR EXISTS(SELECT 1 FROM dbo.Suppliers supplier WHERE supplier.PartyId=l.PartyId AND supplier.TenantId=@TenantId)
+                    OR EXISTS(SELECT 1 FROM dbo.CommerceSellers seller WHERE seller.PartyId=l.PartyId AND seller.TenantId=@TenantId)
+                    OR EXISTS(SELECT 1 FROM dbo.Carriers carrier WHERE carrier.PartyId=l.PartyId AND carrier.TenantId=@TenantId)
+                    OR EXISTS(SELECT 1 FROM dbo.Employees employee WHERE employee.PartyId=l.PartyId AND employee.TenantId=@TenantId)
                     OR EXISTS(SELECT 1 FROM dbo.AppUsers appUser WHERE appUser.PartyId=l.PartyId AND appUser.TenantId=@TenantId)
                     THEN 1 ELSE 0 END) IsInBusiness) partyScope
                 WHERE l.BatchId=@BatchId;

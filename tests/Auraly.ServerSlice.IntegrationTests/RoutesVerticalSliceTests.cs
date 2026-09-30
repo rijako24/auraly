@@ -161,10 +161,10 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
             VALUES(@SellerParty,@TenantId,N'NaturalPerson',N'Vendedor rutas',N'Complete',1,@UserId,SYSDATETIMEOFFSET()),
                   (@PartyOne,@TenantId,N'Organization',@CustomerOneName,N'Complete',1,@UserId,SYSDATETIMEOFFSET()),
                   (@PartyTwo,@TenantId,N'Organization',@CustomerTwoName,N'Complete',1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
-            VALUES(@SellerId,@BusinessId,@SellerParty,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerOne,@PartyOne,@BusinessId,1,@UserId,SYSDATETIMEOFFSET()),(@CustomerTwo,@PartyTwo,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@TenantId,@SellerParty,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerOne,@PartyOne,@TenantId,1,@UserId,SYSDATETIMEOFFSET()),(@CustomerTwo,@PartyTwo,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,Neighborhood,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
             VALUES(@SiteOne,@PartyOne,N'PRINCIPAL',N'Tienda centro',@CountryId,@DivisionId,@CityId,N'Calle 1 # 2-3',N'Centro',N'3000000001',1,1,@UserId,SYSDATETIMEOFFSET()),
                   (@SiteOneSouth,@PartyOne,N'SUR',N'Tienda sur',@CountryId,@DivisionId,@CityId,N'Calle 9 # 8-7',N'Sur',N'3000000003',0,1,@UserId,SYSDATETIMEOFFSET()),

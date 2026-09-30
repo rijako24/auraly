@@ -839,12 +839,12 @@ public sealed partial class SqlOnlineSalesDraftStore(
               FROM dbo.Products scopedProduct
               JOIN RequestedProducts requested ON requested.ProductId=scopedProduct.ProductId
               JOIN dbo.ProductCategories category ON category.ProductCategoryId=scopedProduct.ProductCategoryId
-              WHERE category.BusinessId=@BusinessId
+              WHERE category.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               UNION ALL
               SELECT child.RootProductId,parent.ProductCategoryId,parent.ParentProductCategoryId
               FROM dbo.ProductCategories parent
               JOIN ProductCategoryAncestors child ON child.ParentProductCategoryId=parent.ProductCategoryId
-              WHERE parent.BusinessId=@BusinessId
+              WHERE parent.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
             )
             SELECT p.ProductId,
                    COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
@@ -855,7 +855,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                     COALESCE(price.CostBasisAmount,0),
                     CAST(CASE WHEN p.ManageStock=1 OR EXISTS(
                       SELECT 1 FROM dbo.ProductLinks inventoryLink
-                      WHERE inventoryLink.BusinessId=@BusinessId
+                      WHERE inventoryLink.TenantId=p.TenantId
                         AND inventoryLink.ChildProductId=p.ProductId
                         AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1)
                       THEN 1 ELSE 0 END AS bit),
@@ -891,8 +891,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 price.CostBasisAmount,NULLIF(balance.AverageUnitCost,0),0) Amount
             ) latestCost
             WHERE p.IsActive=1
-              AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
+              AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             """;
         command.Parameters.AddRange([
             P("@BusinessId", businessId), P("@WarehouseId", warehouseId),
@@ -1016,31 +1015,30 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 WHEN p.ProductId=TRY_CONVERT(uniqueidentifier,@Selector) THEN 0
                 WHEN EXISTS (
                   SELECT 1 FROM dbo.ProductBarcodes b
-                  WHERE b.ProductId=p.ProductId AND b.BusinessId=@BusinessId
+                  WHERE b.ProductId=p.ProductId AND b.TenantId=p.TenantId
                     AND b.IsActive=1 AND b.Barcode=@Selector) THEN 1
                 WHEN p.ProductCode=@Selector THEN 2
                 WHEN p.Sku=@Selector THEN 3
                 WHEN p.Reference=@Selector THEN 4
                 WHEN EXISTS (
                   SELECT 1 FROM dbo.ProductIdentifiers i
-                  WHERE i.ProductId=p.ProductId AND i.BusinessId=@BusinessId
+                  WHERE i.ProductId=p.ProductId AND i.TenantId=p.TenantId
                     AND i.IsActive=1 AND i.Value=@Selector) THEN 5
                 ELSE 6
               END AS MatchRank
             FROM dbo.Products p
-            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
+            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND p.IsActive=1
               AND (
                 p.ProductId=TRY_CONVERT(uniqueidentifier,@Selector) OR
                 p.ProductCode=@Selector OR p.Sku=@Selector OR
                 p.Reference=@Selector OR p.Name=@Selector OR
                 EXISTS (
                   SELECT 1 FROM dbo.ProductBarcodes b
-                  WHERE b.ProductId=p.ProductId AND b.BusinessId=@BusinessId
+                  WHERE b.ProductId=p.ProductId AND b.TenantId=p.TenantId
                     AND b.IsActive=1 AND b.Barcode=@Selector) OR
                 EXISTS (
                   SELECT 1 FROM dbo.ProductIdentifiers i
-                  WHERE i.ProductId=p.ProductId AND i.BusinessId=@BusinessId
+                  WHERE i.ProductId=p.ProductId AND i.TenantId=p.TenantId
                     AND i.IsActive=1 AND i.Value=@Selector))
             ORDER BY MatchRank,p.ProductId;
             """;
@@ -1188,11 +1186,11 @@ public sealed partial class SqlOnlineSalesDraftStore(
                   AND candidate.PartySiteId=@PartySiteId
             ) site
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
-            LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId
+            LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=@BusinessId
             OUTER APPLY(SELECT SUM(r.OutstandingAmount) Outstanding FROM dbo.Receivables r
-                        WHERE r.CustomerId=c.CustomerId AND r.BusinessId=c.BusinessId
+                        WHERE r.CustomerId=c.CustomerId AND r.BusinessId=@BusinessId
                           AND r.Status IN(N'Open',N'PartiallyPaid')) balance
-            WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId
+            WHERE c.CustomerId=@CustomerId AND c.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND c.IsActive=1 AND p.IsActive=1;
             """;
         command.Parameters.AddRange([
@@ -1234,11 +1232,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
                                            THEN 1 ELSE 0 END AS BIT)
             FROM dbo.Products p
             LEFT JOIN dbo.ProductLinks link
-              ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
+              ON link.TenantId=p.TenantId AND link.ChildProductId=p.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
             WHERE p.ProductId=@ProductId
-              AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
+              AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
 
             DECLARE @Available DECIMAL(19,6)=COALESCE((
               SELECT balance.QuantityOnHand
@@ -1255,7 +1252,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             FROM dbo.SalesDraftLines line WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Products lineProduct ON lineProduct.ProductId=line.ProductId
             LEFT JOIN dbo.ProductLinks lineLink
-              ON lineLink.BusinessId=@BusinessId AND lineLink.ChildProductId=line.ProductId
+              ON lineLink.TenantId=lineProduct.TenantId AND lineLink.ChildProductId=line.ProductId
              AND lineLink.SharesInventory=1 AND lineLink.IsActive=1
             WHERE line.SalesDraftId=@DraftId
               AND COALESCE(lineLink.ParentProductId,line.ProductId)=@InventoryProductId
@@ -1330,7 +1327,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             JOIN dbo.SalesDrafts draft ON draft.SalesDraftId=line.SalesDraftId
             JOIN dbo.Products product ON product.ProductId=line.ProductId
             LEFT JOIN dbo.ProductLinks inventoryLink
-              ON inventoryLink.BusinessId=draft.BusinessId
+              ON inventoryLink.TenantId=product.TenantId
              AND inventoryLink.ChildProductId=line.ProductId
              AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
             ORDER BY line.SalesDraftId,line.Position,line.SalesDraftLineId;

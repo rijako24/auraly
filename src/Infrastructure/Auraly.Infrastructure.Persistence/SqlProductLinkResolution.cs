@@ -17,7 +17,7 @@ internal static class SqlProductLinkResolution
                    CASE WHEN l.ProductLinkId IS NULL THEN CAST(1 AS DECIMAL(19,6)) ELSE l.InventoryFactor END
             FROM dbo.Products p WITH(UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.ProductLinks l WITH(UPDLOCK,HOLDLOCK)
-              ON l.BusinessId=@BusinessId AND l.ChildProductId=p.ProductId
+              ON l.TenantId=p.TenantId AND l.ChildProductId=p.ProductId
              AND l.SharesInventory=1 AND l.IsActive=1
             WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND p.ProductId=@ProductId;

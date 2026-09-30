@@ -71,7 +71,7 @@ public class ReservationAdminService : IReservationAdminService
 
         var employee = await _unitOfWork.Employees.GetByIdAsync(request.EmployeeId)
             ?? throw new NotFoundException(nameof(Employee), request.EmployeeId);
-        if (employee.BusinessId != request.BusinessId || !employee.IsActive)
+        if (employee.TenantId != tenantId || !employee.IsActive)
             throw new DomainValidationException("Employee", "El empleado no es válido para este negocio.");
 
         var canPerformService = await _unitOfWork.EmployeeServices.GetByEmployeeIdAsync(request.EmployeeId);
@@ -131,7 +131,7 @@ public class ReservationAdminService : IReservationAdminService
         {
             var employee = await _unitOfWork.Employees.GetByIdAsync(request.EmployeeId.Value)
                 ?? throw new NotFoundException(nameof(Employee), request.EmployeeId.Value);
-            if (employee.BusinessId != reservation.BusinessId || !employee.IsActive)
+            if (employee.TenantId != tenantId || !employee.IsActive)
                 throw new DomainValidationException("Employee", "El empleado no es válido.");
             var canPerform = await _unitOfWork.EmployeeServices.GetByEmployeeIdAsync(request.EmployeeId.Value);
             if (!canPerform.Any(es => es.ServiceId == reservation.ServiceId))

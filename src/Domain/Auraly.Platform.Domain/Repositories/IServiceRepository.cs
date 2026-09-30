@@ -5,6 +5,8 @@ namespace Auraly.Platform.Domain.Repositories;
 public interface IServiceRepository
 {
     Task<Service?> GetByIdAsync(Guid serviceId);
+    Task<IReadOnlyList<Service>> GetByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> serviceIds, CancellationToken ct);
     Task<Service?> GetByBusinessIdAndNameAsync(Guid businessId, string serviceName);
     Task<IEnumerable<Service>> GetByBusinessIdAsync(Guid businessId);
     Task<IEnumerable<Service>> GetActiveByBusinessIdAsync(Guid businessId);

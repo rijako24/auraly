@@ -901,10 +901,10 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
               N'1065648633',N'KEVIN RAMIREZ GRANADOS',N'KEVIN',N'RAMIREZ GRANADOS',
               N'Complete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
-              CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+              CustomerId,PartyId,TenantId,RequiresElectronicInvoice,
               IsActive,CreatedBy,CreatedAt)
             VALUES(
-              @CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+              @CustomerId,@PartyId,@TenantId,1,1,@UserId,SYSDATETIMEOFFSET());
             DECLARE @CountryId uniqueidentifier,@DivisionId uniqueidentifier,@CityId uniqueidentifier;
             SELECT TOP(1) @CountryId=country.CountryId,
                           @DivisionId=division.AdministrativeDivisionId,
@@ -952,10 +952,10 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
               N'31',@Identification,@Identification,@Name,
               @Name,N'Complete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
-              CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+              CustomerId,PartyId,TenantId,RequiresElectronicInvoice,
               IsActive,CreatedBy,CreatedAt)
             VALUES(
-              @CustomerId,@PartyId,@BusinessId,@RequiresElectronicInvoice,1,@UserId,SYSDATETIMEOFFSET());
+              @CustomerId,@PartyId,@TenantId,@RequiresElectronicInvoice,1,@UserId,SYSDATETIMEOFFSET());
             DECLARE @CountryId uniqueidentifier,@DivisionId uniqueidentifier,@CityId uniqueidentifier;
             SELECT TOP(1) @CountryId=country.CountryId,
                           @DivisionId=division.AdministrativeDivisionId,

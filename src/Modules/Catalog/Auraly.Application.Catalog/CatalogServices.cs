@@ -19,6 +19,9 @@ public interface ICatalogStore
     Task<InventoryAvailabilityResponse> AvailabilityAsync(
         Guid deviceId, Guid tenantId, Guid businessId,
         InventoryAvailabilityRequest request, CancellationToken ct);
+    Task<IReadOnlyList<InventoryAvailabilityResponse>> AvailabilityBatchAsync(
+        Guid deviceId, Guid tenantId, Guid businessId,
+        InventoryAvailabilityBatchRequest request, CancellationToken ct);
     Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
         Guid? deviceId, Guid tenantId, Guid businessId, Guid productId,
         bool includeOtherBusinesses, CancellationToken ct);
@@ -55,8 +58,8 @@ public sealed class CatalogService(
         Validate(request);
         var product = await store.CreateAsync(
             user, ids.NewId(), request, timeProvider.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(
-            user.TenantId, user.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(
+            user.TenantId, CancellationToken.None);
         return product;
     }
 
@@ -73,8 +76,8 @@ public sealed class CatalogService(
         Validate(request);
         var product = await store.UpdateAsync(
             user, productId, request, timeProvider.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(
-            user.TenantId, user.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(
+            user.TenantId, CancellationToken.None);
         return product;
     }
 
@@ -87,8 +90,8 @@ public sealed class CatalogService(
     {
         Require(user, isActive ? CatalogPermissionCodes.Update : CatalogPermissionCodes.Deactivate);
         await store.SetStatusAsync(user, productId, isActive, timeProvider.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(
-            user.TenantId, user.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(
+            user.TenantId, CancellationToken.None);
     }
 
     public Task<ProductDetail?> GetAsync(CatalogUserIdentity user, Guid productId, CancellationToken ct)
@@ -255,6 +258,8 @@ public sealed class CatalogService(
             || supplier.PurchasePresentationName.Trim().Length > 80 || supplier.UnitsPerPresentation <= 0))
             throw new CatalogValidationException("Every supplier presentation requires a name and a positive conversion factor.");
         if (request.Suppliers.GroupBy(supplier => supplier.Identification.Trim(), StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
+            throw new CatalogValidationException("A supplier cannot be repeated for the same product.");
+        if (request.Suppliers.GroupBy(supplier => supplier.SupplierId).Any(group => group.Count() > 1))
             throw new CatalogValidationException("A supplier cannot be repeated for the same product.");
         if (request.Barcodes.Any(barcode => string.IsNullOrWhiteSpace(barcode.Value)))
             throw new CatalogValidationException("Barcodes cannot be empty.");

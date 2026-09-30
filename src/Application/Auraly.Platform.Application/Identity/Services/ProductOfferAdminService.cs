@@ -46,7 +46,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         {
             ProductOfferId = Guid.NewGuid(),
             ProductId = productId,
-            BusinessId = businessId,
+            TenantId = tenantId,
             CreatedAt = DateTime.UtcNow
         };
         Apply(offer, normalized);
@@ -103,7 +103,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
             throw new DomainValidationException("MediaUrl", "La imagen debe usar una URL HTTPS valida.");
         await EnsureOfferBelongsToProductAsync(businessId, productId, request.ProductOfferId, ct);
         return await AddImageAsync(
-            businessId, productId, request.ProductOfferId, uri.ToString(), request.AltText,
+            tenantId, businessId, productId, request.ProductOfferId, uri.ToString(), request.AltText,
             request.DisplayOrder, request.IsPrimary, ct);
     }
 
@@ -125,7 +125,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
             throw new DomainValidationException("file", "Use una imagen JPG, PNG o WEBP.");
         var blobName = $"products/{productId:N}/{Guid.NewGuid():N}{extension}";
         var url = await _blobStorage.UploadImageAsync(businessId, stream, blobName);
-        return await AddImageAsync(businessId, productId, productOfferId, url, altText, 0, isPrimary, ct);
+        return await AddImageAsync(tenantId, businessId, productId, productOfferId, url, altText, 0, isPrimary, ct);
     }
 
     public async Task<StagedProductImageDto> StageImageAsync(
@@ -202,6 +202,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         return MapImage(selected);
     }
     private async Task<ProductImageDto> AddImageAsync(
+        Guid tenantId,
         Guid businessId,
         Guid productId,
         Guid? offerId,
@@ -228,7 +229,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         {
             ProductImageId = Guid.NewGuid(),
             ProductId = productId,
-            BusinessId = businessId,
+            TenantId = tenantId,
             ProductOfferId = offerId,
             MediaUrl = url,
             AltText = string.IsNullOrWhiteSpace(altText) ? null : altText.Trim(),

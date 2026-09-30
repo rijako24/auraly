@@ -26,7 +26,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             LEFT JOIN dbo.AccountingCostCenters cc ON cc.CostCenterId=c.DefaultCostCenterId
             WHERE c.BusinessId=@BusinessId AND c.IsActive=1 ORDER BY c.Name,c.Code;
             SELECT SupplierId,Identification,Name FROM dbo.Suppliers
-              WHERE BusinessId=@BusinessId AND IsActive=1 AND 1=0
+              WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1
               ORDER BY Name,Identification;
             SELECT a.AccountId,a.Code,a.Name FROM dbo.AccountingAccounts a
               JOIN dbo.Businesses b ON b.TenantId=a.TenantId
@@ -149,7 +149,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
               CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit)
             FROM dbo.Expenses e
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.TenantId=@TenantId
-            JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId AND s.BusinessId=e.BusinessId
+            JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId AND s.TenantId=b.TenantId
             JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=e.ExpenseConceptId AND c.BusinessId=e.BusinessId
             LEFT JOIN dbo.FiscalDocuments f ON f.DocumentId=e.ExpenseId AND f.BusinessId=e.BusinessId
             LEFT JOIN dbo.Payables p ON p.SourceDocumentId=e.ExpenseId AND p.SourceDocumentType=N'Expense'
@@ -204,7 +204,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
                 FROM dbo.ExpenseConcepts c
                 JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
                 JOIN dbo.Suppliers s ON s.SupplierId=@SupplierId
-                  AND s.BusinessId=c.BusinessId AND s.IsActive=1
+                  AND s.TenantId=b.TenantId AND s.IsActive=1
                 WHERE c.ExpenseConceptId=@ConceptId AND c.BusinessId=@BusinessId AND b.TenantId=@TenantId AND c.IsActive=1
                   AND (@CenterId IS NULL OR EXISTS(SELECT 1 FROM dbo.AccountingCostCenters cc WHERE cc.CostCenterId=@CenterId AND cc.BusinessId=@BusinessId AND cc.IsActive=1));
                 """, connection, tx))

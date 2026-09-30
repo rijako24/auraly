@@ -75,7 +75,7 @@ public sealed class SqlServiceInvoiceStore(
             FROM dbo.Customers customer
             JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
-            WHERE customer.BusinessId=@BusinessId AND customer.IsActive=1 AND party.IsActive=1
+            WHERE customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND customer.IsActive=1 AND party.IsActive=1
               AND (@Query IS NULL OR NOT EXISTS(
                    SELECT 1 FROM STRING_SPLIT(@Query,N' ') term
                    WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
@@ -99,7 +99,7 @@ public sealed class SqlServiceInvoiceStore(
               WHERE value.PartyId=party.PartyId AND value.ContactType=N'Email'
                 AND value.IsActive=1
               ORDER BY value.IsPrimary DESC,value.CreatedAt,value.PartyContactId) email
-            WHERE customer.BusinessId=@BusinessId AND customer.IsActive=1 AND party.IsActive=1
+            WHERE customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND customer.IsActive=1 AND party.IsActive=1
               AND (@Query IS NULL OR NOT EXISTS(
                    SELECT 1 FROM STRING_SPLIT(@Query,N' ') term
                    WHERE NULLIF(LTRIM(RTRIM(term.value)),N'') IS NOT NULL
@@ -511,7 +511,7 @@ public sealed class SqlServiceInvoiceStore(
             FROM dbo.Customers customer
             JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.IsActive=1
             JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
-            WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+            WHERE customer.CustomerId=@CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND customer.IsActive=1
               AND (@PartySiteId IS NULL OR site.PartySiteId=@PartySiteId)
             ORDER BY site.IsPrimary DESC,site.Name,site.PartySiteId;
@@ -541,7 +541,7 @@ public sealed class SqlServiceInvoiceStore(
         await using (var existence = new SqlCommand("""
             SELECT COUNT(*) FROM dbo.Customers customer
             JOIN dbo.Parties party ON party.PartyId=customer.PartyId
-            WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+            WHERE customer.CustomerId=@CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND customer.IsActive=1 AND party.IsActive=1
               AND EXISTS(SELECT 1 FROM dbo.PartySites site
                          WHERE site.PartySiteId=@PartySiteId AND site.PartyId=party.PartyId

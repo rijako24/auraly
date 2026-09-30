@@ -14,10 +14,10 @@ internal static class ProductOfferModelConfiguration
             entity.Property(value => value.InventoryFactor).HasPrecision(19, 6);
             entity.Property(value => value.PriceFactor).HasPrecision(19, 6);
             entity.Property(value => value.ConversionFactor).HasPrecision(19, 6);
-            entity.HasIndex(value => new { value.BusinessId, value.ChildProductId }).IsUnique();
+            entity.HasIndex(value => new { value.TenantId, value.ChildProductId }).IsUnique();
             entity.HasIndex(value => new
             {
-                value.BusinessId, value.ParentProductId, value.IsActive
+                value.TenantId, value.ParentProductId, value.IsActive
             });
         });
 
@@ -34,14 +34,10 @@ internal static class ProductOfferModelConfiguration
                 .WithMany(value => value.Offers)
                 .HasForeignKey(value => value.ProductId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.HasOne(value => value.Business)
-                .WithMany()
-                .HasForeignKey(value => value.BusinessId)
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(value => new { value.BusinessId, value.Condition, value.IsActive, value.IsAvailable });
+            entity.HasIndex(value => new { value.TenantId, value.Condition, value.IsActive, value.IsAvailable });
             entity.HasIndex(value => new
             {
-                value.ProductId, value.Condition, value.StorageGb, value.Color, value.VariantLabel
+                value.TenantId, value.ProductId, value.Condition, value.StorageGb, value.Color, value.VariantLabel
             }).IsUnique();
         });
 
@@ -54,10 +50,6 @@ internal static class ProductOfferModelConfiguration
                 .WithMany(value => value.Images)
                 .HasForeignKey(value => value.ProductId)
                 .OnDelete(DeleteBehavior.Cascade);
-            entity.HasOne(value => value.Business)
-                .WithMany()
-                .HasForeignKey(value => value.BusinessId)
-                .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(value => value.ProductOffer)
                 .WithMany(value => value.Images)
                 .HasForeignKey(value => value.ProductOfferId)

@@ -40,7 +40,7 @@ GO
 
 CREATE TABLE [dbo].[CounterpartyTaxProfiles]
 (
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [CounterpartyId] UNIQUEIDENTIFIER NOT NULL,
     [AppliesWithholding] BIT NOT NULL CONSTRAINT [DF_CounterpartyTaxProfiles_AppliesWithholding] DEFAULT (0),
     [Responsibilities] NVARCHAR(1000) NOT NULL,
@@ -48,8 +48,8 @@ CREATE TABLE [dbo].[CounterpartyTaxProfiles]
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [UpdatedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [PK_CounterpartyTaxProfiles] PRIMARY KEY ([BusinessId],[CounterpartyId]),
-    CONSTRAINT [FK_CounterpartyTaxProfiles_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
+    CONSTRAINT [PK_CounterpartyTaxProfiles] PRIMARY KEY ([TenantId],[CounterpartyId]),
+    CONSTRAINT [FK_CounterpartyTaxProfiles_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [FK_CounterpartyTaxProfiles_Users] FOREIGN KEY ([UpdatedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId])
 );
 GO

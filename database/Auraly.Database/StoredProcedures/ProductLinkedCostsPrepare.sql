@@ -23,7 +23,7 @@ BEGIN
     IF NOT EXISTS(
         SELECT 1
         FROM dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
-        WHERE link.BusinessId=@BusinessId
+        WHERE link.TenantId=@TenantId
           AND link.ParentProductId=@ParentProductId
           AND link.SharesPrice=1 AND link.IsActive=1
           AND (@ChildProductId IS NULL OR link.ChildProductId=@ChildProductId))
@@ -74,10 +74,9 @@ BEGIN
     SELECT link.ChildProductId,link.PriceFactor
     FROM dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
     INNER JOIN dbo.Products child ON child.ProductId=link.ChildProductId
-                                  AND (child.TenantId=@TenantId
-                                       OR (child.TenantId IS NULL AND child.BusinessId=@BusinessId))
+                                  AND child.TenantId=@TenantId
                                   AND child.IsActive=1
-    WHERE link.BusinessId=@BusinessId
+    WHERE link.TenantId=@TenantId
       AND link.ParentProductId=@ParentProductId
       AND link.SharesPrice=1 AND link.IsActive=1
       AND (@ChildProductId IS NULL OR link.ChildProductId=@ChildProductId);
@@ -108,8 +107,7 @@ BEGIN
       ON price.ProductId=link.ProductId AND price.IsActive=1
     INNER JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
     INNER JOIN dbo.Products product ON product.ProductId=link.ProductId
-                                   AND (product.TenantId=@TenantId
-                                        OR (product.TenantId IS NULL AND product.BusinessId=@BusinessId))
+                                   AND product.TenantId=@TenantId
     LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=product.TaxProfileId
     OUTER APPLY (
         SELECT TOP(1) pending.TargetMarginPercent,pending.EffectiveMarginPercent,

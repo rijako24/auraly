@@ -74,7 +74,7 @@ public sealed class ProductMerchandisingService(
         Validate(productId, normalized);
         var result = await store.SaveAsync(user, productId, normalized,
             timeProvider.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(user.TenantId, user.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(user.TenantId, CancellationToken.None);
         return result;
     }
 

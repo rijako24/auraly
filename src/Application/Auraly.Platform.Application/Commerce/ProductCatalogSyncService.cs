@@ -172,13 +172,10 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                 }
             }
 
-            var synchronizedCatalog = total > 0 || !connection.LastSyncAt.HasValue
-                ? null
-                : await _unitOfWork.Products.GetIdentityCatalogAsync(businessId, ct);
             var hasSynchronizedIdentity = total > 0
                 || connection.LastSyncAt.HasValue
-                && synchronizedCatalog?.Any(product =>
-                    product.IntegrationConnectionId == connection.IntegrationConnectionId) == true;
+                && await _unitOfWork.Products.HasAnyIdentityAsync(
+                    businessId, connection.IntegrationConnectionId, ct);
             if (!hasSynchronizedIdentity)
                 throw new InvalidOperationException(
                     "Catalog synchronization completed without any products; the catalog remains unavailable and the empty result was not marked as a successful synchronization.");
@@ -290,12 +287,38 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
         CancellationToken ct)
     {
         var changed = 0;
+        var tenantId = (await _unitOfWork.Businesses.GetByIdAsync(connection.BusinessId))?.TenantId
+            ?? throw new InvalidOperationException("The integration business was not found.");
+        var candidates = references
+            .Select(reference => (Reference: reference, ExternalId: Clean(reference.ExternalProductId) ?? Clean(reference.Sku)))
+            .Where(candidate => candidate.ExternalId is not null && !string.IsNullOrWhiteSpace(candidate.Reference.Name))
+            .DistinctBy(candidate => candidate.ExternalId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (candidates.Length == 0) return 0;
+        var externalIds = candidates.Select(candidate => candidate.ExternalId!).ToArray();
+        var existingProducts = await _unitOfWork.Products.GetByExternalIdsAsync(
+            connection.BusinessId, connection.IntegrationConnectionId, externalIds, ct);
+        var productsByExternalId = existingProducts.ToDictionary(
+            product => product.ExternalProductId!, StringComparer.OrdinalIgnoreCase);
         var categories = new Dictionary<string, ProductCategory>(StringComparer.OrdinalIgnoreCase);
-        foreach (var reference in references)
+        var existingCategories = await _unitOfWork.ProductCategories.GetForExternalSyncAsync(
+            tenantId, connection.IntegrationConnectionId,
+            candidates.Select(candidate => Clean(candidate.Reference.ExternalCategoryId)).OfType<string>().ToArray(),
+            candidates.Select(candidate => Clean(candidate.Reference.CategoryName)).OfType<string>().ToArray(), ct);
+        foreach (var category in existingCategories)
         {
-            var externalId = Clean(reference.ExternalProductId) ?? Clean(reference.Sku);
-            if (externalId is null || string.IsNullOrWhiteSpace(reference.Name))
-                continue;
+            if (Clean(category.ExternalCategoryId) is { } categoryExternalId)
+                categories.TryAdd($"id:{categoryExternalId}", category);
+            categories.TryAdd($"name:{category.Name}", category);
+        }
+        var createdCategories = new List<ProductCategory>();
+        var createdProducts = new List<Product>();
+        var updatedProducts = new List<Product>();
+        var changedProducts = new List<Product>();
+        foreach (var candidate in candidates)
+        {
+            var reference = candidate.Reference;
+            var externalId = candidate.ExternalId!;
 
             var identityDescription = string.Join(' ', new[]
                 {
@@ -307,13 +330,9 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => value!.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase));
-            var productCategory = await ResolveProductCategoryAsync(connection, reference, categories, ct);
+            var productCategory = ResolveProductCategory(connection, tenantId, reference, categories, createdCategories);
             var categoryName = productCategory?.Name ?? Clean(reference.CategoryName);
-            var existing = await _unitOfWork.Products.GetByExternalIdAsync(
-                connection.BusinessId,
-                connection.IntegrationConnectionId,
-                externalId,
-                ct);
+            productsByExternalId.TryGetValue(externalId, out var existing);
             if (existing is null)
             {
                 var now = DateTime.UtcNow;
@@ -337,8 +356,8 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                     LastSyncedAt = now,
                     CreatedAt = now
                 };
-                await _unitOfWork.Products.CreateAsync(product, ct);
-                await _unitOfWork.Products.ReplaceSearchTermsAsync(product, ct);
+                createdProducts.Add(product);
+                changedProducts.Add(product);
                 changed++;
                 continue;
             }
@@ -371,33 +390,33 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
             existing.SearchIndexVersion = CurrentSearchIndexVersion;
             existing.LastSyncedAt = DateTime.UtcNow;
             existing.UpdatedAt = DateTime.UtcNow;
-            await _unitOfWork.Products.UpdateAsync(existing, ct);
-            await _unitOfWork.Products.ReplaceSearchTermsAsync(existing, ct);
+            updatedProducts.Add(existing);
+            changedProducts.Add(existing);
             changed++;
         }
+        await _unitOfWork.ProductCategories.CreateManyAsync(createdCategories, ct);
+        await _unitOfWork.Products.CreateManyAsync(createdProducts, ct);
+        await _unitOfWork.Products.UpdateManyAsync(updatedProducts, ct);
+        await _unitOfWork.Products.ReplaceSearchTermsAsync(changedProducts, ct);
         return changed;
     }
 
-    private async Task<ProductCategory?> ResolveProductCategoryAsync(
+    private static ProductCategory? ResolveProductCategory(
         IntegrationConnection connection,
+        Guid tenantId,
         ProductReference reference,
         IDictionary<string, ProductCategory> categories,
-        CancellationToken ct)
+        ICollection<ProductCategory> createdCategories)
     {
         var externalId = Clean(reference.ExternalCategoryId);
         var name = Clean(reference.CategoryName);
         var cacheKey = externalId is not null
             ? $"id:{externalId}"
             : name is not null ? $"name:{name}" : null;
-        if (cacheKey is not null && categories.TryGetValue(cacheKey, out var cached))
-            return cached;
-        ProductCategory? category = null;
-        if (externalId is not null)
-            category = await _unitOfWork.ProductCategories.GetByExternalIdAsync(
-                connection.BusinessId, connection.IntegrationConnectionId, externalId, ct);
-        if (category is null && name is not null)
-            category = await _unitOfWork.ProductCategories.GetByNameAsync(
-                connection.BusinessId, connection.IntegrationConnectionId, name, ct);
+        ProductCategory? category = cacheKey is not null && categories.TryGetValue(cacheKey, out var cached)
+            ? cached
+            : name is not null && categories.TryGetValue($"name:{name}", out var byName)
+                ? byName : null;
         if (category is null)
         {
             if (name is null)
@@ -406,7 +425,7 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
             category = new ProductCategory
             {
                 ProductCategoryId = Guid.NewGuid(),
-                BusinessId = connection.BusinessId,
+                TenantId = tenantId,
                 IntegrationConnectionId = connection.IntegrationConnectionId,
                 ExternalCategoryId = externalId,
                 Name = name,
@@ -416,20 +435,24 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                 LastSyncedAt = now,
                 CreatedAt = now
             };
-            await _unitOfWork.ProductCategories.CreateAsync(category, ct);
-            if (cacheKey is not null)
-                categories[cacheKey] = category;
+            createdCategories.Add(category);
+            if (externalId is not null) categories[$"id:{externalId}"] = category;
+            categories[$"name:{name}"] = category;
             return category;
         }
 
         if (name is null || EqualsText(category.Name, name))
+        {
+            if (cacheKey is not null) categories[cacheKey] = category;
             return category;
+        }
+        categories.Remove($"name:{category.Name}");
         category.Name = name;
         category.LastSyncedAt = DateTime.UtcNow;
         category.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.ProductCategories.UpdateAsync(category, ct);
         if (cacheKey is not null)
             categories[cacheKey] = category;
+        categories[$"name:{name}"] = category;
         return category;
 
     }
@@ -439,24 +462,39 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
         CancellationToken ct)
     {
         var changed = 0;
-        foreach (var reference in references)
+        var candidates = references.Select(reference => new
+            {
+                Reference = reference,
+                AccountId = Clean(reference.ExternalAccountId),
+                CustomerId = Clean(reference.ExternalCustomerId),
+                Phone = Clean(reference.PhoneNormalized)
+            })
+            .Where(candidate => candidate.AccountId is not null
+                && candidate.CustomerId is not null && candidate.Phone is not null)
+            .DistinctBy(candidate => new ExternalCommerceCustomerKey(
+                candidate.AccountId!.ToUpperInvariant(), candidate.CustomerId!.ToUpperInvariant()))
+            .ToArray();
+        if (candidates.Length == 0) return 0;
+        var keys = candidates.Select(candidate => new ExternalCommerceCustomerKey(
+            candidate.AccountId!, candidate.CustomerId!)).ToArray();
+        var existingCustomers = await _unitOfWork.ExternalCommerceCustomers.GetByExternalKeysAsync(
+            connection.BusinessId, connection.IntegrationConnectionId, keys, ct);
+        var byKey = existingCustomers.ToDictionary(customer => new ExternalCommerceCustomerKey(
+            customer.ExternalAccountId.ToUpperInvariant(), customer.ExternalCustomerId.ToUpperInvariant()));
+        var createdCustomers = new List<ExternalCommerceCustomer>();
+        var updatedCustomers = new List<ExternalCommerceCustomer>();
+        foreach (var candidate in candidates)
         {
-            var accountId = Clean(reference.ExternalAccountId);
-            var customerId = Clean(reference.ExternalCustomerId);
-            var phone = Clean(reference.PhoneNormalized);
-            if (accountId is null || customerId is null || phone is null)
-                continue;
-
-            var existing = await _unitOfWork.ExternalCommerceCustomers.GetByExternalKeysAsync(
-                connection.BusinessId,
-                connection.IntegrationConnectionId,
-                accountId,
-                customerId,
-                ct);
+            var reference = candidate.Reference;
+            var accountId = candidate.AccountId!;
+            var customerId = candidate.CustomerId!;
+            var phone = candidate.Phone!;
+            byKey.TryGetValue(new ExternalCommerceCustomerKey(
+                accountId.ToUpperInvariant(), customerId.ToUpperInvariant()), out var existing);
             if (existing is null)
             {
                 var now = DateTime.UtcNow;
-                await _unitOfWork.ExternalCommerceCustomers.CreateAsync(new ExternalCommerceCustomer
+                createdCustomers.Add(new ExternalCommerceCustomer
                 {
                     ExternalCommerceCustomerId = Guid.NewGuid(),
                     BusinessId = connection.BusinessId,
@@ -469,7 +507,7 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                     IsActive = true,
                     LastSyncedAt = now,
                     CreatedAt = now
-                }, ct);
+                });
                 changed++;
                 continue;
             }
@@ -490,9 +528,11 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
             existing.IsActive = true;
             existing.LastSyncedAt = DateTime.UtcNow;
             existing.UpdatedAt = DateTime.UtcNow;
-            await _unitOfWork.ExternalCommerceCustomers.UpdateAsync(existing, ct);
+            updatedCustomers.Add(existing);
             changed++;
         }
+        await _unitOfWork.ExternalCommerceCustomers.CreateManyAsync(createdCustomers, ct);
+        await _unitOfWork.ExternalCommerceCustomers.UpdateManyAsync(updatedCustomers, ct);
         return changed;
     }
 

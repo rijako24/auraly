@@ -134,7 +134,8 @@ private readonly IUnitOfWork _unitOfWork;
                 return (null, ("invalid_employee_id", "employee_id must be a valid GUID."));
 
             var employee = await _unitOfWork.Employees.GetByIdAsync(employeeId);
-            if (employee is null || employee.BusinessId != businessId || !employee.IsActive)
+            var business = await _unitOfWork.Businesses.GetByIdAsync(businessId);
+            if (employee is null || business is null || employee.TenantId != business.TenantId || !employee.IsActive)
                 return (null, ("employee_not_found", "The employee was not found in this business."));
 
             return (employee, null);

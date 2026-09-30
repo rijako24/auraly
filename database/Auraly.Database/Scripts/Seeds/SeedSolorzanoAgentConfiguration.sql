@@ -211,7 +211,7 @@ MERGE dbo.Products AS target
 
 USING @SolorzanoProducts AS source
 
-   ON target.BusinessId = @BusinessId
+   ON target.TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
 
   AND target.Sku = source.Sku
 
@@ -245,13 +245,13 @@ WHEN MATCHED THEN
 
 WHEN NOT MATCHED THEN
 
-    INSERT (ProductId, TenantId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
+    INSERT (ProductId, TenantId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
 
             [Description], CategoryName, Currency, ManageStock, StockQuantity,
 
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
 
-    VALUES (source.ProductId, (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId), @BusinessId, @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
+    VALUES (source.ProductId, (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId), @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
 
             source.[Description], source.CategoryName, source.Currency, 0, source.StockQuantity,
 
@@ -269,7 +269,7 @@ VALUES
 
 DELETE FROM dbo.Products
 
-WHERE BusinessId = @BusinessId
+WHERE TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
 
   AND Source = 0
 

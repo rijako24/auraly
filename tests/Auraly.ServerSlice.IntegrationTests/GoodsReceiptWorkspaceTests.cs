@@ -355,7 +355,7 @@ public sealed class GoodsReceiptWorkspaceTests(
             "/api/commerce/v1/goods-receipts/options");
         Assert.NotNull(options);
         Assert.Contains(options.Warehouses, item => item.WarehouseId == fixture.WarehouseId);
-        Assert.Empty(options.Suppliers);
+        Assert.Contains(options.Suppliers, item => item.SupplierId == fixture.SupplierId);
 
         var products = await client.GetFromJsonAsync<GoodsReceiptProductPage>(
             $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}&page=1&pageSize=50");
@@ -510,15 +510,15 @@ public sealed class GoodsReceiptWorkspaceTests(
             command.CommandText = """
                 IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId)
                   INSERT dbo.TaxProfiles
-                    (TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+                    (TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
                   VALUES
-                    (@TaxProfileId,@BusinessId,@TaxCode,N'01',N'IVA compra 19%',19,1,SYSDATETIMEOFFSET());
+                    (@TaxProfileId,@TenantId,@TaxCode,N'01',N'IVA compra 19%',19,1,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Products
-                  (ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,
+                  (ProductId,TenantId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,
                    TaxProfileId,PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,IsWeighable,
                    IsActive,Source,Currency,CreatedAt)
-                SELECT @ProductId,TenantId,BusinessId,@Code,@Code,@Code,N'Producto catálogo general',
+                SELECT @ProductId,TenantId,@Code,@Code,@Code,N'Producto catálogo general',
                        N'Producto aún no asociado al proveedor',N'EA',@TaxProfileId,
                        @TaxProfileId,N'CapitalizedCost',ManageStock,0,1,Source,Currency,SYSUTCDATETIME()
                 FROM dbo.Products WHERE ProductId=@SourceProductId;
@@ -526,7 +526,7 @@ public sealed class GoodsReceiptWorkspaceTests(
             command.Parameters.AddWithValue("@ProductId", productId);
             command.Parameters.AddWithValue("@SourceProductId", fixture.ProductId);
             command.Parameters.AddWithValue("@TaxProfileId", fixture.TaxProfileId);
-            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             command.Parameters.AddWithValue("@TaxCode", ($"VAT-{productId:N}")[..24]);
             command.Parameters.AddWithValue("@Code", productCode);
             Assert.True(await command.ExecuteNonQueryAsync() >= 1);

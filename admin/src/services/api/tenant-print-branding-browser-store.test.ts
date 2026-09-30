@@ -53,3 +53,12 @@ test("browser cache never serves another tenant's logo", async () => {
       value: { tenantId: "tenant-two" } }), undefined,
     "https://auraly.example"), /cambió de empresa/);
 });
+
+test("the selected tenant matches a branding response regardless of GUID casing", async () => {
+  const branding = await loadTenantPrintBrandingFromBrowserStore(
+    "ABCDEF00-0000-0000-0000-000000000001",
+    async () => ({ notModified: false, etag: '"v1"',
+      value: { tenantId: "abcdef00-0000-0000-0000-000000000001", displayName: "Aurali" } }),
+    undefined, "https://auraly.example");
+  assert.equal(branding.displayName, "Aurali");
+});

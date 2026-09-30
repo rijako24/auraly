@@ -506,7 +506,7 @@ public sealed partial class SqlPosSaleServerStore(
             SELECT COUNT(1)
             FROM dbo.Customers customer
             JOIN dbo.PartySites site ON site.PartyId=customer.PartyId AND site.IsActive=1
-            WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+            WHERE customer.CustomerId=@CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND customer.IsActive=1 AND site.PartySiteId=@PartySiteId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@CustomerId", request.CustomerId.Value);

@@ -11,7 +11,7 @@ BEGIN
     WHERE TenantId=@TenantId AND NormalizedName=N'SELLER' AND IsActive=1;
     IF @RoleId IS NULL THROW 51913,'El rol Vendedor no está configurado para la empresa.',1;
     IF NOT EXISTS(SELECT 1 FROM dbo.Parties party WITH(UPDLOCK,HOLDLOCK)
-      JOIN dbo.CommerceSellers seller ON seller.PartyId=party.PartyId AND seller.BusinessId=@BusinessId AND seller.IsActive=1
+      JOIN dbo.CommerceSellers seller ON seller.PartyId=party.PartyId AND seller.TenantId=@TenantId AND seller.IsActive=1
       WHERE party.TenantId=@TenantId AND party.PartyId=@PartyId AND party.IsActive=1)
       THROW 51910,'El tercero no es un vendedor activo de este negocio.',1;
     IF EXISTS(SELECT 1 FROM dbo.AppUsers WHERE PartyId=@PartyId)

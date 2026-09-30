@@ -20,6 +20,25 @@ test("repeated invoice prints reuse one logo load within the same session", asyn
   assert.deepEqual(await cache.get("session-two"), { logo: 4 });
 });
 
+test("printing reads the prepared name and logo without another request", async () => {
+  let requests = 0;
+  let clock = 0;
+  const cache = createTenantPrintBrandingCache(async () => {
+    requests += 1;
+    return { displayName: "Aurali", logoUrl: "data:image/png;base64,AQID" };
+  }, () => clock);
+  await cache.get("tenant-session");
+
+  for (let print = 0; print < 3; print += 1) {
+    assert.deepEqual(cache.peek("tenant-session"), {
+      displayName: "Aurali", logoUrl: "data:image/png;base64,AQID",
+    });
+  }
+  clock += 11 * 60 * 1000;
+  assert.equal(cache.peek("tenant-session")?.displayName, "Aurali");
+  assert.equal(requests, 1);
+});
+
 test("a failed logo load can be retried", async () => {
   let reads = 0;
   const cache = createTenantPrintBrandingCache(async () => {

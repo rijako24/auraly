@@ -114,7 +114,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         {
             signal = await fixture.ReadSynchronizationMessageAsync();
         }
-        while (signal.Stream != "Catalog");
+        while (signal.Stream != "Catalog" || signal.BusinessId != fixture.BusinessId);
         Assert.Equal(fixture.BusinessId, signal.BusinessId);
         Assert.True(signal.AvailableThroughCursor >= publication.CatalogCursor);
 
@@ -558,21 +558,21 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         command.CommandText = """
             DECLARE @TaxProfileId UNIQUEIDENTIFIER=NEWID();
             INSERT dbo.TaxProfiles
-              (TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+              (TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
             VALUES
-              (@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto',0,1,SYSDATETIMEOFFSET());
+              (@TaxProfileId,@TenantId,@TaxCode,N'Sin impuesto',0,1,SYSDATETIMEOFFSET());
             INSERT dbo.Products
-              (ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,Description,
+              (ProductId,TenantId,ProductCode,Reference,Sku,Name,Description,
                BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,
                Currency,CreatedAt)
             VALUES
-              (@ProductId,@TenantId,@BusinessId,@ProductCode,@ProductCode,@ProductCode,
+              (@ProductId,@TenantId,@ProductCode,@ProductCode,@ProductCode,
                N'Producto pricing',N'Producto de prueba de publicacion',N'EA',
                @TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductBarcodes
-              (ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+              (ProductBarcodeId,TenantId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,@Barcode,1,1,SYSDATETIMEOFFSET());
+              (NEWID(),@TenantId,@ProductId,@Barcode,1,1,SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
                TargetMarginPercent,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
@@ -580,9 +580,9 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
               (NEWID(),@BusinessId,@ProductId,@Price,N'COP',SYSDATETIMEOFFSET(),
                @TargetMarginPercent,1,N'Nearest',1,SYSDATETIMEOFFSET());
             INSERT dbo.SupplierProducts
-              (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
+              (SupplierProductId,TenantId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,@SupplierId,@ProductCode,1,1,SYSDATETIMEOFFSET());
+              (NEWID(),@TenantId,@ProductId,@SupplierId,@ProductCode,1,1,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);

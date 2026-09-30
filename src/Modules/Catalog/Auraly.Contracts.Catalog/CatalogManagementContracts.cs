@@ -211,6 +211,9 @@ public sealed record CatalogDelta(long Version, string Kind, PosCatalogItem Prod
 public sealed record CatalogDeltaPage(long FromCursor, long ToCursor, bool HasMore, IReadOnlyCollection<CatalogDelta> Changes);
 
 public sealed record InventoryAvailabilityRequest(Guid ProductId, Guid WarehouseId, decimal Quantity, Guid OperationId);
+public sealed record InventoryAvailabilityBatchItem(Guid ProductId, decimal Quantity);
+public sealed record InventoryAvailabilityBatchRequest(
+    Guid WarehouseId, Guid OperationId, IReadOnlyList<InventoryAvailabilityBatchItem> Items);
 public sealed record InventoryAvailabilityResponse(
     Guid ProductId,
     Guid WarehouseId,
@@ -232,7 +235,7 @@ public sealed record ProductWarehouseAvailabilityItem(
     bool IsCurrentBusiness);
 
 public sealed record TaxProfileSummary(
-    Guid TaxProfileId, Guid BusinessId, string Code, string DianTaxCode, string Name,
+    Guid TaxProfileId, Guid TenantId, string Code, string DianTaxCode, string Name,
     decimal Rate, bool IsActive);
 
 public sealed record SaveTaxProfileRequest(

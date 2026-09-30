@@ -12,7 +12,7 @@ GO
 GO
 CREATE TABLE [dbo].[Carriers] (
     [CarrierId] UNIQUEIDENTIFIER NOT NULL,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [PartyId] UNIQUEIDENTIFIER NOT NULL,
     [Code] NVARCHAR(32) NOT NULL,
     [TransportationMode] NVARCHAR(24) NOT NULL,
@@ -20,10 +20,10 @@ CREATE TABLE [dbo].[Carriers] (
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_Carriers] PRIMARY KEY ([CarrierId]),
-    CONSTRAINT [FK_Carriers_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_Carriers_Parties] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
-    CONSTRAINT [UQ_Carriers_Business_Party] UNIQUE ([BusinessId],[PartyId]),
-    CONSTRAINT [UQ_Carriers_Business_Code] UNIQUE ([BusinessId],[Code]),
+    CONSTRAINT [FK_Carriers_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
+    CONSTRAINT [FK_Carriers_Parties] FOREIGN KEY ([TenantId], [PartyId]) REFERENCES [dbo].[Parties] ([TenantId], [PartyId]),
+    CONSTRAINT [UQ_Carriers_Tenant_Party] UNIQUE ([TenantId],[PartyId]),
+    CONSTRAINT [UQ_Carriers_Tenant_Code] UNIQUE ([TenantId],[Code]),
     CONSTRAINT [CK_Carriers_Mode] CHECK ([TransportationMode] IN (N'Road',N'Air',N'Maritime',N'Other'))
 );
 GO

@@ -25,7 +25,10 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
         command.CommandText = """
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
               THROW 51060,'Business is outside the authenticated tenant.',1;
-            SELECT PriceChannelId,Code,Name FROM dbo.PriceChannels WHERE BusinessId=@BusinessId AND IsActive=1 ORDER BY Name;
+            SELECT channelValue.PriceChannelId,channelValue.Code,channelValue.Name
+            FROM dbo.PriceChannels channelValue
+            JOIN dbo.Businesses businessValue ON businessValue.TenantId=channelValue.TenantId
+            WHERE businessValue.BusinessId=@BusinessId AND channelValue.IsActive=1 ORDER BY channelValue.Name;
             """;
         command.Parameters.AddRange([P("@BusinessId", actor.BusinessId), P("@TenantId", actor.TenantId)]);
         try
@@ -87,8 +90,8 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
 
             if (role == "Seller")
                 await ExecuteAsync(connection, transaction, """
-                    INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,DefaultCommissionPercent,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
-                    VALUES(@RoleId,@BusinessId,@PartyId,@Code,@Commission,@Option1,@Option2,1,@Now);
+                    INSERT dbo.CommerceSellers(SellerId,TenantId,PartyId,Code,DefaultCommissionPercent,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+                    VALUES(@RoleId,@TenantId,@PartyId,@Code,@Commission,@Option1,@Option2,1,@Now);
 
                     INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
                     SELECT NEWID(),app.UserId,accessRole.RoleId,@BusinessId,@Now,@Actor
@@ -100,13 +103,13 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
                         SELECT 1 FROM dbo.UserRoles assigned
                         WHERE assigned.UserId=app.UserId AND assigned.RoleId=accessRole.RoleId
                           AND assigned.BusinessId=@BusinessId);
-                    """, [P("@RoleId",roleId),P("@BusinessId",businessId),P("@PartyId",resolvedPartyId),P("@Code",code.Trim().ToUpperInvariant()),
+                    """, [P("@RoleId",roleId),P("@BusinessId",businessId),P("@TenantId",actor.TenantId),P("@PartyId",resolvedPartyId),P("@Code",code.Trim().ToUpperInvariant()),
                     P("@Commission",commission),P("@Option1",option1),P("@Option2",option2),P("@Actor",actor.ActorId),P("@Now",now)], ct);
             else
                 await ExecuteAsync(connection, transaction, """
-                    INSERT dbo.Carriers(CarrierId,BusinessId,PartyId,Code,TransportationMode,IsActive,CreatedAt)
-                    VALUES(@RoleId,@BusinessId,@PartyId,@Code,@Option1,1,@Now);
-                    """, [P("@RoleId",roleId),P("@BusinessId",businessId),P("@PartyId",resolvedPartyId),
+                    INSERT dbo.Carriers(CarrierId,TenantId,PartyId,Code,TransportationMode,IsActive,CreatedAt)
+                    VALUES(@RoleId,@TenantId,@PartyId,@Code,@Option1,1,@Now);
+                    """, [P("@RoleId",roleId),P("@TenantId",actor.TenantId),P("@PartyId",resolvedPartyId),
                     P("@Code",code.Trim().ToUpperInvariant()),P("@Option1",option1),P("@Now",now)], ct);
 
             await InsertSiteAsync(connection, transaction, actor, resolvedPartyId, siteId, site, now, ct);
@@ -135,8 +138,7 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
               WHERE TenantId=@TenantId AND Status IN(N'Active',N'PastDue'));
             IF @Limit IS NOT NULL AND (
               SELECT COUNT(*) FROM dbo.CommerceSellers seller WITH(UPDLOCK,HOLDLOCK)
-              INNER JOIN dbo.Businesses businessValue ON businessValue.BusinessId=seller.BusinessId
-              WHERE businessValue.TenantId=@TenantId AND seller.IsActive=1)>=@Limit
+              WHERE seller.TenantId=@TenantId AND seller.IsActive=1)>=@Limit
               THROW 51064,N'Se alcanzó el número de usuarios vendedor contratado. Amplía la suscripción antes de crear otro vendedor.',1;
             """;
         command.Parameters.AddWithValue("@TenantId", tenantId);
@@ -221,7 +223,7 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
 
     private sealed record PartyResolution(Guid PartyId,bool CompleteIdentity);
     private static async Task<bool> RoleExistsAsync(SqlConnection c,SqlTransaction t,Guid business,Guid party,string role,CancellationToken ct)
-    {await using var x=c.CreateCommand();x.Transaction=t;x.CommandText=role=="Seller"?"SELECT COUNT(1) FROM dbo.CommerceSellers WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@Business AND PartyId=@Party":"SELECT COUNT(1) FROM dbo.Carriers WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@Business AND PartyId=@Party";x.Parameters.AddRange([P("@Business",business),P("@Party",party)]);return Convert.ToInt32(await x.ExecuteScalarAsync(ct))>0;}
+    {await using var x=c.CreateCommand();x.Transaction=t;x.CommandText=role=="Seller"?"SELECT COUNT(1) FROM dbo.CommerceSellers WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@Business) AND PartyId=@Party":"SELECT COUNT(1) FROM dbo.Carriers WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@Business) AND PartyId=@Party";x.Parameters.AddRange([P("@Business",business),P("@Party",party)]);return Convert.ToInt32(await x.ExecuteScalarAsync(ct))>0;}
     private static async Task AddContactAsync(SqlConnection c,SqlTransaction t,Guid party,string type,string? value,DateTimeOffset now,CancellationToken ct)
     {if(string.IsNullOrWhiteSpace(value))return;var v=value.Trim();await ExecuteAsync(c,t,"INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt) VALUES(NEWID(),@Party,@Type,@Value,@Normalized,1,1,@Now)",[P("@Party",party),P("@Type",type),P("@Value",v),P("@Normalized",type=="Email"?v.ToUpperInvariant():string.Concat(v.Where(char.IsDigit))),P("@Now",now)],ct);}
     private static Task InsertSiteAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity actor,Guid party,Guid siteId,PartySiteInput s,DateTimeOffset now,CancellationToken ct)=>ExecuteAsync(c,t,"""

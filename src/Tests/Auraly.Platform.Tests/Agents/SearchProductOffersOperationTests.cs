@@ -126,7 +126,7 @@ public sealed class SearchProductOffersOperationTests
         {
             ProductOfferId = Guid.NewGuid(),
             ProductId = product.ProductId,
-            BusinessId = businessId,
+            TenantId = businessId,
             Product = product,
             Condition = "used",
             StorageGb = storageGb,
@@ -140,7 +140,7 @@ public sealed class SearchProductOffersOperationTests
                 ProductImageId = Guid.NewGuid(),
                 ProductId = product.ProductId,
                 ProductOfferId = offer.ProductOfferId,
-                BusinessId = businessId,
+                TenantId = businessId,
                 MediaUrl = mediaUrl,
                 AltText = product.Name,
                 IsPrimary = isPrimary,

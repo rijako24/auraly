@@ -87,24 +87,24 @@ IF NOT EXISTS (SELECT 1 FROM dbo.FiscalSeries WHERE SeriesId = @FiscalSeriesId)
 
 IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId = @TaxProfileId)
     INSERT dbo.TaxProfiles(
-        TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-    VALUES(@TaxProfileId,@BusinessId,N'01',N'IVA 19%',19,1,@Now);
+        TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+    VALUES(@TaxProfileId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),N'01',N'IVA 19%',19,1,@Now);
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Products WHERE ProductId = @ProductId)
     INSERT dbo.Products(
-        ProductId,TenantId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
+        ProductId,TenantId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
         Source,Sku,Name,Currency,ManageStock,IsWeighable,
         IsActive,CreatedAt)
     VALUES(
-        @ProductId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),@BusinessId,N'DEMO-001',N'REF-DEMO-001',N'EA',@TaxProfileId,
+        @ProductId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),N'DEMO-001',N'REF-DEMO-001',N'EA',@TaxProfileId,
         0,N'DEMO-001',N'Producto Auraly de demostración',N'COP',1,0,
         1,SYSUTCDATETIME());
 
 IF NOT EXISTS (SELECT 1 FROM dbo.ProductBarcodes WHERE ProductBarcodeId = @ProductBarcodeId)
     INSERT dbo.ProductBarcodes(
-        ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+        ProductBarcodeId,TenantId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
     VALUES(
-        @ProductBarcodeId,@BusinessId,@ProductId,N'7700000000001',1,1,@Now);
+        @ProductBarcodeId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),@ProductId,N'7700000000001',1,1,@Now);
 
 IF NOT EXISTS (SELECT 1 FROM dbo.ProductPrices WHERE ProductPriceId = @ProductPriceId)
     INSERT dbo.ProductPrices(
@@ -122,7 +122,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.CatalogChanges WHERE BusinessId=@BusinessId AND
 -- local database that contained incorrectly decoded text.
 UPDATE dbo.Products
 SET Name=N'Producto Auraly de demostración',UpdatedAt=SYSUTCDATETIME()
-WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
+WHERE ProductId=@ProductId AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
 UPDATE dbo.OrderItems
 SET ProductNameSnapshot=N'Producto Auraly de demostración'
 WHERE BusinessId=@BusinessId AND ProductId=@ProductId
@@ -183,6 +183,6 @@ SELECT
     (SELECT COUNT(*) FROM dbo.Orders o WHERE o.BusinessId=@BusinessId AND o.Source=0) AS BotOrders
 FROM dbo.Businesses b
 JOIN dbo.Warehouses w ON w.BusinessId=b.BusinessId AND w.WarehouseId=@WarehouseId
-JOIN dbo.Products p ON p.BusinessId=b.BusinessId AND p.ProductId=@ProductId
+JOIN dbo.Products p ON p.TenantId=b.TenantId AND p.ProductId=@ProductId
 JOIN dbo.ProductBarcodes pb ON pb.ProductId=p.ProductId AND pb.IsActive=1
 WHERE b.BusinessId=@BusinessId;

@@ -19,19 +19,6 @@ public sealed class ProductCatalogSyncServiceTests
                 It.IsAny<CommerceAdapterContext>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResult([], "provider"));
-        fixture.Products.Setup(repository => repository.GetIdentityCatalogAsync(
-                fixture.BusinessId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([
-                new Product
-                {
-                    ProductId = Guid.NewGuid(),
-                    BusinessId = fixture.BusinessId,
-                    IntegrationConnectionId = fixture.Connection.IntegrationConnectionId,
-                    Name = "PARTIAL ADMIN REFRESH",
-                    IsActive = true
-                }
-            ]);
-
         var act = () => fixture.Service.SyncAsync(
             fixture.BusinessId,
             new ProductCatalogSyncRequest(Provider: CommerceProvider.Mantis));
@@ -48,16 +35,16 @@ public sealed class ProductCatalogSyncServiceTests
     {
         var fixture = new SyncFixture();
         Product? created = null;
-        fixture.Products.Setup(repository => repository.GetByExternalIdAsync(
+        fixture.Products.Setup(repository => repository.GetByExternalIdsAsync(
                 fixture.BusinessId,
                 fixture.Connection.IntegrationConnectionId,
-                "CF17",
+                It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Product?)null);
-        fixture.Products.Setup(repository => repository.CreateAsync(
-                It.IsAny<Product>(), It.IsAny<CancellationToken>()))
-            .Callback<Product, CancellationToken>((product, _) => created = product)
-            .ReturnsAsync((Product product, CancellationToken _) => product);
+            .ReturnsAsync([]);
+        fixture.Products.Setup(repository => repository.CreateManyAsync(
+                It.IsAny<IReadOnlyCollection<Product>>(), It.IsAny<CancellationToken>()))
+            .Callback<IReadOnlyCollection<Product>, CancellationToken>((products, _) => created = products.Single())
+            .Returns(Task.CompletedTask);
         fixture.Adapter.Setup(adapter => adapter.SearchProductsAsync(
                 It.IsAny<ProductSearchRequest>(),
                 It.IsAny<CommerceAdapterContext>(),
@@ -89,7 +76,75 @@ public sealed class ProductCatalogSyncServiceTests
         created.RawPayloadJson.Should().BeNull();
         created.IsActive.Should().BeFalse();
         fixture.Products.Verify(repository => repository.ReplaceSearchTermsAsync(
-            created, It.IsAny<CancellationToken>()), Times.Once);
+            It.Is<IReadOnlyCollection<Product>>(products => products.Contains(created)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_Processes_a_page_of_products_with_bounded_repository_reads()
+    {
+        var fixture = new SyncFixture();
+        var references = Enumerable.Range(1, 30)
+            .Select(index => new ProductReference(null, $"EXT-{index}", $"SKU-{index}",
+                $"Producto {index}", null, null, 0m, "COP", null))
+            .ToArray();
+        fixture.Adapter.Setup(adapter => adapter.SearchProductsAsync(
+                It.IsAny<ProductSearchRequest>(), It.IsAny<CommerceAdapterContext>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult(references, "mantis"));
+
+        var result = await fixture.Service.SyncAsync(fixture.BusinessId,
+            new ProductCatalogSyncRequest(Provider: CommerceProvider.Mantis));
+
+        result.ProductsChanged.Should().Be(30);
+        fixture.Products.Verify(repository => repository.GetByExternalIdsAsync(
+            fixture.BusinessId, fixture.Connection.IntegrationConnectionId,
+            It.Is<IReadOnlyCollection<string>>(ids => ids.Count == 30),
+            It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Products.Verify(repository => repository.GetByExternalIdAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Products.Verify(repository => repository.CreateManyAsync(
+            It.Is<IReadOnlyCollection<Product>>(products => products.Count == 30),
+            It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Products.Verify(repository => repository.ReplaceSearchTermsAsync(
+            It.Is<IReadOnlyCollection<Product>>(products => products.Count == 30),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncAsync_Processes_a_page_of_customers_with_bounded_repository_reads()
+    {
+        var fixture = new SyncFixture(includeCustomerSource: true);
+        fixture.Adapter.Setup(adapter => adapter.SearchProductsAsync(
+                It.IsAny<ProductSearchRequest>(), It.IsAny<CommerceAdapterContext>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductSearchResult([
+                new ProductReference(null, "EXT-1", "SKU-1", "Producto 1", null, null, 0m, "COP", null)
+            ], "mantis"));
+        var customerSource = fixture.CustomerSource!;
+        customerSource.Setup(source => source.GetCustomerIdentityPageAsync(
+                It.IsAny<CommerceAdapterContext>(), It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalCustomerIdentityPage(Enumerable.Range(1, 30)
+                .Select(index => new ExternalCustomerIdentityReference(
+                    $"ACCOUNT-{index}", $"CUSTOMER-{index}", $"Cliente {index}",
+                    $"57300123{index:0000}", null)).ToArray(), false));
+
+        var result = await fixture.Service.SyncAsync(fixture.BusinessId,
+            new ProductCatalogSyncRequest(Provider: CommerceProvider.Mantis));
+
+        result.CustomersChanged.Should().Be(30);
+        fixture.Customers.Verify(repository => repository.GetByExternalKeysAsync(
+            fixture.BusinessId, fixture.Connection.IntegrationConnectionId,
+            It.Is<IReadOnlyCollection<ExternalCommerceCustomerKey>>(keys => keys.Count == 30),
+            It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Customers.Verify(repository => repository.GetByExternalKeysAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Customers.Verify(repository => repository.CreateManyAsync(
+            It.Is<IReadOnlyCollection<ExternalCommerceCustomer>>(customers => customers.Count == 30),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -115,12 +170,12 @@ public sealed class ProductCatalogSyncServiceTests
             RawPayloadJson = null,
             SearchIndexVersion = 4
         };
-        fixture.Products.Setup(repository => repository.GetByExternalIdAsync(
+        fixture.Products.Setup(repository => repository.GetByExternalIdsAsync(
                 fixture.BusinessId,
                 fixture.Connection.IntegrationConnectionId,
-                "CF17",
+                It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existing);
+            .ReturnsAsync([existing]);
         fixture.Adapter.Setup(adapter => adapter.SearchProductsAsync(
                 It.IsAny<ProductSearchRequest>(),
                 It.IsAny<CommerceAdapterContext>(),
@@ -138,10 +193,10 @@ public sealed class ProductCatalogSyncServiceTests
             new ProductCatalogSyncRequest(Provider: CommerceProvider.Mantis));
 
         result.ProductsChanged.Should().Be(0);
-        fixture.Products.Verify(repository => repository.UpdateAsync(
-            It.IsAny<Product>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Products.Verify(repository => repository.UpdateManyAsync(
+            It.Is<IReadOnlyCollection<Product>>(products => products.Count > 0), It.IsAny<CancellationToken>()), Times.Never);
         fixture.Products.Verify(repository => repository.ReplaceSearchTermsAsync(
-            It.IsAny<Product>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.Is<IReadOnlyCollection<Product>>(products => products.Count > 0), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -165,12 +220,12 @@ public sealed class ProductCatalogSyncServiceTests
             IsActive = true,
             SearchIndexVersion = 4
         };
-        fixture.Products.Setup(repository => repository.GetByExternalIdAsync(
+        fixture.Products.Setup(repository => repository.GetByExternalIdsAsync(
                 fixture.BusinessId,
                 fixture.Connection.IntegrationConnectionId,
-                "CF17",
+                It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(existing);
+            .ReturnsAsync([existing]);
         fixture.Adapter.Setup(adapter => adapter.SearchProductsAsync(
                 It.IsAny<ProductSearchRequest>(),
                 It.IsAny<CommerceAdapterContext>(),
@@ -190,10 +245,12 @@ public sealed class ProductCatalogSyncServiceTests
 
         result.ProductsChanged.Should().Be(1);
         existing.IsActive.Should().BeFalse();
-        fixture.Products.Verify(repository => repository.UpdateAsync(
-            existing, It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Products.Verify(repository => repository.UpdateManyAsync(
+            It.Is<IReadOnlyCollection<Product>>(products => products.Contains(existing)),
+            It.IsAny<CancellationToken>()), Times.Once);
         fixture.Products.Verify(repository => repository.ReplaceSearchTermsAsync(
-            existing, It.IsAny<CancellationToken>()), Times.Once);
+            It.Is<IReadOnlyCollection<Product>>(products => products.Contains(existing)),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -201,15 +258,12 @@ public sealed class ProductCatalogSyncServiceTests
     {
         var fixture = new SyncFixture();
         var requestedPages = new List<int>();
-        fixture.Products.Setup(repository => repository.GetByExternalIdAsync(
+        fixture.Products.Setup(repository => repository.GetByExternalIdsAsync(
                 fixture.BusinessId,
                 fixture.Connection.IntegrationConnectionId,
-                It.IsAny<string>(),
+                It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Product?)null);
-        fixture.Products.Setup(repository => repository.CreateAsync(
-                It.IsAny<Product>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Product product, CancellationToken _) => product);
+            .ReturnsAsync([]);
         fixture.Adapter.Setup(adapter => adapter.SearchProductsAsync(
                 It.IsAny<ProductSearchRequest>(),
                 It.IsAny<CommerceAdapterContext>(),
@@ -256,18 +310,10 @@ public sealed class ProductCatalogSyncServiceTests
     {
         var fixture = new SyncFixture();
         fixture.Connection.LastSyncAt = DateTime.UtcNow.Date;
-        fixture.Products.Setup(repository => repository.GetIdentityCatalogAsync(
-                fixture.BusinessId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([
-                new Product
-                {
-                    ProductId = Guid.NewGuid(),
-                    BusinessId = fixture.BusinessId,
-                    IntegrationConnectionId = fixture.Connection.IntegrationConnectionId,
-                    Name = "EXISTING PRODUCT",
-                    IsActive = true
-                }
-            ]);
+        fixture.Products.Setup(repository => repository.HasAnyIdentityAsync(
+                fixture.BusinessId, fixture.Connection.IntegrationConnectionId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         var requestedDates = new List<DateTime>();
         fixture.DeltaAdapter
             .Setup(source => source.GetProductIdentityDeltaPageAsync(
@@ -299,18 +345,10 @@ public sealed class ProductCatalogSyncServiceTests
     {
         var fixture = new SyncFixture();
         fixture.Connection.LastSyncAt = DateTime.UtcNow.Date;
-        fixture.Products.Setup(repository => repository.GetIdentityCatalogAsync(
-                fixture.BusinessId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([
-                new Product
-                {
-                    ProductId = Guid.NewGuid(),
-                    BusinessId = fixture.BusinessId,
-                    IntegrationConnectionId = fixture.Connection.IntegrationConnectionId,
-                    Name = "EXISTING PRODUCT",
-                    IsActive = true
-                }
-            ]);
+        fixture.Products.Setup(repository => repository.HasAnyIdentityAsync(
+                fixture.BusinessId, fixture.Connection.IntegrationConnectionId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         var requestedPages = new List<int>();
         fixture.DeltaAdapter
             .Setup(source => source.GetProductIdentityDeltaPageAsync(
@@ -361,16 +399,16 @@ public sealed class ProductCatalogSyncServiceTests
     {
         var fixture = new SyncFixture();
         Product? created = null;
-        fixture.Products.Setup(repository => repository.GetByExternalIdAsync(
+        fixture.Products.Setup(repository => repository.GetByExternalIdsAsync(
                 fixture.BusinessId,
                 fixture.Connection.IntegrationConnectionId,
-                "7",
+                It.IsAny<IReadOnlyCollection<string>>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Product?)null);
-        fixture.Products.Setup(repository => repository.CreateAsync(
-                It.IsAny<Product>(), It.IsAny<CancellationToken>()))
-            .Callback<Product, CancellationToken>((product, _) => created = product)
-            .ReturnsAsync((Product product, CancellationToken _) => product);
+            .ReturnsAsync([]);
+        fixture.Products.Setup(repository => repository.CreateManyAsync(
+                It.IsAny<IReadOnlyCollection<Product>>(), It.IsAny<CancellationToken>()))
+            .Callback<IReadOnlyCollection<Product>, CancellationToken>((products, _) => created = products.Single())
+            .Returns(Task.CompletedTask);
         fixture.Adapter.Setup(adapter => adapter.SearchProductsAsync(
                 It.IsAny<ProductSearchRequest>(),
                 It.IsAny<CommerceAdapterContext>(),
@@ -389,13 +427,15 @@ public sealed class ProductCatalogSyncServiceTests
         created.Should().NotBeNull();
         created!.ProductCategoryId.Should().Be(fixture.Category.ProductCategoryId);
         created.CategoryName.Should().Be("CARNES");
-        fixture.Categories.Verify(repository => repository.GetByExternalIdAsync(
+        fixture.Categories.Verify(repository => repository.GetForExternalSyncAsync(
             fixture.BusinessId,
             fixture.Connection.IntegrationConnectionId,
-            "53",
+            It.Is<IReadOnlyCollection<string>>(ids => ids.Contains("53")),
+            It.IsAny<IReadOnlyCollection<string>>(),
             It.IsAny<CancellationToken>()), Times.Once);
-        fixture.Categories.Verify(repository => repository.CreateAsync(
-            It.IsAny<ProductCategory>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Categories.Verify(repository => repository.CreateManyAsync(
+            It.Is<IReadOnlyCollection<ProductCategory>>(categories => categories.Count > 0),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
 
@@ -404,16 +444,20 @@ public sealed class ProductCatalogSyncServiceTests
         public Guid BusinessId { get; } = Guid.NewGuid();
         public IntegrationConnection Connection { get; }
         public Mock<IProductRepository> Products { get; } = new();
+        public Mock<IExternalCommerceCustomerRepository> Customers { get; } = new();
         public Mock<ICommerceAdapter> Adapter { get; } = new();
         public ProductCatalogSyncService Service { get; }
         public Mock<IProductCategoryRepository> Categories { get; } = new();
         public Mock<IExternalCustomerReconciliationRunner> CustomerReconciliation { get; } = new();
+        public Mock<ICommerceCustomerIdentitySource>? CustomerSource { get; }
         public ProductCategory Category { get; }
 
         public Mock<ICommerceProductDeltaIdentitySource> DeltaAdapter { get; }
-        public SyncFixture()
+        public SyncFixture(bool includeCustomerSource = false)
         {
             DeltaAdapter = Adapter.As<ICommerceProductDeltaIdentitySource>();
+            if (includeCustomerSource)
+                CustomerSource = Adapter.As<ICommerceCustomerIdentitySource>();
             Connection = new IntegrationConnection
             {
                 IntegrationConnectionId = Guid.NewGuid(),
@@ -426,19 +470,36 @@ public sealed class ProductCatalogSyncServiceTests
             Category = new ProductCategory
             {
                 ProductCategoryId = Guid.NewGuid(),
-                BusinessId = BusinessId,
+                TenantId = BusinessId,
                 IntegrationConnectionId = Connection.IntegrationConnectionId,
                 ExternalCategoryId = "53",
                 Name = "CARNES",
                 IsActive = true,
                 IsBrowsable = true
             };
-            Categories.Setup(repository => repository.GetByExternalIdAsync(
-                    BusinessId, Connection.IntegrationConnectionId, "53", It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Category);
-            Categories.Setup(repository => repository.GetByNameAsync(
-                    BusinessId, Connection.IntegrationConnectionId, "CARNES", It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Category);
+            Categories.Setup(repository => repository.GetForExternalSyncAsync(
+                    BusinessId, Connection.IntegrationConnectionId,
+                    It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<IReadOnlyCollection<string>>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Guid _, Guid _, IReadOnlyCollection<string> ids,
+                    IReadOnlyCollection<string> names, CancellationToken _) =>
+                    ids.Contains("53") || names.Contains("CARNES") ? [Category] : []);
+            Categories.Setup(repository => repository.CreateManyAsync(
+                    It.IsAny<IReadOnlyCollection<ProductCategory>>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            Products.Setup(repository => repository.GetByExternalIdsAsync(
+                    BusinessId, Connection.IntegrationConnectionId,
+                    It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
+            Products.Setup(repository => repository.CreateManyAsync(
+                    It.IsAny<IReadOnlyCollection<Product>>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            Products.Setup(repository => repository.UpdateManyAsync(
+                    It.IsAny<IReadOnlyCollection<Product>>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            Products.Setup(repository => repository.ReplaceSearchTermsAsync(
+                    It.IsAny<IReadOnlyCollection<Product>>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
             var connections = new Mock<IIntegrationConnectionRepository>();
             connections.Setup(repository => repository.GetByBusinessConnectionTypeAsync(
                     BusinessId, ConnectionType.Commerce, It.IsAny<CancellationToken>()))
@@ -447,8 +508,26 @@ public sealed class ProductCatalogSyncServiceTests
                     It.IsAny<IntegrationConnection>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((IntegrationConnection value, CancellationToken _) => value);
             var unitOfWork = new Mock<IUnitOfWork>();
+            var businesses = new Mock<IBusinessRepository>();
+            businesses.Setup(repository => repository.GetByIdAsync(BusinessId))
+                .ReturnsAsync(new Business { BusinessId = BusinessId, TenantId = BusinessId, Name = "Test" });
+            unitOfWork.SetupGet(value => value.Businesses).Returns(businesses.Object);
             unitOfWork.SetupGet(value => value.IntegrationConnections).Returns(connections.Object);
             unitOfWork.SetupGet(value => value.Products).Returns(Products.Object);
+            Customers.Setup(repository => repository.GetByExternalKeysAsync(
+                    BusinessId, Connection.IntegrationConnectionId,
+                    It.IsAny<IReadOnlyCollection<ExternalCommerceCustomerKey>>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([]);
+            Customers.Setup(repository => repository.CreateManyAsync(
+                    It.IsAny<IReadOnlyCollection<ExternalCommerceCustomer>>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            Customers.Setup(repository => repository.UpdateManyAsync(
+                    It.IsAny<IReadOnlyCollection<ExternalCommerceCustomer>>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            unitOfWork.SetupGet(value => value.ExternalCommerceCustomers).Returns(Customers.Object);
             unitOfWork.SetupGet(value => value.ProductCategories).Returns(Categories.Object);
             unitOfWork.Setup(value => value.SaveChangesAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(1);

@@ -3396,9 +3396,9 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             VALUES(@PartyId,@TenantId,N'Organization',N'Cliente contable',
                    N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers
-              (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,
+              (CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,
                CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@PartyId,@BusinessId,0,1,@UserId,SYSDATETIMEOFFSET());
+            VALUES(@CustomerId,@PartyId,@TenantId,0,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PartySites(
               PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
               CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
@@ -3518,10 +3518,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
             INSERT dbo.Products
-              (ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
+              (ProductId,TenantId,Source,Sku,Name,Currency,
                ManageStock,IsActive,CreatedAt)
             VALUES
-              (@ProductId,@TenantId,@BusinessId,0,@Sku,N'Servicio de compra',
+              (@ProductId,@TenantId,0,@Sku,N'Servicio de compra',
                N'COP',0,1,SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
@@ -3531,10 +3531,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
               (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.SupplierProducts
-              (SupplierProductId,BusinessId,ProductId,SupplierId,
+              (SupplierProductId,TenantId,ProductId,SupplierId,
                SupplierProductCode,IsPrimary,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,@SupplierId,@Sku,1,1,
+              (NEWID(),@TenantId,@ProductId,@SupplierId,@Sku,1,1,
                SYSDATETIMEOFFSET());
             """, connection);
         command.Parameters.AddWithValue("@ProductId", productId);
@@ -3553,10 +3553,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
             INSERT dbo.Products
-              (ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
+              (ProductId,TenantId,Source,Sku,Name,Currency,
                ManageStock,IsActive,CreatedAt)
             VALUES
-              (@ProductId,@TenantId,@BusinessId,0,@Sku,N'Producto sin existencias',
+              (@ProductId,@TenantId,0,@Sku,N'Producto sin existencias',
                N'COP',1,1,SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
@@ -3567,10 +3567,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                30,1,N'Nearest',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.SupplierProducts
-              (SupplierProductId,BusinessId,ProductId,SupplierId,
+              (SupplierProductId,TenantId,ProductId,SupplierId,
                SupplierProductCode,IsPrimary,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,@SupplierId,@Sku,1,1,
+              (NEWID(),@TenantId,@ProductId,@SupplierId,@Sku,1,1,
                SYSDATETIMEOFFSET());
             """, connection);
         command.Parameters.AddWithValue("@ProductId", productId);

@@ -4,7 +4,7 @@ public sealed class ProductImage
 {
     public Guid ProductImageId { get; set; }
     public Guid ProductId { get; set; }
-    public Guid BusinessId { get; set; }
+    public Guid TenantId { get; set; }
     public Guid? ProductOfferId { get; set; }
     public string MediaUrl { get; set; } = string.Empty;
     public string? AltText { get; set; }
@@ -15,6 +15,5 @@ public sealed class ProductImage
     public DateTime? UpdatedAt { get; set; }
 
     public Product Product { get; set; } = null!;
-    public Business Business { get; set; } = null!;
     public ProductOffer? ProductOffer { get; set; }
 }

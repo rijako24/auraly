@@ -14,6 +14,13 @@ public interface IProductCategoryRepository
         string externalCategoryId,
         CancellationToken ct = default);
 
+    Task<IReadOnlyList<ProductCategory>> GetForExternalSyncAsync(
+        Guid tenantId,
+        Guid integrationConnectionId,
+        IReadOnlyCollection<string> externalCategoryIds,
+        IReadOnlyCollection<string> names,
+        CancellationToken ct = default);
+
     Task<ProductCategory?> GetByNameAsync(
         Guid businessId,
         Guid? integrationConnectionId,
@@ -34,5 +41,6 @@ public interface IProductCategoryRepository
         CancellationToken ct = default);
 
     Task<ProductCategory> CreateAsync(ProductCategory category, CancellationToken ct = default);
+    Task CreateManyAsync(IReadOnlyCollection<ProductCategory> categories, CancellationToken ct = default);
     Task<ProductCategory> UpdateAsync(ProductCategory category, CancellationToken ct = default);
 }

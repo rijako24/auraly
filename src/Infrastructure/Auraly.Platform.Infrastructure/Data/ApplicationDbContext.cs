@@ -415,10 +415,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.DayOfWeek).HasConversion<int>();
             entity.Property(e => e.OpenTime).IsRequired();
             entity.Property(e => e.CloseTime).IsRequired();
-            entity.HasOne(e => e.Business)
-                  .WithMany()
-                  .HasForeignKey(e => e.BusinessId)
-                  .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.BusinessId).IsRequired();
             entity.HasOne(e => e.Employee)
                   .WithMany()
                   .HasForeignKey(e => e.EmployeeId)
@@ -431,10 +428,7 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.EmployeeScheduleExceptionId);
             entity.Property(e => e.Reason).HasMaxLength(500);
-            entity.HasOne(e => e.Business)
-                  .WithMany()
-                  .HasForeignKey(e => e.BusinessId)
-                  .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(e => e.BusinessId).IsRequired();
             entity.HasOne(e => e.Employee)
                   .WithMany()
                   .HasForeignKey(e => e.EmployeeId)
@@ -570,8 +564,8 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(category => category.ProductCategoryId);
             entity.Property(category => category.ExternalCategoryId).HasMaxLength(150);
             entity.Property(category => category.Name).IsRequired().HasMaxLength(150);
-            entity.HasOne(category => category.Business).WithMany()
-                .HasForeignKey(category => category.BusinessId)
+            entity.HasOne<Tenant>().WithMany()
+                .HasForeignKey(category => category.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(category => category.Parent).WithMany(category => category.Children)
                 .HasForeignKey(category => category.ParentProductCategoryId)
@@ -581,10 +575,10 @@ public class ApplicationDbContext : DbContext
                 .HasForeignKey(category => category.IntegrationConnectionId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
-            entity.HasIndex(category => category.BusinessId);
+            entity.HasIndex(category => category.TenantId);
             entity.HasIndex(category => new
                 {
-                    category.BusinessId,
+                    category.TenantId,
                     category.IntegrationConnectionId,
                     category.ExternalCategoryId
                 })
@@ -592,7 +586,7 @@ public class ApplicationDbContext : DbContext
                 .HasFilter("[IntegrationConnectionId] IS NOT NULL AND [ExternalCategoryId] IS NOT NULL");
             entity.HasIndex(category => new
                 {
-                    category.BusinessId,
+                    category.TenantId,
                     category.IntegrationConnectionId,
                     category.Name
                 })
@@ -615,10 +609,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.StockQuantity).HasPrecision(18, 2);
             entity.Property(e => e.ConversionMaximumLossPercent).HasPrecision(9, 6);
             entity.Property(e => e.RawPayloadJson).HasColumnType("NVARCHAR(MAX)");
-            entity.HasOne(e => e.Business)
-                .WithMany()
-                .HasForeignKey(e => e.BusinessId)
-                .OnDelete(DeleteBehavior.Restrict);
+            entity.Ignore(e => e.BusinessId);
             entity.HasOne(e => e.IntegrationConnection)
                 .WithMany()
                 .HasForeignKey(e => e.IntegrationConnectionId)
@@ -629,13 +620,12 @@ public class ApplicationDbContext : DbContext
                 .HasForeignKey(e => e.ProductCategoryId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
-            entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => new { e.TenantId, e.ProductCode }).IsUnique()
                 .HasFilter("[ProductCode] IS NOT NULL");
-            entity.HasIndex(e => new { e.BusinessId, e.Name });
-            entity.HasIndex(e => new { e.BusinessId, e.CategoryName });
-            entity.HasIndex(e => new { e.BusinessId, e.Sku });
-            entity.HasIndex(e => new { e.BusinessId, e.IntegrationConnectionId, e.ExternalProductId })
+            entity.HasIndex(e => new { e.TenantId, e.Name });
+            entity.HasIndex(e => new { e.TenantId, e.CategoryName });
+            entity.HasIndex(e => new { e.TenantId, e.Sku });
+            entity.HasIndex(e => new { e.TenantId, e.IntegrationConnectionId, e.ExternalProductId })
                 .IsUnique()
                 .HasFilter("[IntegrationConnectionId] IS NOT NULL AND [ExternalProductId] IS NOT NULL");
         });
@@ -650,7 +640,8 @@ public class ApplicationDbContext : DbContext
             entity.Property(price => price.ValidFrom).HasColumnType("datetimeoffset");
             entity.Property(price => price.ValidUntil).HasColumnType("datetimeoffset");
             entity.Property(price => price.CreatedAt).HasColumnType("datetimeoffset");
-            entity.HasIndex(price => new { price.BusinessId, price.ProductId, price.IsActive });
+            entity.HasIndex(price => new { price.BusinessId, price.ProductId })
+                .IsUnique().HasFilter("[IsActive] = 1");
             // ProductPrices is a dependent of the existing product master. This
             // relationship makes EF preserve the SQL foreign-key insert order when
             // a legacy caller still creates both records in one unit of work.
@@ -722,9 +713,9 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.RecommendedSku).HasMaxLength(100);
             entity.Property(e => e.RecommendedSearchText).HasMaxLength(300);
             entity.Property(e => e.Reason).HasMaxLength(500);
-            entity.HasOne(e => e.Business)
+            entity.HasOne<Tenant>()
                 .WithMany()
-                .HasForeignKey(e => e.BusinessId)
+                .HasForeignKey(e => e.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(e => e.IntegrationConnection)
                 .WithMany()
@@ -738,7 +729,7 @@ public class ApplicationDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(e => e.RecommendedProductId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => new { e.BusinessId, e.IsActive, e.Priority });
+            entity.HasIndex(e => new { e.TenantId, e.IsActive, e.Priority });
             entity.HasIndex(e => e.IntegrationConnectionId);
             entity.HasIndex(e => e.SourceProductId);
             entity.HasIndex(e => e.RecommendedProductId);
@@ -1311,18 +1302,18 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<Employee>(entity =>
         {
             entity.HasKey(e => e.EmployeeId);
-            entity.Property(e => e.BusinessId).IsRequired();
+            entity.Property(e => e.TenantId).IsRequired();
             entity.Property(e => e.PartyId);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
             entity.Property(e => e.CreatedAt).IsRequired();
-            entity.HasOne(e => e.Business)
+            entity.HasOne<Tenant>()
                   .WithMany()
-                  .HasForeignKey(e => e.BusinessId)
+                  .HasForeignKey(e => e.TenantId)
                   .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => e.BusinessId);
-            entity.HasIndex(e => new { e.BusinessId, e.PartyId }).IsUnique().HasFilter("[PartyId] IS NOT NULL");
-            entity.HasIndex(e => new { e.BusinessId, e.Name }); // Ãndice para bÃºsquedas por nombre
+            entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.TenantId, e.PartyId }).IsUnique().HasFilter("[PartyId] IS NOT NULL");
+            entity.HasIndex(e => new { e.TenantId, e.Name });
         });
 
         // EmployeeService configuration (many-to-many)

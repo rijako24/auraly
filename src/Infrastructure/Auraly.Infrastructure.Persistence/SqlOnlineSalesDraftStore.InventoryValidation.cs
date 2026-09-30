@@ -50,7 +50,7 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
              AND product.ProductId=line.ProductId
             LEFT JOIN dbo.ProductLinks link
-              ON link.BusinessId=@BusinessId AND link.ChildProductId=line.ProductId
+              ON link.TenantId=product.TenantId AND link.ChildProductId=line.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
             JOIN dbo.Products inventoryProduct
               ON inventoryProduct.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)

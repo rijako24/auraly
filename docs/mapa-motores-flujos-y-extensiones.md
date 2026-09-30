@@ -30,29 +30,32 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 
 El logo de los comprobantes se toma del perfil del tenant. La caja preparada lo
 descarga al enrolarse y lo conserva como imagen protegida en el equipo; imprimir
-sin conexión no consulta Blob Storage. En POS web, al abrir la vista se hace una
-única petición condicional al endpoint autenticado de marca. Cache Storage del
+sin conexión no consulta Blob Storage. En POS web, al facturar o reimprimir se
+comprueba la marca antes de confirmar la venta o generar la impresión. Cache Storage del
 navegador conserva la respuesta por tenant y envía su ETag; el servidor devuelve
 304 sin leer Blob si la versión no cambió, o los bytes en esa misma petición si
 cambió o no hay copia. Si no hay logo, responde solo los datos del encabezado. Una
 sesión activa mantiene además una copia temporal de acceso rápido durante diez
 minutos. La aplicación instalada sin caja preparada sigue la misma ruta web:
-verifica al entrar al POS y entrega al servicio local de impresión los bytes que
+verifica antes de imprimir y entrega al servicio local de impresión los bytes que
 ya están en la caché del navegador. Solo la caja preparada conserva una copia
 protegida en la carpeta local y la carga al iniciar su servicio. Un cambio del
 logo publica una invalidación en el flujo de configuración existente. Edge
 consulta condicionalmente la versión, descarga los bytes solo si cambiaron y
 actualiza el paquete protegido y la copia activa; una reconexión recupera los
-cambios perdidos. No requiere volver a preparar la caja. Imprimir nunca lee
-Blob ni la API del logo. La consulta existente del nombre del tenant se hace
-al imprimir online; la caja preparada usa sus datos locales.
-La vista independiente de Pedidos hace esa comprobación al abrirse solo cuando
-opera online; una caja preparada conserva la ruta de impresión local.
-La verificación web empieza durante la
-entrada a POS y la pantalla espera como máximo 350 ms; si la descarga tarda más,
-termina en segundo plano. La impresión usa únicamente la copia disponible y,
-si falta o falla, muestra el nombre de la empresa sin demorar ni cancelar la
-factura. Los correos fiscales leen el logo al preparar la entrega, fuera de la
+cambios perdidos. No requiere volver a preparar la caja. La generación de cada
+comprobante nunca lee Blob ni la API de marca. El nombre y los datos fiscales básicos se conservan
+en la misma copia de marca; la caja preparada usa sus datos locales.
+La vista independiente de Pedidos hace esa comprobación al imprimir pedidos o
+antes de facturarlos cuando se solicitó impresión; una caja preparada conserva
+la ruta de impresión local. La facturación sin impresión no consulta la marca.
+La verificación web ocurre en POS al facturar, antes de confirmar la venta; la
+primera carga se reutiliza durante la sesión. En Pedidos, cuando se solicitó
+impresión, debe terminar antes de iniciar la facturación. Un perfil sin logo es
+válido; una falla al cargar la marca impide confirmar la venta o facturación que
+requiere impresión. La impresión
+usa esa copia y conserva la sede del contexto operativo. Los correos
+fiscales leen el logo al preparar la entrega, fuera de la
 transacción de venta. Los perfiles antiguos con un enlace externo ajeno al Blob
 del negocio imprimen el nombre hasta volver a cargar el logo desde el perfil;
 la impresión no consulta esa URL.

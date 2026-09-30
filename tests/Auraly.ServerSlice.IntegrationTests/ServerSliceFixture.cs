@@ -883,8 +883,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             FROM dbo.Countries WHERE Code=N'CO';
 
             INSERT dbo.Customers
-              (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
-            VALUES(@BillingCustomerId,@BillingCustomerPartyId,@BusinessId,1,1,@UserId,@Now);
+              (CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+            VALUES(@BillingCustomerId,@BillingCustomerPartyId,@TenantId,1,1,@UserId,@Now);
 
             INSERT billing.TenantSubscriptions
               (TenantSubscriptionId,TenantId,TenantCommercialPlanId,BillingCustomerId,
@@ -936,13 +936,13 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             WHERE p.IsDefault=1 AND p.IsActive=1 AND t.IsActive=1;
 
             INSERT dbo.ProductUnits(
-                ProductUnitId,BusinessId,Code,Name,Symbol,
+                ProductUnitId,TenantId,Code,Name,Symbol,
                 AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,N'EA',N'Unidad',N'und',0,0,1,SYSDATETIMEOFFSET()),
-              (NEWID(),@BusinessId,N'KG',N'Kilogramo',N'kg',1,3,1,SYSDATETIMEOFFSET()),
-              (NEWID(),@BusinessId,N'M',N'Metro',N'm',1,3,1,SYSDATETIMEOFFSET()),
-              (NEWID(),@BusinessId,N'L',N'Litro',N'L',1,3,1,SYSDATETIMEOFFSET());
+              (NEWID(),@TenantId,N'EA',N'Unidad',N'und',0,0,1,SYSDATETIMEOFFSET()),
+              (NEWID(),@TenantId,N'KG',N'Kilogramo',N'kg',1,3,1,SYSDATETIMEOFFSET()),
+              (NEWID(),@TenantId,N'M',N'Metro',N'm',1,3,1,SYSDATETIMEOFFSET()),
+              (NEWID(),@TenantId,N'L',N'Litro',N'L',1,3,1,SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.EnrolledDevices
             (DeviceId, TenantId, Name,
@@ -1017,9 +1017,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              @DocumentType, @Prefix, 10001, 20000, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Products
-            (ProductId, TenantId, BusinessId, Source, Sku, Name, Currency, ManageStock, IsActive, CreatedAt)
+            (ProductId, TenantId, Source, Sku, Name, Currency, ManageStock, IsActive, CreatedAt)
             VALUES
-            (@ProductId, @TenantId, @BusinessId, 0, N'P-E2E', N'Producto E2E', N'COP', 1, 1, SYSUTCDATETIME());
+            (@ProductId, @TenantId, 0, N'P-E2E', N'Producto E2E', N'COP', 1, 1, SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,CostBasisAmount,CurrencyCode,ValidFrom,
@@ -1034,14 +1034,14 @@ public sealed class ServerSliceFixture : IAsyncLifetime
               (@GoodsSupplierPartyId,@TenantId,N'Organization',N'Proveedor E2E',N'Proveedor E2E',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Suppliers
-              (SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
+              (SupplierId,TenantId,PartyId,Identification,Name,IsActive,CreatedAt)
             VALUES
-              (@GoodsSupplierId,@BusinessId,@GoodsSupplierPartyId,N'900999001',N'Proveedor E2E',1,SYSDATETIMEOFFSET());
+              (@GoodsSupplierId,@TenantId,@GoodsSupplierPartyId,N'900999001',N'Proveedor E2E',1,SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.SupplierProducts
-              (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
+              (SupplierProductId,TenantId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,@GoodsSupplierId,N'PROV-P-E2E',1,1,SYSDATETIMEOFFSET());
+              (NEWID(),@TenantId,@ProductId,@GoodsSupplierId,N'PROV-P-E2E',1,1,SYSDATETIMEOFFSET());
             """;
         await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -1237,6 +1237,20 @@ internal sealed class TestExecutionAccessResolver(
     IHttpContextAccessor httpContextAccessor) : IExecutionAccessResolver
 {
     public const string AccessProfileClaim = "test_execution_access_id";
+
+    public async Task<bool> HasPermissionForBusinessesAsync(
+        Guid userId, Guid tenantId, IReadOnlyCollection<Guid> businessIds,
+        string permission, CancellationToken cancellationToken)
+    {
+        var profileValue = httpContextAccessor.HttpContext?.User
+            .FindFirst(AccessProfileClaim)?.Value;
+        if (!Guid.TryParse(profileValue, out var accessProfileId) ||
+            !registry.TryGet(accessProfileId, out var permissions) ||
+            !permissions.Contains(permission)) return false;
+        var accessible = await sql.ListBusinessesAsync(userId, tenantId, cancellationToken);
+        var accessibleIds = accessible.Select(value => value.BusinessId).ToHashSet();
+        return businessIds.Count > 0 && businessIds.All(accessibleIds.Contains);
+    }
 
     public async Task<ResolvedExecutionAccess> ResolveAccessAsync(
         Guid userId,

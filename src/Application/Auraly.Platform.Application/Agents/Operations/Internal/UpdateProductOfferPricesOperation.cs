@@ -107,7 +107,7 @@ public sealed partial class UpdateProductOfferPricesOperation : IAgentOperation
                 {
                     ProductOfferId = Guid.NewGuid(),
                     ProductId = product.ProductId,
-                    BusinessId = context.BusinessId,
+                    TenantId = product.TenantId,
                     Condition = row.Condition,
                     StorageGb = row.StorageGb,
                     VariantLabel = row.VariantLabel,

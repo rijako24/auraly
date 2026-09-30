@@ -139,6 +139,16 @@ Se permiten varias colas cuando representan responsabilidades o stages diferente
 
 ## 7. Catalogos, tablas y dropdowns
 
+Las fichas de `Products` y todos sus maestros relacionados (categorías,
+marcas, unidades, códigos de barras, identificadores, enlaces, IVA, canales,
+ofertas, imágenes, alias y relaciones con proveedores) pertenecen al tenant y
+conservan el mismo ID al cambiar de sede. `Parties` y sus roles de cliente,
+proveedor, vendedor, transportador y empleado también pertenecen al tenant.
+`ProductPrices` es la única tabla de producto cuyo valor publicado se identifica
+por sede. Las ventas, compras, inventario, documentos y demás operaciones
+siguen usando el `BusinessId` seleccionado y validan que los maestros
+referenciados pertenezcan a su tenant. La creación de sedes no duplica fichas.
+
 Todo selector de datos de negocio debe consumir un catalogo canonico persistido. No se permiten listas quemadas de opciones en TypeScript, C#, prompts, JSON de UI o componentes.
 
 La existencia de una lista quemada actual no la convierte en patron valido. No se agregan nuevos consumidores de ella; cuando una tarea toque ese selector o su contrato, debe migrarlo al catalogo canonico dentro del mismo slice o registrar de forma explicita el bloqueo y la migracion pendiente.

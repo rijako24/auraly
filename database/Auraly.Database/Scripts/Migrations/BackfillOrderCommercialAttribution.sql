@@ -17,6 +17,6 @@ SET SellerId=seller.SellerId
 FROM dbo.Orders orders
 INNER JOIN dbo.AppUsers appUser ON appUser.UserId=orders.CapturedByUserId
 INNER JOIN dbo.CommerceSellers seller
-  ON seller.PartyId=appUser.PartyId AND seller.BusinessId=orders.BusinessId
+  ON seller.PartyId=appUser.PartyId AND seller.TenantId=appUser.TenantId
 WHERE orders.SellerId IS NULL AND seller.IsActive=1;
 GO

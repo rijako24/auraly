@@ -20,16 +20,17 @@ public class EmployeeScheduleExceptionRepository : IEmployeeScheduleExceptionRep
             .FirstOrDefaultAsync(e => e.EmployeeScheduleExceptionId == employeeScheduleExceptionId, ct);
     }
 
-    public async Task<IReadOnlyList<EmployeeScheduleException>> GetByEmployeeIdAsync(Guid employeeId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<EmployeeScheduleException>> GetByEmployeeIdAsync(Guid businessId, Guid employeeId, CancellationToken ct = default)
     {
         return await _context.EmployeeScheduleExceptions
-            .Where(e => e.EmployeeId == employeeId)
+            .Where(e => e.BusinessId == businessId && e.EmployeeId == employeeId)
             .OrderBy(e => e.Date)
             .ThenBy(e => e.OpenTime)
             .ToListAsync(ct);
     }
 
     public async Task<IReadOnlyList<EmployeeScheduleException>> GetByEmployeeIdsAndDateAsync(
+        Guid businessId,
         IEnumerable<Guid> employeeIds,
         DateOnly date,
         CancellationToken ct = default)
@@ -38,7 +39,7 @@ public class EmployeeScheduleExceptionRepository : IEmployeeScheduleExceptionRep
         if (ids.Count == 0) return [];
 
         return await _context.EmployeeScheduleExceptions
-            .Where(e => ids.Contains(e.EmployeeId) && e.Date == date)
+            .Where(e => e.BusinessId == businessId && ids.Contains(e.EmployeeId) && e.Date == date)
             .ToListAsync(ct);
     }
 
@@ -60,10 +61,10 @@ public class EmployeeScheduleExceptionRepository : IEmployeeScheduleExceptionRep
         return Task.CompletedTask;
     }
 
-    public async Task ReplaceForEmployeeAsync(Guid employeeId, IEnumerable<EmployeeScheduleException> exceptions, CancellationToken ct = default)
+    public async Task ReplaceForEmployeeAsync(Guid businessId, Guid employeeId, IEnumerable<EmployeeScheduleException> exceptions, CancellationToken ct = default)
     {
         var current = await _context.EmployeeScheduleExceptions
-            .Where(e => e.EmployeeId == employeeId)
+            .Where(e => e.BusinessId == businessId && e.EmployeeId == employeeId)
             .ToListAsync(ct);
 
         _context.EmployeeScheduleExceptions.RemoveRange(current);

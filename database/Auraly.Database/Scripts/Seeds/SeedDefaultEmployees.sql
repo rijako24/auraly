@@ -5,6 +5,7 @@
 
 
 DECLARE @BusinessId UNIQUEIDENTIFIER = '22222222-2222-2222-2222-222222222222'; -- BusinessId por defecto
+DECLARE @EmployeeTenantId UNIQUEIDENTIFIER = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId = @BusinessId);
 
 
 
@@ -30,9 +31,9 @@ DECLARE @Empleado2Id UNIQUEIDENTIFIER;
 
 
 
-SELECT @Empleado1Id = [EmployeeId] FROM [dbo].[Employees] WHERE [BusinessId] = @BusinessId AND [Name] = 'Empleado 1';
+SELECT @Empleado1Id = [EmployeeId] FROM [dbo].[Employees] WHERE [TenantId] = @EmployeeTenantId AND [Name] = 'Empleado 1';
 
-SELECT @Empleado2Id = [EmployeeId] FROM [dbo].[Employees] WHERE [BusinessId] = @BusinessId AND [Name] = 'Empleado 2';
+SELECT @Empleado2Id = [EmployeeId] FROM [dbo].[Employees] WHERE [TenantId] = @EmployeeTenantId AND [Name] = 'Empleado 2';
 
 
 
@@ -42,9 +43,9 @@ IF @Empleado1Id IS NULL OR @Empleado2Id IS NULL
 
 BEGIN
 
-    SELECT TOP 1 @Empleado1Id = [EmployeeId] FROM [dbo].[Employees] WHERE [BusinessId] = @BusinessId ORDER BY [CreatedAt];
+    SELECT TOP 1 @Empleado1Id = [EmployeeId] FROM [dbo].[Employees] WHERE [TenantId] = @EmployeeTenantId ORDER BY [CreatedAt];
 
-    SELECT TOP 1 @Empleado2Id = [EmployeeId] FROM [dbo].[Employees] WHERE [BusinessId] = @BusinessId AND [EmployeeId] != @Empleado1Id ORDER BY [CreatedAt];
+    SELECT TOP 1 @Empleado2Id = [EmployeeId] FROM [dbo].[Employees] WHERE [TenantId] = @EmployeeTenantId AND [EmployeeId] != @Empleado1Id ORDER BY [CreatedAt];
 
 END
 

@@ -13,10 +13,10 @@ IF NOT EXISTS(
     THROW 51000,'SeedAuralyBillingConfiguration requiere la empresa canónica Auraly.',1;
 
 IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles
-              WHERE BusinessId=@BillingBusinessId AND DianTaxCode=N'01' AND Rate=19)
+              WHERE TenantId=@PlatformTenantId AND DianTaxCode=N'01' AND Rate=19)
     INSERT dbo.TaxProfiles
-      (TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-    VALUES('A0A1B100-0000-0000-0000-000000000019',@BillingBusinessId,N'IVA19',N'01',
+      (TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+    VALUES('A0A1B100-0000-0000-0000-000000000019',@PlatformTenantId,N'IVA19',N'01',
            N'IVA 19%',19,1,@Now);
 
 PRINT N'SeedAuralyBillingConfiguration: identidad fiscal de Auraly preparada.';

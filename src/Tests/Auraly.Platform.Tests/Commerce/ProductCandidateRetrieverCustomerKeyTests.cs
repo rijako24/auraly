@@ -138,7 +138,7 @@ public sealed class ProductCandidateRetrieverCustomerKeyTests
         string customerKey) => new()
     {
         ProductAliasId = Guid.NewGuid(),
-        BusinessId = businessId,
+        TenantId = businessId,
         ProductId = product.ProductId,
         Product = product,
         Scope = ProductAliasScope.Customer,

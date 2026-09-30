@@ -28,7 +28,7 @@ public class EmployeeRepository : IEmployeeRepository
         return await _context.Employees
             .Include(e => e.EmployeeServices)
                 .ThenInclude(es => es.Service)
-            .Where(e => e.BusinessId == businessId)
+            .Where(e => _context.Businesses.Any(b => b.BusinessId == businessId && b.TenantId == e.TenantId))
             .OrderBy(e => e.Name)
             .ToListAsync();
     }
@@ -38,7 +38,7 @@ public class EmployeeRepository : IEmployeeRepository
         return await _context.Employees
             .Include(e => e.EmployeeServices)
                 .ThenInclude(es => es.Service)
-            .Where(e => e.BusinessId == businessId && e.IsActive)
+            .Where(e => _context.Businesses.Any(b => b.BusinessId == businessId && b.TenantId == e.TenantId) && e.IsActive)
             .OrderBy(e => e.Name)
             .ToListAsync();
     }
@@ -48,7 +48,7 @@ public class EmployeeRepository : IEmployeeRepository
         return await _context.Employees
             .Include(e => e.EmployeeServices)
                 .ThenInclude(es => es.Service)
-            .Where(e => e.BusinessId == businessId 
+            .Where(e => _context.Businesses.Any(b => b.BusinessId == businessId && b.TenantId == e.TenantId)
                 && e.IsActive 
                 && e.EmployeeServices.Any(es => es.ServiceId == serviceId))
             .OrderBy(e => e.Name)
@@ -61,7 +61,7 @@ public class EmployeeRepository : IEmployeeRepository
         var query = _context.Employees
             .Include(e => e.EmployeeServices)
                 .ThenInclude(es => es.Service)
-            .Where(e => e.BusinessId == businessId);
+            .Where(e => _context.Businesses.Any(b => b.BusinessId == businessId && b.TenantId == e.TenantId));
 
         if (!string.IsNullOrWhiteSpace(search))
         {

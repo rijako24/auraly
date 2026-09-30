@@ -5,7 +5,7 @@ namespace Auraly.Platform.Domain.Entities;
 public class ProductRecommendationRule
 {
     public Guid ProductRecommendationRuleId { get; set; }
-    public Guid BusinessId { get; set; }
+    public Guid TenantId { get; set; }
     public Guid? IntegrationConnectionId { get; set; }
     public ProductRecommendationMatchType MatchType { get; set; }
     public Guid? SourceProductId { get; set; }
@@ -23,7 +23,6 @@ public class ProductRecommendationRule
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
-    public virtual Business Business { get; set; } = null!;
     public virtual IntegrationConnection? IntegrationConnection { get; set; }
     public virtual Product? SourceProduct { get; set; }
     public virtual Product? RecommendedProduct { get; set; }

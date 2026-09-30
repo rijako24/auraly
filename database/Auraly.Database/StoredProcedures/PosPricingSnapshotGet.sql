@@ -24,14 +24,12 @@ BEGIN
     SELECT channelValue.PriceChannelId,channelValue.Code,channelValue.Name,
            channelValue.Strategy,channelValue.Value
     FROM dbo.PriceChannels channelValue
-    WHERE channelValue.BusinessId = @BusinessId
-      AND channelValue.IsActive = 1;
+    WHERE channelValue.TenantId=@TenantId AND channelValue.IsActive = 1;
 
     SELECT item.PriceChannelId,item.ProductId,item.MinimumQuantity,item.Amount,item.CurrencyCode
     FROM dbo.PriceChannelItems item
     JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=item.PriceChannelId
-    WHERE channelValue.BusinessId=@BusinessId
-      AND channelValue.IsActive=1
+    WHERE channelValue.TenantId=@TenantId AND channelValue.IsActive=1
       AND item.IsActive=1
     ORDER BY item.PriceChannelId,item.ProductId,item.MinimumQuantity;
 
@@ -39,8 +37,7 @@ BEGIN
            exclusion.ProductCategoryId,exclusion.ProductBrandId
     FROM dbo.PriceChannelExclusions exclusion
     JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=exclusion.PriceChannelId
-    WHERE channelValue.BusinessId=@BusinessId
-      AND channelValue.IsActive=1
+    WHERE channelValue.TenantId=@TenantId AND channelValue.IsActive=1
     ORDER BY exclusion.PriceChannelId,exclusion.PriceChannelExclusionId;
 
     SELECT customer.CustomerId,
@@ -61,9 +58,9 @@ BEGIN
     LEFT JOIN dbo.CustomerPricingSettings setting
       ON setting.CustomerId = customer.CustomerId
     LEFT JOIN dbo.CounterpartyTaxProfiles taxProfile
-      ON taxProfile.BusinessId=customer.BusinessId
+      ON taxProfile.TenantId=@TenantId
      AND taxProfile.CounterpartyId=customer.CustomerId
-    WHERE customer.BusinessId = @BusinessId
+    WHERE customer.TenantId = @TenantId
       AND party.IsActive = 1
       AND 1=0; -- Customers are transferred through the paged customer stream.
 

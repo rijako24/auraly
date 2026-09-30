@@ -6,7 +6,7 @@ namespace Auraly.Platform.Domain.Entities;
 public class Employee
 {
     public Guid EmployeeId { get; set; }
-    public Guid BusinessId { get; set; }
+    public Guid TenantId { get; set; }
     public Guid? PartyId { get; set; }
     public string Name { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
@@ -14,7 +14,6 @@ public class Employee
     public DateTime? UpdatedAt { get; set; }
 
     // Navigation properties
-    public virtual Business Business { get; set; } = null!;
     public virtual ICollection<EmployeeService> EmployeeServices { get; set; } = new List<EmployeeService>();
     public virtual ICollection<Reservation> Reservations { get; set; } = new List<Reservation>();
 }

@@ -15,10 +15,10 @@ export const workingHourKeys = {
     [...workingHourKeys.all, "business", businessId] as const,
   businessBlocks: (businessId: string | null) =>
     [...workingHourKeys.all, "business-blocks", businessId] as const,
-  employee: (employeeId: string) =>
-    [...workingHourKeys.all, "employee", employeeId] as const,
-  employeeExceptions: (employeeId: string) =>
-    [...workingHourKeys.all, "employee-exceptions", employeeId] as const,
+  employee: (businessId: string | null, employeeId: string) =>
+    [...workingHourKeys.all, "employee", businessId, employeeId] as const,
+  employeeExceptions: (businessId: string | null, employeeId: string) =>
+    [...workingHourKeys.all, "employee-exceptions", businessId, employeeId] as const,
 };
 
 export function useBusinessWorkingHours() {
@@ -87,60 +87,66 @@ export function useDeleteBusinessAvailabilityBlock() {
 }
 
 export function useEmployeeWorkingHours(employeeId: string) {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
-    queryKey: workingHourKeys.employee(employeeId),
+    queryKey: workingHourKeys.employee(businessId, employeeId),
     queryFn: () => employeesApi.getWorkingHours(employeeId),
-    enabled: !!employeeId,
+    enabled: !!employeeId && !!businessId,
   });
 }
 
 export function useUpdateEmployeeWorkingHours(employeeId: string) {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (workingHours: WorkingHour[]) =>
       employeesApi.updateWorkingHours(employeeId, workingHours),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: workingHourKeys.employee(employeeId) });
+      queryClient.invalidateQueries({ queryKey: workingHourKeys.employee(businessId, employeeId) });
     },
   });
 }
 
 export function useEmployeeScheduleExceptions(employeeId: string) {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
-    queryKey: workingHourKeys.employeeExceptions(employeeId),
+    queryKey: workingHourKeys.employeeExceptions(businessId, employeeId),
     queryFn: () => employeesApi.listScheduleExceptions(employeeId),
-    enabled: !!employeeId,
+    enabled: !!employeeId && !!businessId,
   });
 }
 
 export function useCreateEmployeeScheduleException(employeeId: string) {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: EmployeeScheduleExceptionPayload) =>
       employeesApi.createScheduleException(employeeId, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: workingHourKeys.employeeExceptions(employeeId) });
+      queryClient.invalidateQueries({ queryKey: workingHourKeys.employeeExceptions(businessId, employeeId) });
     },
   });
 }
 
 export function useUpdateEmployeeScheduleException(employeeId: string) {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ exceptionId, payload }: { exceptionId: string; payload: EmployeeScheduleExceptionPayload }) =>
       employeesApi.updateScheduleException(employeeId, exceptionId, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: workingHourKeys.employeeExceptions(employeeId) });
+      queryClient.invalidateQueries({ queryKey: workingHourKeys.employeeExceptions(businessId, employeeId) });
     },
   });
 }
 
 export function useDeleteEmployeeScheduleException(employeeId: string) {
+  const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (exceptionId: string) => employeesApi.deleteScheduleException(employeeId, exceptionId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: workingHourKeys.employeeExceptions(employeeId) });
+      queryClient.invalidateQueries({ queryKey: workingHourKeys.employeeExceptions(businessId, employeeId) });
     },
   });
 }

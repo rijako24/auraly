@@ -553,7 +553,7 @@ public sealed class SqlPayablesStore(
         await using (var scope = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51200,'The business is outside the authenticated tenant.',1;
-            IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
+            IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND TenantId=@TenantId AND IsActive=1)
               THROW 51201,'The supplier is outside the authenticated business.',1;
             IF @WorkSessionId IS NOT NULL AND NOT EXISTS(
               SELECT 1 FROM dbo.WorkSessions

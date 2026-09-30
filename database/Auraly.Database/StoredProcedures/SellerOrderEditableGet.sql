@@ -35,7 +35,8 @@ BEGIN
     INNER JOIN dbo.Orders orders
       ON orders.OrderId=item.OrderId AND orders.BusinessId=item.BusinessId
     LEFT JOIN dbo.Products product
-      ON product.ProductId=item.ProductId AND product.BusinessId=item.BusinessId
+      ON product.ProductId=item.ProductId
+     AND product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=item.BusinessId)
     WHERE item.OrderId=@OrderId AND item.ProductId IS NOT NULL
     ORDER BY COALESCE(TRY_CONVERT(INT,JSON_VALUE(
              CASE WHEN ISJSON(item.RawPayloadJson)=1 THEN item.RawPayloadJson END,

@@ -1,5 +1,6 @@
 using System.Data;
 using System.Security.Claims;
+using System.Text.Json;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Caching.Memory;
@@ -7,7 +8,7 @@ using Microsoft.Extensions.Caching.Memory;
 namespace Auraly.Api;
 
 public sealed record ExecutionTenantOption(Guid TenantId, string Name);
-public sealed record ExecutionBusinessOption(Guid BusinessId, Guid TenantId, string Name);
+public sealed record ExecutionBusinessOption(Guid BusinessId, Guid TenantId, string Name, bool SharesProductPrices);
 public sealed record ExecutionAccess(
     Guid TenantId,
     Guid? BusinessId,
@@ -84,6 +85,9 @@ public interface IExecutionAccessResolver
         Guid tenantId,
         Guid? businessId,
         CancellationToken cancellationToken);
+    Task<bool> HasPermissionForBusinessesAsync(
+        Guid userId, Guid tenantId, IReadOnlyCollection<Guid> businessIds,
+        string permission, CancellationToken cancellationToken);
 }
 
 public sealed class SqlExecutionContextDirectory(
@@ -119,7 +123,7 @@ public sealed class SqlExecutionContextDirectory(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             result.Add(new ExecutionBusinessOption(
-                reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2)));
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetBoolean(3)));
         return result;
     }
 
@@ -152,6 +156,22 @@ public sealed class SqlExecutionContextDirectory(
             roles.Count > 0 || permissions.Count > 0, roles, permissions);
         cache.Set(cacheKey, result, TimeSpan.FromSeconds(10));
         return result;
+    }
+
+    public async Task<bool> HasPermissionForBusinessesAsync(
+        Guid userId, Guid tenantId, IReadOnlyCollection<Guid> businessIds,
+        string permission, CancellationToken cancellationToken)
+    {
+        var uniqueBusinessIds = businessIds.Distinct().ToArray();
+        if (uniqueBusinessIds.Length == 0 || uniqueBusinessIds.Contains(Guid.Empty)) return false;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = Procedure("dbo.ExecutionBusinessesPermissionCheck", connection);
+        command.Parameters.AddWithValue("@BusinessIdsJson", JsonSerializer.Serialize(uniqueBusinessIds));
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@Permission", permission);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == uniqueBusinessIds.Length;
     }
 
     private static SqlCommand Procedure(string name, SqlConnection connection) =>

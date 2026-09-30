@@ -216,7 +216,7 @@ public sealed class ProductAliasServiceTests
                 learned.NormalizedAlias, target.ProductId, It.IsAny<CancellationToken>()))
             .ReturnsAsync([new ProductAlias
             {
-                ProductAliasId = Guid.NewGuid(), BusinessId = businessId, ProductId = other.ProductId,
+                ProductAliasId = Guid.NewGuid(), TenantId = businessId, ProductId = other.ProductId,
                 Scope = ProductAliasScope.Business, Alias = learned.Alias,
                 NormalizedAlias = learned.NormalizedAlias, Status = ProductAliasStatus.Active
             }]);
@@ -273,7 +273,7 @@ public sealed class ProductAliasServiceTests
         ProductAliasScope scope) => new()
     {
         ProductAliasId = Guid.NewGuid(),
-        BusinessId = businessId,
+        TenantId = businessId,
         ProductId = productId,
         Scope = scope,
         CustomerKey = string.Empty,

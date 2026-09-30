@@ -19,21 +19,19 @@ internal static class ProductSearchModelConfiguration
             entity.Property(alias => alias.Source).HasConversion<int>();
             entity.Property(alias => alias.Status).HasConversion<int>();
             entity.Property(alias => alias.RowVersion).IsRowVersion();
-            entity.HasOne(alias => alias.Business).WithMany().HasForeignKey(alias => alias.BusinessId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(alias => alias.Product).WithMany(product => product.Aliases).HasForeignKey(alias => alias.ProductId).OnDelete(DeleteBehavior.Cascade);
-            entity.HasIndex(alias => new { alias.BusinessId, alias.ProductId, alias.Scope, alias.CustomerKey, alias.NormalizedAlias }).IsUnique();
-            entity.HasIndex(alias => new { alias.BusinessId, alias.NormalizedAlias, alias.Scope, alias.CustomerKey, alias.Status });
-            entity.HasIndex(alias => new { alias.BusinessId, alias.Scope, alias.CustomerKey, alias.NormalizedAlias })
+            entity.HasIndex(alias => new { alias.TenantId, alias.ProductId, alias.Scope, alias.CustomerKey, alias.NormalizedAlias }).IsUnique();
+            entity.HasIndex(alias => new { alias.TenantId, alias.NormalizedAlias, alias.Scope, alias.CustomerKey, alias.Status });
+            entity.HasIndex(alias => new { alias.TenantId, alias.Scope, alias.CustomerKey, alias.NormalizedAlias })
                 .IsUnique().HasFilter("[Status] = 1 AND [ResolutionMode] = 1");
         });
 
         modelBuilder.Entity<ProductSearchTerm>(entity =>
         {
-            entity.HasKey(term => new { term.BusinessId, term.ProductId, term.Term });
+            entity.HasKey(term => new { term.TenantId, term.ProductId, term.Term });
             entity.Property(term => term.Term).IsRequired().HasMaxLength(100);
-            entity.HasOne(term => term.Business).WithMany().HasForeignKey(term => term.BusinessId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(term => term.Product).WithMany(product => product.SearchTerms).HasForeignKey(term => term.ProductId).OnDelete(DeleteBehavior.Cascade);
-            entity.HasIndex(term => new { term.BusinessId, term.Term, term.ProductId });
+            entity.HasIndex(term => new { term.TenantId, term.Term, term.ProductId });
         });
     }
 }

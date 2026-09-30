@@ -23,7 +23,7 @@ BEGIN
       AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern
         OR p.Name LIKE @Pattern OR w.Code LIKE @Pattern OR w.Name LIKE @Pattern
         OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode
-                   WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId
+                   WHERE barcode.TenantId=p.TenantId AND barcode.ProductId=p.ProductId
                      AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1));
 
     SELECT w.WarehouseId,w.Code,w.Name,p.ProductId,COALESCE(p.ProductCode,N''),p.Name,p.ManageStock,COALESCE(b.QuantityOnHand,0),
@@ -41,7 +41,7 @@ BEGIN
       AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern
         OR p.Name LIKE @Pattern OR w.Code LIKE @Pattern OR w.Name LIKE @Pattern
         OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode
-                   WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId
+                   WHERE barcode.TenantId=p.TenantId AND barcode.ProductId=p.ProductId
                      AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
     ORDER BY p.Name,w.WarehouseId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
 END;

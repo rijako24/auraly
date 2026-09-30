@@ -951,7 +951,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         Guid partyId;
         await using (var party = new SqlCommand("""
             SELECT PartyId FROM dbo.Suppliers
-            WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId;
+            WHERE SupplierId=@SupplierId AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             """, connection, transaction))
         {
             party.Parameters.AddWithValue("@SupplierId", document.SupplierId);
@@ -1088,7 +1088,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         if (expense.ExpenseId != source.DocumentId || expense.BusinessId != source.BusinessId)
             throw new InvalidOperationException("The expense snapshot does not match its accounting source.");
         await using var command = new SqlCommand("""
-            SELECT PartyId FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId;
+            SELECT PartyId FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             """, connection, transaction);
         command.Parameters.AddWithValue("@SupplierId", expense.SupplierId);
         command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
@@ -1113,7 +1113,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             cancellation.PayableCredit + cancellation.SupplierCredit != original.Withholding.NetAmount)
             throw new InvalidOperationException("The expense cancellation does not reconcile with its accounting source.");
         await using var command = new SqlCommand("""
-            SELECT PartyId FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId;
+            SELECT PartyId FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             SELECT l.AccountId,l.Debit,l.Credit,l.PartyId,l.CostCenterId
             FROM dbo.AccountingEntries e
             JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
@@ -1461,7 +1461,7 @@ public sealed partial class SqlAccountingPostingProcessor(
               AND (mapping.EffectiveTo IS NULL OR mapping.EffectiveTo>=CONVERT(date,@OccurredAt))
             JOIN dbo.AccountingAccounts account ON account.AccountId=mapping.AccountId
               AND account.IsActive=1 AND account.AllowsPosting=1
-            WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId
+            WHERE customer.CustomerId=@CustomerId AND customer.TenantId=@TenantId
             ORDER BY CASE WHEN mapping.BusinessId=@BusinessId THEN 0 ELSE 1 END,mapping.EffectiveFrom DESC;
             """,connection,transaction);
         command.Parameters.AddWithValue("@TenantId",source.TenantId);command.Parameters.AddWithValue("@BusinessId",source.BusinessId);

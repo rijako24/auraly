@@ -38,7 +38,7 @@ public sealed class CanonicalCommerceCustomerLookup(ApplicationDbContext context
                 INNER JOIN dbo.ExternalCommerceCustomers externalCustomer
                     ON externalCustomer.CustomerId=customer.CustomerId
                    AND externalCustomer.PartyId=party.PartyId
-                   AND externalCustomer.BusinessId=customer.BusinessId
+                   AND externalCustomer.BusinessId=@BusinessId
                    AND externalCustomer.IntegrationConnectionId=@IntegrationConnectionId
                    AND externalCustomer.ReconciliationStatus=N'Linked'
                    AND externalCustomer.IsActive=1
@@ -47,7 +47,7 @@ public sealed class CanonicalCommerceCustomerLookup(ApplicationDbContext context
                    AND phoneContact.ContactType=N'Phone'
                    AND phoneContact.NormalizedValue=@Phone
                    AND phoneContact.IsActive=1
-                WHERE customer.BusinessId=@BusinessId AND customer.IsActive=1
+                WHERE customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND customer.IsActive=1
                 ORDER BY phoneContact.IsPrimary DESC,party.CreatedAt,party.PartyId;
                 """;
             command.Parameters.AddWithValue("@BusinessId", businessId);

@@ -14,7 +14,8 @@ columnas existentes. Para los casos de uso nuevos:
 - `ProductCode` es un identificador comercial, no la clave técnica.
 - `UnitPrice` y `StockQuantity` heredados no son fuente de verdad del POS.
 - Los precios viven en `ProductPrices`.
-- El inventario se deriva de `InventoryMovements`.
+- La existencia operativa se consulta en `InventoryBalances`; los movimientos
+  conservan la trazabilidad del inventario.
 - Un producto canónico requiere tenant, unidad e impuesto mediante una
   restricción SQL condicional que no invalida filas anteriores.
 
@@ -34,6 +35,11 @@ Las capacidades relacionadas se almacenan en:
 - `CatalogChanges`
 - `CatalogSyncSessions`
 - `CatalogSyncSessionProducts`
+
+La ficha, las categorías, los códigos, los vínculos de familia y las
+asociaciones con proveedores pertenecen al tenant. Los canales de precios
+también pertenecen al tenant. `ProductPrices` contiene el precio de venta por
+sede (`BusinessId`); los saldos de inventario pertenecen a cada bodega.
 
 La última tabla congela la membresía del bootstrap. Así, cambiar el código de un
 producto o crear otro mientras una caja descarga páginas no altera la
@@ -79,6 +85,7 @@ POS:
 - `GET /api/pos/v1/catalog/sync-sessions/{sessionId}/pages`
 - `GET /api/pos/v1/catalog/changes?cursor={cursor}`
 - `POST /api/pos/v1/inventory/availability`
+- `POST /api/pos/v1/inventory/availability-batch`
 
 ## Bootstrap
 
@@ -126,7 +133,10 @@ protocolo universal para todas las balanzas.
 ## Disponibilidad
 
 POS Edge no almacena inventario. El endpoint valida que producto, dispositivo,
-caja y bodega pertenezcan al mismo contexto. Si la bodega permite negativos,
+sede y bodega pertenezcan al mismo contexto. Si la bodega permite negativos,
 responde que no se requiere bloqueo. Si los bloquea, calcula disponibilidad
-desde `InventoryMovements` y responde al agregar o cambiar cantidad.
+desde `InventoryBalances` y responde al agregar o cambiar cantidad. Al entrar a
+cobrar, Edge valida todos los productos del borrador por lotes de hasta 500 en
+el mismo contexto. Si no hay conexión con el servidor, omite esta validación;
+el resultado no se persiste y el siguiente intento de cobro vuelve a evaluarlo.
 

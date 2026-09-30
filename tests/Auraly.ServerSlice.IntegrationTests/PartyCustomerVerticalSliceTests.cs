@@ -76,11 +76,12 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         var priceChannelId = Guid.NewGuid();
         await ExecuteAsync(
             """
-            INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
-            VALUES(@PriceChannelId,@BusinessId,N'CLI-MAY',N'Mayorista clientes',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
+            INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,Strategy,IsActive,CreatedAt)
+            VALUES(@PriceChannelId,@TenantId,N'CLI-MAY',N'Mayorista clientes',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
             """,
             new SqlParameter("@PriceChannelId", priceChannelId),
-            new SqlParameter("@BusinessId", fixture.BusinessId));
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@TenantId", fixture.TenantId));
 
         var operationId = Guid.NewGuid();
         var request = CustomerRequest(
@@ -108,7 +109,8 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         {
             customerSignal = await fixture.ReadSynchronizationMessageAsync();
         }
-        while (customerSignal.Stream != "Customers");
+        while (customerSignal.Stream != "Customers" ||
+               customerSignal.BusinessId != fixture.BusinessId);
         Assert.Equal(fixture.TenantId, customerSignal.TenantId);
         Assert.Equal(fixture.BusinessId, customerSignal.BusinessId);
         var customerOutboxCount = await ScalarAsync<int>(
@@ -366,11 +368,12 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         var priceChannelId = Guid.NewGuid();
         await ExecuteAsync(
             """
-            INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
-            VALUES(@PriceChannelId,@BusinessId,N'POS-NO',N'POS cannot assign',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
+            INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,Strategy,IsActive,CreatedAt)
+            VALUES(@PriceChannelId,@TenantId,N'POS-NO',N'POS cannot assign',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
             """,
             new SqlParameter("@PriceChannelId", priceChannelId),
-            new SqlParameter("@BusinessId", fixture.BusinessId));
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@TenantId", fixture.TenantId));
         using var pricingResponse = await pos.PostAsJsonAsync(
             "/api/pos/v1/customers",
             request with
@@ -610,17 +613,17 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.Parties WHERE PartyId=@PartyId;",
             new SqlParameter("@PartyId", customer.PartyId)));
         Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.Customers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
-            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+            "SELECT COUNT(*) FROM dbo.Customers WHERE PartyId=@PartyId AND TenantId=@TenantId;",
+            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@TenantId", fixture.TenantId)));
         Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.Suppliers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
-            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+            "SELECT COUNT(*) FROM dbo.Suppliers WHERE PartyId=@PartyId AND TenantId=@TenantId;",
+            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@TenantId", fixture.TenantId)));
         Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.CommerceSellers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
-            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+            "SELECT COUNT(*) FROM dbo.CommerceSellers WHERE PartyId=@PartyId AND TenantId=@TenantId;",
+            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@TenantId", fixture.TenantId)));
         Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.Carriers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
-            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+            "SELECT COUNT(*) FROM dbo.Carriers WHERE PartyId=@PartyId AND TenantId=@TenantId;",
+            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@TenantId", fixture.TenantId)));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.PartySites WHERE PartyId=@PartyId AND Code=N'PRINCIPAL';",
             new SqlParameter("@PartyId", customer.PartyId)));

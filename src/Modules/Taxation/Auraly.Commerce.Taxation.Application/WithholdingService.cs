@@ -97,8 +97,8 @@ public sealed class WithholdingService(
                 "JurisdictionCode cannot exceed 16 characters.");
         var saved = await store.SaveProfileAsync(
             user.TenantId, user.UserId, normalized, ct);
-        await synchronization.DispatchPendingAsync(
-            user.TenantId, user.BusinessId, CancellationToken.None);
+        await synchronization.DispatchTenantPendingAsync(
+            user.TenantId, CancellationToken.None);
         return saved;
     }
 

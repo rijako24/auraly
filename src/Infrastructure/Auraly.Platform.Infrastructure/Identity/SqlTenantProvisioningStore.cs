@@ -104,19 +104,19 @@ public sealed class SqlTenantProvisioningStore(
                 WHERE p.IsDefault=1 AND p.IsActive=1 AND t.IsActive=1;
 
                 INSERT dbo.ProductUnits(
-                    ProductUnitId,BusinessId,Code,Name,Symbol,
+                    ProductUnitId,TenantId,Code,Name,Symbol,
                     AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
                 VALUES
-                  (NEWID(),@BusinessId,N'EA',N'Unidad',N'und',0,0,1,@Now),
-                  (NEWID(),@BusinessId,N'KG',N'Kilogramo',N'kg',1,3,1,@Now),
-                  (NEWID(),@BusinessId,N'M',N'Metro',N'm',1,3,1,@Now),
-                  (NEWID(),@BusinessId,N'L',N'Litro',N'L',1,3,1,@Now);
+                  (NEWID(),@TenantId,N'EA',N'Unidad',N'und',0,0,1,@Now),
+                  (NEWID(),@TenantId,N'KG',N'Kilogramo',N'kg',1,3,1,@Now),
+                  (NEWID(),@TenantId,N'M',N'Metro',N'm',1,3,1,@Now),
+                  (NEWID(),@TenantId,N'L',N'Litro',N'L',1,3,1,@Now);
 
                 INSERT dbo.Parties
                   (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,Identification,NormalizedIdentification,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
                 VALUES(@ConsumerPartyId,@TenantId,N'Organization',@CountryId,N'CC',N'222222222222',N'222222222222',N'Consumidor final',N'Consumidor final',N'Complete',1,@ActorUserId,@Now);
-                INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-                VALUES(@CustomerId,@ConsumerPartyId,@BusinessId,1,@ActorUserId,@Now);
+                INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+                VALUES(@CustomerId,@ConsumerPartyId,@TenantId,1,@ActorUserId,@Now);
                 INSERT dbo.PartySites(
                   PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
                   CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
@@ -338,13 +338,13 @@ public sealed class SqlTenantProvisioningStore(
 
             SELECT @ExistingCustomerId=CustomerId
             FROM dbo.Customers WITH (UPDLOCK,HOLDLOCK)
-            WHERE PartyId=@ExistingPartyId AND BusinessId=@BillingBusinessId;
+            WHERE PartyId=@ExistingPartyId AND TenantId=@PlatformTenantId;
             IF @ExistingCustomerId IS NULL
             BEGIN
               SET @ExistingCustomerId=@CustomerId;
               INSERT dbo.Customers
-                (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
-              VALUES(@ExistingCustomerId,@ExistingPartyId,@BillingBusinessId,1,1,
+                (CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+              VALUES(@ExistingCustomerId,@ExistingPartyId,@PlatformTenantId,1,1,
                      @BillingActorUserId,@Now);
             END;
 

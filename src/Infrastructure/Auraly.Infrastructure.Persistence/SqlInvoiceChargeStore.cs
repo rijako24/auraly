@@ -52,8 +52,8 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
         JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=v.ExpenseConceptId AND c.BusinessId=d.BusinessId
         JOIN dbo.AccountingAccounts a ON a.AccountId=v.ExpenseAccountId AND a.TenantId=@TenantId
         LEFT JOIN dbo.AccountingCostCenters cc ON cc.CostCenterId=v.CostCenterId AND cc.BusinessId=d.BusinessId
-        JOIN dbo.TaxProfiles t ON t.TaxProfileId=v.SalesTaxProfileId AND t.BusinessId=d.BusinessId
-        JOIN dbo.TaxProfiles pt ON pt.TaxProfileId=v.PurchaseTaxProfileId AND pt.BusinessId=d.BusinessId
+        JOIN dbo.TaxProfiles t ON t.TaxProfileId=v.SalesTaxProfileId AND t.TenantId=@TenantId
+        JOIN dbo.TaxProfiles pt ON pt.TaxProfileId=v.PurchaseTaxProfileId AND pt.TenantId=@TenantId
         ORDER BY v.SortOrder,d.Code COLLATE Latin1_General_100_BIN2;
         SELECT r.ChargeId,r.FromInclusive,r.ToExclusive,r.CalculationMode,r.Value
         FROM @PageIds p JOIN sales.InvoiceChargeRanges r ON r.ChargeId=p.ChargeId AND r.Version=p.Version
@@ -63,7 +63,7 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
             WHEN s.IsActive=1 AND party.IsActive=1 THEN 1 ELSE 0 END),
           x.AppliesWithholding,x.TaxResponsibilitiesJson,x.TaxJurisdictionCode,x.PurchaseEvidencePolicy
         FROM @PageIds p JOIN sales.InvoiceChargeSuppliers x ON x.ChargeId=p.ChargeId AND x.Version=p.Version
-        JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId
+        JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.TenantId=@TenantId
         JOIN dbo.Parties party ON party.PartyId=s.PartyId AND party.TenantId=@TenantId
         ORDER BY x.ChargeId,party.DisplayName,s.SupplierId;
         """;
@@ -162,14 +162,14 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
                       AND (c.DefaultCostCenterId IS NULL OR EXISTS(SELECT 1 FROM dbo.AccountingCostCenters cc
                         WHERE cc.CostCenterId=c.DefaultCostCenterId AND cc.BusinessId=@BusinessId AND cc.IsActive=1)))))
                   THROW 51702,N'Selecciona un concepto de gasto activo de esta sede.',1;
-                IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxId AND BusinessId=@BusinessId
+                IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxId AND TenantId=@TenantId
                   AND (@Active=0 OR IsActive=1))
                   THROW 51702,N'Selecciona un impuesto activo de esta sede.',1;
-                IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxId AND BusinessId=@BusinessId
+                IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxId AND TenantId=@TenantId
                   AND (@Active=0 OR IsActive=1))
                   THROW 51702,N'Selecciona el impuesto del costo del proveedor.',1;
                 IF EXISTS(SELECT 1 FROM OPENJSON(@SuppliersJson) WITH(SupplierId uniqueidentifier '$') x
-                  LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId
+                  LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.TenantId=@TenantId
                   LEFT JOIN dbo.Parties p ON p.PartyId=s.PartyId AND p.TenantId=@TenantId
                   WHERE s.SupplierId IS NULL OR p.PartyId IS NULL OR (@Active=1 AND (s.IsActive=0 OR p.IsActive=0)))
                   THROW 51702,N'Los proveedores deben estar activos y pertenecer a esta sede.',1;
@@ -195,8 +195,8 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
                   @ConceptId,@TaxId,@PurchaseTaxId,c.ExpenseAccountId,c.DefaultCostCenterId,c.WithholdingConceptCode,
                   t.DianTaxCode,t.Rate,pt.Rate,@Now,@UserId,@NewCursor
                 FROM dbo.ExpenseConcepts c
-                JOIN dbo.TaxProfiles t ON t.TaxProfileId=@TaxId AND t.BusinessId=c.BusinessId
-                JOIN dbo.TaxProfiles pt ON pt.TaxProfileId=@PurchaseTaxId AND pt.BusinessId=c.BusinessId
+                JOIN dbo.TaxProfiles t ON t.TaxProfileId=@TaxId AND t.TenantId=@TenantId
+                JOIN dbo.TaxProfiles pt ON pt.TaxProfileId=@PurchaseTaxId AND pt.TenantId=@TenantId
                 WHERE c.ExpenseConceptId=@ConceptId AND c.BusinessId=@BusinessId;
                 INSERT sales.InvoiceChargeRanges(ChargeId,Version,Position,FromInclusive,ToExclusive,CalculationMode,Value)
                 SELECT @ChargeId,@NewVersion,CONVERT(int,j.[key])+1,r.FromInclusive,r.ToExclusive,r.CalculationMode,r.Value
@@ -208,9 +208,9 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
                   CONVERT(bit,CASE WHEN s.IsActive=1 AND p.IsActive=1 THEN 1 ELSE 0 END),
                   COALESCE(t.AppliesWithholding,CONVERT(bit,0)),t.Responsibilities,t.JurisdictionCode,s.PurchaseEvidencePolicy
                 FROM OPENJSON(@SuppliersJson) WITH(SupplierId uniqueidentifier '$') input
-                JOIN dbo.Suppliers s ON s.SupplierId=input.SupplierId AND s.BusinessId=@BusinessId
+                JOIN dbo.Suppliers s ON s.SupplierId=input.SupplierId AND s.TenantId=@TenantId
                 JOIN dbo.Parties p ON p.PartyId=s.PartyId AND p.TenantId=@TenantId
-                LEFT JOIN dbo.CounterpartyTaxProfiles t ON t.CounterpartyId=s.SupplierId AND t.BusinessId=s.BusinessId;
+                LEFT JOIN dbo.CounterpartyTaxProfiles t ON t.CounterpartyId=s.SupplierId AND t.TenantId=@TenantId;
                 INSERT dbo.PosSynchronizationOutboxMessages(NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
                 VALUES(NEWID(),@BusinessId,N'Configuration',@NewCursor,@Now);
                 """ + ReadSql, connection, transaction);

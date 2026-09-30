@@ -7,6 +7,7 @@ CREATE PROCEDURE [purchasing].[PurchaseOrdersList]
 AS
 BEGIN
     SET NOCOUNT ON;
+    DECLARE @TenantId UNIQUEIDENTIFIER=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
 
     CREATE TABLE #Orders
     (
@@ -25,7 +26,7 @@ BEGIN
     INSERT #Orders
     SELECT d.PurchaseOrderId,NULL,N'Draft',s.Name,w.Name,d.OrderedAt,d.ExpectedAt,d.GrandTotal,0,d.UpdatedAt
     FROM purchasing.PurchaseOrderDrafts d
-    LEFT JOIN dbo.Suppliers s ON s.SupplierId=d.SupplierId AND s.BusinessId=d.BusinessId
+    LEFT JOIN dbo.Suppliers s ON s.SupplierId=d.SupplierId AND s.TenantId=@TenantId
     LEFT JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId AND w.BusinessId=d.BusinessId
     WHERE d.BusinessId=@BusinessId;
 
@@ -33,7 +34,7 @@ BEGIN
     SELECT o.PurchaseOrderId,o.DocumentNumber,o.Status,s.Name,w.Name,o.OrderedAt,o.ExpectedAt,o.GrandTotal,
         CONVERT(decimal(9,4),COALESCE(100*SUM(l.ReceivedQuantity)/NULLIF(SUM(l.OrderedQuantity),0),0)),o.UpdatedAt
     FROM purchasing.PurchaseOrders o
-    JOIN dbo.Suppliers s ON s.SupplierId=o.SupplierId AND s.BusinessId=o.BusinessId
+    JOIN dbo.Suppliers s ON s.SupplierId=o.SupplierId AND s.TenantId=@TenantId
     JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.BusinessId=o.BusinessId
     JOIN purchasing.PurchaseOrderLines l ON l.PurchaseOrderId=o.PurchaseOrderId
     WHERE o.BusinessId=@BusinessId

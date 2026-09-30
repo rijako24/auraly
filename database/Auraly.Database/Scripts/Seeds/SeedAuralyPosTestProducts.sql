@@ -30,16 +30,16 @@ VALUES
 ('22220002-0000-7000-8000-000000000005','22220002-0000-7000-8000-000000000015','22220002-0000-7000-8000-000000000025',N'DEMO-006',N'REF-DEMO-006',N'Aceite corporal 120 ml',N'7700000000006',22800);
 
 INSERT dbo.Products(
-    ProductId,TenantId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
+    ProductId,TenantId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
     Source,Sku,Name,Currency,ManageStock,IsWeighable,IsActive,CreatedAt)
-SELECT p.ProductId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),@BusinessId,p.Code,p.Reference,N'EA',@TaxProfileId,
+SELECT p.ProductId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),p.Code,p.Reference,N'EA',@TaxProfileId,
        0,p.Code,p.Name,N'COP',1,0,1,@Now
 FROM @Products p
 WHERE NOT EXISTS (SELECT 1 FROM dbo.Products x WHERE x.ProductId=p.ProductId);
 
 INSERT dbo.ProductBarcodes(
-    ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
-SELECT p.BarcodeId,@BusinessId,p.ProductId,p.Barcode,1,1,@Now
+    ProductBarcodeId,TenantId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+SELECT p.BarcodeId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),p.ProductId,p.Barcode,1,1,@Now
 FROM @Products p
 WHERE NOT EXISTS (SELECT 1 FROM dbo.ProductBarcodes x WHERE x.ProductBarcodeId=p.BarcodeId);
 
@@ -62,5 +62,5 @@ SELECT p.ProductCode,p.Name,b.Barcode,pp.Amount
 FROM dbo.Products p
 JOIN dbo.ProductBarcodes b ON b.ProductId=p.ProductId AND b.IsActive=1
 JOIN dbo.ProductPrices pp ON pp.ProductId=p.ProductId AND pp.IsActive=1
-WHERE p.BusinessId=@BusinessId
+WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
 ORDER BY p.ProductCode;

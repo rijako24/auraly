@@ -8,4 +8,5 @@ public interface IBusinessDefaultsProvisioner
         Guid priceSourceBusinessId,
         string inventoryCostBasis,
         CancellationToken cancellationToken);
+
 }

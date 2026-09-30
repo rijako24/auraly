@@ -34,30 +34,53 @@ public sealed partial class ProductRepository
         return products;
     }
 
+    public async Task<bool> HasAnyIdentityAsync(
+        Guid businessId, Guid integrationConnectionId, CancellationToken ct = default)
+    {
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
+        return await _context.Products.AsNoTracking().AnyAsync(product =>
+            product.TenantId == tenantId && product.IntegrationConnectionId == integrationConnectionId, ct);
+    }
+
     public async Task<IReadOnlyList<string>> GetSearchTermsAsync(Guid businessId, Guid productId, CancellationToken ct = default) =>
         await _context.ProductSearchTerms.AsNoTracking()
-            .Where(term => term.BusinessId == businessId && term.ProductId == productId)
+            .Where(term => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == term.TenantId)
+                && term.ProductId == productId)
             .OrderBy(term => term.Term)
             .Select(term => term.Term)
             .ToListAsync(ct);
 
-    public async Task ReplaceSearchTermsAsync(Product product, CancellationToken ct = default)
+    public Task ReplaceSearchTermsAsync(Product product, CancellationToken ct = default) =>
+        ReplaceSearchTermsAsync([product], ct);
+
+    public async Task ReplaceSearchTermsAsync(IReadOnlyCollection<Product> products, CancellationToken ct = default)
     {
+        if (products.Count == 0) return;
+        var tenantId = products.First().TenantId;
+        if (products.Any(product => product.TenantId != tenantId))
+            throw new InvalidOperationException("A search index batch must belong to one tenant.");
+        var productIds = products.Select(product => product.ProductId).Distinct().ToArray();
         var existing = await _context.ProductSearchTerms
-            .Where(term => term.BusinessId == product.BusinessId && term.ProductId == product.ProductId)
+            .Where(term => term.TenantId == tenantId && productIds.Contains(term.ProductId))
             .ToListAsync(ct);
-        var desired = ProductSearchText.GetProductIndexTerms(product.Name, product.Sku, product.ExternalProductId, product.CategoryName)
-            .Where(term => term.Length <= 100)
-            .ToHashSet(StringComparer.Ordinal);
-        _context.ProductSearchTerms.RemoveRange(existing.Where(term => !desired.Contains(term.Term)));
-        var existingTerms = existing.Select(term => term.Term).ToHashSet(StringComparer.Ordinal);
-        _context.ProductSearchTerms.AddRange(desired.Where(term => !existingTerms.Contains(term)).Select(term => new ProductSearchTerm
+        var existingByProduct = existing.GroupBy(term => term.ProductId)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        foreach (var product in products.DistinctBy(product => product.ProductId))
         {
-            BusinessId = product.BusinessId,
-            ProductId = product.ProductId,
-            Term = term,
-            CreatedAt = DateTime.UtcNow
-        }));
+            var current = existingByProduct.GetValueOrDefault(product.ProductId) ?? [];
+            var desired = ProductSearchText.GetProductIndexTerms(product.Name, product.Sku, product.ExternalProductId, product.CategoryName)
+                .Where(term => term.Length <= 100)
+                .ToHashSet(StringComparer.Ordinal);
+            _context.ProductSearchTerms.RemoveRange(current.Where(term => !desired.Contains(term.Term)));
+            var existingTerms = current.Select(term => term.Term).ToHashSet(StringComparer.Ordinal);
+            _context.ProductSearchTerms.AddRange(desired.Where(term => !existingTerms.Contains(term)).Select(term => new ProductSearchTerm
+            {
+                TenantId = tenantId,
+                ProductId = product.ProductId,
+                Term = term,
+                CreatedAt = DateTime.UtcNow
+            }));
+        }
     }
 
     public async Task<IReadOnlyList<Product>> SearchByIndexTermsAsync(Guid businessId, IReadOnlyCollection<string> terms, int limit, CancellationToken ct = default)
@@ -71,7 +94,7 @@ public sealed partial class ProductRepository
         limit = Math.Clamp(limit, 1, 250);
         var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var indexedMatches = await _context.ProductSearchTerms.AsNoTracking()
-            .Where(term => term.BusinessId == businessId && keys.Contains(term.Term))
+            .Where(term => term.TenantId == tenantId && keys.Contains(term.Term))
             .GroupBy(term => term.ProductId).OrderByDescending(group => group.Count())
             .Select(group => new { ProductId = group.Key, Hits = group.Count() })
             .Take(Math.Min(limit * 4, 1000)).ToListAsync(ct);

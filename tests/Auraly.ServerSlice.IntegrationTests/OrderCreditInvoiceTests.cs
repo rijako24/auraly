@@ -304,8 +304,8 @@ public sealed class OrderCreditInvoiceTests(
             VALUES(@PartyId,@TenantId,N'Organization',N'Cliente crédito por lote',
               N'Cliente crédito por lote',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
 
-            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@PartyId,@BusinessId,@CustomerActive,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@TenantId,@CustomerActive,@UserId,SYSDATETIMEOFFSET());
 
             DECLARE @CountryId UNIQUEIDENTIFIER,@DivisionId UNIQUEIDENTIFIER,@CityId UNIQUEIDENTIFIER;
             SELECT TOP(1) @CountryId=country.CountryId,

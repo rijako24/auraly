@@ -157,7 +157,14 @@ export interface CreateCatalogProductRequest {
 
 }
 
-export interface CatalogProductDetail { productId: string; businessId: string; productCode: string; reference: string | null; name: string; isActive: boolean }
+export interface CatalogProductDetail {
+  productId: string; businessId: string; productCode: string; reference: string | null; name: string;
+  isActive: boolean; barcodes: string[]; prices: Array<{ amount: number; currencyCode: string; costBasisAmount: number | null; targetMarginPercent: number | null }>;
+  suppliers: Array<{ supplierId: string; identification: string; name: string; supplierProductCode: string | null;
+    baseUnitCost: number; isPrimary: boolean; purchasePresentationName: string; unitsPerPresentation: number }> | null;
+  salesTaxProfileId: string; purchaseTaxProfileId: string | null; purchaseTaxTreatment: string; description: string | null;
+  baseUnitCode: string; manageInventory: boolean; isWeighable: boolean; unitGrossWeightKg: number | null; isGenericProduct: boolean;
+}
 export interface ReviewProductAliasRequest { action: ProductAliasReviewAction; resolutionMode: ProductAliasResolutionMode }
 export interface PromoteProductAliasRequest { resolutionMode: ProductAliasResolutionMode }
 
@@ -165,14 +172,7 @@ export const productsApi = {
   createCatalog: (request: CreateCatalogProductRequest) => apiClient.post<CatalogProductDetail>("/commerce/v1/products", request),
   updateCatalog: (productId: string, request: CreateCatalogProductRequest) =>
     apiClient.put<CatalogProductDetail>(`/commerce/v1/products/${productId}`, request),
-  getCatalog: (productId: string) => apiClient.get<{
-    productId: string; businessId: string; productCode: string; reference: string | null; name: string;
-    isActive: boolean; barcodes: string[]; prices: Array<{ amount: number; currencyCode: string; costBasisAmount: number | null; targetMarginPercent: number | null }>;
-    suppliers: Array<{ supplierId: string; identification: string; name: string; supplierProductCode: string | null;
-      baseUnitCost: number; isPrimary: boolean; purchasePresentationName: string; unitsPerPresentation: number }> | null;
-    salesTaxProfileId: string; purchaseTaxProfileId: string | null; purchaseTaxTreatment: string; description: string | null;
-    baseUnitCode: string; manageInventory: boolean; isWeighable: boolean; unitGrossWeightKg: number | null; isGenericProduct: boolean;
-  }>(`/commerce/v1/products/${productId}`),
+  getCatalog: (productId: string) => apiClient.get<CatalogProductDetail>(`/commerce/v1/products/${productId}`),
   rotation: (productId: string) => apiClient.get<ProductRotationDetail[]>(`/commerce/v1/products/${productId}/rotation`),
   listCategories: (businessId: string, includeInactive = false) => apiClient.get<ProductCategory[]>(`/businesses/${businessId}/product-categories`, { includeInactive }),
   createCategory: (businessId: string, request: ProductCategoryPayload) => apiClient.post<ProductCategory>(`/businesses/${businessId}/product-categories`, request),

@@ -183,13 +183,13 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT dbo.ProductLinks
-              (ProductLinkId,BusinessId,ChildProductId,ParentProductId,
+              (ProductLinkId,TenantId,ChildProductId,ParentProductId,
                InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,
                SharesPrice,AllowsConversion,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,@ChildId,@ParentId,NULL,@Factor,NULL,0,1,0,1,
+            VALUES(NEWID(),@TenantId,@ChildId,@ParentId,NULL,@Factor,NULL,0,1,0,1,
                    SYSDATETIMEOFFSET());
             """;
-        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@ParentId", parentId);
         command.Parameters.AddWithValue("@ChildId", childId);
         command.Parameters.AddWithValue("@Factor", factor);
@@ -204,15 +204,15 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
         command.CommandText = """
             DECLARE @TaxProfileId UNIQUEIDENTIFIER=NEWID();
             INSERT dbo.TaxProfiles
-              (TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+              (TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
             VALUES
-              (@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto',0,1,SYSDATETIMEOFFSET());
+              (@TaxProfileId,@TenantId,@TaxCode,N'Sin impuesto',0,1,SYSDATETIMEOFFSET());
             INSERT dbo.Products
-              (ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,Description,
+              (ProductId,TenantId,ProductCode,Reference,Sku,Name,Description,
                BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,
                Currency,CreatedAt)
             VALUES
-              (@ProductId,@TenantId,@BusinessId,@ProductCode,@ProductCode,@ProductCode,
+              (@ProductId,@TenantId,@ProductCode,@ProductCode,@ProductCode,
                @Name,N'Prueba de publicacion vinculada',N'EA',
                @TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
@@ -248,14 +248,14 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
             FROM OPENJSON(@ProductIds);
 
             INSERT dbo.TaxProfiles
-              (TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
-            VALUES(@TaxProfileId,@BusinessId,@Marker,N'Sin impuesto masivo',0,1,SYSDATETIMEOFFSET());
+              (TaxProfileId,TenantId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@Marker,N'Sin impuesto masivo',0,1,SYSDATETIMEOFFSET());
 
             INSERT dbo.Products
-              (ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,Description,
+              (ProductId,TenantId,ProductCode,Reference,Sku,Name,Description,
                BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,
                Currency,CreatedAt)
-            SELECT ProductId,@TenantId,@BusinessId,
+            SELECT ProductId,@TenantId,
                    CONCAT(@Marker,N'-',Ordinal),CONCAT(@Marker,N'-',Ordinal),
                    CONCAT(@Marker,N'-',Ordinal),CONCAT(@Marker,N' Producto ',Ordinal),
                    N'Prueba de publicación masiva',N'EA',@TaxProfileId,1,0,1,0,N'COP',

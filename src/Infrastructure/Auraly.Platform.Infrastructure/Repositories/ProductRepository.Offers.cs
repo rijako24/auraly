@@ -17,7 +17,7 @@ public sealed partial class ProductRepository
                 .ThenInclude(value => value.Images)
             .Include(value => value.Images)
             .Where(value =>
-                value.BusinessId == businessId
+                _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == value.TenantId)
                 && value.Product.IsActive
                 && value.IsActive
                 && value.IsAvailable
@@ -39,24 +39,25 @@ public sealed partial class ProductRepository
             .ToListAsync(ct);
     }
 
-    public Task<IReadOnlyList<ProductOffer>> GetOffersAsync(
+    public async Task<IReadOnlyList<ProductOffer>> GetOffersAsync(
         Guid businessId,
         Guid productId,
         CancellationToken ct = default) =>
-        _context.ProductOffers
+        await _context.ProductOffers
             .AsNoTracking()
-            .Where(value => value.BusinessId == businessId && value.ProductId == productId)
+            .Where(value => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == value.TenantId)
+                && value.ProductId == productId)
             .OrderBy(value => value.Condition)
             .ThenBy(value => value.StorageGb)
-            .ToListAsync(ct)
-            .ContinueWith<IReadOnlyList<ProductOffer>>(task => task.Result, ct);
+            .ToListAsync(ct);
 
     public Task<ProductOffer?> GetOfferByIdAsync(
         Guid businessId,
         Guid productOfferId,
         CancellationToken ct = default) =>
         _context.ProductOffers.FirstOrDefaultAsync(
-            value => value.BusinessId == businessId && value.ProductOfferId == productOfferId,
+            value => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == value.TenantId)
+                && value.ProductOfferId == productOfferId,
             ct);
 
     public Task<ProductOffer> CreateOfferAsync(ProductOffer offer, CancellationToken ct = default)
@@ -71,24 +72,25 @@ public sealed partial class ProductRepository
         return Task.FromResult(offer);
     }
 
-    public Task<IReadOnlyList<ProductImage>> GetImagesAsync(
+    public async Task<IReadOnlyList<ProductImage>> GetImagesAsync(
         Guid businessId,
         Guid productId,
         CancellationToken ct = default) =>
-        _context.ProductImages
+        await _context.ProductImages
             .AsNoTracking()
-            .Where(value => value.BusinessId == businessId && value.ProductId == productId)
+            .Where(value => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == value.TenantId)
+                && value.ProductId == productId)
             .OrderByDescending(value => value.IsPrimary)
             .ThenBy(value => value.DisplayOrder)
-            .ToListAsync(ct)
-            .ContinueWith<IReadOnlyList<ProductImage>>(task => task.Result, ct);
+            .ToListAsync(ct);
 
     public Task<ProductImage?> GetImageByIdAsync(
         Guid businessId,
         Guid productImageId,
         CancellationToken ct = default) =>
         _context.ProductImages.FirstOrDefaultAsync(
-            value => value.BusinessId == businessId && value.ProductImageId == productImageId,
+            value => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == value.TenantId)
+                && value.ProductImageId == productImageId,
             ct);
 
     public Task<ProductImage> CreateImageAsync(ProductImage image, CancellationToken ct = default)

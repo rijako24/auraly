@@ -42,7 +42,7 @@ public sealed class SqlPricingStore(
               WHERE p.BusinessId=@BusinessId
                 AND NOT EXISTS(
                   SELECT 1 FROM dbo.ProductLinks costLink
-                  WHERE costLink.BusinessId=p.BusinessId
+                  WHERE costLink.TenantId=@TenantId
                     AND costLink.ChildProductId=p.ProductId
                     AND costLink.SharesPrice=1 AND costLink.IsActive=1)
 
@@ -64,8 +64,8 @@ public sealed class SqlPricingStore(
               OUTER APPLY (
                 SELECT TOP(1) s.SupplierId,s.Name
                 FROM dbo.SupplierProducts sp
-                INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=sp.BusinessId
-                WHERE sp.BusinessId=prepared.BusinessId AND sp.ProductId=prepared.ProductId AND sp.IsActive=1
+                INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.TenantId=sp.TenantId
+                WHERE sp.TenantId=@TenantId AND sp.ProductId=prepared.ProductId AND sp.IsActive=1
                 ORDER BY sp.IsPrimary DESC,sp.CreatedAt DESC
               ) supplier
               WHERE prepared.BusinessId=@BusinessId AND prepared.Status=N'Pending'
@@ -231,20 +231,20 @@ public sealed class SqlPricingStore(
              AND proposal.BusinessId=preparation.BusinessId
              AND proposal.Status IN(N'PendingReview',N'Approved')
             LEFT JOIN (
-              SELECT supplierProduct.BusinessId,supplierProduct.ProductId,
+              SELECT supplierProduct.TenantId,supplierProduct.ProductId,
                      supplier.SupplierId,supplier.Name,
                      ROW_NUMBER() OVER(
-                       PARTITION BY supplierProduct.BusinessId,supplierProduct.ProductId
+                       PARTITION BY supplierProduct.TenantId,supplierProduct.ProductId
                        ORDER BY supplierProduct.IsPrimary DESC,
                                 supplierProduct.CreatedAt DESC) SupplierRank
               FROM dbo.SupplierProducts supplierProduct
               INNER JOIN dbo.Suppliers supplier
                 ON supplier.SupplierId=supplierProduct.SupplierId
-               AND supplier.BusinessId=supplierProduct.BusinessId
-              WHERE supplierProduct.BusinessId=@BusinessId
+               AND supplier.TenantId=supplierProduct.TenantId
+              WHERE supplierProduct.TenantId=@TenantId
                 AND supplierProduct.IsActive=1
             ) productSupplier
-              ON productSupplier.BusinessId=preparation.BusinessId
+              ON productSupplier.TenantId=business.TenantId
              AND productSupplier.ProductId=preparation.ProductId
              AND productSupplier.SupplierRank=1
             LEFT JOIN dbo.GoodsReceipts receipt
@@ -252,7 +252,7 @@ public sealed class SqlPricingStore(
              AND receipt.BusinessId=proposal.BusinessId
             LEFT JOIN dbo.Suppliers receiptSupplier
               ON receiptSupplier.SupplierId=receipt.SupplierId
-             AND receiptSupplier.BusinessId=receipt.BusinessId
+             AND receiptSupplier.TenantId=business.TenantId
             WHERE preparation.BusinessId=@BusinessId
               AND preparation.Status=N'Pending'
             {{selectedProductsPredicate}}
@@ -261,7 +261,7 @@ public sealed class SqlPricingStore(
                       AND preparation.PreparationOrigin IN(N'Product',N'LinkedProduct',N'Migration'))
               AND (proposal.PriceRevisionProposalId IS NULL OR NOT EXISTS(
                 SELECT 1 FROM dbo.ProductLinks costLink
-                WHERE costLink.BusinessId=preparation.BusinessId
+                WHERE costLink.TenantId=@TenantId
                   AND costLink.ChildProductId=preparation.ProductId
                   AND costLink.SharesPrice=1 AND costLink.IsActive=1))
               AND (@SupplierId IS NULL OR COALESCE(receiptSupplier.SupplierId,productSupplier.SupplierId)=@SupplierId)
@@ -831,7 +831,7 @@ public sealed class SqlPricingStore(
             INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
             LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=x.TaxProfileId
             LEFT JOIN dbo.ProductLinks costLink
-              ON costLink.BusinessId=@BusinessId AND costLink.ChildProductId=x.ProductId
+              ON costLink.TenantId=@TenantId AND costLink.ChildProductId=x.ProductId
              AND costLink.SharesPrice=1 AND costLink.IsActive=1
             LEFT JOIN dbo.Products costParent ON costParent.ProductId=costLink.ParentProductId
             OUTER APPLY (
@@ -854,7 +854,7 @@ public sealed class SqlPricingStore(
             OUTER APPLY (
               SELECT TOP(1) latest.LatestUnitCost
               FROM dbo.SupplierProductLatestCosts latest
-              LEFT JOIN dbo.SupplierProducts association ON association.BusinessId=latest.BusinessId
+              LEFT JOIN dbo.SupplierProducts association ON association.TenantId=@TenantId
                 AND association.SupplierId=latest.SupplierId AND association.ProductId=latest.ProductId
               WHERE latest.ProductId=x.ProductId
                 AND (b.SharesProductPrices=1 AND latest.BusinessId IN (
@@ -893,7 +893,7 @@ public sealed class SqlPricingStore(
               ) parentPrice
             ) parentCost
             WHERE x.ProductId=@ProductId AND b.TenantId=@TenantId
-              AND (x.TenantId=@TenantId OR (x.TenantId IS NULL AND x.BusinessId=@BusinessId));
+              AND x.TenantId=@TenantId;
             """, connection);
         AddScope(command, user);
         command.Parameters.AddWithValue("@ProductId", productId);
@@ -926,13 +926,13 @@ public sealed class SqlPricingStore(
                   SELECT 1 FROM dbo.Products x WITH(UPDLOCK,HOLDLOCK)
                   INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
                   WHERE x.ProductId=@ProductId AND b.TenantId=@TenantId
-                    AND (x.TenantId=@TenantId OR (x.TenantId IS NULL AND x.BusinessId=@BusinessId)))
+                    AND x.TenantId=@TenantId)
                   THROW 51600,'The product is outside the authenticated business.',1;
 
                 DECLARE @CostParentProductId UNIQUEIDENTIFIER;
                 SELECT @CostParentProductId=link.ParentProductId
                 FROM dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
-                WHERE link.BusinessId=@BusinessId AND link.ChildProductId=@ProductId
+                WHERE link.TenantId=@TenantId AND link.ChildProductId=@ProductId
                   AND link.SharesPrice=1 AND link.IsActive=1;
                 IF @CostParentProductId IS NOT NULL
                   AND ISNULL(@CostBasisType,N'')<>N'LinkedProduct'
@@ -1130,7 +1130,8 @@ public sealed class SqlPricingStore(
         await using var command = new SqlCommand("""
             SELECT PriceChannelId,Code,Name,Strategy,Value,IsActive
             FROM dbo.PriceChannels
-            WHERE PriceChannelId=@PriceChannelId AND BusinessId=@BusinessId;
+            WHERE PriceChannelId=@PriceChannelId
+              AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
 
             ;WITH CategoryAncestors AS
             (
@@ -1138,14 +1139,14 @@ public sealed class SqlPricingStore(
                      category.ProductCategoryId AncestorId,
                      category.ParentProductCategoryId
               FROM dbo.ProductCategories category
-              WHERE category.BusinessId=@BusinessId
+              WHERE category.TenantId=@TenantId
               UNION ALL
               SELECT child.DescendantId,parent.ProductCategoryId,
                      parent.ParentProductCategoryId
               FROM CategoryAncestors child
               JOIN dbo.ProductCategories parent
                 ON parent.ProductCategoryId=child.ParentProductCategoryId
-               AND parent.BusinessId=@BusinessId
+               AND parent.TenantId=@TenantId
             )
             SELECT product.ProductId,
                    COALESCE(NULLIF(product.ProductCode,N''),NULLIF(product.Sku,N''),N''),

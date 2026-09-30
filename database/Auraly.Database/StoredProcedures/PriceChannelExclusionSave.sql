@@ -15,7 +15,7 @@ BEGIN
 
     IF NOT EXISTS (
         SELECT 1 FROM dbo.PriceChannels
-        WHERE PriceChannelId = @Id AND BusinessId = @BusinessId)
+        WHERE PriceChannelId = @Id AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId))
     BEGIN
         THROW 51004, 'Price channel not found', 1;
     END
@@ -24,7 +24,7 @@ BEGIN
     BEGIN
         IF NOT EXISTS (
             SELECT 1 FROM dbo.Products
-            WHERE ProductId = @ScopeId AND BusinessId = @BusinessId AND IsActive = 1)
+            WHERE ProductId = @ScopeId AND TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive = 1)
         BEGIN
             THROW 51004, 'Product not found', 1;
         END
@@ -38,7 +38,7 @@ BEGIN
     BEGIN
         IF NOT EXISTS (
             SELECT 1 FROM dbo.ProductCategories
-            WHERE ProductCategoryId = @ScopeId AND BusinessId = @BusinessId AND IsActive = 1)
+            WHERE ProductCategoryId = @ScopeId AND TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive = 1)
         BEGIN
             THROW 51004, 'Product category not found', 1;
         END
@@ -52,7 +52,7 @@ BEGIN
     BEGIN
         IF NOT EXISTS (
             SELECT 1 FROM dbo.ProductBrands
-            WHERE ProductBrandId = @ScopeId AND BusinessId = @BusinessId AND IsActive = 1)
+            WHERE ProductBrandId = @ScopeId AND TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive = 1)
         BEGIN
             THROW 51004, 'Product brand not found', 1;
         END

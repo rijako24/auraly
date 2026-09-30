@@ -2,9 +2,10 @@ SET NOCOUNT ON;
 
 DECLARE @Now DATETIMEOFFSET(7)=SYSDATETIMEOFFSET();
 DECLARE @BillingBusinessId UNIQUEIDENTIFIER='A0A10000-0000-0000-0000-000000000001';
+DECLARE @BillingTenantId UNIQUEIDENTIFIER='A0A10000-0000-0000-0000-000000000000';
 DECLARE @SalesTaxProfileId UNIQUEIDENTIFIER=(
     SELECT TaxProfileId FROM dbo.TaxProfiles
-    WHERE BusinessId=@BillingBusinessId AND DianTaxCode=N'01' AND Rate=19 AND IsActive=1);
+    WHERE TenantId=@BillingTenantId AND DianTaxCode=N'01' AND Rate=19 AND IsActive=1);
 
 IF @SalesTaxProfileId IS NULL
     THROW 51000,'SeedTenantCommercialPlans requiere el IVA de venta de Auraly.',1;

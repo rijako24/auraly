@@ -10,22 +10,20 @@ import { ProductImageGallery } from "@/components/products/product-image-gallery
 import { ProductInventoryByWarehouse } from "@/components/products/product-inventory-by-warehouse";
 import { productModeCapabilities } from "@/components/products/product-generic-policy";
 import { useProductCategories } from "@/hooks/use-products";
+import { useProductPricingContext } from "@/hooks/use-pricing";
 import { formatCurrency } from "@/lib/utils";
 import { productMerchandisingApi } from "@/services/api/product-merchandising";
-import { pricingApi } from "@/services/api/pricing";
 import { productsApi, type Product } from "@/services/api/products";
 import { taxProfilesApi } from "@/services/api/tax-profiles";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export function ProductOverview({ product }: { product: Product }) {
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const canReadPriceHistory = useAuthStore((state) => state.user?.permissions.includes("pricing.history.read") ?? false);
-  const detail = useQuery({ queryKey: ["catalog-product-detail", product.productId], queryFn: () => productsApi.getCatalog(product.productId) });
+  const detail = useQuery({ queryKey: ["catalog-product", businessId, product.productId], queryFn: () => productsApi.getCatalog(product.productId), enabled: !!businessId });
   const merchandising = useQuery({ queryKey: ["product-merchandising", product.productId], queryFn: () => productMerchandisingApi.get(product.productId) });
-  const pricing = useQuery({
-    queryKey: ["product-pricing-context", product.productId],
-    queryFn: () => pricingApi.getProductContext(product.productId),
-    enabled: merchandising.isSuccess && !merchandising.data.isGenericProduct,
-  });
+  const pricing = useProductPricingContext(product.productId, merchandising.isSuccess && !merchandising.data.isGenericProduct);
   const brands = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands });
   const units = useQuery({ queryKey: ["product-units"], queryFn: productMerchandisingApi.units });
   const taxes = useQuery({ queryKey: ["tax-profiles"], queryFn: () => taxProfilesApi.list(false) });

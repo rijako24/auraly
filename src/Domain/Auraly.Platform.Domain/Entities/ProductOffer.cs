@@ -4,7 +4,7 @@ public sealed class ProductOffer
 {
     public Guid ProductOfferId { get; set; }
     public Guid ProductId { get; set; }
-    public Guid BusinessId { get; set; }
+    public Guid TenantId { get; set; }
     public string Condition { get; set; } = "new";
     public int? StorageGb { get; set; }
     public string? Color { get; set; }
@@ -20,6 +20,5 @@ public sealed class ProductOffer
     public DateTime? UpdatedAt { get; set; }
 
     public Product Product { get; set; } = null!;
-    public Business Business { get; set; } = null!;
     public ICollection<ProductImage> Images { get; set; } = new List<ProductImage>();
 }

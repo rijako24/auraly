@@ -8,9 +8,9 @@ public class Product
     public Guid ProductId { get; set; }
     public Guid TenantId { get; set; }
     /// <summary>
-    /// Legacy origin business retained for dependent business-scoped configuration.
-    /// Product identity and visibility are tenant-scoped through <see cref="TenantId"/>.
+    /// Current business context for price commands; not a product ownership column.
     /// </summary>
+    [NotMapped]
     public Guid BusinessId { get; set; }
     public Guid? ProductCategoryId { get; set; }
     public Guid? ProductBrandId { get; set; }
@@ -48,7 +48,6 @@ public class Product
     public DateTime? UpdatedAt { get; set; }
     public virtual ProductCategory? ProductCategory { get; set; }
 
-    public virtual Business Business { get; set; } = null!;
     public virtual IntegrationConnection? IntegrationConnection { get; set; }
     public virtual ICollection<ProductAlias> Aliases { get; set; } = new List<ProductAlias>();
     public virtual ICollection<ProductSearchTerm> SearchTerms { get; set; } = new List<ProductSearchTerm>();

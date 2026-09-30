@@ -222,7 +222,9 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command=connection.CreateCommand(); command.Transaction=transaction;
         command.CommandText="""
             SELECT RequiresElectronicInvoice FROM dbo.Customers
-            WHERE CustomerId=@CustomerId AND BusinessId=@BusinessId AND IsActive=1;
+            WHERE CustomerId=@CustomerId
+              AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              AND IsActive=1;
             """;
         command.Parameters.AddRange([P("@CustomerId",customerId),P("@BusinessId",businessId)]);
         if (await command.ExecuteScalarAsync(ct) is true)

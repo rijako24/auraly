@@ -17,7 +17,7 @@ public sealed class ProductAliasRepository : IProductAliasRepository
         await _context.ProductAliases
             .AsNoTracking()
             .Include(alias => alias.Product)
-            .Where(alias => alias.BusinessId == businessId
+            .Where(alias => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == alias.TenantId)
                 && alias.NormalizedAlias == normalizedAlias
                 && alias.Status == ProductAliasStatus.Active
                 && (alias.Scope == ProductAliasScope.Business
@@ -30,31 +30,34 @@ public sealed class ProductAliasRepository : IProductAliasRepository
     public Task<ProductAlias?> GetByIdAsync(
         Guid businessId, Guid productId, Guid productAliasId, CancellationToken ct = default) =>
         _context.ProductAliases.FirstOrDefaultAsync(alias =>
-            alias.BusinessId == businessId
+            _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == alias.TenantId)
             && alias.ProductId == productId
             && alias.ProductAliasId == productAliasId,
             ct);
 
     public async Task<IReadOnlyList<ProductAlias>> GetByProductAsync(Guid businessId, Guid productId, CancellationToken ct = default) =>
         await _context.ProductAliases.AsNoTracking()
-            .Where(alias => alias.BusinessId == businessId && alias.ProductId == productId)
+            .Where(alias => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == alias.TenantId)
+                && alias.ProductId == productId)
             .OrderBy(alias => alias.Alias)
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<ProductAlias>> GetByBusinessAsync(Guid businessId, CancellationToken ct = default) =>
         await _context.ProductAliases
-            .Where(alias => alias.BusinessId == businessId).ToListAsync(ct);
+            .Where(alias => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == alias.TenantId)).ToListAsync(ct);
 
     public Task<ProductAlias?> GetMappingAsync(
         Guid businessId, Guid productId, ProductAliasScope scope, string customerKey, string normalizedAlias, CancellationToken ct = default) =>
         _context.ProductAliases.FirstOrDefaultAsync(alias =>
-            alias.BusinessId == businessId && alias.ProductId == productId && alias.Scope == scope
+            _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == alias.TenantId)
+            && alias.ProductId == productId && alias.Scope == scope
             && alias.CustomerKey == customerKey && alias.NormalizedAlias == normalizedAlias, ct);
 
     public async Task<IReadOnlyList<ProductAlias>> FindConflictsAsync(
         Guid businessId, ProductAliasScope scope, string customerKey, string normalizedAlias, Guid exceptProductId, CancellationToken ct = default) =>
         await _context.ProductAliases.AsNoTracking()
-            .Where(alias => alias.BusinessId == businessId && alias.Scope == scope
+            .Where(alias => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == alias.TenantId)
+                && alias.Scope == scope
                 && alias.CustomerKey == customerKey && alias.NormalizedAlias == normalizedAlias
                 && alias.ProductId != exceptProductId && alias.Status != ProductAliasStatus.Rejected)
             .ToListAsync(ct);

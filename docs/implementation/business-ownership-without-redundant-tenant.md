@@ -8,6 +8,8 @@ Fecha: 2026-07-28
 `TenantId`. Una tabla cuyo agregado pertenece a un negocio persiste
 `BusinessId`, no una copia adicional de `TenantId`. Un hijo conserva únicamente
 la clave de su agregado si esa relación determina el negocio sin ambigüedad.
+Los maestros comerciales compartidos pertenecen al tenant y usan `TenantId`;
+`ProductPrices` conserva `BusinessId` para el precio base de cada sede.
 
 El contexto autenticado sí mantiene tenant y negocio. La eliminación de la
 columna no elimina la validación: cada operación comprueba que el negocio,
@@ -20,22 +22,21 @@ usuario/dispositivo, caja, bodega y recurso pertenecen al tenant autenticado.
 | Tenants | Tenant | Tenant | No | Sí | Ninguno |
 | Businesses | Business | Tenant | PK | Sí | Conservar FK obligatoria |
 | BusinessLocations | Location | Business | Sí | No | Retirar si existe |
-| Products | Product | Business | Sí | No | Retirar columna/FK y ajustar restricción |
-| TaxProfiles | TaxProfile | Business | Sí | No | Retirar |
-| ProductBarcodes | Product | Product padre | No necesario | No | Retirar tenant/business redundantes |
-| ProductIdentifiers | Product | Product padre | No necesario | No | Retirar tenant/business redundantes |
+| Products | Product | Tenant | No | Sí | Una ficha para todas las sedes |
+| TaxProfiles | TaxProfile | Tenant | No | Sí | Un maestro tributario compartido |
+| ProductBarcodes | Product | Tenant/Product padre | No | Sí | Un código único en el tenant |
+| ProductIdentifiers | Product | Tenant/Product padre | No | Sí | Un identificador único en el tenant |
 | ProductScaleConfigurations | Product | Product padre | No | No | Sin cambio |
 | ProductPrices | BasePrice | Business | Sí | No | Retirar tenant/canal; precio base |
 | PriceLists | PriceList | Business | Sí | No | Nueva |
 | PriceListItems | PriceList | Padre | No | No | Nueva |
-| PriceChannels | PriceChannel | Business | Sí | No | Retirar tenant/default |
+| PriceChannels | PriceChannel | Tenant | No | Sí | Definición compartida que aplica en todas las sedes del tenant |
 | PriceChannelItems | PriceChannel | Padre + product configurado | No | No | Nueva; tramo explícito, no precio materializado |
 | PriceChannelExclusions | PriceChannel | Padre | No | No | Nueva |
-| Customers | Customer | Tenant/persona global | No | Sí cuando el cliente pueda compartirse | Nueva frontera mínima |
-| CustomerBusinesses | CustomerBusiness | Business | Sí | No | Nueva |
-| CustomerBusinessPricing | CustomerBusiness | Business | Sí | No | Nueva; lista/canal excluyentes |
-| Suppliers | Supplier | Business | Sí | No | Retirar tenant |
-| SupplierProducts | SupplierProduct | Supplier/Product | No necesario | No | Retirar tenant/business |
+| Customers | Customer | Tenant | No | Sí | Un cliente compartido en todas las sedes |
+| CustomerPricingSettings | Customer | Tenant/Customer padre | No | No | Canal del tenant asignado al cliente |
+| Suppliers | Supplier | Tenant | No | Sí | Un proveedor compartido |
+| SupplierProducts | SupplierProduct | Tenant/Supplier/Product | No | Sí | Una relación compartida |
 | SupplierCostAgreements | SupplierProduct | Padre | No | No | Sin cambio |
 | Warehouses | Warehouse | Business | Sí | No | Retirar |
 | CashRegisters | Register | Business | Sí | No | Retirar tenant y canal de caja |
@@ -60,9 +61,9 @@ usuario/dispositivo, caja, bodega y recurso pertenecen al tenant autenticado.
 ## Estrategia de actualización
 
 1. Agregar o verificar las FK que permiten resolver el dueño.
-2. Actualizar consultas y escrituras para usar `BusinessId` y joins de
-   autorización, sin confiar en el body.
-3. Eliminar índices y restricciones basados en tenant redundante.
+2. Actualizar consultas y escrituras para usar `TenantId` en maestros y
+   `BusinessId` en operaciones, con joins de autorización y sin confiar en el body.
+3. Eliminar índices y restricciones basados en la clave de propietario anterior.
 4. Eliminar columnas en un script predeployment idempotente para permitir
    actualizar una base creada por el DACPAC anterior.
 5. Publicar el DACPAC sobre una copia de esquema anterior y sobre una base vacía.

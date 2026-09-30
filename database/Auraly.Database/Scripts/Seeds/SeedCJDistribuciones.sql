@@ -160,7 +160,7 @@ VALUES
 
 MERGE dbo.Products AS target
 USING @Products AS source
-   ON target.BusinessId = @BusinessId
+   ON target.TenantId = @TenantId
   AND target.Sku = source.Sku
 WHEN MATCHED THEN
     UPDATE SET
@@ -179,10 +179,10 @@ WHEN MATCHED THEN
         RawPayloadJson = NULL,
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
-    INSERT (ProductId, TenantId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
+    INSERT (ProductId, TenantId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
             [Description], CategoryName, Currency, ManageStock, StockQuantity,
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
-    VALUES (source.ProductId, @TenantId, @BusinessId, @MantisCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
+    VALUES (source.ProductId, @TenantId, @MantisCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
             source.[Description], source.CategoryName, source.Currency, 1, source.StockQuantity,
             source.IsActive, NULL, NULL, GETUTCDATE());
 
@@ -195,7 +195,7 @@ VALUES
     (NEWID(),@BusinessId,source.ProductId,source.UnitPrice,source.UnitPrice,source.Currency,N'SalePrice',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
 
 DELETE FROM dbo.Products
-WHERE BusinessId = @BusinessId
+WHERE TenantId = @TenantId
   AND Source = 0
   AND NOT EXISTS (
       SELECT 1
@@ -233,7 +233,7 @@ VALUES
 
 MERGE dbo.ProductRecommendationRules AS target
 USING @RecommendationRules AS source
-   ON target.BusinessId = @BusinessId
+   ON target.TenantId = @TenantId
   AND target.ProductRecommendationRuleId = source.ProductRecommendationRuleId
 WHEN MATCHED THEN
     UPDATE SET
@@ -254,12 +254,12 @@ WHEN MATCHED THEN
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
     INSERT
-        (ProductRecommendationRuleId, BusinessId, IntegrationConnectionId, MatchType,
+        (ProductRecommendationRuleId, TenantId, IntegrationConnectionId, MatchType,
          SourceProductId, SourceValue, RecommendedProductId, RecommendedExternalProductId,
          RecommendedSku, RecommendationType, Priority, Reason, IsActive, StartsAtUtc,
          EndsAtUtc, CreatedAt)
     VALUES
-        (source.ProductRecommendationRuleId, @BusinessId, @MantisCommerceConnectionId,
+        (source.ProductRecommendationRuleId, @TenantId, @MantisCommerceConnectionId,
          source.MatchType, NULL, source.SourceValue, NULL, source.RecommendedExternalProductId,
          source.RecommendedSku, source.RecommendationType, source.Priority, source.Reason,
          1, NULL, NULL, GETUTCDATE());

@@ -16,22 +16,22 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
 
             DECLARE @TenantId UNIQUEIDENTIFIER=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             SELECT COUNT(*) FROM dbo.Products p
-            WHERE (p.TenantId=@TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
+            WHERE p.TenantId=@TenantId
               AND p.IsActive=1 AND p.ManageStock=1
-              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1)
+              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=p.TenantId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1)
               AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
-              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
+              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.TenantId=p.TenantId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
             OPTION(RECOMPILE);
 
             CREATE TABLE #RequestedProducts(ProductId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY);
             INSERT #RequestedProducts(ProductId)
             SELECT p.ProductId
             FROM dbo.Products p
-            WHERE (p.TenantId=@TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
+            WHERE p.TenantId=@TenantId
               AND p.IsActive=1 AND p.ManageStock=1
-              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1)
+              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=p.TenantId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1)
               AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
-              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
+              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.TenantId=p.TenantId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
             ORDER BY p.Name,p.ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
             OPTION(RECOMPILE);
 
@@ -66,7 +66,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    root.ConversionMaximumLossPercent MaximumLossPercent
             FROM dbo.Products p
             LEFT JOIN dbo.ProductLinks childLink
-              ON childLink.BusinessId=@BusinessId AND childLink.ChildProductId=p.ProductId
+              ON childLink.TenantId=p.TenantId AND childLink.ChildProductId=p.ProductId
              AND childLink.AllowsConversion=1 AND childLink.IsActive=1
             INNER JOIN dbo.Products root
               ON root.TenantId=p.TenantId AND root.ProductId=COALESCE(childLink.ParentProductId,p.ProductId)
@@ -76,12 +76,12 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND p.IsActive=1 AND p.ManageStock=1
               AND (childLink.ProductLinkId IS NOT NULL OR EXISTS(
                     SELECT 1 FROM dbo.ProductLinks familyLink
-                    WHERE familyLink.BusinessId=@BusinessId AND familyLink.ParentProductId=p.ProductId
+                    WHERE familyLink.TenantId=p.TenantId AND familyLink.ParentProductId=p.ProductId
                       AND familyLink.AllowsConversion=1 AND familyLink.IsActive=1))
               AND (@FamilyRootProductId IS NULL OR root.ProductId=@FamilyRootProductId)
               AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Sku LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS(
                     SELECT 1 FROM dbo.ProductBarcodes barcode
-                    WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId
+                    WHERE barcode.TenantId=p.TenantId AND barcode.ProductId=p.ProductId
                       AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
             """;
         var sql = $"""

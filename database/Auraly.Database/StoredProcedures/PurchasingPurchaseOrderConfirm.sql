@@ -36,12 +36,12 @@ BEGIN
         THROW 51200,'Business is outside the tenant.',1;
     IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND IsSystem=0 AND UseForGoodsReceipts=1)
         THROW 51201,'Warehouse is invalid.',1;
-    IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
+    IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND TenantId=@TenantId AND IsActive=1)
         THROW 51202,'Supplier is invalid.',1;
     IF EXISTS
     (
         SELECT 1 FROM OPENJSON(@LinesJson) WITH(ProductId uniqueidentifier '$.ProductId') input
-        WHERE NOT EXISTS(SELECT 1 FROM dbo.Products p WHERE p.ProductId=input.ProductId AND p.IsActive=1 AND (p.TenantId=@TenantId OR p.BusinessId=@BusinessId))
+        WHERE NOT EXISTS(SELECT 1 FROM dbo.Products p WHERE p.ProductId=input.ProductId AND p.IsActive=1 AND p.TenantId=@TenantId)
     ) THROW 51202,'A product is invalid.',1;
 
     DECLARE @SeriesId UNIQUEIDENTIFIER,@Prefix NVARCHAR(8),@SeriesCode NVARCHAR(16),@Padding TINYINT,@RangeEnd BIGINT,@Consecutive BIGINT;

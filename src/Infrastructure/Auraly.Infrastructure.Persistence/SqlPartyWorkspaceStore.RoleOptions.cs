@@ -75,19 +75,19 @@ public sealed partial class SqlPartyWorkspaceStore
         "Any" => new("""
             (SELECT scoped.PartyId,scoped.PartyId AS RoleId,CAST(1 AS bit) AS IsActive
              FROM (
-               SELECT PartyId FROM dbo.Customers WHERE BusinessId=@BusinessId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.Suppliers WHERE BusinessId=@BusinessId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.CommerceSellers WHERE BusinessId=@BusinessId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.Carriers WHERE BusinessId=@BusinessId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.Employees WHERE BusinessId=@BusinessId AND IsActive=1
+               SELECT PartyId FROM dbo.Customers WHERE TenantId=@TenantId AND IsActive=1
+               UNION SELECT PartyId FROM dbo.Suppliers WHERE TenantId=@TenantId AND IsActive=1
+               UNION SELECT PartyId FROM dbo.CommerceSellers WHERE TenantId=@TenantId AND IsActive=1
+               UNION SELECT PartyId FROM dbo.Carriers WHERE TenantId=@TenantId AND IsActive=1
+               UNION SELECT PartyId FROM dbo.Employees WHERE TenantId=@TenantId AND IsActive=1
                UNION SELECT PartyId FROM dbo.AppUsers WHERE TenantId=@TenantId AND IsActive=1 AND PartyId IS NOT NULL
              ) scoped)
             """, "RoleId", "1=1", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
-        "Customer" => new("dbo.Customers", "CustomerId", "partyRole.BusinessId=@BusinessId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
-        "Supplier" => new("dbo.Suppliers", "SupplierId", "partyRole.BusinessId=@BusinessId", "partyRole.PurchaseEvidencePolicy", "partyRole.DefaultPaymentDueDays"),
-        "Seller" => new("dbo.CommerceSellers", "SellerId", "partyRole.BusinessId=@BusinessId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
-        "Carrier" => new("dbo.Carriers", "CarrierId", "partyRole.BusinessId=@BusinessId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
-        "Employee" => new("dbo.Employees", "EmployeeId", "partyRole.BusinessId=@BusinessId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
+        "Customer" => new("dbo.Customers", "CustomerId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
+        "Supplier" => new("dbo.Suppliers", "SupplierId", "partyRole.TenantId=@TenantId", "partyRole.PurchaseEvidencePolicy", "partyRole.DefaultPaymentDueDays"),
+        "Seller" => new("dbo.CommerceSellers", "SellerId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
+        "Carrier" => new("dbo.Carriers", "CarrierId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
+        "Employee" => new("dbo.Employees", "EmployeeId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
         "User" => new("dbo.AppUsers", "UserId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
         _ => throw new ArgumentOutOfRangeException(nameof(role))
     };

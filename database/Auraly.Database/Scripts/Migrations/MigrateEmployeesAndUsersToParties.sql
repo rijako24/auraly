@@ -3,9 +3,8 @@ SET NOCOUNT ON;
 -- Todo empleado histórico debe participar en la identidad Party.
 DECLARE @EmployeeParties TABLE(EmployeeId UNIQUEIDENTIFIER PRIMARY KEY,PartyId UNIQUEIDENTIFIER NOT NULL,TenantId UNIQUEIDENTIFIER NOT NULL,DisplayName NVARCHAR(200) NOT NULL);
 INSERT @EmployeeParties(EmployeeId,PartyId,TenantId,DisplayName)
-SELECT employee.EmployeeId,NEWID(),business.TenantId,COALESCE(NULLIF(LTRIM(RTRIM(employee.Name)),N''),N'Empleado')
+SELECT employee.EmployeeId,NEWID(),employee.TenantId,COALESCE(NULLIF(LTRIM(RTRIM(employee.Name)),N''),N'Empleado')
 FROM dbo.Employees employee
-JOIN dbo.Businesses business ON business.BusinessId=employee.BusinessId
 WHERE employee.PartyId IS NULL;
 
 INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,FirstName,CompletionStatus,IsActive,CreatedAt)
@@ -34,8 +33,7 @@ JOIN EmailMatches matching ON matching.UserId=appUser.UserId AND matching.MatchC
 ;WITH NameMatches AS (
   SELECT appUser.UserId,MIN(employee.PartyId) PartyId,COUNT_BIG(*) MatchCount
   FROM dbo.AppUsers appUser
-  JOIN dbo.Businesses business ON business.TenantId=appUser.TenantId
-  JOIN dbo.Employees employee ON employee.BusinessId=business.BusinessId AND employee.PartyId IS NOT NULL
+  JOIN dbo.Employees employee ON employee.TenantId=appUser.TenantId AND employee.PartyId IS NOT NULL
     AND UPPER(LTRIM(RTRIM(employee.Name)))=UPPER(LTRIM(RTRIM(CONCAT(appUser.FirstName,N' ',appUser.LastName))))
   WHERE appUser.PartyId IS NULL
   GROUP BY appUser.UserId

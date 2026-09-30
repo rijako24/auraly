@@ -2,7 +2,7 @@ namespace Auraly.Platform.Application.Identity.DTOs;
 
 public record EmployeeDto(
     Guid EmployeeId,
-    Guid BusinessId,
+    Guid TenantId,
     Guid? PartyId,
     string Name,
     bool IsActive,

@@ -194,7 +194,7 @@ public sealed class SqlExternalCustomerReconciliationStore(
             var customerId = await CustomerIdAsync(
                 connection,
                 transaction,
-                execution.BusinessId,
+                execution.TenantId,
                 partyId,
                 cancellationToken);
             if (customerId is null)
@@ -202,12 +202,12 @@ public sealed class SqlExternalCustomerReconciliationStore(
                 customerId = newCustomerId;
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.Customers
-                      (CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-                    VALUES(@CustomerId,@PartyId,@BusinessId,1,@ActorId,@Now);
+                      (CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+                    VALUES(@CustomerId,@PartyId,@TenantId,1,@ActorId,@Now);
                     """, [
                     P("@CustomerId", customerId),
                     P("@PartyId", partyId),
-                    P("@BusinessId", execution.BusinessId),
+                    P("@TenantId", execution.TenantId),
                     P("@ActorId", execution.ActorId),
                     P("@Now", now)
                 ], cancellationToken);
@@ -220,20 +220,26 @@ public sealed class SqlExternalCustomerReconciliationStore(
                     ReconciliationOrigin=@Origin,UpdatedAt=@Now
                 WHERE ExternalCommerceCustomerId=@ExternalId AND BusinessId=@BusinessId;
 
-                DECLARE @Cursor BIGINT;
-                SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
-                FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
-                WHERE BusinessId=@BusinessId AND Stream=N'Customers';
                 INSERT dbo.PosSynchronizationOutboxMessages
                   (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,
                    EntityType,EntityId,ChangeKind)
-                VALUES(@NotificationId,@BusinessId,N'Customers',@Cursor,@Now,
-                       N'Customer',@CustomerId,N'Upsert');
+                SELECT CASE WHEN business.BusinessId=@BusinessId THEN @NotificationId ELSE NEWID() END,
+                       business.BusinessId,N'Customers',ISNULL(latest.CursorValue,0)+1,@Now,
+                       N'Customer',@CustomerId,N'Upsert'
+                FROM dbo.Businesses business
+                OUTER APPLY
+                (
+                  SELECT MAX(AvailableThroughCursor) CursorValue
+                  FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+                  WHERE BusinessId=business.BusinessId AND Stream=N'Customers'
+                ) latest
+                WHERE business.TenantId=@TenantId AND business.IsActive=1;
                 """, [
                 P("@PartyId", partyId),
                 P("@CustomerId", customerId),
                 P("@ExternalId", externalCommerceCustomerId),
                 P("@BusinessId", execution.BusinessId),
+                P("@TenantId", execution.TenantId),
                 P("@ActorId", execution.ActorId),
                 P("@Origin", execution.Origin),
                 P("@NotificationId", notificationId),
@@ -316,7 +322,7 @@ public sealed class SqlExternalCustomerReconciliationStore(
     private static async Task<Guid?> CustomerIdAsync(
         SqlConnection connection,
         SqlTransaction transaction,
-        Guid businessId,
+        Guid tenantId,
         Guid partyId,
         CancellationToken cancellationToken)
     {
@@ -324,9 +330,9 @@ public sealed class SqlExternalCustomerReconciliationStore(
         command.Transaction = transaction;
         command.CommandText = """
             SELECT CustomerId FROM dbo.Customers WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND PartyId=@PartyId;
+            WHERE TenantId=@TenantId AND PartyId=@PartyId;
             """;
-        command.Parameters.AddRange([P("@BusinessId", businessId), P("@PartyId", partyId)]);
+        command.Parameters.AddRange([P("@TenantId", tenantId), P("@PartyId", partyId)]);
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return value is Guid id ? id : null;
     }

@@ -61,6 +61,11 @@ public class EmployeeServiceRepository : IEmployeeServiceRepository
         }
     }
 
+    public void DeleteMany(IEnumerable<EmployeeService> employeeServices)
+    {
+        _context.EmployeeServices.RemoveRange(employeeServices);
+    }
+
     public async Task<int> GetServiceCountByEmployeeIdAsync(Guid employeeId)
     {
         return await _context.EmployeeServices

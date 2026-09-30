@@ -846,7 +846,7 @@ public sealed class SqlInventoryOperationStore(
               LEFT JOIN dbo.Products p
                 ON p.ProductId=x.ProductId AND p.TenantId=@TenantId AND p.IsActive=1
               LEFT JOIN dbo.ProductLinks inventoryLink
-                ON inventoryLink.BusinessId=@BusinessId AND inventoryLink.ChildProductId=p.ProductId
+                ON inventoryLink.TenantId=@TenantId AND inventoryLink.ChildProductId=p.ProductId
                AND inventoryLink.SharesInventory=1 AND inventoryLink.IsActive=1
               LEFT JOIN dbo.Products inventoryProduct
                 ON inventoryProduct.ProductId=COALESCE(inventoryLink.ParentProductId,p.ProductId)
@@ -956,7 +956,8 @@ public sealed class SqlInventoryOperationStore(
                    COALESCE(b.QuantityOnHand / NULLIF(CASE WHEN link.ProductLinkId IS NULL THEN 1 ELSE link.InventoryFactor END,0),0)
             FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.ProductLinks link WITH (UPDLOCK,HOLDLOCK)
-              ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
+              ON link.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+             AND link.ChildProductId=p.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
             INNER JOIN dbo.Products inventoryProduct WITH (UPDLOCK,HOLDLOCK)
               ON inventoryProduct.ProductId=COALESCE(link.ParentProductId,p.ProductId)
@@ -993,7 +994,8 @@ public sealed class SqlInventoryOperationStore(
             FROM dbo.Products p WITH(UPDLOCK,HOLDLOCK)
             INNER JOIN OPENJSON(@Products) WITH(ProductId uniqueidentifier '$') requested ON requested.ProductId=p.ProductId
             LEFT JOIN dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
-              ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
+              ON link.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+             AND link.ChildProductId=p.ProductId
              AND link.IsActive=1 AND link.AllowsConversion=1
             INNER JOIN dbo.Products root WITH(UPDLOCK,HOLDLOCK)
               ON root.TenantId=p.TenantId AND root.ProductId=COALESCE(link.ParentProductId,p.ProductId)
@@ -1006,7 +1008,8 @@ public sealed class SqlInventoryOperationStore(
                     INNER JOIN dbo.Products childProduct WITH(UPDLOCK,HOLDLOCK)
                       ON childProduct.ProductId=child.ChildProductId AND childProduct.TenantId=p.TenantId
                      AND childProduct.IsActive=1 AND childProduct.ManageStock=1
-                    WHERE child.BusinessId=@BusinessId AND child.ParentProductId=p.ProductId
+                    WHERE child.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                      AND child.ParentProductId=p.ProductId
                       AND child.IsActive=1 AND child.AllowsConversion=1));
             """;
         await using var command = new SqlCommand(sql, connection, transaction);

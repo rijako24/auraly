@@ -40,7 +40,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     {
         var sharedBusinessId = Guid.NewGuid();
         var sharedWarehouseId = Guid.NewGuid();
-        var sharedSupplierId = Guid.NewGuid();
+        var sharedSupplierId = fixture.SupplierId;
         var receipt = CreateRequest() with { DocumentId = Guid.NewGuid() };
         var previousShares = await ScalarAsync<bool>(
             "SELECT SharesProductPrices FROM dbo.Businesses WHERE BusinessId=@BusinessId", receipt.DocumentId);
@@ -63,11 +63,6 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt)
             SELECT NEWID(),@OtherBusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,SYSUTCDATETIME(),1,SYSUTCDATETIME()
             FROM dbo.ProductPrices WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
-            INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
-            SELECT @OtherSupplierId,@OtherBusinessId,PartyId,Identification,Name,1,SYSUTCDATETIME()
-            FROM dbo.Suppliers WHERE SupplierId=@SupplierId;
-            INSERT dbo.SupplierProducts(SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
-            VALUES(NEWID(),@OtherBusinessId,@ProductId,@OtherSupplierId,N'PROV-SHARED',1,1,SYSUTCDATETIME());
             INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
             VALUES(@OtherBusinessId,@OtherWarehouseId,@ProductId,@OtherQuantity,@OtherAverage,@OtherValue,0,SYSUTCDATETIME());
             UPDATE dbo.Businesses SET SharesProductPrices=1 WHERE BusinessId=@BusinessId;
@@ -1350,15 +1345,15 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             IF @CityId IS NULL THROW 51201,'Colombian geography seed is required.',1;
 
             IF NOT EXISTS(
-              SELECT 1 FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId AND Code=N'IVA-0')
+              SELECT 1 FROM dbo.TaxProfiles WHERE TenantId=@TenantId AND Code=N'IVA-0')
               INSERT dbo.TaxProfiles(
-                TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-              VALUES(NEWID(),@BusinessId,N'IVA-0',N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
+                TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+              VALUES(NEWID(),@TenantId,N'IVA-0',N'01',N'IVA 0%',0,1,SYSDATETIMEOFFSET());
             IF NOT EXISTS(
-              SELECT 1 FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId AND Code=N'IVA-19')
+              SELECT 1 FROM dbo.TaxProfiles WHERE TenantId=@TenantId AND Code=N'IVA-19')
               INSERT dbo.TaxProfiles(
-                TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
-              VALUES(NEWID(),@BusinessId,N'IVA-19',N'01',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
+                TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+              VALUES(NEWID(),@TenantId,N'IVA-19',N'01',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
 
             UPDATE party SET IdentificationCountryId=@CountryId,IdentificationTypeCode=N'31',
               Identification=N'900999001',NormalizedIdentification=N'900999001',VerificationDigit=N'1',
@@ -1389,6 +1384,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             """;
         var authorizationId = Guid.NewGuid();
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
         command.Parameters.AddWithValue("@PartyId", fixture.SupplierPartyId);
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
@@ -1607,11 +1603,11 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         await using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE dbo.Suppliers SET PurchaseEvidencePolicy=@Policy
-            WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId;
+            WHERE SupplierId=@SupplierId AND TenantId=@TenantId;
             """;
         command.Parameters.AddWithValue("@Policy", (object?)policy ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
-        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         await command.ExecuteNonQueryAsync();
     }
 

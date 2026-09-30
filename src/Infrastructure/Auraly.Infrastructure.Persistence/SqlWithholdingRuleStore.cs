@@ -90,9 +90,9 @@ public sealed class SqlWithholdingRuleStore(
         await using var command = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51300,'The business is outside the tenant.',1;
-            SELECT BusinessId,CounterpartyId,AppliesWithholding,Responsibilities,JurisdictionCode,UpdatedAt
+            SELECT @BusinessId,CounterpartyId,AppliesWithholding,Responsibilities,JurisdictionCode,UpdatedAt
             FROM dbo.CounterpartyTaxProfiles
-            WHERE BusinessId=@BusinessId AND CounterpartyId=@CounterpartyId;
+            WHERE TenantId=@TenantId AND CounterpartyId=@CounterpartyId;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
@@ -126,13 +126,13 @@ public sealed class SqlWithholdingRuleStore(
         await using var command = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51300,'The business is outside the tenant.',1;
-            SELECT profile.BusinessId,profile.CounterpartyId,profile.AppliesWithholding,
+            SELECT @BusinessId,profile.CounterpartyId,profile.AppliesWithholding,
                    profile.Responsibilities,profile.JurisdictionCode,profile.UpdatedAt
             FROM dbo.CounterpartyTaxProfiles profile
             INNER JOIN OPENJSON(@CounterpartyIds)
               WITH(CounterpartyId uniqueidentifier '$') input
               ON input.CounterpartyId=profile.CounterpartyId
-            WHERE profile.BusinessId=@BusinessId;
+            WHERE profile.TenantId=@TenantId;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
@@ -171,7 +171,7 @@ public sealed class SqlWithholdingRuleStore(
         try
         {
             await EnsureScopeAsync(connection, transaction, tenantId, request.BusinessId, userId, ct);
-            await EnsureCounterpartyAsync(connection, transaction, request.BusinessId, request.CounterpartyId, ct);
+            await EnsureCounterpartyAsync(connection, transaction, tenantId, request.CounterpartyId, ct);
             var now = timeProvider.GetUtcNow();
             var responsibilities = request.Responsibilities
                 .Select(value => value.Trim().ToUpperInvariant())
@@ -180,13 +180,13 @@ public sealed class SqlWithholdingRuleStore(
                 UPDATE dbo.CounterpartyTaxProfiles WITH(UPDLOCK,HOLDLOCK)
                 SET AppliesWithholding=@AppliesWithholding,Responsibilities=@Responsibilities,JurisdictionCode=@Jurisdiction,
                     UpdatedAt=@Now,UpdatedByUserId=@UserId
-                WHERE BusinessId=@BusinessId AND CounterpartyId=@CounterpartyId;
+                WHERE TenantId=@TenantId AND CounterpartyId=@CounterpartyId;
                 IF @@ROWCOUNT=0
                   INSERT dbo.CounterpartyTaxProfiles
-                    (BusinessId,CounterpartyId,AppliesWithholding,Responsibilities,JurisdictionCode,UpdatedAt,UpdatedByUserId)
-                  VALUES(@BusinessId,@CounterpartyId,@AppliesWithholding,@Responsibilities,@Jurisdiction,@Now,@UserId);
+                    (TenantId,CounterpartyId,AppliesWithholding,Responsibilities,JurisdictionCode,UpdatedAt,UpdatedByUserId)
+                  VALUES(@TenantId,@CounterpartyId,@AppliesWithholding,@Responsibilities,@Jurisdiction,@Now,@UserId);
                 """, connection, transaction);
-            command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+            command.Parameters.AddWithValue("@TenantId", tenantId);
             command.Parameters.AddWithValue("@CounterpartyId", request.CounterpartyId);
             command.Parameters.AddWithValue("@AppliesWithholding", request.AppliesWithholding);
             command.Parameters.AddWithValue("@Responsibilities", JsonSerializer.Serialize(responsibilities));
@@ -226,19 +226,19 @@ public sealed class SqlWithholdingRuleStore(
     }
 
     private static async Task EnsureCounterpartyAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId,
         Guid counterpartyId, CancellationToken ct)
     {
         await using var command = new SqlCommand("""
             IF NOT EXISTS(
               SELECT 1 FROM dbo.Suppliers
-              WHERE SupplierId=@CounterpartyId AND BusinessId=@BusinessId
+              WHERE SupplierId=@CounterpartyId AND TenantId=@TenantId
               UNION ALL
               SELECT 1 FROM dbo.Customers
-              WHERE CustomerId=@CounterpartyId AND BusinessId=@BusinessId)
-              THROW 51303,'The counterparty is outside the business.',1;
+              WHERE CustomerId=@CounterpartyId AND TenantId=@TenantId)
+              THROW 51303,'The counterparty is outside the tenant.',1;
             """, connection, transaction);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@CounterpartyId", counterpartyId);
         try { await command.ExecuteNonQueryAsync(ct); }
         catch (SqlException exception) when (exception.Number == 51303)
@@ -267,18 +267,28 @@ public sealed class SqlWithholdingRuleStore(
         CancellationToken ct)
     {
         await using var command = new SqlCommand("""
-            DECLARE @Cursor BIGINT;
-            SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
-            FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND Stream=CASE WHEN @CustomerId IS NULL THEN N'Configuration' ELSE N'Customers' END;
+            DECLARE @TenantId uniqueidentifier=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
+            DECLARE @IsCustomer bit=CASE WHEN EXISTS(
+              SELECT 1 FROM dbo.Customers WHERE CustomerId=@CustomerId AND TenantId=@TenantId)
+              THEN 1 ELSE 0 END;
             INSERT dbo.PosSynchronizationOutboxMessages
               (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,
                EntityType,EntityId,ChangeKind)
-            VALUES(NEWID(),@BusinessId,
-                   CASE WHEN @CustomerId IS NULL THEN N'Configuration' ELSE N'Customers' END,
-                   @Cursor,SYSDATETIMEOFFSET(),
-                   CASE WHEN @CustomerId IS NULL THEN N'WithholdingRules' ELSE N'Customer' END,
-                   @CustomerId,N'Upsert');
+            SELECT NEWID(),business.BusinessId,
+                   CASE WHEN @IsCustomer=1 THEN N'Customers' ELSE N'Configuration' END,
+                   ISNULL(latest.CursorValue,0)+1,SYSDATETIMEOFFSET(),
+                   CASE WHEN @IsCustomer=1 THEN N'Customer' ELSE N'WithholdingRules' END,
+                   CASE WHEN @IsCustomer=1 THEN @CustomerId ELSE NULL END,N'Upsert'
+            FROM dbo.Businesses business
+            OUTER APPLY
+            (
+              SELECT MAX(AvailableThroughCursor) CursorValue
+              FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=business.BusinessId
+                AND Stream=CASE WHEN @IsCustomer=1 THEN N'Customers' ELSE N'Configuration' END
+            ) latest
+            WHERE business.TenantId=@TenantId AND business.IsActive=1
+              AND (@CustomerId IS NOT NULL OR business.BusinessId=@BusinessId);
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@CustomerId", (object?)customerId ?? DBNull.Value);

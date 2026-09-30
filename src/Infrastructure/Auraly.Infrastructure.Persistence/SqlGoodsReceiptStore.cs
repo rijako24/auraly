@@ -250,14 +250,16 @@ public sealed class SqlGoodsReceiptStore(
               THROW 51100,'La sede no pertenece a la empresa autenticada.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND IsSystem=0 AND UseForGoodsReceipts=1)
               THROW 51101,'Selecciona una bodega activa para recibir mercancía.',1;
-            IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51102,'El proveedor no está activo en esta sede.',1;
+            IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId
+              AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1)
+              THROW 51102,'El proveedor no está activo en este tenant.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId') x
-              LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId AND s.IsActive=1
+              LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId
+                AND s.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND s.IsActive=1
               WHERE s.SupplierId IS NULL)
-              THROW 51105,'Un proveedor de costo adicional no está activo en esta sede.',1;
+              THROW 51105,'Un proveedor de costo adicional no está activo en este tenant.',1;
             IF @CurrencyCode<>N'COP' AND NOT EXISTS (
               SELECT 1 FROM reference.Options
               WHERE CatalogCode=N'exchange-rate-source' AND Code=@ExchangeRateSource AND IsActive=1)
@@ -274,7 +276,8 @@ public sealed class SqlGoodsReceiptStore(
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId',PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
               INNER JOIN dbo.Suppliers supplier
-                ON supplier.SupplierId=x.SupplierId AND supplier.BusinessId=@BusinessId AND supplier.IsActive=1
+                ON supplier.SupplierId=x.SupplierId
+               AND supplier.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND supplier.IsActive=1
               WHERE NOT (
                 x.PurchaseEvidenceType IN (N'ForeignCommercialInvoice',N'ImportDeclaration')
                 OR supplier.PurchaseEvidencePolicy IS NULL
@@ -291,7 +294,8 @@ public sealed class SqlGoodsReceiptStore(
             INNER JOIN purchasing.GoodsReceiptCostDocuments d
               ON d.SupplierId=x.SupplierId AND d.DocumentNumber=x.DocumentNumber
             INNER JOIN dbo.GoodsReceipts r ON r.GoodsReceiptId=d.GoodsReceiptId AND r.BusinessId=@BusinessId
-            INNER JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId
+            INNER JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId
+              AND s.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
             WHERE x.PurchaseEvidenceType<>N'BuyerElectronicSupportDocument';
             IF @RepeatedCostNumber IS NOT NULL
             BEGIN
@@ -304,7 +308,8 @@ public sealed class SqlGoodsReceiptStore(
             FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId',DocumentNumber nvarchar(80) '$.DocumentNumber',
                 PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
-            INNER JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId AND s.BusinessId=@BusinessId
+            INNER JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId
+              AND s.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
             WHERE x.PurchaseEvidenceType<>N'BuyerElectronicSupportDocument'
             GROUP BY x.SupplierId,x.DocumentNumber,s.Name
             HAVING COUNT(*)>1;
@@ -316,7 +321,7 @@ public sealed class SqlGoodsReceiptStore(
             END;
             IF NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers
-              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1
+              WHERE SupplierId=@SupplierId AND TenantId=@TenantId AND IsActive=1
                 AND (
                   @PurchaseEvidenceType=N'ForeignCommercialInvoice'
                   OR PurchaseEvidencePolicy IS NULL
@@ -329,9 +334,9 @@ public sealed class SqlGoodsReceiptStore(
               FROM OPENJSON(@ProductsJson)
                 WITH (ProductId UNIQUEIDENTIFIER '$') x
               LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.IsActive=1
-                AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-                     OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
-              LEFT JOIN dbo.SupplierProducts sp ON sp.ProductId=x.ProductId AND sp.SupplierId=@SupplierId AND sp.BusinessId=@BusinessId AND sp.IsActive=1
+                AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              LEFT JOIN dbo.SupplierProducts sp ON sp.ProductId=x.ProductId AND sp.SupplierId=@SupplierId
+                AND sp.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND sp.IsActive=1
               WHERE p.ProductId IS NULL OR sp.SupplierProductId IS NULL)
               THROW 51103,'Cada producto debe estar activo y asociado con el proveedor seleccionado.',1;
             """;
@@ -733,7 +738,8 @@ public sealed class SqlGoodsReceiptStore(
             JOIN dbo.FiscalIssuerConfigurations c ON c.BusinessId=fs.BusinessId AND c.IsActive=1
               AND c.Environment=a.Environment
               AND c.ValidFrom<=item.IssuedAt AND (c.ValidTo IS NULL OR c.ValidTo>item.IssuedAt)
-            JOIN dbo.Suppliers s ON s.SupplierId=item.SupplierId AND s.BusinessId=fs.BusinessId AND s.IsActive=1
+            JOIN dbo.Suppliers s ON s.SupplierId=item.SupplierId
+              AND s.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=fs.BusinessId) AND s.IsActive=1
             JOIN dbo.Parties p ON p.PartyId=s.PartyId AND p.IsActive=1
             LEFT JOIN dbo.PartySites site ON site.PartyId=p.PartyId
               AND site.IsActive=1 AND site.IsPrimary=1
@@ -901,7 +907,7 @@ public sealed class SqlGoodsReceiptStore(
             FROM OPENJSON(@SupplierIds) requested
             LEFT JOIN dbo.Suppliers supplier
               ON supplier.SupplierId=TRY_CONVERT(uniqueidentifier,requested.value)
-             AND supplier.BusinessId=@BusinessId AND supplier.IsActive=1
+             AND supplier.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND supplier.IsActive=1
             LEFT JOIN dbo.Parties party ON party.PartyId=supplier.PartyId AND party.IsActive=1;
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
@@ -932,7 +938,7 @@ public sealed class SqlGoodsReceiptStore(
               (SELECT value FROM OPENJSON(@Ids) WITH (value uniqueidentifier '$'));
             SELECT Code,DianTaxCode,Rate
             FROM dbo.TaxProfiles
-            WHERE BusinessId=@BusinessId AND IsActive=1
+            WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1
               AND (Code IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$'))
                 OR DianTaxCode IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$')));
             """;
@@ -1009,7 +1015,7 @@ public sealed class SqlGoodsReceiptStore(
         var taxProfilesByDianCode = new Dictionary<(string DianCode, decimal Rate), string>();
         await using (var taxCommand = new SqlCommand("""
             SELECT Code,DianTaxCode,Rate FROM dbo.TaxProfiles
-            WHERE BusinessId=@BusinessId AND IsActive=1
+            WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1
               AND (Code IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$'))
                 OR DianTaxCode IN (SELECT value FROM OPENJSON(@TaxCodes) WITH (value nvarchar(32) '$')));
             """, connection, transaction))

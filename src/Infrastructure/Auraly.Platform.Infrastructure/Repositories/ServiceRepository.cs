@@ -27,6 +27,16 @@ public class ServiceRepository : IServiceRepository
             .FirstOrDefaultAsync(s => s.ServiceId == serviceId);
     }
 
+    public async Task<IReadOnlyList<Service>> GetByIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> serviceIds, CancellationToken ct)
+    {
+        if (serviceIds.Count == 0) return [];
+        return await _context.Services
+            .Where(service => service.Business.TenantId == tenantId
+                && serviceIds.Contains(service.ServiceId))
+            .ToListAsync(ct);
+    }
+
     public async Task<Service?> GetByBusinessIdAndNameAsync(Guid businessId, string serviceName)
     {
         return await _context.Services

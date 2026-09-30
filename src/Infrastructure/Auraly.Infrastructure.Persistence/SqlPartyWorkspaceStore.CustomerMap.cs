@@ -24,10 +24,10 @@ public sealed partial class SqlPartyWorkspaceStore
                         WHERE contact.PartyId=party.PartyId AND contact.ContactType=N'Phone' AND contact.IsActive=1
                         ORDER BY contact.IsPrimary DESC,contact.CreatedAt) phone
             LEFT JOIN dbo.SalesRouteStops stop ON stop.PartySiteId=site.PartySiteId AND stop.CustomerId=customer.CustomerId AND stop.IsActive=1
-            LEFT JOIN dbo.SalesRoutes route ON route.RouteId=stop.RouteId AND route.BusinessId=customer.BusinessId AND route.IsActive=1
-            LEFT JOIN dbo.CommerceSellers seller ON seller.SellerId=route.SellerId AND seller.BusinessId=customer.BusinessId AND seller.IsActive=1
+            LEFT JOIN dbo.SalesRoutes route ON route.RouteId=stop.RouteId AND route.BusinessId=@BusinessId AND route.IsActive=1
+            LEFT JOIN dbo.CommerceSellers seller ON seller.SellerId=route.SellerId AND seller.TenantId=@TenantId AND seller.IsActive=1
             LEFT JOIN dbo.Parties sellerParty ON sellerParty.PartyId=seller.PartyId
-            WHERE customer.BusinessId=@BusinessId AND customer.IsActive=1
+            WHERE customer.TenantId=@TenantId AND customer.IsActive=1
               AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%' OR party.Identification LIKE N'%'+@Search+N'%'
                    OR site.Name LIKE N'%'+@Search+N'%' OR site.AddressLine LIKE N'%'+@Search+N'%')
               AND (@RouteId IS NULL OR route.RouteId=@RouteId)
@@ -35,7 +35,7 @@ public sealed partial class SqlPartyWorkspaceStore
               AND (@OnlyUnassigned=0 OR route.RouteId IS NULL)
               AND (@ReadAllRoutes=1 OR EXISTS(
                     SELECT 1 FROM dbo.AppUsers currentUser
-                    INNER JOIN dbo.CommerceSellers ownSeller ON ownSeller.PartyId=currentUser.PartyId AND ownSeller.BusinessId=@BusinessId AND ownSeller.IsActive=1
+                    INNER JOIN dbo.CommerceSellers ownSeller ON ownSeller.PartyId=currentUser.PartyId AND ownSeller.TenantId=@TenantId AND ownSeller.IsActive=1
                     WHERE currentUser.UserId=@ActorId AND currentUser.TenantId=@TenantId AND ownSeller.SellerId=route.SellerId))
             ORDER BY party.DisplayName,site.IsPrimary DESC,site.Name,route.Name;
             """, connection);

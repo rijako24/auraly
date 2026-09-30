@@ -340,12 +340,12 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
                 SET @ResolvedPartyId=@PartyId;
                 END;
                 DECLARE @ResolvedCustomerId uniqueidentifier=(SELECT CustomerId FROM dbo.Customers
-                  WHERE PartyId=@ResolvedPartyId AND BusinessId=@BusinessId);
+                  WHERE PartyId=@ResolvedPartyId AND TenantId=@TenantId);
                 IF @ResolvedCustomerId IS NULL
                 BEGIN
-                INSERT dbo.Customers(CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+                INSERT dbo.Customers(CustomerId,PartyId,TenantId,RequiresElectronicInvoice,
                   IsActive,CreatedBy,CreatedAt)
-                VALUES(@CustomerId,@ResolvedPartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+                VALUES(@CustomerId,@ResolvedPartyId,@TenantId,1,1,@UserId,SYSDATETIMEOFFSET());
                 SET @ResolvedCustomerId=@CustomerId;
                 END;
                 DECLARE @ResolvedSiteId uniqueidentifier=(SELECT TOP(1) PartySiteId FROM dbo.PartySites

@@ -16,7 +16,7 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
         Guid productCategoryId,
         CancellationToken ct = default) =>
         _context.ProductCategories.FirstOrDefaultAsync(category =>
-            category.BusinessId == businessId
+            _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == category.TenantId)
             && category.ProductCategoryId == productCategoryId,
             ct);
 
@@ -25,7 +25,7 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
         bool includeInactive,
         CancellationToken ct = default) =>
         await _context.ProductCategories.AsNoTracking()
-            .Where(category => category.BusinessId == businessId
+            .Where(category => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == category.TenantId)
                 && (includeInactive || category.IsActive))
             .OrderBy(category => category.DisplayOrder)
             .ThenBy(category => category.Name)
@@ -36,10 +36,28 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
         string externalCategoryId,
         CancellationToken ct = default) =>
         _context.ProductCategories.FirstOrDefaultAsync(category =>
-            category.BusinessId == businessId
+            _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == category.TenantId)
             && category.IntegrationConnectionId == integrationConnectionId
             && category.ExternalCategoryId == externalCategoryId,
             ct);
+
+    public async Task<IReadOnlyList<ProductCategory>> GetForExternalSyncAsync(
+        Guid tenantId,
+        Guid integrationConnectionId,
+        IReadOnlyCollection<string> externalCategoryIds,
+        IReadOnlyCollection<string> names,
+        CancellationToken ct = default)
+    {
+        var ids = externalCategoryIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var categoryNames = names.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (ids.Length == 0 && categoryNames.Length == 0) return [];
+        return await _context.ProductCategories
+            .Where(category => category.TenantId == tenantId
+                && category.IntegrationConnectionId == integrationConnectionId
+                && (category.ExternalCategoryId != null && ids.Contains(category.ExternalCategoryId)
+                    || categoryNames.Contains(category.Name)))
+            .ToListAsync(ct);
+    }
 
     public Task<ProductCategory?> GetByNameAsync(
         Guid businessId,
@@ -47,7 +65,7 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
         string name,
         CancellationToken ct = default) =>
         _context.ProductCategories.FirstOrDefaultAsync(category =>
-            category.BusinessId == businessId
+            _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == category.TenantId)
             && category.IntegrationConnectionId == integrationConnectionId
             && category.Name == name,
             ct);
@@ -58,7 +76,7 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
         string name,
         CancellationToken ct = default) =>
         _context.ProductCategories.AsNoTracking().FirstOrDefaultAsync(category =>
-            category.BusinessId == businessId
+            _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == category.TenantId)
             && category.IntegrationConnectionId == integrationConnectionId
             && category.IsActive
             && category.IsBrowsable
@@ -75,7 +93,7 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
         var query = _context.ProductCategories.AsNoTracking()
-            .Where(category => category.BusinessId == businessId
+            .Where(category => _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == category.TenantId)
                 && category.IntegrationConnectionId == integrationConnectionId
                 && category.IsActive
                 && category.IsBrowsable);
@@ -93,6 +111,12 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
     {
         _context.ProductCategories.Add(category);
         return Task.FromResult(category);
+    }
+
+    public Task CreateManyAsync(IReadOnlyCollection<ProductCategory> categories, CancellationToken ct = default)
+    {
+        _context.ProductCategories.AddRange(categories);
+        return Task.CompletedTask;
     }
 
     public Task<ProductCategory> UpdateAsync(ProductCategory category, CancellationToken ct = default)

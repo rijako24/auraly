@@ -136,8 +136,12 @@ export interface RecordTenantSubscriptionPayment {
 }
 
 function selectedPrintTenantId(): string | null {
-  try { return window.localStorage.getItem("selected_tenant_id"); }
+  try { return window.localStorage.getItem("selected_tenant_id")?.toLowerCase() ?? null; }
   catch { return null; }
+}
+
+function printBrandingCacheScope(): string {
+  return `${currentWebSessionVersion()}:${selectedPrintTenantId() ?? "current"}`;
 }
 
 const printBrandingCache = createTenantPrintBrandingCache(async () => {
@@ -163,25 +167,33 @@ const printBrandingCache = createTenantPrintBrandingCache(async () => {
     window.setTimeout(() => URL.revokeObjectURL(value.browser.logoUrl!), 120_000);
 });
 
-function getPrintBranding(): Promise<TenantBranding> {
+async function getPrintBranding(): Promise<TenantBranding> {
   if (typeof window === "undefined")
     return apiClient.get<TenantBranding>("/tenants/branding/print");
-  return printBrandingCache.get(currentWebSessionVersion()).then(value => value.browser);
+  const scope = printBrandingCacheScope();
+  const first = await printBrandingCache.get(scope);
+  const currentScope = printBrandingCacheScope();
+  if (scope === currentScope) return first.browser;
+  // An authentication refresh can change the session while the request is in flight.
+  const current = await printBrandingCache.get(currentScope);
+  if (currentScope !== printBrandingCacheScope())
+    throw new Error("La sesión de impresión cambió. Vuelve a intentarlo.");
+  return current.browser;
 }
 
 function readyPrintBranding(): TenantBranding | null {
   if (typeof window === "undefined") return null;
-  const value = printBrandingCache.peek(currentWebSessionVersion());
+  const value = printBrandingCache.peek(printBrandingCacheScope());
   const tenantId = selectedPrintTenantId();
-  return value && (!tenantId || value.raw.tenantId === tenantId)
+  return value && (!tenantId || value.raw.tenantId.toLowerCase() === tenantId)
     ? value.browser : null;
 }
 
 function readyLocalPrintBranding(): TenantBranding | null {
   if (typeof window === "undefined") return null;
-  const value = printBrandingCache.peek(currentWebSessionVersion());
+  const value = printBrandingCache.peek(printBrandingCacheScope());
   const tenantId = selectedPrintTenantId();
-  return value && (!tenantId || value.raw.tenantId === tenantId)
+  return value && (!tenantId || value.raw.tenantId.toLowerCase() === tenantId)
     ? value.raw : null;
 }
 

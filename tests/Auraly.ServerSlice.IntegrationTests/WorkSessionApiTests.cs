@@ -980,9 +980,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             VALUES(@PartyId,@TenantId,N'Organization',@Name,N'Incomplete',1,
                    @UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers
-              (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,
+              (CustomerId,PartyId,TenantId,RequiresElectronicInvoice,IsActive,
                CreatedBy,CreatedAt)
-            VALUES(@CustomerId,@PartyId,@BusinessId,0,1,@UserId,SYSDATETIMEOFFSET());
+            VALUES(@CustomerId,@PartyId,@TenantId,0,1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.PartySites(
               PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
               CityId,AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)

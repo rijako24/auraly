@@ -1,7 +1,7 @@
 CREATE TABLE [dbo].[ProductImages] (
     [ProductImageId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [ProductOfferId] UNIQUEIDENTIFIER NULL,
     [MediaUrl] NVARCHAR(1500) NOT NULL,
     [AltText] NVARCHAR(300) NULL,
@@ -10,12 +10,12 @@ CREATE TABLE [dbo].[ProductImages] (
     [IsActive] BIT NOT NULL DEFAULT 1,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,
-    CONSTRAINT [FK_ProductImages_Products] FOREIGN KEY ([ProductId])
-        REFERENCES [dbo].[Products] ([ProductId]) ON DELETE CASCADE,
-    CONSTRAINT [FK_ProductImages_Businesses] FOREIGN KEY ([BusinessId])
-        REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [FK_ProductImages_ProductOffers] FOREIGN KEY ([ProductOfferId])
-        REFERENCES [dbo].[ProductOffers] ([ProductOfferId]),
+    CONSTRAINT [FK_ProductImages_Products] FOREIGN KEY ([TenantId], [ProductId])
+        REFERENCES [dbo].[Products] ([TenantId], [ProductId]),
+    CONSTRAINT [FK_ProductImages_Tenants] FOREIGN KEY ([TenantId])
+        REFERENCES [dbo].[Tenants] ([TenantId]),
+    CONSTRAINT [FK_ProductImages_ProductOffers] FOREIGN KEY ([TenantId], [ProductOfferId])
+        REFERENCES [dbo].[ProductOffers] ([TenantId], [ProductOfferId]),
     CONSTRAINT [CK_ProductImages_MediaUrl] CHECK (LEN(LTRIM(RTRIM([MediaUrl]))) > 0)
 );
 

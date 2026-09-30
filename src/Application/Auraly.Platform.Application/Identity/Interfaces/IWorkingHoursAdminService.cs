@@ -10,9 +10,10 @@ public interface IWorkingHoursAdminService
         Guid businessId,
         UpdateWorkingHoursRequest request,
         CancellationToken ct = default);
-    Task<EmployeeWorkingHoursDto> GetEmployeeWorkingHoursAsync(Guid tenantId, Guid employeeId, CancellationToken ct = default);
+    Task<EmployeeWorkingHoursDto> GetEmployeeWorkingHoursAsync(Guid tenantId, Guid businessId, Guid employeeId, CancellationToken ct = default);
     Task<EmployeeWorkingHoursDto> UpdateEmployeeWorkingHoursAsync(
         Guid tenantId,
+        Guid businessId,
         Guid employeeId,
         UpdateWorkingHoursRequest request,
         CancellationToken ct = default);
@@ -38,18 +39,21 @@ public interface IWorkingHoursAdminService
 
     Task<IReadOnlyList<EmployeeScheduleExceptionDto>> GetEmployeeScheduleExceptionsAsync(
         Guid tenantId,
+        Guid businessId,
         Guid employeeId,
         CancellationToken ct = default);
     Task<EmployeeScheduleExceptionDto> CreateEmployeeScheduleExceptionAsync(
         Guid tenantId,
+        Guid businessId,
         Guid employeeId,
         UpsertEmployeeScheduleExceptionRequest request,
         CancellationToken ct = default);
     Task<EmployeeScheduleExceptionDto> UpdateEmployeeScheduleExceptionAsync(
         Guid tenantId,
+        Guid businessId,
         Guid employeeId,
         Guid exceptionId,
         UpsertEmployeeScheduleExceptionRequest request,
         CancellationToken ct = default);
-    Task DeleteEmployeeScheduleExceptionAsync(Guid tenantId, Guid employeeId, Guid exceptionId, CancellationToken ct = default);
+    Task DeleteEmployeeScheduleExceptionAsync(Guid tenantId, Guid businessId, Guid employeeId, Guid exceptionId, CancellationToken ct = default);
 }
