@@ -41,16 +41,18 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
 
         if (Uri.TryCreate(mediaRef, UriKind.Absolute, out var uri) && uri.Scheme == "https")
         {
-            _logger.LogInformation("MediaRef es URL absoluta, retornando tal cual: {MediaRef}", mediaRef);
+            if (verifyExists)
+                _logger.LogInformation("MediaRef es URL absoluta, retornando tal cual: {MediaRef}", mediaRef);
             return mediaRef;
         }
 
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
         var blobClient = containerClient.GetBlobClient(mediaRef);
 
-        _logger.LogInformation(
-            "Resolviendo MediaRef: MediaRef={MediaRef}, Container={ContainerName}",
-            mediaRef, containerName);
+        if (verifyExists)
+            _logger.LogInformation(
+                "Resolviendo MediaRef: MediaRef={MediaRef}, Container={ContainerName}",
+                mediaRef, containerName);
 
         if (verifyExists && !(await blobClient.ExistsAsync(ct)).Value)
         {
@@ -84,9 +86,10 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
                 Sas = sas.ToSasQueryParameters(key, _blobServiceClient.AccountName)
             }.ToUri();
         }
-        _logger.LogInformation(
-            "SAS generado correctamente para BlobPath={MediaRef}, expira en {Minutes} min",
-            mediaRef, SasExpiry.TotalMinutes);
+        if (verifyExists)
+            _logger.LogInformation(
+                "SAS generado correctamente para BlobPath={MediaRef}, expira en {Minutes} min",
+                mediaRef, SasExpiry.TotalMinutes);
         return sasUri.ToString();
     }
 

@@ -251,6 +251,7 @@ public sealed class DatabaseUpgradeMigrationTests
             "SeedInmobiliariaDemo.sql",
             "SeedLuisPetitBarber.sql",
             "SeedSolorzanoBusinessIdentity.sql",
+            "SeedSolorzanoAgentConfiguration.sql",
             "SeedCJDistribuciones.sql",
             "SeedDigitalShop.sql",
             "SeedAndinaSantander.sql",

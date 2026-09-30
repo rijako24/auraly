@@ -149,14 +149,18 @@ ORDER BY i.ProductImageId;
         }
         $requiredFromSource = @($images[$tenantId] | Where-Object { $sourceInventory.ContainsKey($_) })
         $missing = @($requiredFromSource | Where-Object { -not $targetInventory.ContainsKey($_) })
+        $copyPending = @($requiredFromSource | Where-Object {
+            $targetInventory.ContainsKey($_) -and $targetInventory[$_].Status -eq 'pending'
+        })
         foreach ($name in $requiredFromSource) {
             if ($targetInventory.ContainsKey($name) -and
-                ($targetInventory[$name].Length -ne $sourceInventory[$name].Length -or
-                 $targetInventory[$name].Status -in @('failed','pending'))) {
-                throw 'A target product image blob conflicts with the source or has not completed copying.'
+                ($targetInventory[$name].Status -eq 'failed' -or
+                 ($targetInventory[$name].Status -ne 'pending' -and
+                  $targetInventory[$name].Length -ne $sourceInventory[$name].Length))) {
+                throw 'A target product image blob conflicts with the source or its copy failed.'
             }
         }
-        Write-Output "Product image tenant $tenantId`: referenced=$($images[$tenantId].Count), source=$($sourceInventory.Count), missing=$($missing.Count)."
+        Write-Output "Product image tenant $tenantId`: referenced=$($images[$tenantId].Count), source=$($sourceInventory.Count), missing=$($missing.Count), pending=$($copyPending.Count)."
         if ($DryRun) {
             if ($missing.Count -gt 0) {
                 foreach ($source in $sources) {
@@ -169,15 +173,20 @@ ORDER BY i.ProductImageId;
             }
             continue
         }
-        if ($missing.Count -eq 0) { continue }
+        if ($missing.Count -gt 0 -and $copyPending.Count -gt 0) {
+            throw 'Product image copies are still pending; retry after they complete before starting another batch.'
+        }
+        if ($missing.Count -eq 0 -and $copyPending.Count -eq 0) { continue }
 
-        [void](Invoke-Storage -Arguments @('container','create','--name',$destination))
-        foreach ($source in $sources) {
-            & az storage blob copy start-batch --account-name $configuration.Storage `
-                --auth-mode login --only-show-errors --output none `
-                --destination-container $destination `
-                --source-container $source.Container --pattern 'products/*'
-            if ($LASTEXITCODE -ne 0) { throw 'Product image batch copy failed.' }
+        if ($missing.Count -gt 0) {
+            [void](Invoke-Storage -Arguments @('container','create','--name',$destination))
+            foreach ($source in $sources) {
+                & az storage blob copy start-batch --account-name $configuration.Storage `
+                    --auth-mode login --only-show-errors --output none `
+                    --destination-container $destination `
+                    --source-container $source.Container --pattern 'products/*'
+                if ($LASTEXITCODE -ne 0) { throw 'Product image batch copy failed.' }
+            }
         }
         $verified = $false
         for ($attempt = 0; $attempt -lt 60; $attempt++) {
