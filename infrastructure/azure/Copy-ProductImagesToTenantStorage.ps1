@@ -22,9 +22,9 @@ function Invoke-Storage {
 
 function Get-BlobInventory {
     param([string]$Container)
-    $inventory = @{}
+    $inventory = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $exists = Invoke-Storage -Arguments @('container','exists','--name',$Container)
-    if (-not $exists.exists) { return $inventory }
+    if (-not $exists.exists) { return ,$inventory }
     $marker = $null
     do {
         $args = @('blob','list','--container-name',$Container,'--prefix','products/',
@@ -53,7 +53,7 @@ function Get-BlobInventory {
             }
         }
     } while ($marker)
-    return $inventory
+    return ,$inventory
 }
 
 $connection = [System.Data.SqlClient.SqlConnection]::new(
@@ -125,7 +125,7 @@ ORDER BY i.ProductImageId;
     foreach ($tenantId in $images.Keys) {
         $destination = "tenant-$($tenantId.ToString('N'))"
         $sources = [Collections.Generic.List[object]]::new()
-        $sourceInventory = @{}
+        $sourceInventory = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
         foreach ($businessId in $businesses[$tenantId]) {
             $source = "business-$($businessId.ToString('N'))"
             $inventory = Get-BlobInventory $source
@@ -147,8 +147,9 @@ ORDER BY i.ProductImageId;
             if ($Environment -eq 'prod') { throw $message }
             Write-Warning $message
         }
-        $missing = @($sourceInventory.Keys | Where-Object { -not $targetInventory.ContainsKey($_) })
-        foreach ($name in $sourceInventory.Keys) {
+        $requiredFromSource = @($images[$tenantId] | Where-Object { $sourceInventory.ContainsKey($_) })
+        $missing = @($requiredFromSource | Where-Object { -not $targetInventory.ContainsKey($_) })
+        foreach ($name in $requiredFromSource) {
             if ($targetInventory.ContainsKey($name) -and
                 ($targetInventory[$name].Length -ne $sourceInventory[$name].Length -or
                  $targetInventory[$name].Status -in @('failed','pending'))) {
@@ -160,20 +161,21 @@ ORDER BY i.ProductImageId;
 
         [void](Invoke-Storage -Arguments @('container','create','--name',$destination))
         foreach ($source in $sources) {
-            [void](Invoke-Storage -Arguments @('blob','copy','start-batch',
-                '--destination-container',$destination,
-                '--source-container',$source.Container,
-                '--pattern','products/*'))
+            & az storage blob copy start-batch --account-name $configuration.Storage `
+                --auth-mode login --only-show-errors --output none `
+                --destination-container $destination `
+                --source-container $source.Container --pattern 'products/*'
+            if ($LASTEXITCODE -ne 0) { throw 'Product image batch copy failed.' }
         }
         $verified = $false
         for ($attempt = 0; $attempt -lt 60; $attempt++) {
             $targetInventory = Get-BlobInventory $destination
-            $pending = @($sourceInventory.Keys | Where-Object {
+            $pending = @($requiredFromSource | Where-Object {
                 -not $targetInventory.ContainsKey($_) -or
                 $targetInventory[$_].Length -ne $sourceInventory[$_].Length -or
                 $targetInventory[$_].Status -eq 'pending'
             })
-            $failed = @($sourceInventory.Keys | Where-Object {
+            $failed = @($requiredFromSource | Where-Object {
                 $targetInventory.ContainsKey($_) -and $targetInventory[$_].Status -eq 'failed'
             })
             if ($failed.Count -gt 0) { throw 'A product image blob copy failed.' }
@@ -181,7 +183,7 @@ ORDER BY i.ProductImageId;
             Start-Sleep -Seconds 10
         }
         if (-not $verified) { throw 'Timed out verifying copied product image blobs.' }
-        Write-Output "Product image tenant $tenantId`: verified=$($sourceInventory.Count)."
+        Write-Output "Product image tenant $tenantId`: verified=$($requiredFromSource.Count)."
     }
 }
 finally {

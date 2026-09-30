@@ -65,6 +65,7 @@ public interface IProductRepository
     Task<ProductOffer> CreateOfferAsync(ProductOffer offer, CancellationToken ct = default);
     Task<ProductOffer> UpdateOfferAsync(ProductOffer offer, CancellationToken ct = default);
     Task<IReadOnlyList<ProductImage>> GetImagesAsync(Guid businessId, Guid productId, CancellationToken ct = default);
+    Task<IReadOnlyList<ProductImage>> GetTrackedImagesAsync(Guid businessId, Guid productId, CancellationToken ct = default);
     Task<ProductImage?> GetImageByIdAsync(Guid businessId, Guid productImageId, CancellationToken ct = default);
     Task<ProductImage> CreateImageAsync(ProductImage image, CancellationToken ct = default);
     Task DeleteImageAsync(ProductImage image, CancellationToken ct = default);

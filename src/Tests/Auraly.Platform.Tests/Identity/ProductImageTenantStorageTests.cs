@@ -67,6 +67,67 @@ public sealed class ProductImageTenantStorageTests
             It.IsAny<Guid>(), It.IsAny<Stream>(), It.IsAny<string>()), Times.Never);
     }
 
+    [Fact]
+    public async Task Upload_from_second_business_saves_a_tenant_owned_image()
+    {
+        var tenantId = Guid.NewGuid();
+        var businessId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var unitOfWork = CreateUnitOfWork(tenantId, productId, businessId);
+        ProductImage? saved = null;
+        unitOfWork.Products.Setup(repository => repository.CreateImageAsync(
+                It.IsAny<ProductImage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProductImage image, CancellationToken _) =>
+            {
+                saved = image;
+                return image;
+            });
+        unitOfWork.UnitOfWork.Setup(value => value.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+        var storage = new Mock<IBlobStorageService>();
+        storage.Setup(value => value.UploadTenantImageAsync(
+                tenantId, It.IsAny<Stream>(), It.IsAny<string>()))
+            .ReturnsAsync("products/new.png");
+        var service = new ProductOfferAdminService(
+            unitOfWork.UnitOfWork.Object, storage.Object, Mock.Of<IMediaUrlResolver>());
+
+        await service.UploadImageAsync(
+            tenantId, businessId, productId, null, new MemoryStream([1]), "new.png", null, false);
+
+        Assert.NotNull(saved);
+        Assert.Equal(tenantId, saved.TenantId);
+        Assert.Equal("products/new.png", saved.MediaUrl);
+        storage.Verify(value => value.UploadTenantImageAsync(
+            tenantId, It.IsAny<Stream>(), It.IsAny<string>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Selecting_a_primary_image_reads_the_product_images_once()
+    {
+        var tenantId = Guid.NewGuid();
+        var businessId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var unitOfWork = CreateUnitOfWork(tenantId, productId, businessId);
+        var first = new ProductImage { ProductImageId = Guid.NewGuid(), ProductId = productId, TenantId = tenantId, IsPrimary = true };
+        var second = new ProductImage { ProductImageId = Guid.NewGuid(), ProductId = productId, TenantId = tenantId };
+        unitOfWork.Products.Setup(repository => repository.GetTrackedImagesAsync(
+                businessId, productId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([first, second]);
+        unitOfWork.UnitOfWork.Setup(value => value.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+        var service = new ProductOfferAdminService(
+            unitOfWork.UnitOfWork.Object, Mock.Of<IBlobStorageService>(), Mock.Of<IMediaUrlResolver>());
+
+        await service.SetPrimaryImageAsync(tenantId, businessId, productId, second.ProductImageId);
+
+        Assert.False(first.IsPrimary);
+        Assert.True(second.IsPrimary);
+        unitOfWork.Products.Verify(repository => repository.GetTrackedImagesAsync(
+            businessId, productId, It.IsAny<CancellationToken>()), Times.Once);
+        unitOfWork.Products.Verify(repository => repository.GetImageByIdAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static (Mock<IUnitOfWork> UnitOfWork, Mock<IProductRepository> Products) CreateUnitOfWork(
         Guid tenantId, Guid productId, params Guid[] businessIds)
     {
