@@ -159,13 +159,21 @@ resource emailDomain 'Microsoft.Communication/emailServices/domains@2025-09-01' 
   }
 }
 
+resource customerEmailDomain 'Microsoft.Communication/emailServices/domains@2025-09-01' existing = {
+  parent: emailService
+  name: 'mail.auralyapp.co'
+}
+
 resource communicationService 'Microsoft.Communication/communicationServices@2025-09-01' = {
   name: communicationServiceName
   location: 'global'
   tags: tags
   properties: {
     dataLocation: 'United States'
-    linkedDomains: [
+    linkedDomains: environment == 'prod' ? [
+      emailDomain.id
+      customerEmailDomain.id
+    ] : [
       emailDomain.id
     ]
   }
@@ -790,7 +798,7 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
         }
         {
           name: 'Auraly__Email__SenderAddress'
-          value: 'DoNotReply@${emailDomain.properties.mailFromSenderDomain}'
+          value: environment == 'prod' ? 'DoNotReply@${customerEmailDomain.name}' : 'DoNotReply@${emailDomain.properties.mailFromSenderDomain}'
         }
         {
           name: 'Auraly__Email__PublicAppUrl'

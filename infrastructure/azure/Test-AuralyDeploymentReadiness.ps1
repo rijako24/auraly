@@ -185,8 +185,13 @@ function Test-RemoteEnvironment {
         'Notifications__WebPush__Subject debe ser mailto: o https://.'
     Assert-Condition ($settings['Notifications__WebPush__PublicAppUrl'] -match '^https://[^/]+/?$') `
         'Notifications__WebPush__PublicAppUrl debe ser el origen HTTPS de la aplicación.'
-    Assert-Condition ($settings['Auraly__Email__SenderAddress'] -match '^DoNotReply@') `
-        'Auraly__Email__SenderAddress no usa el remitente administrado esperado.'
+    $expectedSenderAddress = if ($Environment -eq 'Prod') {
+        'DoNotReply@mail.auralyapp.co'
+    }
+    else { $null }
+    Assert-Condition (($Environment -eq 'Prod' -and $settings['Auraly__Email__SenderAddress'] -eq $expectedSenderAddress) -or
+        ($Environment -eq 'Dev' -and $settings['Auraly__Email__SenderAddress'] -match '^DoNotReply@.+\.azurecomm\.net$')) `
+        'Auraly__Email__SenderAddress no corresponde al remitente esperado para el ambiente.'
     Assert-Condition ($settings['Release__Version'] -eq $ReleaseVersion) `
         'La version configurada en la API no coincide con el release solicitado.'
     Assert-Condition ($settings['PosInstaller__Version'] -eq $ReleaseVersion) `
