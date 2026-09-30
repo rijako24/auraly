@@ -662,7 +662,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         var created = await create.Content.ReadFromJsonAsync<ProductDetail>();
         Assert.NotNull(created);
-        var createdSignal = await fixture.ReadSynchronizationMessageAsync();
+        var createdSignal = await ReadCatalogSynchronizationMessageAsync(0);
         Assert.Equal("Catalog", createdSignal.Stream);
         Assert.Equal(fixture.TenantId, createdSignal.TenantId);
         Assert.Equal(fixture.BusinessId, createdSignal.BusinessId);
@@ -810,7 +810,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/products/{created.ProductId:D}/deactivate",
                 content: null);
             Assert.Equal(HttpStatusCode.NoContent, deactivate.StatusCode);
-            var deactivatedSignal = await fixture.ReadSynchronizationMessageAsync();
+            var deactivatedSignal = await ReadCatalogSynchronizationMessageAsync(
+                updatedSignal.AvailableThroughCursor);
             Assert.True(deactivatedSignal.AvailableThroughCursor >
                         updatedSignal.AvailableThroughCursor);
             await sync.SynchronizeAsync();
@@ -1338,7 +1339,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         for (var attempt = 0; attempt < 20; attempt++)
         {
             var message = await fixture.ReadSynchronizationMessageAsync();
-            if (message.Stream == "Catalog" && message.AvailableThroughCursor > afterCursor)
+            if (message.Stream == "Catalog" && message.BusinessId == fixture.BusinessId &&
+                message.AvailableThroughCursor > afterCursor)
                 return message;
         }
         throw new InvalidOperationException("No newer catalog synchronization signal was published.");

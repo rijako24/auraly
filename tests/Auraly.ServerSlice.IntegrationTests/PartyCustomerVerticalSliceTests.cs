@@ -109,7 +109,8 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         {
             customerSignal = await fixture.ReadSynchronizationMessageAsync();
         }
-        while (customerSignal.Stream != "Customers");
+        while (customerSignal.Stream != "Customers" ||
+               customerSignal.BusinessId != fixture.BusinessId);
         Assert.Equal(fixture.TenantId, customerSignal.TenantId);
         Assert.Equal(fixture.BusinessId, customerSignal.BusinessId);
         var customerOutboxCount = await ScalarAsync<int>(
