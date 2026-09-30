@@ -22,6 +22,12 @@ public class ConsoleBlobStorageService : IBlobStorageService
         return Task.FromResult<string>(string.Empty);
     }
 
+    public Task<string> UploadTenantImageAsync(Guid tenantId, Stream imageStream, string fileName)
+    {
+        _logger.LogDebug("[MOCK] UploadTenantImageAsync llamado para tenant {TenantId}: {FileName}", tenantId, fileName);
+        return Task.FromResult(string.Empty);
+    }
+
     public Task<string> GetImageUrlAsync(Guid businessId, string fileName)
     {
         _logger.LogDebug("[MOCK] GetImageUrlAsync llamado para business {BusinessId}: {FileName}", businessId, fileName);

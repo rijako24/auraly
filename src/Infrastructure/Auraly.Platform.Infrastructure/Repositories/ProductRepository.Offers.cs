@@ -93,6 +93,16 @@ public sealed partial class ProductRepository
                 && value.ProductImageId == productImageId,
             ct);
 
+    public async Task<IReadOnlyList<ProductImage>> GetTrackedImagesAsync(
+        Guid businessId,
+        Guid productId,
+        CancellationToken ct = default) =>
+        await _context.ProductImages
+            .Where(value => _context.Businesses.Any(business =>
+                    business.BusinessId == businessId && business.TenantId == value.TenantId)
+                && value.ProductId == productId)
+            .ToListAsync(ct);
+
     public Task<ProductImage> CreateImageAsync(ProductImage image, CancellationToken ct = default)
     {
         _context.ProductImages.Add(image);

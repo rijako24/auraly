@@ -14,4 +14,12 @@ public sealed class ConsoleMediaUrlResolver : IMediaUrlResolver
 
         return Task.FromResult($"console://blob/{businessId:D}/{mediaRef}");
     }
+
+    public Task<string> ResolveTenantAsync(Guid tenantId, string mediaRef, CancellationToken ct = default)
+    {
+        if (Uri.TryCreate(mediaRef, UriKind.Absolute, out var uri) && uri.Scheme == "https")
+            return Task.FromResult(mediaRef);
+
+        return Task.FromResult($"console://tenant-blob/{tenantId:D}/{mediaRef}");
+    }
 }

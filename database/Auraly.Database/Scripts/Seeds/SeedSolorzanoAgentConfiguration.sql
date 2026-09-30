@@ -18,6 +18,12 @@ SET ANSI_NULLS ON;
 
 SET NOCOUNT ON;
 
+IF LOWER(N'$(DeploymentEnvironment)') = N'prod'
+BEGIN
+    PRINT N'SeedSolorzanoAgentConfiguration: seed de demostración omitido en producción.';
+    RETURN;
+END;
+
 
 
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'FCEE3BA9-E6BF-43E2-8C1A-560CB724688B';

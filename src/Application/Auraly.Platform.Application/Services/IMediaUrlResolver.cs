@@ -13,4 +13,5 @@ public interface IMediaUrlResolver
     /// Si es URL https, la retorna sin cambios.
     /// </summary>
     Task<string> ResolveAsync(Guid businessId, string mediaRef, CancellationToken ct = default);
+    Task<string> ResolveTenantAsync(Guid tenantId, string mediaRef, CancellationToken ct = default);
 }

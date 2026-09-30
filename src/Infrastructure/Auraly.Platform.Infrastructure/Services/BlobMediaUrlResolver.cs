@@ -28,26 +28,33 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
     }
 
     public async Task<string> ResolveAsync(Guid businessId, string mediaRef, CancellationToken ct = default)
+        => await ResolveFromContainerAsync($"business-{businessId:N}".ToLowerInvariant(), mediaRef, true, ct);
+
+    public async Task<string> ResolveTenantAsync(Guid tenantId, string mediaRef, CancellationToken ct = default)
+        => await ResolveFromContainerAsync($"tenant-{tenantId:N}".ToLowerInvariant(), mediaRef, false, ct);
+
+    private async Task<string> ResolveFromContainerAsync(
+        string containerName, string mediaRef, bool verifyExists, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(mediaRef))
             throw new ArgumentException("MediaRef no puede estar vacío", nameof(mediaRef));
 
         if (Uri.TryCreate(mediaRef, UriKind.Absolute, out var uri) && uri.Scheme == "https")
         {
-            _logger.LogInformation("MediaRef es URL absoluta, retornando tal cual: {MediaRef}", mediaRef);
+            if (verifyExists)
+                _logger.LogInformation("MediaRef es URL absoluta, retornando tal cual: {MediaRef}", mediaRef);
             return mediaRef;
         }
 
-        var containerName = $"business-{businessId:N}".ToLowerInvariant();
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
         var blobClient = containerClient.GetBlobClient(mediaRef);
 
-        _logger.LogInformation(
-            "Resolviendo MediaRef: BusinessId={BusinessId}, MediaRef={MediaRef}, Container={ContainerName}",
-            businessId, mediaRef, containerName);
+        if (verifyExists)
+            _logger.LogInformation(
+                "Resolviendo MediaRef: MediaRef={MediaRef}, Container={ContainerName}",
+                mediaRef, containerName);
 
-        var exists = await blobClient.ExistsAsync(ct);
-        if (!exists.Value)
+        if (verifyExists && !(await blobClient.ExistsAsync(ct)).Value)
         {
             _logger.LogError("El blob NO existe: Container={Container}, Blob={Blob}", containerName, mediaRef);
             throw new InvalidOperationException($"Blob no encontrado: {mediaRef}");
@@ -79,9 +86,10 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
                 Sas = sas.ToSasQueryParameters(key, _blobServiceClient.AccountName)
             }.ToUri();
         }
-        _logger.LogInformation(
-            "SAS generado correctamente para BlobPath={MediaRef}, expira en {Minutes} min",
-            mediaRef, SasExpiry.TotalMinutes);
+        if (verifyExists)
+            _logger.LogInformation(
+                "SAS generado correctamente para BlobPath={MediaRef}, expira en {Minutes} min",
+                mediaRef, SasExpiry.TotalMinutes);
         return sasUri.ToString();
     }
 

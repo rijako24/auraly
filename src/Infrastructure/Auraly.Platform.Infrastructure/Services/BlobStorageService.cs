@@ -20,11 +20,18 @@ public class BlobStorageService : IBlobStorageService
 
     private static string GetContainerName(Guid businessId) => $"business-{businessId:N}".ToLowerInvariant();
 
+    private static string GetTenantContainerName(Guid tenantId) => $"tenant-{tenantId:N}".ToLowerInvariant();
+
     public async Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName)
+        => await UploadToContainerAsync(GetContainerName(businessId), imageStream, fileName);
+
+    public async Task<string> UploadTenantImageAsync(Guid tenantId, Stream imageStream, string fileName)
+        => await UploadToContainerAsync(GetTenantContainerName(tenantId), imageStream, fileName);
+
+    private async Task<string> UploadToContainerAsync(string container, Stream imageStream, string fileName)
     {
         try
         {
-            var container = GetContainerName(businessId);
             var containerClient = _blobServiceClient.GetBlobContainerClient(container);
             await containerClient.CreateIfNotExistsAsync(PublicAccessType.None);
 

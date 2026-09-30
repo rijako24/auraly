@@ -84,7 +84,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         var result = new List<ProductImageDto>(images.Count);
         foreach (var image in images)
         {
-            var resolvedUrl = await _mediaUrlResolver.ResolveAsync(businessId, image.MediaUrl, ct);
+            var resolvedUrl = await _mediaUrlResolver.ResolveTenantAsync(tenantId, image.MediaUrl, ct);
             result.Add(MapImage(image, resolvedUrl));
         }
         return result;
@@ -124,7 +124,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         if (extension is not (".jpg" or ".jpeg" or ".png" or ".webp"))
             throw new DomainValidationException("file", "Use una imagen JPG, PNG o WEBP.");
         var blobName = $"products/{productId:N}/{Guid.NewGuid():N}{extension}";
-        var url = await _blobStorage.UploadImageAsync(businessId, stream, blobName);
+        var url = await _blobStorage.UploadTenantImageAsync(tenantId, stream, blobName);
         return await AddImageAsync(tenantId, businessId, productId, productOfferId, url, altText, 0, isPrimary, ct);
     }
 
@@ -141,7 +141,7 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         if (extension is not (".jpg" or ".jpeg" or ".png" or ".webp"))
             throw new DomainValidationException("file", "Use una imagen JPG, PNG o WEBP.");
         var blobName = $"products/{productId:N}/{Guid.NewGuid():N}{extension}";
-        return new StagedProductImageDto(await _blobStorage.UploadImageAsync(businessId, stream, blobName));
+        return new StagedProductImageDto(await _blobStorage.UploadTenantImageAsync(tenantId, stream, blobName));
     }
 
     public async Task DeleteImageAsync(
@@ -158,14 +158,12 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
             throw new NotFoundException(nameof(ProductImage), productImageId);
         if (image.IsPrimary)
         {
-            var replacement = (await _unitOfWork.Products.GetImagesAsync(businessId, productId, ct))
+            var replacement = (await _unitOfWork.Products.GetTrackedImagesAsync(businessId, productId, ct))
                 .Where(candidate => candidate.ProductImageId != productImageId && candidate.IsActive)
                 .OrderBy(candidate => candidate.DisplayOrder)
                 .FirstOrDefault();
-            var trackedReplacement = replacement is null ? null
-                : await _unitOfWork.Products.GetImageByIdAsync(businessId, replacement.ProductImageId, ct);
-            if (trackedReplacement is not null)
-                trackedReplacement.IsPrimary = true;
+            if (replacement is not null)
+                replacement.IsPrimary = true;
         }
 
         await _unitOfWork.Products.DeleteImageAsync(image, ct);
@@ -181,21 +179,13 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         CancellationToken ct = default)
     {
         await EnsureProductAsync(tenantId, businessId, productId, ct);
-        var selected = await _unitOfWork.Products.GetImageByIdAsync(businessId, productImageId, ct)
+        var images = await _unitOfWork.Products.GetTrackedImagesAsync(businessId, productId, ct);
+        var selected = images.FirstOrDefault(image => image.ProductImageId == productImageId)
             ?? throw new NotFoundException(nameof(ProductImage), productImageId);
-        if (selected.ProductId != productId)
-            throw new NotFoundException(nameof(ProductImage), productImageId);
-
-        var before = MapImage(selected);
-        var images = await _unitOfWork.Products.GetImagesAsync(businessId, productId, ct);
         foreach (var image in images)
         {
-            var tracked = image.ProductImageId == selected.ProductImageId
-                ? selected
-                : await _unitOfWork.Products.GetImageByIdAsync(businessId, image.ProductImageId, ct);
-            if (tracked is null) continue;
-            tracked.IsPrimary = tracked.ProductImageId == selected.ProductImageId;
-            tracked.UpdatedAt = DateTime.UtcNow;
+            image.IsPrimary = image.ProductImageId == selected.ProductImageId;
+            image.UpdatedAt = DateTime.UtcNow;
         }
 
         await _unitOfWork.SaveChangesAsync(ct);
@@ -214,15 +204,11 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
     {
         if (isPrimary)
         {
-            var existing = await _unitOfWork.Products.GetImagesAsync(businessId, productId, ct);
+            var existing = await _unitOfWork.Products.GetTrackedImagesAsync(businessId, productId, ct);
             foreach (var image in existing.Where(value => value.IsPrimary))
             {
-                var tracked = await _unitOfWork.Products.GetImageByIdAsync(businessId, image.ProductImageId, ct);
-                if (tracked is not null)
-                {
-                    tracked.IsPrimary = false;
-                    tracked.UpdatedAt = DateTime.UtcNow;
-                }
+                image.IsPrimary = false;
+                image.UpdatedAt = DateTime.UtcNow;
             }
         }
         var entity = new ProductImage
