@@ -138,12 +138,15 @@ ORDER BY i.ProductImageId;
             }
             $sources.Add([pscustomobject]@{ Container=$source; Count=$inventory.Count })
         }
-        foreach ($mediaRef in $images[$tenantId]) {
-            if (-not $sourceInventory.ContainsKey($mediaRef)) {
-                throw 'A referenced product image blob is missing from all business containers.'
-            }
-        }
         $targetInventory = Get-BlobInventory $destination
+        $missingReferences = @($images[$tenantId] | Where-Object {
+            -not $sourceInventory.ContainsKey($_) -and -not $targetInventory.ContainsKey($_)
+        })
+        if ($missingReferences.Count -gt 0) {
+            $message = "Product image tenant $tenantId has $($missingReferences.Count) referenced blobs missing from source and target storage."
+            if ($Environment -eq 'prod') { throw $message }
+            Write-Warning $message
+        }
         $missing = @($sourceInventory.Keys | Where-Object { -not $targetInventory.ContainsKey($_) })
         foreach ($name in $sourceInventory.Keys) {
             if ($targetInventory.ContainsKey($name) -and

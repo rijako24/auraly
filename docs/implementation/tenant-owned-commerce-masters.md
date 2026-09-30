@@ -23,6 +23,11 @@ compartidos o independientes.
 | Tenant | Products; categorías, marcas, unidades, IVA, códigos de barras, identificadores, enlaces, ofertas, imágenes y demás metadatos del catálogo; Parties y roles Customer, Supplier, Seller, Carrier y Employee; relación producto-proveedor y perfil tributario del tercero; definición de PriceChannels. |
 | Sede | ProductPrices; inventario y bodegas; documentos, ventas, compras, rutas, cajas y sesiones; proyecciones y cursores de sincronización POS. |
 
+Las imágenes de producto se guardan en el contenedor privado
+`tenant-{TenantId}`. Las referencias relativas `products/...` de `ProductImages`
+son compartidas por todas las sedes del tenant. Las URL HTTPS externas se
+conservan sin copia. El logo de impresión conserva su flujo propio.
+
 `BusinessId` en un documento o proyección operativa indica dónde ocurrió la
 operación; no cambia la propiedad del maestro referenciado. Un canal pertenece
 al tenant y aplica automáticamente en todas sus sedes actuales y futuras.
@@ -76,6 +81,15 @@ el backfill de tenant de productos reconoce la ausencia de `BusinessId`, y el
 backfill histórico de sedes de cliente se omite una vez retirada esa columna.
 
 La migración se ejecuta antes del plan DACPAC mediante el pipeline de release.
+Antes del cutover de SQL, el mismo pipeline inventaría por páginas los blobs
+`products/` de los contenedores de las sedes del tenant, comprueba que cada
+referencia relativa de `ProductImages` exista, copia por lote al contenedor del
+tenant y verifica nombre, tamaño y estado de la copia. Una referencia ausente,
+una ruta fuera de `products/` o una colisión entre contenedores detiene el
+despliegue de producción. En DEV, las referencias a blobs que ya estaban
+ausentes se registran como advertencia y no se inventa una imagen de reemplazo.
+Los contenedores originales no se borran. La copia se puede reintentar y
+también se ejecuta en DEV, donde el esquema SQL ya fue convertido.
 La aplicación y el esquema se publican juntos desde un commit integrado en
 `origin/main`. El rollback de la aplicación requiere restaurar el esquema y los
 datos de un respaldo; una versión antigua que consulte `BusinessId` de los

@@ -28,12 +28,13 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
     }
 
     public async Task<string> ResolveAsync(Guid businessId, string mediaRef, CancellationToken ct = default)
-        => await ResolveFromContainerAsync($"business-{businessId:N}".ToLowerInvariant(), mediaRef, ct);
+        => await ResolveFromContainerAsync($"business-{businessId:N}".ToLowerInvariant(), mediaRef, true, ct);
 
     public async Task<string> ResolveTenantAsync(Guid tenantId, string mediaRef, CancellationToken ct = default)
-        => await ResolveFromContainerAsync($"tenant-{tenantId:N}".ToLowerInvariant(), mediaRef, ct);
+        => await ResolveFromContainerAsync($"tenant-{tenantId:N}".ToLowerInvariant(), mediaRef, false, ct);
 
-    private async Task<string> ResolveFromContainerAsync(string containerName, string mediaRef, CancellationToken ct)
+    private async Task<string> ResolveFromContainerAsync(
+        string containerName, string mediaRef, bool verifyExists, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(mediaRef))
             throw new ArgumentException("MediaRef no puede estar vacío", nameof(mediaRef));
@@ -51,8 +52,7 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
             "Resolviendo MediaRef: MediaRef={MediaRef}, Container={ContainerName}",
             mediaRef, containerName);
 
-        var exists = await blobClient.ExistsAsync(ct);
-        if (!exists.Value)
+        if (verifyExists && !(await blobClient.ExistsAsync(ct)).Value)
         {
             _logger.LogError("El blob NO existe: Container={Container}, Blob={Blob}", containerName, mediaRef);
             throw new InvalidOperationException($"Blob no encontrado: {mediaRef}");
