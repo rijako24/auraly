@@ -24,7 +24,73 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Inspect duplicate suppliers without exposing identity data
+        if: inputs.order_number == '__TENANT_SUPPLIER_DUPLICATES__'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rule = "github-supplier-diagnose-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+          try {
+            $ip = (Invoke-RestMethod -Uri 'https://api.ipify.org').Trim()
+            az sql server firewall-rule create --resource-group RG-AURALY-DEV --server sql-auraly-dev-w5usmo6w --name $rule --start-ip-address $ip --end-ip-address $ip --output none
+            if ($LASTEXITCODE) { throw 'Temporary SQL firewall rule failed.' }
+            $token = az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
+            if ($LASTEXITCODE) { throw 'Azure SQL token failed.' }
+            $connection = [System.Data.SqlClient.SqlConnection]::new('Server=tcp:sql-auraly-dev-w5usmo6w.database.windows.net,1433;Initial Catalog=auraly-dev;Encrypt=True;TrustServerCertificate=False;Connection Timeout=60;')
+            $connection.AccessToken = $token
+            $connection.Open()
+            try {
+              $command = $connection.CreateCommand()
+              $command.CommandText = @'
+          WITH duplicate_keys AS (
+            SELECT b.TenantId,s.Identification
+            FROM dbo.Suppliers s JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
+            GROUP BY b.TenantId,s.Identification HAVING COUNT(*)>1
+          )
+          SELECT b.TenantId,s.SupplierId,s.BusinessId,s.PartyId,
+                 CONVERT(varchar(64),HASHBYTES('SHA2_256',s.Identification),2) IdentificationHash,
+                 CONVERT(varchar(64),HASHBYTES('SHA2_256',s.Name),2) NameHash,
+                 s.PurchaseEvidencePolicy,s.DefaultPaymentDueDays,s.IsActive,s.CreatedAt,
+                 (SELECT COUNT(*) FROM dbo.SupplierProducts sp WHERE sp.SupplierId=s.SupplierId) ProductLinks
+          FROM dbo.Suppliers s
+          JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
+          JOIN duplicate_keys keys ON keys.TenantId=b.TenantId AND keys.Identification=s.Identification
+          ORDER BY b.TenantId,s.Identification,s.CreatedAt,s.SupplierId;
+          '@
+              $reader = $command.ExecuteReader()
+              while ($reader.Read()) {
+                [ordered]@{
+                  tenantId = $reader['TenantId']; supplierId = $reader['SupplierId'];
+                  businessId = $reader['BusinessId']; partyId = if ($reader['PartyId'] -is [DBNull]) { $null } else { $reader['PartyId'] };
+                  identificationHash = $reader['IdentificationHash']; nameHash = $reader['NameHash'];
+                  evidencePolicy = if ($reader['PurchaseEvidencePolicy'] -is [DBNull]) { $null } else { $reader['PurchaseEvidencePolicy'] };
+                  dueDays = $reader['DefaultPaymentDueDays']; active = $reader['IsActive'];
+                  createdAt = $reader['CreatedAt']; productLinks = $reader['ProductLinks']
+                } | ConvertTo-Json -Compress | Write-Output
+              }
+              $reader.Close()
+              $command.CommandText = @'
+          SELECT OBJECT_SCHEMA_NAME(fk.parent_object_id) ParentSchema,
+                 OBJECT_NAME(fk.parent_object_id) ParentTable,
+                 COL_NAME(col.parent_object_id,col.parent_column_id) ParentColumn
+          FROM sys.foreign_keys fk
+          JOIN sys.foreign_key_columns col ON col.constraint_object_id=fk.object_id
+          WHERE fk.referenced_object_id=OBJECT_ID(N'dbo.Suppliers')
+          ORDER BY ParentSchema,ParentTable,ParentColumn;
+          '@
+              $reader = $command.ExecuteReader()
+              while ($reader.Read()) {
+                [ordered]@{ referencedBy = "$($reader['ParentSchema']).$($reader['ParentTable']).$($reader['ParentColumn'])" } |
+                  ConvertTo-Json -Compress | Write-Output
+              }
+              $reader.Close()
+            } finally { $connection.Dispose() }
+          } finally {
+            az sql server firewall-rule delete --resource-group RG-AURALY-DEV --server sql-auraly-dev-w5usmo6w --name $rule --output none 2>$null
+          }
+
       - name: Inspect order processing without exposing customer data
+        if: inputs.order_number != '__TENANT_SUPPLIER_DUPLICATES__'
         shell: pwsh
         env:
           ORDER_NUMBER: ${{ inputs.order_number }}
