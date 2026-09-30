@@ -60,6 +60,10 @@ el despliegue si encuentra datos ambiguos. La sede de origen no se convierte en
 una segunda ficha. En DEV, donde ya hay dos sedes, las copias de códigos de
 barras e identificadores se consolidan por producto y tenant después de
 comprobar que sus valores y estado no entran en conflicto.
+Las copias de proveedor con igual identificación y configuración comercial se
+consolidan solo si la copia posterior no tiene referencias; se conserva el
+proveedor original y la ficha `Party` de la copia. Un proveedor con datos
+distintos o referencias propias detiene la migración para revisión.
 
 La migración se ejecuta antes del plan DACPAC mediante el pipeline de release.
 La aplicación y el esquema se publican juntos desde un commit integrado en

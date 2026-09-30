@@ -122,25 +122,49 @@ BEGIN TRY
     JOIN copies ON copies.ProductUnitId=unit.ProductUnitId
     WHERE copies.copyNumber>1;
 
-    -- The accounting seed inserted OCASIONAL once per branch. Keep the first
-    -- row; FK enforcement prevents removing a referenced duplicate.
+    ';
+
+    -- A newly created branch can contain an identical supplier copy. Remove
+    -- only later copies with the same commercial settings and no FK references.
+    -- Preserve their Party row: other roles can still reference that identity.
+    -- Any remaining duplicate is a real conflict and keeps the migration atomic.
+    SELECT @Sql=STRING_AGG(CAST(
+        N' AND NOT EXISTS(SELECT 1 FROM '
+        + QUOTENAME(OBJECT_SCHEMA_NAME(fk.parent_object_id)) + N'.'
+        + QUOTENAME(OBJECT_NAME(fk.parent_object_id)) + N' dependent WHERE dependent.'
+        + QUOTENAME(COL_NAME(keyColumn.parent_object_id,keyColumn.parent_column_id))
+        + N'=supplier.SupplierId)' AS NVARCHAR(MAX)),N'')
+    FROM sys.foreign_keys fk
+    JOIN sys.foreign_key_columns keyColumn
+      ON keyColumn.constraint_object_id=fk.object_id
+    WHERE fk.referenced_object_id=OBJECT_ID(N'dbo.Suppliers')
+      AND COL_NAME(keyColumn.referenced_object_id,keyColumn.referenced_column_id)=N'SupplierId';
+
+    SET @Sql=N'
     ;WITH copies AS (
-        SELECT SupplierId,
+        SELECT SupplierId,TenantId,Identification,
                ROW_NUMBER() OVER(
-                 PARTITION BY TenantId,Identification ORDER BY CreatedAt,SupplierId) copyNumber
-        FROM dbo.Suppliers
-        WHERE Identification=N''OCASIONAL''
-          AND PartyId IS NULL AND Name=N''Gasto ocasional / sin proveedor''
-          AND IsActive=1)
+                 PARTITION BY TenantId,Identification ORDER BY CreatedAt,SupplierId) copyNumber,
+               FIRST_VALUE(SupplierId) OVER(
+                 PARTITION BY TenantId,Identification ORDER BY CreatedAt,SupplierId) canonicalId
+        FROM dbo.Suppliers)
     DELETE supplier
     FROM dbo.Suppliers supplier
     JOIN copies ON copies.SupplierId=supplier.SupplierId
-    WHERE copies.copyNumber>1;
-
+    JOIN dbo.Suppliers canonical ON canonical.SupplierId=copies.canonicalId
+    WHERE copies.copyNumber>1
+      AND NOT EXISTS (
+        SELECT supplier.Name,supplier.PurchaseEvidencePolicy,
+               supplier.DefaultPaymentDueDays,supplier.IsActive
+        EXCEPT
+        SELECT canonical.Name,canonical.PurchaseEvidencePolicy,
+               canonical.DefaultPaymentDueDays,canonical.IsActive)'
+      + COALESCE(@Sql,N'') + N';
     IF EXISTS (
         SELECT 1 FROM dbo.Suppliers
         GROUP BY TenantId,Identification HAVING COUNT(*)>1)
         THROW 52046, ''Conflicting tenant suppliers require manual reconciliation.'', 1;';
+    EXEC sys.sp_executesql @Sql;
 
     IF COL_LENGTH(N'dbo.CounterpartyTaxProfiles', N'BusinessId') IS NOT NULL
     BEGIN
