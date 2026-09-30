@@ -84,6 +84,39 @@ jobs:
                   ConvertTo-Json -Compress | Write-Output
               }
               $reader.Close()
+              $command.CommandText = @'
+          SET NOCOUNT ON;
+          SELECT s.SupplierId INTO #DuplicateSupplierIds
+          FROM dbo.Suppliers s JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
+          WHERE EXISTS (
+            SELECT 1 FROM dbo.Suppliers other
+            JOIN dbo.Businesses otherBusiness ON otherBusiness.BusinessId=other.BusinessId
+            WHERE otherBusiness.TenantId=b.TenantId AND other.Identification=s.Identification
+              AND other.SupplierId<>s.SupplierId);
+          DECLARE @sql nvarchar(max);
+          SELECT @sql=STRING_AGG(CAST(
+            N'SELECT N''' + OBJECT_SCHEMA_NAME(fk.parent_object_id) + N'.' +
+            OBJECT_NAME(fk.parent_object_id) + N''' ParentTable,source.' +
+            QUOTENAME(COL_NAME(col.parent_object_id,col.parent_column_id)) +
+            N' SupplierId,COUNT_BIG(*) ReferenceCount FROM ' +
+            QUOTENAME(OBJECT_SCHEMA_NAME(fk.parent_object_id)) + N'.' +
+            QUOTENAME(OBJECT_NAME(fk.parent_object_id)) + N' source JOIN #DuplicateSupplierIds ids ON ids.SupplierId=source.' +
+            QUOTENAME(COL_NAME(col.parent_object_id,col.parent_column_id)) +
+            N' GROUP BY source.' + QUOTENAME(COL_NAME(col.parent_object_id,col.parent_column_id))
+            AS nvarchar(max)),N' UNION ALL ')
+          FROM sys.foreign_keys fk
+          JOIN sys.foreign_key_columns col ON col.constraint_object_id=fk.object_id
+          WHERE fk.referenced_object_id=OBJECT_ID(N'dbo.Suppliers');
+          EXEC sys.sp_executesql @sql;
+          '@
+              $reader = $command.ExecuteReader()
+              while ($reader.Read()) {
+                [ordered]@{
+                  parentTable = $reader['ParentTable']; supplierId = $reader['SupplierId'];
+                  referenceCount = $reader['ReferenceCount']
+                } | ConvertTo-Json -Compress | Write-Output
+              }
+              $reader.Close()
             } finally { $connection.Dispose() }
           } finally {
             az sql server firewall-rule delete --resource-group RG-AURALY-DEV --server sql-auraly-dev-w5usmo6w --name $rule --output none 2>$null
