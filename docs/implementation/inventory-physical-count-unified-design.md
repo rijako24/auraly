@@ -89,7 +89,9 @@ agrupado.
 La pestaña muestra una grilla paginada de borradores abiertos, con filtros por
 nombre/producto y rango de última actualización, además de bodega, avance,
 propietario y estado. Sólo los marcados `Listo para conciliar`
-son elegibles. El primer borrador elegido fija la bodega y el conteo que registra
+son elegibles si el borrador está realmente en `Ready` y su conteo sigue en
+`Open` o `Reconciling`; el servidor devuelve esa disponibilidad para habilitar
+la casilla. El primer borrador elegido fija la bodega y el conteo que registra
 la conciliación; se pueden agregar borradores de otros conteos de la misma sede
 y bodega. Los de otra bodega siguen visibles, pero quedan deshabilitados porque
 una aplicación de inventario tiene una sola bodega. El administrador decide cuáles participan y pulsa

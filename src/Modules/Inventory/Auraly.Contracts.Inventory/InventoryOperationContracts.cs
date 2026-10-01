@@ -378,7 +378,7 @@ public sealed record InventoryPhysicalCountDraftQuery(
 public sealed record InventoryPhysicalCountDraftSummary(
     Guid InventoryPhysicalCountId, Guid DraftId, string Name, Guid WarehouseId, string WarehouseName,
     string ScopeType, Guid OwnerUserId, string Status, long Version, int ProductCount,
-    int CountedProductCount, DateTimeOffset UpdatedAt);
+    int CountedProductCount, DateTimeOffset UpdatedAt, bool CanReconcile);
 public sealed record InventoryPhysicalCountDraftPage(
     IReadOnlyList<InventoryPhysicalCountDraftSummary> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public sealed record InventoryPhysicalCountDraftLine(
