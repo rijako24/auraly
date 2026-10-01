@@ -51,6 +51,8 @@ public static class InventoryApi
             return await ExecuteAsync(() => service.GetPendingTransfersAsync(identity,
                 new(identity.BusinessId, destinationWarehouseId, search, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
         }).RequireAuthorization("inventory.user");
+        endpoints.MapGet("/api/commerce/v1/inventory/movements/filter-options", async (ClaimsPrincipal principal, InventoryQueryService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetMovementFilterOptionsAsync(principal.ToInventoryIdentity(), token), Results.Ok)).RequireAuthorization("inventory.user");
         endpoints.MapGet("/api/commerce/v1/warehouse-transfers/{transferId:guid}", async (ClaimsPrincipal principal, Guid transferId, InventoryQueryService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetTransferAsync(principal.ToInventoryIdentity(), transferId, token),
                 value => value is null ? Results.NotFound() : Results.Ok(value))).RequireAuthorization("inventory.user");

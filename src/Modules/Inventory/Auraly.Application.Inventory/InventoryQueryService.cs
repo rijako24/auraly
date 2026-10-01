@@ -14,6 +14,7 @@ public interface IInventoryQueryStore
     Task<InventoryReasonItem> SaveReasonAsync(InventoryUserIdentity user, Guid? inventoryReasonId, SaveInventoryReasonRequest request, CancellationToken token);
     Task<InventoryBalancePage> GetBalancesAsync(InventoryUserIdentity user, InventoryBalanceQuery query, bool includeCosts, CancellationToken token);
     Task<InventoryMovementPage> GetMovementsAsync(InventoryUserIdentity user, InventoryMovementQuery query, bool includeCosts, CancellationToken token);
+    Task<InventoryMovementFilterOptions> GetMovementFilterOptionsAsync(InventoryUserIdentity user, CancellationToken token);
     Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, bool includeCosts, CancellationToken token);
     Task<InventoryOperationDetail?> GetOperationDetailAsync(InventoryUserIdentity user, Guid documentId, bool includeCosts, CancellationToken token);
     Task<WarehouseTransferPendingPage> GetPendingTransfersAsync(InventoryUserIdentity user, WarehouseTransferPendingQuery query, CancellationToken token);
@@ -142,6 +143,12 @@ public sealed class InventoryQueryService(
             throw new InventoryValidationException("DocumentId is required.");
         return store.GetOperationDetailAsync(
             user, documentId, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
+    }
+
+    public Task<InventoryMovementFilterOptions> GetMovementFilterOptionsAsync(InventoryUserIdentity user, CancellationToken token = default)
+    {
+        Validate(user, user.BusinessId, 1, 1);
+        return store.GetMovementFilterOptionsAsync(user, token);
     }
 
     public Task<WarehouseTransferPendingPage> GetPendingTransfersAsync(InventoryUserIdentity user, WarehouseTransferPendingQuery query, CancellationToken token = default)

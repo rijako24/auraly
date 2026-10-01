@@ -519,12 +519,16 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             firstDraft = Assert.Single(Assert.IsType<InventoryPhysicalCountDetail>(detail).Drafts).DraftId;
         }
 
-        var secondDraft = Guid.NewGuid();
+        var secondCountId = Guid.NewGuid();
+        Guid secondDraft;
         using (var createDraft = await client.PostAsJsonAsync(
-                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts",
-                   new CreateInventoryPhysicalCountDraftRequest(fixture.BusinessId, secondDraft, secondDraftName, [first])))
+                   "/api/commerce/v1/inventory/physical-counts",
+                   new CreateInventoryPhysicalCountRequest(secondCountId, fixture.BusinessId, fixture.WarehouseId,
+                       "Partial", "PHYSICAL_COUNT", null, secondDraftName, [first])))
         {
-            Assert.Equal(HttpStatusCode.OK, createDraft.StatusCode);
+            Assert.Equal(HttpStatusCode.Created, createDraft.StatusCode);
+            secondDraft = Assert.Single(Assert.IsType<InventoryPhysicalCountDetail>(
+                await createDraft.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>()).Drafts).DraftId;
         }
 
         using (var response = await client.PutAsJsonAsync(
@@ -536,7 +540,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         }
 
         using (var response = await client.PutAsJsonAsync(
-                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{secondDraft:D}",
+                   $"/api/commerce/v1/inventory/physical-counts/{secondCountId:D}/drafts/{secondDraft:D}",
                    new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, 1, secondDraftName,
                        [new(first, 2m, 2m, null)], true, "Recount")))
         {
@@ -568,6 +572,39 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.All(reconciliation.Products.Where(product => product.Status == "Uncounted"),
             product => Assert.Equal(0m, product.ProposedQuantity));
 
+        var previousReconciliationId = reconciliation.ReconciliationId;
+        using (var reselect = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations",
+                   new PrepareInventoryReconciliationRequest(fixture.BusinessId,
+                       [new(firstDraft, 1), new(secondDraft, 1)])))
+        {
+            Assert.Equal(HttpStatusCode.Created, reselect.StatusCode);
+            reconciliation = Assert.IsType<InventoryReconciliationDetail>(
+                await reselect.Content.ReadFromJsonAsync<InventoryReconciliationDetail>());
+        }
+        Assert.NotEqual(previousReconciliationId, reconciliation.ReconciliationId);
+        Assert.Equal(2, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.InventoryPhysicalCountReconciliations WHERE InventoryPhysicalCountId=@Id", countId));
+        var selectedDrafts = await client.GetFromJsonAsync<InventoryPhysicalCountDraftPage>(
+            $"/api/commerce/v1/inventory/physical-count-drafts?search={Uri.EscapeDataString(secondDraftName)}&page=1&pageSize=1&from=2020-01-01T00:00:00Z&to=2030-01-01T00:00:00Z");
+        Assert.Equal(0, selectedDrafts?.TotalCount);
+
+        await ExecuteAsync("UPDATE dbo.InventoryPhysicalCountLists SET Status=N'InProgress' WHERE InventoryPhysicalCountListId=@Id", firstDraft);
+        try
+        {
+            using var staleApply = await client.PostAsJsonAsync(
+                $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations/{reconciliation.ReconciliationId:D}/apply",
+                new ApplyInventoryReconciliationRequest(fixture.BusinessId, "Counted"));
+            Assert.Equal(HttpStatusCode.Conflict, staleApply.StatusCode);
+        }
+        finally
+        {
+            await ExecuteAsync("UPDATE dbo.InventoryPhysicalCountLists SET Status=N'Ready' WHERE InventoryPhysicalCountListId=@Id", firstDraft);
+        }
+        var stillReady = await client.GetFromJsonAsync<InventoryReconciliationDetail>(
+            $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliation");
+        Assert.Null(stillReady?.CountedDocumentId);
+
         await ConfirmAdjustmentAsync(client, new(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred.AddMinutes(5),
             "FOUND_SURPLUS", null, "Movimiento posterior al conteo",
@@ -587,6 +624,12 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             var applying = await client.GetFromJsonAsync<InventoryReconciliationDetail>(
                 $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliation");
             finalOperationId = Assert.IsType<Guid>(Assert.IsType<InventoryReconciliationDetail>(applying).CountedDocumentId);
+
+            using (var reselect = await client.PostAsJsonAsync(
+                       $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations",
+                       new PrepareInventoryReconciliationRequest(fixture.BusinessId,
+                           [new(firstDraft, 1), new(secondDraft, 1)])))
+                Assert.Equal(HttpStatusCode.Conflict, reselect.StatusCode);
 
             Assert.Equal(0, await CountAsync("InventoryMovements", finalOperationId));
             Assert.Equal(13m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
@@ -612,11 +655,29 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(14m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
         Assert.Equal(22m, (await BalanceAsync(fixture.WarehouseId, second)).Quantity);
         Assert.Equal(2, await CountAsync("InventoryMovements", finalOperationId));
+        using (var reselect = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations",
+                   new PrepareInventoryReconciliationRequest(fixture.BusinessId,
+                       [new(firstDraft, 1), new(secondDraft, 1)])))
+            Assert.Equal(HttpStatusCode.Conflict, reselect.StatusCode);
+        using (var reuseFromOtherCount = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{secondCountId:D}/reconciliations",
+                   new PrepareInventoryReconciliationRequest(fixture.BusinessId, [new(secondDraft, 1)])))
+            Assert.Equal(HttpStatusCode.Conflict, reuseFromOtherCount.StatusCode);
+        var appliedReconciliation = await client.GetFromJsonAsync<InventoryReconciliationDetail>(
+            $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliation");
+        Assert.Equal(reconciliation.ReconciliationId, appliedReconciliation?.ReconciliationId);
+        Assert.Equal("Applied", appliedReconciliation?.CountedApplicationStatus);
+        Assert.Equal(finalOperationId, appliedReconciliation?.CountedDocumentId);
+        Assert.Equal(2, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.InventoryPhysicalCountReconciliations WHERE InventoryPhysicalCountId=@Id", countId));
+        Assert.Equal(2, await CountAsync("InventoryMovements", finalOperationId));
         await ClosePhysicalCountForTestAsync(countId);
+        await ClosePhysicalCountForTestAsync(secondCountId);
     }
 
     [Fact]
-    public async Task Reconciliation_saves_all_uncounted_products_as_a_populated_draft_and_can_apply_them_at_zero()
+    public async Task Reconciliation_saves_all_uncounted_products_and_applies_negative_balance_at_zero()
     {
         var countedProduct = Guid.NewGuid();
         var uncountedProduct = Guid.NewGuid();
@@ -631,6 +692,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
             "INITIAL_BALANCE", null, null,
             [new(1, countedProduct, 5m, 2m), new(2, uncountedProduct, 6m, 2m)]));
+        await ExecuteAsync("UPDATE dbo.InventoryBalances SET QuantityOnHand=-2,InventoryValue=-4 WHERE ProductId=@Id", uncountedProduct);
 
         var countId = Guid.NewGuid();
         InventoryPhysicalCountDetail created;
@@ -791,6 +853,12 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Contains(movements!.Items,x=>x.DocumentId==damageId&&x.MovementType=="InventoryDamage");
         var searchedMovements = await client.GetFromJsonAsync<InventoryMovementPage>($"/api/commerce/v1/inventory/movements?search=REF-{product:N}&page=1&pageSize=20");
         Assert.Contains(searchedMovements!.Items, x => x.DocumentId == damageId);
+        var movementOptions = await client.GetFromJsonAsync<InventoryMovementFilterOptions>("/api/commerce/v1/inventory/movements/filter-options");
+        Assert.Contains("Damage", movementOptions!.DocumentTypes);
+        Assert.Contains("InventoryDamage", movementOptions.MovementTypes);
+        var filteredMovements = await client.GetFromJsonAsync<InventoryMovementPage>($"/api/commerce/v1/inventory/movements?productId={product:D}&documentType=Damage&movementType=InventoryDamage&page=1&pageSize=1");
+        Assert.Equal(1, filteredMovements!.TotalCount);
+        Assert.Equal(damageId, Assert.Single(filteredMovements.Items).DocumentId);
         var searchedOperations = await client.GetFromJsonAsync<InventoryOperationPage>("/api/commerce/v1/inventory/operations?search=Insumo&page=1&pageSize=20");
         Assert.Contains(searchedOperations!.Items, x => x.DocumentId == damageId);
         var filteredOperations = await client.GetFromJsonAsync<InventoryOperationPage>("/api/commerce/v1/inventory/operations?documentType=Damage&reasonCode=DAMAGE&page=1&pageSize=20");

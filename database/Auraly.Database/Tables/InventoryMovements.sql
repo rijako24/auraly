@@ -33,3 +33,9 @@ GO
 CREATE INDEX [IX_InventoryMovements_Business_Warehouse]
     ON [dbo].[InventoryMovements] ([BusinessId], [WarehouseId], [OccurredAt]);
 
+GO
+
+CREATE INDEX [IX_InventoryMovements_Business_FilterOptions]
+    ON [dbo].[InventoryMovements] ([BusinessId], [DocumentType], [MovementType])
+    INCLUDE ([WarehouseId]);
+
