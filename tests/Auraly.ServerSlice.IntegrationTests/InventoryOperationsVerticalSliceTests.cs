@@ -555,6 +555,20 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.NotNull(filteredDrafts);
         Assert.Equal(1, filteredDrafts.TotalCount);
         Assert.Equal(secondDraftName, Assert.Single(filteredDrafts.Items).Name);
+        Assert.True(Assert.Single(filteredDrafts.Items).CanReconcile);
+
+        await ExecuteAsync("UPDATE dbo.InventoryPhysicalCountLists SET Status=N'PreCounted' WHERE InventoryPhysicalCountListId=@Id", secondDraft);
+        var legacyDraft = await client.GetFromJsonAsync<InventoryPhysicalCountDraftPage>(
+            $"/api/commerce/v1/inventory/physical-count-drafts?search={Uri.EscapeDataString(secondDraftName)}&page=1&pageSize=1");
+        Assert.Equal("Ready", Assert.Single(legacyDraft!.Items).Status);
+        Assert.False(Assert.Single(legacyDraft.Items).CanReconcile);
+        await ExecuteAsync("UPDATE dbo.InventoryPhysicalCountLists SET Status=N'Ready' WHERE InventoryPhysicalCountListId=@Id", secondDraft);
+
+        await ExecuteAsync("UPDATE dbo.InventoryPhysicalCounts SET Status=N'Review' WHERE InventoryPhysicalCountId=@Id", secondCountId);
+        var reviewDraft = await client.GetFromJsonAsync<InventoryPhysicalCountDraftPage>(
+            $"/api/commerce/v1/inventory/physical-count-drafts?search={Uri.EscapeDataString(secondDraftName)}&page=1&pageSize=1");
+        Assert.False(Assert.Single(reviewDraft!.Items).CanReconcile);
+        await ExecuteAsync("UPDATE dbo.InventoryPhysicalCounts SET Status=N'Open' WHERE InventoryPhysicalCountId=@Id", secondCountId);
 
         InventoryReconciliationDetail reconciliation;
         using (var prepare = await client.PostAsJsonAsync(

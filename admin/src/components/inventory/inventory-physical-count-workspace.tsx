@@ -127,7 +127,11 @@ export function InventoryPhysicalCountWorkspace({
       void client.invalidateQueries({ queryKey: ["inventory-physical-count-drafts", businessId] });
       onReconciled(value);
     },
-    onError: (error: Error) => toast.error(error.message || "No fue posible conciliar los borradores."),
+    onError: (error: Error) => {
+      setSelectedDrafts(new Map());
+      void client.invalidateQueries({ queryKey: ["inventory-physical-count-drafts", businessId] });
+      toast.error(error.message || "No fue posible conciliar los borradores.");
+    },
   });
 
   function changeFilter(setter: (value: string) => void, value: string) {
@@ -141,6 +145,7 @@ export function InventoryPhysicalCountWorkspace({
       const next = new Map(current);
       if (!checked) next.delete(draft.draftId);
       else {
+        if (!draft.canReconcile) return current;
         const selectedWarehouseId = next.values().next().value?.warehouseId;
         if (selectedWarehouseId && selectedWarehouseId !== draft.warehouseId) return current;
         next.set(draft.draftId, draft);
@@ -191,14 +196,14 @@ export function InventoryPhysicalCountWorkspace({
               ? <EmptyRow columns={8} text="Cargando borradores…" />
               : (query.data?.items ?? []).length === 0
                 ? <EmptyRow columns={8} text="No hay borradores para estos filtros." />
-                : query.data?.items.map(draft => { const selectedWarehouseId = selectedDrafts.values().next().value?.warehouseId; const unavailable = draft.status !== "Ready" || Boolean(selectedWarehouseId && selectedWarehouseId !== draft.warehouseId); return <tr key={draft.draftId} className={`border-b last:border-0 ${unavailable ? "opacity-60" : "hover:bg-emerald-50/40"}`}>
+                : query.data?.items.map(draft => { const selectedWarehouseId = selectedDrafts.values().next().value?.warehouseId; const unavailable = !draft.canReconcile || Boolean(selectedWarehouseId && selectedWarehouseId !== draft.warehouseId); return <tr key={draft.draftId} className={`border-b last:border-0 ${unavailable ? "opacity-60" : "hover:bg-emerald-50/40"}`}>
                   <td className="px-4 py-3 text-center"><Checkbox aria-label={`Seleccionar ${draft.name}`} disabled={unavailable || !permissions.has("inventory.physical-counts.manage")} checked={selectedDrafts.has(draft.draftId)} onCheckedChange={checked => selectDraft(draft, checked === true)} /></td>
                   <td className="px-4 py-3 font-medium">{draft.name}</td>
                   <td className="px-4 py-3">{draft.warehouseName}</td>
                   <td className="px-4 py-3">{draft.countedProductCount}/{draft.productCount}</td>
                   <td className="px-4 py-3 font-mono text-xs">{draft.ownerUserId.slice(0, 8)}</td>
                   <td className="px-4 py-3">{formatDateTime(draft.updatedAt)}</td>
-                  <td className="px-4 py-3"><StatusBadge status={draft.status} /></td>
+                  <td className="px-4 py-3">{draft.status === "Ready" && !draft.canReconcile ? <Badge variant="secondary">No disponible</Badge> : <StatusBadge status={draft.status} />}</td>
                   <td className="px-4 py-3 text-right">
                     <Button size="sm" variant="outline" disabled={!permissions.has("inventory.physical-counts.capture")} onClick={() => void resume(draft.inventoryPhysicalCountId, draft.draftId)}>Editar</Button>
                   </td>

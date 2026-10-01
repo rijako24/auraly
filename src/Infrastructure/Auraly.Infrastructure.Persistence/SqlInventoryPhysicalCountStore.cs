@@ -146,7 +146,8 @@ public sealed class SqlInventoryPhysicalCountStore(
                 WHERE matched.InventoryPhysicalCountListId=draft.InventoryPhysicalCountListId
                   AND (matched.ProductNameSnapshot LIKE @Pattern OR matched.ProductCodeSnapshot LIKE @Pattern)));
             SELECT count.InventoryPhysicalCountId,draft.InventoryPhysicalCountListId,draft.Name,count.WarehouseId,warehouse.Name,count.ScopeType,
-              COALESCE(draft.AssignedUserId,count.CreatedByUserId),draft.Status,draft.Version,COUNT(line.ProductId),COUNT(line.PreCountQuantity),draft.UpdatedAt
+              COALESCE(draft.AssignedUserId,count.CreatedByUserId),draft.Status,draft.Version,COUNT(line.ProductId),COUNT(line.PreCountQuantity),draft.UpdatedAt,
+              CAST(CASE WHEN draft.Status=N'Ready' AND count.Status IN (N'Open',N'Reconciling') THEN 1 ELSE 0 END AS BIT)
             FROM dbo.InventoryPhysicalCounts count INNER JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=count.WarehouseId
             INNER JOIN dbo.InventoryPhysicalCountLists draft ON draft.InventoryPhysicalCountId=count.InventoryPhysicalCountId
             LEFT JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=draft.InventoryPhysicalCountListId
@@ -163,7 +164,7 @@ public sealed class SqlInventoryPhysicalCountStore(
                 SELECT 1 FROM dbo.InventoryPhysicalCountLines matched
                 WHERE matched.InventoryPhysicalCountListId=draft.InventoryPhysicalCountListId
                   AND (matched.ProductNameSnapshot LIKE @Pattern OR matched.ProductCodeSnapshot LIKE @Pattern)))
-            GROUP BY count.InventoryPhysicalCountId,draft.InventoryPhysicalCountListId,draft.Name,count.WarehouseId,warehouse.Name,count.ScopeType,draft.AssignedUserId,count.CreatedByUserId,draft.Status,draft.Version,draft.UpdatedAt
+            GROUP BY count.InventoryPhysicalCountId,draft.InventoryPhysicalCountListId,draft.Name,count.WarehouseId,warehouse.Name,count.ScopeType,count.Status,draft.AssignedUserId,count.CreatedByUserId,draft.Status,draft.Version,draft.UpdatedAt
             ORDER BY draft.UpdatedAt DESC,draft.InventoryPhysicalCountListId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """;
@@ -185,7 +186,7 @@ public sealed class SqlInventoryPhysicalCountStore(
         await reader.NextResultAsync(token);
         var items = new List<InventoryPhysicalCountDraftSummary>();
         while (await reader.ReadAsync(token))
-            items.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.GetString(5), reader.GetGuid(6), NormalizeDraftStatus(reader.GetString(7)), reader.GetInt64(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetDateTimeOffset(11)));
+            items.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.GetString(5), reader.GetGuid(6), NormalizeDraftStatus(reader.GetString(7)), reader.GetInt64(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetDateTimeOffset(11), reader.GetBoolean(12)));
         return new(items, query.Page, query.PageSize, total, total == 0 ? 0 : (int)Math.Ceiling(total / (decimal)query.PageSize));
     }
 
