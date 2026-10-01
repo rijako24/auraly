@@ -123,6 +123,8 @@ export function InventoryPhysicalCountWorkspace({
     }),
     onSuccess: value => {
       toast.success("Borradores conciliados por producto.");
+      setSelectedDrafts(new Map());
+      void client.invalidateQueries({ queryKey: ["inventory-physical-count-drafts", businessId] });
       onReconciled(value);
     },
     onError: (error: Error) => toast.error(error.message || "No fue posible conciliar los borradores."),
@@ -139,8 +141,8 @@ export function InventoryPhysicalCountWorkspace({
       const next = new Map(current);
       if (!checked) next.delete(draft.draftId);
       else {
-        const countId = next.values().next().value?.inventoryPhysicalCountId;
-        if (countId && countId !== draft.inventoryPhysicalCountId) return current;
+        const selectedWarehouseId = next.values().next().value?.warehouseId;
+        if (selectedWarehouseId && selectedWarehouseId !== draft.warehouseId) return current;
         next.set(draft.draftId, draft);
       }
       return next;
@@ -177,7 +179,7 @@ export function InventoryPhysicalCountWorkspace({
       </div>
       <p className="border-t pt-4 text-sm text-muted-foreground">Los filtros se aplican automáticamente y únicamente a los borradores.</p>
     </CardContent></Card>
-    {permissions.has("inventory.physical-counts.manage") && <Card className="overflow-hidden border-emerald-200 bg-gradient-to-r from-emerald-50 via-background to-background"><CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><span className="rounded-xl bg-emerald-100 p-2 text-emerald-700"><ClipboardCheck className="h-5 w-5" /></span><div><p className="font-semibold">Conciliar inventario</p><p className="text-sm text-muted-foreground">Marca borradores listos del mismo inventario. El resultado abrirá directamente en Contados y No contados.</p><p className="mt-1 text-xs text-muted-foreground">{selectedDrafts.size} {selectedDrafts.size === 1 ? "seleccionado" : "seleccionados"}</p></div></div><Button className="shrink-0" disabled={!selectedCountId || selectedDrafts.size === 0 || prepare.isPending} onClick={() => prepare.mutate()}>{prepare.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-2 h-4 w-4" />}Conciliar seleccionados</Button></CardContent></Card>}
+    {permissions.has("inventory.physical-counts.manage") && <Card className="overflow-hidden border-emerald-200 bg-gradient-to-r from-emerald-50 via-background to-background"><CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><span className="rounded-xl bg-emerald-100 p-2 text-emerald-700"><ClipboardCheck className="h-5 w-5" /></span><div><p className="font-semibold">Conciliar inventario</p><p className="text-sm text-muted-foreground">Marca borradores listos de la misma bodega, aunque provengan de conteos distintos. El resultado abrirá directamente en Contados y No contados.</p><p className="mt-1 text-xs text-muted-foreground">{selectedDrafts.size} {selectedDrafts.size === 1 ? "seleccionado" : "seleccionados"}</p></div></div><Button className="shrink-0" disabled={!selectedCountId || selectedDrafts.size === 0 || prepare.isPending} onClick={() => prepare.mutate()}>{prepare.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-2 h-4 w-4" />}Conciliar seleccionados</Button></CardContent></Card>}
     <Card>
       <CardContent className="overflow-x-auto p-0">
         <table className="w-full min-w-[980px] text-sm">
@@ -189,7 +191,7 @@ export function InventoryPhysicalCountWorkspace({
               ? <EmptyRow columns={8} text="Cargando borradores…" />
               : (query.data?.items ?? []).length === 0
                 ? <EmptyRow columns={8} text="No hay borradores para estos filtros." />
-                : query.data?.items.map(draft => { const unavailable = draft.status !== "Ready" || Boolean(selectedCountId && selectedCountId !== draft.inventoryPhysicalCountId); return <tr key={draft.draftId} className={`border-b last:border-0 ${unavailable ? "opacity-60" : "hover:bg-emerald-50/40"}`}>
+                : query.data?.items.map(draft => { const selectedWarehouseId = selectedDrafts.values().next().value?.warehouseId; const unavailable = draft.status !== "Ready" || Boolean(selectedWarehouseId && selectedWarehouseId !== draft.warehouseId); return <tr key={draft.draftId} className={`border-b last:border-0 ${unavailable ? "opacity-60" : "hover:bg-emerald-50/40"}`}>
                   <td className="px-4 py-3 text-center"><Checkbox aria-label={`Seleccionar ${draft.name}`} disabled={unavailable || !permissions.has("inventory.physical-counts.manage")} checked={selectedDrafts.has(draft.draftId)} onCheckedChange={checked => selectDraft(draft, checked === true)} /></td>
                   <td className="px-4 py-3 font-medium">{draft.name}</td>
                   <td className="px-4 py-3">{draft.warehouseName}</td>

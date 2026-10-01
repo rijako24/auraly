@@ -125,6 +125,10 @@ GO
 CREATE UNIQUE INDEX [UX_InventoryPhysicalCountReconciliations_Active]
     ON [dbo].[InventoryPhysicalCountReconciliations]([InventoryPhysicalCountId]) WHERE [Status]=N'Active';
 GO
+CREATE INDEX [IX_InventoryPhysicalCountReconciliations_Count]
+    ON [dbo].[InventoryPhysicalCountReconciliations]([InventoryPhysicalCountId])
+    INCLUDE ([Status],[CountedApplicationStatus],[UncountedApplicationStatus]);
+GO
 
 CREATE TABLE [dbo].[InventoryPhysicalCountReconciliationDrafts]
 (
@@ -135,4 +139,7 @@ CREATE TABLE [dbo].[InventoryPhysicalCountReconciliationDrafts]
     CONSTRAINT [FK_InventoryPhysicalCountReconciliationDrafts_Reconciliation] FOREIGN KEY ([InventoryPhysicalCountReconciliationId]) REFERENCES [dbo].[InventoryPhysicalCountReconciliations]([InventoryPhysicalCountReconciliationId]),
     CONSTRAINT [FK_InventoryPhysicalCountReconciliationDrafts_Draft] FOREIGN KEY ([InventoryPhysicalCountListId]) REFERENCES [dbo].[InventoryPhysicalCountLists]([InventoryPhysicalCountListId])
 );
+GO
+CREATE INDEX [IX_InventoryPhysicalCountReconciliationDrafts_Draft]
+    ON [dbo].[InventoryPhysicalCountReconciliationDrafts]([InventoryPhysicalCountListId],[InventoryPhysicalCountReconciliationId]);
 GO

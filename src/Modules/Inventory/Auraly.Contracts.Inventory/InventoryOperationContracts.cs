@@ -305,6 +305,7 @@ public sealed record InventoryBalancePage(IReadOnlyList<InventoryBalanceItem> It
 public sealed record InventoryMovementQuery(Guid BusinessId, Guid? WarehouseId, Guid? ProductId, string? Search, string? DocumentType, string? MovementType, DateTimeOffset? From, DateTimeOffset? To, int Page = 1, int PageSize = 50);
 public sealed record InventoryMovementItem(Guid InventoryMovementId, Guid WarehouseId, string WarehouseName, Guid ProductId, string ProductCode, string ProductName, Guid DocumentId, string DocumentType, string? DocumentNumber, string MovementType, decimal QuantityChange, decimal QuantityBefore, decimal QuantityAfter, decimal? RecognizedUnitCost, decimal? ValueChange, DateTimeOffset OccurredAt, DateTimeOffset? PostedAt);
 public sealed record InventoryMovementPage(IReadOnlyList<InventoryMovementItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
+public sealed record InventoryMovementFilterOptions(IReadOnlyList<string> DocumentTypes, IReadOnlyList<string> MovementTypes);
 
 public sealed record InventoryOperationQuery(
     Guid BusinessId, Guid? WarehouseId, string? Search, string? DocumentType,

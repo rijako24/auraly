@@ -80,7 +80,7 @@ de documentos; no se apilan debajo de los borradores.
 
 ## Conciliación de inventario
 
-La pestaña `Borradores` permite marcar borradores listos del mismo inventario y
+La pestaña `Borradores` permite marcar borradores listos de la misma bodega y
 ejecutar `Conciliar seleccionados`. El diálogo abre directamente el resultado
 agrupado.
 
@@ -89,16 +89,24 @@ agrupado.
 La pestaña muestra una grilla paginada de borradores abiertos, con filtros por
 nombre/producto y rango de última actualización, además de bodega, avance,
 propietario y estado. Sólo los marcados `Listo para conciliar`
-son elegibles. El primer borrador elegido fija el inventario; los borradores de
-otros inventarios siguen visibles, pero quedan deshabilitados para evitar mezclar
-bodegas o alcances. El administrador decide cuáles participan y pulsa
+son elegibles. El primer borrador elegido fija la bodega y el conteo que registra
+la conciliación; se pueden agregar borradores de otros conteos de la misma sede
+y bodega. Los de otra bodega siguen visibles, pero quedan deshabilitados porque
+una aplicación de inventario tiene una sola bodega. El administrador decide cuáles participan y pulsa
 `Conciliar seleccionados`.
 
 La selección envía el identificador de cada borrador. Al conciliar, el servidor
 toma su único estado actual y congela allí la versión usada para trazabilidad;
 una versión antigua enviada por la pantalla no bloquea la confirmación. Una nueva
-conciliación reemplaza la activa anterior. Nunca se mezclan bodegas, sesiones o
-alcances.
+conciliación reemplaza la activa anterior. Nunca se mezclan bodegas.
+El reemplazo sólo se permite antes de iniciar la aplicación de
+cualquiera de las dos secciones. Desde `Processing`, la conciliación y su
+documento estable se conservan para completar o reintentar esa misma aplicación;
+una nueva selección no puede volver a aplicar productos ya procesados. Los
+borradores seleccionados no aparecen en la lista mientras pertenezcan a una
+conciliación activa. Si ésta se reemplaza antes de aplicar, vuelven a estar
+disponibles; una vez iniciada la aplicación, no se reutilizan ni se pueden editar
+o descartar desde la API. La lista visible se actualiza al preparar la conciliación.
 
 ### Resultado agrupado
 
@@ -145,7 +153,10 @@ producto para poder recuperar el trabajo y contarlo después.
 
 `Aplicar todos en cero` genera y acepta un documento normal `StockCount` con
 todos esos productos y cantidad contada `0`. La interfaz exige una confirmación
-explícita que indica que las existencias se ajustarán a cero.
+explícita que indica que las existencias se ajustarán a cero. El preconteo de
+esta sección también es `0`; el documento toma el saldo real por separado. Así
+puede ajustar a cero incluso un saldo actual negativo, sin enviar una cantidad
+inicial negativa al motor.
 
 Las aplicaciones de `Contados` y `No contados` son independientes y pueden
 producir documentos distintos. La sesión se cierra cuando todas las secciones
@@ -221,7 +232,9 @@ después de procesar el `StockCount`.
 
 Todas las consultas se limitan por `BusinessId` y tenant. La preparación de la
 conciliación valida versiones; la aplicación reutiliza un identificador de
-documento si se reintenta después de una respuesta perdida.
+documento si se reintenta después de una respuesta perdida. Antes de aplicar,
+el servidor comprueba que todos los borradores seleccionados sigan listos y en
+la versión congelada por la conciliación.
 Un producto puede capturarse simultáneamente en más de un inventario físico de
 la misma bodega. No se bloquea al agregarlo: la versión del borrador, la
 secuencia de captura y el documento `StockCount` canónico protegen la
@@ -238,7 +251,7 @@ concurrencia al conciliar y aplicar.
 7. Documentos y borradores se muestran en pestañas separadas.
 8. La selección para conciliar está en la pestaña Borradores y el resultado usa un solo diálogo.
 9. La selección filtra por nombre y rango de fecha y se pagina en servidor.
-10. Se pueden seleccionar borradores de cualquier usuario de la misma sesión.
+10. Se pueden seleccionar borradores de cualquier usuario y conteo de la misma sede y bodega.
 11. Un producto repetido suma la cantidad final de todos los borradores elegidos y muestra cada borrador de origen.
 12. El resultado sólo tiene `Contados` y `No contados`.
 13. Guardar Contados crea un borrador poblado con cantidades consolidadas.

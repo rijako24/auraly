@@ -251,6 +251,30 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
 
+    public async Task<InventoryMovementFilterOptions> GetMovementFilterOptionsAsync(InventoryUserIdentity user, CancellationToken token)
+    {
+        const string sql = """
+            SELECT DISTINCT movement.DocumentType,movement.MovementType
+            FROM dbo.InventoryMovements movement
+            INNER JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=movement.WarehouseId
+              AND warehouse.BusinessId=movement.BusinessId AND warehouse.IsSystem=0
+            WHERE movement.BusinessId=@BusinessId;
+            """;
+        await using var connection=connections.Create();
+        await connection.OpenAsync(token);
+        await using var command=new SqlCommand(sql,connection);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
+        await using var reader=await command.ExecuteReaderAsync(token);
+        var documentTypes=new HashSet<string>(StringComparer.Ordinal);
+        var movementTypes=new HashSet<string>(StringComparer.Ordinal);
+        while(await reader.ReadAsync(token))
+        {
+            documentTypes.Add(reader.GetString(0));
+            movementTypes.Add(reader.GetString(1));
+        }
+        return new(documentTypes.Order(StringComparer.Ordinal).ToArray(),movementTypes.Order(StringComparer.Ordinal).ToArray());
+    }
+
     public async Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, bool includeCosts, CancellationToken token)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand("dbo.InventoryOperationsSearch",connection){CommandType=CommandType.StoredProcedure}; AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@DocumentType",(object?)query.DocumentType??DBNull.Value); command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value); command.Parameters.AddWithValue("@From",(object?)query.From??DBNull.Value); command.Parameters.AddWithValue("@To",(object?)query.To??DBNull.Value); command.Parameters.AddWithValue("@ReasonCode",(object?)query.ReasonCode??DBNull.Value); command.Parameters.AddWithValue("@DestinationWarehouseId",(object?)query.DestinationWarehouseId??DBNull.Value); command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value); command.Parameters.AddWithValue("@PurchaseEvidenceType",(object?)query.PurchaseEvidenceType??DBNull.Value); command.Parameters.AddWithValue("@IncludeCosts",includeCosts);
