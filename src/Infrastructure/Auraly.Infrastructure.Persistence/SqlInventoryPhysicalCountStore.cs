@@ -267,8 +267,9 @@ public sealed class SqlInventoryPhysicalCountStore(
                   THROW 51202,'The draft changed. Reload it before saving.',1;
                 IF EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected
                   INNER JOIN dbo.InventoryPhysicalCountReconciliations reconciliation ON reconciliation.InventoryPhysicalCountReconciliationId=selected.InventoryPhysicalCountReconciliationId
-                  WHERE selected.InventoryPhysicalCountListId=@DraftId AND reconciliation.Status=N'Active')
-                  THROW 51202,'This draft belongs to an active reconciliation. Prepare a new draft instead.',1;
+                  WHERE selected.InventoryPhysicalCountListId=@DraftId
+                    AND (reconciliation.Status IN (N'Active',N'Applied') OR reconciliation.CountedApplicationStatus IS NOT NULL OR reconciliation.UncountedApplicationStatus IS NOT NULL))
+                  THROW 51202,'This draft belongs to a reconciliation. Prepare a new draft instead.',1;
                 DECLARE @Sequence BIGINT=(SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId);
                 SELECT count.WarehouseId,draft.CountSubmittedAt,@Sequence
                 FROM dbo.InventoryPhysicalCountLists draft
@@ -390,8 +391,9 @@ public sealed class SqlInventoryPhysicalCountStore(
                   FROM dbo.InventoryPhysicalCountReconciliationDrafts selected
                   INNER JOIN dbo.InventoryPhysicalCountReconciliations reconciliation
                     ON reconciliation.InventoryPhysicalCountReconciliationId=selected.InventoryPhysicalCountReconciliationId
-                  WHERE selected.InventoryPhysicalCountListId=@DraftId AND reconciliation.Status=N'Active')
-                  THROW 51202,'This draft belongs to an active reconciliation and cannot be discarded.',1;
+                  WHERE selected.InventoryPhysicalCountListId=@DraftId
+                    AND (reconciliation.Status IN (N'Active',N'Applied') OR reconciliation.CountedApplicationStatus IS NOT NULL OR reconciliation.UncountedApplicationStatus IS NOT NULL))
+                  THROW 51202,'This draft belongs to a reconciliation and cannot be discarded.',1;
 
                 UPDATE dbo.InventoryPhysicalCountLists
                 SET Status=N'Discarded',Version=Version+1,UpdatedAt=@Now

@@ -664,6 +664,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                    $"/api/commerce/v1/inventory/physical-counts/{secondCountId:D}/reconciliations",
                    new PrepareInventoryReconciliationRequest(fixture.BusinessId, [new(secondDraft, 1)])))
             Assert.Equal(HttpStatusCode.Conflict, reuseFromOtherCount.StatusCode);
+        using (var discardAppliedDraft = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{secondCountId:D}/drafts/{secondDraft:D}/discard",
+                   new DiscardInventoryPhysicalCountDraftRequest(fixture.BusinessId, 2)))
+            Assert.Equal(HttpStatusCode.Conflict, discardAppliedDraft.StatusCode);
         var appliedReconciliation = await client.GetFromJsonAsync<InventoryReconciliationDetail>(
             $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliation");
         Assert.Equal(reconciliation.ReconciliationId, appliedReconciliation?.ReconciliationId);

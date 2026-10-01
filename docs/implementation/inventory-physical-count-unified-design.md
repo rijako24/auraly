@@ -105,7 +105,8 @@ documento estable se conservan para completar o reintentar esa misma aplicación
 una nueva selección no puede volver a aplicar productos ya procesados. Los
 borradores seleccionados no aparecen en la lista mientras pertenezcan a una
 conciliación activa. Si ésta se reemplaza antes de aplicar, vuelven a estar
-disponibles; una vez iniciada la aplicación, no se reutilizan.
+disponibles; una vez iniciada la aplicación, no se reutilizan ni se pueden editar
+o descartar desde la API. La lista visible se actualiza al preparar la conciliación.
 
 ### Resultado agrupado
 

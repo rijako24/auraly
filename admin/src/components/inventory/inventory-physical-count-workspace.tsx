@@ -123,6 +123,8 @@ export function InventoryPhysicalCountWorkspace({
     }),
     onSuccess: value => {
       toast.success("Borradores conciliados por producto.");
+      setSelectedDrafts(new Map());
+      void client.invalidateQueries({ queryKey: ["inventory-physical-count-drafts", businessId] });
       onReconciled(value);
     },
     onError: (error: Error) => toast.error(error.message || "No fue posible conciliar los borradores."),
