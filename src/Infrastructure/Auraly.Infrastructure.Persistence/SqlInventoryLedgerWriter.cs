@@ -28,7 +28,10 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
             throw new InvalidOperationException("An inventory batch must contain distinct lines of one document and warehouse.");
         var loaded = await LoadAsync(session, postings, cancellationToken);
         var balances = loaded.Balances.ToDictionary(balance => (balance.BusinessId, balance.WarehouseId, balance.ProductId));
-        var pools = loaded.Balances.GroupBy(balance => balance.ProductId)
+        // AVE keeps the damaged quantity at zero book value. It cannot join the
+        // sellable cost pool, including when the source balance is negative.
+        var pools = loaded.Balances.Where(balance => !balance.IsDamageWarehouse)
+            .GroupBy(balance => balance.ProductId)
             .ToDictionary(group => group.Key, group => group.Select(balance => (balance.BusinessId, balance.WarehouseId, balance.ProductId)).ToList());
         var movements = new List<ValuedMovement>(postings.Count);
         var results = new InventoryLedgerPostingResult[postings.Count];
@@ -38,14 +41,22 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
             var posting = postings[target.Position];
             if (!target.ManageStock) { results[target.Position] = InventoryLedgerPostingResult.NotManaged; continue; }
             var key = (scope.BusinessId, scope.WarehouseId, target.ProductId);
+            var damageReceipt = posting.MovementType == "DamageWarehouseIn";
             if (!balances.TryGetValue(key, out var balance))
             {
-                balance = new(scope.BusinessId, scope.WarehouseId, target.ProductId, 0, 0, 0, false, false);
+                balance = new(scope.BusinessId, scope.WarehouseId, target.ProductId, 0, 0, 0,
+                    false, false, damageReceipt);
                 balances.Add(key, balance);
-                if (!pools.TryGetValue(target.ProductId, out var keys)) pools[target.ProductId] = keys = [];
-                keys.Add(key);
+                if (!damageReceipt)
+                {
+                    if (!pools.TryGetValue(target.ProductId, out var keys)) pools[target.ProductId] = keys = [];
+                    keys.Add(key);
+                }
             }
-            var poolKeys = pools[target.ProductId];
+            if (damageReceipt != balance.IsDamageWarehouse)
+                throw new InvalidOperationException("The damaged inventory warehouse is outside its cost pool.");
+            List<(Guid BusinessId, Guid WarehouseId, Guid ProductId)> poolKeys =
+                damageReceipt ? [key] : pools[target.ProductId];
             var poolQuantity = poolKeys.Sum(poolKey => balances[poolKey].QuantityOnHand);
             var poolValue = poolKeys.Sum(poolKey => balances[poolKey].InventoryValue);
             var lastKnownCost = poolKeys.Select(poolKey => balances[poolKey].AverageUnitCost)
@@ -115,9 +126,11 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
             ORDER BY target.ProductId, target.Position;
             SELECT @TenantId,@SharesPrices;
             SELECT balance.BusinessId,balance.WarehouseId,balance.ProductId,balance.QuantityOnHand,
-              balance.AverageUnitCost,balance.InventoryValue
+              balance.AverageUnitCost,balance.InventoryValue,
+              CONVERT(bit,CASE WHEN warehouse.IsSystem=1 AND warehouse.Code=N'AVE' THEN 1 ELSE 0 END)
             FROM dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses poolBusiness WITH(UPDLOCK,HOLDLOCK) ON poolBusiness.BusinessId=balance.BusinessId
+            JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=balance.WarehouseId
             WHERE EXISTS(SELECT 1 FROM @Targets target WHERE target.ProductId=balance.ProductId AND target.ManageStock=1)
               AND ((@SharesPrices=1 AND poolBusiness.TenantId=@TenantId AND poolBusiness.SharesProductPrices=1 AND poolBusiness.IsActive=1)
                 OR (@SharesPrices=0 AND balance.BusinessId=@BusinessId))
@@ -136,7 +149,8 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
         await reader.NextResultAsync(token);
         var balances = new List<Balance>();
         while (await reader.ReadAsync(token)) balances.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),
-            reader.GetDecimal(3),reader.GetDecimal(4),reader.GetDecimal(5),true,false));
+            reader.GetDecimal(3),reader.GetDecimal(4),reader.GetDecimal(5),true,false,
+            reader.GetBoolean(6)));
         return new(tenantId,sharesPrices,targets,balances);
     }
 
@@ -203,7 +217,8 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
 
     private sealed record Target(int Position,Guid ProductId,decimal InventoryFactor,bool ManageStock,decimal InitialUnitCost);
     private sealed record Balance(Guid BusinessId,Guid WarehouseId,Guid ProductId,decimal QuantityOnHand,
-        decimal AverageUnitCost,decimal InventoryValue,bool BalanceExists,bool IsTarget);
+        decimal AverageUnitCost,decimal InventoryValue,bool BalanceExists,bool IsTarget,
+        bool IsDamageWarehouse);
     private sealed record LoadedState(Guid TenantId,bool SharesPrices,IReadOnlyList<Target> Targets,IReadOnlyList<Balance> Balances);
     private sealed record ValuedMovement(Guid MovementId,int LineNumber,Guid ProductId,string MovementType,
         decimal QuantityChange,decimal QuantityBefore,decimal QuantityAfter,decimal AverageBefore,decimal AverageAfter,

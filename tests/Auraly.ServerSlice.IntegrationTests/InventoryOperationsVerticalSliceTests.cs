@@ -847,10 +847,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var accepted = await SendAsync(client, "/api/commerce/v1/inventory-damages/confirm", request, key);
         var replay = await SendAsync(client, "/api/commerce/v1/inventory-damages/confirm", request, key);
         Assert.False(accepted.IdempotentReplay); Assert.True(replay.IdempotentReplay);
-        Assert.Equal((7m,3.5m,24.5m), await BalanceAsync(fixture.WarehouseId, product));
+        Assert.Equal((7m,5m,35m), await BalanceAsync(fixture.WarehouseId, product));
         var damagedWarehouseId = await ScalarAsync<Guid>(
             "SELECT DestinationWarehouseId FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", damageId);
-        Assert.Equal((3m,3.5m,10.5m), await BalanceAsync(damagedWarehouseId, product));
+        Assert.Equal((3m,0m,0m), await BalanceAsync(damagedWarehouseId, product));
         Assert.Equal(-3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'InventoryDamage'", damageId));
         Assert.Equal(3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'DamageWarehouseIn'", damageId));
         Assert.Equal(2, await CountAsync("InventoryMovements", damageId)); Assert.Equal(1, await CountAsync("ServerOutboxMessages", damageId));
@@ -863,14 +863,14 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(15m, await ScalarAsync<decimal>(
             "SELECT SUM(line.Credit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'Damage' AND account.Code=N'143505'", damageId));
         var balances = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
-        var row = Assert.Single(balances!.Items.Where(x => x.ProductId == product)); Assert.Equal(3.5m,row.AverageUnitCost); Assert.Equal(24.5m,row.InventoryValue);
+        var row = Assert.Single(balances!.Items.Where(x => x.ProductId == product)); Assert.Equal(5m,row.AverageUnitCost); Assert.Equal(35m,row.InventoryValue);
         foreach (var search in new[] { $"REF-{product:N}", $"BAR-{product:N}" })
         {
             var result = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search={search}&page=1&pageSize=20");
             Assert.Contains(result!.Items, item => item.ProductId == product);
         }
         var products = await client.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
-        var productRow = Assert.Single(products!.Items.Where(x => x.ProductId == product)); Assert.Equal(7m, productRow.QuantityOnHand); Assert.Equal(3.5m, productRow.AverageUnitCost);
+        var productRow = Assert.Single(products!.Items.Where(x => x.ProductId == product)); Assert.Equal(7m, productRow.QuantityOnHand); Assert.Equal(5m, productRow.AverageUnitCost);
         foreach (var search in new[] { $"I-{product:N}", $"REF-{product:N}", $"BAR-{product:N}" })
         {
             var result = await client.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search={search}&page=1&pageSize=20");
@@ -898,6 +898,64 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var hiddenProducts = await restricted.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
         Assert.Null(Assert.Single(hiddenProducts!.Items.Where(x => x.ProductId == product)).AverageUnitCost);
     }
+
+    [Fact]
+    public async Task Damage_after_negative_sellable_stock_does_not_zero_the_cost_of_a_later_count()
+    {
+        var product = Guid.NewGuid();
+        await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var ordersWarehouse = await SystemWarehouseIdAsync("PED");
+        var damageWarehouse = await SystemWarehouseIdAsync("AVE");
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = new SqlCommand("""
+                UPDATE dbo.InventoryBalances
+                SET QuantityOnHand=CASE WHEN WarehouseId=@SaleWarehouse THEN -4.95 ELSE 8 END,
+                    AverageUnitCost=5,
+                    InventoryValue=CASE WHEN WarehouseId=@SaleWarehouse THEN -24.75 ELSE 40 END
+                WHERE BusinessId=@BusinessId AND ProductId=@ProductId
+                  AND WarehouseId IN(@SaleWarehouse,@OrdersWarehouse);
+                """, connection);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@ProductId", product);
+            seed.Parameters.AddWithValue("@SaleWarehouse", fixture.WarehouseId);
+            seed.Parameters.AddWithValue("@OrdersWarehouse", ordersWarehouse);
+            Assert.Equal(2, await seed.ExecuteNonQueryAsync());
+        }
+
+        using var client = fixture.CreateAdminClient(InventoryPermissionCodes.Damage,
+            InventoryPermissionCodes.Count, InventoryPermissionCodes.Read);
+        var damageId = Guid.NewGuid();
+        await SendAsync(client, "/api/commerce/v1/inventory-damages/confirm",
+            new ConfirmInventoryDamageRequest(damageId, fixture.BusinessId,
+                fixture.WarehouseId, DateTimeOffset.UtcNow, "DAMAGE", null,
+                "Avería con saldo negativo", [new(1, product, 5.5m)]),
+            $"damage-negative-{damageId:N}");
+        Assert.Equal((-10.45m, 5m, -52.25m),
+            await BalanceAsync(fixture.WarehouseId, product));
+        Assert.Equal((8m, 5m, 40m), await BalanceAsync(ordersWarehouse, product));
+        Assert.Equal((5.5m, 0m, 0m), await BalanceAsync(damageWarehouse, product));
+
+        var countId = Guid.NewGuid();
+        using (var start = await client.PostAsJsonAsync("/api/commerce/v1/stock-counts/start",
+            new StartStockCountRequest(countId, fixture.BusinessId,
+                fixture.WarehouseId, DateTimeOffset.UtcNow, "PHYSICAL_COUNT",
+                "Conteo después de avería", [new StartStockCountLineRequest(product, 20.5m)])))
+            Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+        using (var request = CreateMessage(
+            $"/api/commerce/v1/stock-counts/{countId:D}/confirm",
+            new ConfirmStockCountRequest(fixture.BusinessId,
+                [new(1, product, 20.5m)]), $"count-after-damage-{countId:N}"))
+        using (var response = await client.SendAsync(request))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        Assert.Equal((20.5m, 5m, 102.5m),
+            await BalanceAsync(fixture.WarehouseId, product));
+        Assert.Equal((8m, 5m, 40m), await BalanceAsync(ordersWarehouse, product));
+        Assert.Equal((5.5m, 0m, 0m), await BalanceAsync(damageWarehouse, product));
+    }
+
     [Fact]
     public async Task Conversion_loss_reduces_inventory_value_and_posts_to_the_configured_account()
     {

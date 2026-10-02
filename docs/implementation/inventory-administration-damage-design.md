@@ -22,7 +22,7 @@ Esta rebanada extiende el modelo canónico existente; no crea un segundo inventa
 - Historial paginado de conteos, ajustes, traslados, conversiones y averías.
 - Costos y valorización visibles solamente con `inventory.costs.read`.
 - Avería como documento definitivo `Damage`, numeración Auraly `AVE00-00000001`, línea `DAMAGE` y movimiento `InventoryDamage`.
-- La avería retira inventario vendible al costo promedio vigente y mueve la cantidad física a la bodega interna `AVE` con valor contable cero; no edita saldos directamente. La salida valorizada conserva el gasto por avería y la entrada interna evita perder la trazabilidad física sin inflar el activo.
+- La avería retira inventario vendible al costo promedio vigente y mueve la cantidad física a la bodega interna `AVE` con valor contable cero; no edita saldos directamente. La salida valorizada conserva el gasto por avería y la entrada interna evita perder la trazabilidad física sin inflar el activo. `AVE` tiene un grupo de valoración separado: su entrada a costo cero no recalcula el promedio de `VEN`, `PED` ni de las demás bodegas vendibles, incluso si el saldo conjunto es negativo. La salida de origen conserva el promedio vigente.
 - El documento se acepta, encola y procesa exactamente una vez; un saldo insuficiente sigue la política común de reintento y dead letter sin adelantar documentos posteriores del mismo negocio.
 - Un evento `inventory.operation.processed` se escribe en la outbox del servidor dentro de la misma transacción.
 
