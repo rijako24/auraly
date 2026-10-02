@@ -25,7 +25,10 @@ public sealed class SqlDocumentProcessingCompletionObserver(
     {
         try
         {
-            if (FiscalGenerationPolicy.Supports(signal.DocumentType))
+            var sourceType = signal.DocumentType == Auraly.Contracts.Sales.PosSaleDocumentTypes.InvoiceRecovery
+                ? Auraly.Contracts.Sales.PosSaleDocumentTypes.Invoice
+                : signal.DocumentType;
+            if (FiscalGenerationPolicy.Supports(sourceType))
                 await fiscal.RequestGenerationAsync(
                     signal.BusinessId, signal.DocumentId, cancellationToken);
 
@@ -33,21 +36,21 @@ public sealed class SqlDocumentProcessingCompletionObserver(
                 foreach (var costDocumentId in await LoadCostSupportDocumentsAsync(signal, cancellationToken))
                     await fiscal.RequestGenerationAsync(signal.BusinessId, costDocumentId, cancellationToken);
 
-            if (signal.EconomicEffectsEnabled && Auraly.Contracts.Sales.PosSaleDocumentTypes.IsSupported(signal.DocumentType))
+            if (signal.EconomicEffectsEnabled && Auraly.Contracts.Sales.PosSaleDocumentTypes.IsSupported(sourceType))
                 foreach (var expenseId in await LoadChargeSupportDocumentsAsync(signal, cancellationToken))
                     await fiscal.RequestGenerationAsync(signal.BusinessId, expenseId, cancellationToken);
 
             if (signal.EconomicEffectsEnabled &&
-                AccountingProcessingPolicy.Supports(signal.DocumentType))
+                AccountingProcessingPolicy.Supports(sourceType))
                 await accounting.RequestPostingAsync(
                     signal.BusinessId, signal.DocumentId,
-                    signal.DocumentType, cancellationToken);
+                    sourceType, cancellationToken);
 
             if (signal.EconomicEffectsEnabled &&
-                SalesReportingProcessingPolicy.Supports(signal.DocumentType))
+                SalesReportingProcessingPolicy.Supports(sourceType))
                 await reporting.RequestProjectionAsync(
                     signal.BusinessId, signal.DocumentId,
-                    signal.DocumentType, cancellationToken);
+                    sourceType, cancellationToken);
 
             await CompleteOperationalOutboxAsync(signal, cancellationToken);
         }

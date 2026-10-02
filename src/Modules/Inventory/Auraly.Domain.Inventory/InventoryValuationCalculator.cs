@@ -4,7 +4,8 @@ public enum InventoryValuationMode
 {
     AverageCost,
     WeightedAverageReceipt,
-    SpecifiedCostIssue
+    SpecifiedCostIssue,
+    CostCorrection
 }
 
 public sealed record InventoryValuationState(
@@ -79,6 +80,13 @@ public static class InventoryValuationCalculator
                     ? poolAverageBefore
                     : UnitCost((Money(state.PoolInventoryValue) + acquisitionValue) /
                         specifiedPoolQuantityAfter);
+                break;
+
+            case InventoryValuationMode.CostCorrection:
+                if (quantityChange != 0)
+                    throw new ArgumentOutOfRangeException(nameof(quantityChange),
+                        "A cost correction cannot change inventory quantity.");
+                averageAfter = recognizedUnitCost;
                 break;
 
             default:

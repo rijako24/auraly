@@ -11,6 +11,7 @@ namespace Auraly.Contracts.Sales;
 public static class PosSaleDocumentTypes
 {
     public const string Invoice = AuralyDocumentTypes.SalesInvoice;
+    public const string InvoiceRecovery = "SalesInvoiceRecovery";
     public const string Receipt = AuralyDocumentTypes.SalesReceipt;
 
     public static bool IsSupported(string value) => value is Invoice or Receipt;

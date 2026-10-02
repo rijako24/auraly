@@ -22,6 +22,19 @@ public sealed record DuplicateFiscalCorrectionResult(
     string FiscalStatus,
     bool Created);
 
+public sealed record DeadLetteredSaleRecoveryResult(
+    Guid DocumentId,
+    Guid MovementId,
+    long ProcessingSequence,
+    bool Created);
+
+public interface IFiscalSaleDeadLetterRecoveryStore
+{
+    Task<DeadLetteredSaleRecoveryResult> AcceptAsync(
+        FiscalUserIdentity user, Guid documentId, string reason,
+        CancellationToken cancellationToken);
+}
+
 public interface IFiscalSaleCorrectionStore
 {
     Task<DuplicateFiscalCorrectionResult> CreateDuplicateCorrectionAsync(
@@ -56,7 +69,8 @@ public sealed class FiscalDocumentService(
     TimeProvider timeProvider,
     FiscalProcessingCoordinator processing,
     IFiscalSaleRecovery saleRecovery,
-    IFiscalSaleCorrectionStore corrections)
+    IFiscalSaleCorrectionStore corrections,
+    IFiscalSaleDeadLetterRecoveryStore deadLetterRecoveries)
 {
     public Task<FiscalDocumentView?> GetAsync(
         FiscalUserIdentity user,
@@ -143,6 +157,16 @@ public sealed class FiscalDocumentService(
             await processing.RequestGenerationAsync(
                 user.BusinessId, result.CorrectionId, cancellationToken);
         return result;
+    }
+
+    public async Task<DeadLetteredSaleRecoveryResult> RecoverDeadLetteredSaleAsync(
+        FiscalUserIdentity user, Guid documentId, string reason,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.Correct);
+        if (documentId == Guid.Empty || string.IsNullOrWhiteSpace(reason) || reason.Trim().Length > 1000)
+            throw new FiscalOperationException("Indica una factura y un motivo de recuperación de hasta 1000 caracteres.");
+        return await deadLetterRecoveries.AcceptAsync(user, documentId, reason.Trim(), cancellationToken);
     }
 
     private static void Demand(FiscalUserIdentity user, string permission)
