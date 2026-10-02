@@ -121,7 +121,7 @@ internal sealed partial class AuralyDesktopUpdater(
         availableUpdate = new AuralyUpdateRequest(DiscoveryMessageType,
             InstallerDownloadPath, pendingUpdate.Version, pendingUpdate.Sha256);
         PostStatus("ready", pendingUpdate.Version, 100,
-            "La actualización descargada está lista. Puedes reiniciar ahora o continuar trabajando.");
+            "La actualización descargada está verificada. Iniciando la instalación…");
     }
 
     private void HandleDiscovery(AuralyUpdateRequest request)
@@ -175,7 +175,7 @@ internal sealed partial class AuralyDesktopUpdater(
                 "ready",
                 pendingUpdate.Version,
                 100,
-                "La actualización está lista. Puedes reiniciar ahora o continuar trabajando.");
+                "Descarga verificada. Iniciando la instalación…");
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
         {
@@ -302,7 +302,7 @@ internal sealed partial class AuralyDesktopUpdater(
         {
             await LogFailureAsync(exception);
             PostStatus("restart-error", update.Version, null,
-                "No fue posible abrir el instalador. La descarga se conserva; puedes reintentar o hacerlo más tarde.");
+                "No fue posible abrir el instalador. La descarga se conserva; puedes reintentar la instalación.");
         }
     }
 

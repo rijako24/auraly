@@ -76,11 +76,14 @@ no contienen campos privados adicionales que desplacen `cbStruct`. La regresión
 ejerce `WinVerifyTrust` con un archivo sin firma y con el runtime firmado de .NET.
 
 El icono descarga a petición del usuario y muestra el progreso. SHA-256 y firma
-del publicador se verifican antes de guardar la descarga. Al finalizar se ofrece
-`Reiniciar ahora` o `Más tarde`. Aplazar cierra el diálogo, conserva el instalador
-y permite abrir de nuevo el aviso con el icono. Al volver a abrir Auraly se ofrece
-otra vez; no se ejecuta el instalador automáticamente. Reiniciar verifica otra
-vez el archivo y lanza el instalador existente. Si no puede abrirlo, conserva
+del publicador se verifican antes de guardar la descarga. Descargar confirma la
+actualización completa: el modal informa que Auraly se actualizará y reiniciará
+automáticamente. Al recibir la descarga verificada, el propietario de interfaz
+envía el comando de reinicio existente sin otra confirmación ni botón `Más tarde`.
+Durante descarga, verificación y apertura del instalador el modal permanece abierto.
+Si la aplicación se cerró después de guardar la descarga, al abrirla se retoma la
+instalación de ese paquete validado sin descargarlo otra vez. Reiniciar verifica
+otra vez el archivo y lanza el instalador existente. Si no puede abrirlo, conserva
 la descarga y ofrece reintentar. Tras una instalación correcta, una versión igual
 o anterior a la instalada deja de ofrecerse y se retira su marcador pendiente.
 

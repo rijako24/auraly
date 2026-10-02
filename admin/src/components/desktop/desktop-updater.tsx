@@ -64,7 +64,11 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
         discovered = true;
         void check();
       }
-      if (status.status === "ready" || status.status === "restart-error") setOpen(true);
+      if (status.status === "ready") {
+        setOpen(true);
+        webview.postMessage({ type: desktopUpdateAction("restart") });
+      }
+      if (status.status === "restarting" || status.status === "restart-error") setOpen(true);
     };
     webview.addEventListener("message", receiveStatus);
     const timer = window.setTimeout(() => webview.postMessage({ type: desktopUpdateAction("check") }), 3500);
@@ -78,8 +82,8 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
 
   const visibleUpdate = authenticated ? update : null;
   const downloading = update?.status === "downloading" || update?.status === "verifying";
-  const ready = update?.status === "ready" || update?.status === "restart-error";
-  const restarting = update?.status === "restarting";
+  const restarting = update?.status === "ready" || update?.status === "restarting";
+  const busy = downloading || restarting;
   const available = update?.status === "available" || update?.status === "error";
   const send = (action: "download" | "restart") => currentWebView()?.postMessage({ type: desktopUpdateAction(action) });
   const download = async () => {
@@ -95,19 +99,19 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
 
   return <UpdateContext.Provider value={{ update: visibleUpdate, activate }}>
     {children}
-    <Dialog open={authenticated && open} onOpenChange={value => { if (!restarting) setOpen(value); }}>
-      <DialogContent showClose={!restarting}>
+    <Dialog open={authenticated && open} onOpenChange={value => { if (!busy) setOpen(value); }}>
+      <DialogContent showClose={!busy}>
         <DialogHeader>
           <DialogTitle>Actualización de Auraly{update?.version ? ` · ${update.version}` : ""}</DialogTitle>
           <DialogDescription>{update?.message}</DialogDescription>
         </DialogHeader>
         {downloading && <Progress aria-label="Progreso de descarga" value={update?.progress ?? 0} />}
-        {ready && <p className="text-sm text-muted-foreground">Al reiniciar se cerrará Auraly para instalar la actualización. Si eliges más tarde, la descarga se conserva y volveremos a recordártela al abrir la aplicación.</p>}
+        {busy && <p className="text-sm text-muted-foreground">Al terminar la descarga y verificación, Auraly se actualizará y reiniciará automáticamente.</p>}
         <DialogFooter>
-          {!restarting && <Button variant="outline" onClick={() => setOpen(false)}>{ready ? "Más tarde" : "Cerrar"}</Button>}
+          {!busy && <Button variant="outline" onClick={() => setOpen(false)}>Cerrar</Button>}
           {available && <Button onClick={() => void download()}><Download className="mr-2 size-4" />{update?.status === "error" ? "Reintentar descarga" : "Descargar"}</Button>}
           {update?.status === "check-error" && <Button onClick={() => { void checkAgain.current?.(); }}>Reintentar consulta</Button>}
-          {ready && <Button onClick={() => send("restart")}><RefreshCw className="mr-2 size-4" />Reiniciar ahora</Button>}
+          {update?.status === "restart-error" && <Button onClick={() => send("restart")}><RefreshCw className="mr-2 size-4" />Reintentar instalación</Button>}
           {restarting && <Button disabled><RefreshCw className="mr-2 size-4 animate-spin" />Abriendo instalador…</Button>}
         </DialogFooter>
       </DialogContent>

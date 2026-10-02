@@ -53,7 +53,7 @@ public sealed class DesktopUpdateTests : IDisposable
         Assert.Equal(expected, AuralyDesktopUpdater.IsTrustedSource(source, "http://127.0.0.1:47830"));
 
     [Fact]
-    public async Task Deferred_download_is_offered_on_each_launch_without_deleting_or_executing_it()
+    public async Task Pending_download_can_be_restored_without_redownloading_or_executing_it_from_the_store()
     {
         var pending = await SaveDownload();
         Assert.Equal(pending, AuralyPendingUpdateStore.TryLoad(directory, configuration));
