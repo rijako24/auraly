@@ -7,6 +7,7 @@ namespace Auraly.Api;
 public static class FiscalApi
 {
     private sealed record CorrectDuplicateSaleRequest(Guid RetainedDocumentId);
+    private sealed record RecoverDeadLetteredSaleRequest(string Reason);
 
     public static IEndpointRouteBuilder MapFiscalApi(this IEndpointRouteBuilder endpoints)
     {
@@ -53,6 +54,12 @@ public static class FiscalApi
                 await service.CorrectDuplicateSaleAsync(
                     context.User.ToFiscalUserIdentity(), documentId,
                     request.RetainedDocumentId, ct))));
+        group.MapPost("/{documentId:guid}/recover-dead-letter", async (
+            HttpContext context, FiscalDocumentService service, Guid documentId,
+            RecoverDeadLetteredSaleRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Accepted(value:
+                await service.RecoverDeadLetteredSaleAsync(
+                    context.User.ToFiscalUserIdentity(), documentId, request.Reason, ct))));
 
         endpoints.MapGet("/api/pos/v1/fiscal/statuses", async (
             HttpContext context,

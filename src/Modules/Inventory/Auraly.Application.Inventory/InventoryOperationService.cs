@@ -8,6 +8,7 @@ public interface IInventoryOperationStore
     Task<StockCountDraft> StartCountAsync(InventoryUserIdentity user, StartStockCountRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmCountAsync(InventoryUserIdentity user, Guid documentId, string idempotencyKey, ConfirmStockCountRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmAdjustmentAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryAdjustmentRequest request, CancellationToken cancellationToken);
+    Task<InventoryOperationAcceptance> ConfirmCostCorrectionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryCostCorrectionRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> DispatchTransferAsync(InventoryUserIdentity user, string idempotencyKey, DispatchWarehouseTransferRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ReceiveTransferAsync(InventoryUserIdentity user, Guid transferId, string idempotencyKey, ReceiveWarehouseTransferRequest request, byte[] rowVersion, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmConversionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductConversionRequest request, CancellationToken cancellationToken);
@@ -93,6 +94,25 @@ public sealed class InventoryOperationService(
             throw new InventoryValidationException("Transfer quantities must be positive.");
         var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) };
         return await PublishAsync(await store.DispatchTransferAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
+    }
+
+    public async Task<InventoryOperationAcceptance> ConfirmCostCorrectionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryCostCorrectionRequest request, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Adjust);
+        ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.ReadCosts);
+        Required(request.DocumentId, nameof(request.DocumentId));
+        Required(request.WarehouseId, nameof(request.WarehouseId));
+        Required(request.ProductId, nameof(request.ProductId));
+        Required(request.OccurredAt, nameof(request.OccurredAt));
+        ValidateKey(idempotencyKey);
+        ValidateReason(request.ReasonCode);
+        if (string.IsNullOrWhiteSpace(request.Notes) || request.TargetUnitCost < 0 ||
+            request.ExpectedPoolQuantity <= 0 || request.ExpectedPoolValue < 0 ||
+            decimal.Round(request.TargetUnitCost * request.ExpectedPoolQuantity, 4,
+                MidpointRounding.AwayFromZero) == request.ExpectedPoolValue)
+            throw new InventoryValidationException("A cost correction requires a supporting note, a positive pool quantity and non-negative values.");
+        var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes)! };
+        return await PublishAsync(await store.ConfirmCostCorrectionAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
     }
 
     public async Task<InventoryOperationAcceptance> ReceiveTransferAsync(InventoryUserIdentity user, Guid transferId, string idempotencyKey, ReceiveWarehouseTransferRequest request, CancellationToken cancellationToken = default)
