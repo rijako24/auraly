@@ -1,6 +1,5 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
-using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -23,9 +22,7 @@ internal static class SqlSalesReportingJobWriter
                    N'Pending',0,@CreatedAt
             FROM dbo.DocumentProcessingPayloads p
             INNER JOIN dbo.DocumentProcessingJobs j
-              ON j.JobId=@ProcessingJobId AND j.DocumentId=p.DocumentId AND j.BusinessId=p.BusinessId
-             AND (j.DocumentType=p.DocumentType OR
-                  (j.DocumentType=@RecoveryType AND p.DocumentType=@InvoiceType))
+              ON j.DocumentId=p.DocumentId AND j.DocumentType=p.DocumentType AND j.BusinessId=p.BusinessId
             WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
               AND p.BusinessId=@BusinessId
               AND NOT EXISTS
@@ -37,9 +34,6 @@ internal static class SqlSalesReportingJobWriter
               );
             """, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@JobId", ids.NewId());
-        command.Parameters.AddWithValue("@ProcessingJobId", session.JobId);
-        command.Parameters.AddWithValue("@RecoveryType", PosSaleDocumentTypes.InvoiceRecovery);
-        command.Parameters.AddWithValue("@InvoiceType", PosSaleDocumentTypes.Invoice);
         command.Parameters.AddWithValue("@DocumentId", document.DocumentId.Value);
         command.Parameters.AddWithValue("@DocumentType", document.DocumentType);
         command.Parameters.AddWithValue("@BusinessId", document.BusinessId.Value);

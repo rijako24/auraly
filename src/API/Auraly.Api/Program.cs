@@ -106,7 +106,6 @@ builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
 builder.Services.AddScoped<IFiscalSaleRecovery, FiscalSaleRecovery>();
 builder.Services.AddScoped<IFiscalSaleCorrectionStore, SqlFiscalSaleCorrectionStore>();
-builder.Services.AddScoped<IFiscalSaleDeadLetterRecoveryStore, SqlFiscalSaleDeadLetterRecoveryStore>();
 builder.Services.AddScoped<FiscalDocumentService>();
 builder.Services.AddScoped<IPosFiscalStatusStore, SqlPosFiscalStatusStore>();
 builder.Services.AddScoped<PosFiscalStatusService>();
@@ -176,7 +175,6 @@ builder.Services.AddScoped<IDocumentProcessingCompletionObserver,
     SqlDocumentProcessingCompletionObserver>();
 builder.Services.AddScoped<SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler>(services => services.GetRequiredService<SqlPosSaleDocumentHandler>());
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleRecoveryDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlExpenseDocumentHandler>();

@@ -30,19 +30,6 @@ Al quinto fallo:
 
 `DeadLettered` no significa procesado ni exitoso. Un duplicado de ese mensaje no puede reaplicar efectos. Su corrección exige una operación administrativa explícita y auditada que produzca un nuevo movimiento; nunca se modifica silenciosamente el documento fallido.
 
-Para una factura `SalesInvoice` verificada que agotó intentos por costo cero,
-`recover-dead-letter` crea un nuevo `DocumentProcessingJob` de tipo
-`SalesInvoiceRecovery` con usuario, motivo y hash del payload original. Solo se
-acepta cuando la factura sigue recibida o fallida, el job original sigue
-`DeadLettered` y no hay efectos comerciales aplicados. El nuevo job vuelve a
-usar el handler de la factura original dentro de su propia transacción. Sus
-efectos quedan ligados a la factura original; el job fallido y sus cinco intentos
-permanecen intactos. El job de reportes se vincula al nuevo movimiento para
-proyectarse solo después de que este termine. El outbox operacional pertenece
-al movimiento de recuperación; su observador publica la factura original a
-los motores fiscal, contable y de reportes. Una segunda solicitud no crea otro
-movimiento ni repite efectos.
-
 ## Consistencia SQL
 
 El incremento realizado al adquirir un lease pertenece inicialmente a la transacción de efectos. Como esa transacción se revierte al fallar, `MarkFailedAsync` incrementa y persiste el intento en una transacción independiente y serializable. De esta forma, el rollback del documento no borra la evidencia del intento.

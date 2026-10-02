@@ -95,7 +95,7 @@ CREATE TABLE [dbo].[InventoryOperationLines]
     CONSTRAINT [FK_InventoryOperationLines_Operation] FOREIGN KEY ([InventoryOperationId]) REFERENCES [dbo].[InventoryOperations] ([InventoryOperationId]),
     CONSTRAINT [FK_InventoryOperationLines_Product] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_InventoryOperationLines_Line] CHECK ([LineNumber]>0),
-    CONSTRAINT [CK_InventoryOperationLines_Direction] CHECK ([Direction] IN (N'COUNT',N'ADJUSTMENT',N'TRANSFER',N'INPUT',N'OUTPUT',N'DAMAGE',N'COST')),
+    CONSTRAINT [CK_InventoryOperationLines_Direction] CHECK ([Direction] IN (N'COUNT',N'ADJUSTMENT',N'TRANSFER',N'INPUT',N'OUTPUT',N'DAMAGE')),
     CONSTRAINT [CK_InventoryOperationLines_Cost] CHECK ([ExplicitUnitCost] IS NULL OR [ExplicitUnitCost]>=0),
     CONSTRAINT [CK_InventoryOperationLines_PreCount] CHECK ([PreCountQuantity] IS NULL OR [PreCountQuantity]>=0),
     CONSTRAINT [CK_InventoryOperationLines_Weight] CHECK ([AllocationWeight] IS NULL OR [AllocationWeight]>0),

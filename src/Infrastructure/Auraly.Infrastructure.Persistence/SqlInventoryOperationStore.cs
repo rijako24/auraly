@@ -132,12 +132,6 @@ public sealed class SqlInventoryOperationStore(
             request.WarehouseId, null, request.OccurredAt, request.ReasonCode, null, request.CostCenterId, null, request.Notes,
             request.Lines.Select(line => new LineInput(line.LineNumber, "ADJUSTMENT", line.ProductId, line.QuantityChange, null, line.ExplicitUnitCost, null)).ToArray(), request, cancellationToken);
 
-    public Task<InventoryOperationAcceptance> ConfirmCostCorrectionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryCostCorrectionRequest request, CancellationToken cancellationToken) =>
-        AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Adjustment,
-            request.WarehouseId, null, request.OccurredAt, request.ReasonCode, null, request.CostCenterId, null, request.Notes,
-            [new LineInput(1, "COST", request.ProductId, 0m, null, request.TargetUnitCost, null,
-                request.ExpectedPoolQuantity, request.ExpectedPoolValue)], request, cancellationToken);
-
     public Task<InventoryOperationAcceptance> DispatchTransferAsync(
         InventoryUserIdentity user,
         string idempotencyKey,
@@ -449,17 +443,13 @@ public sealed class SqlInventoryOperationStore(
                 destinationWarehouseId = await LoadSystemWarehouseAsync(
                     connection, transaction, user.BusinessId, "AVE", cancellationToken);
             await ValidateScopeAsync(connection, transaction, user, documentType, warehouseId,
-                destinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken,
-                allowDamageCostCorrection: inputLines.Count == 1 && inputLines[0].Direction == "COST" && inputLines[0].ExplicitUnitCost == 0m,
-                costCorrectionTarget: inputLines.Count == 1 && inputLines[0].Direction == "COST" ? inputLines[0].ExplicitUnitCost : null);
+                destinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken);
             var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId, documentType, reasonCode, cancellationToken);
             var products = (await LoadProductsAsync(connection, transaction, user.BusinessId, warehouseId, inputLines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
             var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
                 line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
                 products[line.ProductId].Name, line.Quantity, null, line.SystemQuantityAtBase,
-                line.ExplicitUnitCost, line.AllocationWeight,
-                ExpectedPoolQuantity: line.ExpectedPoolQuantity,
-                ExpectedPoolValue: line.ExpectedPoolValue)).ToArray();
+                line.ExplicitUnitCost, line.AllocationWeight)).ToArray();
             ConversionMetadata? conversion = null;
             if (documentType == InventoryDocumentTypes.Conversion)
             {
@@ -841,20 +831,14 @@ public sealed class SqlInventoryOperationStore(
     private static async Task ValidateScopeAsync(SqlConnection connection, SqlTransaction transaction,
         InventoryUserIdentity user, string documentType, Guid warehouseId, Guid? destinationWarehouseId,
         IEnumerable<Guid> productIds, CancellationToken cancellationToken,
-        bool allowSystemWarehouses = false,
-        bool allowDamageCostCorrection = false,
-        decimal? costCorrectionTarget = null)
+        bool allowSystemWarehouses = false)
     {
         const string sql = """
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51200,'The business is outside the authenticated tenant.',1;
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
-              AND IsActive=1 AND (IsSystem=0 OR @AllowSystemWarehouses=1 OR (@AllowDamageCostCorrection=1 AND IsSystem=1 AND Code=N'AVE')))
+              AND IsActive=1 AND (IsSystem=0 OR @AllowSystemWarehouses=1))
               THROW 51201,'Selecciona una bodega de inventario activa.',1;
-            IF @CostCorrectionTarget=0 AND EXISTS(SELECT 1 FROM dbo.Warehouses
-              WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
-                AND NOT(IsSystem=1 AND Code=N'AVE'))
-              THROW 51201,'El costo cero solo se permite para corregir averías.',1;
             IF @Destination IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@Destination AND BusinessId=@BusinessId
               AND IsActive=1 AND (IsSystem=0 OR @AllowSystemWarehouses=1 OR (@DocumentType=N'Damage' AND IsSystem=1 AND Code=N'AVE')))
               THROW 51202,'Selecciona una bodega de inventario de destino activa.',1;
@@ -878,11 +862,6 @@ public sealed class SqlInventoryOperationStore(
         command.Parameters.AddWithValue("@WarehouseId", warehouseId);
         command.Parameters.AddWithValue("@Destination", (object?)destinationWarehouseId ?? DBNull.Value);
         command.Parameters.AddWithValue("@AllowSystemWarehouses", allowSystemWarehouses);
-        command.Parameters.AddWithValue("@AllowDamageCostCorrection", allowDamageCostCorrection);
-        var costParameter = command.Parameters.Add("@CostCorrectionTarget", SqlDbType.Decimal);
-        costParameter.Precision = 19;
-        costParameter.Scale = 6;
-        costParameter.Value = (object?)costCorrectionTarget ?? DBNull.Value;
         command.Parameters.AddWithValue("@Products", JsonSerializer.Serialize(productIds.Distinct()));
         try { await command.ExecuteNonQueryAsync(cancellationToken); }
         catch (SqlException exception) when (exception.Number is >= 51200 and <= 51203) { throw new InventoryValidationException(exception.Message); }
@@ -1267,8 +1246,7 @@ public sealed class SqlInventoryOperationStore(
     private static void AddDecimal(SqlCommand command,string name,decimal value,byte precision,byte scale){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=precision;p.Scale=scale;p.Value=value;}
     private static void AddNullableDecimal(SqlCommand command,string name,decimal? value,byte precision,byte scale){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=precision;p.Scale=scale;p.Value=(object?)value??DBNull.Value;}
     private static SqlCommand StoredProcedure(string name,SqlConnection connection,SqlTransaction transaction)=>new(name,connection,transaction){CommandType=CommandType.StoredProcedure};
-    private sealed record LineInput(int LineNumber,string Direction,Guid ProductId,decimal Quantity,decimal? SystemQuantityAtBase,decimal? ExplicitUnitCost,decimal? AllocationWeight,
-        decimal? ExpectedPoolQuantity = null,decimal? ExpectedPoolValue = null);
+    private sealed record LineInput(int LineNumber,string Direction,Guid ProductId,decimal Quantity,decimal? SystemQuantityAtBase,decimal? ExplicitUnitCost,decimal? AllocationWeight);
     private sealed record ProductState(Guid Id,string Code,string Name,decimal Quantity);
     private sealed record AccountingReasonSnapshot(string CounterpartCategory, Guid? CostCenterId);
     private sealed record CountDraftState(Guid WarehouseId,DateTimeOffset OccurredAt,string ReasonCode,long BaseSequence,string? Notes,IReadOnlyList<InventoryOperationLineSnapshot> Lines);

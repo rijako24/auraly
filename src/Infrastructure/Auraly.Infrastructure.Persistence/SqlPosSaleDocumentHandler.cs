@@ -330,7 +330,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@MessageId", _idGenerator.NewId());
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        command.Parameters.AddWithValue("@DocumentType", session.Context.DocumentType);
+        command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
         command.Parameters.AddWithValue("@Type", "sales.document.processed");
         command.Parameters.AddWithValue("@Payload", payload);
         command.Parameters.AddWithValue("@OccurredAt", _timeProvider.GetUtcNow());

@@ -55,17 +55,6 @@ adjustments use current average cost and cannot create negative stock. An explic
 cost is accepted only for inbound adjustments; otherwise the current inventory
 valuation supplies the cost.
 
-The audited `correct-cost` action is a separate, single-line variant of
-`InventoryAdjustment` for a historical valuation error. It requires both
-inventory adjustment and cost visibility permissions, an explicit reason and
-supporting note, the target unit cost, and the expected quantity and book value
-of the locked cost pool. The processor rejects a changed pool. Its movement has
-zero quantity and the exact book-value difference; the existing inventory
-reason supplies the accounting counterpart. A zero target cost is allowed in
-the system `AVE` warehouse to remove residual value from already discarded
-stock. Sellable warehouses retain their own pool. The operation uses the same
-document job, ledger writer, outbox and accounting processor as adjustments.
-
 ## Transfer semantics
 
 A user transfer has two ordered stages. `Dispatch` removes all lines from the
