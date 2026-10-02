@@ -96,8 +96,8 @@ public static class SalesInvoicePresentationMapper
             Withholdings: commercial.Withholding?.Lines,
             CreditAcknowledgement: creditAcknowledgement,
             InvoicePrintDetails: PrintDetails(ubl),
-            CustomerPhone: ubl?.Customer.Telephone,
-            CustomerAddress: ubl?.Customer.Address.AddressLine,
+            CustomerPhone: ubl?.Customer.Telephone ?? commercial.CustomerPhone,
+            CustomerAddress: ubl?.Customer.Address.AddressLine ?? commercial.CustomerAddress,
             PayableRoundingAmount: commercial.PayableRoundingAmount);
 
     private static OnlineSalesPayment Payment(PosSalePaymentContract payment) => new(

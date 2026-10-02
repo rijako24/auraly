@@ -11,12 +11,12 @@ public static class SalesReturnQueryApi
     {
         endpoints.MapGet("/api/commerce/v1/sales-returns/sales", async (
                 HttpContext context, Guid? businessId, int page, int pageSize, string? search,
-                string? customer,
+                string? customer, Guid? customerId,
                 DateOnly? from, DateOnly? to, bool? withAvailableQuantity,
                 SalesReturnQueryService service, CancellationToken token) =>
             await Execute(() => service.ListReturnableSalesAsync(
                 context.User.ToSalesReturnQueryIdentity(businessId),
-                new(page, pageSize, search, customer, from, to, withAvailableQuantity), token),
+                new(page, pageSize, search, customer, from, to, withAvailableQuantity, customerId), token),
                 Results.Ok))
             .RequireAuthorization("returns.user");
 
@@ -32,21 +32,21 @@ public static class SalesReturnQueryApi
             .RequireAuthorization("returns.user");
 
         endpoints.MapGet("/api/commerce/v1/sales-returns", async (
-                HttpContext context, int page, int pageSize, string? search,
+                HttpContext context, Guid? businessId, Guid? customerId, int page, int pageSize, string? search,
                 string? status, DateOnly? from, DateOnly? to,
                 SalesReturnQueryService service, CancellationToken token) =>
             await Execute(() => service.ListReturnsAsync(
-                context.User.ToSalesReturnQueryIdentity(),
-                new(page, pageSize, search, status, from, to), token), Results.Ok))
+                context.User.ToSalesReturnQueryIdentity(businessId),
+                new(page, pageSize, search, status, from, to, customerId), token), Results.Ok))
             .RequireAuthorization("returns.user");
 
         endpoints.MapGet("/api/commerce/v1/sales-returns/{returnId:guid}",
-            async (HttpContext context, Guid returnId,
+            async (HttpContext context, Guid returnId, Guid? businessId,
                 SalesReturnQueryService service, CancellationToken token) =>
                 await Execute(async () =>
                 {
                     var value = await service.GetReturnAsync(
-                        context.User.ToSalesReturnQueryIdentity(), returnId, token);
+                        context.User.ToSalesReturnQueryIdentity(businessId), returnId, token);
                     return value is null ? Results.NotFound() : Results.Ok(value);
                 }))
             .RequireAuthorization("returns.user");
@@ -74,15 +74,15 @@ public static class SalesReturnQueryApi
     }
 
     private static SalesReturnUserIdentity ToSalesReturnQueryIdentity(
-        this ClaimsPrincipal principal, Guid? businessId = null) => new(
-            RequiredGuid(principal, ClaimTypes.NameIdentifier),
-            RequiredGuid(principal, "tenant_id"),
-            businessId is { } selected && selected != Guid.Empty
-                ? selected
-                : RequiredGuid(principal, "business_id"),
-            principal.FindAll("permission")
-                .Select(claim => claim.Value)
-                .ToHashSet(StringComparer.Ordinal));
+        this ClaimsPrincipal principal, Guid? businessId = null)
+    {
+        var authorizedBusiness = RequiredGuid(principal, "business_id");
+        if (businessId is { } requested && requested != authorizedBusiness)
+            throw new SalesReturnForbiddenException("El negocio solicitado no coincide con el contexto autorizado.");
+        return new(RequiredGuid(principal, ClaimTypes.NameIdentifier),
+            RequiredGuid(principal, "tenant_id"), authorizedBusiness,
+            principal.FindAll("permission").Select(claim => claim.Value).ToHashSet(StringComparer.Ordinal));
+    }
 
     private static Guid RequiredGuid(ClaimsPrincipal principal, string claimType) =>
         Guid.TryParse(principal.FindFirstValue(claimType), out var value)

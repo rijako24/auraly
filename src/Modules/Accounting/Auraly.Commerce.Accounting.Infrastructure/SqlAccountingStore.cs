@@ -9,7 +9,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Commerce.Accounting.Infrastructure;
 
-public sealed class SqlAccountingStore(
+public sealed partial class SqlAccountingStore(
     AccountingSqlConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider,
@@ -17,72 +17,75 @@ public sealed class SqlAccountingStore(
 {
     public Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(
         AccountingUserIdentity user, ConfirmAccountAdjustmentRequest request,
-        CancellationToken cancellationToken) => AcceptManualDocumentAsync(
+        CancellationToken cancellationToken, string? draftVersion = null) => AcceptManualDocumentAsync(
             user, request.AdjustmentId, AccountingManualDocumentTypes.AccountAdjustment,
             request.OccurredAt, request, async (connection, transaction, token) =>
             {
-                _ = await ValidatePostingAccountAsync(connection, transaction, user.TenantId,
-                    request.CounterpartAccountId, token);
-                await ValidateCostCenterAsync(connection, transaction, user.BusinessId,
-                    request.CostCenterId, token);
-                var table = request.SubledgerKind == AccountingSubledgerKinds.Receivable
-                    ? "Receivables" : "Payables";
-                var idColumn = request.SubledgerKind == AccountingSubledgerKinds.Receivable
-                    ? "ReceivableId" : "PayableId";
+                var receivable = request.SubledgerKind == AccountingSubledgerKinds.Receivable;
+                var table = receivable ? "Receivables" : "Payables";
+                var idColumn = receivable ? "ReceivableId" : "PayableId";
+                var partyTable = receivable ? "Customers" : "Suppliers";
+                var partyColumn = receivable ? "CustomerId" : "SupplierId";
+                var applicationTable = receivable ? "CustomerPaymentApplications" : "SupplierPaymentApplications";
+                var paymentTable = receivable ? "CustomerPayments" : "SupplierPayments";
+                var transactionTable = receivable ? "ReceivableTransactions" : "PayableTransactions";
                 await using var target = new SqlCommand($"""
-                    SELECT OutstandingAmount,Status FROM dbo.[{table}] WITH(UPDLOCK,HOLDLOCK)
-                    WHERE [{idColumn}]=@Id AND BusinessId=@BusinessId;
+                    SELECT balance.OutstandingAmount-COALESCE(payments.Reserved,0)-COALESCE(adjustments.Reserved,0),
+                      balance.Status,party.PartyId,source.OccurredAt,balance.CurrencyCode,settings.FunctionalCurrencyCode
+                    FROM dbo.[{table}] balance WITH(UPDLOCK,HOLDLOCK)
+                    JOIN dbo.AccountingTenantSettings settings ON settings.TenantId=@TenantId
+                    JOIN dbo.[{partyTable}] party ON party.[{partyColumn}]=balance.[{partyColumn}]
+                    JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=balance.SourceDocumentId
+                      AND source.SourceDocumentType=balance.SourceDocumentType AND source.BusinessId=balance.BusinessId
+                    OUTER APPLY(SELECT SUM(a.Amount) Reserved FROM dbo.[{applicationTable}] a
+                      JOIN dbo.[{paymentTable}] p ON p.PaymentId=a.PaymentId
+                      WHERE a.[{idColumn}]=balance.[{idColumn}] AND a.AppliedAt IS NULL AND p.Status=N'Accepted') payments
+                    OUTER APPLY(SELECT SUM(d.AdjustmentAmount) Reserved FROM accounting.VoucherDrafts d WITH(INDEX(IX_VoucherDrafts_Obligation))
+                      WHERE d.BusinessId=balance.BusinessId AND d.SubledgerKind=@Kind AND d.SubledgerId=balance.[{idColumn}]
+                        AND d.Direction=N'Decrease' AND d.SentAt IS NOT NULL
+                        AND NOT EXISTS(SELECT 1 FROM dbo.[{transactionTable}] t WHERE t.[{idColumn}]=balance.[{idColumn}]
+                          AND t.TransactionType=N'Adjustment' AND t.SourceDocumentId=d.DocumentId)) adjustments
+                    WHERE balance.[{idColumn}]=@Id AND balance.BusinessId=@BusinessId;
                     """, connection, transaction);
                 target.Parameters.AddWithValue("@Id", request.SubledgerId);
                 target.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+                target.Parameters.AddWithValue("@Kind", request.SubledgerKind);
+                target.Parameters.AddWithValue("@TenantId", user.TenantId);
                 await using var reader = await target.ExecuteReaderAsync(token);
                 if (!await reader.ReadAsync(token))
-                    throw new AccountingValidationException(
-                        "The account adjustment references an unknown subledger balance.");
-                var outstanding = reader.GetDecimal(0);
+                    throw new AccountingValidationException("La obligación no existe en esta sede.");
+                var available = reader.GetDecimal(0);
                 var status = reader.GetString(1);
-                if (status is "Cancelled" ||
-                    request.Direction == AccountingAdjustmentDirections.Decrease &&
-                    request.Amount > outstanding)
-                    throw new AccountingConflictException(
-                        "The adjustment would make the subledger balance negative.");
-            }, cancellationToken);
+                var partyId = reader.IsDBNull(2) ? (Guid?)null : reader.GetGuid(2);
+                if (status == "Cancelled" || request.Direction == AccountingAdjustmentDirections.Decrease && request.Amount > available)
+                    throw new AccountingConflictException("El ajuste supera el saldo disponible, incluidos los movimientos pendientes.");
+                if (draftVersion is not null && request.OccurredAt.Date < reader.GetDateTimeOffset(3).Date)
+                    throw new AccountingValidationException("La fecha del ajuste no puede anteceder la obligación.");
+                if (reader.GetString(4) != reader.GetString(5))
+                    throw new AccountingValidationException("La moneda de la obligación debe coincidir con la moneda funcional.");
+                await reader.DisposeAsync();
+                await ValidateVoucherDimensionsAsync(connection, transaction, user,
+                    [new(request.CounterpartAccountId, partyId, request.CostCenterId, request.Description, request.Amount, 0)],
+                    request.OccurredAt, request.ConceptCode, final: true, token, validateDraftReadiness: draftVersion is not null);
+            }, cancellationToken, draftVersion);
 
     public Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(
         AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request,
-        CancellationToken cancellationToken) => AcceptManualDocumentAsync(
+        CancellationToken cancellationToken, string? draftVersion = null) => AcceptManualDocumentAsync(
             user, request.VoucherId, AccountingManualDocumentTypes.ManualVoucher,
             request.OccurredAt, request, async (connection, transaction, token) =>
             {
-                foreach (var line in request.Lines)
-                {
-                    var requiresParty = await ValidatePostingAccountAsync(connection, transaction, user.TenantId,
-                        line.AccountId, token);
-                    if (requiresParty && line.PartyId is null)
-                        throw new AccountingValidationException(
-                            "A manual voucher line requires a party for its account.");
-                    await ValidateCostCenterAsync(connection, transaction, user.BusinessId,
-                        line.CostCenterId, token);
-                    if (line.PartyId is Guid partyId)
-                    {
-                        await using var party = new SqlCommand("""
-                            SELECT COUNT_BIG(1) FROM dbo.Parties
-                            WHERE PartyId=@PartyId AND TenantId=@TenantId;
-                            """, connection, transaction);
-                        party.Parameters.AddWithValue("@PartyId", partyId);
-                        party.Parameters.AddWithValue("@TenantId", user.TenantId);
-                        if (Convert.ToInt64(await party.ExecuteScalarAsync(token)) != 1)
-                            throw new AccountingValidationException(
-                                "A manual voucher line references an unknown party.");
-                    }
-                }
-            }, cancellationToken);
+                await ValidateVoucherDimensionsAsync(connection, transaction, user,
+                    request.Lines.Select(line => new VoucherDraftLine(line.AccountId, line.PartyId,
+                        line.CostCenterId, line.Description, line.Debit, line.Credit)).ToArray(),
+                    request.OccurredAt, request.ConceptCode, final: true, token, validateDraftReadiness: draftVersion is not null);
+            }, cancellationToken, draftVersion);
 
     private async Task<AccountingManualDocumentAcceptance> AcceptManualDocumentAsync<T>(
         AccountingUserIdentity user, Guid documentId, string documentType,
         DateTimeOffset occurredAt, T payload,
         Func<SqlConnection, SqlTransaction, CancellationToken, Task> validate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? draftVersion = null)
     {
         var json = JsonSerializer.Serialize(payload);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
@@ -93,6 +96,24 @@ public sealed class SqlAccountingStore(
             IsolationLevel.Serializable, cancellationToken);
         try
         {
+            // Lock the editable aggregate before accepting its immutable source.
+            // Legacy direct acceptance cannot bypass a saved draft's version or permission.
+            await using (var draft = new SqlCommand("""
+                SELECT TenantId,BusinessId,DocumentType,RowVersion,SentAt
+                FROM accounting.VoucherDrafts WITH(UPDLOCK,HOLDLOCK) WHERE DocumentId=@Id;
+                """, connection, transaction))
+            {
+                draft.Parameters.AddWithValue("@Id", documentId);
+                await using var reader = await draft.ExecuteReaderAsync(cancellationToken);
+                var exists = await reader.ReadAsync(cancellationToken);
+                if (exists && (draftVersion is null || reader.GetGuid(0) != user.TenantId ||
+                    reader.GetGuid(1) != user.BusinessId || reader.GetString(2) != documentType ||
+                    (reader.IsDBNull(4) && Convert.ToBase64String((byte[])reader[3]) != draftVersion)))
+                    throw new AccountingConflictException("El comprobante cambió o debe contabilizarse desde su captura guardada.");
+                if (!exists && draftVersion is not null)
+                    throw new AccountingConflictException("El comprobante no existe en esta sede.");
+            }
+
             await using (var replay = new SqlCommand("""
                 SELECT s.PayloadHash,a.Status
                 FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)
@@ -147,7 +168,10 @@ public sealed class SqlAccountingStore(
                    SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
                 VALUES(@AccountingJobId,@TenantId,@BusinessId,@DocumentId,
                    @DocumentType,@Hash,@OccurredAt,N'Pending',0,@Now);
+                UPDATE accounting.VoucherDrafts SET SentAt=@Now,SentBy=@UserId,UpdatedAt=@Now,UpdatedBy=@UserId
+                WHERE DocumentId=@DocumentId AND TenantId=@TenantId AND BusinessId=@BusinessId AND SentAt IS NULL;
                 """, connection, transaction);
+            insert.Parameters.AddWithValue("@UserId", user.UserId);
             insert.Parameters.AddWithValue("@AccountingJobId", ids.NewId());
             insert.Parameters.AddWithValue("@TenantId", user.TenantId);
             insert.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -157,7 +181,7 @@ public sealed class SqlAccountingStore(
             insert.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = hash;
             insert.Parameters.AddWithValue("@OccurredAt", occurredAt);
             insert.Parameters.AddWithValue("@Now", now);
-            if (await insert.ExecuteNonQueryAsync(cancellationToken) != 2)
+            if (await insert.ExecuteNonQueryAsync(cancellationToken) != (draftVersion is null ? 2 : 3))
                 throw new DBConcurrencyException(
                     "The manual accounting document was not accepted atomically.");
             await transaction.CommitAsync(cancellationToken);
@@ -204,22 +228,54 @@ public sealed class SqlAccountingStore(
                 "A manual document references an invalid cost center.");
     }
 
+    public async Task<AccountingAccountOptionPage> AccountOptionsAsync(
+        AccountingUserIdentity user, AccountingAccountOptionQuery query, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion
+            INTO #AccountOptions FROM dbo.AccountingAccounts
+            WHERE TenantId=@TenantId AND (@IncludeInactive=1 OR IsActive=1)
+              AND (@IncludeStructural=1 OR AllowsPosting=1)
+              AND (@ExpenseOnly=0 OR AccountType=N'Expense')
+              AND (@AccountId IS NULL OR AccountId=@AccountId)
+              AND (@Search IS NULL OR Code LIKE N'%'+@Search+N'%' OR Name LIKE N'%'+@Search+N'%');
+            SELECT * FROM #AccountOptions ORDER BY Code,AccountId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT COUNT(*) FROM #AccountOptions;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@ExpenseOnly", query.ExpenseOnly);
+        command.Parameters.AddWithValue("@IncludeInactive", query.IncludeInactive);
+        command.Parameters.AddWithValue("@IncludeStructural", query.IncludeStructural);
+        command.Parameters.AddWithValue("@AccountId", (object?)query.AccountId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Offset", (query.Page - 1) * query.PageSize);
+        command.Parameters.AddWithValue("@PageSize", query.PageSize);
+        var items = new List<AccountingAccountView>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            items.Add(ReadAccount(reader));
+        await reader.NextResultAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        return new(items, query.Page, query.PageSize, reader.GetInt32(0));
+    }
+
     public async Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(
         AccountingUserIdentity user, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive
+            SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion
             FROM dbo.AccountingAccounts WHERE TenantId=@TenantId ORDER BY Code;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         var values = new List<AccountingAccountView>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            values.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), reader.GetBoolean(4), reader.GetBoolean(5), reader.GetBoolean(6),
-                PucLevel(reader.GetString(1))));
+            values.Add(ReadAccount(reader));
         return values;
     }
 
@@ -421,6 +477,8 @@ public sealed class SqlAccountingStore(
         const string sql = """
             INSERT dbo.AccountingAccounts
             (AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
+            OUTPUT inserted.AccountId,inserted.Code,inserted.Name,inserted.AccountType,
+                inserted.AllowsPosting,inserted.RequiresParty,inserted.IsActive,inserted.RowVersion
             VALUES(@AccountId,@TenantId,@Code,@Name,@AccountType,@AllowsPosting,@RequiresParty,1,@Now);
             """;
         await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
@@ -429,10 +487,70 @@ public sealed class SqlAccountingStore(
         command.Parameters.AddWithValue("@Code", request.Code); command.Parameters.AddWithValue("@Name", request.Name);
         command.Parameters.AddWithValue("@AccountType", request.AccountType); command.Parameters.AddWithValue("@AllowsPosting", request.AllowsPosting);
         command.Parameters.AddWithValue("@RequiresParty", request.RequiresParty); command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        await ExecuteMutationAsync(command, cancellationToken, "An account with the same ID or code already exists.");
-        return new(request.AccountId, request.Code, request.Name, request.AccountType,
-            request.AllowsPosting, request.RequiresParty, true, PucLevel(request.Code));
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            return ReadAccount(reader);
+        }
+        catch (SqlException exception) when (IsConflict(exception))
+        {
+            throw new AccountingConflictException("Ya existe una cuenta con ese identificador o código.");
+        }
     }
+
+    public async Task<AccountingAccountView> UpdateAccountAsync(
+        AccountingUserIdentity user, Guid accountId, UpdateAccountingAccountRequest request,
+        CancellationToken cancellationToken)
+    {
+        var version = RequiredRecordVersion(request.RowVersion);
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await using var command = new SqlCommand("""
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WITH(UPDLOCK,HOLDLOCK)
+                  WHERE AccountId=@AccountId AND TenantId=@TenantId
+                    AND (RowVersion=@Version OR (Name COLLATE Latin1_General_100_BIN2=@Name AND RequiresParty=@RequiresParty)))
+                  THROW 51415,N'La cuenta cambió o no está disponible. Actualiza la lista antes de guardar.',1;
+                IF @RequiresParty=1 AND EXISTS(SELECT 1 FROM accounting.BankAccounts
+                  WHERE TenantId=@TenantId AND AccountingAccountId=@AccountId AND IsActive=1)
+                  THROW 51411,N'Una cuenta vinculada a un banco activo no puede exigir tercero.',1;
+                UPDATE dbo.AccountingAccounts SET Name=@Name,RequiresParty=@RequiresParty
+                WHERE AccountId=@AccountId AND TenantId=@TenantId AND RowVersion=@Version
+                  AND (Name COLLATE Latin1_General_100_BIN2<>@Name OR RequiresParty<>@RequiresParty);
+                SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion
+                FROM dbo.AccountingAccounts WHERE AccountId=@AccountId AND TenantId=@TenantId;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            command.Parameters.AddWithValue("@AccountId", accountId);
+            command.Parameters.Add("@Version", SqlDbType.Binary, 8).Value = version;
+            command.Parameters.AddWithValue("@Name", request.Name);
+            command.Parameters.AddWithValue("@RequiresParty", request.RequiresParty);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new AccountingConflictException("La cuenta cambió. Actualiza la lista antes de guardar.");
+            var result = ReadAccount(reader);
+            await reader.DisposeAsync();
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch (SqlException exception) when (exception.Number == 51415)
+        {
+            throw new AccountingConflictException(exception.Message);
+        }
+        catch (SqlException exception) when (exception.Number == 51411)
+        {
+            throw new AccountingValidationException(exception.Message);
+        }
+    }
+
+    private static AccountingAccountView ReadAccount(SqlDataReader reader) => new(
+        reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+        reader.GetBoolean(4), reader.GetBoolean(5), reader.GetBoolean(6),
+        PucLevel(reader.GetString(1)), Convert.ToBase64String((byte[])reader[7]));
 
     public async Task<AccountingCostCenterView> CreateCostCenterAsync(
         AccountingUserIdentity user, CreateCostCenterRequest request,
@@ -474,7 +592,7 @@ public sealed class SqlAccountingStore(
         AccountingUserIdentity user, Guid costCenterId, UpdateCostCenterRequest request,
         CancellationToken cancellationToken)
     {
-        var version = RequiredCostCenterVersion(request.RowVersion);
+        var version = RequiredRecordVersion(request.RowVersion);
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -566,7 +684,7 @@ public sealed class SqlAccountingStore(
         }
     }
 
-    private static byte[] RequiredCostCenterVersion(string? value)
+    private static byte[] RequiredRecordVersion(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
             throw new AccountingConflictException("Actualiza la lista para obtener la versión vigente.");
@@ -1110,74 +1228,14 @@ public sealed class SqlAccountingStore(
     public async Task<AccountingDocumentPage> ListDocumentsAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
         string? status, string? search, int page, int pageSize,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? partyId = null)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            WITH posting AS (
-              SELECT SourceDocumentId,SourceDocumentType,OccurredAt,Status,AttemptCount,
-                     LastErrorCode,LastErrorMessage,TenantId,BusinessId
-              FROM dbo.AccountingPostingJobs
-              UNION ALL
-              SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
-                     N'MissingAccountingJob',0,N'MissingAccountingJob',
-                     N'The immutable accounting source has no durable posting job.',
-                     source.TenantId,source.BusinessId
-              FROM dbo.AccountingSourceDocuments source
-              WHERE NOT EXISTS(
-                  SELECT 1 FROM dbo.AccountingPostingJobs job
-                  WHERE job.SourceDocumentId=source.SourceDocumentId
-                    AND job.SourceDocumentType=source.SourceDocumentType
-                    AND job.BusinessId=source.BusinessId
-                    AND job.TenantId=source.TenantId)
-            )
-            SELECT job.SourceDocumentId,job.SourceDocumentType,sourceNumber.DocumentNumber,
-                   job.OccurredAt,job.Status,job.AttemptCount,job.LastErrorCode,
-                   job.LastErrorMessage,entry.EntryId,entry.EntryNumber,
-                   entry.DebitTotal,entry.CreditTotal,entry.PostedAt,
-                   fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,
-                   fiscal.UniqueCode,fiscal.FiscalStatus,COUNT(*) OVER()
-            FROM posting job
-            LEFT JOIN dbo.AccountingEntries entry
-              ON entry.SourceDocumentId=job.SourceDocumentId
-             AND entry.SourceDocumentType=job.SourceDocumentType
-            LEFT JOIN dbo.FiscalDocuments fiscal
-              ON fiscal.DocumentId=job.SourceDocumentId
-             AND fiscal.BusinessId=job.BusinessId
-            OUTER APPLY(SELECT TOP(1) candidate.DocumentNumber FROM (
-              SELECT sale.DocumentNumber FROM dbo.SalesDocuments sale
-               WHERE sale.DocumentId=job.SourceDocumentId
-              UNION ALL SELECT saleReturn.DocumentNumber FROM dbo.SalesReturns saleReturn
-               WHERE saleReturn.ReturnId=job.SourceDocumentId
-              UNION ALL SELECT debitNote.DocumentNumber FROM dbo.SalesDebitNotes debitNote
-               WHERE debitNote.DebitNoteId=job.SourceDocumentId
-              UNION ALL SELECT receipt.DocumentNumber FROM dbo.GoodsReceipts receipt
-               WHERE receipt.GoodsReceiptId=job.SourceDocumentId
-              UNION ALL SELECT purchaseReturn.DocumentNumber FROM dbo.PurchaseReturns purchaseReturn
-               WHERE purchaseReturn.PurchaseReturnId=job.SourceDocumentId
-              UNION ALL SELECT expense.DocumentNumber FROM dbo.Expenses expense
-               WHERE expense.ExpenseId=job.SourceDocumentId
-              UNION ALL SELECT supplierPayment.DocumentNumber FROM dbo.SupplierPayments supplierPayment
-               WHERE supplierPayment.PaymentId=job.SourceDocumentId
-              UNION ALL SELECT customerPayment.DocumentNumber FROM dbo.CustomerPayments customerPayment
-               WHERE customerPayment.PaymentId=job.SourceDocumentId
-              UNION ALL SELECT cashMovement.DocumentNumber FROM dbo.CashMovementDocuments cashMovement
-               WHERE cashMovement.DocumentId=job.SourceDocumentId
-              UNION ALL SELECT operation.DocumentNumber FROM dbo.InventoryOperations operation
-               WHERE operation.InventoryOperationId=job.SourceDocumentId
-              UNION ALL SELECT cost.DocumentNumber FROM purchasing.GoodsReceiptCostDocuments cost
-               WHERE cost.CostDocumentId=job.SourceDocumentId
-            ) candidate) sourceNumber
-            WHERE job.TenantId=@TenantId AND job.BusinessId=@BusinessId
-              AND CAST(job.OccurredAt AS date) BETWEEN @From AND @To
-              AND (@DocumentType IS NULL OR job.SourceDocumentType=@DocumentType)
-              AND (@Status IS NULL OR job.Status=@Status)
-              AND (@Search IS NULL OR sourceNumber.DocumentNumber LIKE N'%'+@Search+N'%'
-                   OR entry.EntryNumber LIKE N'%'+@Search+N'%'
-                   OR CONVERT(nvarchar(36),job.SourceDocumentId) LIKE N'%'+@Search+N'%')
-            ORDER BY job.OccurredAt DESC,job.SourceDocumentId
+        await using var command = new SqlCommand(TraceabilityDocumentsSql + """
+            SELECT * FROM #Documents ORDER BY OccurredAt DESC,SourceDocumentId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT COUNT(*) FROM #Documents;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -1186,6 +1244,7 @@ public sealed class SqlAccountingStore(
         command.Parameters.AddWithValue("@DocumentType", (object?)documentType ?? DBNull.Value);
         command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);
         command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PartyId", (object?)partyId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
         command.Parameters.AddWithValue("@PageSize", pageSize);
         var rows = new List<AccountingDocumentRow>();
@@ -1193,7 +1252,6 @@ public sealed class SqlAccountingStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            total = reader.GetInt32(18);
             rows.Add(new(reader.GetGuid(0), reader.GetString(1),
                 reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetDateTimeOffset(3),
                 reader.GetString(4), reader.GetInt32(5),
@@ -1208,86 +1266,43 @@ public sealed class SqlAccountingStore(
                 reader.IsDBNull(14) ? null : reader.GetString(14),
                 reader.IsDBNull(15) ? null : reader.GetString(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16),
-                reader.IsDBNull(17) ? null : reader.GetString(17)));
+                reader.IsDBNull(17) ? null : reader.GetString(17), reader.GetBoolean(18)));
         }
+        await reader.NextResultAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        total = reader.GetInt32(0);
         return new(rows, page, pageSize, total);
     }
 
     public async Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
         string? status, string? search, int page, int pageSize,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? partyId = null)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            WITH posting AS (
-              SELECT SourceDocumentId,SourceDocumentType,OccurredAt,Status,
-                     LastErrorMessage,TenantId,BusinessId
-              FROM dbo.AccountingPostingJobs
+        await using var command = new SqlCommand(TraceabilityDocumentsSql + """
+            SELECT d.SourceDocumentId,d.SourceDocumentType,d.DocumentNumber,d.OccurredAt,d.Status,d.LastErrorMessage,
+              d.EntryNumber,d.PostedAt,d.FiscalDocumentType,d.FiscalNumber,d.FiscalStatus,
+              line.LineNumber,account.Code,account.Name,line.PartyIdentification,line.PartyName,
+              line.CostCenterCode,line.CostCenterName,line.Description,line.Debit,line.Credit
+            INTO #TraceabilityLines
+            FROM #Documents d
+            OUTER APPLY(
+              SELECT l.LineNumber,l.AccountId,l.PartyIdentificationSnapshot PartyIdentification,l.PartyNameSnapshot PartyName,
+                l.CostCenterCodeSnapshot CostCenterCode,l.CostCenterNameSnapshot CostCenterName,l.Description,l.Debit,l.Credit
+              FROM dbo.AccountingEntryLines l WHERE l.EntryId=d.EntryId
               UNION ALL
-              SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
-                     N'MissingAccountingJob',N'The immutable accounting source has no durable posting job.',
-                     source.TenantId,source.BusinessId
-              FROM dbo.AccountingSourceDocuments source
-              WHERE NOT EXISTS(
-                  SELECT 1 FROM dbo.AccountingPostingJobs job
-                  WHERE job.SourceDocumentId=source.SourceDocumentId
-                    AND job.SourceDocumentType=source.SourceDocumentType
-                    AND job.BusinessId=source.BusinessId
-                    AND job.TenantId=source.TenantId)
-            )
-            SELECT job.SourceDocumentId,job.SourceDocumentType,sourceNumber.DocumentNumber,
-                   job.OccurredAt,job.Status,job.LastErrorMessage,
-                   entry.EntryNumber,entry.PostedAt,
-                   fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.FiscalStatus,
-                   line.LineNumber,account.Code,account.Name,
-                   line.PartyIdentificationSnapshot,line.PartyNameSnapshot,
-                   line.CostCenterCodeSnapshot,line.CostCenterNameSnapshot,line.Description,
-                   line.Debit,line.Credit,COUNT_BIG(1) OVER()
-            FROM posting job
-            LEFT JOIN dbo.AccountingEntries entry
-              ON entry.SourceDocumentId=job.SourceDocumentId
-             AND entry.SourceDocumentType=job.SourceDocumentType
-             AND entry.TenantId=job.TenantId AND entry.BusinessId=job.BusinessId
-            LEFT JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
-            LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId
-            LEFT JOIN dbo.FiscalDocuments fiscal
-              ON fiscal.DocumentId=job.SourceDocumentId
-             AND fiscal.BusinessId=job.BusinessId
-            OUTER APPLY(SELECT TOP(1) candidate.DocumentNumber FROM (
-              SELECT sale.DocumentNumber FROM dbo.SalesDocuments sale
-               WHERE sale.DocumentId=job.SourceDocumentId
-              UNION ALL SELECT saleReturn.DocumentNumber FROM dbo.SalesReturns saleReturn
-               WHERE saleReturn.ReturnId=job.SourceDocumentId
-              UNION ALL SELECT debitNote.DocumentNumber FROM dbo.SalesDebitNotes debitNote
-               WHERE debitNote.DebitNoteId=job.SourceDocumentId
-              UNION ALL SELECT receipt.DocumentNumber FROM dbo.GoodsReceipts receipt
-               WHERE receipt.GoodsReceiptId=job.SourceDocumentId
-              UNION ALL SELECT purchaseReturn.DocumentNumber FROM dbo.PurchaseReturns purchaseReturn
-               WHERE purchaseReturn.PurchaseReturnId=job.SourceDocumentId
-              UNION ALL SELECT expense.DocumentNumber FROM dbo.Expenses expense
-               WHERE expense.ExpenseId=job.SourceDocumentId
-              UNION ALL SELECT supplierPayment.DocumentNumber FROM dbo.SupplierPayments supplierPayment
-               WHERE supplierPayment.PaymentId=job.SourceDocumentId
-              UNION ALL SELECT customerPayment.DocumentNumber FROM dbo.CustomerPayments customerPayment
-               WHERE customerPayment.PaymentId=job.SourceDocumentId
-              UNION ALL SELECT cashMovement.DocumentNumber FROM dbo.CashMovementDocuments cashMovement
-               WHERE cashMovement.DocumentId=job.SourceDocumentId
-              UNION ALL SELECT operation.DocumentNumber FROM dbo.InventoryOperations operation
-               WHERE operation.InventoryOperationId=job.SourceDocumentId
-              UNION ALL SELECT cost.DocumentNumber FROM purchasing.GoodsReceiptCostDocuments cost
-               WHERE cost.CostDocumentId=job.SourceDocumentId
-            ) candidate) sourceNumber
-            WHERE job.TenantId=@TenantId AND job.BusinessId=@BusinessId
-              AND CAST(job.OccurredAt AS date) BETWEEN @From AND @To
-              AND (@DocumentType IS NULL OR job.SourceDocumentType=@DocumentType)
-              AND (@Status IS NULL OR job.Status=@Status)
-              AND (@Search IS NULL OR sourceNumber.DocumentNumber LIKE N'%'+@Search+N'%'
-                   OR entry.EntryNumber LIKE N'%'+@Search+N'%'
-                   OR CONVERT(nvarchar(36),job.SourceDocumentId) LIKE N'%'+@Search+N'%')
-            ORDER BY job.OccurredAt DESC,job.SourceDocumentId,line.LineNumber
+              SELECT l.LineNumber,l.AccountId,p.Identification,p.DisplayName,c.Code,c.Name,l.Description,l.Debit,l.Credit
+              FROM accounting.VoucherDraftLines l
+              LEFT JOIN dbo.Parties p ON p.PartyId=l.PartyId AND p.TenantId=@TenantId
+              LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.BusinessId=@BusinessId
+              WHERE l.DocumentId=d.SourceDocumentId AND d.EntryId IS NULL
+            ) line
+            LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId;
+            SELECT * FROM #TraceabilityLines ORDER BY OccurredAt DESC,SourceDocumentId,LineNumber
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT COUNT(*) FROM #TraceabilityLines;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -1296,6 +1311,7 @@ public sealed class SqlAccountingStore(
         command.Parameters.AddWithValue("@DocumentType", (object?)documentType ?? DBNull.Value);
         command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);
         command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PartyId", (object?)partyId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
         command.Parameters.AddWithValue("@PageSize", pageSize);
         var rows = new List<FinancialTraceabilityLineRow>();
@@ -1303,7 +1319,6 @@ public sealed class SqlAccountingStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            total = checked((int)reader.GetInt64(21));
             rows.Add(new(reader.GetGuid(0), reader.GetString(1),
                 reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetDateTimeOffset(3),
                 reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
@@ -1323,6 +1338,9 @@ public sealed class SqlAccountingStore(
                 reader.IsDBNull(19) ? null : reader.GetDecimal(19),
                 reader.IsDBNull(20) ? null : reader.GetDecimal(20)));
         }
+        await reader.NextResultAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        total = reader.GetInt32(0);
         return new(rows, page, pageSize, total);
     }
 
@@ -1964,7 +1982,7 @@ public sealed class SqlAccountingStore(
                 WHERE assignment.AssignmentId=@Existing;
                 """, connection, transaction);
             command.Parameters.Add("@Version", SqlDbType.Timestamp).Value =
-                request.RowVersion is null ? DBNull.Value : RequiredCostCenterVersion(request.RowVersion);
+                request.RowVersion is null ? DBNull.Value : RequiredRecordVersion(request.RowVersion);
             command.Parameters.AddWithValue("@AssignmentId", request.AssignmentId);
             command.Parameters.AddWithValue("@TenantId", user.TenantId);
             command.Parameters.AddWithValue("@BusinessId", user.BusinessId);

@@ -4,15 +4,19 @@ using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Expenses;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace Auraly.Application.Expenses;
 
 public interface IExpenseStore
 {
+    Task<ExpenseResolution> ResolveAsync(ExpenseUserIdentity user, ConfirmExpenseRequest request, CancellationToken ct);
     Task<ExpenseAcceptance?> FindReplayAsync(ExpenseUserIdentity user, string idempotencyKey,
         ConfirmExpenseRequest request, ExpenseAmounts amounts, CancellationToken ct);
     Task<ExpenseConceptView?> GetConceptAsync(ExpenseUserIdentity user, Guid conceptId, CancellationToken ct);
-    Task<ExpenseWorkspaceOptions> GetOptionsAsync(ExpenseUserIdentity user, CancellationToken ct);
+    Task<ExpenseWorkspaceOptions> GetOptionsAsync(ExpenseUserIdentity user, CancellationToken ct, bool includeDirectories = true);
     Task<IReadOnlyList<ExpenseConceptView>> ListConceptsAsync(ExpenseUserIdentity user, bool includeInactive, CancellationToken ct);
     Task<ExpenseConceptView> SaveConceptAsync(ExpenseUserIdentity user, SaveExpenseConceptRequest request, CancellationToken ct);
     Task<ExpensePage> ListAsync(ExpenseUserIdentity user, int page, int pageSize, string? search, Guid? conceptId,
@@ -21,14 +25,15 @@ public interface IExpenseStore
     Task<ExpenseCancellationAcceptance> CancelAsync(ExpenseUserIdentity user, Guid expenseId,
         CancelExpenseRequest request, CancellationToken ct);
     Task<ExpenseAcceptance> AcceptAsync(ExpenseUserIdentity user, string idempotencyKey,
-        ConfirmExpenseRequest request, ExpenseAmounts amounts, WithholdingCalculationSnapshot withholding, CancellationToken ct);
+        ConfirmExpenseRequest request, ExpenseAmounts amounts, WithholdingCalculationSnapshot withholding, CancellationToken ct,
+        ExpenseResolution? resolution = null);
 }
 
 public sealed class ExpenseService(IExpenseStore store, WithholdingService withholding,
     IAccountingProcessingSignalPublisher signals, Auraly.Application.Fiscal.FiscalProcessingCoordinator fiscal)
 {
-    public Task<ExpenseWorkspaceOptions> GetOptionsAsync(ExpenseUserIdentity user, CancellationToken ct = default)
-    { Demand(user, ExpensePermissionCodes.Read); return store.GetOptionsAsync(user, ct); }
+    public Task<ExpenseWorkspaceOptions> GetOptionsAsync(ExpenseUserIdentity user, CancellationToken ct = default, bool includeDirectories = true)
+    { Demand(user, ExpensePermissionCodes.Read); return store.GetOptionsAsync(user, ct, includeDirectories); }
 
     public Task<IReadOnlyList<ExpenseConceptView>> ListConceptsAsync(ExpenseUserIdentity user, bool includeInactive,
         CancellationToken ct = default)
@@ -94,7 +99,8 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
     {
         Demand(user, ExpensePermissionCodes.Create);
         if (request.BusinessId != user.BusinessId) throw new ExpenseForbiddenException("El gasto pertenece a otra empresa.");
-        if (request.ExpenseId == Guid.Empty || request.SupplierId == Guid.Empty || request.ConceptId == Guid.Empty)
+        if (request.ExpenseId == Guid.Empty || request.SupplierId == Guid.Empty ||
+            (request.Lines is null && (request.ConceptId is null || request.ConceptId == Guid.Empty)))
             throw new ExpenseValidationException("Gasto, proveedor y concepto son obligatorios.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
             throw new ExpenseValidationException("Idempotency-Key es obligatorio y admite máximo 160 caracteres.");
@@ -103,10 +109,12 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
         if (request.PurchaseEvidenceType is not (PurchaseEvidenceTypes.SupplierElectronicInvoice or
             PurchaseEvidenceTypes.BuyerElectronicSupportDocument or PurchaseEvidenceTypes.InternalReceiptVoucher))
             throw new ExpenseValidationException("El tipo de documento del gasto no es válido.");
-        var currency = request.CurrencyCode.Trim().ToUpperInvariant();
+        if (request.Lines is not null) ValidateLines(request);
+        var currency = Text(request.CurrencyCode, 3, "Moneda").ToUpperInvariant();
         if (currency != "COP") throw new ExpenseValidationException("Por ahora los gastos se registran en COP.");
         ExpenseAmounts amounts;
-        try { amounts = ExpenseAmounts.Create(request.TaxExclusiveAmount, request.VatAmount); }
+        try { amounts = ExpenseAmounts.Create(request.Lines?.Sum(line => line.TaxExclusiveAmount) ?? request.TaxExclusiveAmount,
+            request.Lines is null ? request.VatAmount : 0); }
         catch (ExpenseRuleException error) { throw new ExpenseValidationException(error.Message); }
         var supplierDocumentNumber = Optional(request.SupplierDocumentNumber, 80);
         if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.SupplierElectronicInvoice &&
@@ -118,14 +126,31 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
             WithholdingJurisdictionCode = Optional(request.WithholdingJurisdictionCode, 16) };
         var replay = await store.FindReplayAsync(user, idempotencyKey.Trim(), normalized, amounts, ct);
         if (replay is not null) return replay;
-        var concept = await store.GetConceptAsync(user, request.ConceptId, ct);
-        if (concept is null || !concept.IsActive)
-            throw new ExpenseValidationException("El concepto de gasto no está activo.");
-        var calculation = await withholding.CalculateAsync(user.TenantId, user.BusinessId,
-            new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
-                WithholdingRecognitionMoments.Accrual, request.SupplierId, concept.WithholdingConceptCode,
-                normalized.WithholdingJurisdictionCode, amounts.TaxExclusiveAmount, amounts.VatAmount, request.IssuedAt), ct);
-        var accepted = await store.AcceptAsync(user, idempotencyKey.Trim(), normalized, amounts, calculation, ct);
+        if (normalized.Lines is null && normalized.PurchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher && amounts.VatAmount > 0)
+            throw new ExpenseValidationException("Registra este comprobante interno por líneas y selecciona el IVA como mayor valor del gasto.");
+        ExpenseResolution? resolution = null;
+        WithholdingCalculationSnapshot calculation;
+        if (normalized.Lines is not null)
+        {
+            resolution = await store.ResolveAsync(user, normalized, ct);
+            var preview = await CalculatePreviewAsync(user, normalized, resolution, ct);
+            if (!preview.CanConfirm) throw new ExpenseValidationException(string.Join(" ", preview.Diagnostics));
+            if (!string.Equals(normalized.CalculationHash, preview.CalculationHash, StringComparison.Ordinal))
+                throw new ExpenseConflictException("El cálculo cambió o no ha sido revisado. Recalcula las retenciones y revisa el total antes de confirmar.");
+            calculation = preview.Withholding;
+            amounts = ExpenseAmounts.Create(resolution.Lines.Sum(l => l.TaxExclusiveAmount), resolution.Lines.Sum(l => l.VatAmount));
+        }
+        else
+        {
+            var concept = await store.GetConceptAsync(user, request.ConceptId!.Value, ct);
+            if (concept is null || !concept.IsActive)
+                throw new ExpenseValidationException("El concepto de gasto no está activo.");
+            calculation = await withholding.CalculateAsync(user.TenantId, user.BusinessId,
+                new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
+                    WithholdingRecognitionMoments.Accrual, request.SupplierId, concept.WithholdingConceptCode,
+                    normalized.WithholdingJurisdictionCode, amounts.TaxExclusiveAmount, amounts.VatAmount, request.IssuedAt), ct);
+        }
+        var accepted = await store.AcceptAsync(user, idempotencyKey.Trim(), normalized, amounts, calculation, ct, resolution);
         if (!accepted.IdempotentReplay)
         {
             await signals.PublishAsync(new AccountingProcessingSignal(
@@ -135,6 +160,60 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
                 await fiscal.RequestGenerationAsync(user.BusinessId, accepted.ExpenseId, ct);
         }
         return accepted;
+    }
+
+    public async Task<ExpensePreview> PreviewAsync(ExpenseUserIdentity user, ConfirmExpenseRequest request,
+        CancellationToken ct = default)
+    {
+        Demand(user, ExpensePermissionCodes.Create);
+        if (request.BusinessId != user.BusinessId) throw new ExpenseForbiddenException("El gasto pertenece a otra empresa.");
+        if (request.SupplierId == Guid.Empty || request.IssuedAt == default || request.DueDate < request.IssuedAt)
+            throw new ExpenseValidationException("Selecciona un proveedor y fechas válidas.");
+        ValidateLines(request);
+        var resolved = await store.ResolveAsync(user, request, ct);
+        return await CalculatePreviewAsync(user, request, resolved, ct);
+    }
+
+    private async Task<ExpensePreview> CalculatePreviewAsync(ExpenseUserIdentity user,
+        ConfirmExpenseRequest request, ExpenseResolution resolved, CancellationToken ct)
+    {
+        var plan = await withholding.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId, [request.SupplierId], ct);
+        var hasProfile = plan.Profiles.ContainsKey(request.SupplierId);
+        (WithholdingCalculationSnapshot Calculation, IReadOnlyList<string> Diagnostics) result;
+        try
+        {
+            result = withholding.CalculateDocument(plan, resolved.Lines.Select(line =>
+                new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
+                    WithholdingRecognitionMoments.Accrual, request.SupplierId, line.WithholdingConceptCode,
+                    null, line.TaxExclusiveAmount, line.VatAmount, request.IssuedAt)).ToArray());
+        }
+        catch (Auraly.Commerce.Taxation.Domain.WithholdingRuleException error)
+        { throw new ExpenseValidationException($"Revisa la configuración de retenciones: {error.Message}"); }
+        IReadOnlyList<string> diagnostics = hasProfile ? result.Diagnostics :
+            ["Falta el perfil tributario del proveedor. En Terceros → Proveedores → Retenciones y perfil tributario, configura si aplica retención, sus responsabilidades y jurisdicción antes de confirmar."];
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new {
+            request.BusinessId, request.SupplierId, request.IssuedAt, request.DueDate, request.PurchaseEvidenceType,
+            resolved.Lines, result.Calculation, diagnostics, hasProfile }))));
+        return new(resolved.Lines, result.Calculation, hash, diagnostics, hasProfile);
+    }
+
+    private static void ValidateLines(ConfirmExpenseRequest request)
+    {
+        if (request.Lines is not { Count: >= 1 and <= 100 })
+            throw new ExpenseValidationException("El gasto debe tener entre 1 y 100 líneas.");
+        if (request.ConceptId is not null || request.CostCenterId is not null ||
+            request.WithholdingJurisdictionCode is not null)
+            throw new ExpenseValidationException("En un gasto por líneas, el concepto y centro se eligen en cada línea y la jurisdicción se toma del perfil tributario.");
+        foreach (var line in request.Lines)
+        {
+            if (line is null || line.ExpenseAccountId == Guid.Empty || line.TaxExclusiveAmount <= 0 ||
+                line.TaxExclusiveAmount > 999999999999m || line.TaxExclusiveAmount != decimal.Round(line.TaxExclusiveAmount, 4))
+                throw new ExpenseValidationException("Cada línea requiere una cuenta y una base positiva de máximo cuatro decimales.");
+            _ = Text(line.Description, 300, "Descripción de la línea");
+            if (line.TaxTreatment is not (PurchasingTaxTreatments.DeductibleInputVat or PurchasingTaxTreatments.CapitalizedCost))
+                throw new ExpenseValidationException("El tratamiento del IVA no es válido.");
+            _ = Optional(line.WithholdingConceptCode, 32);
+        }
     }
 
     private static void Demand(ExpenseUserIdentity user, string permission)

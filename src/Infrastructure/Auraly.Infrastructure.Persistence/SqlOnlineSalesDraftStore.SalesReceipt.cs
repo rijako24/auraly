@@ -112,8 +112,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         var number = AuralyDocumentNumberAssignment.Create(
             series.SeriesId, PosSaleDocumentTypes.Receipt, series.Prefix,
             series.SeriesCode, consecutive, series.Padding);
-        var customerIdentification = await ResolveCustomerIdentificationAsync(
-            connection, transaction, state.BusinessId, state.CustomerId, ct);
+        var customer = await ReadReceiptCustomerAsync(
+            connection, transaction, state.BusinessId, state.CustomerId, state.CustomerPartySiteId, ct);
         var lines = draft.Lines.Select((line, index) =>
         {
             var fiscal = Fiscalize(line);
@@ -145,10 +145,11 @@ public sealed partial class SqlOnlineSalesDraftStore
                 number.SeriesId, number.DocumentType, number.Prefix,
                 number.SeriesCode, number.Consecutive, number.Padding, number.FullNumber),
             new PosSaleCommercialSnapshotContract(
-                PosSaleDocumentTypes.Receipt, now, customerIdentification, taxes,
+                PosSaleDocumentTypes.Receipt, now, customer.Identification, taxes,
                 draft.UntaxedAmount, draft.TaxAmount,
                 draft.PayableAmount + roundingAdjustment, withholding,
-                roundingAdjustment),
+                roundingAdjustment, CustomerName: customer.Name,
+                CustomerAddress: customer.Address, CustomerPhone: customer.Phone),
             null,
             lines,
             payments,
@@ -300,5 +301,47 @@ public sealed partial class SqlOnlineSalesDraftStore
     private sealed record SalesReceiptSeries(
         Guid SeriesId, string Prefix, string SeriesCode, byte Padding,
         long RangeStart, long RangeEnd);
+    private static async Task<(string Identification, string Name, string? Address, string? Phone)> ReadReceiptCustomerAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        Guid? customerId,
+        Guid? partySiteId,
+        CancellationToken ct)
+    {
+        if (customerId is null)
+            return ("222222222222", "Consumidor final", null, null);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT NULLIF(p.Identification,N''),
+                   COALESCE(p.LegalName,p.DisplayName,
+                     NULLIF(LTRIM(RTRIM(CONCAT(p.FirstName,N' ',p.LastName))),N'')),
+                   site.AddressLine,phone.Value
+            FROM dbo.Customers c
+            JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            LEFT JOIN dbo.PartySites site ON site.PartyId=p.PartyId
+              AND site.PartySiteId=@PartySiteId AND site.IsActive=1
+            OUTER APPLY(
+              SELECT TOP(1) value.Value FROM dbo.PartyContacts value
+              WHERE value.PartyId=p.PartyId AND value.ContactType=N'Phone'
+                AND value.IsActive=1 ORDER BY value.IsPrimary DESC,value.CreatedAt) phone
+            WHERE c.CustomerId=@CustomerId AND c.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              AND c.IsActive=1 AND p.IsActive=1;
+            """;
+        command.Parameters.AddRange([
+            P("@CustomerId", customerId),
+            P("@BusinessId", businessId),
+            P("@PartySiteId", partySiteId)
+        ]);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            return ("222222222222", "Consumidor final", null, null);
+        return (reader.IsDBNull(0) ? "222222222222" : reader.GetString(0),
+            reader.IsDBNull(1) ? "Consumidor final" : reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3));
+    }
+
 }
 

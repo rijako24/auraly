@@ -133,7 +133,8 @@ public sealed record SalesReturnDocumentPayload(
     Guid? BankAccountId = null,
     string? SettlementReference = null,
     string? SettlementNotes = null,
-    IReadOnlyList<SalesReturnChargeSnapshot>? Charges = null);
+    IReadOnlyList<SalesReturnChargeSnapshot>? Charges = null,
+    int PrintTemplateVersion = 1);
 
 public sealed record SalesReturnAcceptance(
     Guid ReturnId,

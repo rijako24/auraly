@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { CalendarClock, Landmark } from "lucide-react";
+import { CalendarClock, Landmark, FilePenLine } from "lucide-react";
 import { usePayableDetail, usePayables } from "@/hooks/use-payables";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -19,6 +19,7 @@ import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
 import { useQueryClient } from "@tanstack/react-query";
 import { PortfolioLedgerTabs, type PortfolioLedgerTab, type PartyRow } from "@/components/payments/portfolio-ledger-tabs";
+import { PortfolioAdjustmentDialog } from "@/components/payments/portfolio-adjustment-dialog";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { partiesApi } from "@/services/api/parties";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -53,6 +54,8 @@ export default function PayablesPage() {
   const [supplierFilter, setSupplierFilter] = useState<PartyRoleSelection | null>(null);
   const [paymentParty, setPaymentParty] = useState<PartyRoleSelection | null>(null);
   const [selectedId, setSelectedId] = useState<string>();
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [adjustmentObligationId, setAdjustmentObligationId] = useState<string | null>(null);
   const [portfolioPaymentOpen,setPortfolioPaymentOpen]=useState(false);
   const [paymentTarget,setPaymentTarget]=useState<PayableDetail>();
 
@@ -132,7 +135,7 @@ export default function PayablesPage() {
       <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por pagar</h1>
         <p className="text-muted-foreground">Obligaciones de compras y gastos, con sus pagos aplicados.</p></div>
-        <div className="ml-auto flex flex-wrap justify-end gap-2">{canPay&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPortfolioPaymentOpen(true)}}><Landmark className="mr-2 h-4 w-4"/>Pagar proveedores</Button>}</div>
+        <div className="ml-auto flex flex-wrap justify-end gap-2">{permissions?.includes("accounting.manual.create")&&<Button variant="outline" onClick={()=>{setAdjustmentObligationId(null);setAdjustmentOpen(true)}}><FilePenLine className="mr-2 h-4 w-4"/>Ajuste de cartera</Button>}{canPay&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPortfolioPaymentOpen(true)}}><Landmark className="mr-2 h-4 w-4"/>Pagar proveedores</Button>}</div>
       </header>
 
     <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} filters={
@@ -202,14 +205,14 @@ export default function PayablesPage() {
                 <div className="space-y-2">
                   {detail.transactions.map((transaction) => (
                     <div key={transaction.transactionId} className="flex items-center justify-between rounded-lg border p-3 text-sm">
-                      <div><p className="font-medium">{transaction.type === "Opening" ? "Obligación creada" : "Pago aplicado"}</p><p className="text-xs text-muted-foreground">{formatDateTime(transaction.occurredAt)}</p></div>
-                      <span className={transaction.type === "Payment" ? "font-semibold text-emerald-700" : "font-semibold"}>{transaction.type === "Payment" ? "−" : "+"}{formatCurrency(transaction.amount, detail.currencyCode)}</span>
+                      <div><p className="font-medium">{transaction.type === "Opening" ? "Obligación creada" : transaction.type === "Payment" ? "Pago aplicado" : "Ajuste de saldo"}</p><p className="text-xs text-muted-foreground">{formatDateTime(transaction.occurredAt)}</p></div>
+                      <span className={transaction.type === "Payment" ? "font-semibold text-emerald-700" : "font-semibold"}>{transaction.type === "Payment" ? "−" : transaction.amount >= 0 ? "+" : ""}{formatCurrency(transaction.amount, detail.currencyCode)}</span>
                     </div>
                   ))}
                 </div>
               </section>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setSelectedId(undefined)}>Cerrar</Button>
+                <Button variant="outline" onClick={() => setSelectedId(undefined)}>Cerrar</Button>{permissions?.includes("accounting.manual.create") && <Button variant="outline" onClick={() => { setAdjustmentObligationId(detail.payableId); setSelectedId(undefined); setAdjustmentOpen(true); }}>Ajuste de cartera</Button>}
                 {canPay && detail.outstandingAmount > 0 && <Button onClick={openPayment}><Landmark className="mr-2 h-4 w-4" /> Registrar pago</Button>}
               </DialogFooter>
             </div>
@@ -217,6 +220,7 @@ export default function PayablesPage() {
         </DialogContent>
       </Dialog>
 
+      {businessId && <PortfolioAdjustmentDialog direction="Payable" businessId={businessId} open={adjustmentOpen} obligationId={adjustmentObligationId} onClose={() => setAdjustmentOpen(false)} />}
       <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null)}}} onCompleted={()=>{for(const key of ["payables","payable-suppliers","payable-payments","payable"]){void queryClient.invalidateQueries({queryKey:[key,businessId]});}}} initialInvoice={paymentTarget?{id:paymentTarget.payableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
     </div>
   );

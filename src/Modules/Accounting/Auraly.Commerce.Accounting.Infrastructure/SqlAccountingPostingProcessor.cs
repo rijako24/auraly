@@ -1099,7 +1099,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             source, expense.GrossAmount, cancellationToken);
         return FinancialFactsResult.Ready(FinancialFacts.Expense(expense.DocumentNumber, party,
             expense.TaxExclusiveAmount, expense.VatAmount, expense.GrossAmount,
-            settlements, expense.ExpenseAccountId));
+            settlements, expense.ExpenseAccountId, expense.Lines));
     }
 
     private static async Task<FinancialFactsResult> LoadExpenseCancellationFactsAsync(
@@ -1141,11 +1141,13 @@ public sealed partial class SqlAccountingPostingProcessor(
         if (originalLines.Sum(line => line.Debit) != original.GrossAmount ||
             originalLines.Sum(line => line.Credit) != original.GrossAmount ||
             originalLines.Count == 0 || originalLines[0].AccountId != original.ExpenseAccountId ||
-            originalLines[0].Debit != original.TaxExclusiveAmount)
+            (original.Lines is null && originalLines[0].Debit != original.TaxExclusiveAmount))
             throw new InvalidOperationException("The original expense journal does not reconcile with the cancellation.");
-        var payableLineIndex = original.VatAmount > 0 ? 2 : 1;
+        // The immutable journal, not today's mappings, owns the reversal. Expense
+        // debits precede settlements; the first credit is the net payable.
+        var payableLineIndex = originalLines.FindIndex(line => line.Credit > 0);
         if (original.Withholding.NetAmount > 0 &&
-            (originalLines.Count <= payableLineIndex ||
+            (payableLineIndex < 0 || originalLines.Count <= payableLineIndex ||
              originalLines[payableLineIndex].Credit != original.Withholding.NetAmount ||
              originalLines[payableLineIndex].Debit != 0))
             throw new InvalidOperationException("The original expense payable line is missing.");
@@ -1751,7 +1753,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         string RevenueCategory = AccountingCategories.SalesRevenue,
         decimal RoundingAdjustment = 0m,
         IReadOnlyList<ManualLineSpec>? AdditionalDirectLines = null,
-        decimal PurchaseInventoryCostAdjustment = 0m)
+        decimal PurchaseInventoryCostAdjustment = 0m,
+        IReadOnlyList<Auraly.Contracts.Expenses.ExpenseLineSnapshot>? ExpenseLines = null)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -1763,6 +1766,12 @@ public sealed partial class SqlAccountingPostingProcessor(
                     return DirectCategoryLines.Select(line => line.Category)
                         .ToHashSet(StringComparer.Ordinal);
                 var values = new HashSet<string>(Settlements.Select(item => item.Category), StringComparer.Ordinal);
+                if (ExpenseLines is not null)
+                {
+                    if (ExpenseLines.Any(line => line.VatAmount > 0 && line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat))
+                        values.Add(AccountingCategories.InputVat);
+                    return values;
+                }
                 if (IsCashMovement)
                 {
                     values.Add(AccountingCategories.Cash);
@@ -1801,6 +1810,21 @@ public sealed partial class SqlAccountingPostingProcessor(
         }
         public IEnumerable<JournalLine> BuildLines(IReadOnlyDictionary<string, Guid> accounts, Guid? costCenter)
         {
+            if (ExpenseLines is not null)
+            {
+                foreach (var line in ExpenseLines)
+                {
+                    var deductible = line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat;
+                    yield return new(line.ExpenseAccountId, line.TaxExclusiveAmount + (deductible ? 0 : line.VatAmount),
+                        0, PartyId, line.CostCenterId ?? costCenter, line.Description);
+                    if (deductible && line.VatAmount > 0)
+                        yield return new(accounts[AccountingCategories.InputVat], line.VatAmount, 0,
+                            PartyId, line.CostCenterId ?? costCenter, line.Description);
+                }
+                foreach (var settlement in Settlements)
+                    yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
+                yield break;
+            }
             if (DirectLines is not null)
             {
                 foreach (var line in DirectLines)
@@ -1930,8 +1954,9 @@ public sealed partial class SqlAccountingPostingProcessor(
                 false, false, false, false, DirectCategoryLines: lines);
         public static FinancialFacts Expense(string number, Guid? party, decimal untaxed, decimal vat,
             decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements,
-            Guid accountId) => new($"Gasto {number}", party, untaxed, vat,
-                total, 0, settlements, false, true, false, false, false, false, accountId);
+            Guid accountId, IReadOnlyList<Auraly.Contracts.Expenses.ExpenseLineSnapshot>? lines = null) =>
+                new($"Gasto {number}", party, untaxed, vat,
+                    total, 0, settlements, false, true, false, false, false, false, accountId, ExpenseLines: lines);
         public static FinancialFacts ExpenseCancellation(string number, Guid party,
             IReadOnlyList<ManualLineSpec> lines) =>
             new($"Anulación gasto {number}", party, 0, 0, 0, 0,

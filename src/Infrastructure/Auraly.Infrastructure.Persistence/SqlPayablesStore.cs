@@ -138,7 +138,11 @@ public sealed class SqlPayablesStore(
             AND (@ConceptId IS NULL OR EXISTS (
                 SELECT 1 FROM dbo.Expenses expense
                 WHERE p.SourceDocumentType=N'Expense' AND expense.ExpenseId=p.SourceDocumentId
-                  AND expense.BusinessId=p.BusinessId AND expense.ExpenseConceptId=@ConceptId))
+                  AND expense.BusinessId=p.BusinessId AND (expense.ExpenseConceptId=@ConceptId OR EXISTS(
+                    SELECT 1 FROM dbo.AccountingSourceDocuments source
+                    CROSS APPLY OPENJSON(source.PayloadJson,'$.lines') WITH(ConceptId uniqueidentifier '$.conceptId') line
+                    WHERE source.SourceDocumentId=expense.ExpenseId AND source.SourceDocumentType=N'Expense'
+                      AND source.BusinessId=expense.BusinessId AND line.ConceptId=@ConceptId))))
             AND (@Status IS NULL OR p.Status=@Status)
             AND (@From IS NULL OR p.CreatedAt>=@From)
             AND (@To IS NULL OR p.CreatedAt<@To)
@@ -585,7 +589,11 @@ public sealed class SqlPayablesStore(
                 JOIN dbo.SupplierPayments payment WITH(UPDLOCK,HOLDLOCK) ON payment.PaymentId=a.PaymentId
                 WHERE a.PayableId=input.PayableId AND a.AppliedAt IS NULL AND payment.Status=N'Accepted') pending
               WHERE p.PayableId IS NULL OR p.SupplierId<>@SupplierId OR p.CurrencyCode<>@Currency
-                OR p.Status IN(N'Paid',N'Cancelled') OR input.Amount>p.OutstandingAmount-pending.Reserved
+                OR p.Status IN(N'Paid',N'Cancelled') OR input.Amount>p.OutstandingAmount-pending.Reserved-COALESCE((SELECT SUM(d.AdjustmentAmount)
+                  FROM accounting.VoucherDrafts d WITH(INDEX(IX_VoucherDrafts_Obligation))
+                  WHERE d.BusinessId=@BusinessId AND d.SubledgerKind=N'Payable' AND d.SubledgerId=input.PayableId
+                    AND d.Direction=N'Decrease' AND d.SentAt IS NOT NULL
+                    AND NOT EXISTS(SELECT 1 FROM dbo.PayableTransactions t WHERE t.PayableId=input.PayableId AND t.TransactionType=N'Adjustment' AND t.SourceDocumentId=d.DocumentId)),0)
                 OR (p.SourceDocumentType=N'Expense' AND NOT EXISTS(
                   SELECT 1 FROM dbo.Expenses e WITH(UPDLOCK,HOLDLOCK)
                   WHERE e.ExpenseId=p.SourceDocumentId AND e.BusinessId=p.BusinessId

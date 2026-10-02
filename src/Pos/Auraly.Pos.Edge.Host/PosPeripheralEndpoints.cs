@@ -114,6 +114,7 @@ internal static class PosPeripheralModule
         edge.MapPost("/print/receipt", async (
             DirectPrintReceiptRequest request,
             string? workflow,
+            string? format,
             ConfigurablePosReceiptPrinter printer,
             CancellationToken ct) =>
         {
@@ -121,7 +122,8 @@ internal static class PosPeripheralModule
             if (request.DocumentId == Guid.Empty ||
                 (orderTicketWorkflow
                     ? request.DocumentType != "Order"
-                    : !PosSaleDocumentTypes.IsSupported(request.DocumentType)))
+                    : !PosSaleDocumentTypes.IsSupported(request.DocumentType) &&
+                      !(request.DocumentType == "SalesReturn" && request.SalesReturnPrintDetails is not null)))
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
                     [nameof(request)] = ["El documento para imprimir no es válido."]
@@ -155,15 +157,14 @@ internal static class PosPeripheralModule
                     BusinessName: request.BusinessName,
                     WarehouseName: request.WarehouseName,
                     CreditAcknowledgement: request.CreditAcknowledgement,
-                    InvoicePrintDetails: request.InvoicePrintDetails);
-                if (orderTicketWorkflow)
-                    await printer.PrintOrderAsync(receipt, ct);
-                else
-                    await printer.PrintAsync(receipt, ct);
+                    InvoicePrintDetails: request.InvoicePrintDetails,
+                    PayableRoundingAmount: request.PayableRoundingAmount,
+                    FiscalStatus: request.FiscalStatus, SalesReturnPrintDetails: request.SalesReturnPrintDetails);
+                await printer.PrintConfiguredAsync(receipt, format, orderTicketWorkflow, ct);
                 return Results.NoContent();
             }
             catch (Exception exception) when (
-                exception is IOException or InvalidOperationException)
+                exception is IOException or InvalidOperationException or ArgumentException)
             {
                 return Results.Problem(
                     exception.Message,

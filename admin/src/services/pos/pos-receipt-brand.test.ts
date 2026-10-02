@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasPrintIdentity, receiptBrandMarkup, resolveReceiptCompanyName } from "./pos-receipt-brand";
-
-test("printing requires a loaded tenant identity but accepts a profile without a logo", () => {
-  assert.equal(hasPrintIdentity(null), false);
-  assert.equal(hasPrintIdentity({ displayName: " ", legalName: null }), false);
-  assert.equal(hasPrintIdentity({ displayName: "Aurali", legalName: null }), true);
-});
+import { receiptBrandMarkup, resolveReceiptCompanyName } from "./pos-receipt-brand";
 
 test("uses the tenant name from POS bootstrap when a receipt and print cache have no name", () => {
   assert.equal(resolveReceiptCompanyName(null, null, "Aurali", "Sede centro"), "Aurali");

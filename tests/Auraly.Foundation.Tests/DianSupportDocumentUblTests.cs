@@ -7,6 +7,27 @@ namespace Auraly.Foundation.Tests;
 public sealed class DianSupportDocumentUblTests
 {
     [Fact]
+    public void Support_withholdings_are_grouped_without_reducing_fiscal_payable()
+    {
+        var support = CreateSupportDocument() with { Withholdings = [
+            new DianTax("06", "ReteRenta", 100_000m, 2_500m, 2.5m),
+            new DianTax("06", "ReteRenta", 20_000m, 500m, 2.5m),
+            new DianTax("05", "ReteIVA", 19_000m, 2_850m, 15m)] };
+        var built = new DianSupportDocumentUblBuilder().Build(support);
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var groups = xml.Root!.Elements(DianUblNamespaces.Cac + "WithholdingTaxTotal").ToArray();
+        Assert.Equal(2, groups.Length);
+        Assert.Equal(5_850m, groups.Sum(group => decimal.Parse(group.Element(DianUblNamespaces.Cbc + "TaxAmount")!.Value,
+            System.Globalization.CultureInfo.InvariantCulture)));
+        Assert.Equal(support.PayableAmount, decimal.Parse(xml.Descendants(DianUblNamespaces.Cbc + "PayableAmount").Single().Value,
+            System.Globalization.CultureInfo.InvariantCulture));
+        var validation = new DianSchemaValidator().Validate(built.Xml);
+        Assert.True(validation.IsValid, string.Join(Environment.NewLine, validation.Errors));
+        Assert.Throws<ArgumentException>(() => new DianSupportDocumentUblBuilder().Build(support with {
+            Withholdings = [new DianTax("07", "ReteICA", 100_000m, 1_000m, 1m)] }));
+    }
+
+    [Fact]
     public void Resident_support_document_matches_the_dian_ubl_contract()
     {
         var support = CreateSupportDocument();

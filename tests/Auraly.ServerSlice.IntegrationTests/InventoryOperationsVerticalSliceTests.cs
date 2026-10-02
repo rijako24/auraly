@@ -156,8 +156,11 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal((0m, 8m, 0m), await BalanceAsync(fixture.WarehouseId, outputTwo));
     }
 
-    [Fact]
-    public async Task Direct_count_application_is_idempotent_and_uses_the_final_optional_recount()
+    [Theory]
+    [InlineData(10, 8, 7)]
+    [InlineData(-10, 20, 20)]
+    public async Task Direct_count_application_is_idempotent_and_uses_the_final_optional_recount(
+        int priorBalance, int initialCount, int finalCount)
     {
         var product = Guid.NewGuid();
         await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
@@ -170,19 +173,25 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred,
             "INITIAL_BALANCE", null, null, [new(1, product, 10m, 5m)]));
 
+        if (priorBalance != 10)
+            await ConfirmAdjustmentAsync(client, new(
+                Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred,
+                "FOUND_SURPLUS", null, null, [new(1, product, priorBalance - 10m, null)]));
+        Assert.Equal(priorBalance, (await BalanceAsync(fixture.WarehouseId, product)).Quantity);
+
         var documentId = Guid.NewGuid();
         var request = new ApplyStockCountRequest(
             documentId, fixture.BusinessId, fixture.WarehouseId, occurred.AddMinutes(1),
             "PHYSICAL_COUNT", "Aplicación directa desde la grilla",
-            [new(product, 8m, 7m)]);
+            [new(product, initialCount, finalCount)]);
         var key = $"direct-count-{documentId:N}";
         var accepted = await SendAsync(client, "/api/commerce/v1/stock-counts/apply", request, key);
         var replay = await SendAsync(client, "/api/commerce/v1/stock-counts/apply", request, key);
 
         Assert.False(accepted.IdempotentReplay);
         Assert.True(replay.IdempotentReplay);
-        Assert.Equal(7m, (await BalanceAsync(fixture.WarehouseId, product)).Quantity);
-        Assert.Equal(-3m, await ScalarAsync<decimal>(
+        Assert.Equal(finalCount, (await BalanceAsync(fixture.WarehouseId, product)).Quantity);
+        Assert.Equal(finalCount - priorBalance, await ScalarAsync<decimal>(
             "SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'StockCountAdjustment'", documentId));
         Assert.Equal(1, await CountAsync("InventoryMovements", documentId));
     }

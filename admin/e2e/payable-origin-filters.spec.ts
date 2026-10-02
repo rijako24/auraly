@@ -7,7 +7,7 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   const payableId = "44444444-4444-4444-4444-444444444444";
   const user = { userId: "55555555-5555-5555-5555-555555555555", tenantId,
     tenantKey: "@portfolio-test", username: "portfolio-test", firstName: "Prueba", lastName: "Cartera",
-    roles: [], permissions: ["payables.read", "receivables.read", "purchasing.goods-receipts.read"] };
+    roles: [], permissions: ["payables.read", "receivables.read", "purchasing.goods-receipts.read", "accounting.manual.create"] };
   await page.context().addCookies([{ name: "auth_token", value: "portfolio-test", url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ user, businessId }) => {
     localStorage.setItem("selected_tenant_id", user.tenantId);
@@ -98,13 +98,29 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   expect(supplierChevronBox!.x - supplierClearBox!.x - supplierClearBox!.width).toBeGreaterThanOrEqual(4);
   const payableRequestsBeforeClear = portfolioRequests.length;
   await supplierClear.click();
-  await expect.poll(() => portfolioRequests.at(-1)).toBeNull();
-  expect(portfolioRequests.length).toBe(payableRequestsBeforeClear + 1);
+  await expect(page.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Filtrar por proveedor");
+  expect(portfolioRequests.length).toBe(payableRequestsBeforeClear);
   await expect(page.getByText("No fue posible cargar la información.")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Desde" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Hasta" })).toBeVisible();
   await expect(page.locator('input[type="date"]')).toHaveCount(0);
   await page.getByRole("tab", { name: "Facturas" }).click();
+  await expect(page.getByLabel("Resumen de cartera")).toBeVisible();
+  await page.getByRole("button", { name: "Ajuste de cartera", exact: true }).click();
+  const adjustment = page.getByRole("dialog", { name: "Ajuste de cartera" });
+  await expect(adjustment.getByRole("heading", { name: "Ajuste de cartera", level: 2 })).toBeVisible();
+  await expect(adjustment.getByLabel("Valor del ajuste")).toBeDisabled();
+  await adjustment.getByRole("combobox", { name: "Seleccionar supplier" }).click();
+  await page.getByRole("option", { name: /Tercero de prueba/ }).click();
+  await adjustment.getByRole("combobox", { name: "Seleccionar factura para ajuste de cartera" }).click();
+  await expect(page.getByRole("option", { name: /GTO00-20/ })).toBeVisible();
+  await page.getByRole("option", { name: /GTO00-20/ }).click();
+  await expect(adjustment.getByText("Proveedor de prueba · 1001")).toBeVisible();
+  await expect(adjustment.getByText("$ 5.000").first()).toBeVisible();
+  await expect(adjustment.getByLabel("Valor del ajuste")).toBeEnabled();
+  await adjustment.getByRole("button", { name: "Cerrar" }).click();
+  await expect(adjustment).toHaveCount(0);
+  await expect(page).toHaveURL(/dashboard\/payables/);
   await page.getByRole("combobox", { name: "Concepto de gasto" }).click();
   await expect.poll(() => conceptPageSize).toBe("10");
   await page.getByRole("option", { name: "Transporte y mensajería" }).click();
@@ -117,6 +133,13 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   await detail.getByRole("button", { name: "Cerrar" }).click();
   await page.getByRole("button", { name: "Limpiar filtros" }).click();
   await expect.poll(() => conceptFilter).toBe("");
+  await page.getByRole("row", { name: /GTO00-20/ }).click();
+  await page.getByRole("dialog", { name: "GTO00-20" }).getByRole("button", { name: "Ajuste de cartera" }).click();
+  await expect(adjustment.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Tercero de prueba");
+  await expect(adjustment.getByText("Proveedor de prueba · 1001")).toBeVisible();
+  await expect(adjustment.getByRole("combobox", { name: "Seleccionar factura para ajuste de cartera" })).toContainText("GTO00-20");
+  await expect(adjustment.getByText("$ 5.000").first()).toBeVisible();
+  await adjustment.getByRole("button", { name: "Cerrar" }).click();
 
   await page.goto("/dashboard/receivables");
   await expect(page.getByLabel("Resumen de cartera")).toBeVisible();
@@ -134,13 +157,15 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   expect(customerChevronBox!.x - customerClearBox!.x - customerClearBox!.width).toBeGreaterThanOrEqual(4);
   const receivableRequestsBeforeClear = portfolioRequests.length;
   await customerClear.click();
-  await expect.poll(() => portfolioRequests.at(-1)).toBeNull();
-  expect(portfolioRequests.length).toBe(receivableRequestsBeforeClear + 1);
+  await expect(page.getByRole("combobox", { name: "Seleccionar customer" })).toContainText("Filtrar por cliente");
+  expect(portfolioRequests.length).toBe(receivableRequestsBeforeClear);
   await expect(page.getByText("No fue posible cargar la información.")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Desde" })).toBeVisible();
   await expect(page.locator('input[type="date"]')).toHaveCount(0);
 
   receiptMode = true;
+  await page.getByRole("tab", { name: "Facturas" }).click();
+  await expect(page.getByLabel("Resumen de cartera")).toBeVisible();
   await page.goto("/dashboard/payables");
   await page.getByRole("tab", { name: "Facturas" }).click();
   await page.getByRole("row", { name: /GTO00-20/ }).click();

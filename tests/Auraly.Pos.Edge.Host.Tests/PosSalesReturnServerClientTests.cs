@@ -9,6 +9,33 @@ namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosSalesReturnServerClientTests
 {
+    [Theory]
+    [InlineData("history")]
+    [InlineData("detail")]
+    [InlineData("customers")]
+    public async Task History_reads_forward_user_identity_without_local_refund_writes(string operation)
+    {
+        var handler = new ReturnHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test/") };
+        // An uninitialized store fails if a read accidentally attempts a local settlement write.
+        var client = new PosSalesReturnServerClient(http,
+            new PosDeviceCredentials(Guid.NewGuid(), "device-secret"),
+            new PosOfflineWorkSessionClosureStore("Data Source=:memory:", TimeProvider.System));
+        var session = new PosLocalUserSession(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            "reader", "Reader", ["sales.returns.read"], DateTimeOffset.UtcNow.AddHours(1), "session-token");
+        var id = Guid.NewGuid();
+        var body = JsonSerializer.SerializeToElement(new { context = new { businessId = Guid.NewGuid() }, page = 1, pageSize = 25 });
+        _ = operation switch
+        {
+            "history" => await client.HistoryAsync(body, session, default),
+            "detail" => await client.DetailAsync(id, body, session, default),
+            _ => await client.CustomersAsync(body, session, default)
+        };
+        Assert.Equal("/api/pos/v1/sales-returns/" + (operation == "detail" ? $"history/{id:D}" : operation), handler.Path);
+        Assert.Equal(session.UserId.ToString("D"), handler.UserId);
+        Assert.Null(handler.WorkSessionId);
+    }
+
     [Fact]
     public async Task Return_query_is_forwarded_without_requiring_a_work_session_header()
     {

@@ -1,3 +1,5 @@
+using Auraly.Contracts.Sales;
+
 namespace Auraly.Contracts.Returns;
 
 public static class SalesReturnRefundMethods
@@ -17,7 +19,8 @@ public sealed record ReturnableSalesQuery(
     string? Customer,
     DateOnly? From,
     DateOnly? To,
-    bool? WithAvailableQuantity);
+    bool? WithAvailableQuantity,
+    Guid? CustomerId = null);
 
 public sealed record ReturnableSaleListItem(
     Guid DocumentId,
@@ -110,7 +113,8 @@ public sealed record SalesReturnQuery(
     string? Search,
     string? Status,
     DateOnly? From,
-    DateOnly? To);
+    DateOnly? To,
+    Guid? CustomerId = null);
 
 public sealed record SalesReturnListItem(
     Guid ReturnId,
@@ -154,4 +158,12 @@ public sealed record SalesReturnDetail(
     string ReasonCode,
     string ReasonDescription,
     string? Notes,
-    IReadOnlyList<SalesReturnLineSnapshot> Lines);
+    IReadOnlyList<SalesReturnLineSnapshot> Lines,
+    IReadOnlyList<SalesReturnChargeSnapshot>? Charges = null,
+    string? BusinessName = null,
+    string? CompanyName = null,
+    OnlineSalesReceipt? Receipt = null,
+    int PrintTemplateVersion = 1)
+{
+    public decimal RoundingAmount => TotalAmount - UntaxedAmount - TaxAmount;
+}

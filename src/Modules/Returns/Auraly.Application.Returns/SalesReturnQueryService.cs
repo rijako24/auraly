@@ -50,14 +50,15 @@ public sealed class SalesReturnQueryService(ISalesReturnQueryStore store)
             user, query with { Search = Normalize(query.Search, 160) }, cancellationToken);
     }
 
-    public Task<SalesReturnDetail?> GetReturnAsync(
+    public async Task<SalesReturnDetail?> GetReturnAsync(
         SalesReturnUserIdentity user, Guid returnId,
         CancellationToken cancellationToken = default)
     {
         RequireRead(user);
         if (returnId == Guid.Empty)
             throw new SalesReturnValidationException("ReturnId is required.");
-        return store.GetReturnAsync(user, returnId, cancellationToken);
+        var detail = await store.GetReturnAsync(user, returnId, cancellationToken);
+        return detail is null ? null : detail with { Receipt = SalesReturnReceipt.Create(detail) };
     }
 
     private static void RequireRead(SalesReturnUserIdentity user)

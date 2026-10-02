@@ -1,3 +1,5 @@
+using Auraly.Application.Parties;
+using Auraly.Contracts.Parties;
 using Auraly.Application.Catalog;
 using Auraly.Application.Inventory;
 using Auraly.Application.Returns;
@@ -35,6 +37,33 @@ public static class PosSalesReturnApi
                 return value is null ? Results.NotFound() : Results.Ok(value);
             }));
 
+        group.MapPost("/history", async (HttpContext context, PosSalesReturnHistoryRequest request,
+            SalesReturnQueryService service, IUserService users, CancellationToken token) =>
+            await Execute(async () =>
+            {
+                var identity = await ValidateAsync(context, request.Context, users, token, SalesReturnPermissionCodes.Read);
+                return Results.Ok(await service.ListReturnsAsync(identity, request.Query, token));
+            }));
+
+        group.MapPost("/history/{returnId:guid}", async (HttpContext context, Guid returnId,
+            PosSalesReturnContext request, SalesReturnQueryService service, IUserService users, CancellationToken token) =>
+            await Execute(async () =>
+            {
+                var identity = await ValidateAsync(context, request, users, token, SalesReturnPermissionCodes.Read);
+                var value = await service.GetReturnAsync(identity, returnId, token);
+                return value is null ? Results.NotFound() : Results.Ok(value);
+            }));
+
+        group.MapPost("/customers", async (HttpContext context, PosSalesReturnCustomersRequest request,
+            PartyWorkspaceService service, IUserService users, CancellationToken token) =>
+            await Execute(async () =>
+            {
+                var identity = await ValidateAsync(context, request.Context, users, token, null);
+                return Results.Ok(await service.RoleOptionsAsync(new PartyActorIdentity(identity.UserId,
+                    identity.TenantId,identity.BusinessId,identity.Permissions,true),request.Page,
+                    new PartyRoleOptionQuery("Customer",request.PageSize,request.Search),token));
+            }));
+
         group.MapPost("/bootstrap", async (HttpContext context, PosSalesReturnContext request,
             InventoryQueryService inventory,
             ReferenceOptionService references, AccountingService accounting,
@@ -67,17 +96,19 @@ public static class PosSalesReturnApi
     }
 
     private static async Task<SalesReturnUserIdentity> ValidateAsync(HttpContext context,
-        PosSalesReturnContext requested, IUserService users, CancellationToken token)
+        PosSalesReturnContext requested, IUserService users, CancellationToken token,
+        string? permission = SalesReturnPermissionCodes.Create)
     {
-        if (requested.BusinessId == Guid.Empty || !requested.WorkSessionId.HasValue ||
-            requested.WorkSessionId.Value == Guid.Empty ||
+        if (requested.BusinessId == Guid.Empty ||
+            (permission == SalesReturnPermissionCodes.Create && (!requested.WorkSessionId.HasValue || requested.WorkSessionId.Value == Guid.Empty)) ||
             !Guid.TryParse(context.Request.Headers["X-Auraly-User-Id"], out var userId))
             throw new SalesReturnForbiddenException(
                 "El dispositivo no identificó el usuario o el negocio.");
         var device = context.User.ToPosDeviceIdentity();
         var permissions = (await users.GetUserPermissionsAsync(userId, requested.BusinessId, token))
             .ToHashSet(StringComparer.Ordinal);
-        if (!permissions.Contains(SalesReturnPermissionCodes.Create))
+        if (permission is not null ? !permissions.Contains(permission) :
+            !permissions.Contains(SalesReturnPermissionCodes.Read) && !permissions.Contains(SalesReturnPermissionCodes.Create))
             throw new SalesReturnForbiddenException(
                 "El usuario no tiene permiso para registrar devoluciones desde esta caja.");
         return new SalesReturnUserIdentity(userId, device.TenantId, requested.BusinessId,
@@ -95,6 +126,10 @@ public static class PosSalesReturnApi
         { return Results.Problem(exception.Message, statusCode: 409); }
         catch (InventoryForbiddenException exception)
         { return Results.Problem(exception.Message, statusCode: 403); }
+        catch (PartyForbiddenException exception)
+        { return Results.Problem(exception.Message, statusCode: 403); }
+        catch (PartyValidationException exception)
+        { return Results.Problem(exception.Message, statusCode: 400); }
         catch (InventoryValidationException exception)
         { return Results.Problem(exception.Message, statusCode: 400); }
     }
@@ -106,3 +141,6 @@ public sealed record PosReturnableSalesRequest(PosSalesReturnContext Context, Re
 public sealed record PosSalesReturnBootstrap(IReadOnlyList<InventoryReasonItem> Reasons,
     IReadOnlyList<ReferenceOption> ResolutionMethods, IReadOnlyList<ReferenceOption> Scopes,
     PosAccountingSettlementConfiguration SettlementConfiguration);
+
+public sealed record PosSalesReturnHistoryRequest(PosSalesReturnContext Context, SalesReturnQuery Query);
+public sealed record PosSalesReturnCustomersRequest(PosSalesReturnContext Context, int Page, int PageSize, string? Search);

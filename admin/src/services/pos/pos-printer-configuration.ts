@@ -10,18 +10,28 @@ export function completeInstalledPrinterConfiguration(
   const onlyInstalledPrinter = installedPrinters.length === 1
     ? installedPrinters[0]
     : null;
-  const configuredPrinter = (format: PosPrintTemplateFormat) =>
-    configuration.templateRoutes?.find((route) => route.format === format)?.printerName ??
+  const configuredPrinter = (documentType: "SalesInvoice" | "Order", format: PosPrintTemplateFormat) =>
+    configuration.templateRoutes?.find((route) => route.documentType === documentType && route.format === format)?.printerName ??
     (format === "Receipt"
       ? configuration.receiptPrinterName
       : configuration.letterPrinterName) ??
     onlyInstalledPrinter;
+  const posPrinterName = configuration.posPrinterName ??
+    configuredPrinter("SalesInvoice", configuration.posOutputFormat ?? "Receipt");
+  const orderPrinterName = configuration.orderPrinterName ??
+    configuredPrinter("Order", configuration.orderOutputFormat ?? "HalfLetter");
+  const templateRoutes = [...configuration.templateRoutes ?? []];
+  for (const documentType of ["SalesInvoice", "SalesReceipt"] as const) {
+    if (!templateRoutes.some(route => route.documentType === documentType && route.format === configuration.posOutputFormat))
+      templateRoutes.push({ documentType, format: configuration.posOutputFormat, printerName: posPrinterName });
+  }
+  if (!templateRoutes.some(route => route.documentType === "Order" && route.format === configuration.orderOutputFormat))
+    templateRoutes.push({ documentType: "Order", format: configuration.orderOutputFormat, printerName: orderPrinterName });
   return {
     ...configuration,
-    posPrinterName: configuration.posPrinterName ??
-      configuredPrinter(configuration.posOutputFormat ?? "Receipt"),
-    orderPrinterName: configuration.orderPrinterName ??
-      configuredPrinter(configuration.orderOutputFormat ?? "HalfLetter"),
+    templateRoutes,
+    posPrinterName,
+    orderPrinterName,
   };
 }
 

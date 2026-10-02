@@ -142,7 +142,11 @@ public sealed record PosSaleCommercialSnapshotContract(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     decimal PayableRoundingAmount = 0m,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? CustomerName = null)
+    string? CustomerName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? CustomerAddress = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? CustomerPhone = null)
 {
     public decimal NetPayableAmount =>
         Withholding is null

@@ -213,9 +213,9 @@ public sealed class PosPrinterConfigurationStore(
                 return stored with
                 {
                     PosPrinterName = Clean(stored.PosPrinterName) ??
-                        LegacyPrinterFor(stored, stored.PosOutputFormat),
+                        LegacyPrinterFor(stored, "SalesInvoice", stored.PosOutputFormat),
                     OrderPrinterName = Clean(stored.OrderPrinterName) ??
-                        LegacyPrinterFor(stored, stored.OrderOutputFormat)
+                        LegacyPrinterFor(stored, "Order", stored.OrderOutputFormat)
                 };
             }
             catch (JsonException exception)
@@ -249,6 +249,15 @@ public sealed class PosPrinterConfigurationStore(
     public PosPrinterConfigurationView SaveView(PosPrinterConfiguration requested)
     {
         var installedPrinters = InstalledPrinters();
+        foreach (var route in requested.TemplateRoutes ?? [])
+        {
+            if (!IsWorkflowFormat(route.Format) ||
+                route.DocumentType is not ("SalesInvoice" or "SalesReceipt" or "Order"))
+                throw new ArgumentException("La ruta de impresión no es válida.");
+            if (!string.IsNullOrWhiteSpace(route.PrinterName))
+                RequireInstalledPrinter(route.PrinterName, installedPrinters,
+                    $"{route.DocumentType} ({route.Format})");
+        }
         var normalized = requested with
         {
             PosPrinterName = RequireInstalledPrinter(
@@ -259,9 +268,21 @@ public sealed class PosPrinterConfigurationStore(
         return View(Save(normalized), installedPrinters, [], []);
     }
 
-    public PosPrinterConfiguration LoadForPosPrinting()
+    public PosPrinterConfiguration LoadForPosPrinting(string? outputFormat = null)
     {
         var configuration = Load();
+        if (outputFormat is not null)
+        {
+            if (!IsWorkflowFormat(outputFormat))
+                throw new ArgumentException("El formato de impresión no es válido.", nameof(outputFormat));
+            configuration = configuration with
+            {
+                PosOutputFormat = outputFormat,
+                PosPrinterName = configuration.PrinterFor("SalesInvoice", outputFormat)
+            };
+            if (configuration.PosPrinterName is null)
+                throw new InvalidOperationException("La impresora de este formato de factura no está configurada.");
+        }
         if (installedPrinterProvider is null) return configuration;
         try
         {
@@ -277,9 +298,21 @@ public sealed class PosPrinterConfigurationStore(
         }
     }
 
-    public PosPrinterConfiguration LoadForOrderPrinting()
+    public PosPrinterConfiguration LoadForOrderPrinting(string? outputFormat = null)
     {
         var configuration = Load();
+        if (outputFormat is not null)
+        {
+            if (!IsWorkflowFormat(outputFormat))
+                throw new ArgumentException("El formato de impresión no es válido.", nameof(outputFormat));
+            configuration = configuration with
+            {
+                OrderOutputFormat = outputFormat,
+                OrderPrinterName = configuration.PrinterFor("Order", outputFormat)
+            };
+            if (configuration.OrderPrinterName is null)
+                throw new InvalidOperationException("La impresora de este formato de pedido no está configurada.");
+        }
         if (installedPrinterProvider is null) return configuration;
         try
         {
@@ -319,7 +352,8 @@ public sealed class PosPrinterConfigurationStore(
             !IsWorkflowFormat(orderOutputFormat))
             throw new ArgumentException(
                 "El formato debe ser tirilla, media carta, media oficio o carta.");
-        var routes = NormalizeRoutes(requested.TemplateRoutes, receipt, letter);
+        var routes = NormalizeRoutes(requested.TemplateRoutes, receipt, letter,
+            requested.OrderPrinterName, requested.OrderOutputFormat);
         var scale = ValidateScale(requested.Scale);
         var posPrinter = Clean(requested.PosPrinterName);
         var orderPrinter = Clean(requested.OrderPrinterName);
@@ -461,9 +495,10 @@ public sealed class PosPrinterConfigurationStore(
 
     private static string? LegacyPrinterFor(
         PosPrinterConfiguration configuration,
+        string documentType,
         string format) =>
         Clean(configuration.TemplateRoutes?.FirstOrDefault(route =>
-            route.Format == format)?.PrinterName) ??
+            route.DocumentType == documentType && route.Format == format)?.PrinterName) ??
         (format == PrintTemplateFormats.Receipt
             ? Clean(configuration.ReceiptPrinterName)
             : Clean(configuration.LetterPrinterName));
@@ -477,7 +512,9 @@ public sealed class PosPrinterConfigurationStore(
     private static IReadOnlyList<PrintTemplateRoute> NormalizeRoutes(
         IReadOnlyList<PrintTemplateRoute>? requested,
         string? receiptFallback,
-        string? letterFallback)
+        string? letterFallback,
+        string? orderFallback,
+        string orderFormat)
     {
         var routes = requested ?? [];
         return RequiredRoutes.Select(key => new PrintTemplateRoute(
@@ -486,9 +523,13 @@ public sealed class PosPrinterConfigurationStore(
             Clean(routes.FirstOrDefault(route =>
                 route.DocumentType == key.DocumentType &&
                 route.Format == key.Format)?.PrinterName) ??
-            (key.Format == PrintTemplateFormats.Receipt
-                ? receiptFallback
-                : letterFallback))).ToArray();
+            (requested is null
+                ? key.DocumentType == "Order"
+                    ? key.Format == orderFormat ? Clean(orderFallback) : null
+                    : key.Format == PrintTemplateFormats.Receipt
+                        ? receiptFallback
+                        : letterFallback
+                : null))).ToArray();
     }
 
     private static readonly (string DocumentType, string Format)[] RequiredRoutes =
@@ -500,7 +541,11 @@ public sealed class PosPrinterConfigurationStore(
         ("SalesInvoice", PrintTemplateFormats.HalfLegal),
         ("SalesReceipt", PrintTemplateFormats.HalfLegal),
         ("SalesInvoice", PrintTemplateFormats.Letter),
-        ("SalesReceipt", PrintTemplateFormats.Letter)
+        ("SalesReceipt", PrintTemplateFormats.Letter),
+        ("Order", PrintTemplateFormats.Receipt),
+        ("Order", PrintTemplateFormats.HalfLetter),
+        ("Order", PrintTemplateFormats.HalfLegal),
+        ("Order", PrintTemplateFormats.Letter)
     ];
 }
 
@@ -511,9 +556,11 @@ public static class PosPrinterConfigurationExtensions
         string documentType,
         string format)
     {
+        if (documentType == "SalesReturn") documentType = "SalesInvoice";
         var route = configuration.TemplateRoutes?.FirstOrDefault(item =>
             item.DocumentType == documentType && item.Format == format);
-        return route?.PrinterName ??
+        if (route is not null) return route.PrinterName;
+        return
                (format == PrintTemplateFormats.Receipt
                    ? configuration.ReceiptPrinterName
                    : configuration.LetterPrinterName);
@@ -621,6 +668,20 @@ public sealed class ConfigurablePosReceiptPrinter(
     {
         var configuration = settings.LoadForPosPrinting();
         await PrintAsync(receipt, configuration, cancellationToken);
+    }
+
+    public async Task PrintConfiguredAsync(
+        PosReceipt receipt,
+        string? outputFormat,
+        bool orderTicketWorkflow,
+        CancellationToken cancellationToken = default)
+    {
+        if (orderTicketWorkflow)
+        {
+            await PrintOrderAsync(receipt, outputFormat, cancellationToken);
+            return;
+        }
+        await PrintAsync(receipt, settings.LoadForPosPrinting(outputFormat), cancellationToken);
     }
 
     private async Task PrintAsync(
@@ -747,14 +808,26 @@ public sealed class ConfigurablePosReceiptPrinter(
     public Task PrintOrderAsync(
         PosReceipt receipt,
         CancellationToken cancellationToken = default) =>
-        PrintOrdersAsync([receipt], cancellationToken);
+        PrintOrdersAsync([receipt], null, cancellationToken);
+
+    public Task PrintOrderAsync(
+        PosReceipt receipt,
+        string? outputFormat,
+        CancellationToken cancellationToken = default) =>
+        PrintOrdersAsync([receipt], outputFormat, cancellationToken);
 
     public async Task PrintOrdersAsync(
         IReadOnlyCollection<PosReceipt> receipts,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await PrintOrdersAsync(receipts, null, cancellationToken);
+
+    private async Task PrintOrdersAsync(
+        IReadOnlyCollection<PosReceipt> receipts,
+        string? outputFormat,
+        CancellationToken cancellationToken)
     {
         if (receipts.Count == 0) return;
-        var configuration = settings.LoadForOrderPrinting();
+        var configuration = settings.LoadForOrderPrinting(outputFormat);
         var prepared = receipts.Select(PrepareReceipt).ToArray();
         if (configuration.OrderOutputFormat != PrintTemplateFormats.Receipt)
         {
@@ -888,41 +961,11 @@ public sealed class ConfigurablePosReceiptPrinter(
 
     private static PosReceipt ToPosReceipt(
         Auraly.Contracts.Sales.OnlineSalesReceipt receipt,
-        int paperWidthMillimeters) =>
-            new(
-                Guid.NewGuid(),
-                new Auraly.BuildingBlocks.Domain.Identifiers.DocumentId(
-                    receipt.DocumentId),
-                receipt.DocumentNumber,
-                receipt.FiscalNumber,
-                receipt.IssuedAt,
-                receipt.CustomerIdentification,
-                receipt.Lines.Select(line => new PosReceiptLine(
-                    line.ProductCode, line.Description, line.Quantity,
-                    line.UnitPrice, line.Discount, line.Tax, line.Total,
-                    line.TaxCode, line.TaxRate, line.UnitCode)).ToArray(),
-                receipt.Payments.Select(payment => new OfflineSalePayment(
-                    payment.MethodCode, payment.Amount, payment.Reference,
-                    payment.CardFranchiseCode, payment.ApprovalNumber,
-                    payment.BankAccountId, payment.Notes,
-                    payment.TenderedAmount,
-                    payment.RoundingAdjustment)).ToArray(),
-                receipt.UntaxedAmount,
-                receipt.TaxAmount,
-                receipt.PayableAmount,
-                receipt.Cufe,
-                receipt.QrPayload,
-                paperWidthMillimeters,
-                receipt.DocumentType,
-                receipt.CompanyName,
-                receipt.CompanyLogoSource,
-                CustomerName: receipt.CustomerName,
-                BusinessName: receipt.CreditAcknowledgement?.BusinessName,
-                WarehouseName: receipt.CreditAcknowledgement?.WarehouseName,
-                CreditAcknowledgement: receipt.CreditAcknowledgement,
-                InvoicePrintDetails: receipt.InvoicePrintDetails,
-                CustomerPhone: receipt.CustomerPhone,
-                CustomerAddress: receipt.CustomerAddress);
+        int paperWidthMillimeters) => receipt.ToPosReceipt(Guid.NewGuid(), paperWidthMillimeters) with
+        {
+            BusinessName = receipt.CreditAcknowledgement?.BusinessName,
+            WarehouseName = receipt.CreditAcknowledgement?.WarehouseName
+        };
 }
 
 public sealed class RenderedWindowsReceiptPrinter(

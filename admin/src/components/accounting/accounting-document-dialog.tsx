@@ -2,6 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useAuthStore } from "@/stores/auth-store";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 import { AlertTriangle, BookOpenCheck, FileText, Loader2, RotateCcw } from "lucide-react";
 import { accountingApi } from "@/services/api/accounting";
 import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
@@ -12,18 +15,21 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import {accountingDocumentTypeLabel,accountingStatusLabel,fiscalStatusLabel} from "@/lib/accounting-labels";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP" });
-export function AccountingDocumentDialog({documentId,sourceLabel,onClose}:{documentId?:string;sourceLabel?:string;onClose:()=>void}){
+export function AccountingDocumentDialog({documentId,sourceLabel,hasFiscalDocument,onClose}:{documentId?:string;sourceLabel?:string;hasFiscalDocument?:boolean;onClose:()=>void}){
   const [reportOpen,setReportOpen]=useState(false);
   const queryClient=useQueryClient();
-  const posting=useQuery({queryKey:["accounting-posting",documentId],queryFn:()=>accountingApi.posting(documentId!),enabled:Boolean(documentId),retry:false});
-  const fiscal=useQuery({queryKey:["fiscal-document",documentId],queryFn:()=>fiscalDocumentsApi.get(documentId!),enabled:Boolean(documentId),retry:false});
-  const entry=useQuery({queryKey:["accounting-entry",documentId],queryFn:()=>accountingApi.entry(documentId!),enabled:Boolean(documentId&&posting.data?.status==="Posted"),retry:false});
-  const retry=useMutation({mutationFn:()=>accountingApi.retryPosting(documentId!),onSuccess:async()=>{await queryClient.invalidateQueries({queryKey:["accounting-posting",documentId]});await queryClient.invalidateQueries({queryKey:["accounting-entry",documentId]})}});
+  const tenantId=useTenantContextStore(state=>state.selectedTenantId);
+  const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
+  const canRetry=useAuthStore(state=>state.user?.permissions.includes("accounting.postings.retry")??false);
+  const posting=useQuery({queryKey:["accounting-posting",tenantId,businessId,documentId],queryFn:()=>accountingApi.posting(documentId!),enabled:Boolean(documentId),retry:false,staleTime:Infinity});
+  const fiscal=useQuery({queryKey:["fiscal-document",tenantId,businessId,documentId],queryFn:()=>fiscalDocumentsApi.get(documentId!),enabled:Boolean(documentId) && hasFiscalDocument !== false,retry:false,staleTime:Infinity});
+  const entry=useQuery({queryKey:["accounting-entry",tenantId,businessId,documentId],queryFn:()=>accountingApi.entry(documentId!),enabled:Boolean(documentId&&posting.data?.status==="Posted"),retry:false,staleTime:Infinity});
+  const retry=useMutation({mutationFn:()=>accountingApi.retryPosting(documentId!),onSuccess:value=>{queryClient.setQueryData(["accounting-posting",tenantId,businessId,documentId],value)}});
   if(!documentId)return null;
   const loading=posting.isLoading||(posting.data?.status==="Posted"&&entry.isLoading);
   const value=entry.data;
   const difference=value?value.debitTotal-value.creditTotal:0;
-  if(reportOpen&&value)return <Dialog open onOpenChange={open=>!open&&setReportOpen(false)}><DialogContent showClose={false} className="h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] overflow-hidden p-2 sm:p-4"><ReportViewer
+  if(reportOpen&&value)return <Dialog open onOpenChange={open=>!open&&setReportOpen(false)}><DialogContent showClose={false} className="h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] overflow-hidden p-2 sm:p-4"><ReportViewer documentDownloads
     onClose={()=>setReportOpen(false)}
     title={`Comprobante contable ${value.entryNumber}`}
     description={`${accountingDocumentTypeLabel(value.sourceDocumentType)} · ${value.description} · ${new Date(value.occurredAt).toLocaleDateString("es-CO")}`}
@@ -46,7 +52,7 @@ export function AccountingDocumentDialog({documentId,sourceLabel,onClose}:{docum
         <div className="flex justify-end"><Badge variant={difference===0?"secondary":"destructive"}>{difference===0?"Comprobante balanceado":`Diferencia ${money.format(difference)}`}</Badge></div>
       </div>}
     </div>
-    <DialogFooter className="border-t px-6 py-4">{!value&&<Button variant="outline" disabled={retry.isPending} onClick={()=>retry.mutate()}>{retry.isPending?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<RotateCcw className="mr-2 h-4 w-4"/>}Reintentar contabilización</Button>}<Button variant="outline" disabled={!value} onClick={()=>setReportOpen(true)}><FileText className="mr-2 h-4 w-4"/>Abrir reporte</Button><Button onClick={onClose}>Cerrar</Button></DialogFooter>
+    <DialogFooter className="border-t px-6 py-4">{retry.isError&&<p role="alert" className="text-destructive">{retry.error.message}</p>}{!value&&canRetry&&<Button variant="outline" disabled={retry.isPending} onClick={()=>retry.mutate()}>{retry.isPending?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<RotateCcw className="mr-2 h-4 w-4"/>}Reintentar contabilización</Button>}<Button variant="outline" disabled={!value} onClick={()=>setReportOpen(true)}><FileText className="mr-2 h-4 w-4"/>Abrir reporte</Button><Button onClick={onClose}>Cerrar</Button></DialogFooter>
   </DialogContent></Dialog>;
 }
 

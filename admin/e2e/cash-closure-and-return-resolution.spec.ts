@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { login as sharedLogin } from "./support/auth";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 const businessId = "22222222-2222-2222-2222-222222222222";
@@ -133,13 +134,16 @@ test("la devolución ofrece destinos independientes y enlaza la reversión de ta
 });
 
 test("el modal de periféricos cubre el viewport completo desde el body", async ({ page }) => {
-  await authenticate(page);
+  test.setTimeout(150_000);
+  if (process.env.AURALY_E2E_TENANT_KEY) await sharedLogin(page, undefined, 90_000);
+  else await authenticate(page);
   await page.route("**/api/commerce/v1/pos/workspace/options", route => json(route, []));
   await page.route("**/api/commerce/v1/routes?**", route => json(route, { items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 0 }));
   await page.route("**/api/commerce/v1/orders?**", route => json(route, { items: [], page: 1, pageSize: 20, totalCount: 0, hasMore: false }));
   await page.route("**/api/commerce/v1/pos/installer", route => json(route, { downloadUrl: "/auraly-installer.exe", version: "1.0.0", sha256: "test", tenantPreconfigured: false }));
 
   await page.goto("/dashboard/orders");
+  await expect(page.getByRole("button", { name: "Configurar plantillas e impresoras" })).toBeVisible();
   await page.evaluate(() => document.documentElement.classList.add("dark"));
   await page.getByRole("button", { name: "Configurar plantillas e impresoras" }).click();
 
@@ -147,11 +151,24 @@ test("el modal de periféricos cubre el viewport completo desde el body", async 
   const dialog = page.getByRole("dialog", { name: "Periféricos" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveCSS("color", "rgb(2, 6, 23)");
-  await expect(dialog.getByText("Formato").first()).toHaveCSS("color", "rgb(2, 6, 23)");
+  await expect(dialog.getByText("Media oficio", { exact: true }).first()).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Cancelar" })).toHaveCSS("color", "rgb(2, 6, 23)");
   expect(await backdrop.evaluate(element => element.parentElement === document.body)).toBe(true);
   await expect(backdrop).toHaveCSS("position", "fixed");
   expect(await backdrop.boundingBox()).toEqual({ x: 0, y: 0, width: 1440, height: 1000 });
+  const invoices = dialog.getByRole("heading", { name: "Facturas" }).locator("../..");
+  const orders = dialog.getByRole("heading", { name: "Pedidos" }).locator("../..");
+  await invoices.getByRole("checkbox", { name: "Usar media oficio por defecto en facturas" }).check();
+  await orders.getByRole("checkbox", { name: "Usar carta por defecto en pedidos" }).check();
+  await expect(invoices.getByRole("checkbox", { checked: true })).toHaveCount(1);
+  await expect(orders.getByRole("checkbox", { checked: true })).toHaveCount(1);
+  await expect(dialog.locator('input[type="radio"]')).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Guardar" }).click();
+  const formats = await page.evaluate(() => {
+    const configuration = JSON.parse(localStorage.getItem("auraly.printing.configuration.v1") ?? "{}");
+    return [configuration.posOutputFormat, configuration.orderOutputFormat];
+  });
+  expect(formats).toEqual(["HalfLegal", "Letter"]);
 });
 
 function movement(key: string, movementType: "Sale" | "Refund" | "CashIn" | "CashOut", sourceDocumentType: "SalesInvoice" | "SalesReceipt" | "SalesReturn" | "CashMovement", documentNumber: string, amount: number) {
@@ -169,7 +186,7 @@ test("historial de cargos pagina y consulta sin cargar pestañas ocultas", async
   });
   await page.route("**/api/commerce/v1/invoice-charges/history?**", route => {
     historyReads++;
-    return json(route, { items: [{ documentId: saleId, documentNumber: "FV-CARGO-1", issuedAt: "2026-09-19T10:00:00-05:00",
+    return json(route, { items: [{ documentId: saleId, documentNumber: "FV-CARGO-1", customerName: "Cliente de prueba", issuedAt: "2026-09-19T10:00:00-05:00",
       workSessionId: closureId, expenseDocumentNumber: "GAS-123", expenseStatus: "Processed", payableBalance: 5000,
       charge: { appliedChargeId: "one", name: "Domicilio", supplier: { name: "Domiciliario prueba" }, amount: 5000,
         invoicedAmount: 5000, expenseAmount: 0 } }], totalCount: 1, page: 1, pageSize: 25, invoicedTotal: 5000, expenseTotal: 0 });
@@ -180,15 +197,55 @@ test("historial de cargos pagina y consulta sin cargar pestañas ocultas", async
   expect(configurationReads).toBe(1); expect(historyReads).toBe(0);
   await page.getByRole("tab", { name: "Consulta de cargos" }).click();
   await expect(page.getByRole("cell", { name: /^FV-CARGO-1/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "Cliente de prueba" })).toBeVisible();
+  await expect(page.locator("thead th")).toContainText(["Factura", "Cliente", "Proveedor", "En factura", "Como gasto", "Cuenta por pagar"]);
+  const card = await page.getByText("Cargos en el periodo").boundingBox();
+  const filter = await page.getByText("Desde", { exact: true }).boundingBox();
+  expect(card!.y).toBeLessThan(filter!.y);
   await expect(page.getByText("GAS-123", { exact: true })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("consulta-cargos.png"), fullPage: true });
   expect(configurationReads).toBe(1); expect(historyReads).toBe(1);
   await page.getByRole("button", { name: "Actualizar", exact: true }).click();
   await expect.poll(() => historyReads).toBe(2);
   expect(configurationReads).toBe(1);
-  await page.getByLabel("Hasta", { exact: true }).fill("2027-12-31");
+  await page.getByLabel("Desde", { exact: true }).click();
+  await page.getByRole("button", { name: "Mes anterior" }).click();
+  await page.getByRole("button", { name: "Mes anterior" }).click();
+  await page.getByRole("button", { name: /^1 de / }).click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("31 días");
   expect(historyReads).toBe(2);
+});
+
+test("consulta de cargos busca y pagina en el servidor", async ({ page }) => {
+  await authenticate(page);
+  const requests: Array<{ page: string | null; pageSize: string | null; search: string | null }> = [];
+  await page.route("**/api/commerce/v1/reference-options/invoice-charge-*", route => json(route, []));
+  await page.route("**/api/commerce/v1/invoice-charges?**", route =>
+    json(route, { items: [], totalCount: 0, page: 1, pageSize: 20, totalPages: 0 }));
+  await page.route("**/api/commerce/v1/invoice-charges/history?**", route => {
+    const url = new URL(route.request().url());
+    const requested = { page: url.searchParams.get("page"), pageSize: url.searchParams.get("pageSize"), search: url.searchParams.get("search") };
+    requests.push(requested);
+    const filtered = requested.search === "Domicilio";
+    const second = requested.page === "2";
+    return json(route, { items: [{ documentId: saleId, documentNumber: second ? "FV-CARGO-2" : "FV-CARGO-1",
+      customerName: "Cliente de prueba", issuedAt: "2026-09-19T10:00:00-05:00", workSessionId: closureId,
+      expenseDocumentNumber: null, expenseStatus: null, payableBalance: null,
+      charge: { appliedChargeId: second ? "two" : "one", name: "Domicilio", supplier: { name: "Proveedor de prueba" },
+        amount: 5000, invoicedAmount: 5000, expenseAmount: 0 } }],
+      totalCount: filtered ? 1 : 21, page: second ? 2 : 1, pageSize: 20,
+      invoicedTotal: filtered ? 5000 : 105000, expenseTotal: 0 });
+  });
+  await page.goto("/dashboard/invoice-charges");
+  await page.getByRole("tab", { name: "Consulta de cargos" }).click();
+  await expect(page.getByRole("cell", { name: /^FV-CARGO-1/ })).toBeVisible();
+  await expect(page.getByText("21", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Siguiente página" }).click();
+  await expect(page.getByRole("cell", { name: /^FV-CARGO-2/ })).toBeVisible();
+  await page.getByPlaceholder("Cargo, proveedor o factura").fill("Domicilio");
+  await expect(page.getByRole("cell", { name: /^FV-CARGO-1/ })).toBeVisible();
+  await expect.poll(() => requests.at(-1)).toEqual({ page: "1", pageSize: "20", search: "Domicilio" });
+  await expect(page.getByRole("button", { name: "Siguiente página" })).toBeDisabled();
 });
 
 test("configurar un cargo conserva concepto y proveedor y reutiliza el resultado al editar", async ({ page }) => {

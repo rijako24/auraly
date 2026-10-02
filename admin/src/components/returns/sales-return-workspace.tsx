@@ -5,6 +5,9 @@ import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, HandCoins, Landmark, PackageCheck, ReceiptText, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { SalesReturnHistory } from "./sales-return-history";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { Badge } from "@/components/ui/badge";
@@ -36,8 +39,13 @@ export function SalesReturnWorkspace({ embedded = false, businessId, workSession
   const permissions = new Set(permissionOverride ?? storedPermissions);
   const canCreate = permissions.has("sales.returns.create");
   const canConfirm = canCreate;
+  const canRead = permissions.has("sales.returns.read");
+  const [tab, setTab] = useState(canCreate ? "new" : "history");
+  const activeTab = tab === "new" && !canCreate ? "history" : tab === "history" && !canRead ? "new" : tab;
+  const selectedBusinessId = useBusinessContextStore(state => state.selectedBusinessId);
+  const resolvedBusinessId = businessId || selectedBusinessId;
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState("");
   const [customer, setCustomer] = useState("");
   const [from, setFrom] = useState("");
@@ -49,10 +57,10 @@ export function SalesReturnWorkspace({ embedded = false, businessId, workSession
     : undefined;
   const list = useReturnableSales({
     page, pageSize, search: search.trim() || undefined,
-    customer: customer.trim() || undefined,
+    customerId: customer || undefined,
     from: from || undefined, to: to || undefined,
     withAvailableQuantity: onlyAvailable || undefined,
-  }, businessId, runtime);
+  }, businessId, runtime, activeTab === "new" && canCreate);
 
   const columns = useMemo<ColumnDef<ReturnableSaleListItem>[]>(() => [
     { accessorKey: "documentNumber", header: "Factura", cell: ({ row }) => <div><p className="font-semibold">{row.original.documentNumber}</p><p className="text-xs text-muted-foreground">DIAN {row.original.fiscalNumber}</p></div> },
@@ -77,16 +85,24 @@ export function SalesReturnWorkspace({ embedded = false, businessId, workSession
 
   return <div className={embedded ? "space-y-4" : "space-y-6"}>
     {!embedded && <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-sm font-medium text-primary">Ventas</p><h1 className="text-3xl font-semibold tracking-tight">Devoluciones de venta</h1><p className="mt-1 max-w-3xl text-muted-foreground">Busca la factura original. Auraly conserva sus precios e impuestos y compensa inventario, efectivo o cartera sin modificar la venta.</p></div><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DVT</Badge></header>}
+    <Tabs value={activeTab} onValueChange={setTab}><TabsList>
+      {canCreate && <TabsTrigger value="new">Nueva devolución</TabsTrigger>}
+      {canRead && <TabsTrigger value="history">Devoluciones realizadas</TabsTrigger>}
+    </TabsList></Tabs>
+    {!canCreate && !canRead && <p role="alert">No tienes permiso para consultar devoluciones.</p>}
+    <SalesReturnHistory key={resolvedBusinessId} active={activeTab === "history" && canRead} businessId={resolvedBusinessId} runtime={runtime} />
+    {activeTab === "new" && canCreate && <>
     {!embedded && <section className="grid gap-3 md:grid-cols-3"><Summary icon={ReceiptText} label="Facturas encontradas" value={String(list.data?.totalCount ?? 0)} /><Summary icon={PackageCheck} label="Inventario" value="Reingreso obligatorio" /><Summary icon={HandCoins} label="Cómo devolver" value="Efectivo, cartera, banco o tarjeta" /></section>}
     <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-2 xl:grid-cols-[minmax(15rem,1fr)_minmax(13rem,.8fr)_11rem_11rem_auto] md:items-end">
       <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={list.isFetching} placeholder="Factura, CUFE o producto" />
-      <div className="space-y-2"><Label>Cliente</Label><ServerSearchInput value={customer} onSearch={(value) => { setCustomer(value); setPage(1); }} isSearching={list.isFetching} placeholder="Nombre o identificación" /></div>
+      <div className="space-y-2"><Label>Cliente</Label><PartyRoleSelect role="Customer" value={customer} leadingOptions={[{value:"",label:"Todos los clientes"}]} placeholder="Seleccionar cliente" sourceKey={`returnable-${runtime?.client.mode ?? "web"}-${resolvedBusinessId}`} loadPage={runtime ? (term, next, size) => runtime.client.searchServerReturnCustomers(runtime.context, term, next, size) : undefined} onChange={value => { setCustomer(value); setPage(1); }} /></div>
       <div className="space-y-2"><Label>Desde</Label><DatePicker value={from} onChange={(value) => { setFrom(value); setPage(1); }} /></div>
       <div className="space-y-2"><Label>Hasta</Label><DatePicker value={to} onChange={(value) => { setTo(value); setPage(1); }} /></div>
       <Button variant={onlyAvailable ? "secondary" : "outline"} onClick={() => { setOnlyAvailable((value) => !value); setPage(1); }}>Solo con saldo</Button>
     </section>
     {list.isError && <section role="alert" className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><AlertCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">No fue posible consultar las facturas disponibles.</p><p className="text-sm">{list.error instanceof Error ? list.error.message : "Verifica la conexión y los permisos de devoluciones."}</p></div></div><Button type="button" variant="outline" className="shrink-0 border-red-300 bg-white" onClick={() => void list.refetch()}>Reintentar</Button></section>}
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={list.data?.page} pageSize={list.data?.pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }} onRowClick={canCreate ? open : undefined} />
+    </>}
     <SalesReturnEditor key={selected?.documentId ?? "none"} sale={selected} open={!!selected} businessId={businessId} runtime={runtime} canConfirm={canConfirm} onCashRefundConfirmed={onCashRefundConfirmed} onClose={() => setSelected(undefined)} />
   </div>;
 }

@@ -18,7 +18,8 @@ public static class PosReceiptPrintMapping
         receipt.WithholdingTotal, receipt.NetPayableAmount, receipt.Withholdings, receipt.CustomerName,
         CreditAcknowledgement: receipt.CreditAcknowledgement, InvoicePrintDetails: receipt.InvoicePrintDetails,
         CustomerPhone: receipt.CustomerPhone, CustomerAddress: receipt.CustomerAddress,
-        PayableRoundingAmount: receipt.PayableRoundingAmount);
+        PayableRoundingAmount: receipt.PayableRoundingAmount,
+        SalesReturnPrintDetails: receipt.SalesReturnPrintDetails, FiscalStatus: receipt.FiscalStatus);
 
     public static OnlineSalesReceipt ToPrintDocument(this PosReceipt receipt) => new(
         receipt.DocumentId.Value, receipt.DocumentType, receipt.DocumentNumber, receipt.FiscalNumber,
@@ -28,9 +29,10 @@ public static class PosReceiptPrintMapping
         receipt.Payments.Select(payment => new OnlineSalesPayment(payment.MethodCode, payment.Amount,
             payment.Reference, payment.CardFranchiseCode, payment.ApprovalNumber, payment.BankAccountId,
             payment.Notes, payment.TenderedAmount, payment.RoundingAdjustment)).ToArray(),
-        receipt.UntaxedAmount, receipt.TaxAmount, receipt.PayableAmount, receipt.Cufe, receipt.QrPayload, null,
+        receipt.UntaxedAmount, receipt.TaxAmount, receipt.PayableAmount, receipt.Cufe, receipt.QrPayload, receipt.FiscalStatus,
         receipt.CustomerName ?? receipt.CustomerIdentification, receipt.CompanyName, receipt.CompanyLogoSource,
         receipt.WithholdingTotal, receipt.NetPayableAmount, receipt.Withholdings, receipt.CreditAcknowledgement,
         receipt.InvoicePrintDetails, receipt.CustomerPhone, receipt.CustomerAddress,
-        PayableRoundingAmount: receipt.PayableRoundingAmount);
+        PayableRoundingAmount: receipt.PayableRoundingAmount,
+        SalesReturnPrintDetails: receipt.SalesReturnPrintDetails);
 }

@@ -271,7 +271,7 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("Comprobante de venta", html);
         Assert.Contains("CVI03-00000042", html);
         Assert.Contains("data-auraly-report=\"sales-receipt\"", html);
-        Assert.Contains("data-auraly-report-version=\"3\"", html);
+        Assert.Contains("data-auraly-report-version=\"5\"", html);
         Assert.Contains("font: 11px/1.35", html);
         Assert.Contains("font-size: 12px", html);
         Assert.DoesNotContain("Número DIAN", html);
@@ -435,7 +435,7 @@ public sealed class EscPosReceiptRendererTests
 
         Assert.Contains("Comprobante de venta", html);
         Assert.Contains("data-auraly-report=\"sales-receipt\"", html);
-        Assert.Contains("data-auraly-report-version=\"3\"", html);
+        Assert.Contains("data-auraly-report-version=\"5\"", html);
         Assert.Contains("Representación gráfica del comprobante de venta", html);
         Assert.Contains("Comprobante emitido por Auraly", html);
         Assert.DoesNotContain("Factura electrónica de venta", html);
@@ -854,7 +854,7 @@ public sealed class EscPosReceiptRendererTests
         var receipt = OnlineReceipt() with { DocumentType = PosSaleDocumentTypes.Receipt };
         var html = RenderSalesReport(receipt, format);
 
-        Assert.Contains("data-auraly-report-version=\"3\"", html);
+        Assert.Contains("data-auraly-report-version=\"5\"", html);
         Assert.Contains("class=\"brand-logo\" src=\"data:image/png;base64,AA==\"", html);
         Assert.DoesNotContain("<div class=\"brand\">Comercializadora Uno</div>", html);
         Assert.DoesNotContain("<h1>Comercializadora Uno</h1>", html);
@@ -879,6 +879,103 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("<div class=\"brand\">Comercializadora Uno</div>", oldInvoice);
         Assert.Contains("data-auraly-report-version=\"2\"", oldReceipt);
         Assert.Contains("<h1>Comercializadora Uno</h1>", oldReceipt);
+    }
+
+    [Theory]
+    [InlineData("Receipt", 58)]
+    [InlineData("Receipt", 80)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter, 80)]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal, 80)]
+    [InlineData(HalfLetterDocumentRenderer.Letter, 80)]
+    public async Task Sales_receipt_customer_contact_matches_invoice_in_every_format(string format, int width)
+    {
+        var receipt = OnlineReceipt() with
+        {
+            DocumentType = PosSaleDocumentTypes.Receipt,
+            InvoicePrintDetails = null,
+            CustomerName = "Cliente & compañía",
+            CustomerAddress = "Carrera 4 # 5-06, edificio Los Almendros <portería>, apartamento 402",
+            CustomerPhone = "300 123 4567",
+            FiscalNumber = null
+        };
+        string Render(OnlineSalesReceipt value, int? version = null) => format == "Receipt"
+            ? new SalesReceiptHtmlRenderer().Render(value, width, templateVersion: version, autoPrint: false)
+            : new HalfLetterDocumentRenderer().Render([value], format, version, autoPrint: false);
+        var html = Render(receipt);
+        Assert.Contains("data-auraly-report-version=\"5\"", html);
+        Assert.Contains("Cliente &amp; compa", html);
+        Assert.Contains("&lt;porter", html);
+        foreach (var version in new[] { 1, 2, 3 })
+        {
+            var historical = Render(receipt, version);
+            Assert.DoesNotContain("<span>Dirección</span>", historical);
+            Assert.DoesNotContain("<span>Teléfono</span>", historical);
+        }
+        var missing = Render(receipt with { CustomerAddress = null, CustomerPhone = " " });
+        Assert.DoesNotContain("<span>Dirección</span>", missing);
+        Assert.DoesNotContain("<span>Teléfono</span>", missing);
+
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
+        var page = await browser.NewPageAsync();
+        await page.SetContentAsync(html);
+        const string customerRows = """
+            () => [...document.querySelectorAll('.pair')]
+              .filter(row => ['Cliente', 'Identificación', 'Dirección', 'Teléfono']
+                .includes(row.querySelector('span')?.textContent)).map(row => row.outerHTML)
+            """;
+        var receiptRows = await page.EvaluateAsync<string[]>(customerRows);
+        if (format != "Receipt")
+        {
+            Assert.True(await page.EvaluateAsync<bool>("""
+                () => [...document.querySelectorAll('.document')].every(document => {
+                  const meta = document.querySelector('.meta');
+                  const border = getComputedStyle(meta);
+                  const products = document.querySelector('table');
+                  return parseFloat(border.borderBottomWidth) > 0 &&
+                    border.borderBottomColor === 'rgb(203, 213, 225)' &&
+                    products.offsetTop >= meta.offsetTop + meta.offsetHeight;
+                })
+                """));
+            Assert.DoesNotContain("border-bottom:.2mm solid #cbd5e1;padding-bottom:1mm", Render(receipt, 4));
+        }
+        Assert.True(await page.EvaluateAsync<bool>("""
+            () => [...document.querySelectorAll('.pair')]
+              .filter(row => row.querySelector('span')?.textContent === 'Dirección')
+              .every(row => row.scrollWidth <= row.clientWidth + 1 &&
+                getComputedStyle(row.querySelector('strong')).textAlign === 'right')
+            """));
+        var invoice = receipt with
+        {
+            DocumentType = PosSaleDocumentTypes.Invoice,
+            InvoicePrintDetails = InvoiceDetails()
+        };
+        await page.SetContentAsync(Render(invoice));
+        Assert.Equal(await page.EvaluateAsync<string[]>(customerRows), receiptRows);
+    }
+
+    [Theory]
+    [InlineData(58)]
+    [InlineData(80)]
+    public void Direct_thermal_sales_receipt_includes_customer_contact(int width)
+    {
+        var receipt = Receipt() with
+        {
+            DocumentType = PosSaleDocumentTypes.Receipt,
+            PaperWidthMillimeters = width,
+            CustomerName = "Cliente de prueba",
+            CustomerAddress = "Calle 10 # 20-30",
+            CustomerPhone = "3001234567"
+        };
+        var renderer = new EscPosReceiptRenderer();
+        var text = Encoding.UTF8.GetString(renderer.Render(receipt));
+        Assert.Contains("Cliente de prueba", text);
+        Assert.Contains(receipt.CustomerIdentification, text);
+        Assert.Contains("Direccion: Calle 10 # 20-30", text);
+        Assert.Contains("Telefono: 3001234567", text);
+        var historical = Encoding.UTF8.GetString(renderer.Render(receipt, templateVersion: 3));
+        Assert.DoesNotContain("Direccion:", historical);
+        Assert.DoesNotContain("Telefono:", historical);
     }
 
     private static string RenderSalesReport(OnlineSalesReceipt receipt, string format) =>

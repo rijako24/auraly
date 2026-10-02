@@ -13,10 +13,11 @@ public static class ExpensesApi
 
         group.MapGet("/options", (
             HttpContext context,
+            bool? includeDirectories,
             ExpenseService service,
             CancellationToken cancellationToken) =>
             Execute(() => service.GetOptionsAsync(
-                context.User.ToExpenseIdentity(), cancellationToken)));
+                context.User.ToExpenseIdentity(), cancellationToken, includeDirectories ?? true)));
 
         group.MapGet("/concepts", (
             HttpContext context,
@@ -94,6 +95,9 @@ public static class ExpensesApi
                 return Results.Accepted(
                     $"/api/commerce/v1/expenses/{value.ExpenseId:D}", value);
             }));
+        group.MapPost("/preview", (HttpContext context, ConfirmExpenseRequest request,
+            ExpenseService service, CancellationToken cancellationToken) =>
+            Execute(() => service.PreviewAsync(context.User.ToExpenseIdentity(), request, cancellationToken)));
         return endpoints;
     }
 

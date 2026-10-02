@@ -78,7 +78,9 @@ public sealed record PosEdgeIssueCommand(
     PosSaleCreditContract? Credit = null,
     string? CustomerName = null,
     Guid? CustomerPartySiteId = null,
-    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
+    string? CustomerAddress = null,
+    string? CustomerPhone = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -1131,7 +1133,8 @@ public sealed class PosEdgeSaleStore
                 invoice.PayableAmount + roundingAdjustment,
                 withholding,
                 roundingAdjustment,
-                CustomerName: command.CustomerName),
+                CustomerName: command.CustomerName,
+                CustomerAddress: command.CustomerAddress, CustomerPhone: command.CustomerPhone),
             snapshot is null || fiscalNumber is null || fiscalAuthorizationId is null
                 ? null
                 : new PosSaleFiscalSnapshotContract(

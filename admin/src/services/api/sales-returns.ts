@@ -141,7 +141,29 @@ export interface WorkSessionView {
   status: string;
 }
 
+export interface SalesReturnHistoryQuery {
+  page: number; pageSize: number; search?: string; customerId?: string; from?: string; to?: string;
+}
+export interface SalesReturnListItem {
+  returnId: string; documentNumber: string; originalDocumentId: string; originalDocumentNumber: string;
+  customerName: string; returnedAt: string; economicResolution: SalesReturnResolution;
+  totalAmount: number; status: string; fiscalStatus: string | null; reasonCode: string;
+}
+export interface SalesReturnPage {
+  items: SalesReturnListItem[]; page: number; pageSize: number; totalCount: number; totalPages: number;
+}
+export interface SalesReturnDetail extends SalesReturnListItem {
+  customerIdentification: string; warehouseId: string; warehouseName: string; businessName: string;
+  refundMethodCode: string | null; untaxedAmount: number; taxAmount: number; roundingAmount: number;
+  reasonDescription: string; notes: string | null;
+  receipt: import("@/services/pos/pos-edge-client").PosPrintableReceipt;
+}
+
 export const salesReturnsApi = {
+  listReturns: (params: SalesReturnHistoryQuery & { businessId: string }) =>
+    apiClient.get<SalesReturnPage>("/commerce/v1/sales-returns", { ...params }),
+  getReturn: (returnId: string, businessId: string) =>
+    apiClient.get<SalesReturnDetail>(`/commerce/v1/sales-returns/${returnId}`, { businessId }),
   settlementConfiguration: () =>
     apiClient.get<SalesSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   listSales: (params: {
@@ -149,7 +171,7 @@ export const salesReturnsApi = {
     page?: number;
     pageSize?: number;
     search?: string;
-    customer?: string;
+    customerId?: string;
     from?: string;
     to?: string;
     withAvailableQuantity?: boolean;

@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { login } from "./support/auth";
 
 test("factura, imprime y avanza el contador pedido por pedido en una instalación", async ({ page, baseURL }) => {
+  test.setTimeout(120_000);
+  if (process.env.AURALY_E2E_TENANT_KEY) await login(page, undefined, 90_000);
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
   const warehouseId = "33333333-3333-3333-3333-333333333333";
@@ -50,6 +53,7 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   };
   const completed = new Set<string>();
   const sequence: string[] = [];
+  let brandingReads = 0;
   const invoiceRequests: Array<{
     orderIds: string[];
     charges?: Array<{
@@ -62,7 +66,8 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   const supplierId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
   const chargeId = "99999999-9999-9999-9999-999999999999";
 
-  await page.context().addCookies([{ name: "auth_token", value: "e2e", url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
+  if (!process.env.AURALY_E2E_TENANT_KEY)
+    await page.context().addCookies([{ name: "auth_token", value: "e2e", url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ tenantId, businessId, user }) => {
     localStorage.setItem("selected_tenant_id", tenantId);
     localStorage.setItem("selected_business_id", businessId);
@@ -85,6 +90,11 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname;
+    if (path.endsWith("/tenants/branding/print")) {
+      brandingReads++;
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ title: "Logo no disponible" }) });
+      return;
+    }
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path === "/api/execution-context/tenants") body = [{ tenantId, name: "Tenant prueba" }];
@@ -230,6 +240,7 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
     "drawer",
   ]);
   expect(invoiceRequests).toHaveLength(3);
+  expect(brandingReads).toBe(1);
   expect(invoiceRequests.every((request) => request.charges == null)).toBe(true);
 
   orders.push(...Array.from({ length: 2 }, (_, index) => ({
@@ -266,4 +277,5 @@ test("factura, imprime y avanza el contador pedido por pedido en una instalació
       charges: [{ chargeId, chargeVersion: 1, supplierId, manualAmount: null }],
     }),
   ]);
+  expect(brandingReads).toBe(2);
 });

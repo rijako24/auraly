@@ -87,6 +87,13 @@ public sealed record CreditNotePrintDetails(
     string OriginalInvoiceNumber,
     string Reason);
 
+// Operational return copy; it is not the graphical representation of a validated fiscal note.
+public sealed record SalesReturnPrintDetails(
+    string OriginalDocumentNumber,
+    string Reason,
+    string EconomicResolution,
+    int TemplateVersion = 1);
+
 public sealed record OnlineSalesReceipt(
     Guid DocumentId,
     string DocumentType,
@@ -114,7 +121,8 @@ public sealed record OnlineSalesReceipt(
     string? CustomerAddress = null,
     IReadOnlyList<SalesReceiptTaxTotal>? TaxTotals = null,
     decimal PayableRoundingAmount = 0m,
-    CreditNotePrintDetails? CreditNotePrintDetails = null);
+    CreditNotePrintDetails? CreditNotePrintDetails = null,
+    SalesReturnPrintDetails? SalesReturnPrintDetails = null);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

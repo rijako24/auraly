@@ -11,6 +11,53 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class FiscalGenerationWorkerTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Expense_lines_and_supported_withholdings_survive_generation_and_adjustment(bool adjustment)
+    {
+        var work = CreateWork();
+        var sale = work.Sale!;
+        var issued = sale.CommercialSnapshot.IssuedAt;
+        var accountId = Guid.NewGuid();
+        var withholding = new Auraly.Commerce.Taxation.Contracts.WithholdingCalculationSnapshot(119_000m, 6_350m, 112_650m, [
+            new(Guid.NewGuid(),1,"RF","Retefuente","IncomeTax","TaxExclusiveAmount",100_000m,2.5m,2_500m,null),
+            new(Guid.NewGuid(),1,"RIVA","ReteIVA","Vat","VatAmount",19_000m,15m,2_850m,null),
+            new(Guid.NewGuid(),1,"RICA","ReteICA","IndustryCommerce","TaxExclusiveAmount",100_000m,1m,1_000m,"11001")]);
+        var expense = new Auraly.Contracts.Expenses.ExpenseDocumentPayload(sale.TenantId, work.BusinessId,
+            work.DocumentId, Guid.NewGuid(), null, accountId, null, Guid.NewGuid(), "GAS-1", Guid.NewGuid(),
+            "GAS", "00", 1, null, issued, issued.AddDays(30), "COP", "Gasto distribuido",100_000m,19_000m,
+            119_000m,null,withholding,PurchaseEvidenceType:"BuyerElectronicSupportDocument",Lines:[
+                new(1,accountId,"519595","Servicios",null,null,null,"Servicio A",60_000m,null,"IVA",19m,11_400m,"DeductibleInputVat",null),
+                new(2,accountId,"519595","Servicios",null,null,null,"Servicio B",40_000m,null,"IVA",19m,7_600m,"CapitalizedCost",null)]);
+        var snapshot = new PurchaseSupportFiscalSnapshot(null,work.Issuer.Id,work.FiscalNumber,2,
+            "https://example.test/qr",sale.UblSnapshot!.Customer,sale.UblSnapshot.Authorization,[
+                new(1,"GASTO-1","999","EA","IVA","01"),new(2,"GASTO-2","999","EA","IVA","01")],
+            Expense:expense,SellerPostalZone:"110111");
+        work = work with { Sale=null,FiscalDocumentType=FiscalDocumentTypeCodes.SupportDocument,SupportDocument=snapshot };
+        if (adjustment)
+        {
+            var cancellation = new Auraly.Contracts.Expenses.ExpenseCancellationPayload(sale.TenantId,work.BusinessId,
+                Guid.NewGuid(),Guid.NewGuid(),issued.AddDays(1),"Anulación",expense,null,112_650m,0m);
+            work = work with { DocumentId=cancellation.CancellationId,FiscalDocumentType=FiscalDocumentTypeCodes.SupportDocumentAdjustment,
+                SupportDocument=snapshot with { Expense=null,ExpenseCancellation=cancellation,OriginalSupportNumber="SETP1",
+                    OriginalSupportCuds=new string('a',96),OriginalSupportIssuedOn=DateOnly.FromDateTime(issued.Date) } };
+        }
+        var store = new TestStore(work);
+        var processed = await CreateWorker(store).ProcessAsync(work.BusinessId,work.DocumentId,"worker-a",CancellationToken.None);
+        Assert.True(processed, store.ErrorMessage);
+        Assert.True(store.Completed is not null,store.ErrorMessage);
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(store.Completed!.UnsignedXml));
+        XNamespace cac=DianUblNamespaces.Cac,cbc=DianUblNamespaces.Cbc;
+        Assert.Equal(2,xml.Root!.Elements(cac+(adjustment?"CreditNoteLine":"InvoiceLine")).Count());
+        Assert.Equal(119_000m,(decimal)xml.Descendants(cbc+"PayableAmount").Single());
+        // CreditNote 2.1 does not permit WithholdingTaxTotal; the adjustment
+        // cancels the referenced support, while accounting reverses all retentions.
+        Assert.Equal(adjustment ? 0m : 5_350m,xml.Root.Elements(cac+"WithholdingTaxTotal").Sum(group=>(decimal)group.Element(cbc+"TaxAmount")!));
+        Assert.Equal(adjustment ? 0 : 2,xml.Root.Elements(cac+"WithholdingTaxTotal").Count());
+        Assert.Contains("Servicio A",xml.ToString()); Assert.Contains("Servicio B",xml.ToString());
+    }
+
     [Fact]
     public async Task Generates_from_the_immutable_snapshot_after_master_data_changes()
     {

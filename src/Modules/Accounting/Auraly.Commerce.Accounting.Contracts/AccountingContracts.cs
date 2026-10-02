@@ -8,6 +8,7 @@ public static class AccountingPermissionCodes
     public const string Retry = "accounting.postings.retry";
     public const string Activate = "accounting.activate";
     public const string ManualCreate = "accounting.manual.create";
+    public const string ManualSend = "accounting.manual.send";
     public const string BankReconciliationRead = "accounting.bank-reconciliation.read";
     public const string BankReconciliationManage = "accounting.bank-reconciliation.manage";
     public const string BankReconciliationClose = "accounting.bank-reconciliation.close";
@@ -93,7 +94,10 @@ public sealed record AccountingAccountView(
     bool AllowsPosting,
     bool RequiresParty,
     bool IsActive,
-    string Level);
+    string Level,
+    string? RowVersion = null);
+
+public sealed record UpdateAccountingAccountRequest(string Name, bool RequiresParty, string RowVersion);
 
 public sealed record SaveBankAccountRequest(
     Guid BankAccountId,
@@ -437,7 +441,7 @@ public sealed record AccountingDocumentRow(
     string? ErrorCode, string? ErrorMessage, Guid? EntryId, string? EntryNumber,
     decimal? DebitTotal, decimal? CreditTotal, DateTimeOffset? PostedAt,
     string? FiscalDocumentType, string? DianNumber, string? UniqueCodeType,
-    string? UniqueCode, string? FiscalStatus);
+    string? UniqueCode, string? FiscalStatus, bool HasManualDraft = false);
 
 public sealed record AccountingDocumentPage(
     IReadOnlyList<AccountingDocumentRow> Items, int Page, int PageSize, int TotalCount)
@@ -470,3 +474,10 @@ public sealed record AccountingPostingView(
     string? ErrorCode,
     string? ErrorMessage,
     Guid? EntryId);
+
+public sealed record AccountingAccountOptionQuery(int Page, int PageSize, string? Search, bool ExpenseOnly = false, Guid? AccountId = null,
+    bool IncludeStructural = false, bool IncludeInactive = false);
+public sealed record AccountingAccountOptionPage(IReadOnlyList<AccountingAccountView> Items, int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}

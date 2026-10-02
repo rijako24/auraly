@@ -34,7 +34,8 @@ public sealed partial class SqlInvoiceChargeStore
             -- Materialize the scoped period once. OPENJSON has fixed cardinality estimates;
             -- sorting its nvarchar(max) projection directly can request excessive memory
             -- even for a small period. The temporary result supplies actual row statistics.
-            SELECT d.DocumentId,d.DocumentNumber,d.IssuedAt,d.WorkSessionId,j.value ChargeJson,
+            SELECT d.DocumentId,d.DocumentNumber,d.IssuedAt,d.WorkSessionId,
+              d.CustomerId,d.CustomerIdentification,j.value ChargeJson,
               c.AppliedChargeId,c.InvoicedAmount,c.ExpenseAmount
             INTO #InvoiceChargeHistory {filter};
             SELECT COUNT(*),COALESCE(SUM(InvoicedAmount),0),COALESCE(SUM(ExpenseAmount),0)
@@ -43,10 +44,15 @@ public sealed partial class SqlInvoiceChargeStore
               SELECT DocumentId,AppliedChargeId FROM #InvoiceChargeHistory
               ORDER BY IssuedAt DESC,DocumentId,AppliedChargeId
               OFFSET @Offset ROWS FETCH NEXT @Size ROWS ONLY)
-            SELECT h.DocumentId,h.DocumentNumber,h.IssuedAt,h.WorkSessionId,h.ChargeJson,
+            SELECT h.DocumentId,h.DocumentNumber,h.IssuedAt,
+              COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),
+                NULLIF(h.CustomerIdentification,N''),N'Consumidor final') CustomerName,
+              h.WorkSessionId,h.ChargeJson,
               expense.DocumentNumber,expense.Status,payable.OutstandingAmount
             FROM Page page JOIN #InvoiceChargeHistory h
               ON h.DocumentId=page.DocumentId AND h.AppliedChargeId=page.AppliedChargeId
+            LEFT JOIN dbo.Customers customer ON customer.CustomerId=h.CustomerId
+            LEFT JOIN dbo.Parties party ON party.PartyId=customer.PartyId
             LEFT JOIN dbo.Expenses expense ON expense.ExpenseId=page.AppliedChargeId AND expense.BusinessId=@BusinessId
             LEFT JOIN dbo.Payables payable ON payable.SourceDocumentId=expense.ExpenseId AND payable.SourceDocumentType=N'Expense' AND payable.BusinessId=@BusinessId
             ORDER BY h.IssuedAt DESC,h.DocumentId,h.AppliedChargeId;
@@ -64,11 +70,12 @@ public sealed partial class SqlInvoiceChargeStore
         var items = new List<InvoiceChargeHistoryItem>();
         var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         while (await reader.ReadAsync(ct))
-            items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetDateTimeOffset(2), reader.GetGuid(3),
-                JsonSerializer.Deserialize<AppliedInvoiceCharge>(reader.GetString(4), jsonOptions)
+            items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetDateTimeOffset(2), reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                JsonSerializer.Deserialize<AppliedInvoiceCharge>(reader.GetString(5), jsonOptions)
                     ?? throw new InvalidDataException("El cargo histórico no contiene su snapshot."),
-                reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetDecimal(7)));
+                reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetDecimal(8)));
         return new(items, page, pageSize, count, invoiced, expenseTotal);
     }
 }

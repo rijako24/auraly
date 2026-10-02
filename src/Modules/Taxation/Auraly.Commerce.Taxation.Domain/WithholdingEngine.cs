@@ -110,6 +110,44 @@ public sealed record WithholdingCalculation(
 
 public sealed class WithholdingEngine
 {
+    // A document threshold is evaluated once per rule over all matching bases,
+    // independently of the number of accounts or cost centers used to distribute it.
+    public (WithholdingCalculation Calculation, IReadOnlyList<string> Diagnostics) CalculateDocument(
+        IReadOnlyList<WithholdingCalculationContext> contexts, IEnumerable<WithholdingRule> candidateRules)
+    {
+        if (contexts.Count is < 1 or > 100)
+            throw new WithholdingRuleException("A document requires between 1 and 100 bases.");
+        var first = contexts[0];
+        if (contexts.Any(c => c.BusinessId != first.BusinessId || c.CounterpartyId != first.CounterpartyId ||
+            c.Direction != first.Direction || c.Moment != first.Moment || c.OccurredAt != first.OccurredAt ||
+            c.BusinessId == Guid.Empty || c.CounterpartyId == Guid.Empty ||
+            c.TaxExclusiveAmount < 0 || c.VatAmount < 0))
+            throw new WithholdingRuleException("The document tax bases are inconsistent.");
+        var lines = new List<WithholdingCalculationLine>();
+        var diagnostics = new List<string>();
+        var date = DateOnly.FromDateTime(first.OccurredAt.UtcDateTime);
+        foreach (var rule in candidateRules.OrderBy(r => r.Kind).ThenBy(r => r.Code, StringComparer.Ordinal))
+        {
+            var matching = contexts.Where(c => c.AppliesWithholding && Applies(rule, c, date)).ToArray();
+            if (matching.Length == 0) continue;
+            var basis = first with { TaxExclusiveAmount = matching.Sum(c => c.TaxExclusiveAmount),
+                VatAmount = matching.Sum(c => c.VatAmount) };
+            var line = CalculateLine(rule, basis);
+            if (line.Amount > 0) lines.Add(line);
+            else diagnostics.Add($"{rule.Name}: base {line.TaxableBase:0.####}; mínimo {rule.MinimumBase:0.####}. No genera retención.");
+        }
+        if (contexts.All(c => !c.AppliesWithholding))
+            diagnostics.Add("El perfil tributario del proveedor indica que no aplica retención.");
+        else if (lines.Count == 0 && diagnostics.Count == 0)
+            diagnostics.Add("Ninguna regla vigente coincide con el concepto, jurisdicción y responsabilidades del proveedor. Revisa la configuración tributaria.");
+        var gross = Money(contexts.Sum(c => c.TaxExclusiveAmount + c.VatAmount));
+        var held = Money(lines.Sum(l => l.Amount));
+        if (held > gross) throw new WithholdingRuleException("Withholdings cannot exceed the document gross amount.");
+        var result = new WithholdingCalculation(gross, held, Money(gross - held), lines);
+        result.EnsureBalanced();
+        return (result, diagnostics);
+    }
+
     public WithholdingCalculation Calculate(
         WithholdingCalculationContext context, IEnumerable<WithholdingRule> candidateRules)
     {

@@ -45,11 +45,16 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    [Fact]
-    public async Task Checkout_maps_a_named_natural_person_to_the_required_dian_identification()
+    [Theory]
+    [InlineData(PosSaleDocumentTypes.Invoice, "1065648633")]
+    [InlineData(PosSaleDocumentTypes.Receipt, "1065648634")]
+    public async Task Checkout_preserves_customer_contact_for_print_and_reprint(string documentType, string identification)
     {
         var userId = await CreateUserAsync("natural-person-dian");
-        var (customerId, partySiteId) = await CreateNaturalPersonCustomerAsync(userId);
+        var (customerId, partySiteId) = await CreateNaturalPersonCustomerAsync(userId, identification);
+        if (documentType == PosSaleDocumentTypes.Receipt)
+            await ExecuteAsync("UPDATE dbo.Customers SET RequiresElectronicInvoice=0 WHERE CustomerId=@Id;",
+                new SqlParameter("@Id", customerId));
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
@@ -80,10 +85,14 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             captured.DraftId,
             new CompleteOnlineSalesDraftRequest(
                 captured.Version,
-                [new OnlineSalesPayment("Cash", captured.PayableAmount, null)]),
+                [new OnlineSalesPayment("Cash", captured.PayableAmount, null)], DocumentType: documentType),
             $"natural-person-dian-{Guid.NewGuid():N}");
         Assert.Equal("Dirección principal", completed.Receipt.CustomerAddress);
         Assert.Equal("3001234567", completed.Receipt.CustomerPhone);
+        Assert.Equal("KEVIN RAMIREZ GRANADOS", completed.Receipt.CustomerName);
+        Assert.Equal(identification, completed.Receipt.CustomerIdentification);
+        await ExecuteAsync("UPDATE dbo.PartySites SET AddressLine=N'Nueva dirección' WHERE PartySiteId=@Id;",
+            new SqlParameter("@Id", partySiteId));
         using (var historyResponse = await client.PostAsJsonAsync(
                    $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/receipt",
                    new OnlineSalesHistoryContext(fixture.BusinessId)))
@@ -93,6 +102,13 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             Assert.NotNull(historical);
             Assert.Equal("Dirección principal", historical.CustomerAddress);
             Assert.Equal("3001234567", historical.CustomerPhone);
+        }
+
+        if (documentType == PosSaleDocumentTypes.Receipt)
+        {
+            Assert.Null(completed.Receipt.InvoicePrintDetails);
+            Assert.Null(completed.Receipt.Cufe);
+            return;
         }
 
         using (var scope = fixture.CreateScope())
@@ -112,12 +128,12 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
         Assert.Equal("2", customer.Element(
             DianUblNamespaces.Cbc + "AdditionalAccountID")?.Value);
-        var identification = customer
+        var customerIdentification = customer
             .Descendants(DianUblNamespaces.Cac + "PartyIdentification")
             .Elements(DianUblNamespaces.Cbc + "ID").Single();
-        Assert.Equal("1065648633", identification.Value);
-        Assert.Equal("13", identification.Attribute("schemeName")?.Value);
-        Assert.Null(identification.Attribute("schemeID"));
+        Assert.Equal(identification, customerIdentification.Value);
+        Assert.Equal("13", customerIdentification.Attribute("schemeName")?.Value);
+        Assert.Null(customerIdentification.Attribute("schemeID"));
         Assert.True(new DianSchemaValidator().Validate(unsigned).IsValid);
     }
 
@@ -884,7 +900,7 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     private Task<(Guid CustomerId, Guid PartySiteId)> CreateElectronicInvoiceCustomerAsync(Guid userId) =>
         CreateCustomerAsync(userId, true, "Cliente factura requerida");
 
-    private async Task<(Guid CustomerId, Guid PartySiteId)> CreateNaturalPersonCustomerAsync(Guid userId)
+    private async Task<(Guid CustomerId, Guid PartySiteId)> CreateNaturalPersonCustomerAsync(Guid userId, string identification)
     {
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
@@ -897,8 +913,8 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
               CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES(
               @PartyId,@TenantId,N'NaturalPerson',
-              (SELECT TOP (1) CountryId FROM dbo.Countries WHERE Code=N'CO'),N'CC',N'1065648633',
-              N'1065648633',N'KEVIN RAMIREZ GRANADOS',N'KEVIN',N'RAMIREZ GRANADOS',
+              (SELECT TOP (1) CountryId FROM dbo.Countries WHERE Code=N'CO'),N'CC',@Identification,
+              @Identification,N'KEVIN RAMIREZ GRANADOS',N'KEVIN',N'RAMIREZ GRANADOS',
               N'Complete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
               CustomerId,PartyId,TenantId,RequiresElectronicInvoice,
@@ -922,6 +938,7 @@ public sealed partial class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
               PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
             VALUES(NEWID(),@PartyId,N'Phone',N'3001234567',N'3001234567',1,1,SYSDATETIMEOFFSET());
             """,
+            new("@Identification", identification),
             new("@PartyId", partyId),
             new("@CustomerId", customerId),
             new("@PartySiteId", partySiteId),

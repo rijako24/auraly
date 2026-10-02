@@ -203,6 +203,25 @@ VALUES
 ('74000000-0000-0000-0000-000000000005',N'expense-cancellation-reason',N'INVALID_SUPPORT',N'Soporte inválido o reemplazado',NULL,50),
 ('74000000-0000-0000-0000-000000000006',N'expense-cancellation-reason',N'INVOICE_CHARGE_CORRECTION',N'Corrección de cargo de facturación',NULL,60);
 
+INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
+VALUES
+('63500000-0000-0000-0000-000000000001',N'accounting-document-status',N'Created',N'Creado / sin enviar',NULL,10),
+('63500000-0000-0000-0000-000000000002',N'accounting-document-status',N'Pending',N'Enviado / pendiente',NULL,20),
+('63500000-0000-0000-0000-000000000003',N'accounting-document-status',N'Posted',N'Contabilizado',NULL,30),
+('63500000-0000-0000-0000-000000000004',N'accounting-document-status',N'AccountingPendingConfiguration',N'Requiere configuración',NULL,40),
+('63500000-0000-0000-0000-000000000005',N'accounting-document-status',N'CommercialEffectsApplied',N'Efecto comercial sin asiento',NULL,50),
+('63500000-0000-0000-0000-000000000006',N'accounting-document-status',N'MissingAccountingJob',N'Ausencia contable',NULL,60),
+('74100000-0000-0000-0000-000000000001',N'expense-status',N'Accepted',N'Aceptado',NULL,10),
+('74100000-0000-0000-0000-000000000002',N'expense-status',N'Processed',N'Procesado',NULL,20),
+('74100000-0000-0000-0000-000000000003',N'expense-status',N'CancellationPending',N'Anulación pendiente',NULL,30),
+('74100000-0000-0000-0000-000000000004',N'expense-status',N'Cancelled',N'Anulado',NULL,40),
+('74100000-0000-0000-0000-000000000005',N'expense-status',N'Returned',N'Devuelto en factura',NULL,50),
+('74100000-0000-0000-0000-000000000011',N'payable-status',N'Open',N'Abierta',NULL,10),
+('74100000-0000-0000-0000-000000000012',N'payable-status',N'PartiallyPaid',N'Pagada parcialmente',NULL,20),
+('74100000-0000-0000-0000-000000000013',N'payable-status',N'Paid',N'Pagada',NULL,30),
+('74100000-0000-0000-0000-000000000014',N'payable-status',N'Cancelled',N'Anulada',NULL,40),
+('74100000-0000-0000-0000-000000000015',N'payable-status',N'None',N'Sin cuenta',NULL,50);
+
 MERGE [reference].[Options] AS target
 USING @Source AS source
 ON target.CatalogCode=source.CatalogCode AND target.Code=source.Code
@@ -218,12 +237,12 @@ WHEN NOT MATCHED BY SOURCE
        (N'payment-method',N'cash-closure-method',N'cash-denomination',N'cash-reconciliation-reason',N'expense-cancellation-reason',N'card-franchise',N'bank-account-type',N'sales-return-resolution-method',N'sales-return-scope',N'sales-document-type',N'purchase-presentation',
         N'inventory-operation-type',N'agent-bot-type',N'accounting-account-type',
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
-        N'accounting-manual-concept',N'accounting-report-type',
+        N'accounting-manual-concept',N'accounting-report-type',N'accounting-document-status',
         N'accounting-withholding-kind',N'accounting-opening-balance-mode',N'accounting-cost-center-operation',N'accounting-document-type',
         N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type',N'tax-responsibility',
         N'purchase-cost-evidence-type',N'purchase-cost-kind',N'purchase-cost-treatment',
         N'purchase-cost-allocation-method',N'purchase-tax-rate',N'purchase-tax-treatment',
-        N'purchase-currency',N'exchange-rate-source')
+        N'purchase-currency',N'exchange-rate-source',N'expense-status',N'payable-status')
 THEN UPDATE SET target.IsActive=0,target.UpdatedAt=@Now;
 
 MERGE worksessions.CashClosurePaymentMethodMappings AS target
