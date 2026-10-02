@@ -121,7 +121,7 @@ internal sealed partial class AuralyDesktopUpdater(
         availableUpdate = new AuralyUpdateRequest(DiscoveryMessageType,
             InstallerDownloadPath, pendingUpdate.Version, pendingUpdate.Sha256);
         PostStatus("ready", pendingUpdate.Version, 100,
-            "La actualización descargada está verificada. Iniciando la instalación…");
+            "La actualización descargada está verificada y lista para instalar.");
     }
 
     private void HandleDiscovery(AuralyUpdateRequest request)

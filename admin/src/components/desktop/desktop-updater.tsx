@@ -28,6 +28,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
   const [update, setUpdate] = useState<DesktopUpdateStatus | null>(null);
   const [open, setOpen] = useState(false);
   const checkAgain = useRef<(() => Promise<boolean>) | null>(null);
+  const installAfterDownload = useRef(false);
 
   useEffect(() => {
     const webview = currentWebView();
@@ -64,10 +65,12 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
         discovered = true;
         void check();
       }
-      if (status.status === "ready") {
+      if (status.status === "ready" && installAfterDownload.current) {
+        installAfterDownload.current = false;
         setOpen(true);
         webview.postMessage({ type: desktopUpdateAction("restart") });
       }
+      if (status.status === "error") installAfterDownload.current = false;
       if (status.status === "restarting" || status.status === "restart-error") setOpen(true);
     };
     webview.addEventListener("message", receiveStatus);
@@ -82,7 +85,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
 
   const visibleUpdate = authenticated ? update : null;
   const downloading = update?.status === "downloading" || update?.status === "verifying";
-  const restarting = update?.status === "ready" || update?.status === "restarting";
+  const restarting = update?.status === "restarting";
   const busy = downloading || restarting;
   const available = update?.status === "available" || update?.status === "error";
   const send = (action: "download" | "restart") => currentWebView()?.postMessage({ type: desktopUpdateAction(action) });
@@ -90,11 +93,13 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
     // The published installer can change while the app remains open. Refresh
     // its version/hash before retrying a rejected download, not on every render.
     if (update?.status === "error" && !await checkAgain.current?.()) return;
+    installAfterDownload.current = true;
     send("download");
   };
   const activate = () => {
     setOpen(true);
     if (available) void download();
+    if (update?.status === "ready") send("restart");
   };
 
   return <UpdateContext.Provider value={{ update: visibleUpdate, activate }}>

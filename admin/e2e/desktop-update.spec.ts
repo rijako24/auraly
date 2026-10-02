@@ -78,6 +78,11 @@ test("application update downloads, verifies and restarts automatically without 
   expect(await page.evaluate(() => localStorage.getItem("test-restart-requests"))).toBe("2");
   await expect(dialog.getByRole("button", { name: "Abriendo instalador…" })).toBeDisabled();
   await page.reload();
+  await expect(dialog).toBeHidden();
+  const resume = page.getByRole("button", { name: "Actualización 0.1.0-rc235 lista para instalar" });
+  await expect(resume).toBeVisible({ timeout: 30_000 });
+  expect(await page.evaluate(() => localStorage.getItem("test-restart-requests"))).toBe("2");
+  await resume.click();
   await expect(dialog).toBeVisible({ timeout: 30_000 });
   expect(manifestReads).toBe(2);
   expect(await page.evaluate(() => localStorage.getItem("test-download-requests"))).toBe("2");

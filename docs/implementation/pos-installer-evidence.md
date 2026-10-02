@@ -81,8 +81,10 @@ actualización completa: el modal informa que Auraly se actualizará y reiniciar
 automáticamente. Al recibir la descarga verificada, el propietario de interfaz
 envía el comando de reinicio existente sin otra confirmación ni botón `Más tarde`.
 Durante descarga, verificación y apertura del instalador el modal permanece abierto.
-Si la aplicación se cerró después de guardar la descarga, al abrirla se retoma la
-instalación de ese paquete validado sin descargarlo otra vez. Reiniciar verifica
+Si la aplicación se cerró después de guardar la descarga y la instalación no
+terminó, al abrirla el icono permite retomarla sin descargarla otra vez. No se
+reinicia automáticamente al recuperar ese pendiente: así un fallo del instalador
+no impide abrir Auraly ni obliga a repetirlo en cada inicio. Reiniciar verifica
 otra vez el archivo y lanza el instalador existente. Si no puede abrirlo, conserva
 la descarga y ofrece reintentar. Tras una instalación correcta, una versión igual
 o anterior a la instalada deja de ofrecerse y se retira su marcador pendiente.
