@@ -2448,6 +2448,7 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Parties": "[1.0.0, )",
+          "Auraly.Contracts.Returns": "[1.0.0, )",
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Domain.Parties": "[1.0.0, )"
         }
@@ -2555,6 +2556,7 @@
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Dispatching": "[1.0.0, )",
+          "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Inventory": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )"
         }
@@ -2720,7 +2722,8 @@
       "auraly.contracts.returns": {
         "type": "Project",
         "dependencies": {
-          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Sales": "[1.0.0, )"
         }
       },
       "auraly.contracts.routes": {
