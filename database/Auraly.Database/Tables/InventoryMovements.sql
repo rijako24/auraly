@@ -25,7 +25,7 @@ CREATE TABLE [dbo].[InventoryMovements]
     CONSTRAINT [FK_InventoryMovements_DocumentJob] FOREIGN KEY ([DocumentId], [DocumentType]) REFERENCES [dbo].[DocumentProcessingJobs] ([DocumentId], [DocumentType]),
     CONSTRAINT [FK_InventoryMovements_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [UQ_InventoryMovements_Document_Line_Type] UNIQUE ([DocumentId], [DocumentType], [LineNumber], [MovementType]),
-    CONSTRAINT [CK_InventoryMovements_Quantity] CHECK ([QuantityChange] <> 0 OR ([MovementType]=N'InventoryCostCorrection' AND [QuantityChange]=0 AND [ValueChange]<>0))
+    CONSTRAINT [CK_InventoryMovements_Quantity] CHECK ([QuantityChange] <> 0)
 );
 
 GO

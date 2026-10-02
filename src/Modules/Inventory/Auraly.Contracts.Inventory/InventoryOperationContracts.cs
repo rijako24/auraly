@@ -84,19 +84,6 @@ public sealed record ConfirmInventoryAdjustmentRequest(
     string? Notes,
     IReadOnlyCollection<InventoryAdjustmentLineRequest> Lines);
 
-public sealed record ConfirmInventoryCostCorrectionRequest(
-    Guid DocumentId,
-    Guid BusinessId,
-    Guid WarehouseId,
-    DateTimeOffset OccurredAt,
-    string ReasonCode,
-    Guid? CostCenterId,
-    string Notes,
-    Guid ProductId,
-    decimal TargetUnitCost,
-    decimal ExpectedPoolQuantity,
-    decimal ExpectedPoolValue);
-
 public sealed record WarehouseTransferLineRequest(int LineNumber, Guid ProductId, decimal DispatchedQuantity);
 
 public sealed record DispatchWarehouseTransferRequest(
@@ -170,9 +157,7 @@ public sealed record InventoryOperationLineSnapshot(
     decimal? ReceivedQuantity = null,
     decimal? DispatchUnitCost = null,
     Guid? TransferId = null,
-    decimal? TransferLossQuantity = null,
-    decimal? ExpectedPoolQuantity = null,
-    decimal? ExpectedPoolValue = null);
+    decimal? TransferLossQuantity = null);
 
 public sealed record InventoryOperationDocumentPayload(
     Guid TenantId,

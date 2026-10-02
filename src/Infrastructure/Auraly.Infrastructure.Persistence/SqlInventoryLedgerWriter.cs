@@ -36,15 +36,12 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
         var movements = new List<ValuedMovement>(postings.Count);
         var results = new InventoryLedgerPostingResult[postings.Count];
         var changedProducts = new HashSet<Guid>();
-        var changedBalances = new HashSet<(Guid BusinessId, Guid WarehouseId, Guid ProductId)>();
         foreach (var target in loaded.Targets.OrderBy(target => target.Position))
         {
             var posting = postings[target.Position];
             if (!target.ManageStock) { results[target.Position] = InventoryLedgerPostingResult.NotManaged; continue; }
             var key = (scope.BusinessId, scope.WarehouseId, target.ProductId);
-            var isCostCorrection = posting.ValuationMode == InventoryValuationMode.CostCorrection;
-            var damageReceipt = posting.MovementType == "DamageWarehouseIn" ||
-                isCostCorrection && balances.TryGetValue(key, out var existing) && existing.IsDamageWarehouse;
+            var damageReceipt = posting.MovementType == "DamageWarehouseIn";
             if (!balances.TryGetValue(key, out var balance))
             {
                 balance = new(scope.BusinessId, scope.WarehouseId, target.ProductId, 0, 0, 0,
@@ -62,12 +59,6 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
                 damageReceipt ? [key] : pools[target.ProductId];
             var poolQuantity = poolKeys.Sum(poolKey => balances[poolKey].QuantityOnHand);
             var poolValue = poolKeys.Sum(poolKey => balances[poolKey].InventoryValue);
-            if (isCostCorrection && (posting.ExpectedPoolQuantity != poolQuantity ||
-                posting.ExpectedPoolValue != poolValue ||
-                posting.QuantityChange != 0 || posting.SpecifiedUnitCost is null ||
-                damageReceipt && posting.SpecifiedUnitCost != 0))
-                throw new InvalidOperationException(
-                    "The inventory cost correction no longer matches its confirmed balance or cost policy.");
             var lastKnownCost = poolKeys.Select(poolKey => balances[poolKey].AverageUnitCost)
                 .FirstOrDefault(cost => cost > 0m);
             var initialCost = lastKnownCost > 0m ? lastKnownCost : target.InitialUnitCost;
@@ -81,13 +72,11 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
                 throw new InvalidOperationException(
                     "El producto inventariable no tiene una valorización contable positiva. Registra o corrige su costo antes de venderlo.");
             balances[key] = balance with { QuantityOnHand = valuation.QuantityAfter, IsTarget = true };
-            changedBalances.Add(key);
             foreach (var poolKey in poolKeys)
             {
                 var current = balances[poolKey];
                 balances[poolKey] = current with { AverageUnitCost = valuation.AverageUnitCostAfter,
                     InventoryValue = decimal.Round(current.QuantityOnHand * valuation.AverageUnitCostAfter, 4, MidpointRounding.AwayFromZero) };
-                changedBalances.Add(poolKey);
             }
             // Individual warehouse values are rounded before persistence. Use
             // their exact aggregate delta so the movement reconciles to the
@@ -96,15 +85,12 @@ public sealed class SqlInventoryLedgerWriter(IAuralyIdGenerator ids, TimeProvide
             movements.Add(new(ids.NewId(), posting.LineNumber, target.ProductId, posting.MovementType,
                 quantityChange, balance.QuantityOnHand, valuation.QuantityAfter, valuation.AverageUnitCostBefore,
                 valuation.AverageUnitCostAfter, valuation.RecognizedUnitCost, bookValueChange, posting.OccurredAt));
-            if (!damageReceipt && valuation.AverageUnitCostAfter != valuation.AverageUnitCostBefore)
-                changedProducts.Add(target.ProductId);
+            if (valuation.AverageUnitCostAfter != valuation.AverageUnitCostBefore) changedProducts.Add(target.ProductId);
             results[target.Position] = new(valuation.QuantityAfter, valuation.AverageUnitCostAfter,
                 valuation.InventoryValueAfter, valuation.RecognizedUnitCost, bookValueChange);
         }
         if (movements.Count > 0)
-            await PersistAsync(session, scope, loaded,
-                changedBalances.Select(key => balances[key]).ToArray(), movements,
-                changedProducts, cancellationToken);
+            await PersistAsync(session, scope, loaded, balances.Values.ToArray(), movements, changedProducts, cancellationToken);
         return results;
     }
 
@@ -250,9 +236,7 @@ public sealed record InventoryLedgerPosting(
     decimal QuantityChange,
     decimal? SpecifiedUnitCost,
     InventoryValuationMode ValuationMode,
-    DateTimeOffset OccurredAt,
-    decimal? ExpectedPoolQuantity = null,
-    decimal? ExpectedPoolValue = null);
+    DateTimeOffset OccurredAt);
 
 public sealed record InventoryLedgerPostingResult(
     decimal QuantityAfter,

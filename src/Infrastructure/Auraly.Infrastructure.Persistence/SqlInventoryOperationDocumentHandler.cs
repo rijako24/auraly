@@ -27,8 +27,6 @@ public sealed class SqlInventoryOperationProcessor(
         {
             var target = await SqlProductLinkResolution.ResolveInventoryAsync(
                 session, operation.BusinessId, line.ProductId, cancellationToken);
-            if (line.Direction == "COST" && (target.ProductId != line.ProductId || target.Factor != 1m))
-                throw new InvalidOperationException("A cost correction must identify the inventory product directly.");
             if (operation.DocumentType == InventoryDocumentTypes.Conversion &&
                 (target.ProductId != line.ProductId || target.Factor != 1m))
                 throw new InvalidOperationException("A conversion product must keep its own inventory.");
@@ -130,14 +128,7 @@ public sealed class SqlInventoryOperationProcessor(
     {
         var total = 0m;
         foreach (var line in operation.Lines.OrderBy(line => line.LineNumber))
-        {
-            if (line.Direction == "COST" && (operation.Lines.Count != 1 || line.Quantity != 0 ||
-                line.ExplicitUnitCost is null || line.ExpectedPoolQuantity is null || line.ExpectedPoolValue is null))
-                throw new InvalidOperationException("The cost correction snapshot is invalid.");
-            var movementType = line.Direction == "COST" ? "InventoryCostCorrection" : "InventoryAdjustment";
-            total += (await ApplyAsync(session, operation, line, operation.WarehouseId, line.Quantity,
-                line.ExplicitUnitCost, movementType, balances, cancellationToken)).ValueChange;
-        }
+            total += (await ApplyAsync(session, operation, line, operation.WarehouseId, line.Quantity, line.ExplicitUnitCost, "InventoryAdjustment", balances, cancellationToken)).ValueChange;
         return InventoryOperationRules.Money(total);
     }
 
@@ -391,9 +382,7 @@ public sealed class SqlInventoryOperationProcessor(
         decimal quantityChange, decimal? inboundUnitCost, string movementType,
         Dictionary<(Guid, Guid), BalanceState> balances, CancellationToken cancellationToken, bool updateLine = true)
     {
-        var mode = movementType == "InventoryCostCorrection"
-            ? InventoryValuationMode.CostCorrection
-            : quantityChange > 0 && inboundUnitCost is not null
+        var mode = quantityChange > 0 && inboundUnitCost is not null
             ? InventoryValuationMode.WeightedAverageReceipt
             : InventoryValuationMode.AverageCost;
         var result = await inventoryWriter.PostAsync(
@@ -409,9 +398,7 @@ public sealed class SqlInventoryOperationProcessor(
                 quantityChange,
                 inboundUnitCost,
                 mode,
-                operation.OccurredAt,
-                line.ExpectedPoolQuantity,
-                line.ExpectedPoolValue),
+                operation.OccurredAt),
             cancellationToken);
         UpdateBalanceStates(balances, warehouseId, line.ProductId, result);
         if (updateLine)
