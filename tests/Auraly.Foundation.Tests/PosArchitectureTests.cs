@@ -617,15 +617,15 @@ public sealed class PosArchitectureTests
         Assert.Contains("title=\"Facturas\"", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("title=\"Pedidos\"", peripheralDialog, StringComparison.Ordinal);
         Assert.DoesNotContain("Facturas desde pedidos", peripheralDialog, StringComparison.Ordinal);
-        Assert.Contains("Impresora del sistema", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("Impresora de ${label} para ${title.toLowerCase()}", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Posición inicial", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Dividir el valor por 1.000", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Probar balanza", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("/sales/receipts/render", onlineClient, StringComparison.Ordinal);
-        Assert.Contains("await this.ensurePrintBranding();", onlineClient, StringComparison.Ordinal);
+        Assert.DoesNotContain("await this.ensurePrintBranding();", onlineClient, StringComparison.Ordinal);
         Assert.Contains("tenantsApi.readyLocalPrintBranding()", onlineClient, StringComparison.Ordinal);
         Assert.Contains("companyLogoSource: branding?.logoUrl ?? null", onlineClient, StringComparison.Ordinal);
-        Assert.Contains("}, branding ? { ...branding, logoUrl: null } : null, workflow);",
+        Assert.Contains("}, branding ? { ...branding, logoUrl: null } : null, workflow, requestedFormat);",
             onlineClient, StringComparison.Ordinal);
         Assert.DoesNotContain("await tenantsApi.getBranding()",
             onlineClient, StringComparison.Ordinal);
