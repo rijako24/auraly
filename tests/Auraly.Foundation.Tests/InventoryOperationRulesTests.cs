@@ -11,6 +11,16 @@ public sealed class InventoryOperationRulesTests
         Assert.Equal(3.125678m, InventoryOperationRules.CountAdjustment(13.1256784m, 10m));
     }
 
+    [Theory]
+    [InlineData(4, -2, 6)]
+    [InlineData(0, -2, 2)]
+    [InlineData(20, -10, 30)]
+    public void Count_accepts_negative_book_stock_and_uses_the_physical_quantity(
+        int counted, int systemAtBase, int expectedAdjustment)
+    {
+        Assert.Equal(expectedAdjustment, InventoryOperationRules.CountAdjustment(counted, systemAtBase));
+    }
+
     [Fact]
     public void Conversion_allocates_the_last_monetary_residue_deterministically()
     {

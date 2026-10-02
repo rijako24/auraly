@@ -12,6 +12,7 @@ import {
 } from "@/services/pos/pos-edge-client";
 import { completeInstalledPrinterConfiguration } from "@/services/pos/pos-printer-configuration";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -120,7 +121,7 @@ export function PosPrinterDialog({
 
   return createPortal(
     <div data-testid="peripherals-dialog-backdrop" data-pos-focus-surface="modal" className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4">
-      <section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="peripherals-dialog-title" className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl bg-white text-slate-950 shadow-2xl [&_button[role=combobox]]:border-slate-300 [&_button[role=combobox]]:bg-white [&_button[role=combobox]]:text-slate-950 [&_input]:border-slate-300 [&_input]:bg-white [&_input]:text-slate-950 [&_input]:placeholder:text-slate-400">
+      <section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="peripherals-dialog-title" className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white text-slate-950 shadow-2xl [&_button[role=combobox]]:border-slate-300 [&_button[role=combobox]]:bg-white [&_button[role=combobox]]:text-slate-950 [&_input]:border-slate-300 [&_input]:bg-white [&_input]:text-slate-950 [&_input]:placeholder:text-slate-400">
         <header className="flex shrink-0 items-start justify-between border-b px-6 py-5">
           <div>
             <p className="text-xs font-bold uppercase tracking-[.16em] text-teal-700">
@@ -147,8 +148,8 @@ export function PosPrinterDialog({
           ) : value ? (
             <>
               <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">{client?"Impresión directa por flujo":"Impresión desde el navegador"}</p><p className="mt-1 text-xs text-slate-600">{client?"Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.":"Sin Auraly, al emitir se abrirá el diálogo del navegador para escoger la impresora y confirmar el trabajo."}</p></div>
-              <WorkflowPrinterCard title="Facturas" description="Facturas electrónicas y comprobantes emitidos desde el punto de venta o al facturar pedidos." format={value.posOutputFormat??"Receipt"} printerName={value.posPrinterName??printerFor(value,value.posOutputFormat??"Receipt")} paperWidth={value.receiptPaperWidthMillimeters} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"invoices",format,printerName,paperWidth))}/>
-              <WorkflowPrinterCard title="Pedidos" description="Pedidos impresos desde la vista administrativa, antes de facturarlos." format={value.orderOutputFormat??"HalfLetter"} printerName={value.orderPrinterName??printerFor(value,value.orderOutputFormat??"HalfLetter")} paperWidth={value.orderReceiptPaperWidthMillimeters??80} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"orders",format,printerName,paperWidth))}/>
+              <WorkflowPrinterCard title="Facturas" description="Facturas electrónicas y comprobantes emitidos desde el punto de venta o al facturar pedidos." workflow="invoices" value={value} printers={printers} direct={Boolean(client)} onChange={setValue}/>
+              <WorkflowPrinterCard title="Pedidos" description="Pedidos impresos desde la vista administrativa, antes de facturarlos." workflow="orders" value={value} printers={printers} direct={Boolean(client)} onChange={setValue}/>
               {client&&!printers.length && (
                 <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
                   Windows no reporto impresoras instaladas. Instala el controlador y vuelve a abrir esta configuracion.
@@ -211,24 +212,63 @@ export function PosPrinterDialog({
   );
 }
 
-function WorkflowPrinterCard({title,description,format,printerName,paperWidth,printers,onChange}:{title:string;description:string;format:PosPrintTemplateFormat;printerName:string|null;paperWidth:58|80;printers:string[];onChange:(format:PosPrintTemplateFormat,printerName:string|null,paperWidth:58|80)=>void}){
-  return <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"><div><h3 className="font-semibold text-slate-950">{title}</h3><p className="text-xs text-slate-600">{description}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Formato"><Select value={format} onValueChange={next=>onChange(next as PosPrintTemplateFormat,printerName,paperWidth)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent className="bg-white text-slate-950"><SelectItem value="Receipt">Tirilla</SelectItem><SelectItem value="HalfLetter">Media carta</SelectItem><SelectItem value="HalfLegal">Media oficio</SelectItem><SelectItem value="Letter">Carta</SelectItem></SelectContent></Select></Field>{printers.length>0&&<Field label="Impresora del sistema"><Select value={printerName??undefined} onValueChange={next=>onChange(format,next,paperWidth)}><SelectTrigger><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent className="bg-white text-slate-950">{printers.map(printer=><SelectItem key={printer} value={printer}>{printer}</SelectItem>)}</SelectContent></Select></Field>}{format==="Receipt"&&<Field label="Ancho de tirilla"><Select value={String(paperWidth)} onValueChange={next=>onChange(format,printerName,Number(next) as 58|80)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent className="bg-white text-slate-950"><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></Field>}</div></section>;
+const PRINT_FORMATS: Array<{ format: PosPrintTemplateFormat; label: string }> = [
+  { format: "Receipt", label: "Tirilla" },
+  { format: "HalfLetter", label: "Media carta" },
+  { format: "HalfLegal", label: "Media oficio" },
+  { format: "Letter", label: "Carta" },
+];
+type PrintWorkflow = "invoices" | "orders";
+
+function routePrinter(value: PosPrinterConfiguration, workflow: PrintWorkflow, format: PosPrintTemplateFormat): string | null {
+  const documentType = workflow === "invoices" ? "SalesInvoice" : "Order";
+  const route = value.templateRoutes?.find(item => item.documentType === documentType && item.format === format);
+  if (route) return route.printerName;
+  const defaultFormat = workflow === "invoices" ? value.posOutputFormat : value.orderOutputFormat;
+  if (format === defaultFormat) return workflow === "invoices" ? value.posPrinterName ?? null : value.orderPrinterName ?? null;
+  return null;
 }
 
-function printerFor(value:PosPrinterConfiguration,format:PosPrintTemplateFormat){
-  return value.templateRoutes?.find(route=>route.format===format)?.printerName??(format==="Receipt"?value.receiptPrinterName:value.letterPrinterName);
+function setWorkflowPrinter(value: PosPrinterConfiguration, workflow: PrintWorkflow, format: PosPrintTemplateFormat, printerName: string | null): PosPrinterConfiguration {
+  const documentTypes = workflow === "invoices" ? ["SalesInvoice", "SalesReceipt"] as const : ["Order"] as const;
+  const routes = (value.templateRoutes ?? []).filter(route => !(documentTypes as readonly string[]).includes(route.documentType) || route.format !== format);
+  const templateRoutes = [...routes, ...documentTypes.map(documentType => ({ documentType, format, printerName }))];
+  const isDefault = format === (workflow === "invoices" ? value.posOutputFormat : value.orderOutputFormat);
+  return {
+    ...value, templateRoutes, receiptMode: "WindowsRaw", orderMode: "WindowsPrint",
+    ...(workflow === "invoices" && isDefault ? { posPrinterName: printerName } : {}),
+    ...(workflow === "orders" && isDefault ? { orderPrinterName: printerName } : {}),
+  };
 }
 
-function configureWorkflow(value:PosPrinterConfiguration,workflow:"invoices"|"orders",format:PosPrintTemplateFormat,printerName:string|null,paperWidth:58|80):PosPrinterConfiguration{
-  const routes=(value.templateRoutes??[]).filter(route=>route.format!==format);
-  const templateRoutes=workflow==="orders"
-    ? value.templateRoutes
-    : [...routes,...(["SalesInvoice","SalesReceipt"] as const).map(documentType=>({documentType,format,printerName}))];
-  return {...value,receiptMode:"WindowsRaw",orderMode:"WindowsPrint",templateRoutes,
-    ...(workflow==="invoices"
-      ? {posOutputFormat:format,posPrinterName:printerName,receiptPaperWidthMillimeters:paperWidth,receiptPrinterName:printerName}
-      : {orderOutputFormat:format,orderPrinterName:printerName,orderReceiptPaperWidthMillimeters:paperWidth}),
-    ...(workflow==="invoices"&&format!=="Receipt"?{letterPrinterName:printerName}:{})};
+function setWorkflowDefault(value: PosPrinterConfiguration, workflow: PrintWorkflow, format: PosPrintTemplateFormat): PosPrinterConfiguration {
+  const printerName = routePrinter(value, workflow, format);
+  return workflow === "invoices"
+    ? { ...value, posOutputFormat: format, posPrinterName: printerName }
+    : { ...value, orderOutputFormat: format, orderPrinterName: printerName };
+}
+
+function WorkflowPrinterCard({ title, description, workflow, value, printers, direct, onChange }: {
+  title: string; description: string; workflow: PrintWorkflow; value: PosPrinterConfiguration;
+  printers: string[]; direct: boolean; onChange: (value: PosPrinterConfiguration) => void;
+}) {
+  const defaultFormat = workflow === "invoices" ? value.posOutputFormat : value.orderOutputFormat;
+  const width = workflow === "invoices" ? value.receiptPaperWidthMillimeters : value.orderReceiptPaperWidthMillimeters ?? 80;
+  return <section className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+    <div><h3 className="font-semibold text-slate-950">{title}</h3><p className="text-xs text-slate-600">{description}</p></div>
+    <div className="space-y-2">{PRINT_FORMATS.map(({ format, label }) => {
+      const printerName = routePrinter(value, workflow, format);
+      return <div key={format} className="grid items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 sm:grid-cols-[7rem_minmax(0,1fr)_5.5rem]">
+        <span className="text-sm font-semibold text-slate-800">{label}</span>
+        {direct ? <Select value={printerName ?? "unconfigured"} onValueChange={next => onChange(setWorkflowPrinter(value, workflow, format, next === "unconfigured" ? null : next))}>
+          <SelectTrigger aria-label={`Impresora de ${label} para ${title.toLowerCase()}`}><SelectValue /></SelectTrigger>
+          <SelectContent className="bg-white text-slate-950"><SelectItem value="unconfigured">Sin configurar</SelectItem>{printers.map(printer => <SelectItem key={printer} value={printer}>{printer}</SelectItem>)}</SelectContent>
+        </Select> : <span className="text-xs text-slate-500">Diálogo del navegador</span>}
+        <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700"><Checkbox aria-label={`Usar ${label.toLowerCase()} por defecto en ${title.toLowerCase()}`} checked={defaultFormat === format} disabled={direct && !printerName} onCheckedChange={checked => { if (checked) onChange(setWorkflowDefault(value, workflow, format)); }} />Por defecto</label>
+        {format === "Receipt" && <div className="sm:col-start-2"><Select value={String(width)} onValueChange={next => onChange(workflow === "invoices" ? { ...value, receiptPaperWidthMillimeters: Number(next) as 58 | 80 } : { ...value, orderReceiptPaperWidthMillimeters: Number(next) as 58 | 80 })}><SelectTrigger aria-label={`Ancho de tirilla para ${title.toLowerCase()}`}><SelectValue /></SelectTrigger><SelectContent className="bg-white text-slate-950"><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></div>}
+      </div>;
+    })}</div>
+  </section>;
 }
 
 function ScaleConfiguration({ value, serialPorts, busy, onChange, onTest }: {
@@ -273,7 +313,7 @@ function defaultScale(): NonNullable<PosPrinterConfiguration["scale"]> {
 
 export function validPeripheralConfiguration(value: PosPrinterConfiguration, direct: boolean) {
   if (!direct) return true;
-  if (!value.posPrinterName || !value.orderPrinterName) return false;
+  if (!routePrinter(value, "invoices", value.posOutputFormat) || !routePrinter(value, "orders", value.orderOutputFormat)) return false;
   if (!value.scale?.enabled) return true;
   return Boolean(value.scale.portName) && value.scale.baudRate > 0 &&
     value.scale.dataBits >= 5 && value.scale.dataBits <= 8 &&

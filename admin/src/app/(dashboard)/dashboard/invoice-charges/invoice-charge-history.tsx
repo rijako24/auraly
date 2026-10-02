@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { DataTablePagination } from "@/components/tables/data-table-pagination";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
@@ -25,26 +25,27 @@ export function InvoiceChargeHistory({ businessId }: { businessId: string }) {
     queryFn: () => invoiceChargesApi.history({ from, to, page, pageSize, search }), enabled: valid,
     refetchOnWindowFocus: false });
   return <div className="space-y-4">
+    <div className="grid gap-4 sm:grid-cols-3">{[
+      ["Cargos en el periodo", query.isSuccess ? String(query.data.totalCount) : "—"],
+      ["Incluido en facturas", query.isSuccess ? money.format(query.data.invoicedTotal) : "—"],
+      ["Registrado como gasto", query.isSuccess ? money.format(query.data.expenseTotal) : "—"],
+    ].map(([label, value]) => <Card key={label}><CardContent className="p-5"><p className="text-sm text-muted-foreground">{label}</p><strong className="mt-2 block text-2xl tabular-nums">{value}</strong></CardContent></Card>)}</div>
     <Card><CardContent className="flex flex-wrap items-end gap-4 p-4">
-      <div className="space-y-2"><Label htmlFor="charges-from">Desde</Label><Input id="charges-from" type="date" value={from} onChange={event => { setFrom(event.target.value); setPage(1); }}/></div>
-      <div className="space-y-2"><Label htmlFor="charges-to">Hasta</Label><Input id="charges-to" type="date" value={to} onChange={event => { setTo(event.target.value); setPage(1); }}/></div>
-      <div className="min-w-64 flex-1"><ServerSearchInput placeholder="Cargo, proveedor o factura" value={search} onSearch={value => { setSearch(value); setPage(1); }}/></div>
+      <div className="w-full space-y-2 sm:w-52"><Label htmlFor="charges-from">Desde</Label><DatePicker id="charges-from" value={from} onChange={value => { setFrom(value); setPage(1); }}/></div>
+      <div className="w-full space-y-2 sm:w-52"><Label htmlFor="charges-to">Hasta</Label><DatePicker id="charges-to" value={to} onChange={value => { setTo(value); setPage(1); }}/></div>
+      <div className="min-w-64 flex-1"><ServerSearchInput placeholder="Cargo, proveedor o factura" value={search} onSearch={value => { setSearch(value); setPage(1); }} isSearching={query.isFetching}/></div>
       <Button variant="outline" disabled={!valid || query.isFetching} onClick={() => void query.refetch()}>Actualizar</Button>
       {!valid && <p role="alert" className="w-full text-sm text-destructive">Selecciona un periodo de hasta 31 días.</p>}
     </CardContent></Card>
     {query.isError && <p role="alert" className="rounded-xl border border-destructive/30 p-4 text-sm text-destructive">No fue posible consultar los cargos. Usa Actualizar para reintentar.</p>}
     {valid && query.isPending && <p role="status" className="p-6 text-center text-muted-foreground">Consultando cargos…</p>}
     {valid && query.isSuccess && <>
-      <div className="grid gap-4 sm:grid-cols-3">{[
-        ["Cargos en el periodo", String(query.data.totalCount)],
-        ["Incluido en facturas", money.format(query.data.invoicedTotal)],
-        ["Registrado como gasto", money.format(query.data.expenseTotal)],
-      ].map(([label, value]) => <Card key={label}><CardContent className="p-5"><p className="text-sm text-muted-foreground">{label}</p><strong className="mt-2 block text-2xl tabular-nums">{value}</strong></CardContent></Card>)}</div>
       <Card><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full text-left text-sm">
-        <thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr>{["Factura", "Cargo / proveedor", "En factura", "Como gasto", "Cuenta por pagar"].map(label => <th key={label} className="p-4">{label}</th>)}</tr></thead>
+        <thead className="bg-muted/50 text-xs uppercase text-muted-foreground"><tr>{["Factura", "Cliente", "Proveedor", "En factura", "Como gasto", "Cuenta por pagar"].map(label => <th key={label} className="p-4">{label}</th>)}</tr></thead>
         <tbody>{query.data.items.map(item => <tr key={item.charge.appliedChargeId} className="border-t align-top hover:bg-muted/20">
           <td className="p-4 font-medium">{item.documentNumber}<small className="mt-1 block font-normal text-muted-foreground">{new Date(item.issuedAt).toLocaleString("es-CO")}</small></td>
-          <td className="p-4"><strong>{item.charge.name}</strong><p className="text-muted-foreground">{item.charge.supplier.name}</p></td>
+          <td className="p-4">{item.customerName}</td>
+          <td className="p-4"><strong>{item.charge.supplier.name}</strong><p className="text-muted-foreground">{item.charge.name}</p></td>
           <td className="p-4 tabular-nums">{money.format(item.charge.invoicedAmount)}</td>
           <td className="p-4 tabular-nums">{money.format(item.charge.expenseAmount)}</td>
           <td className="p-4"><strong className="tabular-nums">{item.payableBalance === null ? "—" : money.format(item.payableBalance)}</strong><small className="mt-1 block text-muted-foreground">{item.expenseDocumentNumber ?? (item.charge.amount > 0 ? "Pendiente de registro" : "Sin obligación")}</small></td>

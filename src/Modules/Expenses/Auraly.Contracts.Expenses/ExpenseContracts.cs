@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.Commerce.Taxation.Contracts;
 
@@ -30,25 +31,45 @@ public sealed record ExpenseConceptView(Guid ConceptId, Guid BusinessId, string 
 public sealed record ExpenseWorkspaceOptions(IReadOnlyList<ExpenseConceptView> Concepts,
     IReadOnlyList<ExpenseSupplierOption> Suppliers, IReadOnlyList<ExpenseAccountOption> ExpenseAccounts,
     IReadOnlyList<ExpenseCostCenterOption> CostCenters,
-    IReadOnlyList<ExpensePurchaseEvidenceOption> PurchaseEvidenceTypes);
+    IReadOnlyList<ExpensePurchaseEvidenceOption> PurchaseEvidenceTypes,
+    IReadOnlyList<ExpenseTaxOption>? Taxes = null,
+    IReadOnlyList<ExpensePurchaseEvidenceOption>? TaxTreatments = null,
+    IReadOnlyList<string>? WithholdingConceptCodes = null);
+public sealed record ExpenseTaxOption(Guid TaxProfileId, string Name, decimal Rate);
 public sealed record ExpenseSupplierOption(Guid SupplierId, string Identification, string Name);
 public sealed record ExpenseAccountOption(Guid AccountId, string Code, string Name);
 public sealed record ExpenseCostCenterOption(Guid CostCenterId, string Code, string Name, bool IsDefault);
 public sealed record ExpensePurchaseEvidenceOption(string Code, string Label, string Description);
 
-public sealed record ConfirmExpenseRequest(Guid ExpenseId, Guid BusinessId, Guid SupplierId, Guid ConceptId,
+public sealed record ConfirmExpenseRequest(Guid ExpenseId, Guid BusinessId, Guid SupplierId, Guid? ConceptId,
     Guid? CostCenterId, string? SupplierDocumentNumber, DateTimeOffset IssuedAt, DateTimeOffset DueDate,
     string CurrencyCode, string Description, decimal TaxExclusiveAmount, decimal VatAmount,
     string? WithholdingJurisdictionCode, string? EvidenceUrl,
-    string PurchaseEvidenceType = "SupplierElectronicInvoice");
+    string PurchaseEvidenceType = "SupplierElectronicInvoice",
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ExpenseLineInput>? Lines = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CalculationHash = null);
+
+public sealed record ExpenseLineInput(Guid ExpenseAccountId, Guid? ConceptId, Guid? CostCenterId,
+    string Description, decimal TaxExclusiveAmount, Guid? TaxProfileId, string TaxTreatment,
+    string? WithholdingConceptCode);
+public sealed record ExpenseLineSnapshot(int LineNumber, Guid ExpenseAccountId, string AccountCode,
+    string AccountName, Guid? ConceptId, Guid? CostCenterId, string? CostCenterName,
+    string Description, decimal TaxExclusiveAmount, Guid? TaxProfileId, string? TaxName,
+    decimal TaxRate, decimal VatAmount, string TaxTreatment, string? WithholdingConceptCode);
+public sealed record ExpenseResolution(string SupplierName, string? PurchaseEvidencePolicy,
+    IReadOnlyList<ExpenseLineSnapshot> Lines);
+public sealed record ExpensePreview(IReadOnlyList<ExpenseLineSnapshot> Lines,
+    WithholdingCalculationSnapshot Withholding, string CalculationHash,
+    IReadOnlyList<string> Diagnostics, bool CanConfirm);
 
 public sealed record ExpenseDocumentPayload(Guid TenantId, Guid BusinessId, Guid ExpenseId, Guid SupplierId,
-    Guid ConceptId, Guid ExpenseAccountId, Guid? CostCenterId, Guid ConfirmedByUserId, string DocumentNumber,
+    Guid? ConceptId, Guid ExpenseAccountId, Guid? CostCenterId, Guid ConfirmedByUserId, string DocumentNumber,
     Guid DocumentSeriesId, string DocumentPrefix, string DocumentSeriesCode, long DocumentConsecutive,
     string? SupplierDocumentNumber, DateTimeOffset IssuedAt, DateTimeOffset DueDate, string CurrencyCode,
     string Description, decimal TaxExclusiveAmount, decimal VatAmount, decimal GrossAmount,
     string? EvidenceUrl, WithholdingCalculationSnapshot Withholding, Guid? SourceInvoiceId = null,
-    string PurchaseEvidenceType = "SupplierElectronicInvoice");
+    string PurchaseEvidenceType = "SupplierElectronicInvoice",
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ExpenseLineSnapshot>? Lines = null);
 
 public sealed record ExpenseAcceptance(Guid ExpenseId, Guid MovementId, string DocumentNumber,
     string Status, long ProcessingSequence, bool IdempotentReplay, Guid? AccountingJobId = null, bool HasFiscalSupport = false);
@@ -71,7 +92,7 @@ public static class ExpenseCancellationSerializer
 }
 
 public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, string? SupplierDocumentNumber,
-    Guid SupplierId, string SupplierName, Guid ConceptId, string ConceptName, DateTimeOffset IssuedAt,
+    Guid SupplierId, string SupplierName, Guid? ConceptId, string ConceptName, DateTimeOffset IssuedAt,
     DateTimeOffset DueDate, decimal GrossAmount, decimal WithholdingAmount, decimal NetPayable,
     string CurrencyCode, string Status, string? EvidenceUrl,
     string PurchaseEvidenceType = "SupplierElectronicInvoice", string? PayableStatus = null,
@@ -79,14 +100,15 @@ public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, stri
 public sealed record ExpensePayableView(Guid PayableId, string Status, decimal OriginalAmount,
     decimal OutstandingAmount);
 public sealed record ExpenseDetail(Guid ExpenseId, string DocumentNumber, string? SupplierDocumentNumber,
-    Guid SupplierId, string SupplierName, Guid ConceptId, string ConceptName,
+    Guid SupplierId, string SupplierName, Guid? ConceptId, string ConceptName,
     DateTimeOffset IssuedAt, DateTimeOffset DueDate, string CurrencyCode, string Description,
     decimal TaxExclusiveAmount, decimal VatAmount, decimal GrossAmount, decimal WithholdingAmount,
     decimal NetPayable, string Status, string PurchaseEvidenceType, string? EvidenceUrl,
     string? FiscalNumber, string? FiscalStatus, ExpensePayableView? Payable,
     Guid? CancellationId, string? CancellationReason,
     string? AdjustmentFiscalNumber, string? AdjustmentFiscalStatus,
-    Guid? SourceInvoiceId, string? SourceInvoiceNumber, bool ChargeReturned);
+    Guid? SourceInvoiceId, string? SourceInvoiceNumber, bool ChargeReturned,
+    IReadOnlyList<ExpenseLineSnapshot>? Lines = null, WithholdingCalculationSnapshot? Withholding = null);
 public sealed record ExpensePage(IReadOnlyList<ExpenseListItem> Items, int Page, int PageSize, int TotalCount,
     decimal GrossTotal, decimal WithholdingTotal, decimal NetPayableTotal)
 { public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize); }

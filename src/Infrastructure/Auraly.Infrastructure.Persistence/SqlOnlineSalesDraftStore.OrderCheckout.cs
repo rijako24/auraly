@@ -250,8 +250,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             var number = AuralyDocumentNumberAssignment.Create(
                 series.SeriesId, PosSaleDocumentTypes.Receipt, series.Prefix,
                 series.SeriesCode, consecutive, series.Padding);
-            var identification = await ResolveCustomerIdentificationAsync(
-                connection, transaction, source.BusinessId, source.CustomerId, ct);
+            var customer = await ReadReceiptCustomerAsync(
+                connection, transaction, source.BusinessId, source.CustomerId, source.CustomerPartySiteId, ct);
             upload = new PosSaleUploadRequest(
                 user.TenantId, source.BusinessId, source.WarehouseId, Guid.Empty,
                 source.WorkSessionId, user.UserId, ids.NewId(),
@@ -260,9 +260,10 @@ public sealed partial class SqlOnlineSalesDraftStore
                     number.SeriesCode, number.Consecutive, number.Padding,
                     number.FullNumber),
                 new PosSaleCommercialSnapshotContract(
-                    PosSaleDocumentTypes.Receipt, now, identification,
+                    PosSaleDocumentTypes.Receipt, now, customer.Identification,
                     taxes, untaxed, taxAmount, payable + roundingAdjustment,
-                    settlement.Withholding, roundingAdjustment),
+                    settlement.Withholding, roundingAdjustment, CustomerName: customer.Name,
+                    CustomerAddress: customer.Address, CustomerPhone: customer.Phone),
                 null, lines, payments, null, source.CustomerId,
                 SaleSourceModes.Online, source.OrderId,
                 BuildOrderCredit(user, source, request, creditValidation),

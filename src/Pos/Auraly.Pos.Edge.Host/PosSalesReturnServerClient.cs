@@ -14,6 +14,12 @@ public sealed class PosSalesReturnServerClient(
         SendAsync("api/pos/v1/sales-returns/search", body, user, null, token);
     public Task<JsonElement> GetAsync(Guid id, JsonElement body, PosLocalUserSession user, CancellationToken token) =>
         SendAsync($"api/pos/v1/sales-returns/sales/{id:D}", body, user, null, token);
+    public Task<JsonElement> HistoryAsync(JsonElement body, PosLocalUserSession user, CancellationToken token) =>
+        SendAsync("api/pos/v1/sales-returns/history", body, user, null, token);
+    public Task<JsonElement> DetailAsync(Guid id, JsonElement body, PosLocalUserSession user, CancellationToken token) =>
+        SendAsync($"api/pos/v1/sales-returns/history/{id:D}", body, user, null, token);
+    public Task<JsonElement> CustomersAsync(JsonElement body, PosLocalUserSession user, CancellationToken token) =>
+        SendAsync("api/pos/v1/sales-returns/customers", body, user, null, token);
     public Task<JsonElement> BootstrapAsync(JsonElement body, PosLocalUserSession user, CancellationToken token) =>
         SendAsync("api/pos/v1/sales-returns/bootstrap", body, user, null, token);
     public async Task<JsonElement> ConfirmAsync(JsonElement body, PosLocalUserSession user, CancellationToken token)

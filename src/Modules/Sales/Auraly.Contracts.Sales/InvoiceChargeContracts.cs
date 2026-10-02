@@ -58,7 +58,8 @@ public sealed record InvoiceChargeConfigurationOptions(IReadOnlyList<ExpenseConc
     IReadOnlyList<TaxProfileSummary> TaxProfiles);
 
 public sealed record InvoiceChargeHistoryItem(Guid DocumentId, string DocumentNumber, DateTimeOffset IssuedAt,
-    Guid WorkSessionId, AppliedInvoiceCharge Charge, string? ExpenseDocumentNumber,
+    string CustomerName,
+    Guid? WorkSessionId, AppliedInvoiceCharge Charge, string? ExpenseDocumentNumber,
     string? ExpenseStatus, decimal? PayableBalance);
 public sealed record InvoiceChargeHistoryPage(IReadOnlyList<InvoiceChargeHistoryItem> Items, int Page,
     int PageSize, int TotalCount, decimal InvoicedTotal, decimal ExpenseTotal);

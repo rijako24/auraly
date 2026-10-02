@@ -21,7 +21,7 @@ export type InvoiceChargePage = { items: InvoiceCharge[]; page: number; pageSize
 export type InvoiceChargeOptions = { concepts: ExpenseConcept[]; taxProfiles: TaxProfile[] };
 
 export type InvoiceChargeHistoryPage = { items: Array<{ documentId: string; documentNumber: string;
-  issuedAt: string; workSessionId: string; charge: AppliedInvoiceCharge; expenseDocumentNumber: string | null;
+  issuedAt: string; customerName: string; workSessionId: string | null; charge: AppliedInvoiceCharge; expenseDocumentNumber: string | null;
   expenseStatus: string | null; payableBalance: number | null }>;
   page: number; pageSize: number; totalCount: number; invoicedTotal: number; expenseTotal: number };
 

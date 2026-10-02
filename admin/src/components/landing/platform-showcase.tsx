@@ -186,7 +186,7 @@ function FinanceWorkspace() {
             })}
           </div>
           <div className="rounded-2xl bg-[#0c3035] p-5 text-white">
-            <span className="text-xs text-white/45">Balance de comprobación</span><strong className="mt-2 block text-3xl">Cuadrado.</strong><div className="mt-6 space-y-3 text-xs">{[["Débitos", "$ 384.260.000"], ["Créditos", "$ 384.260.000"], ["Diferencia", "$ 0"]].map(([label, value], index) => <div key={label} className={cn("flex justify-between border-b border-white/10 pb-2", index === 2 && "border-0 text-[#75ded4]")}><span className="text-white/50">{label}</span><strong>{value}</strong></div>)}</div><div className="mt-6 flex items-center gap-2 text-[10px] text-[#a6f1ea]"><ShieldCheck className="h-4 w-4" /> Trazabilidad completa</div>
+            <span className="text-xs text-white/45">Balance de prueba</span><strong className="mt-2 block text-3xl">Cuadrado.</strong><div className="mt-6 space-y-3 text-xs">{[["Débitos", "$ 384.260.000"], ["Créditos", "$ 384.260.000"], ["Diferencia", "$ 0"]].map(([label, value], index) => <div key={label} className={cn("flex justify-between border-b border-white/10 pb-2", index === 2 && "border-0 text-[#75ded4]")}><span className="text-white/50">{label}</span><strong>{value}</strong></div>)}</div><div className="mt-6 flex items-center gap-2 text-[10px] text-[#a6f1ea]"><ShieldCheck className="h-4 w-4" /> Trazabilidad completa</div>
           </div>
         </div>
       </div>

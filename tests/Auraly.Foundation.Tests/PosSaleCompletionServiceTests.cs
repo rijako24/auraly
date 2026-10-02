@@ -3,6 +3,7 @@ using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
@@ -334,6 +335,41 @@ public sealed class PosSaleCompletionServiceTests
             Assert.NotNull(credit);
             Assert.Equal(customerId, credit.CustomerId);
             Assert.Equal(dueDate, credit.DueDate);
+        });
+    }
+
+    [Fact]
+    public async Task Commercial_receipt_freezes_selected_customer_contact_from_local_catalog()
+    {
+        await WithFixtureAsync(async fixture =>
+        {
+            var customerId = Guid.NewGuid();
+            var siteId = Guid.NewGuid();
+            var catalog = new PosCatalogStore(fixture.ConnectionString);
+            await catalog.InitializeAsync();
+            await catalog.ApplyCustomerBootstrapPageAsync(new(1, null, false,
+                [new PosCustomerPricing(customerId, "123456", "Cliente local", null, true,
+                    Sites: [new(siteId, "PRINCIPAL", "Principal", "Calle 10", "3001234567", true)])]));
+            await fixture.Sales.ProvisionDocumentSeriesAsync(new(
+                Guid.NewGuid(), fixture.Scope.DeviceId, PosSaleDocumentTypes.Receipt,
+                "CVI", "03", 8, 100, 99999));
+            var draft = await fixture.AddLineAsync();
+            draft = await fixture.Drafts.AssignPartiesAsync(draft.DraftId, customerId, null, siteId);
+            var result = await new PosSaleCompletionService(fixture.Drafts, fixture.Issuance,
+                fixture.Sales, fixture.Printer, catalog: catalog).CompleteAsync(draft.DraftId, new(
+                fixture.Scope.UserId, fixture.Register, fixture.IssuedAt, null, "123456",
+                null, null, null, [new OfflineSalePayment("Cash", draft.PayableAmount)],
+                DocumentType: PosSaleDocumentTypes.Receipt));
+            Assert.Equal("Cliente local", result.Receipt.CustomerName);
+            Assert.Equal("Calle 10", result.Receipt.CustomerAddress);
+            Assert.Equal("3001234567", result.Receipt.CustomerPhone);
+            var snapshot = PosSaleContractSerializer.Deserialize(
+                PosSaleContractSerializer.Serialize(result.IssuedSale.Upload));
+            var reprint = SalesInvoicePresentationMapper.From(snapshot, null);
+            Assert.Equal(result.Receipt.CustomerAddress, reprint.CustomerAddress);
+            Assert.Equal(result.Receipt.CustomerPhone, reprint.CustomerPhone);
+            Assert.Null(snapshot.UblSnapshot);
+            Assert.Null(snapshot.FiscalSnapshot);
         });
     }
 

@@ -159,6 +159,10 @@ try {
         -c Release --no-build --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'Las pruebas de POS Edge fallaron.' }
 
+    & dotnet test (Join-Path $repoRoot 'tests\Auraly.Desktop.Tests\Auraly.Desktop.Tests.csproj') `
+        -c Release --no-build --logger 'console;verbosity=minimal'
+    if ($LASTEXITCODE) { throw 'Las pruebas del actualizador de escritorio fallaron.' }
+
     & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
         -c Release --no-build --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'Las regresiones reales de API, pedidos y facturación fallaron.' }

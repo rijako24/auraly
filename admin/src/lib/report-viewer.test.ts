@@ -22,4 +22,10 @@ describe("central report viewer", () => {
   it("sanitizes file names for Windows, Android and iOS downloads", () => {
     assert.equal(safeReportFileName("Despacho: 001/2026"), "Despacho-001-2026");
   });
+
+  it("exports user supplied formulas as text", () => {
+    const csv = toReportCsv([{ name: "=HYPERLINK(1)", quantity: 2 }, { name: "\t+CMD", quantity: 3 }], columns);
+    assert.ok(csv.includes('"\'=HYPERLINK(1)"'));
+    assert.ok(csv.includes('"\'\t+CMD"'));
+  });
 });

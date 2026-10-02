@@ -56,8 +56,6 @@ internal static class Program
         try
         {
             var configuration = LoadConfiguration(AppContext.BaseDirectory);
-            if (AuralyPendingUpdateStore.TryStartAtStartup(DataDirectory, configuration))
-                return 0;
             using var context = new AuralyDesktopApplicationContext(
                 AppContext.BaseDirectory,
                 configuration,

@@ -725,7 +725,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     public async Task Pending_voucher_freezes_before_period_validation_and_reclassification_keeps_account_balance()
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
-            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.Retry);
+            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend, AccountingPermissionCodes.Retry);
         using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
         using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate", new ActivateAccountingRequest(new DateOnly(2026,1,1), "COP", "ZeroDeclared"))) activate.EnsureSuccessStatusCode();
         var centerA = Guid.NewGuid(); var centerB = Guid.NewGuid();
@@ -1345,7 +1345,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         using var accounting = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.PeriodsManage, AccountingPermissionCodes.Retry,
-            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate,
+            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm,
             PurchasingPermissionCodes.ReadGoodsReceipts,
             PurchasingPermissionCodes.CreateGoodsReceipts,
@@ -3008,7 +3008,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await GrantReconciliationRolePermissionsAsync();
         using var client = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
-            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate,
+            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
             AccountingPermissionCodes.BankReconciliationRead,
             AccountingPermissionCodes.BankReconciliationManage,
             AccountingPermissionCodes.BankReconciliationClose);

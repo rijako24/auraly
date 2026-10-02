@@ -54,7 +54,9 @@ public sealed record PosReceipt(
     SalesInvoicePrintDetails? InvoicePrintDetails = null,
     string? CustomerPhone = null,
     string? CustomerAddress = null,
-    decimal PayableRoundingAmount = 0m);
+    decimal PayableRoundingAmount = 0m,
+    string? FiscalStatus = null,
+    SalesReturnPrintDetails? SalesReturnPrintDetails = null);
 
 public interface IPosReceiptPrinter
 {
@@ -256,6 +258,9 @@ public sealed class PosSaleCompletionService(
         var customer = draft.CustomerId is null || catalog is null
             ? null
             : await catalog.GetCustomerAsync(draft.CustomerId.Value, ct);
+        var receiptCustomerSite = command.DocumentType == PosSaleDocumentTypes.Receipt
+            ? customer?.Sites?.SingleOrDefault(site => site.PartySiteId == draft.CustomerPartySiteId)
+            : null;
         if (command.Credit is not null &&
             (draft.CustomerId != command.Credit.CustomerId ||
              command.Credit.Amount <= 0))
@@ -320,7 +325,9 @@ public sealed class PosSaleCompletionService(
                     command.SoldByName,
                     draft.CustomerPartySiteId),
                 customer?.Name,
-                draft.CustomerPartySiteId, draft.Charges),
+                draft.CustomerPartySiteId, draft.Charges,
+                CustomerAddress: receiptCustomerSite?.AddressLine,
+                CustomerPhone: receiptCustomerSite?.Phone),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;

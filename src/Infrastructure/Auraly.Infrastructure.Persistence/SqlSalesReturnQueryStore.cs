@@ -51,11 +51,13 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                   OR d.CustomerIdentification LIKE N'%'+@Search+N'%'
                   OR p.DisplayName LIKE N'%'+@Search+N'%'
                   OR p.LegalName LIKE N'%'+@Search+N'%'
-                  OR EXISTS(SELECT 1 FROM dbo.Products product
-                    WHERE product.ProductId=l.ProductId AND
+                  OR EXISTS(SELECT 1 FROM dbo.SalesDocumentLines matchedLine
+                    INNER JOIN dbo.Products product ON product.ProductId=matchedLine.ProductId
+                    WHERE matchedLine.DocumentId=d.DocumentId AND
                       (product.ProductCode LIKE N'%'+@Search+N'%' OR
                        product.Reference LIKE N'%'+@Search+N'%' OR
                        product.Name LIKE N'%'+@Search+N'%')))
+                AND (@CustomerId IS NULL OR d.CustomerId=@CustomerId)
                 AND (@Customer IS NULL OR d.CustomerIdentification LIKE N'%'+@Customer+N'%'
                   OR p.DisplayName LIKE N'%'+@Customer+N'%'
                   OR p.LegalName LIKE N'%'+@Customer+N'%')
@@ -65,17 +67,20 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             )
             SELECT DocumentId,DocumentNumber,FiscalNumber,CufeReceived,IssuedAt,CustomerId,
                    CustomerName,CustomerIdentification,WarehouseId,WarehouseName,PayableAmount,
-                   ReturnedTotal,HasAvailable,FiscalStatus,COUNT(*) OVER()
-            FROM Sales
-            WHERE @Available IS NULL OR HasAvailable=@Available
+                   ReturnedTotal,HasAvailable,FiscalStatus
+            INTO #MatchedSales FROM Sales
+            WHERE @Available IS NULL OR HasAvailable=@Available;
+            SELECT * FROM #MatchedSales
             ORDER BY IssuedAt DESC,DocumentId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT COUNT(*) FROM #MatchedSales;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand(sql, connection);
         Scope(command, user);
         command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@CustomerId", (object?)query.CustomerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Customer", (object?)query.Customer ?? DBNull.Value);
         command.Parameters.AddWithValue("@From", (object?)query.From?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value);
         command.Parameters.AddWithValue("@To", (object?)query.To?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value);
@@ -87,13 +92,14 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            total = reader.GetInt32(14);
             items.Add(new ReturnableSaleListItem(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.GetDateTimeOffset(4), reader.IsDBNull(5) ? null : reader.GetGuid(5),
                 reader.GetString(6), reader.GetString(7), reader.GetGuid(8), reader.GetString(9),
                 reader.GetDecimal(10), reader.GetDecimal(11), reader.GetBoolean(12), reader.GetString(13)));
         }
+        await reader.NextResultAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken)) total = reader.GetInt32(0);
         return new ReturnableSalePage(items, query.Page, query.PageSize, total);
     }
 
@@ -165,30 +171,34 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         SalesReturnUserIdentity user, SalesReturnQuery query, CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT r.ReturnId,r.DocumentNumber,r.OriginalDocumentId,d.DocumentNumber,
+            SELECT r.ReturnId,r.DocumentNumber,r.OriginalDocumentId,d.DocumentNumber OriginalDocumentNumber,
                    COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
-                     NULLIF(r.CustomerIdentification,N''),N'Consumidor final'),
+                     NULLIF(r.CustomerIdentification,N''),N'Consumidor final') CustomerName,
                    r.ReturnedAt,r.EconomicResolution,r.TotalAmount,r.Status,r.FiscalStatus,
-                   r.ReasonCode,COUNT(*) OVER()
-            FROM dbo.SalesReturns r
+                   r.ReasonCode
+            INTO #MatchedReturns FROM dbo.SalesReturns r
             INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.SalesDocuments d ON d.DocumentId=r.OriginalDocumentId
             LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
             LEFT JOIN dbo.Parties p ON p.PartyId=c.PartyId
             WHERE r.BusinessId=@BusinessId
+              AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
               AND (@Status IS NULL OR r.Status=@Status)
               AND (@From IS NULL OR r.ReturnedAt>=@From)
               AND (@To IS NULL OR r.ReturnedAt<DATEADD(DAY,1,@To))
               AND (@Search IS NULL OR r.DocumentNumber LIKE N'%'+@Search+N'%'
                 OR d.DocumentNumber LIKE N'%'+@Search+N'%'
                 OR r.CustomerIdentification LIKE N'%'+@Search+N'%'
-                OR p.DisplayName LIKE N'%'+@Search+N'%' OR p.LegalName LIKE N'%'+@Search+N'%')
-            ORDER BY r.ReturnedAt DESC,r.ReturnId
+                OR p.DisplayName LIKE N'%'+@Search+N'%' OR p.LegalName LIKE N'%'+@Search+N'%');
+            SELECT * FROM #MatchedReturns
+            ORDER BY ReturnedAt DESC,ReturnId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT COUNT(*) FROM #MatchedReturns;
             """;
         await using var connection=connections.Create(); await connection.OpenAsync(cancellationToken);
         await using var command=new SqlCommand(sql,connection); Scope(command,user);
         command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);
+        command.Parameters.AddWithValue("@CustomerId",(object?)query.CustomerId??DBNull.Value);
         command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
         command.Parameters.AddWithValue("@From",(object?)query.From?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
         command.Parameters.AddWithValue("@To",(object?)query.To?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
@@ -198,11 +208,12 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken))
         {
-            total=reader.GetInt32(11);
             items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetGuid(2),reader.GetString(3),
                 reader.GetString(4),reader.GetDateTimeOffset(5),reader.GetString(6),reader.GetDecimal(7),
                 reader.GetString(8),reader.IsDBNull(9)?null:reader.GetString(9),reader.GetString(10)));
         }
+        await reader.NextResultAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken)) total=reader.GetInt32(0);
         return new(items,query.Page,query.PageSize,total);
     }
 
@@ -212,23 +223,27 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
         const string headerSql="""
             SELECT r.DocumentNumber,r.OriginalDocumentId,d.DocumentNumber,
-                   COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
+                   COALESCE(NULLIF(JSON_VALUE(originalPayload.PayloadJson,'$.commercialSnapshot.customerName'),N''),
                      NULLIF(r.CustomerIdentification,N''),N'Consumidor final'),
                    r.CustomerIdentification,r.WarehouseId,w.Name,r.ReturnedAt,r.EconomicResolution,
                    r.RefundMethodCode,r.UntaxedAmount,r.TaxAmount,r.TotalAmount,r.Status,r.FiscalStatus,
-                   r.ReasonCode,r.ReasonDescription,r.Notes
+                   r.ReasonCode,r.ReasonDescription,r.Notes,b.Name,t.Name,
+                   COALESCE(CONVERT(int,JSON_VALUE(returnPayload.PayloadJson,'$.printTemplateVersion')),1)
             FROM dbo.SalesReturns r
             INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
+            INNER JOIN dbo.Tenants t ON t.TenantId=b.TenantId
             INNER JOIN dbo.SalesDocuments d ON d.DocumentId=r.OriginalDocumentId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
-            LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
-            LEFT JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            LEFT JOIN dbo.DocumentProcessingPayloads originalPayload
+              ON originalPayload.DocumentId=d.DocumentId AND originalPayload.BusinessId=d.BusinessId
+            LEFT JOIN dbo.DocumentProcessingPayloads returnPayload
+              ON returnPayload.DocumentId=r.ReturnId AND returnPayload.BusinessId=r.BusinessId
             WHERE r.ReturnId=@Id AND r.BusinessId=@BusinessId;
             """;
         string number;Guid originalId;string originalNumber;string customer;string identification;
         Guid warehouseId;string warehouse;DateTimeOffset returnedAt;string resolution;string? method;
         decimal untaxed;decimal tax;decimal total;string status;string? fiscalStatus;string reason;
-        string description;string? notes;
+        string description;string? notes;string businessName;string companyName;int templateVersion;
         await using(var command=new SqlCommand(headerSql,connection))
         {
             Scope(command,user);command.Parameters.AddWithValue("@Id",returnId);
@@ -240,14 +255,19 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             method=reader.IsDBNull(9)?null:reader.GetString(9);untaxed=reader.GetDecimal(10);
             tax=reader.GetDecimal(11);total=reader.GetDecimal(12);status=reader.GetString(13);
             fiscalStatus=reader.IsDBNull(14)?null:reader.GetString(14);reason=reader.GetString(15);
-            description=reader.GetString(16);notes=reader.IsDBNull(17)?null:reader.GetString(17);
+            description=reader.GetString(16);notes=reader.IsDBNull(17)?null:reader.GetString(17);businessName=reader.GetString(18);companyName=reader.GetString(19);templateVersion=reader.GetInt32(20);
         }
         var lines=new List<SalesReturnLineSnapshot>();
+        var charges=new List<SalesReturnChargeSnapshot>();
         await using(var command=new SqlCommand("""
             SELECT LineNumber,OriginalLineNumber,ProductId,DescriptionSnapshot,Quantity,UnitPrice,
                    DiscountAmount,TaxCode,TaxRate,UntaxedAmount,TaxAmount,LineTotal,
                    RecognizedUnitCost,InventoryDisposition
             FROM dbo.SalesReturnLines WHERE ReturnId=@Id ORDER BY LineNumber;
+            SELECT AppliedChargeId,ChargeId,Code,Name,Amount,InvoicedAmount,ExpenseAmount,
+                   InvoicedUntaxedAmount,InvoicedTaxAmount,TaxCode,TaxRate,
+                   SupplierUntaxedAmount,SupplierVatAmount,SupplierId,ExpenseAccountId,CostCenterId
+            FROM dbo.SalesReturnCharges WHERE ReturnId=@Id ORDER BY Code,AppliedChargeId;
             """,connection))
         {
             command.Parameters.AddWithValue("@Id",returnId);
@@ -256,10 +276,16 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                 reader.GetGuid(2),reader.GetString(3),reader.GetDecimal(4),reader.GetDecimal(5),
                 reader.GetDecimal(6),reader.GetString(7),reader.GetDecimal(8),reader.GetDecimal(9),
                 reader.GetDecimal(10),reader.GetDecimal(11),reader.GetDecimal(12),reader.GetString(13)));
+            await reader.NextResultAsync(cancellationToken);
+            while(await reader.ReadAsync(cancellationToken)) charges.Add(new(
+                reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetString(3),
+                reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),
+                reader.GetDecimal(8),reader.GetString(9),reader.GetDecimal(10),reader.GetDecimal(11),
+                reader.GetDecimal(12),reader.GetGuid(13),reader.GetGuid(14),reader.IsDBNull(15)?null:reader.GetGuid(15)));
         }
         return new(returnId,number,originalId,originalNumber,customer,identification,warehouseId,
             warehouse,returnedAt,resolution,method,untaxed,tax,total,status,fiscalStatus,reason,
-            description,notes,lines);
+            description,notes,lines,charges,businessName,companyName,PrintTemplateVersion:templateVersion);
     }
 
     private static async Task<IReadOnlyList<ReturnableSalePayment>> LoadPaymentsAsync(

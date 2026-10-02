@@ -15,11 +15,11 @@ export function useReturnableSales(params: {
   page: number;
   pageSize: number;
   search?: string;
-  customer?: string;
+  customerId?: string;
   from?: string;
   to?: string;
   withAvailableQuantity?: boolean;
-}, businessIdOverride?: string | null, runtime?: PosSalesReturnRuntime) {
+}, businessIdOverride?: string | null, runtime?: PosSalesReturnRuntime, enabled = true) {
   const selectedBusinessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const businessId = resolveSalesReturnBusinessId(businessIdOverride, selectedBusinessId);
   return useQuery({
@@ -27,7 +27,7 @@ export function useReturnableSales(params: {
     queryFn: () => runtime
       ? runtime.client.searchServerReturnableSales(runtime.context, params)
       : salesReturnsApi.listSales({ ...params, businessId: businessId! }),
-    enabled: !!businessId,
+    enabled: enabled && !!businessId,
     placeholderData: keepPreviousData,
   });
 }

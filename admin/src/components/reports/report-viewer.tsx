@@ -17,10 +17,13 @@ type Props = {
   rows: ReportRow[];
   columns: ReportColumn[];
   fileName?: string;
+  documentDownloads?: boolean;
 };
 
-export function ReportViewer({ onClose, title, description, rows, columns, fileName }: Props) {
+export function ReportViewer({ onClose, title, description, rows, columns, fileName, documentDownloads = false }: Props) {
   const [search, setSearch] = useState("");
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const selectedTenantId = useTenantContextStore(state => state.selectedTenantId);
   const selectedTenantName = useTenantContextStore(state => state.tenants.find(item => item.tenantId === state.selectedTenantId)?.name ?? "Organización");
   const branding = useQuery({
@@ -33,6 +36,16 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
   const generatedAt = useMemo(() => new Date(), []);
   const filtered = useMemo(() => filterReportRows(rows, columns, search), [columns, rows, search]);
   const recordCount = useMemo(() => filtered.filter(row => !row.__group).length, [filtered]);
+
+  async function exportFile(format: "pdf" | "xlsx") {
+    setExporting(format); setExportError(null);
+    try {
+      const { exportReportPdf, exportReportExcel } = await import("@/lib/report-export");
+      await (format === "pdf" ? exportReportPdf : exportReportExcel)({ title, brandName,
+        description, fileName: fileName ?? title, rows: filtered, columns });
+    } catch (error) { setExportError(error instanceof Error ? error.message : "No se pudo exportar."); }
+    finally { setExporting(null); }
+  }
 
   function exportCsv() {
     const url = URL.createObjectURL(new Blob([toReportCsv(filtered, columns)], { type: "text/csv;charset=utf-8" }));
@@ -51,9 +64,13 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
             <Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar dentro del reporte" />
           </label>
           <span className="text-sm tabular-nums text-muted-foreground">{recordCount.toLocaleString("es-CO")} filas</span>
-          <Button variant="outline" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />Imprimir / PDF</Button>
-          <Button variant="outline" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />Exportar CSV</Button>
+          <Button variant="outline" disabled={!!exporting} onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />{documentDownloads ? "Imprimir" : "Imprimir / PDF"}</Button>
+          {documentDownloads && <><Button variant="outline" disabled={!!exporting} onClick={() => void exportFile("pdf")}>Descargar PDF</Button>
+          <Button variant="outline" disabled={!!exporting} onClick={() => void exportFile("xlsx")}>Exportar Excel</Button></>}
+          <Button variant="outline" disabled={!!exporting} onClick={exportCsv}><Download className="mr-2 h-4 w-4" />Exportar CSV</Button>
         </div>
+        {exporting && <p role="status" className="px-5 py-2">Preparando {exporting === "pdf" ? "PDF" : "Excel"}…</p>}
+        {exportError && <p role="alert" className="px-5 py-2 text-destructive">{exportError}</p>}
         <section id="auraly-report-print-area" className="min-h-0 flex-1 overflow-auto bg-white p-5 text-slate-950">
           <header className="mb-6 border-b-2 border-teal-700 pb-4">
             <div className="flex flex-wrap items-start justify-between gap-4"><div><TenantBrand className="mb-4" displayName={brandName} logoUrl={branding.data?.logoUrl}/><p className="text-[10px] font-bold uppercase tracking-[.24em] text-teal-700">Reporte corporativo</p><h1 className="mt-1 text-2xl font-bold tracking-tight">{title}</h1>{description && <p className="mt-1 text-sm text-slate-600">{description}</p>}</div><dl className="grid min-w-56 gap-1 rounded-lg border bg-slate-50 p-3 text-xs"><div className="flex justify-between gap-4"><dt className="text-slate-500">Generado</dt><dd className="font-medium">{generatedAt.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Registros</dt><dd className="font-medium">{recordCount.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Sistema</dt><dd className="font-medium">Auraly</dd></div></dl></div>

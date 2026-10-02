@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -12,11 +13,11 @@ internal sealed record AuralyUpdateRequest(
     string? Sha256 = null);
 
 internal sealed record AuralyUpdateStatus(
-    string Type,
-    string Status,
-    string? Version,
-    int? Progress,
-    string Message);
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("version")] string? Version,
+    [property: JsonPropertyName("progress")] int? Progress,
+    [property: JsonPropertyName("message")] string Message);
 
 internal sealed partial class AuralyDesktopUpdater(
     WebView2 browser,
@@ -28,13 +29,13 @@ internal sealed partial class AuralyDesktopUpdater(
     private const string DiscoveryMessageType = "auraly-pos-update-discovered";
     private const string DownloadMessageType = "auraly-pos-update-download";
     private const string RestartMessageType = "auraly-pos-update-restart";
-    private const string LaterMessageType = "auraly-pos-update-later";
     private const string ExitMessageType = "auraly-pos-exit";
     private const string StatusMessageType = "auraly-pos-update-status";
     private const string InstallerDownloadPath = "/api/commerce/v1/pos/installer/download";
     private int downloading;
     private AuralyUpdateRequest? availableUpdate;
     private AuralyPendingUpdate? pendingUpdate;
+    private AuralyUpdateStatus? lastStatus;
 
     public void Start()
     {
@@ -51,6 +52,7 @@ internal sealed partial class AuralyDesktopUpdater(
         object? sender,
         Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs args)
     {
+        if (!IsTrustedSource(args.Source, webOrigin)) return;
         AuralyUpdateRequest? request;
         try
         {
@@ -66,6 +68,9 @@ internal sealed partial class AuralyDesktopUpdater(
         if (request is null) return;
         switch (request.Type)
         {
+            case "auraly-pos-update-check":
+                await RestorePendingUpdateAsync();
+                break;
             case DiscoveryMessageType:
                 HandleDiscovery(request);
                 break;
@@ -73,12 +78,7 @@ internal sealed partial class AuralyDesktopUpdater(
                 await DownloadAvailableUpdateAsync();
                 break;
             case RestartMessageType:
-                RestartWithPendingUpdate();
-                break;
-            case LaterMessageType:
-                if (pendingUpdate is not null)
-                    PostStatus("deferred", pendingUpdate.Version, null,
-                        "La actualización se aplicará la próxima vez que abras Auraly.");
+                await RestartWithPendingUpdateAsync();
                 break;
             case ExitMessageType:
                 browser.FindForm()?.BeginInvoke(browser.FindForm()!.Close);
@@ -86,9 +86,53 @@ internal sealed partial class AuralyDesktopUpdater(
         }
     }
 
+    internal static bool IsTrustedSource(string source, string origin) =>
+        Uri.TryCreate(source, UriKind.Absolute, out var sourceUri) &&
+        Uri.TryCreate(origin, UriKind.Absolute, out var originUri) &&
+        string.Equals(sourceUri.GetLeftPart(UriPartial.Authority),
+            originUri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase);
+
+    private async Task RestorePendingUpdateAsync()
+    {
+        if (lastStatus is not null)
+        {
+            browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(lastStatus));
+            return;
+        }
+
+        try
+        {
+            pendingUpdate = await Task.Run(() =>
+                AuralyPendingUpdateStore.TryLoad(dataDirectory, configuration));
+        }
+        catch (Exception exception)
+        {
+            await LogFailureAsync(exception);
+            PostStatus("check-error", null, null,
+                "No fue posible recuperar la actualización descargada. Puedes consultar una nueva descarga.");
+            return;
+        }
+        if (pendingUpdate is null)
+        {
+            PostStatus("idle", null, null, "No hay una actualización descargada.");
+            return;
+        }
+
+        availableUpdate = new AuralyUpdateRequest(DiscoveryMessageType,
+            InstallerDownloadPath, pendingUpdate.Version, pendingUpdate.Sha256);
+        PostStatus("ready", pendingUpdate.Version, 100,
+            "La actualización descargada está verificada y lista para instalar.");
+    }
+
     private void HandleDiscovery(AuralyUpdateRequest request)
     {
-        if (!ShouldOffer(request)) return;
+        if (pendingUpdate is not null || downloading != 0) return;
+        if (!ShouldOffer(request, configuration.Version))
+        {
+            availableUpdate = null;
+            PostStatus("idle", null, null, "Auraly ya está actualizada.");
+            return;
+        }
         availableUpdate = request;
         PostStatus(
             "available",
@@ -97,7 +141,7 @@ internal sealed partial class AuralyDesktopUpdater(
             $"La versión {request.Version} está lista para descargar.");
     }
 
-    internal bool ShouldOffer(AuralyUpdateRequest update)
+    internal static bool ShouldOffer(AuralyUpdateRequest update, string installedVersion)
     {
         if (!string.Equals(update.Type, DiscoveryMessageType, StringComparison.Ordinal) ||
             !string.Equals(update.DownloadUrl, InstallerDownloadPath, StringComparison.Ordinal) ||
@@ -105,7 +149,7 @@ internal sealed partial class AuralyDesktopUpdater(
             update.Sha256.Length != 64 ||
             !update.Sha256.All(Uri.IsHexDigit) ||
             update.Version is null ||
-            !AuralyReleaseVersion.TryParse(configuration.Version, out var current) ||
+            !AuralyReleaseVersion.TryParse(installedVersion, out var current) ||
             !AuralyReleaseVersion.TryParse(update.Version, out var available))
         {
             return false;
@@ -117,20 +161,21 @@ internal sealed partial class AuralyDesktopUpdater(
     private async Task DownloadAvailableUpdateAsync()
     {
         var update = availableUpdate;
-        if (update is null || Interlocked.Exchange(ref downloading, 1) != 0) return;
+        if (update is null || pendingUpdate is not null || Interlocked.Exchange(ref downloading, 1) != 0) return;
 
         try
         {
-            pendingUpdate = await DownloadAsync(update, shutdown.Token);
+            var downloadedUpdate = await DownloadAsync(update, shutdown.Token);
             await AuralyPendingUpdateStore.SaveAsync(
                 dataDirectory,
-                pendingUpdate,
+                downloadedUpdate,
                 shutdown.Token);
+            pendingUpdate = downloadedUpdate;
             PostStatus(
                 "ready",
                 pendingUpdate.Version,
                 100,
-                "La actualización está lista. Puedes reiniciar ahora o continuar trabajando.");
+                "Descarga verificada. Iniciando la instalación…");
         }
         catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
         {
@@ -235,12 +280,30 @@ internal sealed partial class AuralyDesktopUpdater(
             DateTimeOffset.UtcNow);
     }
 
-    private void RestartWithPendingUpdate()
+    private async Task RestartWithPendingUpdateAsync()
     {
-        if (pendingUpdate is null) return;
-        AuralyPendingUpdateStore.StartInstaller(pendingUpdate.InstallerPath);
-        shutdown.Cancel();
-        System.Windows.Forms.Application.Exit();
+        var update = pendingUpdate;
+        if (update is null || lastStatus?.Status == "restarting") return;
+        PostStatus("restarting", update.Version, null, "Abriendo el instalador de la actualización…");
+        try
+        {
+            if (!await Task.Run(() => AuralyPendingUpdateStore.IsValid(update, dataDirectory, configuration)))
+            {
+                pendingUpdate = null;
+                PostStatus("error", update.Version, null,
+                    "La descarga ya no es válida. Descarga nuevamente la actualización.");
+                return;
+            }
+            AuralyPendingUpdateStore.StartInstaller(update.InstallerPath);
+            shutdown.Cancel();
+            System.Windows.Forms.Application.Exit();
+        }
+        catch (Exception exception)
+        {
+            await LogFailureAsync(exception);
+            PostStatus("restart-error", update.Version, null,
+                "No fue posible abrir el instalador. La descarga se conserva; puedes reintentar la instalación.");
+        }
     }
 
     private void PostStatus(
@@ -249,13 +312,14 @@ internal sealed partial class AuralyDesktopUpdater(
         int? progress,
         string message)
     {
-        var json = JsonSerializer.Serialize(new AuralyUpdateStatus(
+        lastStatus = new AuralyUpdateStatus(
             StatusMessageType,
             status,
             version,
             progress,
-            message));
-        browser.CoreWebView2.PostWebMessageAsJson(json);
+            message);
+        if (shutdown.IsCancellationRequested || browser.IsDisposed) return;
+        browser.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(lastStatus));
     }
 
     private async Task LogFailureAsync(Exception exception)

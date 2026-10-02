@@ -4,6 +4,25 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class WithholdingEngineTests
 {
+    [Fact]
+    public void Splitting_expense_accounts_does_not_split_the_minimum_base_or_tax_other_concepts()
+    {
+        var rule = Rule(WithholdingKind.IncomeTax, WithholdingBaseKind.TaxExclusiveAmount, 2.5m,
+            minimum: 100_000m) with { ConceptCode = "SERVICIOS" };
+        var engine = new WithholdingEngine();
+        var combined = engine.CalculateDocument([Context(120_000m, 0m, "11001") with { ConceptCode = "SERVICIOS" }], [rule]);
+        var distributed = engine.CalculateDocument([
+            Context(60_000m, 0m, "11001") with { ConceptCode = "SERVICIOS" },
+            Context(60_000m, 0m, "11001") with { ConceptCode = "SERVICIOS" },
+            Context(80_000m, 0m, "11001") with { ConceptCode = "OTRO" }], [rule]);
+        Assert.Equal(3_000m, distributed.Calculation.WithholdingTotal);
+        Assert.Equal(combined.Calculation.Lines, distributed.Calculation.Lines);
+        Assert.Equal(197_000m, distributed.Calculation.NetAmount);
+        var below = engine.CalculateDocument([Context(50_000m, 0m, "11001") with { ConceptCode = "SERVICIOS" }], [rule]);
+        Assert.Empty(below.Calculation.Lines);
+        Assert.Contains(below.Diagnostics, message => message.Contains("mínimo"));
+    }
+
     private static readonly Guid BusinessId = Guid.NewGuid();
     private static readonly Guid CounterpartyId = Guid.NewGuid();
 

@@ -103,7 +103,10 @@ los coordinadores fiscal y contable existentes después del commit.
 
 La consulta independiente lee snapshots de ventas de la sede autenticada en
 periodos de hasta 31 días y páginas de hasta 100 filas. Une la obligación real
-para mostrar su saldo; no introduce otra tabla de cargos emitidos. El cierre
+para mostrar su saldo y el tercero de la factura para mostrar el cliente. La
+búsqueda por cargo, proveedor o factura se aplica en SQL antes de los totales y
+de paginar; las tres tarjetas resumen el conjunto filtrado, no solo la página.
+No introduce otra tabla de cargos emitidos. El cierre
 congela su desglose y reutiliza el endpoint de snapshot, incluyendo el permiso
 de supervisión del tenant. Sus filas de cargo son informativas y no alteran
 conteos ni decisiones de conciliación.
@@ -317,3 +320,48 @@ El historial requiere `sales.reprint`, consulta el snapshot por tenant y negocio
 sin depender del cajero, sesión o bodega que originaron la venta, y audita la
 reimpresión después de imprimir. No reconstruye la venta a partir de precios ni
 cargos actuales.
+
+El comprobante de venta usa la plantilla `sales-receipt` v5 para mostrar nombre,
+identificación, dirección y teléfono del cliente con el mismo bloque de contacto
+de la factura electrónica, en tirilla de 58/80 mm, media carta, medio oficio y
+carta. Dirección y teléfono se omiten cuando no están registrados. Las versiones
+1 a 4 siguen disponibles sin cambios. La v5 añade entre cliente y productos una
+línea del mismo grosor y color que la factura en los formatos de hoja; la tirilla
+conserva su separador existente. El snapshot comercial conserva los datos
+de contacto al emitir: online amplía la lectura existente del cliente y su sede;
+Edge utiliza el catálogo ya cargado. La reimpresión toma el snapshot, no los datos
+actuales del tercero. Los snapshots anteriores sin contacto no inventan esos datos.
+Este cambio no añade consultas al imprimir ni viajes a la base de datos al emitir.
+La captura conserva la resolución de identificación existente; no introduce
+validaciones ni modifica importes, pagos o numeración. La regresión de checkout
+verifica factura y comprobante, y cambia la dirección del tercero antes de
+reimprimir para comprobar que se utiliza el snapshot original. Las pruebas de
+renderizado comparan el bloque de contacto con el de factura en los cuatro formatos.
+
+Periféricos ofrece cuatro formatos fijos por flujo (tirilla de 58/80 mm, media
+carta, media oficio y carta), cada uno con impresora opcional en la aplicación
+instalada. Facturas y pedidos eligen su propio formato predeterminado; el botón
+habitual usa ese destino. En el modal de pago, `S` confirma sin imprimir,
+`T` tirilla, `M` media carta, `O` medio oficio y `C` carta; la letra inicial se
+resalta dentro de cada etiqueta. `Enter` usa el predeterminado. Los atajos
+funcionan también con foco en el importe; no interceptan referencias, combos ni
+capturas de tarjeta/transferencia. Los números conservan su función de digitación.
+`E` conserva su función de eliminar la fila de pago activa. Una
+opción instalada sin impresora se rechaza antes de confirmar. La elección solo
+afecta el trabajo de impresión posterior: no modifica la captura, numeración,
+confirmación, contenido del comprobante ni facturación de pedidos. En navegador
+se conserva el diálogo de impresión del sistema.
+
+La marca se prepara una vez al entrar al espacio online, mediante el cache por
+tenant existente; una caja preparada usa su copia local. Confirmar o imprimir no
+vuelve a consultar el logo. Si la preparación falla, queda diagnóstico en consola
+y se usa el nombre de la empresa ya disponible. La disponibilidad del logo no es
+una precondición de la venta ni de la facturación de pedidos.
+
+La regresión `pos-print-shortcuts.spec.ts` verifica las seis acciones en web,
+instalada online y preparada: mismo importe, una confirmación por acción,
+sin trabajo de impresión para S, formato seleccionado para las demás y ninguna
+consulta de marca durante la confirmación. La preparación online hace una sola
+consulta por entrada, aun cuando responde 500; la caja preparada hace cero.
+`orders-batch-invoice-progress.spec.ts` verifica impresión y facturación de
+pedidos con la marca no disponible, conservando la secuencia operativa existente.

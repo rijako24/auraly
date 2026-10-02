@@ -154,7 +154,9 @@ public sealed class HalfLetterDocumentRenderer
         var isInvoice = receipt.DocumentType == PosSaleDocumentTypes.Invoice;
         var isCreditNote = receipt.DocumentType == "SalesReturn" && receipt.CreditNotePrintDetails is not null;
         var isOrder = receipt.DocumentType == "Order";
-        var template = isInvoice || isCreditNote
+        var returnDetails = receipt.DocumentType == "SalesReturn" ? receipt.SalesReturnPrintDetails : null;
+        var isReturn = returnDetails is not null;
+        var template = isReturn ? PosPrintTemplateCatalog.ForReturn(returnDetails!.TemplateVersion) : isInvoice || isCreditNote
             ? templateVersion switch
             {
                 2 => PosPrintTemplateCatalog.SalesInvoiceV2,
@@ -176,7 +178,10 @@ public sealed class HalfLetterDocumentRenderer
                     receipt.CustomerPhone, alignAddressRight: template.Version >= 4)
                 : isCreditNote
                     ? OrderContactPresentation.OptionalHtml(receipt.CustomerAddress, receipt.CustomerPhone)
-                : string.Empty;
+                : receipt.DocumentType == PosSaleDocumentTypes.Receipt && template.Version >= 4
+                    ? OrderContactPresentation.OptionalHtml(receipt.CustomerAddress,
+                        receipt.CustomerPhone, alignAddressRight: true)
+                    : string.Empty;
         var customerDetails = isOrder && template.Version >= 2
             ? customerContact
             : $"<div class=\"pair\"><span>Cliente</span><strong>{Encode(receipt.CustomerName)}</strong></div>" +
@@ -188,14 +193,16 @@ public sealed class HalfLetterDocumentRenderer
             : isCreditNote && receipt.CreditNotePrintDetails is { } creditDetails
                 ? $"<section class=\"fiscal-compliance\"><div>{Encode(receipt.CompanyName)} · NIT {Encode(creditDetails.SupplierIdentification)} · {Encode(creditDetails.SupplierAddress)}</div><div>Factura original: {Encode(creditDetails.OriginalInvoiceNumber)} · Motivo: {Encode(creditDetails.Reason)}</div></section>"
                 : string.Empty;
-        var documentName = isOrder
+        if (isReturn)
+            fiscalDetails = $"<section class=\"fiscal-compliance\"><div>Documento original: {Encode(returnDetails!.OriginalDocumentNumber)} · Motivo: {Encode(returnDetails.Reason)}</div><div>Estado fiscal: {Encode(receipt.FiscalStatus ?? "No aplica")}</div></section>";
+        var documentName = isReturn ? "Devolución de venta" : isOrder
             ? "Pedido"
             : isInvoice
             ? "Factura electrónica de venta"
             : isCreditNote
             ? "Nota crédito electrónica"
             : "Comprobante de venta";
-        var representationName = isOrder
+        var representationName = isReturn ? "Copia de la devolución de venta" : isOrder
             ? "Pedido"
             : isInvoice
             ? "Representación gráfica de factura electrónica"
@@ -213,7 +220,7 @@ public sealed class HalfLetterDocumentRenderer
         var rows = string.Join("", receipt.Lines.Select(line =>
         {
             var identity = Encode(line.Description);
-            if (template.Version >= 3 && line.Discount > 0)
+            if ((isReturn || template.Version >= 3) && line.Discount > 0)
                 identity += $"<br><small>Descuento: {Money(line.Discount)}</small>";
             return $"<tr><td>{identity}</td><td class=\"numeric\">{Quantity(line.Quantity)}</td><td class=\"numeric\">{Money(line.UnitPrice)}</td><td class=\"numeric\">{Money(line.Total)}</td></tr>";
         }));
@@ -257,7 +264,9 @@ public sealed class HalfLetterDocumentRenderer
         var showLogoInsteadOfName = !string.IsNullOrWhiteSpace(companyLogo) &&
             (isInvoice ? template.Version >= 4 : !isCreditNote && !isOrder && template.Version >= 3);
         var issuedAt = DianFiscalDateTime.InColombia(receipt.IssuedAt).ToString("d/M/yyyy, h:mm:ss tt", ColombianCulture);
-        var detailSection = isOrder
+        var detailSection = isReturn
+            ? $"<section class=\"details\"><div><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</div><div class=\"totals\"><div class=\"pair\"><span>Base de la devolución</span><strong>{Money(receipt.UntaxedAmount)}</strong></div><div class=\"pair\"><span>Impuestos</span><strong>{Money(receipt.TaxAmount)}</strong></div>{rounding}<div class=\"pair total\"><span>Total devuelto</span><strong>{Money(receipt.PayableAmount)}</strong></div></div></section>"
+            : isOrder
             ? $"<section class=\"details\"><div><div class=\"caption\">Detalle del pedido · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div></div></div></section>"
             : isCreditNote
             ? $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Base de la devolución</span><strong>{Money(receipt.UntaxedAmount)}</strong></div><div class=\"pair\"><span>Impuestos</span><strong>{Money(receipt.TaxAmount)}</strong></div><div class=\"pair total\"><span>Total nota crédito</span><strong>{Money(receipt.PayableAmount)}</strong></div>{qr}</div></div></section>"
@@ -266,7 +275,7 @@ public sealed class HalfLetterDocumentRenderer
         return $$"""
           <article class="document{{(showLogoInsteadOfName ? " logo-primary" : string.Empty)}}" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">
             <header class="top"><div><div class="brand-lockup">{{companyLogo}}{{(showLogoInsteadOfName ? string.Empty : $"<h1>{companyName}</h1>")}}</div><h2>{{documentName}}</h2></div><div class="number"><span>{{(isCreditNote ? "Número de nota" : "N.º de ticket")}}</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
-            <section class="meta">{{customerDetails}}{{fiscalNumber}}</section>
+            <section class="meta"{{(receipt.DocumentType == PosSaleDocumentTypes.Receipt && template.Version >= 5 ? " style=\"border-bottom:.2mm solid #cbd5e1;padding-bottom:1mm\"" : string.Empty)}}>{{customerDetails}}{{fiscalNumber}}</section>
             {{fiscalDetails}}
             <table><thead><tr><th>Producto</th><th class="numeric">{{(isCreditNote ? "Cantidad devuelta" : "Cant.")}}</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
             {{detailSection}}

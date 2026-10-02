@@ -1,4 +1,16 @@
-import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import type { PosPrintTemplateFormat, PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+
+export const PAYMENT_PRINT_SHORTCUTS = [
+  { key: "S", label: "Sin imprimir", choice: "none" },
+  { key: "T", label: "Tirilla", choice: "Receipt" },
+  { key: "M", label: "Media carta", choice: "HalfLetter" },
+  { key: "O", label: "Oficio", choice: "HalfLegal" },
+  { key: "C", label: "Carta", choice: "Letter" },
+] as const;
+
+export function paymentPrintChoiceForShortcut(key: string): PosPrintTemplateFormat | "none" | null {
+  return PAYMENT_PRINT_SHORTCUTS.find(shortcut => shortcut.key === key.toUpperCase())?.choice ?? null;
+}
 
 export function nextPaymentAmountIndex(
   current: number,

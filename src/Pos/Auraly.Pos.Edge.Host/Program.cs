@@ -89,7 +89,10 @@ public sealed record DirectPrintReceiptRequest(
     string? BusinessName = null,
     string? WarehouseName = null,
     CreditSaleAcknowledgement? CreditAcknowledgement = null,
-    SalesInvoicePrintDetails? InvoicePrintDetails = null);
+    SalesInvoicePrintDetails? InvoicePrintDetails = null,
+    decimal PayableRoundingAmount = 0m,
+    string? FiscalStatus = null,
+    SalesReturnPrintDetails? SalesReturnPrintDetails = null);
 
 public static class PosEdgeHostApplication
 {
@@ -1105,6 +1108,15 @@ public static class PosEdgeHostApplication
             PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerReturnResult(() => server.GetAsync(documentId, request,
                 RequiredSalesReturnUser(sessions), ct)));
+        edge.MapPost("/server-returns/history", async (JsonElement request,
+            PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerReturnResult(() => server.HistoryAsync(request, sessions.Required(), ct)));
+        edge.MapPost("/server-returns/history/{returnId:guid}", async (Guid returnId, JsonElement request,
+            PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerReturnResult(() => server.DetailAsync(returnId, request, sessions.Required(), ct)));
+        edge.MapPost("/server-returns/customers", async (JsonElement request,
+            PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
+            await ServerReturnResult(() => server.CustomersAsync(request, sessions.Required(), ct)));
         edge.MapPost("/server-returns/bootstrap", async (JsonElement request,
             PosSalesReturnServerClient server, PosLocalSessionAccessor sessions, CancellationToken ct) =>
             await ServerReturnResult(() => server.BootstrapAsync(request,

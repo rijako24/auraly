@@ -519,7 +519,11 @@ public sealed class SqlReceivablesStore(
                 WHERE a.ReceivableId=input.ReceivableId AND a.AppliedAt IS NULL AND p.Status=N'Accepted') pending
               WHERE r.ReceivableId IS NULL OR b.BusinessId IS NULL OR r.CustomerId<>@CustomerId
                 OR r.CurrencyCode<>@Currency OR r.Status IN(N'Paid',N'Cancelled')
-                OR input.Amount>r.OutstandingAmount-pending.Reserved)
+                OR input.Amount>r.OutstandingAmount-pending.Reserved-COALESCE((SELECT SUM(d.AdjustmentAmount)
+                  FROM accounting.VoucherDrafts d WITH(INDEX(IX_VoucherDrafts_Obligation))
+                  WHERE d.BusinessId=@BusinessId AND d.SubledgerKind=N'Receivable' AND d.SubledgerId=input.ReceivableId
+                    AND d.Direction=N'Decrease' AND d.SentAt IS NOT NULL
+                    AND NOT EXISTS(SELECT 1 FROM dbo.ReceivableTransactions t WHERE t.ReceivableId=input.ReceivableId AND t.TransactionType=N'Adjustment' AND t.SourceDocumentId=d.DocumentId)),0))
               THROW 51311,'An allocation is unavailable or outside the selected customer.',1;
             IF @SessionId IS NOT NULL AND NOT EXISTS(
               SELECT 1 FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)

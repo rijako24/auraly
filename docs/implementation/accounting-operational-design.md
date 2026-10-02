@@ -3,6 +3,28 @@
 **Implemented:** 2026-08-01
 **Branch:** `feature/auraly-commerce-accounting-engine`
 
+## Open vouchers (2026-09-30)
+
+The approved workspace and its remaining export/attachment limitations are owned by
+[`accounting-open-vouchers-design.md`](accounting-open-vouchers-design.md).
+Financial Traceability now owns **Nuevo comprobante**, persisted unsent captures,
+explicit **Contabilizar**, status and native retries. Portfolio adjustments start
+from the selected obligation in CxC/CxP. Both reuse `AccountingService`, the native
+source/job acceptance and `SqlAccountingPostingProcessor`; no second financial
+engine, writer or queue is introduced. `accounting.VoucherDrafts` stores mutable
+capture only, with optimistic versions and atomic freezing on acceptance.
+
+Saving creates no financial/fiscal effects. Sending requires `accounting.manual.send`,
+including retained legacy direct-confirmation endpoints. Native accepted commands
+replay without republishing. Pending draft decreases participate in the existing
+obligation availability checks. See the owner document for locking and test evidence.
+
+The old Accounting manual section has been removed. Expenses retain their native
+capture, tax preview, accounting and fiscal support flow described in
+[`expenses-account-selection-and-withholdings-design.md`](expenses-account-selection-and-withholdings-design.md).
+`ReportViewer` now supports downloadable PDF/XLSX; large filtered reports remain
+paginated and their page exports are explicitly labelled.
+
 ## Boundary
 
 Accounting is a physical .NET module with contracts, domain, application and
@@ -20,22 +42,22 @@ that design is not a claim that its pending corrections are already implemented.
 ## Durable flow
 
 ```text
-sale, sales return or goods receipt handler
-  -> operational effects and, when required, AccountingPostingJob in the same SQL transaction
-  -> DocumentProcessingJob Completed
-  -> completion observer before broker ACK
+physical document handler -> inventory effects + canonical accounting source/job signal
+financial document acceptance -> AccountingSourceDocuments + AccountingPostingJobs
+  -> existing accounting queue / AccountingProcessingCoordinator
   -> separate serializable financial-accounting transaction
   -> financial subledger effects
   -> when AccountingEntryRequired: open period + effective mappings + balanced immutable entry
   -> AccountingPostingJob CommercialEffectsApplied or Posted
 ```
 
-There is still one broker message per source document. There is no accounting
-poller and no second broker message. If the process stops after the operational
-commit and before the accounting commit, the unacknowledged broker message is
-delivered again. `DocumentProcessingWorker` recognizes the completed operational
-job and runs the idempotent completion observer without repeating inventory,
-payments, work-session movements or fiscal work.
+The topology is governed by
+`../decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md`.
+Accounting has its own canonical queue and durable job; financial-only documents
+do not enter `DocumentProcessingJobs` or advance inventory cursors. Duplicate
+activation signals reuse the same job and cannot repeat financial or physical
+effects. The earlier completion-observer description is superseded by that
+decision.
 
 If a period or account mapping is missing, the work becomes
 `AccountingPendingConfiguration`. This is an accepted derived state: it does not
@@ -271,7 +293,8 @@ Still pending:
   added through the same canonical document handler and accounting job path;
 - convergence of the current supplier master into Party before supplier and
   exogenous ledgers are considered complete;
-- manual vouchers, reversals and authorized reopening;
+- the saved manual-voucher lifecycle described above, reversals and authorized
+  reopening; multi-line manual acceptance itself is already implemented;
 - account/party/center ledgers beyond the trial balance;
 - tax/withholding engine and regulatory reporting;
 - reconciliations and statutory financial statements.
@@ -282,3 +305,57 @@ accountant must compare that balance with the bank statement externally and
 post supported adjustments through audited manual vouchers. This is enough for
 initial operation, but it does not satisfy the acceptance gate for a fully
 reconciled accounting close.
+
+Approved next UI change: account adjustments will be created from Cuentas por cobrar / Cuentas por pagar in the context of their party and obligation. Financial traceability already shows their document and posting state. The relocation and saved-draft lifecycle are pending; the current creation entry remains in Accounting.
+
+## PUC account maintenance (implemented locally)
+
+`Plan de cuentas` is a list with a header, server search, server pagination and
+`Nueva cuenta`. Clicking a row, pressing Enter on it or using `Editar` opens the
+same account dialog. The permanent creation form beside the list is removed.
+Read-only users can consult the list; mutations require `accounting.configure`.
+The nature selector uses `reference.Options/accounting-account-type`.
+
+`AccountingService` and `SqlAccountingStore` retain sole ownership of accounts.
+`PUT /accounting/accounts/{accountId}` edits the name and `RequiresParty` on the
+tenant's existing `AccountingAccounts` row. Code, nature, posting capability and
+identity remain stable, so existing journal lines and references retain their
+classification. The requirement for a party applies when subsequent entries are
+validated; this operation does not rewrite historical entries or pending sources.
+An active bank's PUC account cannot start requiring a party. This validation and
+the write share a serializable transaction and the account lock used by bank
+configuration.
+
+The existing SQL row version is exposed additively in account responses and
+required for editing. Stale divergent edits return 409. An identical replay
+returns the current authoritative record without another update. Tenant scope
+comes from authenticated context. No schema migration, new ledger writer, job,
+queue, fiscal transmission or background refresh is introduced.
+
+`GET /accounting/accounts?page=...&pageSize=...&search=...` returns a bounded page,
+including structural and inactive accounts. The legacy request without query
+parameters remains compatible. The list and account dropdowns reuse the same
+SQL query owner; dropdowns retain active/postable and expense-only restrictions.
+Page and count use one SQL command. An edit also uses one SQL command and has a
+local acceptance budget of two seconds, including commit.
+
+The PUC list owns its load; the legacy full-plan query is disabled while it is
+visible. Editing without a search updates the row from the mutation response,
+with no GET. Creating or renaming under an active search performs one bounded
+page read because page membership and total count can change. Other cached
+pages/selectors are marked stale without fetching. Reverting this UI/API change
+requires no data rollback; saved names and party requirements remain valid.
+
+Regression coverage: `AccountingAccountEditingTests` exercises HTTP permissions,
+tenant isolation, stale writes, replay, atomic bank validation, persisted reload,
+pagination and SQL command counts. `account-editing.spec.ts` covers row/keyboard
+opening, creation, saving/reopening, conflict, query failure/retry, search and
+read-only access. The shared retentions workspace lives outside its route module
+so both embedded and standalone rendering satisfy Next.js page export rules.
+
+Local verification on 2026-09-30: backend Release build and frontend production
+build passed; focused ESLint passed. Both SQL editing regressions passed after
+the replay check, including the one-command/two-second budget. All eight browser
+cases passed (three PUC journeys, account search and four return reprint paths).
+Visual inspection verified the list header, row action, keyboard opening and
+the visible page size. No deployment or physical-printer certification was done.

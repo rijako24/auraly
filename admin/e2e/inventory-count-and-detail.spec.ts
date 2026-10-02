@@ -26,19 +26,21 @@ test.describe("conteo y detalle de inventario", () => {
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({items:[
-          {inventoryPhysicalCountId:countId,draftId:firstDraft,name:"Pasillo A",warehouseId:"66666666-6666-6666-6666-666666666666",warehouseName:"Principal",scopeType:"General",ownerUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",status:"Ready",version:2,productCount:1,countedProductCount:1,updatedAt:"2026-08-25T12:10:00Z"},
-          {inventoryPhysicalCountId:countId,draftId:secondDraft,name:"Pasillo B",warehouseId:"66666666-6666-6666-6666-666666666666",warehouseName:"Principal",scopeType:"General",ownerUserId:"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",status:"Ready",version:2,productCount:1,countedProductCount:1,updatedAt:"2026-08-25T12:12:00Z"}
+          {inventoryPhysicalCountId:countId,draftId:firstDraft,name:"Pasillo A",warehouseId:"66666666-6666-6666-6666-666666666666",warehouseName:"Principal",scopeType:"General",ownerUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",status:"Ready",canReconcile:true,version:2,productCount:1,countedProductCount:1,updatedAt:"2026-08-25T12:10:00Z"},
+          {inventoryPhysicalCountId:countId,draftId:secondDraft,name:"Pasillo B",warehouseId:"66666666-6666-6666-6666-666666666666",warehouseName:"Principal",scopeType:"General",ownerUserId:"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",status:"Ready",canReconcile:true,version:2,productCount:1,countedProductCount:1,updatedAt:"2026-08-25T12:12:00Z"}
         ],page:1,pageSize:20,totalCount:2,totalPages:1}),
       });
     });
     await page.route(`**/api/commerce/v1/inventory/physical-counts/${countId}/reconciliations`, async (route) => route.fulfill({contentType:"application/json",body:JSON.stringify({reconciliationId:"55555555-5555-5555-5555-555555555555",inventoryPhysicalCountId:countId,snapshotInventorySequence:30,status:"Active",createdAt:"2026-08-25T12:15:00Z",createdByUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",isStale:false,countedApplicationStatus:null,countedDocumentId:null,countedDocumentNumber:null,uncountedApplicationStatus:null,uncountedDocumentId:null,uncountedDocumentNumber:null,drafts:[{draftId:firstDraft,name:"Pasillo A",ownerUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",version:2,countedProducts:1,pendingProducts:0},{draftId:secondDraft,name:"Pasillo B",ownerUserId:"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",version:2,countedProducts:1,pendingProducts:0}],products:[{productId,productCode:"PRD-1",productName:"Arroz",status:"Counted",proposedQuantity:8,systemQuantity:7,unitCost:2000,averageUnitCost:1800,sources:[{draftId:firstDraft,draftName:"Pasillo A",ownerUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",initialQuantity:3,verificationQuantity:null,finalQuantity:3},{draftId:secondDraft,draftName:"Pasillo B",ownerUserId:"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",initialQuantity:5,verificationQuantity:null,finalQuantity:5}]}]})}));
 
     await page.goto("/dashboard/inventory");
-    await page.getByRole("button", { name: "Conciliación de inventario" }).click();
+    await page.getByRole("tab", { name: "Operaciones" }).click();
+    await page.getByRole("button", { name: "Inventarios" }).click();
+    await page.getByRole("tab", { name: "Borradores" }).click();
+    await page.getByRole("checkbox",{name:"Seleccionar Pasillo A"}).check();
+    await page.getByRole("checkbox",{name:"Seleccionar Pasillo B"}).check();
+    await page.getByRole("button",{name:"Conciliar seleccionados"}).click();
     const dialog=page.getByRole("dialog",{name:"Conciliación de inventario"});
-    await dialog.getByRole("checkbox",{name:"Seleccionar Pasillo A"}).check();
-    await dialog.getByRole("checkbox",{name:"Seleccionar Pasillo B"}).check();
-    await dialog.getByRole("button",{name:"Conciliar seleccionados"}).click();
     await expect(dialog.getByRole("tab",{name:/Contados · 1/})).toBeVisible();
     await expect(dialog.getByText("Pasillo A",{exact:true})).toBeVisible();
     await expect(dialog.getByText("Pasillo B",{exact:true})).toBeVisible();
@@ -125,7 +127,7 @@ test.describe("conteo y detalle de inventario", () => {
     const count=operation.getByRole("textbox",{name:"Contar Arroz",exact:true});
     await expect(count).toBeFocused();
     await count.fill("8");
-    await operation.getByRole("button",{name:"Cerrar",exact:true}).click();
+    await operation.getByRole("button",{name:"Close",exact:true}).click();
     await expect(operation).toBeHidden();
     await page.getByRole("button", { name: "Nueva operación" }).click();
     const restoredCount=operation.getByRole("textbox",{name:"Contar Arroz",exact:true});

@@ -24,6 +24,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { routesApi, type SalesRouteListItem } from "@/services/api/routes";
+import { tenantsApi } from "@/services/api/tenants";
 import { PosPrinterDialog } from "@/app/(pos)/pos/pos-printer-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
 import { sellerOrdersApi } from "@/services/api/seller-orders";
@@ -65,8 +66,10 @@ export default function OrdersPage() {
         }
         setPreparedPrintBranding(false);
       }
+      tenantsApi.preparePrintBrandingForWorkspaceEntry();
     };
-    void prepare();
+    // Let a replaced effect cancel before starting the shared brand request.
+    void Promise.resolve().then(() => { if (active) return prepare(); });
     return () => { active = false; };
   }, [businessId, userId, printerClient]);
   useEffect(() => {

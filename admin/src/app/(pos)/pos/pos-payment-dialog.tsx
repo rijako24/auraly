@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PosPaymentInput, type PosClient, type PosCustomer, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import { PosPaymentInput, type PosClient, type PosCustomer, type PosSaleDocumentType, type PosPrintTemplateFormat } from "@/services/pos/pos-edge-client";
 import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
@@ -26,7 +26,7 @@ import {
 import { usePosReferenceOptions } from "./use-pos-reference-options";
 import { initialTransferBankAccountId } from "./pos-transfer-settlement";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
-import { isChangeDocumentShortcut, nextPaymentAmountIndex } from "./pos-payment-keyboard";
+import { isChangeDocumentShortcut, nextPaymentAmountIndex, PAYMENT_PRINT_SHORTCUTS, paymentPrintChoiceForShortcut } from "./pos-payment-keyboard";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -37,6 +37,7 @@ const money = new Intl.NumberFormat("es-CO", {
 type PaymentRow = PosPaymentInput & { id: string };
 type PaymentCaptureClient = Pick<PosClient, "mode" | "referenceOptions"> & {
   settlementConfiguration: () => Promise<{ isAccountingEnabled: boolean; bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean; accountNumber?: string }> }>;
+  printerConfigurationForSale?: PosClient["printerConfigurationForSale"];
 };
 
 export function PosPaymentDialog({
@@ -72,6 +73,7 @@ export function PosPaymentDialog({
   onConfirm: (
     payments: PosPaymentInput[],
     settlement: PosPaymentSettlement,
+    printChoice: PosPrintTemplateFormat | "none" | null,
   ) => Promise<void>;
   portfolioDirection?: "receivable" | "payable";
   onBack?: () => void;
@@ -99,6 +101,9 @@ export function PosPaymentDialog({
   const [bankAccounts, setBankAccounts] = useState<Array<{ bankAccountId: string; displayName: string; isPrimary: boolean; accountNumber?: string }>>([]);
   const [accountingEnabled, setAccountingEnabled] = useState(false);
   const [settlementConfigurationLoaded, setSettlementConfigurationLoaded] = useState(false);
+  const [printConfiguration, setPrintConfiguration] = useState<Awaited<ReturnType<PosClient["printerConfigurationForSale"]>> | null>(null);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const printChoiceRef = useRef<PosPrintTemplateFormat | "none" | null>(null);
   const cardApprovalRef = useRef<HTMLInputElement>(null);
   const transferReferenceRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
@@ -139,6 +144,15 @@ export function PosPaymentDialog({
     }).catch(() => { if (active) setSettlementConfigurationLoaded(false); });
     return () => { active = false; };
   }, [client]);
+
+  useEffect(() => {
+    if (portfolioDirection || !client.printerConfigurationForSale) return;
+    let active = true;
+    void client.printerConfigurationForSale()
+      .then(configuration => { if (active) setPrintConfiguration(configuration); })
+      .catch(() => { if (active) setPrintError("No fue posible consultar las impresoras. Revisa Periféricos antes de emitir."); });
+    return () => { active = false; };
+  }, [client, portfolioDirection]);
 
   const openTransferCapture = useCallback((paymentId: string, payment?: PaymentRow) => {
     if (!settlementConfigurationLoaded) {
@@ -262,9 +276,46 @@ export function PosPaymentDialog({
     setPendingFocusId(null);
   }, [focusAmount, pendingFocusId, payments]);
 
+  const choosePrint = useCallback((choice: PosPrintTemplateFormat | "none" | null) => {
+    if (busy || portfolioDirection) return;
+    if (choice !== "none") {
+      if (!printConfiguration) {
+        printChoiceRef.current = null;
+        setPrintError("Espera a que cargue la configuración de impresión.");
+        return;
+      }
+      if (printConfiguration.direct) {
+        const format = choice ?? printConfiguration.configuration.posOutputFormat;
+        const route = printConfiguration.configuration.templateRoutes?.find(item =>
+          item.documentType === "SalesInvoice" && item.format === format);
+        const printer = route ? route.printerName :
+          format === printConfiguration.configuration.posOutputFormat
+            ? printConfiguration.configuration.posPrinterName : null;
+        if (!printer) {
+          printChoiceRef.current = null;
+          setPrintError(`La impresión en ${format === "Receipt" ? "tirilla" : format === "HalfLetter" ? "media carta" : format === "HalfLegal" ? "media oficio" : "carta"} no está configurada en Periféricos.`);
+          return;
+        }
+      }
+    }
+    setPrintError(null);
+    printChoiceRef.current = choice;
+    modal.current?.requestSubmit();
+  }, [busy, portfolioDirection, printConfiguration]);
+
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
       if (cardCapture || transferCapture) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const editingText = Boolean(target?.closest("input:not([data-payment-amount]), textarea, [role=combobox], [role=listbox], [contenteditable=true]"));
+      const printChoice = paymentPrintChoiceForShortcut(event.key);
+      if (!portfolioDirection && printChoice !== null && !editingText &&
+          !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.repeat) choosePrint(printChoice);
+        return;
+      }
       if (!portfolioDirection && isChangeDocumentShortcut(event.key, documentTypeLocked)) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -276,23 +327,41 @@ export function PosPaymentDialog({
         event.preventDefault();
         event.stopImmediatePropagation();
         addPayment(method.code);
-      } else if (event.key.toLowerCase() === "e" && activePaymentId && payments.length > 1 &&
-          !(event.target instanceof HTMLElement && event.target.dataset.paymentReference === "true")) {
+      } else if (event.key.toLowerCase() === "e" && activePaymentId && payments.length > 1 && !editingText) {
         event.preventDefault();
         removePayment(activePaymentId);
       }
     };
     window.addEventListener("keydown", shortcut, true);
     return () => window.removeEventListener("keydown", shortcut, true);
-  }, [activePaymentId, addPayment, cardCapture, documentTypeLocked, methods, onChangeDocumentType, payments.length, portfolioDirection, removePayment, transferCapture]);
+  }, [activePaymentId, addPayment, cardCapture, choosePrint, documentTypeLocked, methods, onChangeDocumentType, payments.length, portfolioDirection, removePayment, transferCapture]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (!portfolioDirection && printChoiceRef.current !== "none" && !printConfiguration) {
+      printChoiceRef.current = null;
+      setPrintError("Espera a que cargue la configuración de impresión.");
+      return;
+    }
+    if (!portfolioDirection && printChoiceRef.current === null && printConfiguration?.direct) {
+      const configuration = printConfiguration.configuration;
+      const route = configuration.templateRoutes?.find(item => item.documentType === "SalesInvoice" && item.format === configuration.posOutputFormat);
+      if (!(route ? route.printerName : configuration.posPrinterName)) {
+        printChoiceRef.current = null;
+        setPrintError("La impresión predeterminada no está configurada en Periféricos.");
+        return;
+      }
+    }
     if (!settlement.isValid || busy || !documentTypeReady ||
         payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) ||
         payments.some(payment => payment.methodCode === "Transfer" &&
           (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) ||
-        paymentMethods.isLoading || paymentMethods.isError) return;
+        paymentMethods.isLoading || paymentMethods.isError) {
+      printChoiceRef.current = null;
+      return;
+    }
+    const printChoice = printChoiceRef.current;
+    printChoiceRef.current = null;
     await onConfirm(
       settlement.appliedPayments.map(({ methodCode, amount, roundingAdjustment, reference, cardFranchiseCode, approvalNumber, bankAccountId, notes, tenderedAmount }) => ({
         methodCode,
@@ -306,6 +375,7 @@ export function PosPaymentDialog({
         tenderedAmount: methodCode === "Cash" ? tenderedAmount ?? null : null,
       })),
       settlement,
+      printChoice,
     );
   }
 
@@ -453,6 +523,7 @@ export function PosPaymentDialog({
                   autoFocus={index === 0}
                   type="text"
                   inputMode="decimal"
+                  data-payment-amount="true"
                   aria-label={`Valor recibido en ${methods.find((method) => method.code === payment.methodCode)?.label ?? payment.methodCode}`}
                   value={amountDrafts[payment.id] ?? formatMoneyValue(payment.amount)}
                   onFocus={(event) => event.currentTarget.select()}
@@ -541,7 +612,13 @@ export function PosPaymentDialog({
         )}
         </div>
 
-        <div className={`grid shrink-0 gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:justify-end sm:px-5 sm:pb-4 sm:pt-4 ${portfolioDirection ? "grid-cols-3" : "grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]"}`}>
+        {printError && !portfolioDirection && <p role="alert" className="shrink-0 border-t border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{printError}</p>}
+        <div className={`grid shrink-0 gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:items-center sm:justify-between sm:px-5 sm:pb-4 sm:pt-4 ${portfolioDirection ? "grid-cols-3" : "grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]"}`}>
+          {!portfolioDirection && <div className="col-span-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:col-auto" aria-label="Opciones de impresión">
+            {PAYMENT_PRINT_SHORTCUTS.map(({ key, label, choice }) =>
+              <button key={key} type="button" aria-keyshortcuts={key} aria-label={label} disabled={busy} onClick={() => choosePrint(choice)} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 font-medium transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/30 disabled:opacity-50"><span className="font-bold text-teal-700 underline decoration-teal-500/60 decoration-2 underline-offset-4">{key}</span>{label.slice(1)}</button>)}
+          </div>}
+          <div className="col-span-2 flex justify-end gap-2 sm:col-auto">
           {portfolioDirection && <button type="button" onClick={onBack} disabled={busy} className="h-11 rounded-lg border border-slate-300 px-3 font-medium sm:px-5">Atrás</button>}
           <button
             type="button"
@@ -565,6 +642,7 @@ export function PosPaymentDialog({
             <span className="hidden sm:inline">{portfolioDirection ? "Confirmar pago" : "Emitir e imprimir"}</span>
             <span className="hidden rounded bg-white/15 px-1.5 py-0.5 text-xs sm:inline">Enter</span>
           </button>
+          </div>
         </div>
       </form>
     </div>

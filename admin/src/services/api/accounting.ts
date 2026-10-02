@@ -4,7 +4,9 @@ export interface AccountingAccount {
   accountId: string; code: string; name: string; accountType: string;
   allowsPosting: boolean; requiresParty: boolean; isActive: boolean;
   level: "Class"|"Group"|"Account"|"Subaccount"|"Auxiliary";
+  rowVersion?: string | null;
 }
+export interface AccountingAccountPage { items: AccountingAccount[]; page: number; pageSize: number; totalCount: number; totalPages: number; }
 export interface AccountingCostCenter {
   costCenterId: string; businessId: string; code: string; name: string;
   parentCostCenterId: string | null; isDefault: boolean; isActive: boolean; rowVersion:string;
@@ -90,10 +92,8 @@ export interface AccountingJournalRow { entryId:string;entryNumber:string;occurr
 export interface GeneralLedgerRow { accountCode:string;accountName:string;accountType:string;openingBalance:number;debit:number;credit:number;closingBalance:number; }
 export interface FinancialStatementRow { section:string;accountCode:string;accountName:string;amount:number; }
 export interface AccountingExceptionRow { sourceDocumentId:string;sourceDocumentType:string;occurredAt:string;status:string;errorCode:string|null;errorMessage:string|null; }
-export interface AccountingDocumentRow { sourceDocumentId:string;sourceDocumentType:string;sourceDocumentNumber:string|null;occurredAt:string;status:string;attemptCount:number;errorCode:string|null;errorMessage:string|null;entryId:string|null;entryNumber:string|null;debitTotal:number|null;creditTotal:number|null;postedAt:string|null;fiscalDocumentType:string|null;dianNumber:string|null;uniqueCodeType:string|null;uniqueCode:string|null;fiscalStatus:string|null; }
+export interface AccountingDocumentRow { hasManualDraft?:boolean; sourceDocumentId:string;sourceDocumentType:string;sourceDocumentNumber:string|null;occurredAt:string;status:string;attemptCount:number;errorCode:string|null;errorMessage:string|null;entryId:string|null;entryNumber:string|null;debitTotal:number|null;creditTotal:number|null;postedAt:string|null;fiscalDocumentType:string|null;dianNumber:string|null;uniqueCodeType:string|null;uniqueCode:string|null;fiscalStatus:string|null; }
 export interface AccountingDocumentPage { items:AccountingDocumentRow[];page:number;pageSize:number;totalCount:number;totalPages:number; }
-export interface FinancialTraceabilityLineRow { sourceDocumentId:string;sourceDocumentType:string;sourceDocumentNumber:string|null;occurredAt:string;status:string;errorMessage:string|null;entryNumber:string|null;postedAt:string|null;fiscalDocumentType:string|null;dianNumber:string|null;fiscalStatus:string|null;lineNumber:number|null;accountCode:string|null;accountName:string|null;partyIdentification:string|null;partyName:string|null;costCenterCode:string|null;costCenterName:string|null;description:string|null;debit:number|null;credit:number|null; }
-export interface FinancialTraceabilityLinePage { items:FinancialTraceabilityLineRow[];page:number;pageSize:number;totalCount:number;totalPages:number; }
 export interface ComplianceReportDefinition { authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;name:string;reportKind:"Exogenous"|"FiscalDraft";resolutionNumber:string;resolutionDate:string;technicalAnnex:string;sourceUrl:string;sourceSha256:string; }
 export interface ComplianceConceptMapping { mappingId:string;tenantId:string;businessId:string|null;authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;accountId:string;accountCode:string;accountName:string;conceptCode:string;targetField:string; }
 export interface ComplianceValidation { severity:"Error"|"Warning";code:string;message:string;partyId:string|null;accountId:string|null; }
@@ -102,6 +102,10 @@ export interface SetComplianceConceptMapping { businessId:string|null;authorityC
 export interface GenerateComplianceReport { authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;periodFrom:string;periodTo:string; }
 
 export const accountingApi = {
+  voucherDraft: (id: string) => apiClient.get<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${id}`),
+  saveVoucherDraft: (request: SaveVoucherDraft) => apiClient.put<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${request.documentId}`, request),
+  sendVoucherDraft: (id: string, rowVersion: string) => apiClient.post<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${id}/send`, { rowVersion }),
+  accountOptions:(params:{page:number;pageSize:number;search?:string;expenseOnly?:boolean;accountId?:string})=>apiClient.get<{items:AccountingAccount[];page:number;pageSize:number;totalCount:number;totalPages:number}>("/commerce/v1/accounting/account-options",params),
   accounts: () => apiClient.get<AccountingAccount[]>("/commerce/v1/accounting/accounts"),
   bankAccounts: (includeInactive=false) => apiClient.get<BankAccount[]>("/commerce/v1/accounting/bank-accounts", {includeInactive}),
   saveBankAccount: (request:SaveBankAccount) => apiClient.put<BankAccount>(`/commerce/v1/accounting/bank-accounts/${request.bankAccountId}`,request),
@@ -125,6 +129,8 @@ export const accountingApi = {
   approveOpeningBalance: (batchId:string) => apiClient.post<AccountingOpeningBalance>(`/commerce/v1/accounting/opening-balances/${batchId}/approve`,{}),
   ensureDefaults: () => apiClient.put<AccountingDefaultsResult>("/commerce/v1/accounting/defaults", {}),
   createAccount: (request: CreateAccount) => apiClient.post<AccountingAccount>("/commerce/v1/accounting/accounts", request),
+  accountPage: (params: {page:number;pageSize:number;search?:string}) => apiClient.get<AccountingAccountPage>("/commerce/v1/accounting/accounts", params),
+  updateAccount: (accountId:string, request:{name:string;requiresParty:boolean;rowVersion:string}) => apiClient.put<AccountingAccount>(`/commerce/v1/accounting/accounts/${accountId}`, request),
   createCostCenter: (request: CreateCostCenter) => apiClient.post<AccountingCostCenter>("/commerce/v1/accounting/cost-centers", request),
   updateCostCenter: (costCenterId:string, request:Omit<AccountingCostCenter,"costCenterId"|"businessId">) => apiClient.put<AccountingCostCenter>(`/commerce/v1/accounting/cost-centers/${costCenterId}`,request),
   setCostCenterStatus: (costCenterId:string,isActive:boolean,rowVersion:string) => apiClient.put<AccountingCostCenter>(`/commerce/v1/accounting/cost-centers/${costCenterId}/status`,{isActive,rowVersion}),
@@ -136,8 +142,7 @@ export const accountingApi = {
   posting: (documentId:string) => apiClient.get<AccountingPosting>(`/commerce/v1/accounting/postings/by-document/${documentId}`),
   retryPosting: (documentId:string) => apiClient.post<AccountingPosting>(`/commerce/v1/accounting/postings/${documentId}/retry`,{}),
   entry: (documentId:string) => apiClient.get<AccountingEntry>(`/commerce/v1/accounting/entries/by-document/${documentId}`),
-  documents: (params:{from:string;to:string;documentType?:string;status?:string;search?:string;page?:number;pageSize?:number}) => apiClient.get<AccountingDocumentPage>("/commerce/v1/accounting/documents",params),
-  financialTraceabilityLines: (params:{from:string;to:string;documentType?:string;status?:string;search?:string;page?:number;pageSize?:number}) => apiClient.get<FinancialTraceabilityLinePage>("/commerce/v1/accounting/reports/financial-traceability-lines",params),
+  documents: (params:{from:string;to:string;documentType?:string;status?:string;search?:string;partyId?:string;page?:number;pageSize?:number}) => apiClient.get<AccountingDocumentPage>("/commerce/v1/accounting/documents",params),
   trialBalance: (from: string, to: string) => apiClient.get<TrialBalanceRow[]>(`/commerce/v1/accounting/reports/trial-balance?from=${from}&to=${to}`),
   accountMovements: (accountCode: string, from: string, to: string, costCenterId?:string) => apiClient.get<AccountMovementRow[]>(`/commerce/v1/accounting/reports/account-movements?accountCode=${encodeURIComponent(accountCode)}&from=${from}&to=${to}${costCenterId?`&costCenterId=${encodeURIComponent(costCenterId)}`:""}`),
   journal: (from:string,to:string) => apiClient.get<AccountingJournalRow[]>(`/commerce/v1/accounting/reports/journal?from=${from}&to=${to}`),
@@ -152,3 +157,9 @@ export const accountingApi = {
   complianceRuns: (taxYear?:number) => apiClient.get<ComplianceReportRun[]>("/commerce/v1/accounting/compliance/runs",{taxYear}),
   complianceArtifactUrl: (runId:string) => `/api/commerce/v1/accounting/compliance/runs/${runId}/artifact`,
 };
+
+export interface VoucherDraftLine { accountId:string|null;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number;reference?:string|null; }
+export interface VoucherDraftAdjustment { subledgerKind:"Receivable"|"Payable";subledgerId:string;direction:"Increase"|"Decrease";amount:number;counterpartAccountId:string|null;costCenterId:string|null; }
+export interface SaveVoucherDraft { documentId:string;documentType:"ManualAccountingVoucher"|"AccountAdjustment";occurredAt:string;conceptCode:string;description:string;reference:string|null;lines:VoucherDraftLine[];adjustment:VoucherDraftAdjustment|null;rowVersion:string|null; }
+export interface VoucherDraftLineView { value:VoucherDraftLine;accountCode:string|null;accountName:string|null;partyName:string|null;partyIdentification:string|null;costCenterName:string|null; }
+export interface VoucherDraft extends Omit<SaveVoucherDraft,"lines"> { lines:VoucherDraftLineView[];currencyCode:string;rowVersion:string;sentAt:string|null;status:string;canEdit:boolean;canSend:boolean;row:AccountingDocumentRow; }

@@ -5,6 +5,7 @@ import { ThemeProvider } from "@/providers/theme-provider";
 import { QueryProvider } from "@/providers/query-provider";
 import { PwaProvider } from "@/providers/pwa-provider";
 import { AppBootScreen } from "@/components/pwa/app-boot-screen";
+import { DesktopUpdateProvider } from "@/components/desktop/desktop-updater";
 
 import "./globals.css";
 
@@ -64,7 +65,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryProvider>
-            <PwaProvider>{children}<Toaster /></PwaProvider>
+            <PwaProvider><DesktopUpdateProvider>{children}</DesktopUpdateProvider><Toaster /></PwaProvider>
           </QueryProvider>
         </ThemeProvider>
       </body>

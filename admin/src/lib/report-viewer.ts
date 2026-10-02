@@ -23,7 +23,10 @@ export function filterReportRows(rows: ReportRow[], columns: ReportColumn[], sea
 }
 
 export function toReportCsv(rows: ReportRow[], columns: ReportColumn[]): string {
-  const quote = (value: string) => `"${value.replaceAll('"', '""')}"`;
+  const quote = (value: string) => {
+    const safe = /^[\s]*[=+@-]/.test(value) || /^[\t\r\n]/.test(value) ? `'${value}` : value;
+    return `"${safe.replaceAll('"', '""')}"`;
+  };
   const delimiter = ";";
   return "\uFEFF" + [
     columns.map((column) => quote(column.label)).join(delimiter),

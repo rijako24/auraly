@@ -17,6 +17,59 @@ namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosConfigurationTests
 {
+    [Theory]
+    [InlineData(PrintTemplateFormats.Receipt)]
+    [InlineData(PrintTemplateFormats.HalfLetter)]
+    [InlineData(PrintTemplateFormats.Letter)]
+    public void Return_uses_the_existing_invoice_printer_route(string format)
+    {
+        var configuration = new PosPrinterConfiguration(PosPrinterModes.WindowsRaw,
+            "Tirilla predeterminada", 58, "Hoja predeterminada",
+            TemplateRoutes: [new("SalesInvoice", format, "Impresora de facturas")],
+            PosOutputFormat: format);
+        Assert.Equal("Impresora de facturas", configuration.PrinterFor("SalesReturn", format));
+        Assert.Equal(configuration.PrinterFor("SalesInvoice", format), configuration.PrinterFor("SalesReturn", format));
+    }
+
+    [Fact]
+    public async Task Selected_invoice_format_uses_its_printer_without_changing_order_default()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "auraly-format-route-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"), Path.Combine(directory, "receipts"),
+                installedPrinterProvider: () => ["Caja", "Hoja", "Pedidos"]);
+            store.SaveView(new PosPrinterConfiguration(PosPrinterModes.WindowsRaw, "Caja", 80, null,
+                PosPrinterName: "Caja", OrderPrinterName: "Pedidos",
+                TemplateRoutes: [
+                    new("SalesInvoice", PrintTemplateFormats.Receipt, "Caja"),
+                    new("SalesReceipt", PrintTemplateFormats.Receipt, "Caja"),
+                    new("SalesInvoice", PrintTemplateFormats.HalfLetter, "Hoja"),
+                    new("SalesReceipt", PrintTemplateFormats.HalfLetter, "Hoja"),
+                    new("Order", PrintTemplateFormats.HalfLetter, "Pedidos")
+                ]));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurablePosReceiptPrinter(store,
+                new EscPosReceiptRenderer(), new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(), rendered,
+                new ConfigurableOrderDocumentPrinter(store, new HalfLetterDocumentRenderer(), rendered),
+                new CreditSaleAcknowledgementRenderer());
+
+            await printer.PrintConfiguredAsync(Receipt(), PrintTemplateFormats.HalfLetter, false);
+            await printer.PrintConfiguredAsync(Receipt() with { DocumentType = "SalesReceipt" }, PrintTemplateFormats.HalfLetter, false);
+            await printer.PrintOrderAsync(Receipt() with { DocumentType = "Order" });
+
+            Assert.Equal(["Hoja", "Hoja", "Pedidos"], rendered.PrinterNames);
+            Assert.Equal(PrintTemplateFormats.Receipt, store.Load().PosOutputFormat);
+            Assert.Throws<InvalidOperationException>(() => store.LoadForPosPrinting(PrintTemplateFormats.Letter));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Pending_rendered_print_does_not_delay_edge_shutdown()
     {
@@ -442,9 +495,11 @@ public sealed class PosConfigurationTests
     }
 
     [Theory]
-    [InlineData(PrintTemplateFormats.Receipt)]
-    [InlineData(PrintTemplateFormats.HalfLetter)]
-    public async Task Prepared_pos_prints_cached_tenant_logo_instead_of_remote_url(string format)
+    [InlineData(PrintTemplateFormats.Receipt, false)]
+    [InlineData(PrintTemplateFormats.HalfLetter, false)]
+    [InlineData(PrintTemplateFormats.Receipt, true)]
+    [InlineData(PrintTemplateFormats.HalfLetter, true)]
+    public async Task Prepared_pos_prints_cached_tenant_logo_instead_of_remote_url(string format, bool salesReturn)
     {
         var directory = Path.Combine(Path.GetTempPath(), "auraly-logo-print-" + Guid.NewGuid().ToString("N"));
         try
@@ -465,7 +520,7 @@ public sealed class PosConfigurationTests
                     "data:image/png;base64,AA=="));
             var receipt = Receipt();
             await printer.PrintSalesDocumentsAsync([new OnlineSalesReceipt(
-                receipt.DocumentId.Value, receipt.DocumentType, receipt.DocumentNumber,
+                receipt.DocumentId.Value, salesReturn ? "SalesReturn" : receipt.DocumentType, receipt.DocumentNumber,
                 receipt.FiscalNumber, receipt.IssuedAt, receipt.CustomerIdentification,
                 receipt.Lines.Select(line => new OnlineSalesReceiptLine(
                     line.ProductCode, line.Description, line.Quantity, line.UnitPrice,
@@ -474,11 +529,13 @@ public sealed class PosConfigurationTests
                     payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
                 receipt.UntaxedAmount, receipt.TaxAmount, receipt.PayableAmount,
                 receipt.Cufe, receipt.QrPayload, null, "Cliente",
-                CompanyLogoSource: "https://example.com/logo.png")]);
+                CompanyLogoSource: "https://example.com/logo.png",
+                SalesReturnPrintDetails: salesReturn ? new("FV-original", "Devolución", "Refund") : null)]);
 
             Assert.Single(rendered.Documents);
             Assert.Contains("data:image/png;base64,AA==", rendered.Documents[0]);
             Assert.DoesNotContain("https://example.com/logo.png", rendered.Documents[0]);
+            if (salesReturn) Assert.Contains("FV-original", rendered.Documents[0]);
         }
         finally
         {
@@ -691,20 +748,21 @@ public sealed class PosConfigurationTests
             Assert.Contains("\"OrderPrinterName\":\"Pedidos\"", serialized);
             Assert.Contains("\"OrderReceiptPaperWidthMillimeters\":80", serialized);
             Assert.DoesNotContain("\"Orders", serialized);
-            Assert.Equal(8, reloaded.TemplateRoutes?.Count);
+            Assert.Equal(12, reloaded.TemplateRoutes?.Count);
             Assert.All(
                 reloaded.TemplateRoutes!.Where(route =>
-                    route.Format == PrintTemplateFormats.Receipt),
+                    route.Format == PrintTemplateFormats.Receipt && route.DocumentType != "Order"),
                 route => Assert.Equal("Tirilla", route.PrinterName));
             Assert.All(
                 reloaded.TemplateRoutes!.Where(route =>
-                    route.Format == PrintTemplateFormats.HalfLetter),
+                    route.Format == PrintTemplateFormats.HalfLetter && route.DocumentType != "Order"),
                 route => Assert.Equal("Carta", route.PrinterName));
             Assert.All(
                 reloaded.TemplateRoutes!.Where(route =>
-                    route.Format is PrintTemplateFormats.HalfLegal or
-                        PrintTemplateFormats.Letter),
+                    (route.Format is PrintTemplateFormats.HalfLegal or
+                        PrintTemplateFormats.Letter) && route.DocumentType != "Order"),
                 route => Assert.Equal("Carta", route.PrinterName));
+            Assert.Equal("Pedidos", reloaded.PrinterFor("Order", PrintTemplateFormats.HalfLetter));
             Assert.Equal(
                 saved with { TemplateRoutes = null },
                 reloaded with { TemplateRoutes = null });

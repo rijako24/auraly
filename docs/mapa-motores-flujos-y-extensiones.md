@@ -28,40 +28,17 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Resolver precio comercial de productos | `CommercePriceResolver` compone los calculadores canónicos de canal y promoción con las líneas del documento ya cargadas | recalcular en SQL, SQLite, pedido, endpoint o UI |
 | Imprimir pedidos | `OrderService` autoriza y solicita el snapshot capturado; `SqlOrderStore` lo carga en lote; `PosPrintTemplateCatalog.Order` y el pipeline de impresión existente lo representan | consultar cada pedido/línea por separado, convertirlo en venta o crear otro renderer/servicio de impresión |
 
-El logo de los comprobantes se toma del perfil del tenant. La caja preparada lo
-descarga al enrolarse y lo conserva como imagen protegida en el equipo; imprimir
-sin conexión no consulta Blob Storage. En POS web, al facturar o reimprimir se
-comprueba la marca antes de confirmar la venta o generar la impresión. Cache Storage del
-navegador conserva la respuesta por tenant y envía su ETag; el servidor devuelve
-304 sin leer Blob si la versión no cambió, o los bytes en esa misma petición si
-cambió o no hay copia. Si no hay logo, responde solo los datos del encabezado. Una
-sesión activa mantiene además una copia temporal de acceso rápido durante diez
-minutos. La aplicación instalada sin caja preparada sigue la misma ruta web:
-verifica antes de imprimir y entrega al servicio local de impresión los bytes que
-ya están en la caché del navegador. Solo la caja preparada conserva una copia
-protegida en la carpeta local y la carga al iniciar su servicio. Un cambio del
-logo publica una invalidación en el flujo de configuración existente. Edge
-consulta condicionalmente la versión, descarga los bytes solo si cambiaron y
-actualiza el paquete protegido y la copia activa; una reconexión recupera los
-cambios perdidos. No requiere volver a preparar la caja. La generación de cada
-comprobante nunca lee Blob ni la API de marca. El nombre y los datos fiscales básicos se conservan
-en la misma copia de marca; la caja preparada usa sus datos locales.
-La vista independiente de Pedidos hace esa comprobación al imprimir pedidos o
-antes de facturarlos cuando se solicitó impresión; una caja preparada conserva
-la ruta de impresión local. La facturación sin impresión no consulta la marca.
-La verificación web ocurre en POS al facturar, antes de confirmar la venta; la
-primera carga se reutiliza durante la sesión. En Pedidos, cuando se solicitó
-impresión, debe terminar antes de iniciar la facturación. Un perfil sin logo es
-válido; una falla al cargar la marca impide confirmar la venta o facturación que
-requiere impresión. La impresión
-usa esa copia y conserva la sede del contexto operativo. Los correos
-fiscales leen el logo al preparar la entrega, fuera de la
-transacción de venta. Los perfiles antiguos con un enlace externo ajeno al Blob
-del negocio imprimen el nombre hasta volver a cargar el logo desde el perfil;
-la impresión no consulta esa URL.
+La marca de los comprobantes se rige exclusivamente por la sección
+**Facturación y marca de los comprobantes** de las invariantes arquitectónicas.
+Se prepara al entrar en la vista o por la sincronización de la caja; confirmar
+ventas, pedidos y devoluciones no consulta ni recibe el logo. Imprimir reutiliza
+la copia disponible y un fallo de marca/impresora no cancela ni repite una
+operación confirmada. La reimpresión de devoluciones comparte configuración y
+transportes de facturas, conservando su snapshot y plantilla operacional propia.
+
 | Consultar o editar la empresa propia | `tenant.profile.read/update` → `TenantsController` limita el recurso a `User.TenantId` → `TenantService`; el plan se proyecta en solo lectura desde la suscripción canónica | conceder `tenants.*` al administrador cliente, confiar en el `tenantId` del navegador o duplicar el perfil empresarial |
 | Cargos de facturación | catálogo versionado `InvoiceChargeService`/`SqlInvoiceChargeStore` → `InvoiceChargeCalculation` compartido por borrador online y Edge → snapshot de la venta → writer común de Gastos | otro medio de pago, producto ficticio, cálculo en UI o tabla paralela de cargos emitidos |
-| Gasto manual o asociado a una factura | `ExpenseService` o handler de venta → `SqlExpenseStore.PersistAcceptedAsync` → fuentes/trabajos financieros canónicos → `SqlAccountingPostingProcessor` abre CxP y marca el gasto procesado | consumir cursor operativo para gastos nuevos, abrir CxP desde POS o volver a registrar gasto al pagar al proveedor |
+| Gasto manual o asociado a una factura | `ExpenseService` (cuentas por línea y preview con `WithholdingService`, ver `implementation/expenses-account-selection-and-withholdings-design.md`) o handler de venta → `SqlExpenseStore.PersistAcceptedAsync` → fuentes/trabajos financieros canónicos → `SqlAccountingPostingProcessor` abre CxP y marca el gasto procesado | consumir cursor operativo para gastos nuevos, abrir CxP desde POS o volver a registrar gasto al pagar al proveedor |
 | Recaudar CxC o pagar CxP | wizard compartido → `ReceivablesService`/`PayablesService` → aceptación transaccional de aplicaciones y `payments[]` → `AccountingSourceDocuments`/`AccountingPostingJobs` → `SqlAccountingPostingProcessor`; desde POS preparado, Edge abre o retoma la sesión local, confirma su registro en el servidor, guarda primero la proyección mínima en SQLite y luego actúa como proxy online autenticado por dispositivo y sesión. Si la llamada al servidor falla, elimina esa proyección provisional sin programar un reintento automático del pago; un reintento manual conserva la clave idempotente. El cierre preparado lee solo proyecciones confirmadas. Los historiales paginados incluyen medios y aplicaciones por factura en el mismo viaje de lectura. | aceptar en servidor antes de escribir SQLite en caja preparada, usar `DocumentProcessingJobs`, crear otro motor, refetch automático posterior o contabilizar desde UI/API |
 
 La autorización de ese wizard depende de la superficie: POS web y preparado usan `pos.receivables.payments.create` o `pos.payables.payments.create`, solo consultan facturas pendientes del tercero elegido y abren o retoman la sesión operativa antes de confirmar; administración conserva `receivables.read`/`receivables.payments.create` y `payables.read`/`payables.payments.create`. El rol Cajero recibe solo los permisos POS; las dos superficies invocan los mismos servicios, stores y motor contable.

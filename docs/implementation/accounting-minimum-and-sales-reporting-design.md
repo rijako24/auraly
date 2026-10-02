@@ -48,7 +48,7 @@ documento físico pendiente ni se crea un hueco que bloquee la sede.
 
 La API y la vista de Contabilidad exponen:
 
-- balance de comprobación jerárquico por clase, grupo, cuenta, subcuenta y
+- balance de prueba jerárquico por clase, grupo, cuenta, subcuenta y
   auxiliar, con saldo inicial débito/crédito, movimientos del periodo y saldo
   final débito/crédito; el auxiliar permanece como drill-down separado y solo
   se abre desde niveles contabilizables;

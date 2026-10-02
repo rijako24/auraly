@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,8 @@ interface DatePickerProps {
 export function DatePicker({ value, onChange, placeholder = "Selecciona una fecha", disabled, className, min, max, id }: DatePickerProps) {
   const selected = value ? parseDate(value) : undefined;
   const [open, setOpen] = useState(false);
+  const calendar = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const [month, setMonth] = useState(() => startOfMonth(selected ?? new Date()));
   const days = useMemo(() => calendarDays(month), [month]);
 
@@ -31,8 +33,23 @@ export function DatePicker({ value, onChange, placeholder = "Selecciona una fech
     if (value) setMonth(startOfMonth(parseDate(value)));
   }, [value]);
 
+  useEffect(() => {
+    if (!open) return;
+    // Dialog and Popover currently resolve different Radix dismissable layers.
+    // Handle the focused calendar first so Escape never discards its parent form.
+    const closeCalendar = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !(event.target instanceof Node) || !calendar.current?.contains(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+    };
+    window.addEventListener("keydown", closeCalendar, true);
+    return () => window.removeEventListener("keydown", closeCalendar, true);
+  }, [open]);
+
   const choose = (date: Date) => {
-    if (disabled) return;
+    const input = toInputValue(date);
+    if (disabled || (min && input < min) || (max && input > max)) return;
     onChange?.(toInputValue(date));
     setOpen(false);
   };
@@ -40,12 +57,12 @@ export function DatePicker({ value, onChange, placeholder = "Selecciona una fech
   return (
     <Popover modal open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button id={id} type="button" variant="outline" disabled={disabled} className={cn("w-full justify-start gap-2 px-3 font-normal", !value && "text-muted-foreground", className)}>
+        <Button ref={trigger} id={id} type="button" variant="outline" disabled={disabled} className={cn("w-full justify-start gap-2 px-3 font-normal", !value && "text-muted-foreground", className)}>
           <CalendarDays className="h-4 w-4 text-primary" />
           {selected ? formatLongDate(selected) : placeholder}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[19rem] rounded-xl border-border/80 p-3 shadow-xl">
+      <PopoverContent ref={calendar} portalContainer={trigger.current?.closest<HTMLElement>("[role='dialog']") ?? undefined} align="start" className="w-[19rem] rounded-xl border-border/80 p-3 shadow-xl">
         <div className="mb-3 flex items-center justify-between">
           <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setMonth(previousMonth(month))} aria-label="Mes anterior">
             <ChevronLeft className="h-4 w-4" />
@@ -75,7 +92,7 @@ export function DatePicker({ value, onChange, placeholder = "Selecciona una fech
         </div>
         <div className="mt-3 flex items-center justify-between border-t pt-3">
           <Button type="button" variant="ghost" size="sm" onClick={() => setMonth(startOfMonth(new Date()))}>Hoy</Button>
-          <Button type="button" variant="ghost" size="sm" onClick={() => choose(new Date())}>Elegir hoy</Button>
+          <Button type="button" variant="ghost" size="sm" disabled={Boolean((min && toInputValue(new Date()) < min) || (max && toInputValue(new Date()) > max))} onClick={() => choose(new Date())}>Elegir hoy</Button>
         </div>
       </PopoverContent>
     </Popover>

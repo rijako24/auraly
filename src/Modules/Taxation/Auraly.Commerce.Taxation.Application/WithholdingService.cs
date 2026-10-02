@@ -155,6 +155,17 @@ public sealed class WithholdingService(
     public WithholdingCalculationSnapshot Calculate(
         WithholdingCalculationPlan plan,
         WithholdingPreviewRequest request)
+        => ToSnapshot(engine.Calculate(CreateContext(plan, request), plan.Rules));
+
+    public (WithholdingCalculationSnapshot Calculation, IReadOnlyList<string> Diagnostics) CalculateDocument(
+        WithholdingCalculationPlan plan, IReadOnlyList<WithholdingPreviewRequest> bases)
+    {
+        var result = engine.CalculateDocument(bases.Select(basis => CreateContext(plan, basis)).ToArray(), plan.Rules);
+        return (ToSnapshot(result.Calculation), result.Diagnostics);
+    }
+
+    private static WithholdingCalculationContext CreateContext(
+        WithholdingCalculationPlan plan, WithholdingPreviewRequest request)
     {
         if (request.BusinessId != plan.BusinessId)
             throw new TaxationForbiddenException("The calculation belongs to another business.");
@@ -167,14 +178,13 @@ public sealed class WithholdingService(
         var jurisdictionCode = string.IsNullOrWhiteSpace(request.JurisdictionCode)
             ? profile?.JurisdictionCode
             : request.JurisdictionCode.Trim().ToUpperInvariant();
-        var context = new WithholdingCalculationContext(
+        return new WithholdingCalculationContext(
             plan.BusinessId, Parse<WithholdingDirection>(request.Direction, nameof(request.Direction)),
             Parse<WithholdingRecognitionMoment>(request.Moment, nameof(request.Moment)),
             request.CounterpartyId, request.ConceptCode, jurisdictionCode,
             request.TaxExclusiveAmount, request.VatAmount, request.OccurredAt,
             profile?.AppliesWithholding ?? false, responsibilities,
             new HashSet<Guid>(request.PreviouslyRecognizedRuleIds ?? []));
-        return ToSnapshot(engine.Calculate(context, plan.Rules));
     }
 
     private static WithholdingRuleView ToView(WithholdingRule rule) => new(

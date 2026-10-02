@@ -346,7 +346,7 @@ export type PosReceiptLine = {
 
 export type PosPrintableReceipt = {
   documentId: string;
-  documentType: PosSaleDocumentType | "Order";
+  documentType: PosSaleDocumentType | "Order" | "SalesReturn";
   documentNumber: string;
   fiscalNumber: string | null;
   issuedAt: string;
@@ -394,6 +394,8 @@ export type PosPrintableReceipt = {
     softwareProviderIdentification: string;
     softwareName: string;
   } | null;
+  payableRoundingAmount?: number;
+  salesReturnPrintDetails?: { originalDocumentNumber: string; reason: string; economicResolution: string; templateVersion: number } | null;
   creditAcknowledgement?: {
     documentId: string;
     documentNumber: string;
@@ -753,6 +755,7 @@ export interface PosClient {
   recoverTemporary(draftId: string): Promise<PosDraft>;
   validateDraftInventory(draftId: string): Promise<PosInventoryValidation>;
   previewSettlement(draftId: string): Promise<PosSaleSettlement>;
+  printerConfigurationForSale(): Promise<{ configuration: PosPrinterConfiguration; direct: boolean }>;
   completeSale(
     draftId: string,
     customerIdentification: string | null,
@@ -760,6 +763,7 @@ export interface PosClient {
     documentType: PosSaleDocumentType,
     credit?: PosCreditTerms | null,
     authorization?: PosSensitiveAuthorization,
+    printChoice?: PosPrintTemplateFormat | "none" | null,
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
   searchServerIssuedSales(
@@ -803,6 +807,9 @@ export interface PosClient {
     request: ConfirmSalesReturnRequest,
   ): Promise<SalesReturnAcceptance>;
   reprint(documentId: string): Promise<void>;
+  searchServerSalesReturns(context: PosSalesReturnContext, query: import("@/services/api/sales-returns").SalesReturnHistoryQuery): Promise<import("@/services/api/sales-returns").SalesReturnPage>;
+  loadServerSalesReturn(context: PosSalesReturnContext, returnId: string): Promise<import("@/services/api/sales-returns").SalesReturnDetail>;
+  searchServerReturnCustomers(context: PosSalesReturnContext, search: string, page: number, pageSize: number): Promise<import("@/services/api/parties").PartyRoleOptionPage>;
   printHistoricalReceipt(receipt: PosPrintableReceipt): Promise<void>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
@@ -841,7 +848,7 @@ export type PosPrinterConfiguration = {
   orderMode: "BrowserPreview" | "WindowsPrint";
   posOutputFormat: PosPrintTemplateFormat;
   templateRoutes: Array<{
-    documentType: "SalesInvoice" | "SalesReceipt";
+    documentType: "SalesInvoice" | "SalesReceipt" | "Order";
     format: PosPrintTemplateFormat;
     printerName: string | null;
   }> | null;
@@ -861,7 +868,7 @@ export type PosSalesReturnQuery = {
   page: number;
   pageSize: number;
   search?: string;
-  customer?: string;
+  customerId?: string;
   from?: string;
   to?: string;
   withAvailableQuantity?: boolean;
@@ -1013,6 +1020,11 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
+  async printerConfigurationForSale() {
+    const view = await this.printerConfiguration();
+    return { configuration: view.configuration, direct: true };
+  }
+
   savePrinterConfiguration(configuration: PosPrinterConfiguration) {
     return this.request<PosPrinterConfigurationView>(
       "/edge/v1/configuration/printers",
@@ -1028,8 +1040,11 @@ export class PosEdgeClient implements PosClient {
     receipt: PosPrintableReceipt,
     branding?: TenantBranding | null,
     workflow: "pos" | "order-tickets" = "pos",
+    format?: PosPrintTemplateFormat,
   ) {
-    return this.requestVoid(`/edge/v1/print/receipt?workflow=${workflow}`, {
+    const query = new URLSearchParams({ workflow });
+    if (format) query.set("format", format);
+    return this.requestVoid(`/edge/v1/print/receipt?${query}`, {
       method: "POST",
       body: JSON.stringify({
         ...receipt,
@@ -1625,6 +1640,7 @@ export class PosEdgeClient implements PosClient {
     documentType: PosSaleDocumentType,
     credit: PosCreditTerms | null = null,
     authorization?: PosSensitiveAuthorization,
+    printChoice: PosPrintTemplateFormat | "none" | null = null,
   ) {
     const result = await this.request<PosEdgeCompleteSaleResult>(
       `/edge/v1/drafts/${draftId}/complete`,
@@ -1641,11 +1657,11 @@ export class PosEdgeClient implements PosClient {
       fiscalStatus: result.receipt.fiscalStatus || "LocallyIssuedPendingSync",
     };
     const printEffect = resolveSalePrintEffect(result.issuedSale.wasAlreadyIssued);
-    const printCompletion = result.printedDirectly || !printEffect.dispatchCopy
+    const printCompletion = printChoice === "none" || result.printedDirectly || !printEffect.dispatchCopy
       ? undefined
       : new Promise<void>((resolve, reject) => {
           window.setTimeout(() => {
-            void this.printReceipt(receipt, null, "pos").then(resolve, reject);
+            void this.printReceipt(receipt, null, "pos", printChoice ?? undefined).then(resolve, reject);
           }, 0);
         });
     return {
@@ -1751,6 +1767,22 @@ export class PosEdgeClient implements PosClient {
       `/edge/v1/server-returns/sales/${documentId}`,
       { method: "POST", body: JSON.stringify(context) },
     );
+  }
+
+  searchServerSalesReturns(context: PosSalesReturnContext, query: import("@/services/api/sales-returns").SalesReturnHistoryQuery) {
+    return this.request<import("@/services/api/sales-returns").SalesReturnPage>("/edge/v1/server-returns/history", {
+      method: "POST", body: JSON.stringify({ context, query }),
+    });
+  }
+  loadServerSalesReturn(context: PosSalesReturnContext, returnId: string) {
+    return this.request<import("@/services/api/sales-returns").SalesReturnDetail>(`/edge/v1/server-returns/history/${returnId}`, {
+      method: "POST", body: JSON.stringify(context),
+    });
+  }
+  searchServerReturnCustomers(context: PosSalesReturnContext, search: string, page: number, pageSize: number) {
+    return this.request<import("@/services/api/parties").PartyRoleOptionPage>("/edge/v1/server-returns/customers", {
+      method: "POST", body: JSON.stringify({ context, search, page, pageSize }),
+    });
   }
 
   loadServerSalesReturnBootstrap(context: PosSalesReturnContext) {

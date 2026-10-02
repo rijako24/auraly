@@ -267,6 +267,7 @@
     <Build Include="Tables\InventoryBalances.sql" />
     <Build Include="Tables\AccountingSourceDocuments.sql" />
     <Build Include="Tables\Accounting.sql" />
+    <Build Include="Tables\AccountingVoucherDrafts.sql" />
     <Build Include="Tables\BankAccounts.sql" />
     <Build Include="Tables\BankReconciliations.sql" />
     <Build Include="Tables\ComplianceReporting.sql" />

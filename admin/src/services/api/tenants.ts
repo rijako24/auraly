@@ -210,7 +210,13 @@ export const tenantsApi = {
   getPrintBranding,
   readyPrintBranding,
   readyLocalPrintBranding,
-  resetPrintBrandingForWorkspaceEntry: clearPrintBranding,
+  preparePrintBrandingForWorkspaceEntry: () => {
+    clearPrintBranding();
+    // Brand preparation belongs to workspace entry, never to sale confirmation.
+    void getPrintBranding().catch(error => {
+      console.warn("No se pudo preparar el logo; la impresión usará el nombre de la empresa.", error);
+    });
+  },
   create: (tenant: ProvisionTenantRequest, quote: TenantQuoteRequest) =>
     apiClient.post<ProvisionTenantResult>("/tenants", { tenant, quote }),
   update: async (id: string, data: Partial<Tenant>) => {

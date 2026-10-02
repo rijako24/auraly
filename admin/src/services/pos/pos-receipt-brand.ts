@@ -4,12 +4,6 @@ export type PosReceiptBranding = {
   logoUrl: string | null;
 };
 
-export function hasPrintIdentity(
-  branding: Pick<PosReceiptBranding, "displayName" | "legalName"> | null,
-): boolean {
-  return Boolean(branding?.displayName?.trim() || branding?.legalName?.trim());
-}
-
 export function resolveReceiptCompanyName(
   branding: Pick<PosReceiptBranding, "displayName" | "legalName"> | null,
   receiptName?: string | null,

@@ -528,9 +528,19 @@ public sealed partial class AccountingVerticalSliceTests
         var history = (await historyResponse.Content.ReadFromJsonAsync<InvoiceChargeHistoryPage>())!;
         Assert.True(historyTimer.Elapsed < TimeSpan.FromSeconds(2), $"El historial de 30 facturas tardó {historyTimer.Elapsed.TotalMilliseconds:F0} ms.");
         Assert.Equal(20, history.TotalCount);
+        Assert.All(history.Items, item => Assert.Equal("Cliente contable", item.CustomerName));
         Assert.Equal(expectedCharges.Sum(charge => charge.InvoicedAmount), history.InvoicedTotal);
         Assert.Equal(expectedCharges.Sum(charge => charge.ExpenseAmount), history.ExpenseTotal);
         Assert.Equal(0, history.Items.Single(item => item.Charge.AppliedChargeId == firstCharge.AppliedChargeId).PayableBalance);
+        using var secondPageResponse = await admin.GetAsync(
+            $"/api/commerce/v1/invoice-charges/history?from={date:yyyy-MM-dd}&to={date:yyyy-MM-dd}&page=2&pageSize=1&search={code}");
+        Assert.True(secondPageResponse.IsSuccessStatusCode, await secondPageResponse.Content.ReadAsStringAsync());
+        var secondPage = (await secondPageResponse.Content.ReadFromJsonAsync<InvoiceChargeHistoryPage>())!;
+        Assert.Equal(20, secondPage.TotalCount);
+        Assert.Single(secondPage.Items);
+        Assert.Equal(history.InvoicedTotal, secondPage.InvoicedTotal);
+        Assert.Equal(history.ExpenseTotal, secondPage.ExpenseTotal);
+        Assert.NotEqual(history.Items[0].Charge.AppliedChargeId, secondPage.Items[0].Charge.AppliedChargeId);
     }
 
     private PosSaleUploadRequest CreateChargeMatrixSale(long consecutive, decimal productTotal,

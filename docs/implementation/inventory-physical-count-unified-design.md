@@ -266,6 +266,12 @@ concurrencia al conciliar y aplicar.
 18. Precio costo y costo promedio valorizan ambas pestañas.
 19. Los movimientos posteriores a la captura no se pierden al aplicar.
 20. El motor ordenado conserva autoridad exclusiva sobre saldos y kárdex.
+21. El saldo anterior, aunque sea negativo, no bloquea la aplicación: el conteo
+    físico es autoritativo y la captura no admite cantidades negativas. Por
+    ejemplo, saldo previo -10 y conteo 20 generan un ajuste +30 para quedar en 20
+    si no hubo movimientos posteriores. El usuario ingresa 20, nunca el ajuste.
+    Aplicar No contados permite llevar un saldo negativo a cero. Se conservan
+    las validaciones de permisos, alcance, versiones e idempotencia.
 
 ## Referencia Xion
 

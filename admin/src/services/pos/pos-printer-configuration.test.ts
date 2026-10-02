@@ -50,3 +50,15 @@ test("legacy printer fields populate the independent workflows", () => {
   assert.equal(completed.posPrinterName, "Tirilla anterior");
   assert.equal(completed.orderPrinterName, "Documentos anteriores");
 });
+
+test("order routes never fill an invoice printer", () => {
+  const completed = completeInstalledPrinterConfiguration({
+    ...configuration,
+    posOutputFormat: "HalfLetter",
+    templateRoutes: [{ documentType: "Order", format: "HalfLetter", printerName: "Pedidos" }],
+  }, ["Pedidos", "Facturas"]);
+
+  assert.equal(completed.posPrinterName, null);
+  assert.equal(completed.orderPrinterName, "Pedidos");
+  assert.equal(completed.templateRoutes?.find(route => route.documentType === "SalesInvoice")?.printerName, null);
+});

@@ -20,13 +20,15 @@ public sealed record DianSupportDocument(
     decimal TaxInclusiveAmount,
     decimal DiscountAmount,
     decimal PayableAmount,
-    string QrPayload)
+    string QrPayload,
+    IReadOnlyList<DianTax>? Withholdings = null)
 {
     public const string Profile =
         "DIAN 2.1: documento soporte en adquisiciones efectuadas a no obligados a facturar.";
 
     public void Validate()
     {
+        DianTaxTotalXml.ValidateSupportWithholdings(Withholdings);
         if (Environment is not (1 or 2))
             throw new ArgumentOutOfRangeException(nameof(Environment));
         if (string.IsNullOrWhiteSpace(DocumentNumber) || string.IsNullOrWhiteSpace(Cuds))

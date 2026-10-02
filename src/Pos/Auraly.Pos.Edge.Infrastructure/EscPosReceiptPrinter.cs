@@ -22,7 +22,7 @@ public sealed class EscPosReceiptRenderer
     private static readonly byte[] DoubleHeight = [0x1D, 0x21, 0x10];
     private static readonly byte[] NormalSize = [0x1D, 0x21, 0x00];
 
-    public byte[] Render(PosReceipt receipt)
+    public byte[] Render(PosReceipt receipt, int? templateVersion = null)
     {
         ArgumentNullException.ThrowIfNull(receipt);
         var columns = receipt.PaperWidthMillimeters switch
@@ -43,6 +43,8 @@ public sealed class EscPosReceiptRenderer
         Write(stream, NormalSize);
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
         var isOrder = receipt.DocumentType == "Order";
+        var isReturn = receipt.DocumentType == "SalesReturn" && receipt.SalesReturnPrintDetails is not null;
+        if (isReturn) Auraly.Pos.Printing.PosPrintTemplateCatalog.ForReturn(receipt.SalesReturnPrintDetails!.TemplateVersion);
         WriteBoldLine(stream, PosReceiptPresentation.Title(receipt));
         WriteBoldLine(stream, PosReceiptPresentation.DisplayNumber(receipt));
         WriteLine(stream, receipt.IssuedAt.ToLocalTime()
@@ -64,6 +66,14 @@ public sealed class EscPosReceiptRenderer
             WriteBoldLine(stream, Pair("Cliente", receipt.CustomerName ?? receipt.CustomerIdentification, columns));
             WriteBoldLine(stream, Pair("Identificacion", receipt.CustomerIdentification, columns));
         }
+        if (receipt.DocumentType == PosSaleDocumentTypes.Receipt &&
+            PosPrintTemplateCatalog.ForReceipt(templateVersion).Version >= 4)
+        {
+            if (!string.IsNullOrWhiteSpace(receipt.CustomerAddress))
+                WriteWrapped(stream, $"Direccion: {receipt.CustomerAddress}", columns);
+            if (!string.IsNullOrWhiteSpace(receipt.CustomerPhone))
+                WriteWrapped(stream, $"Telefono: {receipt.CustomerPhone}", columns);
+        }
         if (isFiscal && receipt.InvoicePrintDetails is { } details)
         {
             var customerAddress = string.IsNullOrWhiteSpace(receipt.CustomerAddress)
@@ -78,6 +88,12 @@ public sealed class EscPosReceiptRenderer
             WriteWrapped(stream, $"Prefijo {details.AuthorizationPrefix} Rango {details.AuthorizationRangeStart} a {details.AuthorizationRangeEnd}", columns);
             WriteWrapped(stream, $"Vigencia {details.AuthorizationValidFrom:dd/MM/yyyy} a {details.AuthorizationValidUntil:dd/MM/yyyy}", columns);
             WriteWrapped(stream, $"{details.SoftwareName} - Fabricante/proveedor {details.SupplierName} NIT {details.SoftwareProviderIdentification}", columns);
+        }
+        if (isReturn)
+        {
+            WriteWrapped(stream, $"Documento original: {receipt.SalesReturnPrintDetails!.OriginalDocumentNumber}", columns);
+            WriteWrapped(stream, $"Motivo: {receipt.SalesReturnPrintDetails.Reason}", columns);
+            WriteWrapped(stream, $"Estado fiscal: {receipt.FiscalStatus ?? "No aplica"}", columns);
         }
         WriteLine(stream, new string('-', columns));
         var lineNumber = 0;
@@ -118,7 +134,7 @@ public sealed class EscPosReceiptRenderer
                     Money(tax.Amount),
                     columns));
             }
-            WriteLine(stream, Pair("Subtotal factura",
+            WriteLine(stream, Pair(isReturn ? "Subtotal devolucion" : "Subtotal factura",
                 Money(receipt.PayableAmount - receipt.PayableRoundingAmount), columns));
             if (receipt.PayableRoundingAmount != 0)
                 WriteLine(stream, Pair("Ajuste al peso",
@@ -136,7 +152,7 @@ public sealed class EscPosReceiptRenderer
             "Total",
             Money(receipt.WithholdingTotal > 0 ? receipt.NetPayableAmount : receipt.PayableAmount),
             columns));
-        if (!isOrder)
+        if (!isOrder && !isReturn)
         {
             WriteCashTender(stream, receipt.Payments, columns);
             WriteBoldLine(stream, "Medios de pago");
@@ -305,6 +321,8 @@ public sealed class EscPosReceiptRenderer
 internal static class PosReceiptPresentation
 {
     public static string Title(PosReceipt receipt) =>
+        receipt.DocumentType == "SalesReturn" && receipt.SalesReturnPrintDetails is not null
+            ? "Devolucion de venta" :
         receipt.DocumentType == "Order"
             ? "Pedido"
             : PosSaleDocumentTypes.IsFiscal(receipt.DocumentType)

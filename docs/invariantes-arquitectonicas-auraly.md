@@ -155,6 +155,8 @@ La existencia de una lista quemada actual no la convierte en patron valido. No s
 
 ### 7.1 Regla de UI
 
+- Todo filtro de tercero usa el combo canónico de `Parties` con el rol correspondiente y envía su ID; no se sustituye por una caja de texto de nombre o identificación. La búsqueda escrita pertenece al combo paginado.
+- Todos los filtros de una colección se combinan en servidor sobre el conjunto completo autorizado, antes de contar, ordenar y paginar. Nunca se filtra solamente la página cargada en la grilla; totales y exportaciones conservan el mismo alcance.
 - Un `select`, combobox, radio group o dropdown que elija un valor de negocio carga sus opciones desde API/query respaldada por tabla.
 - La API entrega como minimo codigo/ID estable, label, estado activo y orden; tambien scope de tenant/business y metadata cuando aplique.
 - El frontend no mantiene arrays paralelos `{ value, label }`, mapas de traduccion de estados ni switches para reconstruir el catalogo.

@@ -58,6 +58,7 @@ public sealed class DianSupportDocumentUblBuilder
             Buyer(document.Buyer),
             Payment(document.Payment),
             DianTaxTotalXml.Header(document.Taxes, document.CurrencyCode),
+            DianTaxTotalXml.Withholding(document.Withholdings, document.CurrencyCode),
             LegalMonetaryTotal(document),
             document.Lines.Select(line => InvoiceLine(
                 line, document.CurrencyCode, DateOnly.FromDateTime(issuedAt.Date))));

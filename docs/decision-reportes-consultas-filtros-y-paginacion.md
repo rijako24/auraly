@@ -52,6 +52,13 @@ La regla transversal queda cerrada:
 
 > Toda vista que muestre una colección consultable debe soportar paginación, filtros por encabezado aplicables de forma combinada y ordenamiento desde servidor.
 
+Los filtros de terceros usan siempre el combo canónico de `Parties`, con búsqueda
+paginada y selección por ID del tercero o de su rol; no usan cajas de texto como
+sustituto. Todos los filtros aplican al conjunto completo autorizado en servidor,
+antes del conteo y la paginación, nunca solamente a las filas visibles. Totales
+y exportaciones usan los mismos filtros. Esta regla también aplica a consultas
+operativas, incluidos documentos retornables e historial de devoluciones.
+
 ---
 
 ## 2. Hallazgos útiles de Xion

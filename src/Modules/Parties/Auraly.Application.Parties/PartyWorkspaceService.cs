@@ -1,3 +1,4 @@
+using Auraly.Contracts.Returns;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
@@ -59,10 +60,12 @@ public sealed class PartyWorkspaceService(
     {
         // Expense readers need the scoped supplier picker for filters; expense
         // creators use the same picker without full third-party workspace access.
-        if (query.Role?.Trim() != "Supplier" ||
+        var returnCustomer = query.Role?.Trim() == "Customer" &&
+            (actor.Permissions.Contains(SalesReturnPermissionCodes.Read) || actor.Permissions.Contains(SalesReturnPermissionCodes.Create));
+        if (!returnCustomer && (query.Role?.Trim() != "Supplier" ||
             (!actor.Permissions.Contains(ExpensePermissionCodes.Create) &&
              !actor.Permissions.Contains(ExpensePermissionCodes.Read) &&
-             !actor.Permissions.Contains(InvoiceChargePermissions.Configure)))
+             !actor.Permissions.Contains(InvoiceChargePermissions.Configure))))
             Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
         if (page < 1 || query.PageSize is < 1 or > 100)
             throw new PartyValidationException("Page and PageSize are outside the allowed range.");

@@ -451,7 +451,8 @@ group.MapPost("/{draftId:guid}/items", async (
         {
             if (request.Receipts is null || request.Receipts.Count is < 1 or > 500 ||
                 request.Receipts.Any(receipt => receipt is null ||
-                    !PosSaleDocumentTypes.IsSupported(receipt.DocumentType) ||
+                    (!PosSaleDocumentTypes.IsSupported(receipt.DocumentType) &&
+                     !(receipt.DocumentType == "SalesReturn" && receipt.SalesReturnPrintDetails is not null)) ||
                     receipt.Lines is null || receipt.Lines.Count == 0 || receipt.Lines.Any(line => line is null) ||
                     receipt.Payments is null || receipt.Payments.Any(payment => payment is null) ||
                     (PosSaleDocumentTypes.IsFiscal(receipt.DocumentType) &&

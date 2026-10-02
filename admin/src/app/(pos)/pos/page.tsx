@@ -60,6 +60,7 @@ import {
   type PosCaptureResult,
   type PosInventoryValidation,
   type PosSensitiveAuthorization,
+  type PosPrintTemplateFormat,
   type PosDraftLineUpdate,
   clearEdgeUserSession,
   readEdgeTokenFromLaunch,
@@ -103,7 +104,7 @@ import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
 import { PosCashDenominationDialog } from "./pos-cash-denomination-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
-import { PosDesktopUpdater } from "./pos-desktop-updater";
+import { DesktopUpdateButton } from "@/components/desktop/desktop-updater";
 import { PosLineEditorDialog } from "./pos-line-editor-dialog";
 import { PosGenericProductDialog } from "./pos-generic-product-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
@@ -742,7 +743,7 @@ export default function PosPage() {
               false,
               serverBootstrap.tenantName,
             );
-            tenantsApi.resetPrintBrandingForWorkspaceEntry();
+            tenantsApi.preparePrintBrandingForWorkspaceEntry();
             if (!active) return;
             setClient(onlineClient);
           }
@@ -1199,7 +1200,7 @@ export default function PosPage() {
 
   const activePosPermissions = client?.mode === "edge" ? edgePermissions : permissions;
   const canReprintSales = activePosPermissions.includes("sales.reprint");
-  const canCreateSalesReturns = activePosPermissions.includes("sales.returns.create");
+  const canAccessSalesReturns = activePosPermissions.includes("sales.returns.create") || activePosPermissions.includes("sales.returns.read");
   const canOpenCashDrawer = activePosPermissions
     .includes("work-sessions.cash.drawer.open") &&
     (client?.mode === "edge" || Boolean(edgeEnrollmentToken));
@@ -1273,7 +1274,7 @@ export default function PosPage() {
         shortcut === POS_ACTION_SHORTCUTS.returns &&
         serverConnected &&
         Boolean(workstation.workSessionId) &&
-        canCreateSalesReturns &&
+        canAccessSalesReturns &&
         !busy &&
         !temporaryOpen &&
         !productSearchOpen &&
@@ -2354,6 +2355,7 @@ export default function PosPage() {
   async function completeSale(
     payments: PosPaymentInput[],
     settlement: PosPaymentSettlement,
+    printChoice: PosPrintTemplateFormat | "none" | null = null,
     authorization: PosSensitiveAuthorization | null = null,
   ) {
     if (!client || !draft || (busy && !authorizationIsCurrent(authorization))) return;
@@ -2380,14 +2382,14 @@ export default function PosPage() {
             products: draft.lines.map((line) => line.description),
           },
           null,
-          async (approved) => completeSale(payments, settlement, approved),
+          async (approved) => completeSale(payments, settlement, printChoice, approved),
         );
       } catch (caught) {
         showError(caught);
       }
       return;
     }
-    const localPrintPreview = client.mode === "edge"
+    const localPrintPreview = client.mode === "edge" && printChoice !== "none"
       ? openHalfLetterPrintPreview()
       : null;
     setBusy(true);
@@ -2401,6 +2403,7 @@ export default function PosPage() {
         effectiveDocumentType,
         checkout.credit,
         authorization ?? undefined,
+        printChoice,
       );
       if (client.mode === "edge" && (result.printedDirectly || result.printCompletion ||
           result.issuedSale.wasAlreadyIssued))
@@ -2426,6 +2429,7 @@ export default function PosPage() {
             await result.printCompletion;
           } else if (
             client.mode === "edge" &&
+            printChoice !== "none" &&
             result.printedDirectly === false &&
             !result.issuedSale.wasAlreadyIssued &&
             result.receipt
@@ -2456,10 +2460,12 @@ export default function PosPage() {
           setError(`La venta quedó registrada. ${detail}`);
         }
       };
-      window.setTimeout(() => void printAfterCompletedSale(), 0);
+      if (printChoice !== "none") window.setTimeout(() => void printAfterCompletedSale(), 0);
 
       const issuedLabel = result.issuedSale.wasAlreadyIssued
         ? "ya estaba emitida; no se repitieron efectos"
+        : printChoice === "none"
+          ? "emitida sin imprimir"
         : result.printCompletion
           ? "emitida; impresión en curso"
           : result.printedDirectly
@@ -2818,7 +2824,7 @@ export default function PosPage() {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectSalesWorkspace(option, workspaceChanging);
       const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName, edgeEnrollmentToken, false, onlineTenantName);
-      tenantsApi.resetPrintBrandingForWorkspaceEntry();
+      tenantsApi.preparePrintBrandingForWorkspaceEntry();
       setDraft(null);
       setTemporaries([]);
       setSelectedCustomer(null);
@@ -3060,7 +3066,6 @@ export default function PosPage() {
 
   return (
     <main className="min-h-screen bg-[#eef3f3] text-slate-950 xl:h-screen xl:overflow-hidden">
-      <PosDesktopUpdater />
       <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
         <div className="flex items-center gap-2">
           {(canOpenAdministrativeMenu || client.mode === "edge") && (
@@ -3154,6 +3159,7 @@ export default function PosPage() {
           )}
         </div>
         <div className="flex min-w-0 items-center gap-3 text-sm">
+          <DesktopUpdateButton />
           {canChangeWorkspace ? (
             <button
               type="button"
@@ -3328,7 +3334,7 @@ export default function PosPage() {
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">{POS_ACTION_SHORTCUTS.invoices}</span>
               </button>
               <button type="button"
-                disabled={!serverConnected || !workstation.workSessionId || !canCreateSalesReturns || busy}
+                disabled={!serverConnected || !workstation.workSessionId || !canAccessSalesReturns || busy}
                 onClick={() => setReturnsOpen(true)}
                 title={serverConnected ? "Abrir devoluciones" : "Requiere conexión con Auraly Server"}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">

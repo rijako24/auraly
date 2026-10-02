@@ -45,7 +45,9 @@ public sealed class SalesReceiptHtmlRenderer
 
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
         var isOrder = receipt.DocumentType == "Order";
-        var template = isFiscal
+        var returnDetails = receipt.DocumentType == "SalesReturn" ? receipt.SalesReturnPrintDetails : null;
+        var isReturn = returnDetails is not null;
+        var template = isReturn ? PosPrintTemplateCatalog.ForReturn(returnDetails!.TemplateVersion) : isFiscal
             ? templateVersion switch
             {
                 2 => PosPrintTemplateCatalog.SalesInvoiceV2,
@@ -64,7 +66,7 @@ public sealed class SalesReceiptHtmlRenderer
         var ticketNumber = $"<div class=\"ticket-number\">N.º de ticket: <strong>{displayNumber}</strong></div>";
         var documentHeader = isFiscal
             ? (template.Version >= 3 ? "<div class=\"title\">Factura electrónica de venta</div>" : string.Empty) + ticketNumber
-            : $"<div class=\"title\">{Encode((isOrder ? "Pedido" : "Comprobante de venta"))}</div>{ticketNumber}";
+            : $"<div class=\"title\">{Encode((isReturn ? "Devolución de venta" : isOrder ? "Pedido" : "Comprobante de venta"))}</div>{ticketNumber}";
         var qrSvg = string.Empty;
         if (isFiscal)
         {
@@ -78,6 +80,8 @@ public sealed class SalesReceiptHtmlRenderer
         var fiscalFooter = isFiscal
             ? $"<div class=\"cufe\"><strong>CUFE</strong><br>{Encode(receipt.Cufe!)}</div><div class=\"qr\">{qrSvg}</div>"
             : string.Empty;
+        if (isReturn)
+            documentHeader += $"<div>Documento original: {Encode(returnDetails!.OriginalDocumentNumber)}</div><div>Motivo: {Encode(returnDetails.Reason)}</div><div>Copia de la devolución · estado fiscal: {Encode(receipt.FiscalStatus ?? "No aplica")}</div>";
         var customerContact = isOrder && template.Version >= 2
             ? OrderContactPresentation.Html(receipt.CustomerName, receipt.CustomerIdentification,
                 receipt.CustomerAddress, receipt.CustomerPhone)
@@ -87,7 +91,10 @@ public sealed class SalesReceiptHtmlRenderer
                         ? invoiceDetails.CustomerAddress
                         : receipt.CustomerAddress,
                     receipt.CustomerPhone, alignAddressRight: template.Version >= 4)
-                : string.Empty;
+                : receipt.DocumentType == PosSaleDocumentTypes.Receipt && template.Version >= 4
+                    ? OrderContactPresentation.OptionalHtml(receipt.CustomerAddress,
+                        receipt.CustomerPhone, alignAddressRight: true)
+                    : string.Empty;
         var customerDetails = isOrder && template.Version >= 2
             ? customerContact
             : $"<div class=\"pair\"><span>Cliente</span><strong>{Encode(receipt.CustomerName ?? receipt.CustomerIdentification)}</strong></div>" +
@@ -139,7 +146,9 @@ public sealed class SalesReceiptHtmlRenderer
             ? receipt.NetPayableAmount
             : receipt.PayableAmount;
         var cashTender = CashTender(receipt.Payments);
-        var summary = isOrder
+        var summary = isReturn
+            ? $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Base de la devolución", Money(receipt.UntaxedAmount))}{Pair("Impuestos", Money(receipt.TaxAmount))}{rounding}<div class=\"pair total\"><span>Total devuelto</span><strong>{Money(receipt.PayableAmount)}</strong></div>"
+            : isOrder
             ? $"<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div><hr class=\"rule summary\">"
             : $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Subtotal factura", Money(invoiceSubtotal))}{rounding}{grossTotal}{withholdings}<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div>{cashTender}<hr class=\"rule summary\"><div class=\"section-title\">Medios de pago</div>{payments}<hr class=\"rule\">";
 

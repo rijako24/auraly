@@ -27,6 +27,7 @@ jobs:
         run: ./tests/Auraly.Foundation.Tests/bin/Release/net8.0/playwright.ps1 install --only-shell chromium
       - run: dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj --no-build --configuration Release
       - run: dotnet test tests/Auraly.Pos.Edge.Host.Tests/Auraly.Pos.Edge.Host.Tests.csproj --no-build --configuration Release
+      - run: dotnet test tests/Auraly.Desktop.Tests/Auraly.Desktop.Tests.csproj --no-build --configuration Release
       - run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release
 
   invoice-pdf-linux:

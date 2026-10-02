@@ -5,7 +5,17 @@ import {
   documentTypeForShortcut,
   isChangeDocumentShortcut,
   nextPaymentAmountIndex,
+  paymentPrintChoiceForShortcut,
 } from "./pos-payment-keyboard";
+
+test("print letters are case-insensitive and leave amount digits and payment keys alone", () => {
+  for (const [key, choice] of [["s", "none"], ["t", "Receipt"], ["m", "HalfLetter"], ["o", "HalfLegal"], ["c", "Letter"]]) {
+    assert.equal(paymentPrintChoiceForShortcut(key), choice);
+    assert.equal(paymentPrintChoiceForShortcut(key.toUpperCase()), choice);
+  }
+  for (const key of ["0", "1", "2", "3", "4", "q", "w", "e", "r", "F1", "F2", "Enter", "Delete"])
+    assert.equal(paymentPrintChoiceForShortcut(key), null);
+});
 
 test("up and down move only between received-value rows", () => {
   assert.equal(nextPaymentAmountIndex(1, 3, "ArrowUp"), 0);

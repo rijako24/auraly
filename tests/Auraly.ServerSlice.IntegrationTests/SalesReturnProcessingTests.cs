@@ -7,6 +7,8 @@ using Auraly.Contracts.WorkSessions;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Fiscal.Core;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
+using Auraly.Application.Returns;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -53,6 +55,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             SalesReturnPermissionCodes.Read);
         var sessionId = await fixture.OpenWebWorkSessionAsync();
         var refunded = 0m;
+        var returnIds = new List<Guid>();
         for (var index = 0; index < 2; index++)
         {
             var request = new ConfirmSalesReturnRequest(
@@ -73,11 +76,44 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(5_950m + rounding / 2m, accepted.TotalAmount);
             Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
             refunded += accepted.TotalAmount;
+            returnIds.Add(request.ReturnId);
+            var detail = await user.GetFromJsonAsync<SalesReturnDetail>(
+                $"/api/commerce/v1/sales-returns/{request.ReturnId:D}?businessId={fixture.BusinessId:D}");
+            Assert.NotNull(detail?.Receipt);
+            Assert.Equal(accepted.TotalAmount, detail.Receipt.PayableAmount);
+            Assert.Equal(rounding / 2m, detail.Receipt.PayableRoundingAmount);
+            Assert.Equal(original.DocumentNumber.FullNumber, detail.Receipt.SalesReturnPrintDetails!.OriginalDocumentNumber);
+            foreach (var format in new[] { "Receipt", "HalfLetter" })
+            {
+                using var rendered = await user.PostAsJsonAsync("/api/commerce/v1/pos/drafts/sales/receipts/render",
+                    new SalesReceiptsRenderRequest([detail.Receipt], format, AutoPrint: false));
+                Assert.True(rendered.IsSuccessStatusCode, await rendered.Content.ReadAsStringAsync());
+            }
             Assert.Equal(accepted.TotalAmount, await ScalarAsync<decimal>(
                 "SELECT Amount FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id",
                 request.ReturnId));
         }
         Assert.Equal(payable, refunded);
+        var historyUrl = $"/api/commerce/v1/sales-returns?businessId={fixture.BusinessId:D}&pageSize=1&search={Uri.EscapeDataString(original.DocumentNumber.FullNumber)}";
+        var history = await user.GetFromJsonAsync<SalesReturnPage>(historyUrl + "&page=1");
+        Assert.NotNull(history);
+        Assert.Equal(2, history.TotalCount);
+        Assert.Single(history.Items);
+        var secondPage = await user.GetFromJsonAsync<SalesReturnPage>(historyUrl + "&page=2");
+        Assert.Single(secondPage!.Items);
+        Assert.NotEqual(history.Items[0].ReturnId, secondPage.Items[0].ReturnId);
+        var emptyPage = await user.GetFromJsonAsync<SalesReturnPage>(historyUrl + "&page=99");
+        Assert.Empty(emptyPage!.Items);
+        Assert.Equal(2, emptyPage.TotalCount);
+        var otherCustomer = await user.GetFromJsonAsync<SalesReturnPage>(historyUrl + $"&page=1&customerId={Guid.NewGuid():D}");
+        Assert.Equal(0, otherCustomer!.TotalCount);
+        using var otherBusiness = await user.GetAsync($"/api/commerce/v1/sales-returns/{returnIds[0]:D}?businessId={Guid.NewGuid():D}");
+        Assert.Equal(HttpStatusCode.Forbidden, otherBusiness.StatusCode);
+        using var creatorOnly = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create);
+        using var forbidden = await creatorOnly.GetAsync(historyUrl + "&page=1");
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+        Assert.Equal(2, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.SalesReturns WHERE OriginalDocumentId=@Id", original.DocumentId));
+        Assert.Equal(payable, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM dbo.SalesReturnSettlements WHERE OriginalDocumentId=@Id", original.DocumentId));
         using var read = await user.GetAsync(
             $"/api/commerce/v1/sales-returns/sales/{original.DocumentId:D}?businessId={fixture.BusinessId:D}");
         read.EnsureSuccessStatusCode();
@@ -85,6 +121,60 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.NotNull(sale);
         Assert.Equal(0m, sale.UnroundedOutstanding);
         Assert.Equal(0m, sale.RemainingRounding);
+        if (direction > 0) await MeasureHistoryAsync(returnIds[0], original.DocumentId, original.DocumentNumber.FullNumber);
+    }
+
+    private async Task MeasureHistoryAsync(Guid seedReturnId, Guid originalId, string originalNumber)
+    {
+        // Query-only fixture in the disposable database, with no operational jobs or settlement effects.
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var seed = new SqlCommand("""
+            WITH Numbers AS (SELECT 1 n UNION ALL SELECT n+1 FROM Numbers WHERE n<998)
+            INSERT dbo.SalesReturns(ReturnId,BusinessId,WarehouseId,OriginalDocumentId,DocumentSeriesId,
+              DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,
+              ReturnedAt,EconomicResolution,RefundMethodCode,CorrectionCode,ReasonCode,ReasonDescription,
+              CustomerId,CustomerIdentification,UntaxedAmount,TaxAmount,TotalAmount,Status,FiscalStatus,CreatedByUserId,AcceptedAt)
+            SELECT NEWID(),r.BusinessId,r.WarehouseId,r.OriginalDocumentId,r.DocumentSeriesId,
+              CONCAT(N'PERF-',n),N'PERF',r.DocumentSeriesCode,n,CONCAT(N'PERF-',@Id,N'-',n),r.PayloadHash,
+              r.ReturnedAt,r.EconomicResolution,r.RefundMethodCode,r.CorrectionCode,r.ReasonCode,r.ReasonDescription,
+              r.CustomerId,r.CustomerIdentification,r.UntaxedAmount,r.TaxAmount,r.TotalAmount,r.Status,r.FiscalStatus,r.CreatedByUserId,r.AcceptedAt
+            FROM Numbers CROSS JOIN dbo.SalesReturns r WHERE r.ReturnId=@Id OPTION(MAXRECURSION 1000);
+            """, connection);
+        seed.Parameters.AddWithValue("@Id", seedReturnId);
+        await seed.ExecuteNonQueryAsync();
+        try
+        {
+            using var scope = fixture.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<SalesReturnQueryService>();
+            var actor = new SalesReturnUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+                new HashSet<string> { SalesReturnPermissionCodes.Read });
+            var query = new SalesReturnQuery(1,25,originalNumber,null,null,null);
+            await service.ListReturnsAsync(actor,query); // Warm up JIT and the query plan outside the measurement.
+            var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            {
+                var started = Stopwatch.GetTimestamp();
+                var page = await service.ListReturnsAsync(actor,query);
+                var elapsed = Stopwatch.GetElapsedTime(started);
+                Assert.Equal(1000,page.TotalCount);
+                Assert.Equal(25,page.Items.Count);
+                Assert.Equal(1,counter.Count);
+                Console.WriteLine($"Historial 1000 devoluciones / página 25: {elapsed.TotalMilliseconds:F1} ms, {counter.Count} comando SQL.");
+                Assert.True(elapsed < TimeSpan.FromSeconds(2), $"Historial: {elapsed.TotalMilliseconds:F1} ms");
+            }
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            {
+                Assert.NotNull((await service.GetReturnAsync(actor,seedReturnId))?.Receipt);
+                Assert.Equal(2,counter.Count);
+            }
+        }
+        finally
+        {
+            await using var cleanup = new SqlCommand("DELETE dbo.SalesReturns WHERE OriginalDocumentId=@Id AND DocumentPrefix=N'PERF'",connection);
+            cleanup.Parameters.AddWithValue("@Id",originalId);
+            await cleanup.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]

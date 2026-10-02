@@ -119,7 +119,7 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
         }
     }
 
-    private sealed class CommandCounter : IObserver<System.Diagnostics.DiagnosticListener>,
+    internal sealed class CommandCounter : IObserver<System.Diagnostics.DiagnosticListener>,
         IObserver<KeyValuePair<string, object?>>, IDisposable
     {
         private readonly string database;

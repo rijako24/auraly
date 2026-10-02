@@ -29,23 +29,29 @@ internal static class AuralyPendingUpdateStore
         File.Move(temporaryPath, markerPath, overwrite: true);
     }
 
-    public static bool TryStartAtStartup(
+    public static AuralyPendingUpdate? TryLoad(
         string dataDirectory,
         DesktopConfiguration configuration)
     {
         var markerPath = Path.Combine(dataDirectory, "updates", MarkerFileName);
-        if (!File.Exists(markerPath)) return false;
+        if (!File.Exists(markerPath)) return null;
 
         try
         {
             var update = JsonSerializer.Deserialize<AuralyPendingUpdate>(
                 File.ReadAllText(markerPath));
+            if (update is not null &&
+                AuralyReleaseVersion.TryParse(update.Version, out var downloaded) &&
+                AuralyReleaseVersion.TryParse(configuration.Version, out var installed) &&
+                downloaded.CompareTo(installed) <= 0)
+            {
+                File.Delete(markerPath);
+                return null;
+            }
             if (!IsValid(update, dataDirectory, configuration))
                 throw new InvalidDataException("The pending update marker is invalid.");
 
-            File.Delete(markerPath);
-            StartInstaller(update!.InstallerPath);
-            return true;
+            return update;
         }
         catch (Exception exception)
         {
@@ -55,7 +61,7 @@ internal static class AuralyPendingUpdateStore
                 Path.Combine(logDirectory, "desktop-update-error.log"),
                 $"{DateTimeOffset.Now:O} Pending update rejected: {exception}{Environment.NewLine}");
             File.Delete(markerPath);
-            return false;
+            return null;
         }
     }
 

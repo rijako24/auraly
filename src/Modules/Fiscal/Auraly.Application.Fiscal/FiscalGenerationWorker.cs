@@ -673,17 +673,8 @@ public sealed class FiscalGenerationWorker(
         }
         else
         {
-            if (!metadata.TryGetValue(1, out var item))
-                throw new FiscalSnapshotDataException(
-                    "Support-document metadata is missing for the expense line.");
-            var taxRate = expense!.TaxExclusiveAmount == 0 ? 0 :
-                decimal.Round(expense.VatAmount / expense.TaxExclusiveAmount * 100m,
-                    6, MidpointRounding.AwayFromZero);
-            lines = [new DianInvoiceLine(1, item.ProductCode, item.ProductCodeScheme,
-                expense.Description, item.UnitCode, 1m, expense.TaxExclusiveAmount, 0,
-                expense.TaxExclusiveAmount, [new DianTax("01", item.TaxName,
-                    expense.TaxExclusiveAmount, expense.VatAmount, taxRate)])];
-            issuedAt = expense.IssuedAt;
+            lines = ExpenseFiscalLines(expense!, metadata);
+            issuedAt = expense!.IssuedAt;
             dueAt = expense.DueDate;
             currencyCode = expense.CurrencyCode;
             untaxedAmount = expense.TaxExclusiveAmount;
@@ -709,7 +700,7 @@ public sealed class FiscalGenerationWorker(
             lines, taxes, new DianPayment(createsPayable ? "2" : "1", "42",
                 DateOnly.FromDateTime(dueAt.Date), null),
             untaxedAmount, untaxedAmount, untaxedAmount + taxAmount,
-            discountAmount, totalAmount, cuds.QrPayload);
+            discountAmount, totalAmount, cuds.QrPayload, ExpenseFiscalWithholdings(expense?.Withholding));
         return new FiscalUblBuildResult(
             supportDocumentBuilder.Build(document), cuds.Cuds, cuds.QrPayload);
     }
@@ -768,19 +759,9 @@ public sealed class FiscalGenerationWorker(
         else
         {
             var original = cancellation!.Original;
-            if (!metadata.TryGetValue(1, out var item))
-                throw new FiscalSnapshotDataException(
-                    "Support-adjustment metadata is missing for the expense line.");
-            if (string.IsNullOrWhiteSpace(item.DianTaxCode))
-                throw new FiscalSnapshotDataException(
-                    "Support-adjustment metadata has no DIAN tax code for the expense line.");
-            var taxRate = original.TaxExclusiveAmount == 0 ? 0 :
-                decimal.Round(original.VatAmount / original.TaxExclusiveAmount * 100m,
-                    6, MidpointRounding.AwayFromZero);
-            lines = [new DianCreditNoteLine(1, item.ProductCode, item.ProductCodeScheme,
-                original.Description, item.UnitCode, 1m, original.TaxExclusiveAmount, 0,
-                original.TaxExclusiveAmount, [new DianTax(item.DianTaxCode, item.TaxName,
-                    original.TaxExclusiveAmount, original.VatAmount, taxRate)])];
+            lines = ExpenseFiscalLines(original, metadata).Select(line => new DianCreditNoteLine(
+                line.Number, line.ProductCode, line.ProductCodeScheme, line.Description, line.UnitCode,
+                line.Quantity, line.UnitPrice, line.DiscountAmount, line.UntaxedAmount, line.Taxes)).ToArray();
             issuedAt = cancellation.CancelledAt;
             currencyCode = original.CurrencyCode;
             untaxedAmount = original.TaxExclusiveAmount;
@@ -817,6 +798,32 @@ public sealed class FiscalGenerationWorker(
         return new FiscalUblBuildResult(
             creditNoteBuilder.Build(note), cuds.Cuds, cuds.QrPayload);
     }
+
+    private static IReadOnlyList<DianInvoiceLine> ExpenseFiscalLines(
+        Auraly.Contracts.Expenses.ExpenseDocumentPayload expense,
+        IReadOnlyDictionary<int, PurchaseSupportLineMetadata> metadata)
+    {
+        var bases = expense.Lines?.Select(line => (line.LineNumber, line.Description,
+            line.TaxExclusiveAmount, line.VatAmount, line.TaxRate)).ToArray()
+            ?? [(1, expense.Description, expense.TaxExclusiveAmount, expense.VatAmount,
+                expense.TaxExclusiveAmount == 0 ? 0 : decimal.Round(
+                    expense.VatAmount / expense.TaxExclusiveAmount * 100m, 6, MidpointRounding.AwayFromZero))];
+        return bases.Select(line => {
+            if (!metadata.TryGetValue(line.Item1, out var item) || string.IsNullOrWhiteSpace(item.DianTaxCode))
+                throw new FiscalSnapshotDataException($"Faltan los datos fiscales de la línea {line.Item1} del gasto.");
+            return new DianInvoiceLine(line.Item1, item.ProductCode, item.ProductCodeScheme,
+                line.Item2, item.UnitCode, 1m, line.Item3, 0, line.Item3,
+                [new DianTax(item.DianTaxCode, item.TaxName, line.Item3, line.Item4, line.Item5)]);
+        }).ToArray();
+    }
+
+    // Annex 1.1, 16.2.2 permits 05/06 in the support document. Municipal ICA
+    // remains in the accounting snapshot; it is not a supported fiscal tax code.
+    private static IReadOnlyList<DianTax>? ExpenseFiscalWithholdings(
+        Auraly.Commerce.Taxation.Contracts.WithholdingCalculationSnapshot? withholding) =>
+        withholding?.Lines.Where(line => line.Kind is "Vat" or "IncomeTax")
+            .Select(line => new DianTax(line.Kind == "Vat" ? "05" : "06",
+                line.Kind == "Vat" ? "ReteIVA" : "ReteRenta", line.TaxableBase, line.Amount, line.Rate)).ToArray();
 
     private static string TaxName(string code) => code switch
     {
