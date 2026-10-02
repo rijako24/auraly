@@ -20,6 +20,175 @@ public sealed class OrderBatchInvoiceTests(
     ITestOutputHelper output)
 {
     [Fact]
+    public async Task Quota_failure_leaves_order_unprepared_and_a_new_request_can_invoice_it()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, Guid.NewGuid());
+        using var client = fixture.CreateUserClient(
+            userId, CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read, OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var request = new InvoiceOrdersRequest(
+            workSessionId, fixture.WarehouseId, userId, [orderId], "Cash", null);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        int previousLimit;
+        await using (var read = connection.CreateCommand())
+        {
+            read.CommandText = """
+                SELECT DianDocumentMonthlyLimit FROM billing.TenantSubscriptions
+                WHERE TenantId=@TenantId;
+                """;
+            read.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            previousLimit = Convert.ToInt32(await read.ExecuteScalarAsync());
+        }
+        async Task SetLimitAsync(int limit)
+        {
+            await using var update = connection.CreateCommand();
+            update.CommandText = """
+                UPDATE billing.TenantSubscriptions SET DianDocumentMonthlyLimit=@Limit
+                WHERE TenantId=@TenantId;
+                """;
+            update.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            update.Parameters.AddWithValue("@Limit", limit);
+            await update.ExecuteNonQueryAsync();
+        }
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            await SetLimitAsync(0);
+            var failed = await InvoiceAsync(client, request, $"quota-fail-{Guid.NewGuid():N}");
+            Assert.Equal("Failed", failed.Status);
+            Assert.Contains("No hay cupo", Assert.Single(failed.Results).Error);
+
+            await using (var check = connection.CreateCommand())
+            {
+                check.CommandText = """
+                    SELECT (SELECT COUNT(*) FROM dbo.OnlineSalesCheckoutReceipts
+                            WHERE SourceOrderId=@OrderId),
+                           (SELECT COUNT(*) FROM dbo.OrderInvoiceLinks
+                            WHERE OrderId=@OrderId),
+                           (SELECT Status FROM dbo.Orders WHERE OrderId=@OrderId);
+                    """;
+                check.Parameters.AddWithValue("@OrderId", orderId);
+                await using var reader = await check.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(0, reader.GetInt32(0));
+                Assert.Equal(0, reader.GetInt32(1));
+                Assert.Equal(2, reader.GetInt32(2));
+            }
+
+            await SetLimitAsync(previousLimit);
+            var retry = await InvoiceAsync(client, request, $"quota-retry-{Guid.NewGuid():N}");
+            Assert.Equal("Completed", retry.Status);
+            Assert.Equal("Invoiced", Assert.Single(retry.Results).Status);
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+        }
+        finally
+        {
+            await SetLimitAsync(previousLimit);
+            fixture.ResumeDocumentProcessing();
+        }
+    }
+
+    [Fact]
+    public async Task Abandoning_an_unissued_order_releases_its_preparation_and_quota_once()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, Guid.NewGuid());
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using (var prepare = connection.CreateCommand())
+        {
+            prepare.CommandText = """
+                DECLARE @Reserved bit;
+                EXEC dbo.TenantDianDocumentQuotaReserve
+                    @BusinessId=@BusinessId,@DocumentId=@DocumentId,
+                    @DocumentKind=N'Invoice',@Now=@Now,@Reserved=@Reserved OUTPUT;
+                IF @Reserved<>1 THROW 51024,N'Expected test quota.',1;
+                INSERT dbo.OrderInvoiceBatchReceipts
+                  (OperationId,BusinessId,WarehouseId,WorkSessionId,DeviceId,UserId,
+                   IdempotencyKey,RequestHash,Status,RequestedCount,CompletedCount,
+                   FailedCount,ResultJson,LeaseToken,LeaseExpiresAt,CreatedAt,UpdatedAt)
+                VALUES(@OperationId,@BusinessId,@WarehouseId,@WorkSessionId,NULL,@UserId,
+                   @BatchKey,REPLICATE('A',64),N'Processing',1,0,0,NULL,NEWID(),
+                   DATEADD(minute,5,@Now),@Now,@Now);
+                INSERT dbo.OnlineSalesCheckoutReceipts
+                  (OnlineSalesCheckoutReceiptId,BusinessId,SourceOrderId,OperationId,
+                   IdempotencyKey,RequestHash,DocumentId,PayloadJson,Status,CreatedAt)
+                VALUES(NEWID(),@BusinessId,@OrderId,@OperationId,@ReceiptKey,
+                   REPLICATE('A',64),@DocumentId,N'{}',N'Prepared',@Now);
+                """;
+            prepare.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            prepare.Parameters.AddWithValue("@DocumentId", documentId);
+            prepare.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
+            prepare.Parameters.AddWithValue("@OperationId", operationId);
+            prepare.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            prepare.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+            prepare.Parameters.AddWithValue("@UserId", userId);
+            prepare.Parameters.AddWithValue("@OrderId", orderId);
+            prepare.Parameters.AddWithValue("@BatchKey", $"abandon-batch-{operationId:N}");
+            prepare.Parameters.AddWithValue("@ReceiptKey", $"abandon-receipt-{operationId:N}");
+            await prepare.ExecuteNonQueryAsync();
+        }
+
+        int usedBefore;
+        await using (var before = connection.CreateCommand())
+        {
+            before.CommandText = """
+                SELECT periodValue.DianDocumentsUsed
+                FROM billing.TenantSubscriptionUsagePeriods periodValue
+                JOIN billing.TenantDianDocumentUsages usageValue
+                  ON usageValue.TenantSubscriptionUsagePeriodId=periodValue.TenantSubscriptionUsagePeriodId
+                WHERE usageValue.SourceDocumentId=@DocumentId AND usageValue.DocumentKind=N'Invoice';
+                """;
+            before.Parameters.AddWithValue("@DocumentId", documentId);
+            usedBefore = Convert.ToInt32(await before.ExecuteScalarAsync());
+        }
+
+        using var scope = fixture.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOnlineSalesCheckoutStore>();
+        var identity = new OnlineSalesUserIdentity(
+            userId, fixture.TenantId, new HashSet<string>());
+        var source = new OnlineSalesOrderCheckoutSource(
+            operationId, orderId, fixture.BusinessId, fixture.WarehouseId,
+            workSessionId, null, null, [], []);
+        await store.AbandonUnissuedOrderAsync(identity, source, documentId,
+            CancellationToken.None);
+        await store.AbandonUnissuedOrderAsync(identity, source, documentId,
+            CancellationToken.None);
+
+        await using var verify = connection.CreateCommand();
+        verify.CommandText = """
+            SELECT (SELECT COUNT(*) FROM dbo.OnlineSalesCheckoutReceipts
+                    WHERE SourceOrderId=@OrderId),
+                   (SELECT Status FROM billing.TenantDianDocumentUsages
+                    WHERE SourceDocumentId=@DocumentId AND DocumentKind=N'Invoice'),
+                   (SELECT DianDocumentsUsed FROM billing.TenantSubscriptionUsagePeriods periodValue
+                    JOIN billing.TenantDianDocumentUsages usageValue
+                      ON usageValue.TenantSubscriptionUsagePeriodId=periodValue.TenantSubscriptionUsagePeriodId
+                    WHERE usageValue.SourceDocumentId=@DocumentId AND usageValue.DocumentKind=N'Invoice');
+            """;
+        verify.Parameters.AddWithValue("@OrderId", orderId);
+        verify.Parameters.AddWithValue("@DocumentId", documentId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(0, reader.GetInt32(0));
+        Assert.Equal("Released", reader.GetString(1));
+        Assert.Equal(usedBefore - 1, reader.GetInt32(2));
+    }
+
+    [Fact]
     public void Legacy_single_charge_member_is_rejected_by_the_batch_contract()
     {
         var json = JsonSerializer.Serialize(new

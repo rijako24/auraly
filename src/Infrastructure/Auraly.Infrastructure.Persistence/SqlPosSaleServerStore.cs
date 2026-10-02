@@ -263,7 +263,7 @@ public sealed partial class SqlPosSaleServerStore(
                 connection, transaction, request.BusinessId, request.DocumentId,
                 "Invoice", command.ReceivedAt, cancellationToken);
             if (!hasDianQuota && request.SourceMode == SaleSourceModes.Online)
-                throw new InvalidOperationException(
+                throw new PosSaleInvalidException(
                     "No hay cupo de documentos DIAN. Compra un paquete antes de recuperar la factura electrónica.");
 
             var fiscalStatus = hasDianQuota
@@ -385,7 +385,7 @@ public sealed partial class SqlPosSaleServerStore(
                     cancellationToken);
             if (isFiscal && command.Verification.IsVerified && !hasDianQuota
                 && request.SourceMode == SaleSourceModes.Online)
-                throw new InvalidOperationException(
+                throw new PosSaleInvalidException(
                     "No hay cupo de documentos DIAN. Cambia manualmente a comprobante o compra un paquete antes de emitir la factura electrónica.");
             var processingStatus = command.Verification.IsVerified ? "Received" : "Blocked";
             string? fiscalStatus = !isFiscal ? null : command.Verification.IsVerified

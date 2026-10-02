@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Auraly.Platform.Application.Common.Exceptions;
 using Auraly.Platform.Application.Common.Interfaces;
+using Auraly.Application.Sales;
 
 namespace Auraly.Api.Middleware;
 
@@ -40,6 +41,7 @@ public class ExceptionHandlingMiddleware
             ConflictException e => (StatusCodes.Status409Conflict, e.Message),
             ForbiddenException e => (StatusCodes.Status403Forbidden, e.Message),
             DomainValidationException e => (StatusCodes.Status400BadRequest, e.Message),
+            PosSaleInvalidException e => (StatusCodes.Status409Conflict, e.Message),
             _ => (StatusCodes.Status500InternalServerError, "Error interno del servidor.")
         };
 

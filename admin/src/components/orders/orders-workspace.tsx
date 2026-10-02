@@ -49,7 +49,7 @@ import {
   type OrderInvoiceChargeSelection,
 } from "@/services/orders/commerce-orders-client";
 import type { InvoiceChargePage } from "@/services/api/invoice-charges";
-import { orderOperationErrorMessage } from "@/services/orders/order-http-error";
+import { OrderHttpError, orderOperationErrorMessage } from "@/services/orders/order-http-error";
 import { orderInvoiceFailureDetails } from "@/services/orders/order-invoice-result";
 import {
   limitInvoiceBatch,
@@ -469,7 +469,14 @@ export function OrdersWorkspace({
       setChargeDialogOpen(false);
       void refresh(true);
     } catch (caught) {
-      setError(orderOperationErrorMessage(caught, "No fue posible facturar los pedidos."));
+      const message = orderOperationErrorMessage(caught, "No fue posible facturar los pedidos.");
+      if (caught instanceof OrderHttpError && caught.status === 402) {
+        invoiceAttemptRef.current = null;
+        setInvoiceProgress(null);
+        setNotice(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setWorking(false);
       window.setTimeout(() => setInvoiceProgress(null), 2200);

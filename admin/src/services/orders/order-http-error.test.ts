@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { orderHttpError, orderOperationErrorMessage } from "./order-http-error";
+import { OrderHttpError, orderHttpError, orderOperationErrorMessage } from "./order-http-error";
 
 test("order errors preserve problem details returned as json", async () => {
   const error = await orderHttpError(new Response(
@@ -8,6 +8,17 @@ test("order errors preserve problem details returned as json", async () => {
     { status: 404, headers: { "content-type": "application/problem+json" } },
   ));
   assert.equal(error.message, "El pedido no existe.");
+  assert.equal((error as OrderHttpError).status, 404);
+});
+
+test("inactive subscription keeps its user-facing reason and status", async () => {
+  const error = await orderHttpError(new Response(
+    JSON.stringify({ detail: "La suscripción no está activa. Revisa su estado." }),
+    { status: 402, headers: { "content-type": "application/problem+json" } },
+  ));
+  assert.ok(error instanceof OrderHttpError);
+  assert.equal(error.status, 402);
+  assert.equal(error.message, "La suscripción no está activa. Revisa su estado.");
 });
 
 test("order errors never expose an html error page in the seller UI", async () => {

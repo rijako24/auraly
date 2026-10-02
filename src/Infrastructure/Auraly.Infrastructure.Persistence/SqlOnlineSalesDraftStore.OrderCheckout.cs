@@ -159,6 +159,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             lines.Select(line => new PosSaleTaxContract(line.TaxCode, line.TaxAmount)),
             source.Charges);
 
+        var documentId = ids.NewId();
         PosSaleUploadRequest upload;
         if (request.DocumentType == PosSaleDocumentTypes.Invoice)
         {
@@ -173,6 +174,11 @@ public sealed partial class SqlOnlineSalesDraftStore
                 configuration.Environment != fiscalMaterial.Environment)
                 throw new OnlineSalesDraftValidationException(
                     "La clave técnica no corresponde al emisor y ambiente de la resolución.");
+            if (!await SqlDianDocumentQuota.TryReserveAsync(
+                    connection, transaction, source.BusinessId, documentId,
+                    "Invoice", now, ct))
+                throw new PosSaleInvalidException(
+                    "No hay cupo de documentos DIAN. Amplía el paquete antes de emitir la factura electrónica.");
             var documentConsecutive = await ConsumeDocumentNumberAsync(
                 connection, transaction, configuration, now, ct);
             var fiscalConsecutive = await ConsumeFiscalNumberAsync(
@@ -193,7 +199,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 fiscalMaterial.QrValidationUrl);
             upload = new PosSaleUploadRequest(
                 user.TenantId, source.BusinessId, source.WarehouseId, Guid.Empty,
-                source.WorkSessionId, user.UserId, ids.NewId(),
+                source.WorkSessionId, user.UserId, documentId,
                 new PosSaleDocumentNumberContract(
                     documentNumber.SeriesId, documentNumber.DocumentType,
                     documentNumber.Prefix, documentNumber.SeriesCode,
@@ -254,7 +260,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 connection, transaction, source.BusinessId, source.CustomerId, source.CustomerPartySiteId, ct);
             upload = new PosSaleUploadRequest(
                 user.TenantId, source.BusinessId, source.WarehouseId, Guid.Empty,
-                source.WorkSessionId, user.UserId, ids.NewId(),
+                source.WorkSessionId, user.UserId, documentId,
                 new PosSaleDocumentNumberContract(
                     number.SeriesId, number.DocumentType, number.Prefix,
                     number.SeriesCode, number.Consecutive, number.Padding,
@@ -341,6 +347,49 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (affected == 0)
             throw new OnlineSalesDraftForbiddenException(
                 "La emisión del pedido no pertenece al usuario autenticado.");
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task AbandonUnissuedOrderAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesOrderCheckoutSource source,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            DECLARE @Deleted TABLE(DocumentId uniqueidentifier);
+            DELETE receipt
+            OUTPUT deleted.DocumentId INTO @Deleted
+            FROM dbo.OnlineSalesCheckoutReceipts receipt
+            JOIN dbo.OrderInvoiceBatchReceipts operation
+              ON operation.OperationId=receipt.OperationId
+            WHERE receipt.BusinessId=@BusinessId AND receipt.SourceOrderId=@OrderId
+              AND receipt.OperationId=@OperationId AND receipt.DocumentId=@DocumentId
+              AND receipt.Status=N'Prepared' AND operation.UserId=@UserId
+              AND NOT EXISTS(SELECT 1 FROM dbo.SalesDocuments document
+                             WHERE document.DocumentId=receipt.DocumentId);
+
+            IF EXISTS(SELECT 1 FROM @Deleted)
+            BEGIN
+                DECLARE @Released bit;
+                EXEC dbo.TenantDianDocumentQuotaReserve
+                  @BusinessId=@BusinessId,@DocumentId=@DocumentId,
+                  @DocumentKind=N'Invoice',@Now=@Now,
+                  @Reserved=@Released OUTPUT,@Release=1;
+            END;
+            """;
+        command.Parameters.AddRange([
+            P("@BusinessId", source.BusinessId), P("@OrderId", source.OrderId),
+            P("@OperationId", source.OperationId), P("@DocumentId", documentId),
+            P("@UserId", user.UserId), P("@Now", time.GetUtcNow())
+        ]);
+        await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 

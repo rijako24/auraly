@@ -1,3 +1,9 @@
+export class OrderHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 export async function orderHttpError(response: Response): Promise<Error> {
   const raw = await response.text();
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
@@ -9,7 +15,7 @@ export async function orderHttpError(response: Response): Promise<Error> {
         title?: string;
       };
       const detail = problem.detail || problem.message || problem.title;
-      if (detail) return new Error(detail);
+      if (detail) return new OrderHttpError(detail, response.status);
     } catch {
       // The fallback below keeps malformed upstream responses out of the UI.
     }
@@ -22,7 +28,7 @@ export async function orderHttpError(response: Response): Promise<Error> {
       : response.status === 403
         ? "No tienes permiso para consultar este pedido."
         : "No fue posible consultar los pedidos.";
-  return new Error(status);
+  return new OrderHttpError(status, response.status);
 }
 
 export function orderOperationErrorMessage(

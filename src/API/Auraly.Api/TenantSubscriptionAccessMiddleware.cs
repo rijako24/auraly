@@ -29,9 +29,9 @@ public sealed class TenantSubscriptionAccessMiddleware(RequestDelegate next)
         await context.Response.WriteAsJsonAsync(new
         {
             type = "https://auralyapp.co/problems/subscription-suspended",
-            title = "La suscripción está suspendida",
+            title = "La operación no está activa",
             status = StatusCodes.Status402PaymentRequired,
-            detail = "El periodo de gracia terminó. Puedes consultar Auraly y entrar a Suscripción para pagar y reactivar la operación.",
+            detail = "La empresa o su suscripción no está activa. Puedes consultar Auraly y entrar a Suscripción para revisar el estado y reactivar la operación.",
             actionUrl = "/dashboard/subscription"
         }, cancellationToken);
     }

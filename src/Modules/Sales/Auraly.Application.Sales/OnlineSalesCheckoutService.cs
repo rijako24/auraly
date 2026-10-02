@@ -150,6 +150,12 @@ public interface IOnlineSalesCheckoutStore
         PreparedOnlineSaleSettlement settlement,
         CancellationToken cancellationToken);
 
+    Task AbandonUnissuedOrderAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesOrderCheckoutSource source,
+        Guid documentId,
+        CancellationToken cancellationToken);
+
     Task MarkResultAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
@@ -310,12 +316,22 @@ public sealed class OnlineSalesCheckoutService(
         var prepared = await checkouts.PrepareOrderAsync(
             user, source, request, idempotencyKey.Trim(), material,
             settlement, cancellationToken);
-        var reception = await receiver.ReceivePreparedOnlineAsync(
-            user,
-            $"online:{prepared.Request.DocumentId:N}",
-            prepared.Request,
-            prepared.IsReplay,
-            cancellationToken);
+        PosSaleUploadResponse reception;
+        try
+        {
+            reception = await receiver.ReceivePreparedOnlineAsync(
+                user,
+                $"online:{prepared.Request.DocumentId:N}",
+                prepared.Request,
+                prepared.IsReplay,
+                cancellationToken);
+        }
+        catch
+        {
+            await checkouts.AbandonUnissuedOrderAsync(
+                user, source, prepared.Request.DocumentId, CancellationToken.None);
+            throw;
+        }
         var status = reception.Status == PosSaleRemoteStatuses.FiscalIntegrityConflict
             ? "FiscalConflict"
             : "Completed";

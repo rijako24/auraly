@@ -91,12 +91,12 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
             JOIN billing.TenantCommercialPlans pricingPlan
               ON pricingPlan.BillableServiceId=pricingService.BillableServiceId AND pricingPlan.IsActive=1
             CROSS APPLY(
-              SELECT TOP(1) addOn.UnitSize
+              SELECT TOP(1) serviceValue.UnitSize
               FROM billing.TenantCommercialAddOns addOn
               JOIN billing.BillableServices serviceValue ON serviceValue.BillableServiceId=addOn.BillableServiceId
               WHERE serviceValue.Code=N'dian_document_pack' AND serviceValue.IsActive=1 AND addOn.IsActive=1) dianPack
             CROSS APPLY(
-              SELECT TOP(1) addOn.UnitSize
+              SELECT TOP(1) serviceValue.UnitSize
               FROM billing.TenantCommercialAddOns addOn
               JOIN billing.BillableServices serviceValue ON serviceValue.BillableServiceId=addOn.BillableServiceId
               WHERE serviceValue.Code=N'payroll_employee_pack' AND serviceValue.IsActive=1 AND addOn.IsActive=1) payrollPack
