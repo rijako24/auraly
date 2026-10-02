@@ -69,15 +69,14 @@ internal static class AuralyAuthenticodeVerifier
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private sealed class WinTrustFileInfo : IDisposable
     {
-        private readonly IntPtr filePathPointer;
-
         public WinTrustFileInfo(string path)
         {
             StructSize = (uint)Marshal.SizeOf<WinTrustFileInfo>();
-            filePathPointer = Marshal.StringToCoTaskMemUni(path);
-            FilePath = filePathPointer;
+            FilePath = Marshal.StringToCoTaskMemUni(path);
         }
 
+        // All instance fields participate in native layout, including private
+        // fields. cbStruct must be first, exactly as in WINTRUST_FILE_INFO.
         public uint StructSize;
         public IntPtr FilePath;
         public IntPtr FileHandle = IntPtr.Zero;
@@ -85,15 +84,14 @@ internal static class AuralyAuthenticodeVerifier
 
         public void Dispose()
         {
-            Marshal.FreeCoTaskMem(filePathPointer);
+            Marshal.FreeCoTaskMem(FilePath);
+            FilePath = IntPtr.Zero;
         }
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private sealed class WinTrustData : IDisposable
     {
-        private readonly IntPtr fileInfoPointer;
-
         public WinTrustData(WinTrustFileInfo fileInfo)
         {
             StructSize = (uint)Marshal.SizeOf<WinTrustData>();
@@ -102,11 +100,11 @@ internal static class AuralyAuthenticodeVerifier
             UnionChoice = WinTrustDataChoice.File;
             StateAction = WinTrustDataStateAction.Verify;
             ProviderFlags = 0x00000040;
-            fileInfoPointer = Marshal.AllocCoTaskMem(Marshal.SizeOf<WinTrustFileInfo>());
-            Marshal.StructureToPtr(fileInfo, fileInfoPointer, false);
-            File = fileInfoPointer;
+            File = Marshal.AllocCoTaskMem(Marshal.SizeOf<WinTrustFileInfo>());
+            Marshal.StructureToPtr(fileInfo, File, false);
         }
 
+        // Keep only the WINTRUST_DATA fields in their Windows ABI order.
         public uint StructSize;
         public IntPtr PolicyCallbackData = IntPtr.Zero;
         public IntPtr SipClientData = IntPtr.Zero;
@@ -123,7 +121,8 @@ internal static class AuralyAuthenticodeVerifier
 
         public void Dispose()
         {
-            Marshal.FreeCoTaskMem(fileInfoPointer);
+            Marshal.FreeCoTaskMem(File);
+            File = IntPtr.Zero;
         }
     }
 }

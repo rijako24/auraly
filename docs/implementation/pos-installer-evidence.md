@@ -54,6 +54,44 @@ Reference: [Windows Installer file versioning rules](https://learn.microsoft.com
 
 ## Process ownership during updates
 
+### Aviso y actualización de la aplicación (2026-10-01)
+
+El actualizador pertenece a toda la aplicación instalada. Un único
+`DesktopUpdateProvider` conserva su estado; el icono azul del encabezado consume
+ese estado sin consultar por separado. Sólo aparece cuando hay una actualización
+o una consulta fallida que el usuario puede reintentar. No se muestra ni consulta
+desde el navegador normal. La comprobación se hace una vez al iniciar la sesión
+autenticada, sin polling; navegar entre pantallas no vuelve a consultar.
+Un reintento explícito de una descarga fallida consulta de nuevo el manifiesto
+para usar la versión y hash actuales si el instalador publicado cambió.
+
+El puente nativo devuelve primero una descarga pendiente validada. Si no existe,
+la interfaz consulta una vez el manifiesto publicado. Los estados JSON usan los
+mismos nombres `type`, `status`, `version`, `progress` y `message` en C# y web.
+Los comandos sólo se aceptan desde el origen web local de esa instalación.
+Las estructuras de firma respetan exactamente el orden de campos de Windows
+([WINTRUST_DATA](https://learn.microsoft.com/en-us/windows/win32/api/wintrust/ns-wintrust-wintrust_data)
+y [WINTRUST_FILE_INFO](https://learn.microsoft.com/en-us/windows/win32/api/wintrust/ns-wintrust-wintrust_file_info));
+no contienen campos privados adicionales que desplacen `cbStruct`. La regresión
+ejerce `WinVerifyTrust` con un archivo sin firma y con el runtime firmado de .NET.
+
+El icono descarga a petición del usuario y muestra el progreso. SHA-256 y firma
+del publicador se verifican antes de guardar la descarga. Al finalizar se ofrece
+`Reiniciar ahora` o `Más tarde`. Aplazar cierra el diálogo, conserva el instalador
+y permite abrir de nuevo el aviso con el icono. Al volver a abrir Auraly se ofrece
+otra vez; no se ejecuta el instalador automáticamente. Reiniciar verifica otra
+vez el archivo y lanza el instalador existente. Si no puede abrirlo, conserva
+la descarga y ofrece reintentar. Tras una instalación correcta, una versión igual
+o anterior a la instalada deja de ofrecerse y se retira su marcador pendiente.
+
+Las instalaciones anteriores que no interpretaban los avisos requieren instalar
+una vez el paquete corregido: su interfaz y puente nativo están empaquetados
+localmente. Las siguientes actualizaciones usan este mismo flujo.
+
+La regresión nativa está en `Auraly.Desktop.Tests`; la interfaz, los errores y
+la recuperación del aviso se verifican en `desktop-update.spec.ts`. La publicación
+continúa usando el instalador firmado y el pipeline de release canónicos.
+
 The desktop launcher assigns its Node.js and POS Edge children to one Windows
 Job Object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. If Windows
 Installer must terminate the launcher during an update, Windows also terminates

@@ -7,6 +7,7 @@ import { BusinessSwitcher } from "@/components/layout/business-switcher";
 import { NotificationsDropdown } from "@/components/layout/notifications-dropdown";
 import { SearchCommand } from "@/components/layout/search-command";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { DesktopUpdateButton } from "@/components/desktop/desktop-updater";
 import { UserMenu } from "@/components/layout/user-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,7 @@ export function Header({ onMobileMenuClick, className }: HeaderProps) {
 
         {/* Notifications */}
         <NotificationsDropdown />
+        <DesktopUpdateButton />
 
         <div className="hidden sm:block"><ThemeToggle /></div>
 

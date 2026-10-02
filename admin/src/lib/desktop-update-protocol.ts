@@ -1,9 +1,12 @@
 export type DesktopUpdateStatusName =
+  | "idle"
+  | "check-error"
   | "available"
   | "downloading"
   | "verifying"
   | "ready"
-  | "deferred"
+  | "restarting"
+  | "restart-error"
   | "error";
 
 export type DesktopUpdateStatus = {
@@ -15,11 +18,14 @@ export type DesktopUpdateStatus = {
 };
 
 const statuses = new Set<DesktopUpdateStatusName>([
+  "idle",
+  "check-error",
   "available",
   "downloading",
   "verifying",
   "ready",
-  "deferred",
+  "restarting",
+  "restart-error",
   "error",
 ]);
 
@@ -36,21 +42,6 @@ export function isDesktopUpdateStatus(value: unknown): value is DesktopUpdateSta
   );
 }
 
-export function desktopUpdateAction(action: "download" | "restart" | "later") {
+export function desktopUpdateAction(action: "check" | "download" | "restart") {
   return `auraly-pos-update-${action}` as const;
-}
-
-export function desktopExitAction() {
-  return "auraly-pos-exit" as const;
-}
-
-export function exitPosApplication() {
-  const webview = (
-    window as typeof window & { chrome?: { webview?: { postMessage(message: unknown): void } } }
-  ).chrome?.webview;
-  if (webview) {
-    webview.postMessage({ type: desktopExitAction() });
-    return;
-  }
-  window.close();
 }
