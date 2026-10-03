@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Parties;
 using Auraly.Contracts.Receivables;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.Returns;
@@ -150,6 +151,22 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             WHERE CustomerId=@Id AND PartySiteId IS NOT NULL
               AND Status IN(N'Open',N'PartiallyPaid')
             """, customerId));
+        var bySite = await client.GetFromJsonAsync<CustomerPortfolioPage>(
+            $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&customerId={customerId:D}");
+        var siteRows = bySite!.Items.Where(item => item.CustomerId == customerId).ToArray();
+        Assert.Equal(2, siteRows.Length);
+        Assert.Contains(siteRows, item => item.PartySiteId == northSiteId);
+        Assert.Contains(siteRows, item => item.PartySiteId == centerSiteId);
+        Assert.Equal(expectedOutstanding, siteRows.Sum(item => item.OutstandingAmount));
+        var siteOptions = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(
+            $"/api/commerce/v1/portfolio/parties/site-options?page=1&pageSize=20&role=Customer&search={ServerSliceFixture.UniqueNit(customerId)}");
+        Assert.Equal(3, siteOptions!.Items.Count(item => item.RoleId == customerId));
+        var northOnly = await client.GetFromJsonAsync<CustomerPortfolioPage>(
+            $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&customerId={customerId:D}&partySiteId={northSiteId:D}");
+        Assert.Equal(northSiteId, Assert.Single(northOnly!.Items).PartySiteId);
+        var northInvoices = await client.GetFromJsonAsync<ReceivablePage>(
+            $"/api/commerce/v1/receivables?page=1&pageSize=20&customerId={customerId:D}&partySiteId={northSiteId:D}");
+        Assert.All(northInvoices!.Items, item => Assert.Equal(northSiteId, item.PartySiteId));
         using var profileResponse = await client.GetAsync(
             $"/api/commerce/v1/customers/{customerId:D}/credit");
         profileResponse.EnsureSuccessStatusCode();
@@ -874,6 +891,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var (customerId, userId, _) = await ConfigureAsync();
         var northSiteId = Guid.NewGuid();
         var centerSiteId = Guid.NewGuid();
+        var unusedSiteId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await ExecuteAsync(connection, null, """
@@ -898,10 +916,13 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
               (@NorthSiteId,@PartyId,N'NORTE',N'Sede Norte',@CountryId,@DivisionId,@CityId,
                N'Carrera 10 Norte',N'3001001001',1,1,@UserId,SYSDATETIMEOFFSET()),
               (@CenterSiteId,@PartyId,N'CENTRO',N'Sede Centro',@CountryId,@DivisionId,@CityId,
-               N'Calle 20 Centro',N'3002002002',0,1,@UserId,SYSDATETIMEOFFSET());
+               N'Calle 20 Centro',N'3002002002',0,1,@UserId,SYSDATETIMEOFFSET()),
+              (@UnusedSiteId,@PartyId,N'SUR',N'Sede sin cartera',@CountryId,@DivisionId,@CityId,
+               N'Calle 30 Sur',N'3003003003',0,1,@UserId,SYSDATETIMEOFFSET());
             """,
             new("@CustomerId", customerId), new("@NorthSiteId", northSiteId),
-            new("@CenterSiteId", centerSiteId), new("@UserId", userId));
+            new("@CenterSiteId", centerSiteId), new("@UnusedSiteId", unusedSiteId),
+            new("@UserId", userId));
         return (customerId, userId, northSiteId, centerSiteId);
     }
 

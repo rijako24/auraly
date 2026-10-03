@@ -1,6 +1,7 @@
 using Auraly.Commerce.Taxation.Contracts;
 
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Auraly.BuildingBlocks.Domain.Documents;
 
 namespace Auraly.Contracts.Purchasing;
@@ -105,7 +106,8 @@ public sealed record GoodsReceiptCostDocumentRequest(
     DateOnly? ExchangeRateDate, string ExchangeRateSource,
     IReadOnlyCollection<GoodsReceiptCostLineRequest> Lines,
     string? WithholdingConceptCode = null,
-    string? WithholdingJurisdictionCode = null);
+    string? WithholdingJurisdictionCode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PartySiteId = null);
 
 public sealed record GoodsReceiptLineRequest(
     int LineNumber,
@@ -147,7 +149,8 @@ public sealed record ConfirmGoodsReceiptRequest(
     decimal ExchangeRate = 1,
     DateOnly? ExchangeRateDate = null,
     string ExchangeRateSource = "FunctionalCurrency",
-    IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null);
+    IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null,
+    Guid? PartySiteId = null);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -197,7 +200,7 @@ public sealed record GoodsReceiptCostDocumentSnapshot(
     decimal NetAmount, decimal TaxAmount, decimal GrandTotal,
     decimal FunctionalNetAmount, decimal FunctionalTaxAmount, decimal FunctionalGrandTotal,
     WithholdingCalculationSnapshot Withholding,
-    IReadOnlyList<GoodsReceiptCostLineSnapshot> Lines);
+    IReadOnlyList<GoodsReceiptCostLineSnapshot> Lines, Guid? PartySiteId = null);
 
 public sealed record GoodsReceiptCostDocumentAccountingPayload(
     Guid TenantId, Guid BusinessId, Guid GoodsReceiptId,
@@ -237,7 +240,8 @@ public sealed record GoodsReceiptDocumentPayload(
     decimal FunctionalNetAmount = 0,
     decimal FunctionalTaxAmount = 0,
     decimal FunctionalGrandTotal = 0,
-    IReadOnlyList<GoodsReceiptCostDocumentSnapshot>? AdditionalCostDocuments = null);
+    IReadOnlyList<GoodsReceiptCostDocumentSnapshot>? AdditionalCostDocuments = null,
+    Guid? PartySiteId = null);
 
 public sealed record GoodsReceiptAcceptance(
     Guid DocumentId,
@@ -280,7 +284,8 @@ public sealed record SaveGoodsReceiptDraftRequest(
     decimal ExchangeRate = 1,
     DateOnly? ExchangeRateDate = null,
     string ExchangeRateSource = "FunctionalCurrency",
-    IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null);
+    IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null,
+    Guid? PartySiteId = null);
 
 public sealed record GoodsReceiptDraft(
     Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
@@ -294,7 +299,8 @@ public sealed record GoodsReceiptDraft(
     decimal ExchangeRate = 1,
     DateOnly? ExchangeRateDate = null,
     string ExchangeRateSource = "FunctionalCurrency",
-    IReadOnlyList<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null);
+    IReadOnlyList<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null,
+    Guid? PartySiteId = null);
 
 public sealed record GoodsReceiptDetail(
     Guid DocumentId, string DocumentNumber, string Status,

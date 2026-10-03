@@ -16,6 +16,11 @@ No se crean motores ni colas nuevas. La confirmación crea el `DocumentProcessin
 
 ## Política del proveedor
 
+La recepción y cada factura de costo adicional conservan la sede seleccionada
+del proveedor en borrador, documento y payload contable. La aceptación valida
+la pertenencia y actividad de cada sede en una consulta por conjunto; el motor
+abre las obligaciones de CxP con esa dimensión sin crear un flujo paralelo.
+
 `AuralyCatalog.Suppliers.PurchaseEvidencePolicy` es opcional y usa el catálogo `purchase-evidence-type`:
 
 - Factura del proveedor: permite factura electrónica o comprobante interno.

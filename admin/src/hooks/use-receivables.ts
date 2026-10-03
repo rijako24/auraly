@@ -12,6 +12,7 @@ export function useReceivables(params: {
   pageSize: number;
   search?: string;
   customerId?: string;
+  partySiteId?: string;
   status?: ReceivableStatus;
   overdue?: boolean;
   from?: string;

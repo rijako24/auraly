@@ -31,7 +31,8 @@ public sealed class SqlReceivablesStore(
               WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
               GROUP BY application.ReceivableId),
             Portfolio AS(
-              SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
+              SELECT r.CustomerId,r.PartySiteId,site.Name PartySiteName,
+                COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                 COALESCE(p.Identification,N'') Identification,COUNT(*) InvoiceCount,
                 SUM(r.OriginalAmount) OriginalAmount,SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,
                 SUM(r.OutstandingAmount) OutstandingAmount,
@@ -40,9 +41,11 @@ public sealed class SqlReceivablesStore(
               JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
               JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
               JOIN dbo.Parties p ON p.PartyId=c.PartyId
+              LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId AND site.PartyId=p.PartyId
               LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId
               WHERE r.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
+                AND (@PartySiteId IS NULL OR r.PartySiteId=@PartySiteId)
                 AND (@Status IS NULL OR r.Status=@Status)
                 AND (@From IS NULL OR r.CreatedAt>=@From)
                 AND (@To IS NULL OR r.CreatedAt<@To)
@@ -50,8 +53,8 @@ public sealed class SqlReceivablesStore(
                   OR (@Overdue=0 AND (r.OutstandingAmount=0 OR r.DueDate>=@Now)))
                 AND (@Search IS NULL OR p.DisplayName LIKE N'%' + @Search + N'%'
                   OR p.LegalName LIKE N'%' + @Search + N'%' OR p.Identification LIKE N'%' + @Search + N'%'
-                  OR r.DocumentNumber LIKE N'%' + @Search + N'%')
-              GROUP BY r.CustomerId,p.DisplayName,p.LegalName,p.Identification)
+                  OR r.DocumentNumber LIKE N'%' + @Search + N'%' OR site.Name LIKE N'%' + @Search + N'%')
+              GROUP BY r.CustomerId,r.PartySiteId,site.Name,p.DisplayName,p.LegalName,p.Identification)
             SELECT * INTO #Portfolio FROM Portfolio
             WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0)
               OR (@Overdue=0 AND OverdueAmount=0);
@@ -59,13 +62,14 @@ public sealed class SqlReceivablesStore(
               COALESCE(SUM(OriginalAmount),0),COALESCE(SUM(PaidAmount),0)
             FROM #Portfolio;
             SELECT CustomerId,CustomerName,Identification,InvoiceCount,OriginalAmount,PaidAmount,
-              OutstandingAmount,OverdueAmount FROM #Portfolio
-            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,CustomerName
+              OutstandingAmount,OverdueAmount,PartySiteId,PartySiteName FROM #Portfolio
+            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,CustomerName,PartySiteName,PartySiteId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);
         command.Parameters.AddWithValue("@CustomerId",(object?)query.CustomerId??DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId",(object?)query.PartySiteId??DBNull.Value);
         command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
         AddDateRange(command,query.From,query.To);
         command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
@@ -73,7 +77,7 @@ public sealed class SqlReceivablesStore(
         var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);var invoices=reader.GetInt32(3);
         var original=reader.GetDecimal(4);var paid=reader.GetDecimal(5);
         await reader.NextResultAsync(token);var items=new List<CustomerPortfolioItem>();
-        while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7)));
+        while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.IsDBNull(8)?null:reader.GetGuid(8),reader.IsDBNull(9)?null:reader.GetString(9)));
         return new(items,query.Page,query.PageSize,count,outstanding,overdue,invoices,original,paid);
     }
 
@@ -170,18 +174,29 @@ public sealed class SqlReceivablesStore(
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token);
         await using var command=new SqlCommand("""
-            SELECT COUNT(*),COALESCE(SUM(payment.TotalAmount),0) FROM dbo.CustomerPayments payment
+            SELECT application.PaymentId,SUM(application.Amount) AppliedAmount INTO #SiteApplied
+            FROM dbo.CustomerPaymentApplications application
+            JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
+            WHERE @PartySiteId IS NOT NULL AND invoice.BusinessId=@BusinessId
+              AND invoice.PartySiteId=@PartySiteId
+            GROUP BY application.PaymentId;
+            SELECT COUNT(*),COALESCE(SUM(CASE WHEN @PartySiteId IS NULL
+              THEN payment.TotalAmount ELSE siteApplied.AppliedAmount END),0)
+            FROM dbo.CustomerPayments payment
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+            LEFT JOIN #SiteApplied siteApplied ON siteApplied.PaymentId=payment.PaymentId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@CustomerId IS NULL OR payment.CustomerId=@CustomerId)
+              AND (@PartySiteId IS NULL OR siteApplied.PaymentId IS NOT NULL)
               AND (@From IS NULL OR payment.PaidAt>=@From)
               AND (@To IS NULL OR payment.PaidAt<@To)
               AND (@Status IS NULL AND @Overdue IS NULL OR EXISTS(
                 SELECT 1 FROM dbo.CustomerPaymentApplications application
                 JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
                 WHERE application.PaymentId=payment.PaymentId
+                  AND (@PartySiteId IS NULL OR invoice.PartySiteId=@PartySiteId)
                   AND (@Status IS NULL OR invoice.Status=@Status)
                   AND (@Overdue IS NULL OR (@Overdue=1 AND invoice.OutstandingAmount>0 AND invoice.DueDate<@Now)
                     OR (@Overdue=0 AND (invoice.OutstandingAmount=0 OR invoice.DueDate>=@Now)))))
@@ -191,6 +206,7 @@ public sealed class SqlReceivablesStore(
                 OR EXISTS(SELECT 1 FROM dbo.CustomerPaymentApplications application
                   JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
                   WHERE application.PaymentId=payment.PaymentId
+                    AND (@PartySiteId IS NULL OR invoice.PartySiteId=@PartySiteId)
                     AND invoice.DocumentNumber LIKE N'%' + @Search + N'%'));
             DECLARE @Page TABLE(PaymentId uniqueidentifier PRIMARY KEY);
             INSERT @Page(PaymentId)
@@ -198,14 +214,17 @@ public sealed class SqlReceivablesStore(
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+            LEFT JOIN #SiteApplied siteApplied ON siteApplied.PaymentId=payment.PaymentId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@CustomerId IS NULL OR payment.CustomerId=@CustomerId)
+              AND (@PartySiteId IS NULL OR siteApplied.PaymentId IS NOT NULL)
               AND (@From IS NULL OR payment.PaidAt>=@From)
               AND (@To IS NULL OR payment.PaidAt<@To)
               AND (@Status IS NULL AND @Overdue IS NULL OR EXISTS(
                 SELECT 1 FROM dbo.CustomerPaymentApplications application
                 JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
                 WHERE application.PaymentId=payment.PaymentId
+                  AND (@PartySiteId IS NULL OR invoice.PartySiteId=@PartySiteId)
                   AND (@Status IS NULL OR invoice.Status=@Status)
                   AND (@Overdue IS NULL OR (@Overdue=1 AND invoice.OutstandingAmount>0 AND invoice.DueDate<@Now)
                     OR (@Overdue=0 AND (invoice.OutstandingAmount=0 OR invoice.DueDate>=@Now)))))
@@ -215,21 +234,26 @@ public sealed class SqlReceivablesStore(
                 OR EXISTS(SELECT 1 FROM dbo.CustomerPaymentApplications application
                   JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
                   WHERE application.PaymentId=payment.PaymentId
+                    AND (@PartySiteId IS NULL OR invoice.PartySiteId=@PartySiteId)
                     AND invoice.DocumentNumber LIKE N'%' + @Search + N'%'))
             ORDER BY payment.PaidAt DESC,payment.PaymentId DESC
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
-              payment.TotalAmount,payment.Status,
+              CASE WHEN @PartySiteId IS NULL THEN payment.TotalAmount
+                ELSE siteApplied.AppliedAmount END,payment.Status,
               COUNT(application.ReceivableId) AppliedDocumentCount,payment.CustomerId,
               COALESCE(party.DisplayName,party.LegalName,party.Identification) CustomerName
             FROM @Page page INNER JOIN dbo.CustomerPayments payment ON payment.PaymentId=page.PaymentId
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+            LEFT JOIN #SiteApplied siteApplied ON siteApplied.PaymentId=payment.PaymentId
             LEFT JOIN dbo.CustomerPaymentApplications application ON application.PaymentId=payment.PaymentId
+              AND (@PartySiteId IS NULL OR EXISTS(SELECT 1 FROM dbo.Receivables invoice
+                WHERE invoice.ReceivableId=application.ReceivableId AND invoice.PartySiteId=@PartySiteId))
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
             GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
-              payment.TotalAmount,payment.Status,payment.CustomerId,
+              payment.TotalAmount,siteApplied.AppliedAmount,payment.Status,payment.CustomerId,
               party.DisplayName,party.LegalName,party.Identification
             ORDER BY payment.PaidAt DESC,payment.PaymentId DESC;
             SELECT tender.PaymentId,tender.LineNumber,tender.MethodCode,tender.Amount,tender.TenderedAmount,
@@ -240,11 +264,13 @@ public sealed class SqlReceivablesStore(
             FROM dbo.CustomerPaymentApplications application
             INNER JOIN @Page page ON page.PaymentId=application.PaymentId
             INNER JOIN dbo.Receivables receivable ON receivable.ReceivableId=application.ReceivableId
+            WHERE @PartySiteId IS NULL OR receivable.PartySiteId=@PartySiteId
             ORDER BY application.PaymentId,application.LineNumber;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
         command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@CustomerId",(object?)query.CustomerId??DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId",(object?)query.PartySiteId??DBNull.Value);
         command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);
         command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
         command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);

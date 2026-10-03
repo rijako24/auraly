@@ -54,6 +54,14 @@ POST /api/commerce/v1/payable-payments/confirm
 La lista aplica paginación de servidor y combina búsqueda, proveedor, estado y
 vencimiento. El servidor obtiene `TenantId`, `BusinessId` y `UserId` de la
 identidad autenticada; no confía en el alcance del body.
+El tab Proveedores agrupa obligaciones y saldos a favor por proveedor y
+`PartySiteId`; las facturas y pagos se filtran por esa misma sede en el servidor.
+El combo consulta todas las sedes activas del proveedor desde el directorio
+paginado, incluidas las que todavía no tienen cartera. Al confirmar una compra
+o gasto con varias sedes se debe seleccionar una; el payload durable lleva esa
+sede al único writer de CxP. Un pago nuevo aplica facturas de una sola sede.
+Las obligaciones y saldos a favor históricos sin sede se atribuyen a la sede
+principal mediante migración que se detiene si falta una principal única.
 
 Permisos:
 
@@ -117,7 +125,7 @@ después lo confirma con identidad del dispositivo en el servicio canónico.
 El comprobante autoritativo actualiza la misma proyección por `PaymentId`. El
 cierre de la caja se calcula localmente, incluso sin conexión.
 
-El backend admite un pago aplicado a varias obligaciones del mismo proveedor.
+El backend admite un pago aplicado a varias obligaciones del mismo proveedor y sede.
 La primera pantalla registra un abono desde una obligación para mantener el flujo
 simple; la selección masiva se agregará cuando exista su caso de uso visual
 completo.

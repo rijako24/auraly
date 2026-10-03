@@ -1042,6 +1042,18 @@ public sealed class ServerSliceFixture : IAsyncLifetime
               (SupplierProductId,TenantId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
             VALUES
               (NEWID(),@TenantId,@ProductId,@GoodsSupplierId,N'PROV-P-E2E',1,1,SYSDATETIMEOFFSET());
+            INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,
+              AdministrativeDivisionId,CityId,AddressLine,PostalCode,IsPrimary,IsActive,CreatedBy,CreatedAt)
+            SELECT NEWID(),@GoodsSupplierPartyId,N'PRINCIPAL',N'Sede principal',
+              country.CountryId,division.AdministrativeDivisionId,city.CityId,
+              N'Dirección de prueba',N'200001',1,1,@UserId,SYSDATETIMEOFFSET()
+            FROM dbo.Countries country
+            JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+            JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+            WHERE country.IsActive=1 AND division.IsActive=1 AND city.IsActive=1
+              AND NOT EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@GoodsSupplierPartyId)
+            ORDER BY country.CountryId,division.AdministrativeDivisionId,city.CityId
+            OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY;
             """;
         await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync();

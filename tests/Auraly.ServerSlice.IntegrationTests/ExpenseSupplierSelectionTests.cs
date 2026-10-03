@@ -71,6 +71,9 @@ public sealed class ExpenseSupplierSelectionTests(ServerSliceFixture fixture)
         Assert.Contains(options.Items, item => item.RoleId == fixture.SupplierId);
         Assert.All(options.Items, item => Assert.Equal("Supplier", item.Role));
         Assert.InRange(options.Items.Count, 1, 10);
+        var sites = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(
+            "/api/commerce/v1/portfolio/parties/site-options?role=Supplier&page=1&pageSize=10");
+        Assert.Contains(sites!.Items, item => item.RoleId == fixture.SupplierId);
 
         foreach (var role in new[] { "Any", "Customer", "User", "Employee" })
         {

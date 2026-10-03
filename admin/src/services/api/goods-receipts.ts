@@ -15,7 +15,7 @@ export type PurchaseCostAllocationMethod = "Value" | "Quantity" | "Weight" |
   "Volume" | "Equal" | "Manual" | "None";
 
 export interface GoodsReceiptCostDocument {
-  costDocumentId: string; supplierId: string; purchaseEvidenceType: PurchaseEvidenceType;
+  costDocumentId: string; supplierId: string; partySiteId?: string|null; purchaseEvidenceType: PurchaseEvidenceType;
   documentNumber: string; issuedAt: string; createsPayable: boolean; dueDate: string | null;
   currencyCode: string; exchangeRate: number; exchangeRateDate: string | null;
   exchangeRateSource: string; withholdingConceptCode?: string | null;
@@ -77,6 +77,7 @@ export interface GoodsReceiptDraft {
   businessId: string;
   warehouseId: string | null;
   supplierId: string | null;
+  partySiteId?: string | null;
   supplierInvoiceNumber: string | null;
   supplierInvoiceDate: string | null;
   receivedAt: string;
@@ -141,6 +142,7 @@ export interface SaveGoodsReceiptDraftRequest {
   businessId: string;
   warehouseId: string | null;
   supplierId: string | null;
+  partySiteId: string | null;
   supplierInvoiceNumber: string | null;
   supplierInvoiceDate: string | null;
   receivedAt: string;
@@ -285,7 +287,7 @@ export const goodsReceiptsApi = {
     "/commerce/v1/goods-receipts/cost-withholding-preview", request,
   ),
   confirm: (request: {
-    documentId: string; businessId: string; warehouseId: string; supplierId: string;
+    documentId: string; businessId: string; warehouseId: string; supplierId: string; partySiteId: string|null;
     supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null;
     receivedAt: string; createsPayable: boolean; dueDate: string | null;
     currencyCode: string; notes: string | null; lines: GoodsReceiptLine[];

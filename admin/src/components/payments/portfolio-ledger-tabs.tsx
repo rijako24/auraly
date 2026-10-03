@@ -14,7 +14,7 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export type PortfolioLedgerTab = "parties" | "invoices" | "payments";
-export type PartyRow={id:string;name:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string};
+export type PartyRow={id:string;name:string;identification:string;partySiteId?:string|null;partySiteName?:string|null;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string};
 type PaymentRow={paymentId:string;paidAt:string;partyName:string|null;documentNumber:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string};
 type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding?:number;totalOverdue?:number;totalInvoiceCount?:number;totalSupplierCredit?:number;currencyTotals?:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>};
 
@@ -24,6 +24,7 @@ export function PortfolioLedgerTabs({
   onValueChange,
   search,
   partyId,
+  partySiteId,
   status,
   overdue,
   from,
@@ -39,6 +40,7 @@ export function PortfolioLedgerTabs({
   onValueChange: (value: PortfolioLedgerTab) => void;
   search?: string;
   partyId?: string;
+  partySiteId?: string;
   status?: ReceivableStatus | PayableStatus;
   overdue?: boolean;
   from?: string;
@@ -50,33 +52,33 @@ export function PortfolioLedgerTabs({
   children: ReactNode;
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
-  const pageKey=JSON.stringify([direction,search,partyId,status,overdue,from,to,value]);
+  const pageKey=JSON.stringify([direction,search,partyId,partySiteId,status,overdue,from,to,value]);
   const [pagination,setPagination]=useState({key:pageKey,page:1});
   const page=pagination.key===pageKey?pagination.page:1;
   const setPage=(next:number)=>setPagination({key:pageKey,page:next});
   const partiesKey = [direction === "receivable" ? "receivable-customers" : "payable-suppliers",businessId];
   const loadParties = async (requestedPage: number) => {
       const filters = { page: requestedPage, pageSize: 20, search, status, overdue: overdue || undefined, from, to };
-      if(direction === "receivable") { const result=await receivablesApi.customerPortfolio({...filters,customerId:partyId}); return {...result,items:result.items.map(item=>({id:item.customerId,name:item.customerName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:0,currencyCode:"COP"}))}; }
-      const result=await payablesApi.supplierPortfolio({...filters,supplierId:partyId}); return {...result,items:result.items.map(item=>({id:item.supplierId,name:item.supplierName,identification:item.identification,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:item.supplierCreditAmount,currencyCode:item.currencyCode}))};
+      if(direction === "receivable") { const result=await receivablesApi.customerPortfolio({...filters,customerId:partyId,partySiteId}); return {...result,items:result.items.map(item=>({id:item.customerId,name:item.customerName,identification:item.identification,partySiteId:item.partySiteId,partySiteName:item.partySiteName,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:0,currencyCode:"COP"}))}; }
+      const result=await payablesApi.supplierPortfolio({...filters,supplierId:partyId,partySiteId}); return {...result,items:result.items.map(item=>({id:item.supplierId,name:item.supplierName,identification:item.identification,partySiteId:item.partySiteId,partySiteName:item.partySiteName,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:item.supplierCreditAmount,currencyCode:item.currencyCode}))};
   };
   const partyPage = value === "parties" ? page : 1;
   const parties = useQuery<Page<PartyRow>>({
-    queryKey: [...partiesKey, partyPage, search, partyId, status, overdue, from, to],
+    queryKey: [...partiesKey, partyPage, search, partyId, partySiteId, status, overdue, from, to],
     queryFn: () => loadParties(partyPage),
     enabled: !!businessId,
     staleTime: 5 * 60 * 1000,
   });
   const payments = useQuery<Page<PaymentRow>>({
-    queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search, partyId, status, overdue, from, to],
+    queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search, partyId, partySiteId, status, overdue, from, to],
     queryFn: async () => {
       const filters = { page, pageSize: 20, search, status, overdue: overdue || undefined, from, to };
       if(direction === "receivable") {
-        const result=await receivablesApi.payments({...filters,customerId:partyId});
+        const result=await receivablesApi.payments({...filters,customerId:partyId,partySiteId});
         return {...result,items:result.items.map(item=>({...item,partyName:item.customerName,
           applications:item.applications.map(application=>({...application,invoiceId:application.receivableId}))}))};
       }
-      const result=await payablesApi.payments({...filters,supplierId:partyId});
+      const result=await payablesApi.payments({...filters,supplierId:partyId,partySiteId});
       return {...result,items:result.items.map(item=>({...item,partyName:item.supplierName,
         applications:item.applications.map(application=>({...application,invoiceId:application.payableId}))}))};
     },
@@ -113,7 +115,7 @@ export function PortfolioLedgerTabs({
     <TabsContent value="parties" className="mt-0">
       <LedgerTable loading={loading} failed={failed} isEmpty={partyItems.length === 0} empty="No hay terceros con cartera para estos filtros.">
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">{direction === "receivable" ? "Cliente" : "Proveedor"}</th><th>Facturas</th><th>Valor original</th><th>Pagado</th><th>Saldo</th><th className="pr-3">Vencido</th>{direction === "payable" && <th className="pr-3">A favor</th>}</tr></thead>
-        <tbody>{partyItems.map(item => <tr key={`${item.id}-${item.currencyCode}`} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}{direction==="payable"?` · ${item.currencyCode}`:""}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount,item.currencyCode)}</td><td>{formatCurrency(item.paidAmount,item.currencyCode)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount,item.currencyCode)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount,item.currencyCode)}</td>{direction === "payable" && <td className="pr-3 font-semibold">{formatCurrency(item.supplierCreditAmount,"COP")}</td>}</tr>)}</tbody>
+        <tbody>{partyItems.map(item => <tr key={`${item.id}-${item.partySiteId??"none"}-${item.currencyCode}`} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}{item.partySiteName?` · ${item.partySiteName}`:""}{direction==="payable"?` · ${item.currencyCode}`:""}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount,item.currencyCode)}</td><td>{formatCurrency(item.paidAmount,item.currencyCode)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount,item.currencyCode)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount,item.currencyCode)}</td>{direction === "payable" && <td className="pr-3 font-semibold">{formatCurrency(item.supplierCreditAmount,"COP")}</td>}</tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>

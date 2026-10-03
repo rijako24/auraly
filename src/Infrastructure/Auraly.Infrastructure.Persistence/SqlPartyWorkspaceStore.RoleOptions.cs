@@ -6,6 +6,61 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlPartyWorkspaceStore
 {
+    public async Task<PartySiteRoleOptionPage> SiteRoleOptionsAsync(
+        PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct)
+    {
+        var role = query.Role == "Customer" ? (Table: "dbo.Customers", Id: "CustomerId") :
+            (Table: "dbo.Suppliers", Id: "SupplierId");
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT COUNT_BIG(1)
+            FROM dbo.Parties party
+            JOIN {role.Table} partyRole ON partyRole.PartyId=party.PartyId
+              AND partyRole.TenantId=@TenantId AND partyRole.IsActive=1
+            JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
+            WHERE party.TenantId=@TenantId AND party.IsActive=1
+              AND (@RoleId IS NULL OR partyRole.{role.Id}=@RoleId)
+              AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
+                OR party.LegalName LIKE N'%'+@Search+N'%'
+                OR party.Identification LIKE N'%'+@Search+N'%'
+                OR site.Name LIKE N'%'+@Search+N'%' OR site.Code LIKE N'%'+@Search+N'%');
+            SELECT party.PartyId,partyRole.{role.Id},site.PartySiteId,
+              COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),N'Sin nombre'),
+              COALESCE(party.Identification,N''),site.Name,site.IsPrimary
+            FROM dbo.Parties party
+            JOIN {role.Table} partyRole ON partyRole.PartyId=party.PartyId
+              AND partyRole.TenantId=@TenantId AND partyRole.IsActive=1
+            JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
+            WHERE party.TenantId=@TenantId AND party.IsActive=1
+              AND (@RoleId IS NULL OR partyRole.{role.Id}=@RoleId)
+              AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
+                OR party.LegalName LIKE N'%'+@Search+N'%'
+                OR party.Identification LIKE N'%'+@Search+N'%'
+                OR site.Name LIKE N'%'+@Search+N'%' OR site.Code LIKE N'%'+@Search+N'%')
+            ORDER BY party.DisplayName,party.PartyId,site.IsPrimary DESC,site.Name,site.PartySiteId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """;
+        command.Parameters.AddRange([
+            new SqlParameter("@TenantId", actor.TenantId),
+            new SqlParameter("@RoleId", (object?)query.RoleId ?? DBNull.Value),
+            new SqlParameter("@Search", (object?)Empty(query.Search) ?? DBNull.Value),
+            new SqlParameter("@Offset", (page - 1) * query.PageSize),
+            new SqlParameter("@PageSize", query.PageSize)
+        ]);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        var total = checked((int)reader.GetInt64(0));
+        await reader.NextResultAsync(ct);
+        var items = new List<PartySiteRoleOption>();
+        while (await reader.ReadAsync(ct))
+            items.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+                reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetBoolean(6)));
+        return new(items, page, query.PageSize, total,
+            (int)Math.Ceiling(total / (double)query.PageSize));
+    }
+
     public async Task<PartyRoleOptionPage> RoleOptionsAsync(
         PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct)
     {

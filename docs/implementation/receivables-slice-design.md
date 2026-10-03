@@ -41,7 +41,7 @@ Las tablas pertenecen al `BusinessId`; el `TenantId` se valida mediante la relac
 No existe una configuración de cartera consolidada o separada en el cliente.
 Cada factura y cada obligación nueva conservan siempre la `PartySite` elegida,
 mientras una `Party` con varias sedes continúa siendo un solo tercero y conserva
-un solo `CustomerId` por `BusinessId`. Consolidar o desglosar es una decisión de
+un solo `CustomerId` por tenant. Consolidar o desglosar es una decisión de
 consulta y presentación, no una política de escritura ni una reclasificación de
 la deuda.
 
@@ -64,6 +64,10 @@ esta forma un retry o el renombrado de una sede no reclasifican deuda.
 La lista de obligaciones muestra `Nombre del cliente · Nombre de la sede`. Sus
 tarjetas de totales consolidan el saldo del resultado y la consulta puede
 filtrar por cliente o por sede sin alterar las obligaciones individuales.
+El tab Clientes agrupa por `CustomerId` y `PartySiteId`, con paginación y totales
+del servidor. El combo de filtro consulta directamente el directorio paginado de
+sedes activas: incluye sedes sin cartera y nunca se alimenta de la página de
+obligaciones.
 
 La consulta admite filtro por `PartySiteId` y búsqueda por nombre o código de
 sede, siempre paginada y con una sola consulta. El detalle devuelve ambos IDs y

@@ -178,7 +178,8 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
               p.PayableId,p.Status,p.OriginalAmount,p.OutstandingAmount,
               e.CancellationId,e.CancellationReason,adjustment.FiscalNumber,adjustment.FiscalStatus,
               e.SourceInvoiceId,invoice.DocumentNumber,
-              CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit),COALESCE(source.PayloadJson,legacy.PayloadJson)
+              CAST(CASE WHEN returned.AppliedChargeId IS NULL THEN 0 ELSE 1 END AS bit),COALESCE(source.PayloadJson,legacy.PayloadJson),
+              p.PartySiteId,site.Name
             FROM dbo.Expenses e
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.TenantId=@TenantId
             JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId AND s.TenantId=b.TenantId
@@ -186,6 +187,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             LEFT JOIN dbo.FiscalDocuments f ON f.DocumentId=e.ExpenseId AND f.BusinessId=e.BusinessId
             LEFT JOIN dbo.Payables p ON p.SourceDocumentId=e.ExpenseId AND p.SourceDocumentType=N'Expense'
               AND p.BusinessId=e.BusinessId
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=p.PartySiteId AND site.PartyId=s.PartyId
             LEFT JOIN dbo.FiscalDocuments adjustment ON adjustment.DocumentId=e.CancellationId
               AND adjustment.BusinessId=e.BusinessId AND adjustment.FiscalDocumentType=N'SupportDocumentAdjustment'
             LEFT JOIN dbo.SalesDocuments invoice ON invoice.DocumentId=e.SourceInvoiceId
@@ -203,7 +205,9 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
         if (!await reader.ReadAsync(ct)) return null;
         var snapshot = reader.IsDBNull(32) ? null : ExpenseContractSerializer.Deserialize(reader.GetString(32));
         ExpensePayableView? payable = reader.IsDBNull(21) ? null :
-            new(reader.GetGuid(21), reader.GetString(22), reader.GetDecimal(23), reader.GetDecimal(24));
+            new(reader.GetGuid(21), reader.GetString(22), reader.GetDecimal(23), reader.GetDecimal(24),
+                reader.IsDBNull(33) ? null : reader.GetGuid(33),
+                reader.IsDBNull(34) ? null : reader.GetString(34));
         return new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
             reader.GetGuid(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetString(6),
             reader.GetDateTimeOffset(7), reader.GetDateTimeOffset(8), reader.GetString(9),
@@ -262,6 +266,23 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             }
             if (!PurchaseEvidenceTypes.AllowedFor(purchaseEvidencePolicy).Contains(request.PurchaseEvidenceType))
                 throw new ExpenseValidationException("El tipo de documento no está permitido por la política fiscal del proveedor.");
+            await using (var site = new SqlCommand("""
+                SELECT COUNT(*),SUM(CASE WHEN supplierSite.PartySiteId=@PartySiteId THEN 1 ELSE 0 END)
+                FROM dbo.Suppliers supplier JOIN dbo.PartySites supplierSite
+                  ON supplierSite.PartyId=supplier.PartyId AND supplierSite.IsActive=1
+                WHERE supplier.SupplierId=@SupplierId AND supplier.TenantId=@TenantId;
+                """, connection, tx))
+            {
+                site.Parameters.AddWithValue("@SupplierId", request.SupplierId);
+                site.Parameters.AddWithValue("@TenantId", user.TenantId);
+                site.Parameters.AddWithValue("@PartySiteId", (object?)request.PartySiteId ?? DBNull.Value);
+                await using var siteReader = await site.ExecuteReaderAsync(ct);
+                await siteReader.ReadAsync(ct);
+                var count = siteReader.GetInt32(0);
+                if (request.PartySiteId is Guid && (siteReader.IsDBNull(1) || siteReader.GetInt32(1) != 1)
+                    || request.PartySiteId is null && count != 1)
+                    throw new ExpenseValidationException("Selecciona una sede válida del proveedor.");
+            }
             var now = timeProvider.GetUtcNow();
             var requiresSupport = request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument;
             if (requiresSupport && !await SqlDianDocumentQuota.TryReserveAsync(connection, tx,
@@ -285,7 +306,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             var accountingJobId = ids.NewId(); var center = request.CostCenterId ?? defaultCenter;
             var payload = new ExpenseDocumentPayload(user.TenantId, user.BusinessId, request.ExpenseId, request.SupplierId,
                 resolution is { Lines.Count: 1 } ? resolution.Lines[0].ConceptId : request.ConceptId,
-                accountId, center, user.UserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, request.SupplierDocumentNumber, request.IssuedAt, request.DueDate, request.CurrencyCode, request.Description, amounts.TaxExclusiveAmount, amounts.VatAmount, amounts.GrossAmount, request.EvidenceUrl, withholding, PurchaseEvidenceType: request.PurchaseEvidenceType, Lines: resolution?.Lines);
+                accountId, center, user.UserId, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, request.SupplierDocumentNumber, request.IssuedAt, request.DueDate, request.CurrencyCode, request.Description, amounts.TaxExclusiveAmount, amounts.VatAmount, amounts.GrossAmount, request.EvidenceUrl, withholding, PurchaseEvidenceType: request.PurchaseEvidenceType, Lines: resolution?.Lines, PartySiteId: request.PartySiteId);
             await PersistAcceptedAsync(connection, tx,
                 [new(payload, idempotencyKey, requestHash, accountingJobId)], now, ct);
             if (support is not null)

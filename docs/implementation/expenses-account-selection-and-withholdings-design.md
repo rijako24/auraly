@@ -73,6 +73,12 @@ Las pruebas comprueban XML y XSD del repositorio; no equivalen a aceptación rea
 
 ## Interfaz y carga
 
+La captura elige una sede activa del proveedor mediante el directorio paginado
+de sedes, independiente de si existe cartera. La aceptación valida que pertenezca
+al proveedor y la congela en el payload para que el motor contable abra la cuenta
+por pagar en esa sede. Si un proveedor tiene varias sedes, no se infiere una por
+su nombre ni por obligaciones previas.
+
 `ExpenseForm` utiliza `PartyRoleSelect`, `AccountSelect`, `DatePicker` y `FormattedNumberInput`. Las opciones de respaldo, tratamiento y estados proceden de catálogos persistidos. Los proveedores y cuentas se buscan por páginas en servidor; la carga de opciones de Gastos omite esos directorios completos. El detalle y el cálculo reutilizan `ExpenseBreakdown`; durante la captura las líneas se muestran una sola vez en la grilla y debajo quedan retenciones y totales. `AccountSelect` entrega la opción seleccionada para conservar su etiqueta en memoria; abrir el editor de una línea no vuelve a consultar su cuenta.
 
 El listado, opciones y detalle tienen un único dueño de consulta por empresa. No hay polling. El preview se solicita por las acciones explícitas de agregar, editar o quitar una línea, o al confirmar un documento modificado, y bloquea la edición mientras está en curso para impedir respuestas antiguas sobre datos nuevos. Una creación necesita una sola lectura de la página filtrada, porque cambia su composición, totales y paginación. La edición de una plantilla reutiliza la respuesta guardada y actualiza el catálogo en memoria. El acuse de anulación no contiene el detalle resultante ni la página: se consulta cada recurso visible una sola vez para conservar el estado real, saldo y pertenencia a filtros. Al completar un pago se actualiza una vez la página de Gastos; el detalle cerrado se consulta solamente al abrirlo de nuevo.

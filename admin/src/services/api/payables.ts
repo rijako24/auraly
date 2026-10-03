@@ -16,6 +16,8 @@ export interface PayableListItem {
   isOverdue: boolean;
   createdAt: string;
   expenseConceptName: string | null;
+  partySiteId: string | null;
+  partySiteName: string | null;
 }
 
 export interface PayablePage {
@@ -55,6 +57,8 @@ export interface PayableDetail {
   expenseDescription: string | null;
   sourceInvoiceNumber: string | null;
   goodsReceiptId: string | null;
+  partySiteId: string | null;
+  partySiteName: string | null;
 }
 
 export interface ConfirmSupplierPaymentRequest {
@@ -86,14 +90,14 @@ export interface SupplierPaymentHistoryPage {
   items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:SupplierPaymentTender[];applications:Array<{payableId:string;documentNumber:string;amount:number}>;supplierId:string|null;supplierName:string|null}>;
   page:number;pageSize:number;totalCount:number;totalPages:number;
 }
-export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalSupplierCredit:number;currencyTotals:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>}
+export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string;partySiteId:string|null;partySiteName:string|null}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalSupplierCredit:number;currencyTotals:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>}
 
 export const payablesApi = {
   expenseConcepts: (search: string, page: number, pageSize: number) =>
     apiClient.get<{ items: Array<{ conceptId: string; name: string }>; page: number; pageSize: number; totalCount: number; totalPages: number }>(
       "/commerce/v1/payables/expense-concepts", { search: search || undefined, page, pageSize }),
-  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;status?:PayableStatus;from?:string;to?:string})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
-  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
+  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;partySiteId?:string;status?:PayableStatus;from?:string;to?:string})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
+  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;partySiteId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   paymentHistory: (supplierId:string,page=1,pageSize=5) =>
@@ -103,6 +107,7 @@ export const payablesApi = {
     pageSize?: number;
     search?: string;
     supplierId?: string;
+    partySiteId?: string;
     status?: PayableStatus;
     overdue?: boolean;
     outstandingOnly?: boolean;

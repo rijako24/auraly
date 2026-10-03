@@ -292,46 +292,77 @@ public sealed class SqlInventoryPhysicalCountStore(
             if(recountStartedAt is not null && request.CaptureStage!="Recount")
                 throw new InventoryConflictException("The product scope is locked because recounting already started.");
             var now=timeProvider.GetUtcNow();
-            foreach(var line in request.Lines)
-            {
-                if(request.CaptureStage=="Count")
-                {
-                    const string existsSql="SELECT COUNT(*) FROM dbo.InventoryPhysicalCountLines WHERE InventoryPhysicalCountListId=@DraftId AND ProductId=@ProductId;";
-                    await using var existsCommand=new SqlCommand(existsSql,connection,transaction);
-                    existsCommand.Parameters.AddWithValue("@DraftId",draftId);
-                    existsCommand.Parameters.AddWithValue("@ProductId",line.ProductId);
-                    if(Convert.ToInt32(await existsCommand.ExecuteScalarAsync(token))==0)
-                        await InsertDraftLineAsync(connection,transaction,countId,draftId,line.ProductId,user.BusinessId,warehouseId,true,token);
-                }
-                const string update="""
-                    DECLARE @CurrentBalance DECIMAL(19,6)=COALESCE((
-                      SELECT QuantityOnHand FROM dbo.InventoryBalances WITH(UPDLOCK,HOLDLOCK)
-                      WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId),0);
-                    UPDATE dbo.InventoryPhysicalCountLines SET
-                      PreCountedByUserId=CASE WHEN @Initial IS NULL THEN NULL ELSE @UserId END,
-                      PreCountedAt=CASE WHEN @Initial IS NULL THEN NULL WHEN PreCountQuantity=@Initial THEN PreCountedAt ELSE @Now END,
-                      PreCountedAtProcessingSequence=CASE WHEN @Initial IS NULL THEN NULL WHEN PreCountQuantity=@Initial THEN PreCountedAtProcessingSequence ELSE @Sequence END,
-                      PreCountQuantity=@Initial,
-                      CountedByUserId=CASE WHEN @Verification IS NULL THEN NULL ELSE @UserId END,
-                      CountedAt=CASE WHEN @Verification IS NULL THEN NULL WHEN CountedQuantity=@Verification THEN CountedAt ELSE @Now END,
-                      CountedAtProcessingSequence=CASE WHEN @Verification IS NULL THEN NULL WHEN CountedQuantity=@Verification THEN CountedAtProcessingSequence ELSE @Sequence END,
-                      CountedQuantity=@Verification,
-                      ExpectedQuantityAtCount=CASE
-                        WHEN @Verification IS NOT NULL AND (CountedQuantity IS NULL OR CountedQuantity<>@Verification) THEN @CurrentBalance
-                        WHEN @Verification IS NULL AND @Initial IS NOT NULL AND (PreCountQuantity IS NULL OR PreCountQuantity<>@Initial) THEN @CurrentBalance
-                        WHEN @Initial IS NULL THEN NULL
-                        ELSE ExpectedQuantityAtCount END,
-                      PendingReason=CASE WHEN @Initial IS NULL THEN @PendingReason ELSE NULL END
-                    WHERE InventoryPhysicalCountListId=@DraftId AND ProductId=@ProductId;
-                    IF @@ROWCOUNT=0 THROW 51201,'A product does not belong to this draft.',1;
-                    """;
-                await ExecuteAsync(connection,transaction,update,token,P("@Initial",line.InitialQuantity),P("@Verification",line.VerificationQuantity),P("@PendingReason",line.PendingReason),P("@UserId",user.UserId),P("@Now",now),P("@Sequence",sequence),P("@BusinessId",user.BusinessId),P("@WarehouseId",warehouseId),P("@DraftId",draftId),P("@ProductId",line.ProductId));
-            }
-            const string validateCompleteScope="""
-                IF (SELECT COUNT(*) FROM dbo.InventoryPhysicalCountLines WHERE InventoryPhysicalCountListId=@DraftId)<>@LineCount
+            const string saveLines="""
+                SELECT ProductId,InitialQuantity,VerificationQuantity,PendingReason
+                INTO #RequestedLines
+                FROM OPENJSON(@LinesJson) WITH (
+                  ProductId uniqueidentifier '$.ProductId',
+                  InitialQuantity decimal(19,6) '$.InitialQuantity',
+                  VerificationQuantity decimal(19,6) '$.VerificationQuantity',
+                  PendingReason nvarchar(250) '$.PendingReason');
+                IF EXISTS (
+                  SELECT 1 FROM #RequestedLines requested
+                  LEFT JOIN dbo.InventoryPhysicalCountLines existing
+                    ON existing.InventoryPhysicalCountListId=@DraftId
+                   AND existing.ProductId=requested.ProductId
+                  LEFT JOIN dbo.Products product ON product.ProductId=requested.ProductId
+                    AND product.TenantId=@TenantId AND product.IsActive=1 AND product.ManageStock=1
+                  WHERE existing.ProductId IS NULL AND
+                    (@CaptureStage<>N'Count' OR product.ProductId IS NULL))
+                  THROW 51201,'A selected product is not inventory enabled.',1;
+                IF @CaptureStage=N'Count'
+                BEGIN
+                  INSERT dbo.InventoryPhysicalCountLines
+                    (InventoryPhysicalCountId,InventoryPhysicalCountListId,ProductId,
+                     ProductCodeSnapshot,ProductNameSnapshot,SystemQuantityAtBase)
+                  SELECT @CountId,@DraftId,product.ProductId,
+                    COALESCE(product.ProductCode,product.Sku,product.Reference,N''),product.Name,
+                    COALESCE(balance.QuantityOnHand,0)
+                  FROM #RequestedLines requested
+                  JOIN dbo.Products product ON product.ProductId=requested.ProductId AND product.TenantId=@TenantId
+                  LEFT JOIN dbo.InventoryPhysicalCountLines existing
+                    ON existing.InventoryPhysicalCountListId=@DraftId AND existing.ProductId=requested.ProductId
+                  LEFT JOIN dbo.InventoryBalances balance
+                    ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=requested.ProductId
+                  WHERE existing.ProductId IS NULL;
+                END;
+                UPDATE line SET
+                  PreCountedByUserId=CASE WHEN requested.InitialQuantity IS NULL THEN NULL ELSE @UserId END,
+                  PreCountedAt=CASE WHEN requested.InitialQuantity IS NULL THEN NULL
+                    WHEN line.PreCountQuantity=requested.InitialQuantity THEN line.PreCountedAt ELSE @Now END,
+                  PreCountedAtProcessingSequence=CASE WHEN requested.InitialQuantity IS NULL THEN NULL
+                    WHEN line.PreCountQuantity=requested.InitialQuantity THEN line.PreCountedAtProcessingSequence ELSE @Sequence END,
+                  PreCountQuantity=requested.InitialQuantity,
+                  CountedByUserId=CASE WHEN requested.VerificationQuantity IS NULL THEN NULL ELSE @UserId END,
+                  CountedAt=CASE WHEN requested.VerificationQuantity IS NULL THEN NULL
+                    WHEN line.CountedQuantity=requested.VerificationQuantity THEN line.CountedAt ELSE @Now END,
+                  CountedAtProcessingSequence=CASE WHEN requested.VerificationQuantity IS NULL THEN NULL
+                    WHEN line.CountedQuantity=requested.VerificationQuantity THEN line.CountedAtProcessingSequence ELSE @Sequence END,
+                  CountedQuantity=requested.VerificationQuantity,
+                  ExpectedQuantityAtCount=CASE
+                    WHEN requested.VerificationQuantity IS NOT NULL AND
+                      (line.CountedQuantity IS NULL OR line.CountedQuantity<>requested.VerificationQuantity)
+                      THEN COALESCE(balance.QuantityOnHand,0)
+                    WHEN requested.VerificationQuantity IS NULL AND requested.InitialQuantity IS NOT NULL AND
+                      (line.PreCountQuantity IS NULL OR line.PreCountQuantity<>requested.InitialQuantity)
+                      THEN COALESCE(balance.QuantityOnHand,0)
+                    WHEN requested.InitialQuantity IS NULL THEN NULL
+                    ELSE line.ExpectedQuantityAtCount END,
+                  PendingReason=CASE WHEN requested.InitialQuantity IS NULL THEN requested.PendingReason ELSE NULL END
+                FROM dbo.InventoryPhysicalCountLines line
+                JOIN #RequestedLines requested ON requested.ProductId=line.ProductId
+                LEFT JOIN dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
+                  ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=line.ProductId
+                WHERE line.InventoryPhysicalCountListId=@DraftId;
+                IF @@ROWCOUNT<>@LineCount OR
+                  (SELECT COUNT(*) FROM dbo.InventoryPhysicalCountLines WHERE InventoryPhysicalCountListId=@DraftId)<>@LineCount
                   THROW 51201,'Every draft product must be included when saving.',1;
                 """;
-            await ExecuteAsync(connection,transaction,validateCompleteScope,token,P("@DraftId",draftId),P("@LineCount",request.Lines.Count));
+            await ExecuteAsync(connection,transaction,saveLines,token,
+                P("@LinesJson",JsonSerializer.Serialize(request.Lines)),P("@CaptureStage",request.CaptureStage),
+                P("@CountId",countId),P("@DraftId",draftId),P("@BusinessId",user.BusinessId),
+                P("@TenantId",user.TenantId),P("@WarehouseId",warehouseId),P("@UserId",user.UserId),
+                P("@Now",now),P("@Sequence",sequence),P("@LineCount",request.Lines.Count));
             const string finish="""
                 UPDATE dbo.InventoryPhysicalCountLists SET Name=@Name,Status=@Status,Version=Version+1,UpdatedAt=@Now,
                   PreCountSubmittedAt=CASE WHEN @Status=N'Ready' THEN @Now ELSE NULL END,

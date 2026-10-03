@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Payables;
+using Auraly.Contracts.Parties;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
 
@@ -12,6 +13,93 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Accounting")]
 public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Supplier_sites_are_independent_in_directory_obligations_and_portfolio()
+    {
+        var productId = Guid.NewGuid();
+        await ConfigureSeriesAndAccountingAsync(productId);
+        var primarySiteId = await ScalarAsync<Guid>("""
+            SELECT TOP(1) site.PartySiteId FROM dbo.Suppliers supplier
+            JOIN dbo.PartySites site ON site.PartyId=supplier.PartyId AND site.IsActive=1
+            WHERE supplier.SupplierId=@Id ORDER BY site.IsPrimary DESC,site.PartySiteId
+            """, fixture.SupplierId);
+        var alternateSiteId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var insert = new SqlCommand("""
+                INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,
+                  CityId,AddressLine,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                SELECT @Alternate,site.PartyId,@Code,N'Sede alterna',site.CountryId,
+                  site.AdministrativeDivisionId,site.CityId,site.AddressLine,site.Phone,
+                  0,1,@UserId,SYSDATETIMEOFFSET()
+                FROM dbo.PartySites site WHERE site.PartySiteId=@Primary;
+                """, connection);
+            insert.Parameters.AddWithValue("@Alternate", alternateSiteId);
+            insert.Parameters.AddWithValue("@Primary", primarySiteId);
+            insert.Parameters.AddWithValue("@Code", $"ALT-{alternateSiteId:N}"[..12]);
+            insert.Parameters.AddWithValue("@UserId", fixture.UserId);
+            Assert.Equal(1, await insert.ExecuteNonQueryAsync());
+        }
+        try
+        {
+            using var client = fixture.CreateAdminClient(
+                PurchasingPermissionCodes.CreateGoodsReceipts,
+                PurchasingPermissionCodes.ConfirmGoodsReceipts,
+                PayablesPermissionCodes.Read,
+                PayablesPermissionCodes.RegisterPayment);
+            var directory = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(
+                $"/api/commerce/v1/portfolio/parties/site-options?role=Supplier&roleId={fixture.SupplierId:D}&page=1&pageSize=20");
+            Assert.Contains(directory!.Items, item => item.PartySiteId == alternateSiteId);
+            Assert.Contains(directory.Items, item => item.PartySiteId == primarySiteId);
+
+            var issuedAt = new DateTimeOffset(2026, 8, 2, 9, 0, 0, TimeSpan.FromHours(-5));
+            var payableIds = new List<Guid>();
+            foreach (var siteId in new[] { primarySiteId, alternateSiteId })
+            {
+                var receipt = new ConfirmGoodsReceiptRequest(Guid.NewGuid(), fixture.BusinessId,
+                    fixture.WarehouseId, fixture.SupplierId, $"SITE-{Guid.NewGuid():N}",
+                    issuedAt, issuedAt, true, issuedAt.AddDays(30), "COP", "Cartera por sede",
+                    [new GoodsReceiptLineRequest(1, productId, "Producto de sede", 1m, 10_000m,
+                        0m, "00", 0m, PurchasingTaxTreatments.NotApplicable)], PartySiteId: siteId);
+                using var response = await SendAsync(client, "/api/commerce/v1/goods-receipts/confirm",
+                    receipt, $"site-receipt-{receipt.DocumentId:N}");
+                Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+                Assert.Equal(siteId, await ScalarAsync<Guid>(
+                    "SELECT PartySiteId FROM dbo.Payables WHERE SourceDocumentId=@Id", receipt.DocumentId));
+                payableIds.Add(await ScalarAsync<Guid>(
+                    "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", receipt.DocumentId));
+            }
+            var mixedSitePayment = new ConfirmSupplierPaymentRequest(
+                Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId, issuedAt.AddHours(1),
+                "COP", "Pago entre sedes no permitido",
+                payableIds.Select(id => new SupplierPaymentAllocationRequest(id, 1_000m)).ToArray(),
+                [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash, 2_000m, 2_000m)]);
+            using (var response = await SendAsync(client,
+                       "/api/commerce/v1/payable-payments/confirm", mixedSitePayment,
+                       $"mixed-site-payment-{mixedSitePayment.PaymentId:N}"))
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(0, await CountAsync("SupplierPayments", "PaymentId", mixedSitePayment.PaymentId));
+            var portfolio = await client.GetFromJsonAsync<SupplierPortfolioPage>(
+                $"/api/commerce/v1/payables/suppliers?supplierId={fixture.SupplierId:D}&page=1&pageSize=20");
+            Assert.Contains(portfolio!.Items, item => item.PartySiteId == primarySiteId);
+            Assert.Contains(portfolio.Items, item => item.PartySiteId == alternateSiteId);
+            var filtered = await client.GetFromJsonAsync<SupplierPortfolioPage>(
+                $"/api/commerce/v1/payables/suppliers?supplierId={fixture.SupplierId:D}&partySiteId={alternateSiteId:D}&page=1&pageSize=20");
+            Assert.All(filtered!.Items, item => Assert.Equal(alternateSiteId, item.PartySiteId));
+            Assert.NotEmpty(filtered.Items);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var deactivate = new SqlCommand(
+                "UPDATE dbo.PartySites SET IsActive=0 WHERE PartySiteId=@Id", connection);
+            deactivate.Parameters.AddWithValue("@Id", alternateSiteId);
+            await deactivate.ExecuteNonQueryAsync();
+        }
+    }
+
     [Fact]
     public async Task Goods_receipt_to_supplier_payment_is_scoped_idempotent_and_accounted_once()
     {
@@ -209,10 +297,16 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
 
         async Task<SupplierPortfolioItem> SupplierPortfolioAsync()
         {
+            var primarySiteId = await ScalarAsync<Guid>("""
+                SELECT TOP(1) site.PartySiteId FROM dbo.Suppliers supplier
+                JOIN dbo.PartySites site ON site.PartyId=supplier.PartyId
+                WHERE supplier.SupplierId=@Id AND site.IsPrimary=1
+                ORDER BY site.PartySiteId
+                """, fixture.SupplierId);
             var page=await client.GetFromJsonAsync<SupplierPortfolioPage>(
                 "/api/commerce/v1/payables/suppliers?page=1&pageSize=100");
             return Assert.Single(page!.Items,item=>item.SupplierId==fixture.SupplierId &&
-                item.CurrencyCode=="COP");
+                item.CurrencyCode=="COP" && item.PartySiteId==primarySiteId);
         }
         var paidBeforeAdjustment=(await SupplierPortfolioAsync()).PaidAmount;
         await using (var connection=new SqlConnection(fixture.ConnectionString))

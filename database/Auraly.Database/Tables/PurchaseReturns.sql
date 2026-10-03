@@ -92,6 +92,7 @@ CREATE TABLE [dbo].[SupplierCredits]
     [SupplierCreditId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NULL,
     [SourcePurchaseReturnId] UNIQUEIDENTIFIER NULL,
     [SourceDocumentId] UNIQUEIDENTIFIER NULL,
     [SourceDocumentType] NVARCHAR(40) NULL,
@@ -103,6 +104,7 @@ CREATE TABLE [dbo].[SupplierCredits]
     CONSTRAINT [PK_SupplierCredits] PRIMARY KEY CLUSTERED ([SupplierCreditId]),
     CONSTRAINT [FK_SupplierCredits_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SupplierCredits_Supplier] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
+    CONSTRAINT [FK_SupplierCredits_PartySite] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [FK_SupplierCredits_Return] FOREIGN KEY ([SourcePurchaseReturnId]) REFERENCES [dbo].[PurchaseReturns] ([PurchaseReturnId]),
     CONSTRAINT [CK_SupplierCredits_Source] CHECK (([SourcePurchaseReturnId] IS NOT NULL AND [SourceDocumentId] IS NULL AND [SourceDocumentType] IS NULL) OR ([SourcePurchaseReturnId] IS NULL AND [SourceDocumentId] IS NOT NULL AND NULLIF(LTRIM(RTRIM([SourceDocumentType])),N'') IS NOT NULL)),
     CONSTRAINT [CK_SupplierCredits_Amounts] CHECK ([OriginalAmount] > 0 AND [AvailableAmount] BETWEEN 0 AND [OriginalAmount]),
@@ -118,5 +120,5 @@ CREATE UNIQUE INDEX [UX_SupplierCredits_PurchaseReturn]
     WHERE [SourcePurchaseReturnId] IS NOT NULL;
 GO
 CREATE INDEX [IX_SupplierCredits_Business_Supplier]
-    ON [dbo].[SupplierCredits] ([BusinessId], [SupplierId], [Status]);
+    ON [dbo].[SupplierCredits] ([BusinessId], [SupplierId], [PartySiteId], [Status]);
 GO

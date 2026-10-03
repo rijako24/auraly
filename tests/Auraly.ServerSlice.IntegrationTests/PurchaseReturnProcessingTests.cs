@@ -85,6 +85,10 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(11_900m,await ScalarAsync<decimal>(
             "SELECT AvailableAmount FROM dbo.SupplierCredits WHERE SourcePurchaseReturnId=@Id",
             request.ReturnId));
+        Assert.Equal(await ScalarAsync<Guid>(
+                "SELECT PartySiteId FROM dbo.Payables WHERE SourceDocumentId=@Id", receipt.Acceptance.DocumentId),
+            await ScalarAsync<Guid>(
+                "SELECT PartySiteId FROM dbo.SupplierCredits WHERE SourcePurchaseReturnId=@Id", request.ReturnId));
         Assert.Equal(0m,await ScalarAsync<decimal>(
             "SELECT PayableCreditAmount FROM dbo.PurchaseReturnFinancialEffects WHERE PurchaseReturnId=@Id",
             request.ReturnId));

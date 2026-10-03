@@ -117,7 +117,8 @@ public sealed class SqlGoodsReceiptStore(
                     document.Request.ExchangeRateSource, document.NetAmount, document.TaxAmount,
                     document.GrandTotal, document.FunctionalNetAmount, document.FunctionalTaxAmount,
                     document.FunctionalGrandTotal,
-                    additionalWithholdings[document.Request.CostDocumentId], document.Lines)).ToArray();
+                    additionalWithholdings[document.Request.CostDocumentId], document.Lines,
+                    document.Request.PartySiteId)).ToArray();
             var payload = new GoodsReceiptDocumentPayload(
                 user.TenantId,
                 user.BusinessId,
@@ -155,7 +156,8 @@ public sealed class SqlGoodsReceiptStore(
                 FunctionalNetAmount: costCalculation.FunctionalNetAmount,
                 FunctionalTaxAmount: costCalculation.FunctionalTaxAmount,
                 FunctionalGrandTotal: costCalculation.FunctionalGrandTotal,
-                AdditionalCostDocuments: additionalDocuments);
+                AdditionalCostDocuments: additionalDocuments,
+                PartySiteId: request.PartySiteId);
             var payloadJson = GoodsReceiptContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
 
@@ -253,6 +255,22 @@ public sealed class SqlGoodsReceiptStore(
             IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId
               AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1)
               THROW 51102,'El proveedor no está activo en este tenant.',1;
+            IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers supplier JOIN dbo.PartySites site
+              ON site.PartyId=supplier.PartyId AND site.IsActive=1
+              WHERE supplier.SupplierId=@SupplierId AND
+                (@PartySiteId IS NOT NULL AND site.PartySiteId=@PartySiteId OR
+                 @PartySiteId IS NULL AND (SELECT COUNT(*) FROM dbo.PartySites candidate
+                   WHERE candidate.PartyId=supplier.PartyId AND candidate.IsActive=1)=1))
+              THROW 51110,'Selecciona una sede válida del proveedor.',1;
+            IF EXISTS (SELECT 1 FROM OPENJSON(@CostDocumentsJson)
+              WITH (SupplierId uniqueidentifier '$.SupplierId',PartySiteId uniqueidentifier '$.PartySiteId') document
+              JOIN dbo.Suppliers supplier ON supplier.SupplierId=document.SupplierId
+              WHERE NOT EXISTS (SELECT 1 FROM dbo.PartySites site
+                WHERE site.PartyId=supplier.PartyId AND site.IsActive=1 AND
+                  (document.PartySiteId IS NOT NULL AND site.PartySiteId=document.PartySiteId OR
+                   document.PartySiteId IS NULL AND (SELECT COUNT(*) FROM dbo.PartySites candidate
+                     WHERE candidate.PartyId=supplier.PartyId AND candidate.IsActive=1)=1)))
+              THROW 51111,'Selecciona una sede válida para cada proveedor de costo adicional.',1;
             IF EXISTS (
               SELECT 1 FROM OPENJSON(@CostDocumentsJson)
               WITH (SupplierId uniqueidentifier '$.SupplierId') x
@@ -345,6 +363,7 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@SupplierId", request.SupplierId);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)request.PartySiteId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PurchaseEvidenceType", request.PurchaseEvidenceType);
         command.Parameters.AddWithValue("@CurrencyCode", request.CurrencyCode);
         command.Parameters.AddWithValue("@ExchangeRateSource", request.ExchangeRateSource);
@@ -360,7 +379,7 @@ public sealed class SqlGoodsReceiptStore(
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (SqlException exception) when (exception.Number is >= 51100 and <= 51109)
+        catch (SqlException exception) when (exception.Number is >= 51100 and <= 51111)
         {
             throw new PurchasingValidationException(exception.Message);
         }
@@ -457,14 +476,14 @@ public sealed class SqlGoodsReceiptStore(
     {
         const string sql = """
             INSERT dbo.GoodsReceipts
-              (GoodsReceiptId,BusinessId,WarehouseId,SupplierId,DocumentSeriesId,DocumentNumber,
+              (GoodsReceiptId,BusinessId,WarehouseId,SupplierId,PartySiteId,DocumentSeriesId,DocumentNumber,
                DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,
                PurchaseOrderId,PurchaseEvidenceType,SupportFiscalSeriesId,SupportFiscalAuthorizationId,SupportFiscalNumber,
                SupplierInvoiceNumber,SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,
                Notes,NetAmount,TaxAmount,GrandTotal,ExchangeRate,ExchangeRateDate,ExchangeRateSource,
                FunctionalNetAmount,FunctionalTaxAmount,FunctionalGrandTotal,Status,ConfirmedByUserId,AcceptedAt)
             VALUES
-              (@Id,@BusinessId,@WarehouseId,@SupplierId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,
+              (@Id,@BusinessId,@WarehouseId,@SupplierId,@PartySiteId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,
                @IdempotencyKey,@PayloadHash,@PurchaseOrderId,@PurchaseEvidenceType,@SupportFiscalSeriesId,@SupportFiscalAuthorizationId,@SupportFiscalNumber,
                @SupplierInvoiceNumber,@SupplierInvoiceDate,@ReceivedAt,
                @CreatesPayable,@DueDate,@CurrencyCode,@Notes,@NetAmount,@TaxAmount,@GrandTotal,
@@ -476,6 +495,7 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@SupplierId", request.SupplierId);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)request.PartySiteId ?? DBNull.Value);
         command.Parameters.AddWithValue("@SeriesId", number.SeriesId);
         command.Parameters.AddWithValue("@Number", number.FullNumber);
         command.Parameters.AddWithValue("@Prefix", number.Prefix);
@@ -568,11 +588,11 @@ public sealed class SqlGoodsReceiptStore(
         {
             await using (var command = new SqlCommand("""
                 INSERT purchasing.GoodsReceiptCostDocuments
-                  (CostDocumentId,GoodsReceiptId,SupplierId,PurchaseEvidenceType,DocumentNumber,
+                  (CostDocumentId,GoodsReceiptId,SupplierId,PartySiteId,PurchaseEvidenceType,DocumentNumber,
                    IssuedAt,CreatesPayable,DueDate,CurrencyCode,ExchangeRate,ExchangeRateDate,
                    ExchangeRateSource,NetAmount,TaxAmount,GrandTotal,FunctionalNetAmount,
                    FunctionalTaxAmount,FunctionalGrandTotal,CreatedAt)
-                VALUES(@Id,@ReceiptId,@SupplierId,@Evidence,@Number,@IssuedAt,@CreatesPayable,@DueDate,
+                VALUES(@Id,@ReceiptId,@SupplierId,@PartySiteId,@Evidence,@Number,@IssuedAt,@CreatesPayable,@DueDate,
                    @Currency,@ExchangeRate,@ExchangeRateDate,@ExchangeRateSource,@Net,@Tax,@Total,
                    @FunctionalNet,@FunctionalTax,@FunctionalTotal,@Now);
                 """, connection, transaction))
@@ -580,6 +600,7 @@ public sealed class SqlGoodsReceiptStore(
                 command.Parameters.AddWithValue("@Id", document.CostDocumentId);
                 command.Parameters.AddWithValue("@ReceiptId", goodsReceiptId);
                 command.Parameters.AddWithValue("@SupplierId", document.SupplierId);
+                command.Parameters.AddWithValue("@PartySiteId", (object?)document.PartySiteId ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Evidence", document.PurchaseEvidenceType);
                 command.Parameters.AddWithValue("@Number", document.DocumentNumber);
                 command.Parameters.AddWithValue("@IssuedAt", document.IssuedAt);
@@ -1143,8 +1164,9 @@ public sealed class SqlGoodsReceiptStore(
 
     private static byte[] HashRequest(ConfirmGoodsReceiptRequest request, GoodsReceiptCalculation calculation,
         GoodsReceiptCostCalculation costCalculation, WithholdingCalculationSnapshot withholding,
-        IReadOnlyDictionary<Guid, WithholdingCalculationSnapshot> additionalWithholdings) =>
-        SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        IReadOnlyDictionary<Guid, WithholdingCalculationSnapshot> additionalWithholdings)
+    {
+        var legacyFields = new
         {
             request.DocumentId,
             request.BusinessId,
@@ -1166,7 +1188,13 @@ public sealed class SqlGoodsReceiptStore(
             CostCalculation = costCalculation,
             Withholding = withholding,
             AdditionalWithholdings = additionalWithholdings.OrderBy(value => value.Key)
-        }));
+        };
+        if (request.PartySiteId is Guid siteId)
+            return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
+                new { Legacy = legacyFields, PartySiteId = siteId }));
+        // A null site keeps the pre-site receipt hash, including cost documents.
+        return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(legacyFields));
+    }
 
     private static void AddDecimal(SqlCommand command, string name, decimal value, byte precision, byte scale)
     {
