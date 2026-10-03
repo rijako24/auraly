@@ -777,11 +777,11 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     {
         const string sql = """
             INSERT dbo.GoodsReceiptDrafts
-              (GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,PurchaseOrderId,PurchaseEvidenceType,SupplierInvoiceNumber,
+              (GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,PartySiteId,PurchaseOrderId,PurchaseEvidenceType,SupplierInvoiceNumber,
                SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,ExchangeRate,
                ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson,Notes,
                NetAmount,TaxAmount,GrandTotal,CreatedByUserId,UpdatedByUserId,CreatedAt,UpdatedAt)
-            VALUES(@Id,@BusinessId,@WarehouseId,@SupplierId,@PurchaseOrderId,@PurchaseEvidenceType,@InvoiceNumber,@InvoiceDate,@ReceivedAt,
+            VALUES(@Id,@BusinessId,@WarehouseId,@SupplierId,@PartySiteId,@PurchaseOrderId,@PurchaseEvidenceType,@InvoiceNumber,@InvoiceDate,@ReceivedAt,
                    @CreatesPayable,@DueDate,@Currency,@ExchangeRate,@ExchangeRateDate,@ExchangeRateSource,
                    @AdditionalCostsJson,@Notes,@Net,@Tax,@Total,@UserId,@UserId,@Now,@Now);
             """;
@@ -796,7 +796,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     {
         const string sql = """
             UPDATE dbo.GoodsReceiptDrafts
-            SET WarehouseId=@WarehouseId,SupplierId=@SupplierId,PurchaseOrderId=@PurchaseOrderId,PurchaseEvidenceType=@PurchaseEvidenceType,SupplierInvoiceNumber=@InvoiceNumber,
+            SET WarehouseId=@WarehouseId,SupplierId=@SupplierId,PartySiteId=@PartySiteId,PurchaseOrderId=@PurchaseOrderId,PurchaseEvidenceType=@PurchaseEvidenceType,SupplierInvoiceNumber=@InvoiceNumber,
                 SupplierInvoiceDate=@InvoiceDate,ReceivedAt=@ReceivedAt,CreatesPayable=@CreatesPayable,
                 DueDate=@DueDate,CurrencyCode=@Currency,ExchangeRate=@ExchangeRate,
                 ExchangeRateDate=@ExchangeRateDate,ExchangeRateSource=@ExchangeRateSource,
@@ -820,6 +820,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", (object?)request.WarehouseId ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupplierId", (object?)request.SupplierId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)request.PartySiteId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PurchaseOrderId", (object?)request.PurchaseOrderId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PurchaseEvidenceType", (object?)request.PurchaseEvidenceType ?? DBNull.Value);
         command.Parameters.AddWithValue("@InvoiceNumber", (object?)request.SupplierInvoiceNumber ?? DBNull.Value);
@@ -906,7 +907,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             SELECT GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,SupplierInvoiceNumber,
                    SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,Notes,
                    NetAmount,TaxAmount,GrandTotal,UpdatedAt,RowVersion,PurchaseEvidenceType,PurchaseOrderId,
-                   ExchangeRate,ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson
+                   ExchangeRate,ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson,PartySiteId
             FROM dbo.GoodsReceiptDrafts
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId;
             SELECT receiptLine.LineNumber,receiptLine.ProductId,receiptLine.DescriptionSnapshot,receiptLine.Quantity,receiptLine.UnitCost,receiptLine.DiscountAmount,
@@ -941,7 +942,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             ExchangeSource = reader.GetString(20),
             AdditionalCosts = reader.IsDBNull(21) ? null :
                 JsonSerializer.Deserialize<IReadOnlyList<GoodsReceiptCostDocumentRequest>>(
-                    reader.GetString(21), new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                    reader.GetString(21), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            PartySiteId = reader.IsDBNull(22) ? (Guid?)null : reader.GetGuid(22)
         };
         await reader.NextResultAsync(cancellationToken);
         var lines = new List<GoodsReceiptLineSnapshot>();
@@ -960,7 +962,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             header.InvoiceDate, header.Received, header.Payable, header.Due, header.Currency,
             header.Notes, header.Net, header.Tax, header.Total, lines, header.Updated, header.Token,
             header.EvidenceType, header.OrderId, header.ExchangeRate, header.ExchangeDate,
-            header.ExchangeSource, header.AdditionalCosts);
+            header.ExchangeSource, header.AdditionalCosts, header.PartySiteId);
     }
 
     private static byte[] ParseToken(string value)

@@ -4,6 +4,8 @@ using Auraly.Application.WorkSessions;
 using Auraly.Contracts.WorkSessions;
 using Auraly.Contracts.Receivables;
 using Auraly.Contracts.Payables;
+using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Purchasing;
 using Auraly.Platform.Application.Identity.Interfaces;
 
 namespace Auraly.Api;
@@ -29,12 +31,31 @@ public static class PartyWorkspaceApi
                     throw new PartyValidationException("Solo se pueden consultar clientes o proveedores.");
                 var identity=context.User.ToPartyUserIdentity();
                 var portfolioPermission=role=="Customer"?ReceivablesPermissionCodes.Read:PayablesPermissionCodes.Read;
-                if(!identity.Permissions.Contains(portfolioPermission))
+                if(!identity.Permissions.Contains(portfolioPermission) && !(role=="Supplier" &&
+                    (identity.Permissions.Contains(ExpensePermissionCodes.Create) ||
+                     identity.Permissions.Contains(PurchasingPermissionCodes.CreateGoodsReceipts))))
                     throw new PartyForbiddenException("No tienes permiso para consultar esta cartera.");
                 var permission=role=="Customer"?PartyPermissionCodes.CustomerRead:PartyWorkspacePermissionCodes.SupplierRead;
                 var actor=identity with { Permissions=new HashSet<string>([permission],StringComparer.Ordinal) };
                 return Results.Ok(await service.RoleOptionsAsync(actor,page??1,
                     new PartyRoleOptionQuery(role,pageSize??10,search,roleId,null),ct));
+            })).RequireAuthorization();
+        endpoints.MapGet("/api/commerce/v1/portfolio/parties/site-options", async(HttpContext context,PartyWorkspaceService service,
+            int? page,int? pageSize,string role,string? search,Guid? roleId,CancellationToken ct)=>
+            await Handle(async()=>
+            {
+                if(role is not ("Customer" or "Supplier"))
+                    throw new PartyValidationException("Solo se pueden consultar sedes de clientes o proveedores.");
+                var identity=context.User.ToPartyUserIdentity();
+                var portfolioPermission=role=="Customer"?ReceivablesPermissionCodes.Read:PayablesPermissionCodes.Read;
+                if(!identity.Permissions.Contains(portfolioPermission) && !(role=="Supplier" &&
+                    (identity.Permissions.Contains(ExpensePermissionCodes.Create) ||
+                     identity.Permissions.Contains(PurchasingPermissionCodes.CreateGoodsReceipts))))
+                    throw new PartyForbiddenException("No tienes permiso para consultar esta cartera.");
+                var permission=role=="Customer"?PartyPermissionCodes.CustomerRead:PartyWorkspacePermissionCodes.SupplierRead;
+                var actor=identity with { Permissions=new HashSet<string>([permission],StringComparer.Ordinal) };
+                return Results.Ok(await service.SiteRoleOptionsAsync(actor,page??1,
+                    new PartyRoleOptionQuery(role,pageSize??10,search,roleId),ct));
             })).RequireAuthorization();
         endpoints.MapGet("/api/commerce/v1/pos/portfolio/parties/role-options", async(HttpContext context,PartyWorkspaceService service,
             int? page,int? pageSize,string role,string? search,Guid? roleId,CancellationToken ct)=>

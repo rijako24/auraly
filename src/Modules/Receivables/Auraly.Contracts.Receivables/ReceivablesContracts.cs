@@ -79,17 +79,20 @@ public sealed record CustomerPaymentHistoryItem(Guid PaymentId, string DocumentN
     Guid? CustomerId = null, string? CustomerName = null);
 public sealed record CustomerPaymentHistoryApplication(Guid ReceivableId,string DocumentNumber,decimal Amount);
 public sealed record CustomerPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? CustomerId,
-    string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null);
+    string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null,
+    Guid? PartySiteId = null);
 public sealed record CustomerPaymentHistoryPage(IReadOnlyList<CustomerPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount, decimal TotalAmount = 0)
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
 public sealed record CustomerPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue,
-    Guid? CustomerId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null);
+    Guid? CustomerId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null,
+    Guid? PartySiteId = null);
 public sealed record CustomerPortfolioItem(Guid CustomerId, string CustomerName,
     string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
-    decimal OutstandingAmount, decimal OverdueAmount);
+    decimal OutstandingAmount, decimal OverdueAmount, Guid? PartySiteId = null,
+    string? PartySiteName = null);
 public sealed record CustomerPortfolioPage(IReadOnlyList<CustomerPortfolioItem> Items,
     int Page, int PageSize, int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
     int TotalInvoiceCount = 0, decimal TotalOriginal = 0, decimal TotalPaid = 0)

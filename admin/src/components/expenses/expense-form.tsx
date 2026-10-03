@@ -5,6 +5,8 @@ import { Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AccountSelect } from "@/components/accounting/account-select";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
+import { PagedEntitySelect, type PagedEntityOption } from "@/components/forms/paged-entity-select";
+import { partiesApi, type PartySiteRoleOption } from "@/services/api/parties";
 import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -32,10 +34,11 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   businessId: string; options: ExpenseOptions; onSaved: () => Promise<void>; onBusyChange: (busy: boolean) => void;
 }) {
   const [party, setParty] = useState<PartyRoleSelection | null>(null);
+  const [siteOption, setSiteOption] = useState<PagedEntityOption | null>(null);
   const [lines, setLines] = useState<EditableLine[]>([]);
   const [editingLine, setEditingLine] = useState<EditableLine | null>(null);
   const [form, setForm] = useState<ConfirmExpense>(() => ({ expenseId: crypto.randomUUID(), businessId,
-    supplierId: "", conceptId: null, costCenterId: null, supplierDocumentNumber: "", issuedAt: issuedAt(today()),
+    supplierId: "", partySiteId: null, conceptId: null, costCenterId: null, supplierDocumentNumber: "", issuedAt: issuedAt(today()),
     dueDate: issuedAt(today()), currencyCode: "COP", description: "", taxExclusiveAmount: 0, vatAmount: 0,
     withholdingJurisdictionCode: null, evidenceUrl: null, purchaseEvidenceType: options.purchaseEvidenceTypes[0]?.code ?? "SupplierElectronicInvoice" }));
   const [preview, setPreview] = useState<ExpensePreview | null>(null);
@@ -73,7 +76,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   function canPreview(value: EditableLine[], header: ConfirmExpense = form) {
     return !!header.supplierId && !!header.issuedAt && !!header.dueDate && header.dueDate >= header.issuedAt &&
     value.length > 0 && value.every(validLine); }
-  const valid = canPreview(lines) && evidence.some(option => option.code === form.purchaseEvidenceType) &&
+  const valid = canPreview(lines) && !!form.partySiteId && evidence.some(option => option.code === form.purchaseEvidenceType) &&
     (!supplierInvoice || !!form.supplierDocumentNumber?.trim()) && !editingLine;
   function request(value: EditableLine[], hash: string | null, header: ConfirmExpense = form): ConfirmExpense {
     return { ...header, lines: value.map(line => ({ expenseAccountId:line.expenseAccountId,conceptId:line.conceptId,costCenterId:line.costCenterId,description:line.description,taxExclusiveAmount:line.taxExclusiveAmount,taxProfileId:line.taxProfileId,taxTreatment:line.taxTreatment,withholdingConceptCode:line.withholdingConceptCode })), calculationHash: hash };
@@ -117,11 +120,20 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
           selectedOption={party ? { value: party.roleId, label: party.displayName } : null}
           placeholder="Buscar proveedor o beneficiario" emptyMessage="No hay proveedores activos para esta búsqueda. Registra el tercero con rol Proveedor para usarlo en Gastos." onChange={(supplierId, selected) => {
             setParty(selected ?? null);
+            setSiteOption(null);
             const allowed = options.purchaseEvidenceTypes.filter(option => allowedPurchaseEvidenceTypes(selected?.supplierPurchaseEvidencePolicy ?? null).includes(option.code));
             const due = new Date(form.issuedAt); due.setUTCDate(due.getUTCDate() + (selected?.supplierDefaultPaymentDueDays ?? 0));
-            change({ supplierId, dueDate: Number.isNaN(due.getTime()) ? form.dueDate : issuedAt(due.toISOString().slice(0, 10)),
+            change({ supplierId, partySiteId: null, dueDate: Number.isNaN(due.getTime()) ? form.dueDate : issuedAt(due.toISOString().slice(0, 10)),
               purchaseEvidenceType: allowed.some(option => option.code === form.purchaseEvidenceType) ? form.purchaseEvidenceType : allowed[0]?.code ?? form.purchaseEvidenceType });
           }}/></div>}</Field>
+        <Field label="Sede del proveedor">{() => <PagedEntitySelect<PartySiteRoleOption>
+          queryKey={["expense-supplier-sites",businessId,form.supplierId]} value={form.partySiteId??""}
+          selectedOption={siteOption} disabled={!form.supplierId} preload
+          loadPage={(term,page,pageSize)=>partiesApi.portfolioSiteOptions({role:"Supplier",roleId:form.supplierId,search:term||undefined,page,pageSize})}
+          getOption={item=>({value:item.partySiteId,label:item.siteName,description:`${item.displayName} · ${item.identification}`})}
+          onChange={(value,option)=>{setSiteOption(option);change({partySiteId:value})}}
+          onClear={()=>{setSiteOption(null);change({partySiteId:null})}}
+          placeholder="Seleccionar sede" ariaLabel="Sede del proveedor" />}</Field>
         <Field label="Respaldo del gasto">{id => <Select value={form.purchaseEvidenceType} onValueChange={(value: PurchaseEvidenceType) => change({ purchaseEvidenceType: value })}><SelectTrigger id={id}><SelectValue/></SelectTrigger><SelectContent>{evidence.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select>}</Field>
         <Field label={supplierInvoice ? "Número de factura del proveedor" : "Referencia (opcional)"}>{id => <Input id={id} maxLength={80} required={supplierInvoice} value={form.supplierDocumentNumber ?? ""} onChange={event => change({ supplierDocumentNumber: event.target.value })}/>}</Field>
         <Field label="Descripción general (opcional)">{id => <Input id={id} maxLength={300} value={form.description} onChange={event => change({ description: event.target.value })}/>}</Field>

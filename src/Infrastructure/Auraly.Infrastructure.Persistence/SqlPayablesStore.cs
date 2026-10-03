@@ -62,20 +62,23 @@ public sealed class SqlPayablesStore(
               WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
               GROUP BY application.PayableId),
             Credits AS(
-              SELECT SupplierId,SUM(AvailableAmount) CreditAmount
+              SELECT SupplierId,PartySiteId,SUM(AvailableAmount) CreditAmount
               FROM dbo.SupplierCredits WHERE BusinessId=@BusinessId AND AvailableAmount>0
-              GROUP BY SupplierId),
-            Grouped AS(
-              SELECT p.SupplierId,s.Name SupplierName,COALESCE(s.Identification,N'') Identification,
+              GROUP BY SupplierId,PartySiteId),
+            PayableGrouped AS(
+              SELECT p.SupplierId,p.PartySiteId,site.Name PartySiteName,
+                s.Name SupplierName,COALESCE(s.Identification,N'') Identification,
                 p.CurrencyCode,
                 COUNT(*) InvoiceCount,SUM(p.OriginalAmount) OriginalAmount,
                 SUM(COALESCE(paid.PaidAmount,0)) PaidAmount,SUM(p.OutstandingAmount) OutstandingAmount,
                 SUM(CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN p.OutstandingAmount ELSE 0 END) OverdueAmount
               FROM dbo.Payables p JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
               JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
+              LEFT JOIN dbo.PartySites site ON site.PartySiteId=p.PartySiteId AND site.PartyId=s.PartyId
               LEFT JOIN Paid paid ON paid.PayableId=p.PayableId
               WHERE p.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
+                AND (@PartySiteId IS NULL OR p.PartySiteId=@PartySiteId)
                 AND (@Status IS NULL OR p.Status=@Status)
                 AND (@From IS NULL OR p.CreatedAt>=@From)
                 AND (@To IS NULL OR p.CreatedAt<@To)
@@ -83,28 +86,46 @@ public sealed class SqlPayablesStore(
                   OR (@Overdue=0 AND (p.OutstandingAmount=0 OR p.DueDate>=@Now)))
                 AND (@Search IS NULL OR s.Name LIKE N'%' + @Search + N'%' OR s.Identification LIKE N'%' + @Search + N'%'
                   OR p.DocumentNumber LIKE N'%' + @Search + N'%')
-              GROUP BY p.SupplierId,s.Name,s.Identification,p.CurrencyCode),
+              GROUP BY p.SupplierId,p.PartySiteId,site.Name,s.Name,s.Identification,p.CurrencyCode),
+            Grouped AS(
+              SELECT * FROM PayableGrouped
+              UNION ALL
+              SELECT credit.SupplierId,credit.PartySiteId,site.Name,supplier.Name,
+                COALESCE(supplier.Identification,N''),N'COP',0,0,0,0,0
+              FROM Credits credit
+              JOIN dbo.Suppliers supplier ON supplier.SupplierId=credit.SupplierId
+              JOIN dbo.Businesses business ON business.BusinessId=@BusinessId AND business.TenantId=@TenantId
+              LEFT JOIN dbo.PartySites site ON site.PartySiteId=credit.PartySiteId AND site.PartyId=supplier.PartyId
+              WHERE NOT EXISTS (SELECT 1 FROM PayableGrouped existing
+                WHERE existing.SupplierId=credit.SupplierId AND existing.PartySiteId=credit.PartySiteId)
+                AND (@SupplierId IS NULL OR credit.SupplierId=@SupplierId)
+                AND (@PartySiteId IS NULL OR credit.PartySiteId=@PartySiteId)
+                AND @Status IS NULL AND @From IS NULL AND @To IS NULL
+                AND (@Search IS NULL OR supplier.Name LIKE N'%' + @Search + N'%'
+                  OR supplier.Identification LIKE N'%' + @Search + N'%'
+                  OR site.Name LIKE N'%' + @Search + N'%')),
             Portfolio AS(
               SELECT grouped.*,
                 CASE WHEN grouped.CurrencyCode=COALESCE(
                   MAX(CASE WHEN grouped.CurrencyCode=N'COP' THEN N'COP' END)
-                    OVER(PARTITION BY grouped.SupplierId),
-                  MIN(grouped.CurrencyCode) OVER(PARTITION BY grouped.SupplierId))
+                    OVER(PARTITION BY grouped.SupplierId,grouped.PartySiteId),
+                  MIN(grouped.CurrencyCode) OVER(PARTITION BY grouped.SupplierId,grouped.PartySiteId))
                 THEN COALESCE(credits.CreditAmount,0) ELSE 0 END SupplierCreditAmount
               FROM Grouped grouped
-              LEFT JOIN Credits credits ON credits.SupplierId=grouped.SupplierId)
+              LEFT JOIN Credits credits ON credits.SupplierId=grouped.SupplierId
+                AND credits.PartySiteId=grouped.PartySiteId)
             SELECT * INTO #Portfolio FROM Portfolio
             WHERE @Overdue IS NULL OR (@Overdue=1 AND OverdueAmount>0) OR (@Overdue=0 AND OverdueAmount=0);
             SELECT CASE WHEN GROUPING(CurrencyCode)=1 THEN NULL ELSE CurrencyCode END,
               COUNT(*),COALESCE(SUM(InvoiceCount),0),COALESCE(SUM(SupplierCreditAmount),0),
               COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0)
             FROM #Portfolio GROUP BY GROUPING SETS ((CurrencyCode),());
-            SELECT SupplierId,SupplierName,Identification,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount,SupplierCreditAmount,CurrencyCode
+            SELECT SupplierId,SupplierName,Identification,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount,SupplierCreditAmount,CurrencyCode,PartySiteId,PartySiteName
             FROM #Portfolio
-            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,SupplierName,SupplierId
+            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,SupplierName,PartySiteName,PartySiteId,SupplierId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """,connection);
-        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value);command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);AddDateRange(command,query.From,query.To);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value);command.Parameters.AddWithValue("@PartySiteId",(object?)query.PartySiteId??DBNull.Value);command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);AddDateRange(command,query.From,query.To);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
         await using var reader=await command.ExecuteReaderAsync(token);
         var count=0;var invoices=0;var supplierCredit=0m;
         var currencyTotals=new List<PayableCurrencyTotal>();
@@ -117,7 +138,7 @@ public sealed class SqlPayablesStore(
             else currencyTotals.Add(new(reader.GetString(0),reader.GetDecimal(4),reader.GetDecimal(5)));
         }
         await reader.NextResultAsync(token);
-        var items=new List<SupplierPortfolioItem>();while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetString(9)));
+        var items=new List<SupplierPortfolioItem>();while(await reader.ReadAsync(token))items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetString(9),reader.IsDBNull(10)?null:reader.GetGuid(10),reader.IsDBNull(11)?null:reader.GetString(11)));
         var cop=currencyTotals.FirstOrDefault(item=>item.CurrencyCode=="COP");
         return new SupplierPortfolioPage(items,query.Page,query.PageSize,count,
             cop?.OutstandingAmount??0,cop?.OverdueAmount??0,invoices,supplierCredit)
@@ -135,6 +156,7 @@ public sealed class SqlPayablesStore(
             p.BusinessId=@BusinessId
             AND b.TenantId=@TenantId
             AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
+            AND (@PartySiteId IS NULL OR p.PartySiteId=@PartySiteId)
             AND (@ConceptId IS NULL OR EXISTS (
                 SELECT 1 FROM dbo.Expenses expense
                 WHERE p.SourceDocumentType=N'Expense' AND expense.ExpenseId=p.SourceDocumentId
@@ -182,11 +204,13 @@ public sealed class SqlPayablesStore(
             SELECT p.PayableId,p.SupplierId,s.Name SupplierName,p.DocumentNumber,p.CurrencyCode,
                    p.OriginalAmount,p.OutstandingAmount,p.DueDate,p.Status,p.CreatedAt,
                    CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN CAST(1 AS BIT)
-                        ELSE CAST(0 AS BIT) END IsOverdue,concept.Name ExpenseConceptName
+                        ELSE CAST(0 AS BIT) END IsOverdue,concept.Name ExpenseConceptName,
+                   p.PartySiteId,site.Name PartySiteName
             INTO #Page
             FROM dbo.Payables p
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=p.PartySiteId AND site.PartyId=s.PartyId
             LEFT JOIN dbo.Expenses expense ON p.SourceDocumentType=N'Expense'
               AND expense.ExpenseId=p.SourceDocumentId AND expense.BusinessId=p.BusinessId
             LEFT JOIN dbo.ExpenseConcepts concept ON concept.ExpenseConceptId=expense.ExpenseConceptId
@@ -198,7 +222,7 @@ public sealed class SqlPayablesStore(
             SELECT page.PayableId,page.SupplierId,page.SupplierName,page.DocumentNumber,
               page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
               page.Status,page.CreatedAt,page.IsOverdue,page.ExpenseConceptName,
-              COALESCE(paid.PaidAmount,0)
+              COALESCE(paid.PaidAmount,0),page.PartySiteId,page.PartySiteName
             FROM #Page page
             LEFT JOIN (SELECT application.PayableId,SUM(application.Amount) PaidAmount
               FROM dbo.SupplierPaymentApplications application
@@ -220,7 +244,8 @@ public sealed class SqlPayablesStore(
                     reader.GetString(3), reader.GetString(4), reader.GetDecimal(5),
                     reader.GetDecimal(6), reader.GetDateTimeOffset(7), reader.GetString(8),
                     reader.GetBoolean(10), reader.GetDateTimeOffset(9),
-                    reader.IsDBNull(11) ? null : reader.GetString(11),reader.GetDecimal(12)));
+                    reader.IsDBNull(11) ? null : reader.GetString(11),reader.GetDecimal(12),
+                    reader.IsDBNull(13)?null:reader.GetGuid(13),reader.IsDBNull(14)?null:reader.GetString(14)));
         }
         var cop = currencyTotals.FirstOrDefault(item => item.CurrencyCode == "COP");
         return new PayablePage(items, query.Page, query.PageSize, totalCount,
@@ -242,6 +267,9 @@ public sealed class SqlPayablesStore(
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@SupplierId IS NULL OR payment.SupplierId=@SupplierId)
+              AND (@PartySiteId IS NULL OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentApplications siteApplication
+                JOIN dbo.Payables sitePayable ON sitePayable.PayableId=siteApplication.PayableId
+                WHERE siteApplication.PaymentId=payment.PaymentId AND sitePayable.PartySiteId=@PartySiteId))
               AND (@From IS NULL OR payment.PaidAt>=@From)
               AND (@To IS NULL OR payment.PaidAt<@To)
               AND (@Status IS NULL AND @Overdue IS NULL OR EXISTS(
@@ -264,6 +292,9 @@ public sealed class SqlPayablesStore(
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@SupplierId IS NULL OR payment.SupplierId=@SupplierId)
+              AND (@PartySiteId IS NULL OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentApplications siteApplication
+                JOIN dbo.Payables sitePayable ON sitePayable.PayableId=siteApplication.PayableId
+                WHERE siteApplication.PaymentId=payment.PaymentId AND sitePayable.PartySiteId=@PartySiteId))
               AND (@From IS NULL OR payment.PaidAt>=@From)
               AND (@To IS NULL OR payment.PaidAt<@To)
               AND (@Status IS NULL AND @Overdue IS NULL OR EXISTS(
@@ -288,6 +319,8 @@ public sealed class SqlPayablesStore(
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
             LEFT JOIN dbo.SupplierPaymentApplications application ON application.PaymentId=payment.PaymentId
+              AND (@PartySiteId IS NULL OR EXISTS(SELECT 1 FROM dbo.Payables sitePayable
+                WHERE sitePayable.PayableId=application.PayableId AND sitePayable.PartySiteId=@PartySiteId))
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
             GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
               payment.TotalAmount,payment.Status,payment.SupplierId,supplier.Name
@@ -300,11 +333,13 @@ public sealed class SqlPayablesStore(
             FROM dbo.SupplierPaymentApplications application
             INNER JOIN @Page page ON page.PaymentId=application.PaymentId
             INNER JOIN dbo.Payables payable ON payable.PayableId=application.PayableId
+            WHERE @PartySiteId IS NULL OR payable.PartySiteId=@PartySiteId
             ORDER BY application.PaymentId,application.LineNumber;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
         command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId",(object?)query.PartySiteId??DBNull.Value);
         command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);
         command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
         command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);
@@ -346,9 +381,10 @@ public sealed class SqlPayablesStore(
                    p.OutstandingAmount,p.DueDate,p.Status,concept.Name,expense.Description,
                    invoice.DocumentNumber,
                    CASE WHEN p.SourceDocumentType=N'GoodsReceipt' THEN p.SourceDocumentId
-                        ELSE p.ParentGoodsReceiptId END
+                        ELSE p.ParentGoodsReceiptId END,p.PartySiteId,site.Name
             FROM dbo.Payables p
             INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=p.PartySiteId AND site.PartyId=s.PartyId
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
             LEFT JOIN dbo.Expenses expense ON p.SourceDocumentType=N'Expense'
               AND expense.ExpenseId=p.SourceDocumentId AND expense.BusinessId=p.BusinessId
@@ -373,6 +409,8 @@ public sealed class SqlPayablesStore(
         string? description;
         string? sourceInvoiceNumber;
         Guid? goodsReceiptId;
+        Guid? partySiteId;
+        string? partySiteName;
         await using (var command = new SqlCommand(headerSql, connection))
         {
             command.Parameters.AddWithValue("@PayableId", payableId);
@@ -395,6 +433,8 @@ public sealed class SqlPayablesStore(
             description = reader.IsDBNull(13) ? null : reader.GetString(13);
             sourceInvoiceNumber = reader.IsDBNull(14) ? null : reader.GetString(14);
             goodsReceiptId = reader.IsDBNull(15) ? null : reader.GetGuid(15);
+            partySiteId = reader.IsDBNull(16) ? null : reader.GetGuid(16);
+            partySiteName = reader.IsDBNull(17) ? null : reader.GetString(17);
         }
         var transactions = new List<PayableTransactionView>();
         await using (var command = new SqlCommand("""
@@ -414,7 +454,8 @@ public sealed class SqlPayablesStore(
             payableId, supplierId, supplierName, supplierIdentification,
             sourceDocumentId, sourceDocumentType, documentNumber, currency,
             original, outstanding, dueDate, status, transactions,
-            conceptName, description, sourceInvoiceNumber, goodsReceiptId);
+            conceptName, description, sourceInvoiceNumber, goodsReceiptId,
+            partySiteId, partySiteName);
     }
 
     public async Task<SupplierPaymentAcceptance> AcceptPaymentAsync(
@@ -508,6 +549,7 @@ public sealed class SqlPayablesStore(
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@SupplierId", (object?)query.SupplierId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)query.PartySiteId ?? DBNull.Value);
         command.Parameters.AddWithValue("@ConceptId", (object?)query.ConceptId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Status", (object?)query.Status ?? DBNull.Value);
         command.Parameters.AddWithValue("@OutstandingOnly", query.OutstandingOnly);
@@ -599,6 +641,12 @@ public sealed class SqlPayablesStore(
                   WHERE e.ExpenseId=p.SourceDocumentId AND e.BusinessId=p.BusinessId
                     AND e.Status=N'Processed')))
               THROW 51211,'An allocation is unavailable or outside the selected supplier.',1;
+            IF EXISTS(SELECT 1
+                FROM OPENJSON(@Allocations) WITH(PayableId uniqueidentifier) input
+                JOIN dbo.Payables payable ON payable.PayableId=input.PayableId AND payable.BusinessId=@BusinessId
+                HAVING COUNT(DISTINCT payable.PartySiteId)<>1
+                  OR COUNT(*)<>COUNT(payable.PartySiteId))
+              THROW 51214,'Selecciona obligaciones de una sola sede del proveedor.',1;
             DECLARE @AccountingReady bit=CONVERT(bit,CASE WHEN EXISTS(
               SELECT 1 FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId AND Status=N'Ready'
                 AND EffectiveFrom<=CONVERT(date,@PaidAt)) THEN 1 ELSE 0 END);
@@ -621,7 +669,7 @@ public sealed class SqlPayablesStore(
         batch.Parameters.AddWithValue("@Currency",request.CurrencyCode);
         batch.Parameters.AddWithValue("@PaidAt",request.PaidAt);
         try { await batch.ExecuteNonQueryAsync(cancellationToken); }
-        catch(SqlException ex) when(ex.Number is >=51210 and <=51213)
+        catch(SqlException ex) when(ex.Number is >=51210 and <=51214)
         { if(ex.Number==51211) throw new PayablesConflictException(ex.Message); throw new PayablesValidationException(ex.Message); }
     }
 

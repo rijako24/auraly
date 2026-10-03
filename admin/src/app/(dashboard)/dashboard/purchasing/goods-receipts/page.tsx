@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
+import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
 import { allowedPurchaseEvidenceTypes } from "@/lib/purchase-evidence-policy";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
@@ -46,7 +47,7 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
-import { partiesApi } from "@/services/api/parties";
+import { partiesApi, type PartySiteRoleOption } from "@/services/api/parties";
 import { tenantCommercialApi } from "@/services/api/tenants";
 import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
@@ -69,7 +70,7 @@ type PendingSupplierChange = { supplier?: PartyRoleSelection };
 type GoodsReceiptCostLine = GoodsReceiptCostDocument["lines"][number];
 
 type EditorDraft = {
-  draftId: string; warehouseId: string; supplierId: string;
+  draftId: string; warehouseId: string; supplierId: string; partySiteId: string;
   supplierInvoiceNumber: string; supplierInvoiceDate: string; receivedAt: string;
   purchaseEvidenceType: PurchaseEvidenceType | "";
   createsPayable: boolean; dueDate: string; notes: string;
@@ -662,7 +663,7 @@ function ReceiptEditor({
   const addCostDocument = () => {
     const evidence: PurchaseEvidenceType = "SupplierElectronicInvoice";
     editCostDocument({
-      costDocumentId: crypto.randomUUID(), supplierId: "", purchaseEvidenceType: evidence,
+      costDocumentId: crypto.randomUUID(), supplierId: "", partySiteId: null, purchaseEvidenceType: evidence,
       documentNumber: "", issuedAt: todayInput(), createsPayable: true,
       dueDate: plusDaysFrom(todayInput(), 30), currencyCode: "COP", exchangeRate: 1,
       exchangeRateDate: todayInput(), exchangeRateSource: "FunctionalCurrency",
@@ -703,11 +704,11 @@ function ReceiptEditor({
   });
   const saveCostDocument = () => {
     if (!editingCostDocument) return;
-    if (!editingCostDocument.supplierId ||
+    if (!editingCostDocument.supplierId || !editingCostDocument.partySiteId ||
         (editingCostDocument.purchaseEvidenceType !== "BuyerElectronicSupportDocument" &&
          !editingCostDocument.documentNumber.trim()) ||
         !editingCostDocument.issuedAt || editingCostDocument.lines.length === 0) {
-      toast.error("Completa proveedor, fecha, conceptos y número cuando corresponda.");
+      toast.error("Completa proveedor, sede, fecha, conceptos y número cuando corresponda.");
       return;
     }
     const exists = draft.additionalCostDocuments.some((document) =>
@@ -725,7 +726,7 @@ function ReceiptEditor({
     setSelectedSupplier(supplier ?? null);
     const evidenceType = supplier?.supplierPurchaseEvidencePolicy ?? "";
     const issueDate = draft.supplierInvoiceDate || todayInput();
-    change({ supplierId, lines: [], purchaseOrderId: "", purchaseEvidenceType: evidenceType,
+    change({ supplierId, partySiteId: "", lines: [], purchaseOrderId: "", purchaseEvidenceType: evidenceType,
       supplierInvoiceNumber: "", supplierInvoiceDate: issueDate,
       dueDate: draft.createsPayable && supplier
         ? plusDaysFrom(issueDate, supplier.supplierDefaultPaymentDueDays ?? 30) : "" });
@@ -746,6 +747,7 @@ function ReceiptEditor({
   const request = (): SaveGoodsReceiptDraftRequest => ({
     draftId: draft.draftId, businessId,
     warehouseId: draft.warehouseId || null, supplierId: draft.supplierId || null,
+    partySiteId: draft.partySiteId || null,
     supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
       ? draft.supplierInvoiceNumber.trim() || null : null,
     supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
@@ -933,8 +935,8 @@ function ReceiptEditor({
   };
 
   const confirmEntry = async () => {
-    if (!draft.warehouseId || !draft.supplierId || !draft.purchaseEvidenceType || draft.lines.length === 0) {
-      toast.error("Selecciona proveedor, bodega, tipo de soporte y agrega al menos un producto.");
+    if (!draft.warehouseId || !draft.supplierId || !draft.partySiteId || !draft.purchaseEvidenceType || draft.lines.length === 0) {
+      toast.error("Selecciona proveedor, sede, bodega, tipo de soporte y agrega al menos un producto.");
       return;
     }
     if (!draft.supplierInvoiceDate) {
@@ -948,7 +950,7 @@ function ReceiptEditor({
     try {
       const accepted = await confirm.mutateAsync({
         documentId: draft.draftId, businessId, warehouseId: draft.warehouseId,
-        supplierId: draft.supplierId,
+        supplierId: draft.supplierId, partySiteId: draft.partySiteId || null,
         supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
           ? draft.supplierInvoiceNumber.trim() || null : null,
         supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
@@ -1094,6 +1096,9 @@ function ReceiptEditor({
               }}
               onChange={requestSupplierChange}/>
           </Field>
+          <Field label="Sede del proveedor"><SupplierSitePicker businessId={businessId}
+            supplierId={draft.supplierId} value={draft.partySiteId}
+            onChange={partySiteId=>change({partySiteId})}/></Field>
           <Field label="Bodega">
             <Select value={draft.warehouseId} disabled={!!draft.purchaseOrderId} onValueChange={(value) => change({ warehouseId: value })}>
               <SelectTrigger><SelectValue placeholder="Seleccionar bodega" /></SelectTrigger>
@@ -1402,8 +1407,11 @@ function ReceiptEditor({
                   onResolved={(supplier) => supplier && setCostSupplierNames((names) => ({ ...names, [supplier.supplierId ?? supplier.partyId]: supplier.displayName }))}
                   onChange={(supplierId, supplier) => {
                     if (supplier) setCostSupplierNames((names) => ({ ...names, [supplierId]: supplier.displayName }));
-                    updateCostDocument({ supplierId });
+                    updateCostDocument({ supplierId, partySiteId: null });
                   }} /></Field>
+                <Field label="Sede del proveedor"><SupplierSitePicker businessId={businessId}
+                  supplierId={document.supplierId} value={document.partySiteId??""}
+                  onChange={partySiteId=>updateCostDocument({partySiteId:partySiteId||null})}/></Field>
                 <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                 <Field label="Número">{document.purchaseEvidenceType === "BuyerElectronicSupportDocument" ? <Input readOnly value="Se asignará al confirmar" /> : <Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} />}</Field>
                 <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
@@ -1591,9 +1599,19 @@ function ReceiptEditor({
   </Dialog>;
 }
 
+function SupplierSitePicker({businessId,supplierId,value,onChange}:{businessId:string;supplierId:string;value:string;onChange:(value:string)=>void}) {
+  return <PagedEntitySelect<PartySiteRoleOption>
+    queryKey={["supplier-sites",businessId,supplierId]} value={value} preload pageSize={50}
+    disabled={!supplierId} selectedOption={value?{value,label:"Sede seleccionada"}:null}
+    loadPage={(term,page,pageSize)=>partiesApi.portfolioSiteOptions({role:"Supplier",roleId:supplierId,search:term||undefined,page,pageSize})}
+    getOption={item=>({value:item.partySiteId,label:item.siteName,description:`${item.displayName} · ${item.identification}`})}
+    onChange={onChange} onClear={value?()=>onChange(""):undefined}
+    placeholder="Seleccionar sede" ariaLabel="Sede del proveedor" />;
+}
+
 function emptyDraft(): EditorDraft {
   return {
-    draftId: crypto.randomUUID(), warehouseId: "", supplierId: "",
+    draftId: crypto.randomUUID(), warehouseId: "", supplierId: "", partySiteId: "",
     supplierInvoiceNumber: "", supplierInvoiceDate: todayInput(), purchaseEvidenceType: "",
     receivedAt: localDateTime(), createsPayable: true, dueDate: plusDaysFrom(todayInput(),30),
     notes: "", lines: [], concurrencyToken: null,
@@ -1606,7 +1624,7 @@ function emptyDraft(): EditorDraft {
 function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
   return {
     draftId: draft.draftId, warehouseId: draft.warehouseId ?? "",
-    supplierId: draft.supplierId ?? "", supplierInvoiceNumber: draft.supplierInvoiceNumber ?? "",
+    supplierId: draft.supplierId ?? "", partySiteId: draft.partySiteId ?? "", supplierInvoiceNumber: draft.supplierInvoiceNumber ?? "",
     supplierInvoiceDate: draft.supplierInvoiceDate?.slice(0, 10) ?? "",
     purchaseEvidenceType: draft.purchaseEvidenceType ?? "",
     receivedAt: localDateTime(draft.receivedAt), createsPayable: draft.createsPayable,

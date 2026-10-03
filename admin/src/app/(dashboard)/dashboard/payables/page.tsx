@@ -20,8 +20,8 @@ import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-
 import { useQueryClient } from "@tanstack/react-query";
 import { PortfolioLedgerTabs, type PortfolioLedgerTab, type PartyRow } from "@/components/payments/portfolio-ledger-tabs";
 import { PortfolioAdjustmentDialog } from "@/components/payments/portfolio-adjustment-dialog";
-import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
-import { partiesApi } from "@/services/api/parties";
+import { type PartyRoleSelection } from "@/components/parties/party-role-select";
+import { partiesApi, type PartySiteRoleOption } from "@/services/api/parties";
 import { DatePicker } from "@/components/ui/date-picker";
 import { PagedEntitySelect, type PagedEntityOption } from "@/components/forms/paged-entity-select";
 
@@ -51,8 +51,11 @@ export default function PayablesPage() {
   const [to, setTo] = useState("");
   const [activeTab, setActiveTab] = useState<PortfolioLedgerTab>("parties");
   const [supplierId, setSupplierId] = useState<string>();
-  const [supplierFilter, setSupplierFilter] = useState<PartyRoleSelection | null>(null);
+  const [partySiteId, setPartySiteId] = useState<string>();
+  const [supplierFilter, setSupplierFilter] = useState<PagedEntityOption | null>(null);
   const [paymentParty, setPaymentParty] = useState<PartyRoleSelection | null>(null);
+  const [paymentPartySiteId, setPaymentPartySiteId] = useState<string>();
+  const [paymentPartySiteName, setPaymentPartySiteName] = useState<string>();
   const [selectedId, setSelectedId] = useState<string>();
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [adjustmentObligationId, setAdjustmentObligationId] = useState<string | null>(null);
@@ -63,6 +66,7 @@ export default function PayablesPage() {
     page, pageSize,
     search: search.trim() || undefined,
     supplierId,
+    partySiteId,
     conceptId: conceptId === "all" ? undefined : conceptId,
     status: status === "all" ? undefined : status,
     overdue: overdue || undefined,
@@ -80,7 +84,7 @@ export default function PayablesPage() {
       cell: ({ row }) => (
         <div>
           <p className="font-semibold">{row.original.documentNumber}</p>
-          <p className="text-xs text-muted-foreground">{row.original.supplierName}</p>
+          <p className="text-xs text-muted-foreground">{row.original.supplierName}{row.original.partySiteName ? ` · ${row.original.partySiteName}` : ""}</p>
           {row.original.expenseConceptName && <p className="text-xs text-muted-foreground">{row.original.expenseConceptName}</p>}
         </div>
       ),
@@ -121,11 +125,13 @@ export default function PayablesPage() {
 
   const openPayment = () => {
     if (!detail || detail.outstandingAmount <= 0) return;
-    setPaymentTarget(detail); setSelectedId(undefined); setPortfolioPaymentOpen(true);
+    setPaymentTarget(detail); setPaymentPartySiteId(detail.partySiteId??undefined); setPaymentPartySiteName(detail.partySiteName??undefined); setSelectedId(undefined); setPortfolioPaymentOpen(true);
   };
   const openPartyPayment = (item: PartyRow) => {
     if (!canPay) return;
     setPaymentTarget(undefined);
+    setPaymentPartySiteId(item.partySiteId??undefined);
+    setPaymentPartySiteName(item.partySiteName??undefined);
     setPaymentParty({partyId:"",roleId:item.id,role:"Supplier",displayName:item.name,identification:item.identification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:item.id,sellerId:null,carrierId:null,employeeId:null,userId:null});
     setPortfolioPaymentOpen(true);
   };
@@ -135,12 +141,12 @@ export default function PayablesPage() {
       <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por pagar</h1>
         <p className="text-muted-foreground">Obligaciones de compras y gastos, con sus pagos aplicados.</p></div>
-        <div className="ml-auto flex flex-wrap justify-end gap-2">{permissions?.includes("accounting.manual.create")&&<Button variant="outline" onClick={()=>{setAdjustmentObligationId(null);setAdjustmentOpen(true)}}><FilePenLine className="mr-2 h-4 w-4"/>Ajuste de cartera</Button>}{canPay&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPortfolioPaymentOpen(true)}}><Landmark className="mr-2 h-4 w-4"/>Pagar proveedores</Button>}</div>
+        <div className="ml-auto flex flex-wrap justify-end gap-2">{permissions?.includes("accounting.manual.create")&&<Button variant="outline" onClick={()=>{setAdjustmentObligationId(null);setAdjustmentOpen(true)}}><FilePenLine className="mr-2 h-4 w-4"/>Ajuste de cartera</Button>}{canPay&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPaymentPartySiteId(undefined);setPaymentPartySiteName(undefined);setPortfolioPaymentOpen(true)}}><Landmark className="mr-2 h-4 w-4"/>Pagar proveedores</Button>}</div>
       </header>
 
-    <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} filters={
+    <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} partySiteId={partySiteId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} filters={
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Filtros</summary><div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-        <PartyRoleSelect role="Supplier" value={supplierId??""} sourceKey="web-portfolio" loadPage={(search,page,pageSize)=>partiesApi.portfolioRoleOptions({role:"Supplier",search,page,pageSize})} selectedOption={supplierFilter?{value:supplierFilter.roleId,label:supplierFilter.displayName}:null} placeholder="Filtrar por proveedor" onChange={(id,party)=>{setSupplierId(id || undefined);setSupplierFilter(party??null);setPage(1)}}/>
+        <PagedEntitySelect<PartySiteRoleOption> queryKey={["payable-supplier-site-options",businessId]} value={partySiteId??""} selectedOption={supplierFilter} placeholder="Filtrar por proveedor y sede" ariaLabel="Filtrar proveedor y sede" loadPage={(term,page,pageSize)=>partiesApi.portfolioSiteOptions({role:"Supplier",search:term||undefined,page,pageSize})} getOption={item=>({value:item.partySiteId,label:`${item.displayName} · ${item.siteName}`,description:item.identification})} onChange={(_,option,item)=>{if(!item)return;setSupplierId(item.roleId);setPartySiteId(item.partySiteId);setSupplierFilter(option);setPage(1)}} onClear={()=>{setSupplierId(undefined);setPartySiteId(undefined);setSupplierFilter(null);setPage(1)}}/>
         <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Número de documento o identificación" />
         <Select value={status} onValueChange={(value) => { setStatus(value as PayableStatus | "all"); setPage(1); }}>
           <SelectTrigger><SelectValue placeholder="Todos los estados" /></SelectTrigger>
@@ -164,13 +170,13 @@ export default function PayablesPage() {
         </Button>
         <label className="space-y-1 text-sm">Desde<DatePicker value={from} max={to || undefined} onChange={value=>{setFrom(value);setPage(1)}} placeholder="Fecha inicial"/></label>
         <label className="space-y-1 text-sm">Hasta<DatePicker value={to} min={from || undefined} onChange={value=>{setTo(value);setPage(1)}} placeholder="Fecha final"/></label>
-        <div className="col-span-full flex justify-end"><Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setConceptId("all");setSelectedConcept(null);setOverdue(false);setSupplierId(undefined);setSupplierFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button></div>
+        <div className="col-span-full flex justify-end"><Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setConceptId("all");setSelectedConcept(null);setOverdue(false);setSupplierId(undefined);setPartySiteId(undefined);setSupplierFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button></div>
       </div></details>
     }>
       {query.isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudieron cargar las obligaciones. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div>
       ) : (
-        <><div className="mb-3 flex items-center justify-between">{supplierId?<Badge variant="secondary">Cartera del proveedor seleccionado</Badge>:<span/>}{supplierId&&<Button size="sm" variant="ghost" onClick={()=>{setSupplierId(undefined);setSupplierFilter(null);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading}
+        <><div className="mb-3 flex items-center justify-between">{supplierId?<Badge variant="secondary">Cartera de la sede seleccionada</Badge>:<span/>}{supplierId&&<Button size="sm" variant="ghost" onClick={()=>{setSupplierId(undefined);setPartySiteId(undefined);setSupplierFilter(null);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading}
           page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages}
           totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }}
           onRowClick={(item) => setSelectedId(item.payableId)} enableRowSelection={false} /></>
@@ -181,7 +187,7 @@ export default function PayablesPage() {
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{detail?.documentNumber ?? "Detalle de obligación"}</DialogTitle>
-            <DialogDescription>{detail ? `${detail.supplierName} · ${detail.supplierIdentification}` : "Cargando información..."}</DialogDescription>
+            <DialogDescription>{detail ? `${detail.supplierName}${detail.partySiteName ? ` · ${detail.partySiteName}` : ""} · ${detail.supplierIdentification}` : "Cargando información..."}</DialogDescription>
           </DialogHeader>
           {detailQuery.isLoading ? <p className="py-8 text-center text-muted-foreground">Cargando trazabilidad...</p> : detail ? (
             <div className="space-y-5">
@@ -221,7 +227,7 @@ export default function PayablesPage() {
       </Dialog>
 
       {businessId && <PortfolioAdjustmentDialog direction="Payable" businessId={businessId} open={adjustmentOpen} obligationId={adjustmentObligationId} onClose={() => setAdjustmentOpen(false)} />}
-      <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null)}}} onCompleted={()=>{for(const key of ["payables","payable-suppliers","payable-payments","payable"]){void queryClient.invalidateQueries({queryKey:[key,businessId]});}}} initialInvoice={paymentTarget?{id:paymentTarget.payableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
+      <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null);setPaymentPartySiteId(undefined);setPaymentPartySiteName(undefined)}}} onCompleted={()=>{for(const key of ["payables","payable-suppliers","payable-payments","payable"]){void queryClient.invalidateQueries({queryKey:[key,businessId]});}}} initialInvoice={paymentTarget?{id:paymentTarget.payableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialPartySiteId={paymentPartySiteId} initialPartySiteName={paymentPartySiteName} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
     </div>
   );
 }

@@ -47,7 +47,8 @@ public sealed record ConfirmExpenseRequest(Guid ExpenseId, Guid BusinessId, Guid
     string? WithholdingJurisdictionCode, string? EvidenceUrl,
     string PurchaseEvidenceType = "SupplierElectronicInvoice",
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ExpenseLineInput>? Lines = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CalculationHash = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CalculationHash = null,
+    Guid? PartySiteId = null);
 
 public sealed record ExpenseLineInput(Guid ExpenseAccountId, Guid? ConceptId, Guid? CostCenterId,
     string Description, decimal TaxExclusiveAmount, Guid? TaxProfileId, string TaxTreatment,
@@ -69,7 +70,8 @@ public sealed record ExpenseDocumentPayload(Guid TenantId, Guid BusinessId, Guid
     string Description, decimal TaxExclusiveAmount, decimal VatAmount, decimal GrossAmount,
     string? EvidenceUrl, WithholdingCalculationSnapshot Withholding, Guid? SourceInvoiceId = null,
     string PurchaseEvidenceType = "SupplierElectronicInvoice",
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ExpenseLineSnapshot>? Lines = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ExpenseLineSnapshot>? Lines = null,
+    Guid? PartySiteId = null);
 
 public sealed record ExpenseAcceptance(Guid ExpenseId, Guid MovementId, string DocumentNumber,
     string Status, long ProcessingSequence, bool IdempotentReplay, Guid? AccountingJobId = null, bool HasFiscalSupport = false);
@@ -98,7 +100,7 @@ public sealed record ExpenseListItem(Guid ExpenseId, string DocumentNumber, stri
     string PurchaseEvidenceType = "SupplierElectronicInvoice", string? PayableStatus = null,
     decimal? OutstandingAmount = null, bool ChargeReturned = false);
 public sealed record ExpensePayableView(Guid PayableId, string Status, decimal OriginalAmount,
-    decimal OutstandingAmount);
+    decimal OutstandingAmount, Guid? PartySiteId = null, string? PartySiteName = null);
 public sealed record ExpenseDetail(Guid ExpenseId, string DocumentNumber, string? SupplierDocumentNumber,
     Guid SupplierId, string SupplierName, Guid? ConceptId, string ConceptName,
     DateTimeOffset IssuedAt, DateTimeOffset DueDate, string CurrencyCode, string Description,

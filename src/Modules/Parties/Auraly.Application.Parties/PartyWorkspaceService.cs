@@ -14,6 +14,8 @@ public interface IPartyWorkspaceStore
         PartyActorIdentity actor, int page, PartyWorkspaceQuery query, CancellationToken ct);
     Task<PartyRoleOptionPage> RoleOptionsAsync(
         PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct);
+    Task<PartySiteRoleOptionPage> SiteRoleOptionsAsync(
+        PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct);
     Task<IReadOnlyCollection<CustomerMapSite>> CustomerMapAsync(
         PartyActorIdentity actor, CustomerMapQuery query, CancellationToken ct);
     Task<PartyWorkspaceDetail?> FindIdentityAsync(
@@ -74,6 +76,17 @@ public sealed class PartyWorkspaceService(
             throw new PartyValidationException("Role must be Any, Customer, Supplier, Seller, Carrier, Employee or User.");
         return store.RoleOptionsAsync(
             actor, page, query with { Role = role, Search = query.Search?.Trim() }, ct);
+    }
+
+    public Task<PartySiteRoleOptionPage> SiteRoleOptionsAsync(
+        PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct)
+    {
+        if (query.Role is not ("Customer" or "Supplier") || page < 1 ||
+            query.PageSize is < 1 or > 100)
+            throw new PartyValidationException("Rol o paginación inválidos para sedes de terceros.");
+        Require(actor, query.Role == "Customer" ? PartyPermissionCodes.CustomerRead :
+            PartyWorkspacePermissionCodes.SupplierRead);
+        return store.SiteRoleOptionsAsync(actor, page, query with { Search = query.Search?.Trim() }, ct);
     }
 
     public Task<IReadOnlyCollection<CustomerMapSite>> CustomerMapAsync(

@@ -524,10 +524,12 @@ public sealed partial class SqlAccountingPostingProcessor
             FROM dbo.Payables payable JOIN @Effects effect ON effect.PayableId=payable.PayableId;
             INSERT dbo.PayableTransactions(PayableTransactionId,PayableId,TransactionType,Amount,SourceDocumentId,OccurredAt,CreatedAt)
             SELECT TransactionId,PayableId,N'Credit',PayableCredit,@ReturnId,@At,@Now FROM @Effects WHERE PayableCredit>0;
-            INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,SourceDocumentId,SourceDocumentType,
+            INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,PartySiteId,SourceDocumentId,SourceDocumentType,
               OriginalAmount,AvailableAmount,Status,CreatedAt)
-            SELECT SupplierCreditId,@BusinessId,SupplierId,AppliedChargeId,N'SalesReturnCharge',
-              SupplierCredit,SupplierCredit,N'Open',@Now FROM @Effects WHERE SupplierCredit>0;
+            SELECT effect.SupplierCreditId,@BusinessId,effect.SupplierId,payable.PartySiteId,
+              effect.AppliedChargeId,N'SalesReturnCharge',effect.SupplierCredit,effect.SupplierCredit,N'Open',@Now
+            FROM @Effects effect JOIN dbo.Payables payable ON payable.PayableId=effect.PayableId
+            WHERE effect.SupplierCredit>0;
             INSERT dbo.SalesReturnChargeFinancialEffects(ReturnId,AppliedChargeId,PayableId,PayableCreditAmount,SupplierCreditAmount,CreatedAt)
             SELECT @ReturnId,AppliedChargeId,PayableId,PayableCredit,SupplierCredit,@Now FROM @Effects;
             """, connection, transaction);
@@ -549,7 +551,7 @@ public sealed partial class SqlAccountingPostingProcessor
                 value.DocumentId, "GoodsReceipt", value.DocumentNumber, value.CurrencyCode,
                 decimal.Round(value.GrandTotal - value.Withholding.WithholdingTotal / value.ExchangeRate, 4),
                 value.DueDate!.Value, value.SupplierInvoiceDate ?? value.ReceivedAt, token,
-                value.Withholding.NetAmount, value.ExchangeRate, value.DocumentId)
+                value.Withholding.NetAmount, value.ExchangeRate, value.DocumentId, value.PartySiteId)
             : Task.CompletedTask;
 
     private Task ApplyGoodsReceiptCostDocumentFinancialEffectsAsync(
@@ -564,7 +566,7 @@ public sealed partial class SqlAccountingPostingProcessor
                 decimal.Round(document.GrandTotal -
                     document.Withholding.WithholdingTotal / document.ExchangeRate, 4),
                 document.DueDate!.Value, document.IssuedAt, token,
-                document.Withholding.NetAmount, document.ExchangeRate, value.GoodsReceiptId)
+                document.Withholding.NetAmount, document.ExchangeRate, value.GoodsReceiptId, document.PartySiteId)
             : Task.CompletedTask;
     }
 
@@ -575,7 +577,8 @@ public sealed partial class SqlAccountingPostingProcessor
         if (value.Withholding.NetAmount > 0)
             await OpenPayableAsync(connection, transaction, value.BusinessId, value.SupplierId,
                 value.ExpenseId, "Expense", value.DocumentNumber, value.CurrencyCode,
-                value.Withholding.NetAmount, value.DueDate, value.IssuedAt, token);
+                value.Withholding.NetAmount, value.DueDate, value.IssuedAt, token,
+                partySiteId: value.PartySiteId);
         await using var command = new SqlCommand("""
             UPDATE dbo.Expenses SET Status=N'Processed',ProcessedAt=@Now
             WHERE ExpenseId=@Id AND BusinessId=@BusinessId AND Status=N'Accepted';
@@ -618,15 +621,19 @@ public sealed partial class SqlAccountingPostingProcessor
         if (value.SupplierCredit > 0)
         {
             await using var credit = new SqlCommand("""
-                INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,
+                INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,PartySiteId,
                   SourceDocumentId,SourceDocumentType,OriginalAmount,AvailableAmount,Status,CreatedAt)
-                VALUES(@Id,@BusinessId,@SupplierId,@CancellationId,N'ExpenseCancellation',
-                  @Amount,@Amount,N'Open',@Now);
+                SELECT @Id,@BusinessId,@SupplierId,payable.PartySiteId,@CancellationId,N'ExpenseCancellation',
+                  @Amount,@Amount,N'Open',@Now FROM dbo.Payables payable
+                WHERE payable.BusinessId=@BusinessId AND payable.SourceDocumentId=@ExpenseId
+                  AND payable.SourceDocumentType=N'Expense';
+                IF @@ROWCOUNT<>1 THROW 51843,'The expense payable site is unavailable for credit.',1;
                 """, connection, transaction);
             credit.Parameters.AddWithValue("@Id", ids.NewId());
             credit.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             credit.Parameters.AddWithValue("@SupplierId", value.Original.SupplierId);
             credit.Parameters.AddWithValue("@CancellationId", value.CancellationId);
+            credit.Parameters.AddWithValue("@ExpenseId", value.Original.ExpenseId);
             AddMoney(credit, "@Amount", value.SupplierCredit);
             credit.Parameters.AddWithValue("@Now", now);
             await credit.ExecuteNonQueryAsync(token);
@@ -650,16 +657,27 @@ public sealed partial class SqlAccountingPostingProcessor
         string number, string currency, decimal amount, DateTimeOffset dueDate,
         DateTimeOffset occurredAt, CancellationToken token,
         decimal? functionalAmount = null, decimal exchangeRate = 1,
-        Guid? parentGoodsReceiptId = null)
+        Guid? parentGoodsReceiptId = null, Guid? partySiteId = null)
     {
         await using var command = new SqlCommand("""
             INSERT dbo.Payables
-              (PayableId,BusinessId,SupplierId,SourceDocumentId,SourceDocumentType,
+              (PayableId,BusinessId,SupplierId,PartySiteId,SourceDocumentId,SourceDocumentType,
                DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,FunctionalOriginalAmount,
                FunctionalOutstandingAmount,ExchangeRate,ParentGoodsReceiptId,DueDate,Status,CreatedAt)
-            VALUES(@PayableId,@BusinessId,@SupplierId,@DocumentId,@DocumentType,
+            SELECT @PayableId,@BusinessId,@SupplierId,
+               COALESCE(@PartySiteId,site.PartySiteId),@DocumentId,@DocumentType,
                @Number,@Currency,@Amount,@Amount,@FunctionalAmount,@FunctionalAmount,@ExchangeRate,
-               @ParentGoodsReceiptId,@DueDate,N'Open',@Now);
+               @ParentGoodsReceiptId,@DueDate,N'Open',@Now
+            FROM dbo.Suppliers supplier
+            JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
+              AND business.TenantId=supplier.TenantId
+            CROSS APPLY (SELECT TOP(1) chosen.PartySiteId FROM dbo.PartySites chosen
+              WHERE chosen.PartyId=supplier.PartyId AND
+                (@PartySiteId IS NOT NULL AND chosen.PartySiteId=@PartySiteId OR
+                 @PartySiteId IS NULL AND chosen.IsActive=1)
+              ORDER BY chosen.IsPrimary DESC,chosen.PartySiteId) site
+            WHERE supplier.SupplierId=@SupplierId;
+            IF @@ROWCOUNT<>1 THROW 51842,'Supplier site is missing or invalid.',1;
             INSERT dbo.PayableTransactions
               (PayableTransactionId,PayableId,TransactionType,Amount,
                SourceDocumentId,OccurredAt,CreatedAt)
@@ -669,6 +687,7 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@TransactionId", ids.NewId());
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@SupplierId", supplierId);
+        command.Parameters.AddWithValue("@PartySiteId", (object?)partySiteId ?? DBNull.Value);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@DocumentType", documentType);
         command.Parameters.AddWithValue("@Number", number);
@@ -692,11 +711,20 @@ public sealed partial class SqlAccountingPostingProcessor
         PurchaseReturnDocumentPayload value, CancellationToken token)
     {
         Guid? payableId = null;
+        Guid? partySiteId = null;
         decimal outstanding = 0;
         await using (var load = new SqlCommand("""
-            SELECT PayableId,OutstandingAmount FROM dbo.Payables WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND SourceDocumentId=@OriginalId
-              AND SourceDocumentType=N'GoodsReceipt';
+            SELECT payable.PayableId,payable.OutstandingAmount,
+              COALESCE(payable.PartySiteId,receipt.PartySiteId,primarySite.PartySiteId)
+            FROM dbo.GoodsReceipts receipt
+            JOIN dbo.Suppliers supplier ON supplier.SupplierId=receipt.SupplierId
+            OUTER APPLY (SELECT TOP(1) site.PartySiteId FROM dbo.PartySites site
+              WHERE site.PartyId=supplier.PartyId AND site.IsActive=1
+              ORDER BY site.IsPrimary DESC,site.PartySiteId) primarySite
+            LEFT JOIN dbo.Payables payable WITH(UPDLOCK,HOLDLOCK)
+              ON payable.BusinessId=receipt.BusinessId AND payable.SourceDocumentId=receipt.GoodsReceiptId
+              AND payable.SourceDocumentType=N'GoodsReceipt'
+            WHERE receipt.BusinessId=@BusinessId AND receipt.GoodsReceiptId=@OriginalId;
             """, connection, transaction))
         {
             load.Parameters.AddWithValue("@BusinessId", value.BusinessId);
@@ -704,8 +732,9 @@ public sealed partial class SqlAccountingPostingProcessor
             await using var reader = await load.ExecuteReaderAsync(token);
             if (await reader.ReadAsync(token))
             {
-                payableId = reader.GetGuid(0);
-                outstanding = reader.GetDecimal(1);
+                payableId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
+                outstanding = reader.IsDBNull(1) ? 0 : reader.GetDecimal(1);
+                partySiteId = reader.IsDBNull(2) ? null : reader.GetGuid(2);
             }
         }
         var payableCredit = decimal.Min(value.TotalAmount, outstanding);
@@ -735,13 +764,14 @@ public sealed partial class SqlAccountingPostingProcessor
         {
             await using var credit = new SqlCommand("""
                 INSERT dbo.SupplierCredits
-                  (SupplierCreditId,BusinessId,SupplierId,SourcePurchaseReturnId,
+                  (SupplierCreditId,BusinessId,SupplierId,PartySiteId,SourcePurchaseReturnId,
                    OriginalAmount,AvailableAmount,Status,CreatedAt)
-                VALUES(@Id,@BusinessId,@SupplierId,@ReturnId,@Amount,@Amount,N'Open',@Now);
+                VALUES(@Id,@BusinessId,@SupplierId,@PartySiteId,@ReturnId,@Amount,@Amount,N'Open',@Now);
                 """, connection, transaction);
             credit.Parameters.AddWithValue("@Id", ids.NewId());
             credit.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             credit.Parameters.AddWithValue("@SupplierId", value.SupplierId);
+            credit.Parameters.AddWithValue("@PartySiteId", (object?)partySiteId ?? DBNull.Value);
             credit.Parameters.AddWithValue("@ReturnId", value.ReturnId);
             AddMoney(credit, "@Amount", supplierCredit);
             credit.Parameters.AddWithValue("@Now", now);

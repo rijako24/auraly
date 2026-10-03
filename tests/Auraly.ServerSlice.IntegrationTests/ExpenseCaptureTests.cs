@@ -112,6 +112,8 @@ public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputH
             Assert.Null(detail.ConceptId);
             Assert.Equal(2, detail.Lines!.Count);
             Assert.Equal(139_800m, detail.Payable!.OriginalAmount);
+            Assert.NotNull(detail.Payable.PartySiteId);
+            Assert.Equal("Sede principal", detail.Payable.PartySiteName);
             Assert.Equal(3_000m, detail.Withholding!.WithholdingTotal);
             Assert.Equal("Processed", detail.Status);
             var page = (await client.GetFromJsonAsync<ExpensePage>($"/api/commerce/v1/expenses?search={request.SupplierDocumentNumber}&page=1&pageSize=1"))!;

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Diagnostics;
+using System.Text.Json;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
@@ -272,6 +273,59 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                 [new(first, 4m, 4m, null), new(added, null, null, null), new(rejectedAfterRecount, 1m, null, null)],
                 true, "Count"));
         Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        await ClosePhysicalCountForTestAsync(countId);
+    }
+
+    [Fact]
+    public async Task Physical_count_draft_saves_three_hundred_lines_in_one_bounded_operation()
+    {
+        var first = Guid.NewGuid();
+        await SeedAsync(first, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        var productIds = Enumerable.Range(0, 315).Select(_ => Guid.NewGuid()).ToArray();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = new SqlCommand("""
+                INSERT dbo.Products(ProductId,TenantId,ProductCode,BaseUnitCode,TaxProfileId,
+                  Source,Sku,Name,Currency,ManageStock,IsActive,CreatedAt)
+                SELECT requested.ProductId,@TenantId,
+                  N'BULK-'+CONVERT(nvarchar(36),requested.ProductId),N'EA',source.TaxProfileId,
+                  0,CONVERT(nvarchar(36),requested.ProductId),N'Producto de conteo masivo',N'COP',1,1,SYSUTCDATETIME()
+                FROM OPENJSON(@Products) WITH(ProductId uniqueidentifier '$') requested
+                CROSS JOIN dbo.Products source
+                WHERE source.ProductId=@First;
+                """, connection);
+            seed.Parameters.AddWithValue("@Products", JsonSerializer.Serialize(productIds));
+            seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            seed.Parameters.AddWithValue("@First", first);
+            Assert.Equal(productIds.Length, await seed.ExecuteNonQueryAsync());
+        }
+        using var client = fixture.CreateAdminClient(InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.ManagePhysicalCounts,
+            InventoryPermissionCodes.CapturePhysicalCounts);
+        await ConfirmAdjustmentAsync(client, new ConfirmInventoryAdjustmentRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null, [new(1, first, 1m, 1m)]));
+        var countId = Guid.NewGuid();
+        using var created = await client.PostAsJsonAsync("/api/commerce/v1/inventory/physical-counts",
+            new CreateInventoryPhysicalCountRequest(countId, fixture.BusinessId, fixture.WarehouseId,
+                "Partial", "PHYSICAL_COUNT", null, "Conteo masivo", productIds));
+        Assert.True(created.StatusCode == HttpStatusCode.Created,
+            $"Expected Created but received {created.StatusCode}: {await created.Content.ReadAsStringAsync()}");
+        var draft = Assert.Single((await created.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>())!.Drafts);
+        var started = Stopwatch.StartNew();
+        using var saved = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}",
+            new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, draft.Version, draft.Name,
+                productIds.Select(id => new InventoryPhysicalCountDraftLineInput(id, 1m, null, null)).ToArray(),
+                false, "Count"));
+        started.Stop();
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var detail = await saved.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>();
+        Assert.Equal(productIds.Length, Assert.Single(detail!.Drafts).Lines.Count);
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(30),
+            $"Guardar 315 partidas tardó {started.Elapsed.TotalSeconds:F2} s.");
         await ClosePhysicalCountForTestAsync(countId);
     }
 
@@ -696,6 +750,12 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(reconciliation.ReconciliationId, appliedReconciliation?.ReconciliationId);
         Assert.Equal("Applied", appliedReconciliation?.CountedApplicationStatus);
         Assert.Equal(finalOperationId, appliedReconciliation?.CountedDocumentId);
+        var countOperations = await client.GetFromJsonAsync<InventoryOperationPage>(
+            $"/api/commerce/v1/inventory/operations?documentType=StockCount&search={Uri.EscapeDataString(appliedReconciliation!.CountedDocumentNumber!)}&page=1&pageSize=20");
+        Assert.Contains(countOperations!.Items, operation => operation.DocumentId == finalOperationId);
+        var countOperationDetail = await client.GetFromJsonAsync<InventoryOperationDetail>(
+            $"/api/commerce/v1/inventory/operations/{finalOperationId:D}");
+        Assert.Equal(finalOperationId, countOperationDetail?.DocumentId);
         Assert.Equal(2, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.InventoryPhysicalCountReconciliations WHERE InventoryPhysicalCountId=@Id", countId));
         Assert.Equal(2, await CountAsync("InventoryMovements", finalOperationId));

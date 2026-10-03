@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[GoodsReceipts]
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NULL,
     [PurchaseOrderId] UNIQUEIDENTIFIER NULL,
     [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentNumber] NVARCHAR(40) NOT NULL,
@@ -41,6 +42,7 @@ CREATE TABLE [dbo].[GoodsReceipts]
     CONSTRAINT [FK_GoodsReceipts_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_GoodsReceipts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_GoodsReceipts_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
+    CONSTRAINT [FK_GoodsReceipts_PartySite] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [FK_GoodsReceipts_PurchaseOrder] FOREIGN KEY ([PurchaseOrderId]) REFERENCES [purchasing].[PurchaseOrders] ([PurchaseOrderId]),
     CONSTRAINT [FK_GoodsReceipts_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_GoodsReceipts_SupportFiscalSeries] FOREIGN KEY ([SupportFiscalSeriesId]) REFERENCES [dbo].[FiscalSeries] ([SeriesId]),
@@ -122,6 +124,7 @@ CREATE TABLE [purchasing].[GoodsReceiptCostDocuments]
     [CostDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [GoodsReceiptId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NULL,
     [PurchaseEvidenceType] NVARCHAR(40) NOT NULL,
     [DocumentNumber] NVARCHAR(80) NOT NULL,
     [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -141,6 +144,7 @@ CREATE TABLE [purchasing].[GoodsReceiptCostDocuments]
     CONSTRAINT [PK_GoodsReceiptCostDocuments] PRIMARY KEY ([CostDocumentId]),
     CONSTRAINT [FK_GoodsReceiptCostDocuments_Receipt] FOREIGN KEY ([GoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts]([GoodsReceiptId]),
     CONSTRAINT [FK_GoodsReceiptCostDocuments_Supplier] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers]([SupplierId]),
+    CONSTRAINT [FK_GoodsReceiptCostDocuments_PartySite] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites]([PartySiteId]),
     CONSTRAINT [UQ_GoodsReceiptCostDocuments_SupplierNumber] UNIQUE ([SupplierId],[DocumentNumber]),
     CONSTRAINT [CK_GoodsReceiptCostDocuments_Evidence] CHECK ([PurchaseEvidenceType] IN (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher',N'ForeignCommercialInvoice',N'ImportDeclaration')),
     CONSTRAINT [CK_GoodsReceiptCostDocuments_Amounts] CHECK ([ExchangeRate]>0 AND [NetAmount]>=0 AND [TaxAmount]>=0 AND [GrandTotal]=[NetAmount]+[TaxAmount] AND [FunctionalNetAmount]>=0 AND [FunctionalTaxAmount]>=0 AND [FunctionalGrandTotal]=[FunctionalNetAmount]+[FunctionalTaxAmount]),
@@ -242,6 +246,7 @@ CREATE TABLE [dbo].[Payables]
     [PayableId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NULL,
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(64) NOT NULL,
     [DocumentNumber] NVARCHAR(80) NOT NULL,
@@ -259,6 +264,7 @@ CREATE TABLE [dbo].[Payables]
     CONSTRAINT [PK_Payables] PRIMARY KEY CLUSTERED ([PayableId]),
     CONSTRAINT [FK_Payables_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_Payables_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
+    CONSTRAINT [FK_Payables_PartySites] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [FK_Payables_SourceJob] FOREIGN KEY ([SourceDocumentId], [SourceDocumentType]) REFERENCES [dbo].[AccountingPostingJobs] ([SourceDocumentId], [SourceDocumentType]),
     CONSTRAINT [FK_Payables_ParentGoodsReceipt] FOREIGN KEY ([ParentGoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts]([GoodsReceiptId]),
     CONSTRAINT [UQ_Payables_Source] UNIQUE ([SourceDocumentId], [SourceDocumentType]),
@@ -267,6 +273,8 @@ CREATE TABLE [dbo].[Payables]
 );
 GO
 CREATE INDEX [IX_Payables_Business_Due] ON [dbo].[Payables] ([BusinessId], [Status], [DueDate]);
+GO
+CREATE INDEX [IX_Payables_Business_Supplier_Site] ON [dbo].[Payables] ([BusinessId], [SupplierId], [PartySiteId], [Status], [DueDate]);
 GO
 
 CREATE TABLE [dbo].[PayableTransactions]
