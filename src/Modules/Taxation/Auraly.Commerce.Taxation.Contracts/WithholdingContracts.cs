@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Auraly.Commerce.Taxation.Contracts;
 
 public static class TaxationPermissionCodes
@@ -70,6 +72,18 @@ public sealed record WithholdingLineSnapshot(
     string BaseKind, decimal TaxableBase, decimal Rate, decimal Amount,
     string? JurisdictionCode);
 
+public sealed record WithholdingAdjustmentRequest(
+    Guid RuleId, string Action, decimal? TaxableBase, decimal? Amount, string Reason);
+
+public sealed record WithholdingAdjustmentSnapshot(
+    Guid RuleId, int RuleVersion, string Action, decimal? AutomaticTaxableBase,
+    decimal? AutomaticAmount, decimal? TaxableBase, decimal? Amount,
+    string Reason, Guid AdjustedByUserId);
+
 public sealed record WithholdingCalculationSnapshot(
     decimal GrossAmount, decimal WithholdingTotal, decimal NetAmount,
-    IReadOnlyList<WithholdingLineSnapshot> Lines);
+    IReadOnlyList<WithholdingLineSnapshot> Lines,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<WithholdingAdjustmentSnapshot>? Adjustments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ReviewHash = null);

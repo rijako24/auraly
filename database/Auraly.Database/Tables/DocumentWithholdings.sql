@@ -6,11 +6,13 @@ CREATE TABLE [dbo].[DocumentWithholdingSnapshots]
     [GrossAmount] DECIMAL(19,4) NOT NULL,
     [WithholdingTotal] DECIMAL(19,4) NOT NULL,
     [NetAmount] DECIMAL(19,4) NOT NULL,
+    [AdjustmentsJson] NVARCHAR(MAX) NULL,
     [RecognizedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_DocumentWithholdingSnapshots] PRIMARY KEY ([DocumentId],[DocumentType]),
     CONSTRAINT [FK_DocumentWithholdingSnapshots_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [CK_DocumentWithholdingSnapshots_Reconcile] CHECK ([GrossAmount]-[WithholdingTotal]=[NetAmount]),
-    CONSTRAINT [CK_DocumentWithholdingSnapshots_Amounts] CHECK ([GrossAmount]>=0 AND [WithholdingTotal]>=0 AND [NetAmount]>=0)
+    CONSTRAINT [CK_DocumentWithholdingSnapshots_Amounts] CHECK ([GrossAmount]>=0 AND [WithholdingTotal]>=0 AND [NetAmount]>=0),
+    CONSTRAINT [CK_DocumentWithholdingSnapshots_AdjustmentsJson] CHECK ([AdjustmentsJson] IS NULL OR ISJSON([AdjustmentsJson])=1)
 );
 GO
 CREATE TABLE [dbo].[DocumentWithholdingLines]

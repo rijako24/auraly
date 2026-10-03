@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Diagnostics;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
+using Auraly.Commerce.Taxation.Contracts;
 using Microsoft.Data.SqlClient;
 using Xunit.Abstractions;
 
@@ -341,6 +342,106 @@ public sealed class GoodsReceiptWorkspaceTests(
             $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}" +
             $"?concurrencyToken={Uri.EscapeDataString(recovered.ConcurrencyToken)}");
         Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+    }
+
+    [Fact]
+    public async Task Manual_withholding_survives_draft_and_requires_reviewed_preview_before_confirmation()
+    {
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.ReadGoodsReceipts,
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts,
+            TaxationPermissionCodes.ManageWithholdingRules,
+            TaxationPermissionCodes.ViewWithholdingRules);
+        var request = CreateDraft();
+        var concept = "MAN-" + Guid.NewGuid().ToString("N")[..12];
+        var rule = new SaveWithholdingRuleRequest(fixture.BusinessId, concept,
+            "Retención adicional de compra", "IncomeTax", "Purchase", "Accrual",
+            "TaxExclusiveAmount", concept, null, 2.5m, 0m, [],
+            new DateOnly(2026, 1, 1), null, true);
+        using var createdRule = await client.PostAsJsonAsync(
+            "/api/commerce/v1/taxation/withholding-rules", rule);
+        createdRule.EnsureSuccessStatusCode();
+        var savedRule = (await createdRule.Content.ReadFromJsonAsync<WithholdingRuleView>())!;
+        var adjustment = new WithholdingAdjustmentRequest(savedRule.RuleId, "Add", 10m, 0.25m,
+            "Retención revisada para esta factura");
+        var costAdjustment = adjustment with { TaxableBase = 5m, Amount = 0.10m,
+            Reason = "Retención revisada para el flete" };
+        var costDocument = new GoodsReceiptCostDocumentRequest(
+            Guid.NewGuid(), fixture.SupplierId, PurchaseEvidenceTypes.SupplierElectronicInvoice,
+            $"FLETE-{Guid.NewGuid():N}", request.ReceivedAt, true, request.DueDate,
+            "COP", 1m, DateOnly.FromDateTime(request.ReceivedAt.Date), "FunctionalCurrency",
+            [new GoodsReceiptCostLineRequest(1, PurchaseCostKinds.Freight, "Flete", 5m, 5m,
+                "00", 0m, 0m, PurchasingTaxTreatments.NotApplicable,
+                PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)],
+            WithholdingAdjustments: [costAdjustment]);
+        try
+        {
+            request = request with { WithholdingConceptCode = null,
+                WithholdingAdjustments = [adjustment], AdditionalCostDocuments = [costDocument] };
+            using var withoutPermission = fixture.CreateAdminClient(
+                PurchasingPermissionCodes.CreateGoodsReceipts);
+            using (var denied = await withoutPermission.PutAsJsonAsync(
+                $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}", request))
+                Assert.Equal(System.Net.HttpStatusCode.Forbidden, denied.StatusCode);
+            using var saved = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}", request);
+            Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync());
+            var recovered = await client.GetFromJsonAsync<GoodsReceiptDraft>(
+                $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}");
+            Assert.Equal(adjustment, Assert.Single(recovered!.WithholdingAdjustments!));
+            Assert.Equal(costAdjustment, Assert.Single(Assert.Single(
+                recovered.AdditionalCostDocuments!).WithholdingAdjustments!));
+
+            var previewRequest = new PreviewGoodsReceiptWithholdingRequest(
+                fixture.BusinessId, fixture.SupplierId, request.SupplierInvoiceDate!.Value,
+                request.Lines, PurchaseEvidenceType: PurchaseEvidenceTypes.SupplierElectronicInvoice,
+                WithholdingAdjustments: [adjustment]);
+            using var previewResponse = await client.PostAsJsonAsync(
+                "/api/commerce/v1/goods-receipts/withholding-preview", previewRequest);
+            Assert.True(previewResponse.IsSuccessStatusCode,
+                await previewResponse.Content.ReadAsStringAsync());
+            var preview = (await previewResponse.Content.ReadFromJsonAsync<WithholdingCalculationSnapshot>())!;
+            Assert.Contains(preview.Lines, line => line.RuleId == savedRule.RuleId && line.Amount == 0.25m);
+            Assert.NotNull(preview.ReviewHash);
+            using var costPreviewResponse = await client.PostAsJsonAsync(
+                "/api/commerce/v1/goods-receipts/cost-withholding-preview",
+                new PreviewGoodsReceiptCostWithholdingRequest(fixture.BusinessId, costDocument));
+            Assert.True(costPreviewResponse.IsSuccessStatusCode,
+                await costPreviewResponse.Content.ReadAsStringAsync());
+            var costPreview = (await costPreviewResponse.Content.ReadFromJsonAsync<WithholdingCalculationSnapshot>())!;
+            Assert.NotNull(costPreview.ReviewHash);
+            Assert.Equal(0.10m, costPreview.WithholdingTotal);
+
+            var confirmation = new ConfirmGoodsReceiptRequest(
+                request.DraftId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+                request.SupplierInvoiceNumber, request.SupplierInvoiceDate, request.ReceivedAt,
+                request.CreatesPayable, request.DueDate, request.CurrencyCode, request.Notes,
+                request.Lines, PurchaseEvidenceType: PurchaseEvidenceTypes.SupplierElectronicInvoice,
+                WithholdingAdjustments: [adjustment], WithholdingReviewHash: "stale",
+                AdditionalCostDocuments: [costDocument with { WithholdingReviewHash = costPreview.ReviewHash }]);
+            using (var stale = await SendConfirmationAsync(client, confirmation))
+                Assert.Equal(System.Net.HttpStatusCode.Conflict, stale.StatusCode);
+            using var accepted = await SendConfirmationAsync(client,
+                confirmation with { WithholdingReviewHash = preview.ReviewHash });
+            Assert.Equal(System.Net.HttpStatusCode.Accepted, accepted.StatusCode);
+        }
+        finally
+        {
+            using var disabled = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/taxation/withholding-rules/{savedRule.RuleId}",
+                rule with { IsActive = false });
+            disabled.EnsureSuccessStatusCode();
+        }
+    }
+
+    private static async Task<HttpResponseMessage> SendConfirmationAsync(
+        HttpClient client, ConfirmGoodsReceiptRequest request)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Post,
+            "/api/commerce/v1/goods-receipts/confirm") { Content = JsonContent.Create(request) };
+        message.Headers.Add("Idempotency-Key", request.DocumentId.ToString("N"));
+        return await client.SendAsync(message);
     }
 
     [Fact]

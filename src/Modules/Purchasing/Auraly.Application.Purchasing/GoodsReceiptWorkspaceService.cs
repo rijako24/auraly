@@ -88,6 +88,12 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
         CancellationToken cancellationToken = default)
     {
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
+        if (request.WithholdingAdjustments is { Count: > 0 } &&
+            !user.Permissions.Contains(Auraly.Commerce.Taxation.Contracts.TaxationPermissionCodes.ManageWithholdingRules))
+            throw new PurchasingForbiddenException("No tienes permiso para ajustar retenciones manualmente.");
+        if ((request.AdditionalCostDocuments ?? []).Any(document => document.WithholdingAdjustments is { Count: > 0 }) &&
+            !user.Permissions.Contains(Auraly.Commerce.Taxation.Contracts.TaxationPermissionCodes.ManageWithholdingRules))
+            throw new PurchasingForbiddenException("No tienes permiso para ajustar retenciones manualmente.");
         if (user.BusinessId != request.BusinessId)
             throw new PurchasingForbiddenException("El borrador pertenece a otra sede.");
         if (request.DraftId == Guid.Empty) throw new PurchasingValidationException("Falta el identificador del borrador.");

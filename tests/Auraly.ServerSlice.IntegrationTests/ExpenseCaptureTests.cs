@@ -43,6 +43,11 @@ public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputH
         using var ruleResponse = await client.PostAsJsonAsync("/api/commerce/v1/taxation/withholding-rules", rule);
         ruleResponse.EnsureSuccessStatusCode();
         var savedRule = (await ruleResponse.Content.ReadFromJsonAsync<WithholdingRuleView>())!;
+        var manualRule = rule with { Code = "MAN-" + Guid.NewGuid().ToString("N")[..12],
+            ConceptCode = "MAN-" + Guid.NewGuid().ToString("N")[..12], Name = "Retención agregada manualmente" };
+        using var manualRuleResponse = await client.PostAsJsonAsync("/api/commerce/v1/taxation/withholding-rules", manualRule);
+        manualRuleResponse.EnsureSuccessStatusCode();
+        var savedManualRule = (await manualRuleResponse.Content.ReadFromJsonAsync<WithholdingRuleView>())!;
         try
         {
             using (var profile = await client.PutAsJsonAsync($"/api/commerce/v1/taxation/counterparty-profiles/{fixture.SupplierId}",
@@ -132,6 +137,53 @@ public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputH
                 Assert.Equal(142_800m, reader.GetDecimal(0)); Assert.Equal(reader.GetDecimal(0), reader.GetDecimal(1));
                 Assert.Equal(131_400m, reader.GetDecimal(2));
             }
+            var adjustments = new[] {
+                new WithholdingAdjustmentRequest(savedRule.RuleId, "Override", 120_000m, 2_400m, "Tarifa pactada según revisión contable"),
+                new WithholdingAdjustmentRequest(savedManualRule.RuleId, "Add", 10_000m, 100m, "Retención específica de esta operación") };
+            var adjustedRequest = request with { ExpenseId = Guid.NewGuid(),
+                SupplierDocumentNumber = Guid.NewGuid().ToString("N"), CalculationHash = null,
+                WithholdingAdjustments = adjustments };
+            using (var noPermission = await creator.PostAsJsonAsync("/api/commerce/v1/expenses/preview", adjustedRequest))
+                Assert.Equal(HttpStatusCode.Forbidden, noPermission.StatusCode);
+            using (var invalidAdjustment = await client.PostAsJsonAsync("/api/commerce/v1/expenses/preview",
+                adjustedRequest with { WithholdingAdjustments = [adjustments[0] with { Reason = "" }] }))
+                Assert.Equal(HttpStatusCode.BadRequest, invalidAdjustment.StatusCode);
+            using var adjustedPreviewResponse = await client.PostAsJsonAsync("/api/commerce/v1/expenses/preview", adjustedRequest);
+            adjustedPreviewResponse.EnsureSuccessStatusCode();
+            var adjustedPreview = (await adjustedPreviewResponse.Content.ReadFromJsonAsync<ExpensePreview>())!;
+            Assert.Equal(2_500m, adjustedPreview.Withholding.WithholdingTotal);
+            Assert.Equal(140_300m, adjustedPreview.Withholding.NetAmount);
+            Assert.Equal(2, adjustedPreview.Withholding.Adjustments!.Count);
+            using (var staleAdjustment = await SendAsync(client, adjustedRequest with {
+                CalculationHash = adjustedPreview.CalculationHash,
+                WithholdingAdjustments = [adjustments[0] with { Amount = 2_500m }, adjustments[1]] }))
+                Assert.Equal(HttpStatusCode.Conflict, staleAdjustment.StatusCode);
+            using (var adjustedAcceptance = await SendAsync(client, adjustedRequest with {
+                CalculationHash = adjustedPreview.CalculationHash }))
+                Assert.Equal(HttpStatusCode.Accepted, adjustedAcceptance.StatusCode);
+            var adjustedDetail = (await client.GetFromJsonAsync<ExpenseDetail>(
+                $"/api/commerce/v1/expenses/{adjustedRequest.ExpenseId}"))!;
+            Assert.Equal(140_300m, adjustedDetail.Payable!.OriginalAmount);
+            Assert.Equal(2_500m, adjustedDetail.Withholding!.WithholdingTotal);
+            Assert.Equal("Override", adjustedDetail.Withholding.Adjustments![0].Action);
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var command = new SqlCommand("""
+                    SELECT AdjustmentsJson FROM dbo.DocumentWithholdingSnapshots
+                    WHERE DocumentId=@Id AND DocumentType=N'Expense';
+                    """, connection);
+                command.Parameters.AddWithValue("@Id", adjustedRequest.ExpenseId);
+                Assert.Contains("Tarifa pactada", (string)(await command.ExecuteScalarAsync())!);
+            }
+            using var excludedPreviewResponse = await client.PostAsJsonAsync("/api/commerce/v1/expenses/preview",
+                request with { ExpenseId = Guid.NewGuid(), CalculationHash = null,
+                    WithholdingAdjustments = [new WithholdingAdjustmentRequest(savedRule.RuleId,
+                        "Exclude", null, null, "No aplica en esta operación")] });
+            excludedPreviewResponse.EnsureSuccessStatusCode();
+            var excludedPreview = (await excludedPreviewResponse.Content.ReadFromJsonAsync<ExpensePreview>())!;
+            Assert.Empty(excludedPreview.Withholding.Lines);
+            Assert.Equal(0m, excludedPreview.Withholding.WithholdingTotal);
             // Current tax configuration cannot change an accepted replay.
             using (var changed = await client.PutAsJsonAsync($"/api/commerce/v1/taxation/withholding-rules/{savedRule.RuleId}", rule with { Rate = 3m }))
                 changed.EnsureSuccessStatusCode();
@@ -165,6 +217,9 @@ public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputH
         }
         finally
         {
+            using var deactivateManual = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/taxation/withholding-rules/{savedManualRule.RuleId}", manualRule with { IsActive = false });
+            deactivateManual.EnsureSuccessStatusCode();
             using var deactivate = await client.PutAsJsonAsync($"/api/commerce/v1/taxation/withholding-rules/{savedRule.RuleId}", rule with { IsActive = false });
             deactivate.EnsureSuccessStatusCode();
             using var restore = await client.PutAsJsonAsync($"/api/commerce/v1/taxation/counterparty-profiles/{fixture.SupplierId}",

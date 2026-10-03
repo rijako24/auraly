@@ -17,6 +17,8 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     [ExchangeRateDate] DATE NULL,
     [ExchangeRateSource] NVARCHAR(64) NOT NULL CONSTRAINT [DF_GoodsReceiptDrafts_ExchangeRateSource] DEFAULT N'FunctionalCurrency',
     [AdditionalCostsJson] NVARCHAR(MAX) NULL,
+    [WithholdingConceptCode] NVARCHAR(32) NULL,
+    [WithholdingAdjustmentsJson] NVARCHAR(MAX) NULL,
     [Notes] NVARCHAR(1000) NULL,
     [NetAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
@@ -36,7 +38,8 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     CONSTRAINT [CK_GoodsReceiptDrafts_Payable] CHECK (([CreatesPayable] = 0) OR ([DueDate] IS NOT NULL)),
     CONSTRAINT [CK_GoodsReceiptDrafts_PurchaseEvidenceType] CHECK ([PurchaseEvidenceType] IS NULL OR [PurchaseEvidenceType] IN
       (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher',N'ForeignCommercialInvoice')),
-    CONSTRAINT [CK_GoodsReceiptDrafts_AdditionalCostsJson] CHECK ([AdditionalCostsJson] IS NULL OR ISJSON([AdditionalCostsJson])=1)
+    CONSTRAINT [CK_GoodsReceiptDrafts_AdditionalCostsJson] CHECK ([AdditionalCostsJson] IS NULL OR ISJSON([AdditionalCostsJson])=1),
+    CONSTRAINT [CK_GoodsReceiptDrafts_WithholdingAdjustmentsJson] CHECK ([WithholdingAdjustmentsJson] IS NULL OR ISJSON([WithholdingAdjustmentsJson])=1)
 );
 GO
 CREATE INDEX [IX_GoodsReceiptDrafts_Business_Updated]

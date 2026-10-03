@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AccountSelect } from "@/components/accounting/account-select";
@@ -18,6 +19,9 @@ import { allowedPurchaseEvidenceTypes } from "@/lib/purchase-evidence-policy";
 import { expensesApi, type ConfirmExpense, type ExpenseLineInput, type ExpenseOptions, type ExpensePreview } from "@/services/api/expenses";
 import type { PurchaseEvidenceType } from "@/services/api/goods-receipts";
 import { ExpenseBreakdown } from "./expense-breakdown";
+import { WithholdingAdjustmentEditor } from "@/components/taxation/withholding-adjustment-editor";
+import { taxationApi } from "@/services/api/taxation";
+import { useAuthStore } from "@/stores/auth-store";
 
 type EditableLine = ExpenseLineInput & { key: string; accountCode: string; accountName: string };
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 4 });
@@ -33,6 +37,10 @@ function newLine(options: ExpenseOptions): EditableLine {
 export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   businessId: string; options: ExpenseOptions; onSaved: () => Promise<void>; onBusyChange: (busy: boolean) => void;
 }) {
+  const canAdjustWithholdings = useAuthStore(state =>
+    state.user?.permissions?.includes("commerce.taxation.withholdings.manage") ?? false);
+  const withholdingRules = useQuery({queryKey:["withholding-rules",businessId,"purchase-adjustments"],
+    queryFn:() => taxationApi.listRules(false), enabled:canAdjustWithholdings});
   const [party, setParty] = useState<PartyRoleSelection | null>(null);
   const [siteOption, setSiteOption] = useState<PagedEntityOption | null>(null);
   const [lines, setLines] = useState<EditableLine[]>([]);
@@ -55,7 +63,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   function change(patch: Partial<ConfirmExpense>) {
     const next = { ...form, ...patch };
     setForm(next);
-    if ("supplierId" in patch || "issuedAt" in patch || "dueDate" in patch || "purchaseEvidenceType" in patch) {
+    if ("supplierId" in patch || "issuedAt" in patch || "dueDate" in patch || "purchaseEvidenceType" in patch || "withholdingAdjustments" in patch) {
       invalidate();
       if (canPreview(lines, next)) void calculate(lines, next);
     } else setError(null);
@@ -172,8 +180,12 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
     {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
     {lines.length > 0 && <section className="space-y-4 rounded-xl border p-4" aria-label="Cálculo del gasto">
       {phase === "calculate" && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Calculando retenciones…</p>}
-      {preview ? <><ExpenseBreakdown withholding={preview.withholding}/>{preview.diagnostics.map((message, index) => <p key={index} className={`rounded-lg p-3 text-sm ${preview.canConfirm ? "bg-muted text-muted-foreground" : "bg-destructive/5 text-destructive"}`}>{message}</p>)}</> :
+      {preview ? <><ExpenseBreakdown withholding={preview.withholding} hideWithholdingLines/>{preview.diagnostics.map((message, index) => <p key={index} className={`rounded-lg p-3 text-sm ${preview.canConfirm ? "bg-muted text-muted-foreground" : "bg-destructive/5 text-destructive"}`}>{message}</p>)}</> :
         phase !== "calculate" && !error && <p className="text-sm text-muted-foreground">{!form.supplierId ? "Selecciona el proveedor para calcular las retenciones de estos gastos." : "Completa las fechas válidas para calcular las retenciones."}</p>}
+      {(preview || !!form.withholdingAdjustments?.length) && <WithholdingAdjustmentEditor calculation={preview?.withholding ?? null}
+        adjustments={form.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
+        disabled={!!phase || !canAdjustWithholdings || withholdingRules.isLoading}
+        onChange={withholdingAdjustments => change({withholdingAdjustments})}/>}
     </section>}
     <DialogFooter className="sticky bottom-0 border-t bg-background py-3">
       <Button type="submit" disabled={!!phase || !valid || preview?.canConfirm === false}>{phase === "confirm" && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}{phase === "confirm" ? "Confirmando gasto…" : "Confirmar gasto"}</Button>
