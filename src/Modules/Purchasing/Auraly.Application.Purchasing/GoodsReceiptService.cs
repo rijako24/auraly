@@ -3,6 +3,9 @@ using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace Auraly.Application.Purchasing;
 
@@ -35,6 +38,7 @@ public sealed class GoodsReceiptService(
         if (user.BusinessId != request.BusinessId)
             throw new PurchasingForbiddenException("La recepción pertenece a otra sede.");
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
+        RequireWithholdingAdjustmentPermission(user, request.WithholdingAdjustments);
         if (request.SupplierId == Guid.Empty)
             throw new PurchasingValidationException("Selecciona un proveedor.");
         if (request.SupplierInvoiceDate == default)
@@ -53,7 +57,9 @@ public sealed class GoodsReceiptService(
         var calculation = Calculate(normalizedLines);
         if (request.ExchangeRate <= 0)
             throw new PurchasingValidationException("La tasa de cambio debe ser positiva.");
-        return await CalculateWithholdingAsync(
+        var plan = await withholdingService.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId,
+            [request.SupplierId], cancellationToken);
+        return CalculateWithholding(plan,
             user, request.SupplierId, request.WithholdingConceptCode,
             request.WithholdingJurisdictionCode,
             FunctionalCalculation(
@@ -61,7 +67,7 @@ public sealed class GoodsReceiptService(
                     MidpointRounding.AwayFromZero),
                 decimal.Round(calculation.TaxAmount * request.ExchangeRate, 4,
                     MidpointRounding.AwayFromZero)),
-            request.SupplierInvoiceDate, cancellationToken);
+            request.SupplierInvoiceDate, request.WithholdingAdjustments);
     }
 
     public async Task<WithholdingCalculationSnapshot> PreviewCostWithholdingAsync(
@@ -75,6 +81,7 @@ public sealed class GoodsReceiptService(
             throw new PurchasingForbiddenException("El documento de costo pertenece a otra sede.");
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
         var document = request.Document ?? throw new PurchasingValidationException("Selecciona un documento de costo.");
+        RequireWithholdingAdjustmentPermission(user, document.WithholdingAdjustments);
         if (document.SupplierId == Guid.Empty || document.IssuedAt == default ||
             document.ExchangeRate <= 0 || document.Lines is null || document.Lines.Count == 0)
             throw new PurchasingValidationException("Completa proveedor, emisión, tasa de cambio y conceptos.");
@@ -91,10 +98,12 @@ public sealed class GoodsReceiptService(
                 MidpointRounding.AwayFromZero),
             decimal.Round(document.Lines.Sum(line => line.TaxAmount) * document.ExchangeRate, 4,
                 MidpointRounding.AwayFromZero));
-        return await CalculateWithholdingAsync(
+        var plan = await withholdingService.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId,
+            [document.SupplierId], cancellationToken);
+        return CalculateWithholding(plan,
             user, document.SupplierId, document.WithholdingConceptCode,
             document.WithholdingJurisdictionCode, calculation,
-            document.IssuedAt, cancellationToken);
+            document.IssuedAt, document.WithholdingAdjustments);
     }
 
     public async Task<GoodsReceiptAcceptance> ConfirmAsync(
@@ -165,6 +174,9 @@ public sealed class GoodsReceiptService(
             { OverReceiptReason = Normalize(line.OverReceiptReason, 500) }).ToArray(),
             AdditionalCostDocuments = NormalizeAdditionalDocuments(request.AdditionalCostDocuments)
         };
+        RequireWithholdingAdjustmentPermission(user, normalizedRequest.WithholdingAdjustments);
+        foreach (var document in normalizedRequest.AdditionalCostDocuments ?? [])
+            RequireWithholdingAdjustmentPermission(user, document.WithholdingAdjustments);
         if ((normalizedRequest.AdditionalCostDocuments ?? []).Select(value => value.CostDocumentId)
             .Append(request.DocumentId).Distinct().Count() !=
             (normalizedRequest.AdditionalCostDocuments?.Count ?? 0) + 1)
@@ -184,7 +196,9 @@ public sealed class GoodsReceiptService(
             user, request.SupplierId, request.WithholdingConceptCode,
             request.WithholdingJurisdictionCode, FunctionalCalculation(
                 costCalculation.FunctionalNetAmount, costCalculation.FunctionalTaxAmount),
-            request.SupplierInvoiceDate.Value);
+            request.SupplierInvoiceDate.Value, request.WithholdingAdjustments);
+        RequireReviewedWithholding(request.WithholdingAdjustments,
+            request.WithholdingReviewHash, withholding.ReviewHash);
         var additionalWithholdings = new Dictionary<Guid, WithholdingCalculationSnapshot>();
         foreach (var document in costCalculation.AdditionalDocuments)
         {
@@ -192,7 +206,10 @@ public sealed class GoodsReceiptService(
                 user, document.Request.SupplierId, document.Request.WithholdingConceptCode,
                 document.Request.WithholdingJurisdictionCode,
                 FunctionalCalculation(document.FunctionalNetAmount, document.FunctionalTaxAmount),
-                document.Request.IssuedAt);
+                document.Request.IssuedAt, document.Request.WithholdingAdjustments);
+            RequireReviewedWithholding(document.Request.WithholdingAdjustments,
+                document.Request.WithholdingReviewHash,
+                additionalWithholdings[document.Request.CostDocumentId].ReviewHash);
         }
 
         var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), normalizedRequest,
@@ -214,21 +231,54 @@ public sealed class GoodsReceiptService(
         string? conceptCode,
         string? jurisdictionCode,
         GoodsReceiptCalculation calculation,
-        DateTimeOffset occurredAt) =>
-        withholdingService.Calculate(plan,
+        DateTimeOffset occurredAt,
+        IReadOnlyList<WithholdingAdjustmentRequest>? adjustments) =>
+        ReviewedWithholding(ApplyValidatedAdjustments(plan, withholdingService.Calculate(plan,
             new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
                 WithholdingRecognitionMoments.Accrual, supplierId, conceptCode,
-                jurisdictionCode, calculation.NetAmount, calculation.TaxAmount, occurredAt));
+                jurisdictionCode, calculation.NetAmount, calculation.TaxAmount, occurredAt)),
+            adjustments, user.UserId, occurredAt, calculation.TaxAmount),
+            user.BusinessId, supplierId, conceptCode, jurisdictionCode, occurredAt,
+            calculation, adjustments);
 
-    private Task<WithholdingCalculationSnapshot> CalculateWithholdingAsync(
-        PurchasingUserIdentity user, Guid supplierId, string? conceptCode,
-        string? jurisdictionCode, GoodsReceiptCalculation calculation,
-        DateTimeOffset occurredAt, CancellationToken cancellationToken) =>
-        withholdingService.CalculateAsync(user.TenantId, user.BusinessId,
-            new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
-                WithholdingRecognitionMoments.Accrual, supplierId, conceptCode,
-                jurisdictionCode, calculation.NetAmount, calculation.TaxAmount, occurredAt),
-            cancellationToken);
+    private WithholdingCalculationSnapshot ApplyValidatedAdjustments(
+        WithholdingCalculationPlan plan, WithholdingCalculationSnapshot automatic,
+        IReadOnlyList<WithholdingAdjustmentRequest>? adjustments, Guid userId,
+        DateTimeOffset occurredAt, decimal vatAmount)
+    {
+        try { return withholdingService.ApplyAdjustments(plan, automatic, adjustments, userId, occurredAt, vatAmount); }
+        catch (TaxationValidationException error) { throw new PurchasingValidationException(error.Message); }
+    }
+
+    private static WithholdingCalculationSnapshot ReviewedWithholding(
+        WithholdingCalculationSnapshot snapshot, Guid businessId, Guid supplierId,
+        string? conceptCode, string? jurisdictionCode, DateTimeOffset occurredAt,
+        GoodsReceiptCalculation calculation, IReadOnlyList<WithholdingAdjustmentRequest>? adjustments)
+    {
+        if (adjustments is not { Count: > 0 }) return snapshot;
+        var input = JsonSerializer.Serialize(new {
+            businessId, supplierId, conceptCode, jurisdictionCode, occurredAt,
+            calculation.NetAmount, calculation.TaxAmount, snapshot
+        });
+        return snapshot with { ReviewHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input))) };
+    }
+
+    private static void RequireReviewedWithholding(
+        IReadOnlyList<WithholdingAdjustmentRequest>? adjustments, string? submittedHash, string? calculatedHash)
+    {
+        if (adjustments is { Count: > 0 } &&
+            !string.Equals(submittedHash, calculatedHash, StringComparison.Ordinal))
+            throw new PurchasingConflictException(
+                "El cálculo de retenciones cambió o no fue revisado. Revisa los valores antes de confirmar.");
+    }
+
+    private static void RequireWithholdingAdjustmentPermission(PurchasingUserIdentity user,
+        IReadOnlyList<WithholdingAdjustmentRequest>? adjustments)
+    {
+        if (adjustments is { Count: > 0 } &&
+            !user.Permissions.Contains(TaxationPermissionCodes.ManageWithholdingRules))
+            throw new PurchasingForbiddenException("No tienes permiso para ajustar retenciones manualmente.");
+    }
 
     private static GoodsReceiptCalculation Calculate(
         IReadOnlyCollection<GoodsReceiptLineRequest> normalizedLines)

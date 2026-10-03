@@ -45,6 +45,8 @@ import {
   type PurchaseCostAllocationMethod, type PurchaseCostKind,
 } from "@/services/api/goods-receipts";
 import { useAuthStore } from "@/stores/auth-store";
+import { taxationApi, type WithholdingAdjustment } from "@/services/api/taxation";
+import { WithholdingAdjustmentEditor } from "@/components/taxation/withholding-adjustment-editor";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { partiesApi, type PartySiteRoleOption } from "@/services/api/parties";
@@ -75,6 +77,7 @@ type EditorDraft = {
   purchaseEvidenceType: PurchaseEvidenceType | "";
   createsPayable: boolean; dueDate: string; notes: string;
   withholdingConceptCode: string; withholdingJurisdictionCode: string;
+  withholdingAdjustments?: WithholdingAdjustment[];
   lines: GoodsReceiptLine[]; concurrencyToken: string | null;
   purchaseOrderId: string;
   currencyCode: string; exchangeRate: number; exchangeRateDate: string; exchangeRateSource: string;
@@ -109,6 +112,7 @@ export default function GoodsReceiptsPage() {
   const canCreate = permissions.has("purchasing.goods-receipts.create");
   const canConfirm = permissions.has("purchasing.goods-receipts.confirm");
   const canAssociateProducts = permissions.has("catalog.costs.manage");
+  const canAdjustWithholdings = permissions.has("commerce.taxation.withholdings.manage");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
@@ -280,7 +284,8 @@ export default function GoodsReceiptsPage() {
       onRowClick={openEntry} enableRowSelection={false} />
 
     <ReceiptEditor key={editor?.draftId ?? "closed"} open={!!editor} draft={editor} businessId={businessId}
-      canConfirm={canConfirm} canAssociateProducts={canAssociateProducts} onChange={rememberLocalDraft}
+      canConfirm={canConfirm} canAssociateProducts={canAssociateProducts}
+      canAdjustWithholdings={canAdjustWithholdings} onChange={rememberLocalDraft}
       onClose={() => {
         if (localDraftKey) void localDrafts.flush(localDraftKey).catch(() =>
           toast.error("No fue posible guardar la recuperación local de esta recepción."));
@@ -488,10 +493,10 @@ function DetailValue({ label, value }: { label: string; value: string }) {
 }
 
 function ReceiptEditor({
-  open, draft, businessId, canConfirm, canAssociateProducts, onChange, onClose, onClear,
+  open, draft, businessId, canConfirm, canAssociateProducts, canAdjustWithholdings, onChange, onClose, onClear,
 }: {
   open: boolean; draft?: EditorDraft; businessId: string | null; canConfirm: boolean;
-  canAssociateProducts: boolean;
+  canAssociateProducts: boolean; canAdjustWithholdings: boolean;
   onChange: (draft: EditorDraft) => void; onClose: () => void; onClear: () => Promise<void>;
 }) {
   const options = useGoodsReceiptOptions();
@@ -507,6 +512,8 @@ function ReceiptEditor({
     enabled: open && !!businessId,
   });
   const subscription = useQuery({ queryKey: ["tenant-commercial", "subscription"], queryFn: tenantCommercialApi.subscription });
+  const withholdingRules = useQuery({queryKey:["withholding-rules",businessId,"purchase-adjustments"],
+    queryFn:() => taxationApi.listRules(false), enabled:open && canAdjustWithholdings && !!businessId});
   const [productSearch, setProductSearch] = useState("");
   const [includeUnassociated, setIncludeUnassociated] = useState(false);
   const [productMenuOpen, setProductMenuOpen] = useState(false);
@@ -561,7 +568,7 @@ function ReceiptEditor({
     queryKey: [
       "goods-receipt-withholding-preview", businessId, draft?.supplierId,
       draft?.supplierInvoiceDate, draft?.purchaseEvidenceType,
-      draft?.withholdingConceptCode, draft?.exchangeRate, draft?.lines,
+      draft?.withholdingConceptCode, draft?.withholdingAdjustments, draft?.exchangeRate, draft?.lines,
     ],
     queryFn: () => {
       if (!businessId || !draft) throw new Error("La recepción no está lista para calcular retenciones.");
@@ -571,6 +578,7 @@ function ReceiptEditor({
         lines: draft.lines.map(withDerivedWeight),
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: null,
+        withholdingAdjustments: draft.withholdingAdjustments ?? null,
         purchaseEvidenceType: draft.purchaseEvidenceType as PurchaseEvidenceType,
         exchangeRate: draft.currencyCode === "COP" ? 1 : draft.exchangeRate,
       });
@@ -588,6 +596,13 @@ function ReceiptEditor({
         document.exchangeRate > 0 && document.lines.length > 0),
       staleTime: 10_000,
     })),
+  });
+  const editingCostWithholdingPreview = useQuery({
+    queryKey:["goods-receipt-cost-withholding-preview",businessId,editingCostDocument],
+    queryFn:() => goodsReceiptsApi.previewCostWithholding({businessId:businessId!,document:serializeCostDocuments([editingCostDocument!])[0]}),
+    enabled:Boolean(open && businessId && editingCostDocument?.supplierId && editingCostDocument.issuedAt &&
+      editingCostDocument.exchangeRate > 0 && editingCostDocument.lines.length > 0),
+    staleTime: 10_000,
   });
   const costSupplierIds = [...new Set((draft?.additionalCostDocuments ?? [])
     .map((document) => document.supplierId).filter(Boolean))];
@@ -759,6 +774,8 @@ function ReceiptEditor({
     purchaseOrderId: draft.purchaseOrderId || null,
     exchangeRate: draft.exchangeRate, exchangeRateDate: draft.exchangeRateDate || null,
     exchangeRateSource: draft.exchangeRateSource,
+    withholdingConceptCode: draft.withholdingConceptCode || null,
+    withholdingAdjustments: draft.withholdingAdjustments ?? null,
     additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments),
   });
 
@@ -948,6 +965,16 @@ function ReceiptEditor({
       return;
     }
     try {
+      if (draft.withholdingAdjustments?.length &&
+          (!withholdingPreview.data || withholdingPreview.isFetching || withholdingPreview.isError)) {
+        toast.error("Espera el cálculo actualizado de las retenciones antes de confirmar.");
+        return;
+      }
+      if (draft.additionalCostDocuments.some((document,index) => document.withholdingAdjustments?.length &&
+          (!costWithholdingPreviews[index]?.data || costWithholdingPreviews[index]?.isFetching || costWithholdingPreviews[index]?.isError))) {
+        toast.error("Revisa las retenciones de las facturas adicionales antes de confirmar.");
+        return;
+      }
       const accepted = await confirm.mutateAsync({
         documentId: draft.draftId, businessId, warehouseId: draft.warehouseId,
         supplierId: draft.supplierId, partySiteId: draft.partySiteId || null,
@@ -960,11 +987,15 @@ function ReceiptEditor({
         draftConcurrencyToken: null,
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: null,
+        withholdingAdjustments: draft.withholdingAdjustments ?? null,
+        withholdingReviewHash: withholdingPreview.data?.reviewHash ?? null,
         purchaseEvidenceType: draft.purchaseEvidenceType,
         purchaseOrderId: draft.purchaseOrderId || null,
         exchangeRate: draft.exchangeRate, exchangeRateDate: draft.exchangeRateDate || null,
         exchangeRateSource: draft.exchangeRateSource,
-        additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments),
+        additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments).map((document,index) => ({
+          ...document, withholdingReviewHash: costWithholdingPreviews[index]?.data?.reviewHash ?? null,
+        })),
       });
       try {
         await onClear();
@@ -1388,7 +1419,7 @@ function ReceiptEditor({
           </div>}
           {editingCostDocument && [editingCostDocument].map((document) => {
             const committedIndex = draft.additionalCostDocuments.findIndex((item) => item.costDocumentId === document.costDocumentId);
-            const withholding = committedIndex >= 0 ? costWithholdingPreviews[committedIndex] : undefined;
+            const withholding = editingCostWithholdingPreview;
             const rate = document.currencyCode === "COP" ? 1 : document.exchangeRate;
             const documentNet = document.lines.reduce((sum, line) => sum + line.amount, 0);
             const documentTax = document.lines.reduce((sum, line) => sum + line.taxAmount, 0);
@@ -1471,6 +1502,10 @@ function ReceiptEditor({
                 {withholding?.isFetching && <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">Calculando retenciones con el motor tributario…</p>}
                 {withholding?.isError && <p className="text-xs text-amber-700 md:col-span-2 xl:col-span-5">La vista previa no está disponible; la confirmación volverá a validarla.</p>}
               </div>
+              {(withholding.data || !!document.withholdingAdjustments?.length) && <WithholdingAdjustmentEditor calculation={withholding.data ?? null}
+                adjustments={document.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
+                disabled={!canAdjustWithholdings || withholdingRules.isLoading || withholding.isFetching}
+                onChange={withholdingAdjustments => updateCostDocument({withholdingAdjustments})}/>}
               </div>
               <DialogFooter className="border-t px-6 py-4">
                 <Button type="button" variant="outline" onClick={closeCostDocument}>Cancelar</Button>
@@ -1519,6 +1554,10 @@ function ReceiptEditor({
             </p>}
           </dl>
         </section>
+        {(withholdingPreview.data || !!draft.withholdingAdjustments?.length) && <WithholdingAdjustmentEditor calculation={withholdingPreview.data ?? null}
+          adjustments={draft.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
+          disabled={!canAdjustWithholdings || withholdingRules.isLoading || withholdingPreview.isFetching}
+          onChange={withholdingAdjustments => change({withholdingAdjustments})}/>}
 
         <section className="grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
           <Field label="Concepto fiscal de la compra">
@@ -1615,7 +1654,7 @@ function emptyDraft(): EditorDraft {
     supplierInvoiceNumber: "", supplierInvoiceDate: todayInput(), purchaseEvidenceType: "",
     receivedAt: localDateTime(), createsPayable: true, dueDate: plusDaysFrom(todayInput(),30),
     notes: "", lines: [], concurrencyToken: null,
-    withholdingConceptCode: "", withholdingJurisdictionCode: "", purchaseOrderId: "",
+    withholdingConceptCode: "", withholdingJurisdictionCode: "", withholdingAdjustments: [], purchaseOrderId: "",
     currencyCode: "COP", exchangeRate: 1, exchangeRateDate: todayInput(),
     exchangeRateSource: "FunctionalCurrency", additionalCostDocuments: [],
   };
@@ -1640,7 +1679,8 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
       totalGrossWeightKg: line.totalGrossWeightKg, totalVolumeM3: line.totalVolumeM3,
       unitGrossWeightKg: line.unitGrossWeightKg,
     })),
-    withholdingConceptCode: "", withholdingJurisdictionCode: "",
+    withholdingConceptCode: draft.withholdingConceptCode ?? "", withholdingJurisdictionCode: "",
+    withholdingAdjustments: draft.withholdingAdjustments ?? [],
     purchaseOrderId: draft.purchaseOrderId ?? "",
     concurrencyToken: draft.concurrencyToken,
     currencyCode: draft.currencyCode, exchangeRate: draft.exchangeRate ?? 1,

@@ -126,6 +126,9 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
             WithholdingJurisdictionCode = Optional(request.WithholdingJurisdictionCode, 16) };
         var replay = await store.FindReplayAsync(user, idempotencyKey.Trim(), normalized, amounts, ct);
         if (replay is not null) return replay;
+        RequireWithholdingAdjustmentPermission(user, normalized.WithholdingAdjustments);
+        if (normalized.Lines is null && normalized.WithholdingAdjustments is { Count: > 0 })
+            throw new ExpenseValidationException("Registra el gasto por líneas para ajustar retenciones manualmente.");
         if (normalized.Lines is null && normalized.PurchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher && amounts.VatAmount > 0)
             throw new ExpenseValidationException("Registra este comprobante interno por líneas y selecciona el IVA como mayor valor del gasto.");
         ExpenseResolution? resolution = null;
@@ -167,6 +170,7 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
     {
         Demand(user, ExpensePermissionCodes.Create);
         if (request.BusinessId != user.BusinessId) throw new ExpenseForbiddenException("El gasto pertenece a otra empresa.");
+        RequireWithholdingAdjustmentPermission(user, request.WithholdingAdjustments);
         if (request.SupplierId == Guid.Empty || request.IssuedAt == default || request.DueDate < request.IssuedAt)
             throw new ExpenseValidationException("Selecciona un proveedor y fechas válidas.");
         ValidateLines(request);
@@ -189,12 +193,28 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
         }
         catch (Auraly.Commerce.Taxation.Domain.WithholdingRuleException error)
         { throw new ExpenseValidationException($"Revisa la configuración de retenciones: {error.Message}"); }
+        WithholdingCalculationSnapshot finalCalculation;
+        try
+        {
+            finalCalculation = withholding.ApplyAdjustments(plan, result.Calculation,
+                request.WithholdingAdjustments, user.UserId, request.IssuedAt,
+                resolved.Lines.Sum(line => line.VatAmount));
+        }
+        catch (TaxationValidationException error) { throw new ExpenseValidationException(error.Message); }
         IReadOnlyList<string> diagnostics = hasProfile ? result.Diagnostics :
             ["Falta el perfil tributario del proveedor. En Terceros → Proveedores → Retenciones y perfil tributario, configura si aplica retención, sus responsabilidades y jurisdicción antes de confirmar."];
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new {
             request.BusinessId, request.SupplierId, request.IssuedAt, request.DueDate, request.PurchaseEvidenceType,
-            resolved.Lines, result.Calculation, diagnostics, hasProfile }))));
-        return new(resolved.Lines, result.Calculation, hash, diagnostics, hasProfile);
+            resolved.Lines, finalCalculation, diagnostics, hasProfile }))));
+        return new(resolved.Lines, finalCalculation, hash, diagnostics, hasProfile);
+    }
+
+    private static void RequireWithholdingAdjustmentPermission(ExpenseUserIdentity user,
+        IReadOnlyList<WithholdingAdjustmentRequest>? adjustments)
+    {
+        if (adjustments is { Count: > 0 } &&
+            !user.Permissions.Contains(TaxationPermissionCodes.ManageWithholdingRules))
+            throw new ExpenseForbiddenException("No tienes permiso para ajustar retenciones manualmente.");
     }
 
     private static void ValidateLines(ConfirmExpenseRequest request)

@@ -122,8 +122,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
     {
         await using (var command = new SqlCommand("""
             INSERT dbo.DocumentWithholdingSnapshots
-              (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt)
-            VALUES(@DocumentId,@DocumentType,@BusinessId,@Gross,@Withholding,@Net,@At);
+              (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt,AdjustmentsJson)
+            VALUES(@DocumentId,@DocumentType,@BusinessId,@Gross,@Withholding,@Net,@At,@Adjustments);
             """, session.Connection, session.Transaction))
         {
             command.Parameters.AddWithValue("@DocumentId", documentId);
@@ -133,6 +133,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             AddDecimal(command, "@Withholding", withholding.WithholdingTotal, 19, 4);
             AddDecimal(command, "@Net", withholding.NetAmount, 19, 4);
             command.Parameters.AddWithValue("@At", recognizedAt);
+            command.Parameters.AddWithValue("@Adjustments", withholding.Adjustments is null
+                ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(withholding.Adjustments));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 

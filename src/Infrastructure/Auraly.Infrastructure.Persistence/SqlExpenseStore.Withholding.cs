@@ -22,10 +22,11 @@ public sealed partial class SqlExpenseStore
             INSERT @Expenses SELECT ExpenseId,BusinessId,IssuedAt,Withholding FROM OPENJSON(@Payloads) WITH(
               ExpenseId uniqueidentifier,BusinessId uniqueidentifier,IssuedAt datetimeoffset,Withholding nvarchar(max) AS JSON);
             INSERT dbo.DocumentWithholdingSnapshots
-              (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt)
-            SELECT e.DocumentId,N'Expense',e.BusinessId,w.GrossAmount,w.WithholdingTotal,w.NetAmount,e.IssuedAt
+              (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt,AdjustmentsJson)
+            SELECT e.DocumentId,N'Expense',e.BusinessId,w.GrossAmount,w.WithholdingTotal,w.NetAmount,e.IssuedAt,w.AdjustmentsJson
             FROM @Expenses e CROSS APPLY OPENJSON(e.Withholding) WITH
-              (GrossAmount decimal(19,4),WithholdingTotal decimal(19,4),NetAmount decimal(19,4)) w;
+              (GrossAmount decimal(19,4),WithholdingTotal decimal(19,4),NetAmount decimal(19,4),
+               AdjustmentsJson nvarchar(max) '$.Adjustments' AS JSON) w;
             INSERT dbo.DocumentWithholdingLines
               (DocumentId,DocumentType,LineNumber,RuleId,RuleVersion,RuleCode,Name,Kind,
                BaseKind,TaxableBase,Rate,Amount,JurisdictionCode)

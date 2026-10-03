@@ -38,7 +38,13 @@ export interface WithholdingCalculation {
   lines: Array<{ ruleId: string; ruleVersion: number; ruleCode: string; name: string;
     kind: WithholdingKind; baseKind: WithholdingBaseKind; taxableBase: number;
     rate: number; amount: number; jurisdictionCode: string | null; }>;
+  adjustments?: Array<{ruleId:string;ruleVersion:number;action:"Add"|"Override"|"Exclude";
+    automaticTaxableBase:number|null;automaticAmount:number|null;taxableBase:number|null;
+    amount:number|null;reason:string;adjustedByUserId:string}>|null;
 }
+
+export type WithholdingAdjustment = {ruleId:string;action:"Add"|"Override"|"Exclude";
+  taxableBase:number|null;amount:number|null;reason:string};
 
 export const taxationApi = {
   listRules: (includeInactive = false) => apiClient.get<WithholdingRule[]>(

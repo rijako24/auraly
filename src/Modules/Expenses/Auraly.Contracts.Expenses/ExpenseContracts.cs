@@ -48,7 +48,9 @@ public sealed record ConfirmExpenseRequest(Guid ExpenseId, Guid BusinessId, Guid
     string PurchaseEvidenceType = "SupplierElectronicInvoice",
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ExpenseLineInput>? Lines = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CalculationHash = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<WithholdingAdjustmentRequest>? WithholdingAdjustments = null);
 
 public sealed record ExpenseLineInput(Guid ExpenseAccountId, Guid? ConceptId, Guid? CostCenterId,
     string Description, decimal TaxExclusiveAmount, Guid? TaxProfileId, string TaxTreatment,

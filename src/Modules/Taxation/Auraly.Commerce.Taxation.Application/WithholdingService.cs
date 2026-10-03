@@ -164,6 +164,67 @@ public sealed class WithholdingService(
         return (ToSnapshot(result.Calculation), result.Diagnostics);
     }
 
+    public WithholdingCalculationSnapshot ApplyAdjustments(
+        WithholdingCalculationPlan plan, WithholdingCalculationSnapshot automatic,
+        IReadOnlyList<WithholdingAdjustmentRequest>? adjustments,
+        Guid userId, DateTimeOffset occurredAt, decimal vatAmount)
+    {
+        if (adjustments is not { Count: > 0 }) return automatic;
+        if (adjustments.Count > 20 || userId == Guid.Empty ||
+            adjustments.Select(item => item.RuleId).Distinct().Count() != adjustments.Count)
+            throw new TaxationValidationException("Las retenciones manuales son inválidas o están duplicadas.");
+
+        var date = DateOnly.FromDateTime(occurredAt.UtcDateTime);
+        var lines = automatic.Lines.ToDictionary(line => line.RuleId);
+        var audit = new List<WithholdingAdjustmentSnapshot>(adjustments.Count);
+        foreach (var adjustment in adjustments)
+        {
+            var rule = plan.Rules.SingleOrDefault(candidate => candidate.RuleId == adjustment.RuleId);
+            if (rule is null || !rule.IsActive || rule.BusinessId != plan.BusinessId ||
+                rule.Direction != WithholdingDirection.Purchase ||
+                rule.Moment != WithholdingRecognitionMoment.Accrual ||
+                date < rule.EffectiveFrom || rule.EffectiveTo is not null && date > rule.EffectiveTo)
+                throw new TaxationValidationException("La regla manual no está vigente para esta compra.");
+            var reason = adjustment.Reason?.Trim();
+            if (string.IsNullOrWhiteSpace(reason) || reason.Length > 500)
+                throw new TaxationValidationException("Indica el motivo del ajuste (máximo 500 caracteres).");
+            var exists = lines.TryGetValue(rule.RuleId, out var original);
+            if (adjustment.Action == "Exclude")
+            {
+                if (!exists || adjustment.TaxableBase is not null || adjustment.Amount is not null)
+                    throw new TaxationValidationException("Solo se puede excluir una retención calculada.");
+                lines.Remove(rule.RuleId);
+            }
+            else if (adjustment.Action is "Add" or "Override")
+            {
+                if (exists != (adjustment.Action == "Override") ||
+                    adjustment.TaxableBase is not > 0 || adjustment.Amount is not > 0 ||
+                    decimal.Round(adjustment.TaxableBase.Value, 4) != adjustment.TaxableBase ||
+                    decimal.Round(adjustment.Amount.Value, 4) != adjustment.Amount ||
+                    adjustment.TaxableBase > automatic.GrossAmount ||
+                    adjustment.Amount > adjustment.TaxableBase ||
+                    rule.BaseKind == WithholdingBaseKind.VatAmount && adjustment.TaxableBase > vatAmount)
+                    throw new TaxationValidationException("La base o el valor de la retención manual no es válido.");
+                lines[rule.RuleId] = new WithholdingLineSnapshot(
+                    rule.RuleId, rule.Version, rule.Code, rule.Name, rule.Kind.ToString(),
+                    rule.BaseKind.ToString(), adjustment.TaxableBase.Value, rule.Rate,
+                    adjustment.Amount.Value, rule.JurisdictionCode);
+            }
+            else throw new TaxationValidationException("La acción de retención manual no es válida.");
+
+            audit.Add(new WithholdingAdjustmentSnapshot(rule.RuleId, rule.Version,
+                adjustment.Action, original?.TaxableBase, original?.Amount,
+                adjustment.TaxableBase, adjustment.Amount, reason, userId));
+        }
+        var total = lines.Values.Sum(line => line.Amount);
+        if (total > automatic.GrossAmount)
+            throw new TaxationValidationException("Las retenciones superan el total del documento.");
+        return new WithholdingCalculationSnapshot(automatic.GrossAmount, total,
+            automatic.GrossAmount - total,
+            lines.Values.OrderBy(line => line.Kind, StringComparer.Ordinal)
+                .ThenBy(line => line.RuleCode, StringComparer.Ordinal).ToArray(), audit);
+    }
+
     private static WithholdingCalculationContext CreateContext(
         WithholdingCalculationPlan plan, WithholdingPreviewRequest request)
     {

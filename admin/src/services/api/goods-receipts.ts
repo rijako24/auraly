@@ -1,4 +1,5 @@
 import { apiClient, withPagedDefaults } from "./client";
+import type { WithholdingAdjustment } from "./taxation";
 
 export type GoodsReceiptStatus = "Draft" | "Accepted" | "Processed";
 export type PurchaseTaxTreatment = "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
@@ -20,6 +21,8 @@ export interface GoodsReceiptCostDocument {
   currencyCode: string; exchangeRate: number; exchangeRateDate: string | null;
   exchangeRateSource: string; withholdingConceptCode?: string | null;
   withholdingJurisdictionCode?: string | null;
+  withholdingAdjustments?: WithholdingAdjustment[] | null;
+  withholdingReviewHash?: string | null;
   lines: Array<{
     lineNumber: number; costKind: PurchaseCostKind; description: string; amount: number;
     taxableBaseAmount: number; taxCode: string; taxRate: number; taxAmount: number;
@@ -95,6 +98,8 @@ export interface GoodsReceiptDraft {
   purchaseOrderId: string | null;
   exchangeRate: number; exchangeRateDate: string | null; exchangeRateSource: string;
   additionalCostDocuments: GoodsReceiptCostDocument[] | null;
+  withholdingConceptCode?: string | null;
+  withholdingAdjustments?: WithholdingAdjustment[] | null;
 }
 
 export interface GoodsReceiptDetail {
@@ -156,6 +161,8 @@ export interface SaveGoodsReceiptDraftRequest {
   purchaseOrderId: string | null;
   exchangeRate: number; exchangeRateDate: string | null; exchangeRateSource: string;
   additionalCostDocuments: GoodsReceiptCostDocument[] | null;
+  withholdingConceptCode?: string | null;
+  withholdingAdjustments?: WithholdingAdjustment[] | null;
 }
 
 export interface GoodsReceiptListItem {
@@ -242,11 +249,15 @@ export interface GoodsReceiptWithholdingCalculation {
   grossAmount: number;
   withholdingTotal: number;
   netAmount: number;
+  reviewHash?: string | null;
   lines: Array<{
     ruleId: string; ruleVersion: number; ruleCode: string; name: string;
     kind: string; baseKind: string; taxableBase: number; rate: number;
     amount: number; jurisdictionCode: string | null;
   }>;
+  adjustments?: Array<{ruleId:string;ruleVersion:number;action:"Add"|"Override"|"Exclude";
+    automaticTaxableBase:number|null;automaticAmount:number|null;taxableBase:number|null;
+    amount:number|null;reason:string;adjustedByUserId:string}>|null;
 }
 
 export const goodsReceiptsApi = {
@@ -278,6 +289,7 @@ export const goodsReceiptsApi = {
     lines: GoodsReceiptLine[]; withholdingConceptCode: string | null;
     withholdingJurisdictionCode: string | null; purchaseEvidenceType: PurchaseEvidenceType;
     exchangeRate: number;
+    withholdingAdjustments?: WithholdingAdjustment[] | null;
   }) => apiClient.post<GoodsReceiptWithholdingCalculation>(
     "/commerce/v1/goods-receipts/withholding-preview", request,
   ),
@@ -297,6 +309,8 @@ export const goodsReceiptsApi = {
     purchaseOrderId: string | null;
     exchangeRate: number; exchangeRateDate: string | null; exchangeRateSource: string;
     additionalCostDocuments: GoodsReceiptCostDocument[] | null;
+    withholdingAdjustments?: WithholdingAdjustment[] | null;
+    withholdingReviewHash?: string | null;
   }) => apiClient.postIdempotent<GoodsReceiptAcceptance>(
     "/commerce/v1/goods-receipts/confirm", request, `goods-receipt-${request.documentId}`,
   ),

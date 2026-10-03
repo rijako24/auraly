@@ -107,7 +107,10 @@ public sealed record GoodsReceiptCostDocumentRequest(
     IReadOnlyCollection<GoodsReceiptCostLineRequest> Lines,
     string? WithholdingConceptCode = null,
     string? WithholdingJurisdictionCode = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PartySiteId = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PartySiteId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WithholdingReviewHash = null);
 
 public sealed record GoodsReceiptLineRequest(
     int LineNumber,
@@ -150,7 +153,10 @@ public sealed record ConfirmGoodsReceiptRequest(
     DateOnly? ExchangeRateDate = null,
     string ExchangeRateSource = "FunctionalCurrency",
     IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WithholdingReviewHash = null);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -259,7 +265,8 @@ public sealed record PreviewGoodsReceiptWithholdingRequest(
     string? WithholdingConceptCode = null,
     string? WithholdingJurisdictionCode = null,
     string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
-    decimal ExchangeRate = 1);
+    decimal ExchangeRate = 1,
+    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null);
 
 public sealed record PreviewGoodsReceiptCostWithholdingRequest(
     Guid BusinessId,
@@ -285,7 +292,9 @@ public sealed record SaveGoodsReceiptDraftRequest(
     DateOnly? ExchangeRateDate = null,
     string ExchangeRateSource = "FunctionalCurrency",
     IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    string? WithholdingConceptCode = null,
+    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null);
 
 public sealed record GoodsReceiptDraft(
     Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
@@ -300,7 +309,9 @@ public sealed record GoodsReceiptDraft(
     DateOnly? ExchangeRateDate = null,
     string ExchangeRateSource = "FunctionalCurrency",
     IReadOnlyList<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    string? WithholdingConceptCode = null,
+    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null);
 
 public sealed record GoodsReceiptDetail(
     Guid DocumentId, string DocumentNumber, string Status,
