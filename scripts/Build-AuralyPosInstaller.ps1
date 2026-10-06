@@ -282,7 +282,21 @@ Invoke-AuralySigning @($msi)
 $bundleProject = Join-Path $root 'src\Installer\Auraly.Pos.Bundle\Auraly.Pos.Bundle.wixproj'
 $webView2Installer = if ([string]::IsNullOrWhiteSpace($WebView2InstallerPath)) {
     $downloadPath = Join-Path $artifacts 'MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
-    Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/?linkid=2124701' -OutFile $downloadPath
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/?linkid=2124701' `
+                -OutFile $downloadPath -TimeoutSec 180
+            if ((Get-Item -LiteralPath $downloadPath).Length -eq 0) {
+                throw 'Microsoft devolvió un instalador WebView2 vacío.'
+            }
+            break
+        }
+        catch {
+            Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+            if ($attempt -eq 3) { throw }
+            Start-Sleep -Seconds (3 * $attempt)
+        }
+    }
     $downloadPath
 }
 else {
