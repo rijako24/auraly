@@ -163,6 +163,10 @@ async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: bool
       items: [{ partyId: "88888888-8888-8888-8888-888888888888", roleId: "88888888-8888-8888-8888-888888888888", role: "Supplier", displayName: "Proveedor Andino", identification: "900100200", supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 }],
       page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
     });
+    if (path.endsWith("/parties/site-options")) return json(route, {
+      items: [{ partySiteId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", siteName: "Principal", displayName: "Proveedor Andino", identification: "900100200" }],
+      page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
+    });
     if (path.endsWith("/goods-receipts") || path.endsWith("/purchase-orders")) return json(route, {
       items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 0,
     });
@@ -288,6 +292,42 @@ test("conversión busca por el código mostrado en su catálogo elegible", async
   await expect(dialog.getByText(/No hay productos habilitados para conversión/)).toBeVisible();
 });
 
+test("conversión distingue falta de inventario de merma y permite una merma válida", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/commerce/v1/inventory/conversion-products?**", route => {
+    const search = new URL(route.request().url()).searchParams.get("search")?.toLowerCase() ?? "";
+    const products = [
+      { productId, productCode: "ARROZ", reference: null, productName: "Arroz origen", unitCode: "EA", quantityOnHand: 5, familyRootProductId: productId, conversionFactor: 1, maximumLossPercent: 10 },
+      { productId: "99999999-9999-9999-9999-999999999999", productCode: "BOLSA", reference: null, productName: "Bolsa producida", unitCode: "EA", quantityOnHand: 0, familyRootProductId: productId, conversionFactor: 1, maximumLossPercent: 10 },
+    ].filter(product => `${product.productCode} ${product.productName}`.toLowerCase().includes(search));
+    return json(route, { items: products, page: 1, pageSize: 10, totalCount: products.length, totalPages: products.length ? 1 : 0 });
+  });
+  await authenticate(page);
+  await page.goto("/dashboard/inventory");
+  await page.getByRole("button", { name: "Nueva operación" }).click();
+  const dialog = page.getByRole("dialog", { name: "Nueva operación" });
+  await dialog.getByRole("button", { name: "Conversión" }).click();
+  await select(page, field(dialog, "Bodega").getByRole("combobox"), "Principal");
+  await select(page, field(dialog, "Motivo").getByRole("combobox"), "Motivo de prueba");
+  const search = dialog.getByTestId("product-picker-search");
+  await search.fill("ARROZ");
+  await dialog.getByRole("option", { name: /Arroz origen/ }).click();
+  await search.fill("BOLSA");
+  await dialog.getByRole("option", { name: /Bolsa producida/ }).click();
+
+  await dialog.getByTestId("inventory-quantity-0").fill("6");
+  await dialog.getByTestId("inventory-quantity-1").fill("5.7");
+  await expect(dialog.getByText(/Existencias insuficientes de Arroz origen/)).toBeVisible();
+  await expect(dialog.getByText(/La merma de .* supera/)).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Confirmar conversión" })).toBeDisabled();
+
+  await dialog.getByTestId("inventory-quantity-0").fill("5");
+  await dialog.getByTestId("inventory-quantity-1").fill("4.75");
+  await expect(dialog.getByText(/Existencias insuficientes/)).toHaveCount(0);
+  await expect(dialog.getByText(/La merma de .* supera/)).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Confirmar conversión" })).toBeEnabled();
+});
+
 test("despachar limpia el traslado y abre desde su fila una entrada editable", async ({ page }) => {
   await mockApi(page, { transferWorkflow: true });
   await authenticate(page);
@@ -341,6 +381,8 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   const supplier = dialog.getByRole("combobox", { name: "Seleccionar supplier" });
   await supplier.click();
   await page.getByRole("option", { name: /Proveedor Andino/ }).click();
+  await dialog.getByRole("combobox", { name: "Sede del proveedor" }).click();
+  await page.getByRole("option", { name: /Principal.*Proveedor Andino/ }).click();
   await select(page, field(dialog, "Bodega").getByRole("combobox"), "Principal · PPL");
   await select(page, dialog.getByRole("combobox", { name: "Tipo de soporte" }), "Comprobante interno");
   const search = dialog.getByPlaceholder(/Escanea o busca/);
@@ -352,7 +394,7 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("auraly-purchasing-work", 1);
+      const request = indexedDB.open("auraly-purchasing-work");
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -402,6 +444,8 @@ test("recepción simple sigue directa y la factura adicional carga catálogos y 
   const supplier = dialog.getByRole("combobox", { name: "Seleccionar supplier" });
   await supplier.click();
   await page.getByRole("option", { name: /Proveedor Andino/ }).click();
+  await dialog.getByRole("combobox", { name: "Sede del proveedor" }).click();
+  await page.getByRole("option", { name: /Principal.*Proveedor Andino/ }).click();
   await select(page, field(dialog, "Bodega").getByRole("combobox"), "Principal · PPL");
   await select(page, dialog.getByRole("combobox", { name: "Tipo de soporte" }), "Comprobante interno");
   const search = dialog.getByPlaceholder(/Escanea o busca/);
@@ -430,7 +474,7 @@ test("recepción simple sigue directa y la factura adicional carga catálogos y 
 
   await dialog.getByRole("button", { name: /Facturas y otros costos/ }).click();
   await dialog.getByRole("button", { name: "Agregar factura" }).click();
-  const costs = page.getByRole("dialog", { name: "Agregar factura" });
+  const costs = page.getByRole("dialog", { name: "Agregar documento adicional" });
   await expect(costs).toBeVisible();
   await expect(costs.getByText(/^Concepto 1$/)).toHaveCount(0);
   const firstConcept = field(costs, "Concepto").getByRole("combobox").first();
@@ -443,6 +487,8 @@ test("recepción simple sigue directa y la factura adicional carga catálogos y 
   await expect(costs.getByText(/El IVA descontable se reconoce separado/)).toBeVisible();
   await costs.getByRole("combobox", { name: "Seleccionar supplier" }).click();
   await page.getByRole("option", { name: /Proveedor Andino/ }).click();
+  await costs.getByRole("combobox", { name: "Sede del proveedor" }).click();
+  await page.getByRole("option", { name: /Principal.*Proveedor Andino/ }).click();
   await field(costs, "Número").getByRole("textbox").fill("DECL-9001");
   await costs.getByRole("button", { name: "Agregar documento" }).click();
   await expect(costs).toBeHidden();
@@ -450,5 +496,5 @@ test("recepción simple sigue directa y la factura adicional carga catálogos y 
   await expect(declarationRow).toContainText("Proveedor Andino");
   await expect(dialog.getByRole("columnheader", { name: "Antes de IVA" })).toBeVisible();
   await declarationRow.getByRole("button", { name: "Ver" }).click();
-  await expect(page.getByRole("dialog", { name: "Editar factura" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Editar documento adicional" })).toBeVisible();
 });

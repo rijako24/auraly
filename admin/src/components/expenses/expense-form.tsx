@@ -92,7 +92,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   async function calculate(value: EditableLine[], header: ConfirmExpense = form) {
     const version = ++calculationVersion.current;
     pendingCalculations.current++;
-    setPhase("calculate"); onBusyChange(true); setError(null); setPreview(null);
+    setPhase("calculate"); setError(null); setPreview(null);
     try {
       const result = await expensesApi.preview(request(value, null, header));
       if (version === calculationVersion.current) { setPreview(result); return result; }
@@ -103,16 +103,17 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
       return null;
     } finally {
       pendingCalculations.current--;
-      if (pendingCalculations.current === 0) { setPhase(null); onBusyChange(false); }
+      if (pendingCalculations.current === 0) setPhase(null);
     }
   }
   async function confirm(event: React.FormEvent) {
     event.preventDefault();
     if (!valid || phase) return;
-    const calculation = preview ?? await calculate(lines);
-    if (!calculation?.canConfirm) return;
-    setPhase("confirm"); onBusyChange(true); setError(null);
+    onBusyChange(true);
     try {
+      const calculation = preview ?? await calculate(lines);
+      if (!calculation?.canConfirm) return;
+      setPhase("confirm"); setError(null);
       await expensesApi.confirm(request(lines, calculation.calculationHash));
       toast.success("Gasto aceptado. Su comprobante y estado están en Trazabilidad financiera.");
       await onSaved();
@@ -179,13 +180,16 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
     </fieldset>
     {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
     {lines.length > 0 && <section className="space-y-4 rounded-xl border p-4" aria-label="Cálculo del gasto">
+      <WithholdingAdjustmentEditor calculation={preview?.withholding ?? null}
+        adjustments={form.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
+        disabled={!!phase || !canAdjustWithholdings || withholdingRules.isLoading || withholdingRules.isError}
+        onChange={withholdingAdjustments => change({withholdingAdjustments})}/>
+      {canAdjustWithholdings && !withholdingRules.isLoading && !withholdingRules.isError &&
+        !withholdingRules.data?.some(rule => rule.isActive && rule.direction === "Purchase" && rule.moment === "Accrual") &&
+        <p className="text-sm text-muted-foreground">No hay reglas de retención de compra vigentes para esta sede. Configúralas en Contabilidad → Retenciones.</p>}
       {phase === "calculate" && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Calculando retenciones…</p>}
       {preview ? <><ExpenseBreakdown withholding={preview.withholding} hideWithholdingLines/>{preview.diagnostics.map((message, index) => <p key={index} className={`rounded-lg p-3 text-sm ${preview.canConfirm ? "bg-muted text-muted-foreground" : "bg-destructive/5 text-destructive"}`}>{message}</p>)}</> :
         phase !== "calculate" && !error && <p className="text-sm text-muted-foreground">{!form.supplierId ? "Selecciona el proveedor para calcular las retenciones de estos gastos." : "Completa las fechas válidas para calcular las retenciones."}</p>}
-      {(preview || !!form.withholdingAdjustments?.length) && <WithholdingAdjustmentEditor calculation={preview?.withholding ?? null}
-        adjustments={form.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
-        disabled={!!phase || !canAdjustWithholdings || withholdingRules.isLoading}
-        onChange={withholdingAdjustments => change({withholdingAdjustments})}/>}
     </section>}
     <DialogFooter className="sticky bottom-0 border-t bg-background py-3">
       <Button type="submit" disabled={!!phase || !valid || preview?.canConfirm === false}>{phase === "confirm" && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}{phase === "confirm" ? "Confirmando gasto…" : "Confirmar gasto"}</Button>

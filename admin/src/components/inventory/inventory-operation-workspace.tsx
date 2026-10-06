@@ -517,10 +517,15 @@ export function InventoryOperationWorkspace({
   const conversionLoss = conversionQuantity(Math.max(0, conversionInputEquivalent - conversionOutputEquivalent));
   const conversionLossPercent = conversionInputEquivalent > 0 ? conversionQuantity(conversionLoss / conversionInputEquivalent * 100) : 0;
   const conversionMaximumLossPercent = lines[0]?.maximumLossPercent ?? 0;
+  const conversionHasBothSides = conversionInputEquivalent > 0 && conversionOutputEquivalent > 0;
+  const conversionOutputExceedsInput = conversionHasBothSides && conversionOutputEquivalent > conversionInputEquivalent;
+  const conversionLossExceedsLimit = conversionHasBothSides && conversionLossPercent > conversionMaximumLossPercent;
+  const conversionInsufficientStock = lines.filter((line) =>
+    line.direction === "INPUT" && Number(line.quantity || 0) > line.stock);
   const conversionInventoryValid = kind !== "conversion" || (
-    conversionOutputEquivalent <= conversionInputEquivalent &&
-    conversionLossPercent <= conversionMaximumLossPercent &&
-    lines.filter((line) => line.direction === "INPUT").every((line) => Number(line.quantity || 0) <= line.stock)
+    !conversionOutputExceedsInput &&
+    !conversionLossExceedsLimit &&
+    conversionInsufficientStock.length === 0
   );
   const adjustmentValuationValid =
     kind !== "adjustment" ||
@@ -681,7 +686,9 @@ export function InventoryOperationWorkspace({
             <ConversionMetric label="Salida equivalente" value={conversionOutputEquivalent} />
             <ConversionMetric label="Merma" value={conversionLoss} detail={`${conversionLossPercent.toFixed(3)} %`} />
             <ConversionMetric label="Máximo permitido" value={conversionMaximumLossPercent} detail="%" />
-            {!conversionInventoryValid && <p className="text-sm text-red-700 sm:col-span-4">La salida no puede superar la entrada, la merma debe quedar dentro del máximo configurado y cada consumo debe tener existencia suficiente.</p>}
+            {conversionOutputExceedsInput && <p className="text-sm text-red-700 sm:col-span-4">La salida equivalente supera la entrada equivalente.</p>}
+            {conversionLossExceedsLimit && <p className="text-sm text-red-700 sm:col-span-4">La merma de {conversionLossPercent.toLocaleString("es-CO")} % supera el máximo configurado de {conversionMaximumLossPercent.toLocaleString("es-CO")} %.</p>}
+            {conversionInsufficientStock.map((line) => <p key={line.productId} className="text-sm text-red-700 sm:col-span-4">Existencias insuficientes de {line.productName}: quieres consumir {line.quantity} {line.unitCode} y hay {line.stock} {line.unitCode} en esta bodega.</p>)}
           </div>}
 
           <Field label="Observaciones">
