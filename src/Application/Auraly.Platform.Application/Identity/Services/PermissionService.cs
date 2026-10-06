@@ -69,6 +69,10 @@ public class PermissionService : IPermissionService
     {
         var permissions = await _unitOfWork.Permissions.GetAllAsync(ct);
         var administratorRoles = await _unitOfWork.AppRoles.GetActiveAdministratorRolesAsync(ct);
+        var optInPermissionIds = permissions
+            .Where(permission => IsAttentionGrowthPermission(permission.Resource))
+            .Select(permission => permission.PermissionId)
+            .ToHashSet();
 
         // IsSystemRole protects built-in roles from being edited/deleted; it does not
         // mean that every built-in operational role is an administrator. Only the
@@ -81,8 +85,10 @@ public class PermissionService : IPermissionService
             var eligiblePermissionIds = eligiblePermissions
                 .Select(permission => permission.PermissionId)
                 .ToHashSet();
+            // A future explicit opt-in survives startup; it is never added by this seed.
             var improper = role.RolePermissions
-                .Where(assignment => !eligiblePermissionIds.Contains(assignment.PermissionId))
+                .Where(assignment => !eligiblePermissionIds.Contains(assignment.PermissionId)
+                    && !optInPermissionIds.Contains(assignment.PermissionId))
                 .ToList();
             if (improper.Count > 0)
                 _unitOfWork.RolePermissions.DeleteRange(improper);
@@ -114,12 +120,20 @@ public class PermissionService : IPermissionService
     private static bool IsAllowedForAdministrator(
         AppRole role,
         Domain.Entities.Permission permission) =>
-        string.Equals(
+        !IsAttentionGrowthPermission(permission.Resource)
+        && (string.Equals(
             role.Tenant?.TenantKey,
             PlatformPermissions.PlatformTenantKey,
             StringComparison.OrdinalIgnoreCase)
         || !permission.Resource.StartsWith("tenants.", StringComparison.OrdinalIgnoreCase)
-          && !permission.Resource.StartsWith("platform.", StringComparison.OrdinalIgnoreCase);
+          && !permission.Resource.StartsWith("platform.", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsAttentionGrowthPermission(string resource) =>
+        resource.StartsWith("agents.", StringComparison.OrdinalIgnoreCase)
+        || resource.StartsWith("conversations.", StringComparison.OrdinalIgnoreCase)
+        || resource.StartsWith("leads.", StringComparison.OrdinalIgnoreCase)
+        || resource.StartsWith("campaigns.", StringComparison.OrdinalIgnoreCase)
+        || resource.StartsWith("reservations.", StringComparison.OrdinalIgnoreCase);
 
     private static PermissionDto MapToDto(Domain.Entities.Permission p) => new(
         p.PermissionId, p.Module, p.Action, p.Resource, p.Description);

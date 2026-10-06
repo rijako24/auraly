@@ -68,12 +68,17 @@ BEGIN
     WHERE RoleId=@PlatformRoleId;
 END;
 
--- El rol raíz recibe el catálogo completo. La única cuenta administradora inicial
+-- El rol raíz recibe el catálogo de plataforma sin Atención y crecimiento. La única cuenta administradora inicial
 -- es la persona que acepta la invitación del aprovisionamiento.
 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
 SELECT NEWID(),@PlatformRoleId,permissionValue.PermissionId,SYSUTCDATETIME()
 FROM dbo.Permissions permissionValue
-WHERE NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing WHERE existing.RoleId=@PlatformRoleId AND existing.PermissionId=permissionValue.PermissionId);
+WHERE permissionValue.Resource NOT LIKE N'agents.%'
+  AND permissionValue.Resource NOT LIKE N'conversations.%'
+  AND permissionValue.Resource NOT LIKE N'leads.%'
+  AND permissionValue.Resource NOT LIKE N'campaigns.%'
+  AND permissionValue.Resource NOT LIKE N'reservations.%'
+  AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing WHERE existing.RoleId=@PlatformRoleId AND existing.PermissionId=permissionValue.PermissionId);
 
 -- Retira sin destruir auditoría las identidades técnicas obsoletas. Nunca debe
 -- coincidir con una cuenta creada por una invitación real.

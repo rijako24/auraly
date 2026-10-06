@@ -26,21 +26,6 @@ WHERE NOT EXISTS (SELECT 1 FROM [dbo].[Permissions] WHERE [Resource] = p.Resourc
 
 
 
--- Regla canónica: todo administrador recibe los permisos disponibles dentro de
--- su alcance. La contratación del módulo se controla por entitlement, no quitando
--- permisos al rol Administrador.
-INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
-SELECT NEWID(),roleValue.RoleId,permissionValue.PermissionId,SYSUTCDATETIME()
-FROM dbo.AppRoles roleValue
-CROSS JOIN dbo.Permissions permissionValue
-WHERE roleValue.IsActive=1
-  AND roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
-  AND permissionValue.Resource IN(N'agents.read',N'agents.update')
-  AND NOT EXISTS(
-      SELECT 1 FROM dbo.RolePermissions existing
-      WHERE existing.RoleId=roleValue.RoleId
-        AND existing.PermissionId=permissionValue.PermissionId);
-
 PRINT N'SeedAgentPermissions: catálogo de agentes listo.';
 
 GO

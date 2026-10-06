@@ -124,6 +124,8 @@ WHERE roleValue.IsActive=1
     roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
       AND (permissionValue.Resource NOT LIKE N'tenants.%' AND permissionValue.Resource NOT LIKE N'platform.%'
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
+      AND NOT EXISTS(SELECT 1 FROM @OptInPermissionPrefixes optIn
+                     WHERE permissionValue.Resource LIKE optIn.Prefix+N'%')
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
       N'pos.receivables.payments.create',N'pos.payables.payments.create',

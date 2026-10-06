@@ -94,7 +94,7 @@ public sealed class PermissionServiceTests
     }
 
     [Fact]
-    public async Task SeedPermissionsAsync_Grants_every_tenant_permission_to_tenant_admin()
+    public async Task SeedPermissionsAsync_keeps_attention_growth_permissions_opt_in_for_administrators()
     {
         var tenantPermission = Permission("dispatches.delivery.execute");
         var tenantManagement = Permission("tenants.read");
@@ -103,6 +103,12 @@ public sealed class PermissionServiceTests
         var reservationPermission = Permission("reservations.read");
         var platformAdministrator = Administrator("@auraly");
         var tenantAdministrator = Administrator("@cliente", isSystemRole: false);
+        tenantAdministrator.RolePermissions.Add(new RolePermission
+        {
+            RolePermissionId = Guid.NewGuid(),
+            RoleId = tenantAdministrator.RoleId,
+            PermissionId = agentPermission.PermissionId
+        });
 
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(x => x.Permissions).Returns(Mock.Of<IPermissionRepository>());
@@ -126,14 +132,13 @@ public sealed class PermissionServiceTests
         var service = new PermissionService(unitOfWork.Object, Mock.Of<ILogger<PermissionService>>());
         await service.SeedPermissionsAsync(CancellationToken.None);
 
-        Assert.Equal(5, assignments.Count(item => item.RoleId == platformAdministrator.RoleId));
-        Assert.Equal(3, assignments.Count(item => item.RoleId == tenantAdministrator.RoleId));
+        Assert.Equal(3, assignments.Count(item => item.RoleId == platformAdministrator.RoleId));
+        Assert.Single(assignments.Where(item => item.RoleId == tenantAdministrator.RoleId));
         Assert.Contains(assignments, item =>
             item.RoleId == tenantAdministrator.RoleId && item.PermissionId == tenantPermission.PermissionId);
-        Assert.Contains(assignments, item =>
-            item.RoleId == tenantAdministrator.RoleId && item.PermissionId == agentPermission.PermissionId);
-        Assert.Contains(assignments, item =>
-            item.RoleId == tenantAdministrator.RoleId && item.PermissionId == reservationPermission.PermissionId);
+        Assert.DoesNotContain(assignments, item =>
+            item.PermissionId == agentPermission.PermissionId || item.PermissionId == reservationPermission.PermissionId);
+        unitOfWork.Verify(x => x.RolePermissions.DeleteRange(It.IsAny<IEnumerable<RolePermission>>()), Times.Never);
     }
 
     private static Permission Permission(string resource) => new()
