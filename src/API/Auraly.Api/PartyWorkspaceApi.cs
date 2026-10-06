@@ -41,7 +41,7 @@ public static class PartyWorkspaceApi
                     new PartyRoleOptionQuery(role,pageSize??10,search,roleId,null),ct));
             })).RequireAuthorization();
         endpoints.MapGet("/api/commerce/v1/portfolio/parties/site-options", async(HttpContext context,PartyWorkspaceService service,
-            int? page,int? pageSize,string role,string? search,Guid? roleId,CancellationToken ct)=>
+            int? page,int? pageSize,string role,string? search,Guid? roleId,Guid? partySiteId,CancellationToken ct)=>
             await Handle(async()=>
             {
                 if(role is not ("Customer" or "Supplier"))
@@ -55,7 +55,7 @@ public static class PartyWorkspaceApi
                 var permission=role=="Customer"?PartyPermissionCodes.CustomerRead:PartyWorkspacePermissionCodes.SupplierRead;
                 var actor=identity with { Permissions=new HashSet<string>([permission],StringComparer.Ordinal) };
                 return Results.Ok(await service.SiteRoleOptionsAsync(actor,page??1,
-                    new PartyRoleOptionQuery(role,pageSize??10,search,roleId),ct));
+                    new PartyRoleOptionQuery(role,pageSize??10,search,roleId,null,partySiteId),ct));
             })).RequireAuthorization();
         endpoints.MapGet("/api/commerce/v1/pos/portfolio/parties/role-options", async(HttpContext context,PartyWorkspaceService service,
             int? page,int? pageSize,string role,string? search,Guid? roleId,CancellationToken ct)=>

@@ -1,5 +1,5 @@
 import { apiClient, withPagedDefaults } from "./client";
-import type { WithholdingAdjustment } from "./taxation";
+import type { WithholdingAdjustment, WithholdingCalculation } from "./taxation";
 
 export type GoodsReceiptStatus = "Draft" | "Accepted" | "Processed";
 export type PurchaseTaxTreatment = "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
@@ -245,19 +245,8 @@ export interface GoodsReceiptAcceptance {
   idempotentReplay: boolean;
 }
 
-export interface GoodsReceiptWithholdingCalculation {
-  grossAmount: number;
-  withholdingTotal: number;
-  netAmount: number;
+export interface GoodsReceiptWithholdingCalculation extends WithholdingCalculation {
   reviewHash?: string | null;
-  lines: Array<{
-    ruleId: string; ruleVersion: number; ruleCode: string; name: string;
-    kind: string; baseKind: string; taxableBase: number; rate: number;
-    amount: number; jurisdictionCode: string | null;
-  }>;
-  adjustments?: Array<{ruleId:string;ruleVersion:number;action:"Add"|"Override"|"Exclude";
-    automaticTaxableBase:number|null;automaticAmount:number|null;taxableBase:number|null;
-    amount:number|null;reason:string;adjustedByUserId:string}>|null;
 }
 
 export const goodsReceiptsApi = {

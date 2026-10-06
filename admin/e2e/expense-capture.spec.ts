@@ -13,7 +13,7 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
     localStorage.setItem("selected_tenant_id", user.tenantId); localStorage.setItem("selected_business_id", businessId);
     localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user }, version: 0 }));
   }, { user, businessId });
-  const state = { preview: [] as Record<string, unknown>[], confirm: [] as Record<string, unknown>[], list: 0, accountReads: 0, conflict: false, canConfirm: true };
+  const state = { preview: [] as Record<string, unknown>[], confirm: [] as Record<string, unknown>[], savedRules: [] as Record<string, unknown>[], list: 0, accountReads: 0, conflict: false, canConfirm: true };
   let releasePreview = () => {};
   const previewGate = new Promise<void>(resolve => { releasePreview = resolve; });
   await page.route("**/api/**", async route => {
@@ -23,6 +23,11 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Empresa" }];
     else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, permissions: user.permissions, roles: [] };
+    else if (path.endsWith("/reference-options/accounting-withholding-kind")) body = [
+      { id: "kind-income", code: "IncomeTax", label: "Retefuente", isActive: true, sortOrder: 10 },
+      { id: "kind-vat", code: "Vat", label: "ReteIVA", isActive: true, sortOrder: 20 },
+      { id: "kind-ica", code: "IndustryCommerce", label: "ReteICA", isActive: true, sortOrder: 30 },
+    ];
     else if (path.endsWith("/accounting/readiness")) body = { status: "Ready", blockingIssues: [] };
     else if (path.endsWith("/expenses/options")) body = { concepts: [{ conceptId, businessId, code: "SERV", name: "Servicio frecuente", expenseAccountId: accountId,
       expenseAccountCode: "519595", expenseAccountName: "Servicios", defaultCostCenterId: null, defaultCostCenterName: null, withholdingConceptCode: "SERVICIOS", isActive: true }],
@@ -30,18 +35,31 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
       taxTreatments: [{ code: "DeductibleInputVat", label: "IVA descontable" }, { code: "CapitalizedCost", label: "Mayor valor del gasto" }],
       withholdingConceptCodes: ["SERVICIOS"], purchaseEvidenceTypes: [{ code: "SupplierElectronicInvoice", label: "Factura electrónica del proveedor" }, { code: "InternalReceiptVoucher", label: "Comprobante interno" }] };
     else if (path.endsWith("/parties/role-options")) body = { items: [{ partyId: supplierId, roleId: supplierId, role: "Supplier", displayName: "Proveedor de prueba", identification: "900123456", supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30, supplierId }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 };
-    else if (path.endsWith("/parties/site-options")) body = { items: [{ partySiteId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", siteName: "Sede principal", displayName: "Proveedor de prueba", identification: "900123456" }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 };
-    else if (path.endsWith("/taxation/withholding-rules")) body = behavior.rules ?? [];
-    else if (path.endsWith("/accounting/account-options")) { state.accountReads++; body = { items: [{ accountId: "99999999-9999-9999-9999-999999999999", code: "519596", name: "Servicios varios", accountType: "Expense", allowsPosting: true, isActive: true }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 }; }
+    else if (path.endsWith("/parties/site-options")) body = { items: [
+      { partyId: supplierId, roleId: supplierId, partySiteId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", siteName: "Sede principal", displayName: "Proveedor de prueba", identification: "900123456", isPrimary: true, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 },
+      { partyId: supplierId, roleId: supplierId, partySiteId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", siteName: "Sede norte", displayName: "Proveedor de prueba", identification: "900123456", isPrimary: false, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 },
+    ], page: 1, pageSize: 20, totalCount: 2, totalPages: 1 };
+    else if (path.endsWith("/taxation/withholding-rules")) {
+      if (request.method() === "POST") {
+        const value = request.postDataJSON();state.savedRules.push(value);
+        body = {...value,ruleId:crypto.randomUUID(),version:1};
+      } else body = [...(behavior.rules ?? []),...state.savedRules];
+    }
+    else if (path.endsWith("/accounting/account-options")) { state.accountReads++; const liability = new URL(request.url()).searchParams.get("liabilityOnly") === "true"; body = { items: liability
+      ? [{ accountId: "88888888-8888-8888-8888-888888888888", code: "236570", name: "Retenciones por pagar", accountType: "Liability", allowsPosting: true, isActive: true }]
+      : [{ accountId: "99999999-9999-9999-9999-999999999999", code: "519596", name: "Servicios varios", accountType: "Expense", allowsPosting: true, isActive: true }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 }; }
     else if (path.endsWith("/expenses/preview")) {
       if (behavior.holdPreview) await previewGate;
       const value = request.postDataJSON(); state.preview.push(value);
       const base = value.lines.reduce((sum: number, line: { taxExclusiveAmount: number }) => sum + line.taxExclusiveAmount, 0);
+      const manual = (value.withholdingAdjustments ?? []).filter((item: {action:string}) => item.action === "Manual");
+      const manualTotal = manual.reduce((sum:number,item:{amount:number}) => sum + item.amount, 0);
       body = { lines: value.lines.map((line: object, index: number) => ({ ...line, lineNumber: index + 1, accountCode: "519595", accountName: "Servicios", vatAmount: 0, taxRate: 0 })),
         calculationHash: `review-${state.preview.length}`, canConfirm: state.canConfirm,
         diagnostics: state.canConfirm ? [] : ["Falta el perfil tributario del proveedor."],
-        withholding: { grossAmount: base, withholdingTotal: base * .025, netAmount: base * .975,
-          lines: [{ ruleId: "rule", ruleVersion: 1, ruleCode: "RF", name: "Retefuente servicios", taxableBase: base, rate: 2.5, amount: base * .025 }] } };
+        withholding: { grossAmount: base, withholdingTotal: base * .025 + manualTotal, netAmount: base * .975 - manualTotal,
+          lines: [{ ruleId: "rule", ruleVersion: 1, ruleCode: "RF", name: "Retefuente servicios", kind:"IncomeTax", baseKind:"TaxExclusiveAmount", taxableBase: base, rate: 2.5, amount: base * .025, jurisdictionCode:null },
+            ...manual.map((item:object) => ({...item,ruleVersion:0,ruleCode:"MANUAL",baseKind:"TaxExclusiveAmount"}))] } };
     } else if (path.endsWith("/expenses/confirm")) {
       state.confirm.push(request.postDataJSON());
       if (state.conflict) { status = 409; body = { detail: "El cálculo cambió. Recalcula las retenciones." }; }
@@ -52,22 +70,23 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
   await page.goto("/dashboard/expenses");
   await page.getByRole("button", { name: "Nuevo gasto", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Registrar gasto" });
-  await dialog.getByRole("combobox", { name: "Seleccionar supplier" }).click();
-  await page.getByRole("option", { name: /Proveedor de prueba/ }).click();
-  await dialog.getByRole("combobox", { name: "Sede del proveedor" }).click();
+  await expect(dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" })).toHaveCount(1);
+  await dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).click();
+  await expect(page.getByRole("option", { name: /Sede principal/ })).toBeVisible();
+  await expect(page.getByRole("option", { name: /Sede norte/ })).toBeVisible();
   await page.getByRole("option", { name: /Sede principal/ }).click();
   if (enterSupplierInvoice) await dialog.getByLabel("Número de factura del proveedor").fill("FV-100");
   await dialog.getByRole("button", { name: "Agregar gasto", exact: true }).click();
   const line = page.getByRole("dialog", { name: "Agregar gasto", exact: true });
   await expect(line.getByRole("button", { name: "Agregar a la grilla" })).toBeDisabled();
-  await expect(line.getByLabel("Gasto frecuente (opcional)")).toContainText("Seleccionar gasto frecuente");
+  await expect(line.getByLabel("Usar gasto frecuente (opcional)")).toContainText("Seleccionar gasto frecuente");
   await expect(line.getByRole("button", { name: "Quitar selección de gasto frecuente" })).toHaveCount(0);
-  await line.getByLabel("Gasto frecuente (opcional)").click();
+  await line.getByLabel("Usar gasto frecuente (opcional)").click();
   await page.getByRole("option", { name: "Servicio frecuente" }).click();
   await line.getByRole("button", { name: "Quitar selección de gasto frecuente" }).click();
-  await expect(line.getByLabel("Gasto frecuente (opcional)")).toContainText("Seleccionar gasto frecuente");
+  await expect(line.getByLabel("Usar gasto frecuente (opcional)")).toContainText("Seleccionar gasto frecuente");
   await expect(line.getByRole("combobox", { name: "Seleccionar cuenta contable" })).toContainText("Seleccionar cuenta");
-  await line.getByLabel("Gasto frecuente (opcional)").click();
+  await line.getByLabel("Usar gasto frecuente (opcional)").click();
   await page.getByRole("option", { name: "Servicio frecuente" }).click();
   await line.getByLabel("Base antes de IVA").fill("120000");
   await line.getByLabel("Base antes de IVA").blur();
@@ -89,23 +108,65 @@ test("cerrar gasto durante el cálculo libera la página y permite abrirlo otra 
   }
 });
 
-test("agregar retención está disponible sin responsabilidades del proveedor", async ({ page, baseURL }) => {
-  const rule = {ruleId:"manual-rule",businessId,version:1,code:"RET-MAN",name:"Retención manual",kind:"IncomeTax",
-    direction:"Purchase",moment:"Accrual",baseKind:"TaxExclusiveAmount",conceptCode:null,jurisdictionCode:null,
-    rate:2.5,minimumBase:0,requiredResponsibilities:[],effectiveFrom:"2026-01-01",effectiveTo:null,isActive:true};
-  const { dialog } = await openExpenses(page, baseURL!, false, {manageWithholdings:true,rules:[rule]});
+test("agregar retención manual funciona sin reglas configuradas", async ({ page, baseURL }) => {
+  const { dialog, state } = await openExpenses(page, baseURL!, false, {manageWithholdings:true,rules:[]});
   const add = dialog.getByRole("button", {name:"Agregar retención"});
   await expect(add).toBeVisible();
   await expect(add).toBeEnabled();
   await add.click();
-  await expect(page.getByRole("dialog", {name:"Agregar retención"})).toBeVisible();
+  const manual = page.getByRole("dialog", {name:"Agregar retención manual"});
+  await expect(manual).toBeVisible();
+  await manual.getByRole("combobox", {name:"Tipo de retención"}).click();
+  await page.getByRole("option", {name:"ReteICA"}).click();
+  await manual.getByLabel("Concepto o nombre").fill("ReteICA puntual");
+  await manual.getByLabel("Base de retención").fill("10000");
+  await manual.getByLabel("Tarifa %").fill("2.5");
+  await manual.getByLabel("Jurisdicción").fill("11001");
+  await manual.getByRole("combobox", {name:"Seleccionar cuenta contable"}).click();
+  await page.getByRole("option", {name:/236570/}).click();
+  await manual.getByLabel("Motivo").fill("Revisión contable");
+  await manual.getByRole("button", {name:"Aplicar retención"}).click();
+  await expect.poll(() => state.preview.length).toBe(2);
+  expect((state.preview.at(-1)!.withholdingAdjustments as Array<{action:string;accountId:string}>)[0]).toMatchObject({action:"Manual",accountId:"88888888-8888-8888-8888-888888888888"});
 });
 
-test("sin reglas de compra muestra el botón deshabilitado y la causa", async ({ page, baseURL }) => {
+test("la regla automática no se duplica y permite ajustar su retención", async ({ page, baseURL }) => {
+  const rule = {ruleId:"rule",businessId,version:1,code:"RF",name:"Retefuente servicios",kind:"IncomeTax",
+    direction:"Purchase",moment:"Accrual",baseKind:"TaxExclusiveAmount",conceptCode:null,jurisdictionCode:null,
+    rate:2.5,minimumBase:0,requiredResponsibilities:[],effectiveFrom:"2026-01-01",effectiveTo:null,isActive:true,appliesAutomatically:true,defaultAccountId:null};
+  const { dialog } = await openExpenses(page, baseURL!, false, {manageWithholdings:true,rules:[rule]});
+  await expect(dialog.getByRole("button", {name:"Agregar retención"})).toBeEnabled();
+  await dialog.getByRole("button", {name:"Editar Retefuente servicios"}).click();
+  await expect(page.getByRole("dialog", {name:"Ajustar retención"})).toBeVisible();
+});
+
+test("sin reglas de compra permite abrir retención puntual", async ({ page, baseURL }) => {
   const { dialog } = await openExpenses(page, baseURL!, false, {manageWithholdings:true,rules:[]});
   await expect(dialog.getByRole("button", {name:"Agregar retención"})).toBeVisible();
-  await expect(dialog.getByRole("button", {name:"Agregar retención"})).toBeDisabled();
-  await expect(dialog.getByText("No hay reglas de retención de compra vigentes para esta sede.", {exact:false})).toBeVisible();
+  await expect(dialog.getByRole("button", {name:"Agregar retención"})).toBeEnabled();
+});
+
+test("guardar como regla es opcional y no activa el cálculo automático", async ({ page, baseURL }) => {
+  const { dialog, state } = await openExpenses(page, baseURL!, false, {manageWithholdings:true,rules:[]});
+  await dialog.getByRole("button", {name:"Agregar retención"}).click();
+  const manual = page.getByRole("dialog", {name:"Agregar retención manual"});
+  await manual.getByRole("combobox", {name:"Tipo de retención"}).click();
+  await page.getByRole("option", {name:"ReteICA"}).click();
+  await manual.getByLabel("Concepto o nombre").fill("ReteICA local");
+  await manual.getByLabel("Base de retención").fill("10000");
+  await manual.getByLabel("Tarifa %").fill("1");
+  await manual.getByLabel("Jurisdicción").fill("11001");
+  await manual.getByRole("combobox", {name:"Seleccionar cuenta contable"}).click();
+  await page.getByRole("option", {name:/236570/}).click();
+  await manual.getByLabel("Motivo").fill("Aplicación contable puntual");
+  const checkbox = manual.getByRole("checkbox", {name:"Guardar como regla para usarla después"});
+  await expect(checkbox).not.toBeChecked();
+  await checkbox.click();
+  await manual.getByLabel("Código de la regla").fill("ICA-LOCAL");
+  await manual.getByRole("button", {name:"Aplicar retención"}).click();
+  await expect.poll(() => state.savedRules.length).toBe(1);
+  expect(state.savedRules[0]).toMatchObject({code:"ICA-LOCAL",appliesAutomatically:false,
+    defaultAccountId:"88888888-8888-8888-8888-888888888888"});
 });
 
 test("la retención se recalcula al agregar, editar y quitar gastos antes de completar la factura", async ({ page, baseURL }) => {
@@ -125,7 +186,7 @@ test("la retención se recalcula al agregar, editar y quitar gastos antes de com
 
   await dialog.getByRole("button", { name: "Agregar gasto", exact: true }).click();
   const adding = page.getByRole("dialog", { name: "Agregar gasto", exact: true });
-  await adding.getByLabel("Gasto frecuente (opcional)").click();
+  await adding.getByLabel("Usar gasto frecuente (opcional)").click();
   await page.getByRole("option", { name: "Servicio frecuente" }).click();
   await adding.getByLabel("Base antes de IVA").fill("50000");
   await adding.getByLabel("Base antes de IVA").blur();

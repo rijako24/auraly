@@ -41,13 +41,15 @@ public sealed record WithholdingRuleView(
     string Kind, string Direction, string Moment, string BaseKind, string? ConceptCode,
     string? JurisdictionCode, decimal Rate, decimal MinimumBase,
     IReadOnlyList<string> RequiredResponsibilities, DateOnly EffectiveFrom,
-    DateOnly? EffectiveTo, bool IsActive);
+    DateOnly? EffectiveTo, bool IsActive, bool AppliesAutomatically = true,
+    Guid? DefaultAccountId = null);
 
 public sealed record SaveWithholdingRuleRequest(
     Guid BusinessId, string Code, string Name, string Kind, string Direction,
     string Moment, string BaseKind, string? ConceptCode, string? JurisdictionCode,
     decimal Rate, decimal MinimumBase, IReadOnlyCollection<string> RequiredResponsibilities,
-    DateOnly EffectiveFrom, DateOnly? EffectiveTo, bool IsActive);
+    DateOnly EffectiveFrom, DateOnly? EffectiveTo, bool IsActive, bool AppliesAutomatically = true,
+    Guid? DefaultAccountId = null);
 
 public sealed record CounterpartyTaxProfileView(
     Guid BusinessId, Guid CounterpartyId,
@@ -70,15 +72,17 @@ public sealed record WithholdingPreviewRequest(
 public sealed record WithholdingLineSnapshot(
     Guid RuleId, int RuleVersion, string RuleCode, string Name, string Kind,
     string BaseKind, decimal TaxableBase, decimal Rate, decimal Amount,
-    string? JurisdictionCode);
+    string? JurisdictionCode, Guid? AccountId = null, Guid? ManualLineId = null);
 
 public sealed record WithholdingAdjustmentRequest(
-    Guid RuleId, string Action, decimal? TaxableBase, decimal? Amount, string Reason);
+    Guid RuleId, string Action, decimal? TaxableBase, decimal? Amount, string Reason,
+    Guid? ManualLineId = null, string? Kind = null, string? Name = null,
+    decimal? Rate = null, string? JurisdictionCode = null, Guid? AccountId = null);
 
 public sealed record WithholdingAdjustmentSnapshot(
     Guid RuleId, int RuleVersion, string Action, decimal? AutomaticTaxableBase,
     decimal? AutomaticAmount, decimal? TaxableBase, decimal? Amount,
-    string Reason, Guid AdjustedByUserId);
+    string Reason, Guid AdjustedByUserId, Guid? ManualLineId = null, Guid? AccountId = null);
 
 public sealed record WithholdingCalculationSnapshot(
     decimal GrossAmount, decimal WithholdingTotal, decimal NetAmount,

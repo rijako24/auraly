@@ -484,7 +484,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
               AND s.BusinessId=@BusinessId;
 
             SELECT l.RuleId,l.RuleVersion,l.RuleCode,l.Name,l.Kind,l.BaseKind,
-                   l.TaxableBase,l.Rate,l.Amount,l.JurisdictionCode
+                   l.TaxableBase,l.Rate,l.Amount,l.JurisdictionCode,l.AccountId,l.ManualLineId
             FROM dbo.DocumentWithholdingLines l
             INNER JOIN dbo.DocumentWithholdingSnapshots s
               ON s.DocumentId=l.DocumentId AND s.DocumentType=l.DocumentType
@@ -546,10 +546,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             if (await reader.NextResultAsync(cancellationToken))
                 while (await reader.ReadAsync(cancellationToken))
                     withholdingLines.Add(new WithholdingLineSnapshot(
-                        reader.GetGuid(0), reader.GetInt32(1), reader.GetString(2),
+                        reader.IsDBNull(0) ? Guid.Empty : reader.GetGuid(0),
+                        reader.IsDBNull(1) ? 0 : reader.GetInt32(1), reader.GetString(2),
                         reader.GetString(3), reader.GetString(4), reader.GetString(5),
                         reader.GetDecimal(6), reader.GetDecimal(7), reader.GetDecimal(8),
-                        reader.IsDBNull(9) ? null : reader.GetString(9)));
+                        reader.IsDBNull(9) ? null : reader.GetString(9),
+                        reader.IsDBNull(10) ? null : reader.GetGuid(10),
+                        reader.IsDBNull(11) ? null : reader.GetGuid(11)));
             withholding = new WithholdingCalculationSnapshot(
                 grossAmount, withholdingTotal, netPayable, withholdingLines, adjustments);
         }

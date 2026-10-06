@@ -52,7 +52,7 @@ test.describe("borradores y detalle de recepciones de compra", () => {
     await page.goto("/dashboard/purchasing/goods-receipts");
     await page.getByRole("button", { name: "Nueva entrada" }).click();
     const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
-    await selectFirst(page, dialog, "Proveedor");
+    await selectFirst(page, dialog, "Proveedor · sede");
     await selectFirst(page, dialog, "Bodega");
 
     const marker = `Prueba E2E ${Date.now()}`;

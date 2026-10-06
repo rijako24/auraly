@@ -58,7 +58,7 @@ public sealed class GoodsReceiptService(
         if (request.ExchangeRate <= 0)
             throw new PurchasingValidationException("La tasa de cambio debe ser positiva.");
         var plan = await withholdingService.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId,
-            [request.SupplierId], cancellationToken);
+            [request.SupplierId], cancellationToken, ManualAccountIds(request.WithholdingAdjustments));
         return CalculateWithholding(plan,
             user, request.SupplierId, request.WithholdingConceptCode,
             request.WithholdingJurisdictionCode,
@@ -99,7 +99,7 @@ public sealed class GoodsReceiptService(
             decimal.Round(document.Lines.Sum(line => line.TaxAmount) * document.ExchangeRate, 4,
                 MidpointRounding.AwayFromZero));
         var plan = await withholdingService.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId,
-            [document.SupplierId], cancellationToken);
+            [document.SupplierId], cancellationToken, ManualAccountIds(document.WithholdingAdjustments));
         return CalculateWithholding(plan,
             user, document.SupplierId, document.WithholdingConceptCode,
             document.WithholdingJurisdictionCode, calculation,
@@ -191,7 +191,10 @@ public sealed class GoodsReceiptService(
         var withholdingPlan = await withholdingService.PrepareCalculationPlanAsync(
             user.TenantId, user.BusinessId,
             costCalculation.AdditionalDocuments.Select(item => item.Request.SupplierId)
-                .Append(request.SupplierId).Distinct().ToArray(), cancellationToken);
+                .Append(request.SupplierId).Distinct().ToArray(), cancellationToken,
+            ManualAccountIds((normalizedRequest.AdditionalCostDocuments ?? [])
+                .SelectMany(document => document.WithholdingAdjustments ?? [])
+                .Concat(request.WithholdingAdjustments ?? []).ToArray()));
         var withholding = CalculateWithholding(withholdingPlan,
             user, request.SupplierId, request.WithholdingConceptCode,
             request.WithholdingJurisdictionCode, FunctionalCalculation(
@@ -279,6 +282,10 @@ public sealed class GoodsReceiptService(
             !user.Permissions.Contains(TaxationPermissionCodes.ManageWithholdingRules))
             throw new PurchasingForbiddenException("No tienes permiso para ajustar retenciones manualmente.");
     }
+
+    private static Guid[] ManualAccountIds(IReadOnlyList<WithholdingAdjustmentRequest>? adjustments) =>
+        (adjustments ?? []).Where(item => item.Action == "Manual" && item.AccountId.HasValue)
+            .Select(item => item.AccountId!.Value).Distinct().ToArray();
 
     private static GoodsReceiptCalculation Calculate(
         IReadOnlyCollection<GoodsReceiptLineRequest> normalizedLines)

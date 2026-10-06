@@ -138,30 +138,28 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        for (var index = 0; index < withholding.Lines.Count; index++)
+        if (withholding.Lines.Count > 0)
         {
-            var line = withholding.Lines[index];
             await using var command = new SqlCommand("""
                 INSERT dbo.DocumentWithholdingLines
                   (DocumentId,DocumentType,LineNumber,RuleId,RuleVersion,RuleCode,Name,Kind,
-                   BaseKind,TaxableBase,Rate,Amount,JurisdictionCode)
-                VALUES(@DocumentId,@DocumentType,@Line,@RuleId,@Version,@Code,@Name,@Kind,
-                   @BaseKind,@Base,@Rate,@Amount,@Jurisdiction);
+                   BaseKind,TaxableBase,Rate,Amount,JurisdictionCode,AccountId,ManualLineId)
+                SELECT @DocumentId,@DocumentType,CONVERT(int,j.[key])+1,
+                  NULLIF(l.RuleId,'00000000-0000-0000-0000-000000000000'),NULLIF(l.RuleVersion,0),
+                  l.RuleCode,l.Name,l.Kind,l.BaseKind,l.TaxableBase,l.Rate,l.Amount,
+                  l.JurisdictionCode,l.AccountId,l.ManualLineId
+                FROM OPENJSON(@Lines) j CROSS APPLY OPENJSON(j.value) WITH(
+                  RuleId uniqueidentifier,RuleVersion int,RuleCode nvarchar(32),Name nvarchar(120),
+                  Kind nvarchar(32),BaseKind nvarchar(32),TaxableBase decimal(19,4),
+                  Rate decimal(9,6),Amount decimal(19,4),JurisdictionCode nvarchar(16),
+                  AccountId uniqueidentifier,ManualLineId uniqueidentifier) l;
                 """, session.Connection, session.Transaction);
             command.Parameters.AddWithValue("@DocumentId", documentId);
             command.Parameters.AddWithValue("@DocumentType", documentType);
-            command.Parameters.AddWithValue("@Line", index + 1);
-            command.Parameters.AddWithValue("@RuleId", line.RuleId);
-            command.Parameters.AddWithValue("@Version", line.RuleVersion);
-            command.Parameters.AddWithValue("@Code", line.RuleCode);
-            command.Parameters.AddWithValue("@Name", line.Name);
-            command.Parameters.AddWithValue("@Kind", line.Kind);
-            command.Parameters.AddWithValue("@BaseKind", line.BaseKind);
-            AddDecimal(command, "@Base", line.TaxableBase, 19, 4);
-            AddDecimal(command, "@Rate", line.Rate, 9, 6);
-            AddDecimal(command, "@Amount", line.Amount, 19, 4);
-            command.Parameters.AddWithValue("@Jurisdiction", (object?)line.JurisdictionCode ?? DBNull.Value);
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            command.Parameters.Add("@Lines", System.Data.SqlDbType.NVarChar, -1).Value =
+                System.Text.Json.JsonSerializer.Serialize(withholding.Lines);
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != withholding.Lines.Count)
+                throw new DBConcurrencyException("The complete withholding snapshot was not persisted.");
         }
     }
 

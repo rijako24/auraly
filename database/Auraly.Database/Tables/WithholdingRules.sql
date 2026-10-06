@@ -17,11 +17,14 @@ CREATE TABLE [dbo].[WithholdingRules]
     [EffectiveFrom] DATE NOT NULL,
     [EffectiveTo] DATE NULL,
     [IsActive] BIT NOT NULL,
+    [AppliesAutomatically] BIT NOT NULL CONSTRAINT [DF_WithholdingRules_AppliesAutomatically] DEFAULT (1),
+    [DefaultAccountId] UNIQUEIDENTIFIER NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [CreatedByUserId] UNIQUEIDENTIFIER NOT NULL,
     CONSTRAINT [PK_WithholdingRules] PRIMARY KEY ([RuleId], [Version]),
     CONSTRAINT [FK_WithholdingRules_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_WithholdingRules_Users] FOREIGN KEY ([CreatedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_WithholdingRules_Account] FOREIGN KEY ([DefaultAccountId]) REFERENCES [dbo].[AccountingAccounts] ([AccountId]),
     CONSTRAINT [UQ_WithholdingRules_Business_Code_Version] UNIQUE ([BusinessId], [Code], [Version]),
     CONSTRAINT [CK_WithholdingRules_Version] CHECK ([Version] > 0),
     CONSTRAINT [CK_WithholdingRules_Kind] CHECK ([Kind] IN (N'IncomeTax',N'Vat',N'IndustryCommerce')),
@@ -34,7 +37,10 @@ CREATE TABLE [dbo].[WithholdingRules]
     CONSTRAINT [CK_WithholdingRules_VatBase] CHECK (
       ([Kind]=N'Vat' AND [BaseKind]=N'VatAmount') OR
       ([Kind]<>N'Vat' AND [BaseKind]=N'TaxExclusiveAmount')),
-    CONSTRAINT [CK_WithholdingRules_IcaJurisdiction] CHECK ([Kind]<>N'IndustryCommerce' OR [JurisdictionCode] IS NOT NULL)
+    CONSTRAINT [CK_WithholdingRules_IcaJurisdiction] CHECK ([Kind]<>N'IndustryCommerce' OR [JurisdictionCode] IS NOT NULL),
+    CONSTRAINT [CK_WithholdingRules_AutomationAccount] CHECK (
+      ([AppliesAutomatically]=1 AND [DefaultAccountId] IS NULL) OR
+      ([AppliesAutomatically]=0 AND [DefaultAccountId] IS NOT NULL))
 );
 GO
 

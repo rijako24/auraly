@@ -20,8 +20,10 @@ CREATE TABLE [dbo].[DocumentWithholdingLines]
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentType] NVARCHAR(32) NOT NULL,
     [LineNumber] INT NOT NULL,
-    [RuleId] UNIQUEIDENTIFIER NOT NULL,
-    [RuleVersion] INT NOT NULL,
+    [RuleId] UNIQUEIDENTIFIER NULL,
+    [RuleVersion] INT NULL,
+    [AccountId] UNIQUEIDENTIFIER NULL,
+    [ManualLineId] UNIQUEIDENTIFIER NULL,
     [RuleCode] NVARCHAR(32) NOT NULL,
     [Name] NVARCHAR(120) NOT NULL,
     [Kind] NVARCHAR(32) NOT NULL,
@@ -35,6 +37,11 @@ CREATE TABLE [dbo].[DocumentWithholdingLines]
       REFERENCES [dbo].[DocumentWithholdingSnapshots] ([DocumentId],[DocumentType]),
     CONSTRAINT [FK_DocumentWithholdingLines_Rule] FOREIGN KEY ([RuleId],[RuleVersion])
       REFERENCES [dbo].[WithholdingRules] ([RuleId],[Version]),
+    CONSTRAINT [FK_DocumentWithholdingLines_Account] FOREIGN KEY ([AccountId])
+      REFERENCES [dbo].[AccountingAccounts] ([AccountId]),
+    CONSTRAINT [CK_DocumentWithholdingLines_Source] CHECK (
+      ([RuleId] IS NOT NULL AND [RuleVersion] IS NOT NULL AND [AccountId] IS NULL AND [ManualLineId] IS NULL)
+      OR ([RuleId] IS NULL AND [RuleVersion] IS NULL AND [AccountId] IS NOT NULL AND [ManualLineId] IS NOT NULL)),
     CONSTRAINT [CK_DocumentWithholdingLines_Amount] CHECK ([TaxableBase]>=0 AND [Amount]>0 AND [Rate]>0)
 );
 GO

@@ -214,13 +214,16 @@ guardar la copia en IndexedDB.
 
 ### Autorizacion administrativa
 
-- Cada permiso nuevo se registra en el catalogo canónico y queda asignado al rol
-  `ADMINISTRATOR` por sincronización determinista. No se mantiene una lista manual
-  incompleta de permisos administrativos.
-- El administrador del tenant recibe todo permiso aplicable dentro de su tenant; las
-  capacidades contratadas se controlan por entitlement, no retirando permisos al rol.
+- Cada permiso nuevo se registra en el catalogo canónico. Los permisos operativos
+  aplicables al tenant se asignan a `ADMINISTRATOR` por sincronización determinista,
+  salvo `agents.*`, `conversations.*`, `leads.*`, `campaigns.*` y `reservations.*`:
+  Atención y crecimiento permanece disponible para habilitación expresa, sin
+  concesión automática. No se mantiene otra lista manual incompleta de permisos.
+- Los entitlements controlan la disponibilidad comercial de los módulos, pero no
+  conceden por sí solos los permisos de Atención y crecimiento.
 - Los recursos `tenants.*` y `platform.*` pertenecen exclusivamente al alcance de
-  plataforma. El administrador de `@auraly` recibe el catálogo completo y, al operar
+  plataforma. El administrador de `@auraly` recibe los permisos de plataforma y
+  los operativos no optativos; al operar
   sobre un tenant seleccionado autorizado, sus permisos efectivos abarcan todas las
   acciones de ese tenant. Esta regla nunca habilita a un administrador cliente para
   cruzar tenants.

@@ -181,7 +181,11 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
     private async Task<ExpensePreview> CalculatePreviewAsync(ExpenseUserIdentity user,
         ConfirmExpenseRequest request, ExpenseResolution resolved, CancellationToken ct)
     {
-        var plan = await withholding.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId, [request.SupplierId], ct);
+        var manualAccounts = request.WithholdingAdjustments?
+            .Where(item => item.Action == "Manual" && item.AccountId.HasValue)
+            .Select(item => item.AccountId!.Value).Distinct().ToArray();
+        var plan = await withholding.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId,
+            [request.SupplierId], ct, manualAccounts);
         var hasProfile = plan.Profiles.ContainsKey(request.SupplierId);
         (WithholdingCalculationSnapshot Calculation, IReadOnlyList<string> Diagnostics) result;
         try
@@ -201,12 +205,15 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
                 resolved.Lines.Sum(line => line.VatAmount));
         }
         catch (TaxationValidationException error) { throw new ExpenseValidationException(error.Message); }
+        var hasManualWithholding = request.WithholdingAdjustments?.Any(item => item.Action == "Manual") == true;
         IReadOnlyList<string> diagnostics = hasProfile ? result.Diagnostics :
-            ["Falta el perfil tributario del proveedor. En Terceros → Proveedores → Retenciones y perfil tributario, configura si aplica retención, sus responsabilidades y jurisdicción antes de confirmar."];
+            [hasManualWithholding
+                ? "El proveedor no tiene perfil tributario; se aplicará únicamente la retención manual indicada."
+                : "Falta el perfil tributario del proveedor. En Terceros → Proveedores → Retenciones y perfil tributario, configura si aplica retención, sus responsabilidades y jurisdicción antes de confirmar."];
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new {
             request.BusinessId, request.SupplierId, request.IssuedAt, request.DueDate, request.PurchaseEvidenceType,
             resolved.Lines, finalCalculation, diagnostics, hasProfile }))));
-        return new(resolved.Lines, finalCalculation, hash, diagnostics, hasProfile);
+        return new(resolved.Lines, finalCalculation, hash, diagnostics, hasProfile || hasManualWithholding);
     }
 
     private static void RequireWithholdingAdjustmentPermission(ExpenseUserIdentity user,

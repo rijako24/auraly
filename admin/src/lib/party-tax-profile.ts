@@ -9,7 +9,7 @@ export function counterpartyWithholdingRuleIsCandidate(
   jurisdictionCode: string | null,
 ) {
   const direction = role === "customer" ? "Sale" : "Purchase";
-  if (!rule.isActive || rule.direction !== direction) return false;
+  if (!rule.isActive || !rule.appliesAutomatically || rule.direction !== direction) return false;
   if (role === "supplier" && rule.kind === "IncomeTax" && hasResponsibility(
     responsibilities,
     incomeTaxSelfWithholderResponsibilityCode,

@@ -11,8 +11,8 @@ import {
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
-import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
-import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
+import { type PartyRoleSelection } from "@/components/parties/party-role-select";
+import { SupplierSiteSelect, type SupplierSiteSelection } from "@/components/parties/supplier-site-select";
 import { allowedPurchaseEvidenceTypes } from "@/lib/purchase-evidence-policy";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
@@ -49,7 +49,7 @@ import { taxationApi, type WithholdingAdjustment } from "@/services/api/taxation
 import { WithholdingAdjustmentEditor } from "@/components/taxation/withholding-adjustment-editor";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
-import { partiesApi, type PartySiteRoleOption } from "@/services/api/parties";
+import { partiesApi } from "@/services/api/parties";
 import { tenantCommercialApi } from "@/services/api/tenants";
 import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
@@ -68,7 +68,7 @@ import {
   goodsReceiptConfirmationReceivedAt,
 } from "@/lib/goods-receipt-confirmation";
 
-type PendingSupplierChange = { supplier?: PartyRoleSelection };
+type PendingSupplierChange = { supplier?: SupplierSiteSelection };
 type GoodsReceiptCostLine = GoodsReceiptCostDocument["lines"][number];
 
 type EditorDraft = {
@@ -736,12 +736,12 @@ function ReceiptEditor({
     setCostsExpanded(true);
   };
 
-  const applySupplierChange = (supplier?: PartyRoleSelection) => {
+  const applySupplierChange = (supplier?: SupplierSiteSelection) => {
     const supplierId = supplier?.supplierId ?? "";
     setSelectedSupplier(supplier ?? null);
     const evidenceType = supplier?.supplierPurchaseEvidencePolicy ?? "";
     const issueDate = draft.supplierInvoiceDate || todayInput();
-    change({ supplierId, partySiteId: "", lines: [], purchaseOrderId: "", purchaseEvidenceType: evidenceType,
+    change({ supplierId, partySiteId: supplier?.partySiteId ?? "", lines: [], purchaseOrderId: "", purchaseEvidenceType: evidenceType,
       supplierInvoiceNumber: "", supplierInvoiceDate: issueDate,
       dueDate: draft.createsPayable && supplier
         ? plusDaysFrom(issueDate, supplier.supplierDefaultPaymentDueDays ?? 30) : "" });
@@ -750,9 +750,14 @@ function ReceiptEditor({
     setProductSearch("");
   };
 
-  const requestSupplierChange = (supplierId: string, supplier?: PartyRoleSelection) => {
-    if (supplierId === draft.supplierId) return;
-    if (supplierId && !supplier) return;
+  const requestSupplierChange = (partySiteId: string, supplier?: SupplierSiteSelection) => {
+    if (partySiteId === draft.partySiteId) return;
+    if (partySiteId && !supplier) return;
+    if (supplier?.supplierId === draft.supplierId) {
+      setSelectedSupplier(supplier);
+      change({ partySiteId });
+      return;
+    }
     if (draft.lines.length === 0) {
       applySupplierChange(supplier);
       return;
@@ -1069,6 +1074,7 @@ function ReceiptEditor({
                   purchaseOrderId: order.purchaseOrderId,
                   warehouseId: order.warehouseId,
                   supplierId: order.supplierId,
+                  partySiteId: "",
                   notes: order.notes ?? "",
                   lines: order.lines.map((line, index) => ({
                     lineNumber: index + 1,
@@ -1111,10 +1117,10 @@ function ReceiptEditor({
           <p className="mt-2 text-xs text-muted-foreground">Puedes recibir directamente sin orden. Si eliges una, Auraly propone únicamente su saldo pendiente.</p>
         </section>
         <section className="grid items-start gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
-          <Field label="Proveedor">
-            <PartyRoleSelect role="Supplier" value={draft.supplierId} placeholder="Buscar proveedor"
+          <Field label="Proveedor · sede">
+            <SupplierSiteSelect value={draft.partySiteId} placeholder="Buscar proveedor y sede"
               preload
-              disabled={!!draft.purchaseOrderId}
+              roleId={draft.purchaseOrderId ? draft.supplierId : undefined}
               onResolved={(supplier)=>{
                 setSelectedSupplier(supplier);
                 if(supplier?.supplierId===draft.supplierId){
@@ -1127,9 +1133,6 @@ function ReceiptEditor({
               }}
               onChange={requestSupplierChange}/>
           </Field>
-          <Field label="Sede del proveedor"><SupplierSitePicker businessId={businessId}
-            supplierId={draft.supplierId} value={draft.partySiteId}
-            onChange={partySiteId=>change({partySiteId})}/></Field>
           <Field label="Bodega">
             <Select value={draft.warehouseId} disabled={!!draft.purchaseOrderId} onValueChange={(value) => change({ warehouseId: value })}>
               <SelectTrigger><SelectValue placeholder="Seleccionar bodega" /></SelectTrigger>
@@ -1434,15 +1437,12 @@ function ReceiptEditor({
               </DialogHeader>
               <div className="space-y-4 overflow-y-auto px-6 py-5">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Field label="Proveedor"><PartyRoleSelect role="Supplier" value={document.supplierId} placeholder="Buscar proveedor"
+                <Field label="Proveedor · sede"><SupplierSiteSelect value={document.partySiteId??""} placeholder="Buscar proveedor y sede"
                   onResolved={(supplier) => supplier && setCostSupplierNames((names) => ({ ...names, [supplier.supplierId ?? supplier.partyId]: supplier.displayName }))}
-                  onChange={(supplierId, supplier) => {
-                    if (supplier) setCostSupplierNames((names) => ({ ...names, [supplierId]: supplier.displayName }));
-                    updateCostDocument({ supplierId, partySiteId: null });
+                  onChange={(partySiteId, supplier) => {
+                    if (supplier) setCostSupplierNames((names) => ({ ...names, [supplier.supplierId]: supplier.displayName }));
+                    updateCostDocument({ supplierId: supplier?.supplierId ?? "", partySiteId: partySiteId || null });
                   }} /></Field>
-                <Field label="Sede del proveedor"><SupplierSitePicker businessId={businessId}
-                  supplierId={document.supplierId} value={document.partySiteId??""}
-                  onChange={partySiteId=>updateCostDocument({partySiteId:partySiteId||null})}/></Field>
                 <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                 <Field label="Número">{document.purchaseEvidenceType === "BuyerElectronicSupportDocument" ? <Input readOnly value="Se asignará al confirmar" /> : <Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} />}</Field>
                 <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
@@ -1502,10 +1502,12 @@ function ReceiptEditor({
                 {withholding?.isFetching && <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">Calculando retenciones con el motor tributario…</p>}
                 {withholding?.isError && <p className="text-xs text-amber-700 md:col-span-2 xl:col-span-5">La vista previa no está disponible; la confirmación volverá a validarla.</p>}
               </div>
-              {(withholding.data || !!document.withholdingAdjustments?.length) && <WithholdingAdjustmentEditor calculation={withholding.data ?? null}
+              <WithholdingAdjustmentEditor businessId={businessId} occurredAt={document.issuedAt} calculation={withholding.data ?? null}
                 adjustments={document.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
-                disabled={!canAdjustWithholdings || withholdingRules.isLoading || withholding.isFetching}
-                onChange={withholdingAdjustments => updateCostDocument({withholdingAdjustments})}/>}
+                disabled={!canAdjustWithholdings || withholding.isFetching}
+                onChange={withholdingAdjustments => updateCostDocument({withholdingAdjustments})}/>
+              {!withholding.data && !withholding.isFetching && !withholding.isError &&
+                <p className="text-xs text-muted-foreground">Completa el concepto, la fecha y el valor del costo para habilitar la retención.</p>}
               </div>
               <DialogFooter className="border-t px-6 py-4">
                 <Button type="button" variant="outline" onClick={closeCostDocument}>Cancelar</Button>
@@ -1515,6 +1517,13 @@ function ReceiptEditor({
             </Dialog>;
           })}
         </section>
+
+        <WithholdingAdjustmentEditor businessId={businessId} occurredAt={draft.supplierInvoiceDate ?? ""} calculation={withholdingPreview.data ?? null}
+          adjustments={draft.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
+          disabled={!canAdjustWithholdings || withholdingPreview.isFetching}
+          onChange={withholdingAdjustments => change({withholdingAdjustments})}/>
+        {!withholdingPreviewReady &&
+          <p className="text-xs text-muted-foreground">Agrega un producto y completa la fecha, el soporte y los valores para habilitar la retención.</p>}
 
         <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_23rem]">
           <Textarea value={draft.notes} onChange={(event) => change({ notes: event.target.value })}
@@ -1554,11 +1563,6 @@ function ReceiptEditor({
             </p>}
           </dl>
         </section>
-        {(withholdingPreview.data || !!draft.withholdingAdjustments?.length) && <WithholdingAdjustmentEditor calculation={withholdingPreview.data ?? null}
-          adjustments={draft.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
-          disabled={!canAdjustWithholdings || withholdingRules.isLoading || withholdingPreview.isFetching}
-          onChange={withholdingAdjustments => change({withholdingAdjustments})}/>}
-
         <section className="grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
           <Field label="Concepto fiscal de la compra">
             <Select value={draft.withholdingConceptCode || "__none"} onValueChange={(value) => change({ withholdingConceptCode: value === "__none" ? "" : value })}>
@@ -1636,16 +1640,6 @@ function ReceiptEditor({
       </DialogFooter>
     </DialogContent>
   </Dialog>;
-}
-
-function SupplierSitePicker({businessId,supplierId,value,onChange}:{businessId:string;supplierId:string;value:string;onChange:(value:string)=>void}) {
-  return <PagedEntitySelect<PartySiteRoleOption>
-    queryKey={["supplier-sites",businessId,supplierId]} value={value} preload pageSize={50}
-    disabled={!supplierId} selectedOption={value?{value,label:"Sede seleccionada"}:null}
-    loadPage={(term,page,pageSize)=>partiesApi.portfolioSiteOptions({role:"Supplier",roleId:supplierId,search:term||undefined,page,pageSize})}
-    getOption={item=>({value:item.partySiteId,label:item.siteName,description:`${item.displayName} · ${item.identification}`})}
-    onChange={onChange} onClear={value?()=>onChange(""):undefined}
-    placeholder="Seleccionar sede" ariaLabel="Sede del proveedor" />;
 }
 
 function emptyDraft(): EditorDraft {
@@ -1782,7 +1776,7 @@ function editorCellKey(productId: string, field: GoodsReceiptEditorField) {
 }
 
 function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
-  return <div className="space-y-2"><Label>{label}</Label>{children}</div>;
+  return <div className="space-y-2"><Label className="flex min-h-5 items-center">{label}</Label>{children}</div>;
 }
 function Amount({ label, value, strong = false }: { label: string; value: number | null; strong?: boolean }) {
   return <div className={`flex justify-between ${strong ? "border-t border-white/20 pt-3 text-lg" : "text-sm"}`}>

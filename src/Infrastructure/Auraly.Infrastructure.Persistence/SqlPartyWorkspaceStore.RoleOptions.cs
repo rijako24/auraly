@@ -11,6 +11,8 @@ public sealed partial class SqlPartyWorkspaceStore
     {
         var role = query.Role == "Customer" ? (Table: "dbo.Customers", Id: "CustomerId") :
             (Table: "dbo.Suppliers", Id: "SupplierId");
+        var supplierPolicy = query.Role == "Supplier" ? "partyRole.PurchaseEvidencePolicy" : "CAST(NULL AS NVARCHAR(40))";
+        var supplierDueDays = query.Role == "Supplier" ? "partyRole.DefaultPaymentDueDays" : "CAST(NULL AS INT)";
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
@@ -22,19 +24,22 @@ public sealed partial class SqlPartyWorkspaceStore
             JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
             WHERE party.TenantId=@TenantId AND party.IsActive=1
               AND (@RoleId IS NULL OR partyRole.{role.Id}=@RoleId)
+              AND (@PartySiteId IS NULL OR site.PartySiteId=@PartySiteId)
               AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
                 OR party.LegalName LIKE N'%'+@Search+N'%'
                 OR party.Identification LIKE N'%'+@Search+N'%'
                 OR site.Name LIKE N'%'+@Search+N'%' OR site.Code LIKE N'%'+@Search+N'%');
             SELECT party.PartyId,partyRole.{role.Id},site.PartySiteId,
               COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),N'Sin nombre'),
-              COALESCE(party.Identification,N''),site.Name,site.IsPrimary
+              COALESCE(party.Identification,N''),site.Name,site.IsPrimary,
+              {supplierPolicy},{supplierDueDays}
             FROM dbo.Parties party
             JOIN {role.Table} partyRole ON partyRole.PartyId=party.PartyId
               AND partyRole.TenantId=@TenantId AND partyRole.IsActive=1
             JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
             WHERE party.TenantId=@TenantId AND party.IsActive=1
               AND (@RoleId IS NULL OR partyRole.{role.Id}=@RoleId)
+              AND (@PartySiteId IS NULL OR site.PartySiteId=@PartySiteId)
               AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
                 OR party.LegalName LIKE N'%'+@Search+N'%'
                 OR party.Identification LIKE N'%'+@Search+N'%'
@@ -45,6 +50,7 @@ public sealed partial class SqlPartyWorkspaceStore
         command.Parameters.AddRange([
             new SqlParameter("@TenantId", actor.TenantId),
             new SqlParameter("@RoleId", (object?)query.RoleId ?? DBNull.Value),
+            new SqlParameter("@PartySiteId", (object?)query.PartySiteId ?? DBNull.Value),
             new SqlParameter("@Search", (object?)Empty(query.Search) ?? DBNull.Value),
             new SqlParameter("@Offset", (page - 1) * query.PageSize),
             new SqlParameter("@PageSize", query.PageSize)
@@ -56,7 +62,8 @@ public sealed partial class SqlPartyWorkspaceStore
         var items = new List<PartySiteRoleOption>();
         while (await reader.ReadAsync(ct))
             items.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-                reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetBoolean(6)));
+                reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetBoolean(6),
+                S(reader, 7), reader.IsDBNull(8) ? null : reader.GetInt32(8)));
         return new(items, page, query.PageSize, total,
             (int)Math.Ceiling(total / (double)query.PageSize));
     }

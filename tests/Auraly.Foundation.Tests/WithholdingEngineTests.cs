@@ -5,6 +5,17 @@ namespace Auraly.Foundation.Tests;
 public sealed class WithholdingEngineTests
 {
     [Fact]
+    public void Manual_only_rule_is_a_template_and_never_runs_in_automatic_calculation()
+    {
+        var manual = Rule(WithholdingKind.IncomeTax,
+            WithholdingBaseKind.TaxExclusiveAmount, 2.5m) with
+        { AppliesAutomatically = false, DefaultAccountId = Guid.NewGuid() };
+        var context = Context(100_000m, 0m, "11001");
+        Assert.Empty(new WithholdingEngine().Calculate(context, [manual]).Lines);
+        Assert.Empty(new WithholdingEngine().CalculateDocument([context], [manual]).Calculation.Lines);
+    }
+
+    [Fact]
     public void Splitting_expense_accounts_does_not_split_the_minimum_base_or_tax_other_concepts()
     {
         var rule = Rule(WithholdingKind.IncomeTax, WithholdingBaseKind.TaxExclusiveAmount, 2.5m,

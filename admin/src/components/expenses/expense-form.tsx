@@ -5,9 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { AccountSelect } from "@/components/accounting/account-select";
-import { PartyRoleSelect, type PartyRoleSelection } from "@/components/parties/party-role-select";
-import { PagedEntitySelect, type PagedEntityOption } from "@/components/forms/paged-entity-select";
-import { partiesApi, type PartySiteRoleOption } from "@/services/api/parties";
+import { SupplierSiteSelect, type SupplierSiteSelection } from "@/components/parties/supplier-site-select";
 import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -41,8 +39,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
     state.user?.permissions?.includes("commerce.taxation.withholdings.manage") ?? false);
   const withholdingRules = useQuery({queryKey:["withholding-rules",businessId,"purchase-adjustments"],
     queryFn:() => taxationApi.listRules(false), enabled:canAdjustWithholdings});
-  const [party, setParty] = useState<PartyRoleSelection | null>(null);
-  const [siteOption, setSiteOption] = useState<PagedEntityOption | null>(null);
+  const [party, setParty] = useState<SupplierSiteSelection | null>(null);
   const [lines, setLines] = useState<EditableLine[]>([]);
   const [editingLine, setEditingLine] = useState<EditableLine | null>(null);
   const [form, setForm] = useState<ConfirmExpense>(() => ({ expenseId: crypto.randomUUID(), businessId,
@@ -63,7 +60,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   function change(patch: Partial<ConfirmExpense>) {
     const next = { ...form, ...patch };
     setForm(next);
-    if ("supplierId" in patch || "issuedAt" in patch || "dueDate" in patch || "purchaseEvidenceType" in patch || "withholdingAdjustments" in patch) {
+    if ("supplierId" in patch || "partySiteId" in patch || "issuedAt" in patch || "dueDate" in patch || "purchaseEvidenceType" in patch || "withholdingAdjustments" in patch) {
       invalidate();
       if (canPreview(lines, next)) void calculate(lines, next);
     } else setError(null);
@@ -125,24 +122,15 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   return <><form onSubmit={confirm} className="space-y-5">
     <fieldset disabled={!!phase} className="space-y-5 disabled:opacity-75">
       <section className="grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
-        <Field label="Proveedor o beneficiario">{id => <div id={id}><PartyRoleSelect role="Supplier" value={form.supplierId}
-          selectedOption={party ? { value: party.roleId, label: party.displayName } : null}
-          placeholder="Buscar proveedor o beneficiario" emptyMessage="No hay proveedores activos para esta búsqueda. Registra el tercero con rol Proveedor para usarlo en Gastos." onChange={(supplierId, selected) => {
+        <Field label="Proveedor o beneficiario · sede">{id => <div id={id}><SupplierSiteSelect value={form.partySiteId??""}
+          sourceKey="expense-supplier-sites" onChange={(partySiteId, selected) => {
             setParty(selected ?? null);
-            setSiteOption(null);
             const allowed = options.purchaseEvidenceTypes.filter(option => allowedPurchaseEvidenceTypes(selected?.supplierPurchaseEvidencePolicy ?? null).includes(option.code));
             const due = new Date(form.issuedAt); due.setUTCDate(due.getUTCDate() + (selected?.supplierDefaultPaymentDueDays ?? 0));
-            change({ supplierId, partySiteId: null, dueDate: Number.isNaN(due.getTime()) ? form.dueDate : issuedAt(due.toISOString().slice(0, 10)),
+            change({ supplierId: selected?.supplierId ?? "", partySiteId: partySiteId || null,
+              dueDate: Number.isNaN(due.getTime()) ? form.dueDate : issuedAt(due.toISOString().slice(0, 10)),
               purchaseEvidenceType: allowed.some(option => option.code === form.purchaseEvidenceType) ? form.purchaseEvidenceType : allowed[0]?.code ?? form.purchaseEvidenceType });
           }}/></div>}</Field>
-        <Field label="Sede del proveedor">{() => <PagedEntitySelect<PartySiteRoleOption>
-          queryKey={["expense-supplier-sites",businessId,form.supplierId]} value={form.partySiteId??""}
-          selectedOption={siteOption} disabled={!form.supplierId} preload
-          loadPage={(term,page,pageSize)=>partiesApi.portfolioSiteOptions({role:"Supplier",roleId:form.supplierId,search:term||undefined,page,pageSize})}
-          getOption={item=>({value:item.partySiteId,label:item.siteName,description:`${item.displayName} · ${item.identification}`})}
-          onChange={(value,option)=>{setSiteOption(option);change({partySiteId:value})}}
-          onClear={()=>{setSiteOption(null);change({partySiteId:null})}}
-          placeholder="Seleccionar sede" ariaLabel="Sede del proveedor" />}</Field>
         <Field label="Respaldo del gasto">{id => <Select value={form.purchaseEvidenceType} onValueChange={(value: PurchaseEvidenceType) => change({ purchaseEvidenceType: value })}><SelectTrigger id={id}><SelectValue/></SelectTrigger><SelectContent>{evidence.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select>}</Field>
         <Field label={supplierInvoice ? "Número de factura del proveedor" : "Referencia (opcional)"}>{id => <Input id={id} maxLength={80} required={supplierInvoice} value={form.supplierDocumentNumber ?? ""} onChange={event => change({ supplierDocumentNumber: event.target.value })}/>}</Field>
         <Field label="Descripción general (opcional)">{id => <Input id={id} maxLength={300} value={form.description} onChange={event => change({ description: event.target.value })}/>}</Field>
@@ -180,13 +168,10 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
     </fieldset>
     {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
     {lines.length > 0 && <section className="space-y-4 rounded-xl border p-4" aria-label="Cálculo del gasto">
-      <WithholdingAdjustmentEditor calculation={preview?.withholding ?? null}
+      <WithholdingAdjustmentEditor businessId={businessId} occurredAt={form.issuedAt} calculation={preview?.withholding ?? null}
         adjustments={form.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
-        disabled={!!phase || !canAdjustWithholdings || withholdingRules.isLoading || withholdingRules.isError}
+        disabled={!!phase || !canAdjustWithholdings}
         onChange={withholdingAdjustments => change({withholdingAdjustments})}/>
-      {canAdjustWithholdings && !withholdingRules.isLoading && !withholdingRules.isError &&
-        !withholdingRules.data?.some(rule => rule.isActive && rule.direction === "Purchase" && rule.moment === "Accrual") &&
-        <p className="text-sm text-muted-foreground">No hay reglas de retención de compra vigentes para esta sede. Configúralas en Contabilidad → Retenciones.</p>}
       {phase === "calculate" && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Calculando retenciones…</p>}
       {preview ? <><ExpenseBreakdown withholding={preview.withholding} hideWithholdingLines/>{preview.diagnostics.map((message, index) => <p key={index} className={`rounded-lg p-3 text-sm ${preview.canConfirm ? "bg-muted text-muted-foreground" : "bg-destructive/5 text-destructive"}`}>{message}</p>)}</> :
         phase !== "calculate" && !error && <p className="text-sm text-muted-foreground">{!form.supplierId ? "Selecciona el proveedor para calcular las retenciones de estos gastos." : "Completa las fechas válidas para calcular las retenciones."}</p>}
@@ -197,14 +182,16 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   </form>
     <Dialog open={!!editingLine} onOpenChange={open => { if (!open) setEditingLine(null); }}>
       <DialogContent className="max-h-[90dvh] overflow-visible sm:max-w-3xl">
-        <DialogHeader><DialogTitle>{existingLine ? "Editar gasto" : "Agregar gasto"}</DialogTitle><DialogDescription>Elige un gasto frecuente o una cuenta directa. La línea se incorpora al documento al guardar.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{existingLine ? "Editar gasto" : "Agregar gasto"}</DialogTitle><DialogDescription>Completa la cuenta y los valores de la línea. Si usas un gasto frecuente, se cargarán sus datos.</DialogDescription></DialogHeader>
         {editingLine && <form onSubmit={saveLine} className="max-h-[calc(90dvh-8rem)] space-y-5 overflow-y-auto pr-1">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
-            <Field label="Gasto frecuente (opcional)">{id => <div className="relative"><Select value={editingLine.conceptId ?? "none"} onValueChange={value => {
+          <div className="rounded-xl border bg-muted/20 p-3">
+            <Field label="Usar gasto frecuente (opcional)">{id => <div className="relative"><Select value={editingLine.conceptId ?? "none"} onValueChange={value => {
               const concept = options.concepts.find(item => item.conceptId === value);
               if (concept) changeLine({ conceptId: concept.conceptId, expenseAccountId: concept.expenseAccountId, accountCode: concept.expenseAccountCode, accountName: concept.expenseAccountName,
                 description: concept.name, costCenterId: concept.defaultCostCenterId, withholdingConceptCode: concept.withholdingConceptCode });
             }}><SelectTrigger id={id} className={editingLine.conceptId ? "pr-16" : undefined}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Seleccionar gasto frecuente</SelectItem>{options.concepts.filter(item => item.isActive).map(item => <SelectItem key={item.conceptId} value={item.conceptId}>{item.name}</SelectItem>)}</SelectContent></Select>{editingLine.conceptId && <button type="button" aria-label="Quitar selección de gasto frecuente" className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => changeLine({ conceptId: null, expenseAccountId: "", accountCode: "", accountName: "", description: "", costCenterId: options.costCenters.find(center => center.isDefault)?.costCenterId ?? null, withholdingConceptCode: null })}><X className="h-4 w-4"/></button>}</div>}</Field>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
             <Field label="Cuenta de gasto">{id => <div id={id}><AccountSelect expenseOnly accounts={knownAccounts} value={editingLine.expenseAccountId} onChange={(expenseAccountId, account) => changeLine({ expenseAccountId, accountCode: account?.code ?? "", accountName: account?.name ?? "", conceptId: null })}/></div>}</Field>
             <Field label="Centro de costo">{id => <Select value={editingLine.costCenterId ?? "none"} onValueChange={value => changeLine({ costCenterId: value === "none" ? null : value })}><SelectTrigger id={id}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Predeterminado de contabilidad</SelectItem>{options.costCenters.map(item => <SelectItem key={item.costCenterId} value={item.costCenterId}>{item.code} · {item.name}</SelectItem>)}</SelectContent></Select>}</Field>
             <Field label="Descripción de la línea">{id => <Input id={id} required maxLength={300} value={editingLine.description} onChange={event => changeLine({ description: event.target.value })}/>}</Field>

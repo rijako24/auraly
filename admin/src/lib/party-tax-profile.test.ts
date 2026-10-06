@@ -10,7 +10,7 @@ const baseRule: WithholdingRule = {
   moment: "Accrual", baseKind: "TaxExclusiveAmount", conceptCode: null,
   jurisdictionCode: null, rate: 2.5, minimumBase: 0,
   requiredResponsibilities: [], effectiveFrom: "2026-01-01", effectiveTo: null,
-  isActive: true,
+  isActive: true, appliesAutomatically: true, defaultAccountId: null,
 };
 
 test("does not present purchase income tax as applicable to a self-withholding supplier", () => {
@@ -28,4 +28,11 @@ test("keeps other supplier withholdings and sale income tax candidates", () => {
     { ...baseRule, direction: "Sale" },
     "customer", new Set(["O-15"]), null,
   ), true);
+});
+
+test("manual-only rules are not shown as automatically applicable", () => {
+  assert.equal(counterpartyWithholdingRuleIsCandidate(
+    { ...baseRule, appliesAutomatically: false, defaultAccountId: "account" },
+    "supplier", new Set(), null,
+  ), false);
 });

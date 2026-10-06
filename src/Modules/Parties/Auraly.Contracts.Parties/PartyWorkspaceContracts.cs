@@ -119,7 +119,8 @@ public sealed record PartyRoleOptionQuery(
     int PageSize = 25,
     string? Search = null,
     Guid? RoleId = null,
-    Guid? PartyId = null);
+    Guid? PartyId = null,
+    Guid? PartySiteId = null);
 
 public sealed record PartyRoleOption(
     Guid PartyId,
@@ -138,7 +139,9 @@ public sealed record PartyRoleOptionPage(
     int TotalPages);
 
 public sealed record PartySiteRoleOption(Guid PartyId, Guid RoleId, Guid PartySiteId,
-    string DisplayName, string Identification, string SiteName, bool IsPrimary);
+    string DisplayName, string Identification, string SiteName, bool IsPrimary,
+    string? SupplierPurchaseEvidencePolicy = null,
+    int? SupplierDefaultPaymentDueDays = null);
 public sealed record PartySiteRoleOptionPage(IReadOnlyCollection<PartySiteRoleOption> Items,
     int Page, int PageSize, int TotalCount, int TotalPages);
 

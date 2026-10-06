@@ -164,7 +164,7 @@ async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: bool
       page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
     });
     if (path.endsWith("/parties/site-options")) return json(route, {
-      items: [{ partySiteId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", siteName: "Principal", displayName: "Proveedor Andino", identification: "900100200" }],
+      items: [{ partyId: "88888888-8888-8888-8888-888888888888", roleId: "88888888-8888-8888-8888-888888888888", partySiteId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", siteName: "Principal", displayName: "Proveedor Andino", identification: "900100200", isPrimary: true, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 }],
       page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
     });
     if (path.endsWith("/goods-receipts") || path.endsWith("/purchase-orders")) return json(route, {
@@ -378,11 +378,11 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await page.goto("/dashboard/purchasing/goods-receipts");
   await page.getByRole("button", { name: "Nueva entrada" }).click();
   const dialog = page.getByRole("dialog", { name: "Recepción de compra" });
-  const supplier = dialog.getByRole("combobox", { name: "Seleccionar supplier" });
+  await expect(dialog.getByRole("button", { name: "Agregar retención" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Agregar retención" })).toBeDisabled();
+  const supplier = dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" });
   await supplier.click();
-  await page.getByRole("option", { name: /Proveedor Andino/ }).click();
-  await dialog.getByRole("combobox", { name: "Sede del proveedor" }).click();
-  await page.getByRole("option", { name: /Principal.*Proveedor Andino/ }).click();
+  await page.getByRole("option", { name: /Proveedor Andino.*Principal/ }).click();
   await select(page, field(dialog, "Bodega").getByRole("combobox"), "Principal · PPL");
   await select(page, dialog.getByRole("combobox", { name: "Tipo de soporte" }), "Comprobante interno");
   const search = dialog.getByPlaceholder(/Escanea o busca/);
@@ -409,7 +409,7 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   })).toBe(true);
   await page.reload();
   await page.getByRole("button", { name: "Nueva entrada" }).click();
-  await expect(dialog.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Proveedor Andino");
+  await expect(dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" })).toContainText("Proveedor Andino · Principal");
   await expect(field(dialog, "Bodega").getByRole("combobox")).toContainText("Principal");
   await expect(dialog.getByRole("combobox", { name: "Tipo de soporte" })).toContainText("Comprobante interno");
   await expect(dialog.getByText("Arroz premium", { exact: true })).toBeVisible();
@@ -441,11 +441,9 @@ test("recepción simple sigue directa y la factura adicional carga catálogos y 
   await page.getByRole("button", { name: "Nueva entrada" }).click();
   const dialog = page.getByRole("dialog", { name: "Recepción de compra" });
 
-  const supplier = dialog.getByRole("combobox", { name: "Seleccionar supplier" });
+  const supplier = dialog.getByRole("combobox", { name: "Seleccionar proveedor y sede" });
   await supplier.click();
-  await page.getByRole("option", { name: /Proveedor Andino/ }).click();
-  await dialog.getByRole("combobox", { name: "Sede del proveedor" }).click();
-  await page.getByRole("option", { name: /Principal.*Proveedor Andino/ }).click();
+  await page.getByRole("option", { name: /Proveedor Andino.*Principal/ }).click();
   await select(page, field(dialog, "Bodega").getByRole("combobox"), "Principal · PPL");
   await select(page, dialog.getByRole("combobox", { name: "Tipo de soporte" }), "Comprobante interno");
   const search = dialog.getByPlaceholder(/Escanea o busca/);
@@ -485,10 +483,8 @@ test("recepción simple sigue directa y la factura adicional carga catálogos y 
   await select(page, secondConcept, "IVA de importación");
   await expect(field(costs, "Tratamiento del IVA").getByRole("combobox")).toContainText("IVA descontable");
   await expect(costs.getByText(/El IVA descontable se reconoce separado/)).toBeVisible();
-  await costs.getByRole("combobox", { name: "Seleccionar supplier" }).click();
-  await page.getByRole("option", { name: /Proveedor Andino/ }).click();
-  await costs.getByRole("combobox", { name: "Sede del proveedor" }).click();
-  await page.getByRole("option", { name: /Principal.*Proveedor Andino/ }).click();
+  await costs.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).click();
+  await page.getByRole("option", { name: /Proveedor Andino.*Principal/ }).click();
   await field(costs, "Número").getByRole("textbox").fill("DECL-9001");
   await costs.getByRole("button", { name: "Agregar documento" }).click();
   await expect(costs).toBeHidden();

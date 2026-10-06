@@ -311,7 +311,8 @@ public sealed partial class AccountingService(
             Demand(user, AccountingPermissionCodes.Read);
         var canRead = user.Permissions.Contains(AccountingPermissionCodes.Read) ||
             user.Permissions.Contains(AccountingPermissionCodes.ManualCreate);
-        if (!canRead && !(query.ExpenseOnly && (user.Permissions.Contains(ExpensePermissionCodes.Create) || user.Permissions.Contains(ExpensePermissionCodes.Configure))))
+        if (!canRead && !(query.ExpenseOnly && (user.Permissions.Contains(ExpensePermissionCodes.Create) || user.Permissions.Contains(ExpensePermissionCodes.Configure))) &&
+            !(query.LiabilityOnly && user.Permissions.Contains(Auraly.Commerce.Taxation.Contracts.TaxationPermissionCodes.ManageWithholdingRules)))
             throw new AccountingForbiddenException("No tienes permiso para consultar estas cuentas.");
         if (query.Page < 1 || query.PageSize is < 1 or > 100 || query.Search?.Length > 160)
             throw new AccountingValidationException("La página o la búsqueda de cuentas no es válida.");

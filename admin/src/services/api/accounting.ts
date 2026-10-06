@@ -105,7 +105,7 @@ export const accountingApi = {
   voucherDraft: (id: string) => apiClient.get<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${id}`),
   saveVoucherDraft: (request: SaveVoucherDraft) => apiClient.put<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${request.documentId}`, request),
   sendVoucherDraft: (id: string, rowVersion: string) => apiClient.post<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${id}/send`, { rowVersion }),
-  accountOptions:(params:{page:number;pageSize:number;search?:string;expenseOnly?:boolean;accountId?:string})=>apiClient.get<{items:AccountingAccount[];page:number;pageSize:number;totalCount:number;totalPages:number}>("/commerce/v1/accounting/account-options",params),
+  accountOptions:(params:{page:number;pageSize:number;search?:string;expenseOnly?:boolean;liabilityOnly?:boolean;accountId?:string})=>apiClient.get<{items:AccountingAccount[];page:number;pageSize:number;totalCount:number;totalPages:number}>("/commerce/v1/accounting/account-options",params),
   accounts: () => apiClient.get<AccountingAccount[]>("/commerce/v1/accounting/accounts"),
   bankAccounts: (includeInactive=false) => apiClient.get<BankAccount[]>("/commerce/v1/accounting/bank-accounts", {includeInactive}),
   saveBankAccount: (request:SaveBankAccount) => apiClient.put<BankAccount>(`/commerce/v1/accounting/bank-accounts/${request.bankAccountId}`,request),

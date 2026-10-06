@@ -27,7 +27,9 @@ public sealed record WithholdingRule(
     IReadOnlySet<string> RequiredResponsibilities,
     DateOnly EffectiveFrom,
     DateOnly? EffectiveTo,
-    bool IsActive)
+    bool IsActive,
+    bool AppliesAutomatically = true,
+    Guid? DefaultAccountId = null)
 {
     public static WithholdingRule Create(
         Guid ruleId, Guid businessId, int version, string code, string name,
@@ -35,7 +37,8 @@ public sealed record WithholdingRule(
         WithholdingRecognitionMoment moment, WithholdingBaseKind baseKind,
         string? conceptCode, string? jurisdictionCode, decimal rate, decimal minimumBase,
         IEnumerable<string>? requiredResponsibilities, DateOnly effectiveFrom,
-        DateOnly? effectiveTo, bool isActive)
+        DateOnly? effectiveTo, bool isActive, bool appliesAutomatically = true,
+        Guid? defaultAccountId = null)
     {
         if (ruleId == Guid.Empty || businessId == Guid.Empty)
             throw new WithholdingRuleException("RuleId and BusinessId are required.");
@@ -66,11 +69,15 @@ public sealed record WithholdingRule(
             throw new WithholdingRuleException("Tax responsibilities must contain at most 20 values of 32 characters.");
         if (kind == WithholdingKind.IndustryCommerce && string.IsNullOrWhiteSpace(jurisdictionCode))
             throw new WithholdingRuleException("ReteICA requires a jurisdiction.");
+        if (!appliesAutomatically && defaultAccountId is null)
+            throw new WithholdingRuleException("A manual withholding rule requires an accounting account.");
+        if (appliesAutomatically && defaultAccountId is not null)
+            throw new WithholdingRuleException("An automatic withholding rule uses its configured accounting mapping.");
 
         return new WithholdingRule(
             ruleId, businessId, version, code.Trim().ToUpperInvariant(), name.Trim(), kind, direction,
             moment, baseKind, normalizedConcept, normalizedJurisdiction, rate, minimumBase,
-            responsibilities, effectiveFrom, effectiveTo, isActive);
+            responsibilities, effectiveFrom, effectiveTo, isActive, appliesAutomatically, defaultAccountId);
     }
 
     private static string? Normalize(string? value) =>
@@ -179,7 +186,7 @@ public sealed class WithholdingEngine
 
     private static bool Applies(WithholdingRule rule, WithholdingCalculationContext context, DateOnly date)
     {
-        if (!rule.IsActive || rule.BusinessId != context.BusinessId ||
+        if (!rule.IsActive || !rule.AppliesAutomatically || rule.BusinessId != context.BusinessId ||
             rule.Direction != context.Direction || rule.Moment != context.Moment)
             return false;
         if (rule.Kind == WithholdingKind.IncomeTax &&

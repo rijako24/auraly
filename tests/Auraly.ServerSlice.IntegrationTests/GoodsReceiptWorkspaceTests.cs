@@ -435,6 +435,85 @@ public sealed class GoodsReceiptWorkspaceTests(
         }
     }
 
+    [Fact]
+    public async Task One_off_withholding_without_a_rule_is_reviewed_on_purchase_invoice()
+    {
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts,
+            TaxationPermissionCodes.ManageWithholdingRules);
+        Guid accountId;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                SELECT TOP(1) AccountId FROM dbo.AccountingAccounts
+                WHERE TenantId=@TenantId AND AccountType=N'Liability' AND IsActive=1 AND AllowsPosting=1
+                ORDER BY CASE WHEN Code LIKE N'236%' THEN 0 ELSE 1 END,Code;
+                """, connection);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            accountId = (Guid)(await command.ExecuteScalarAsync())!;
+        }
+        var request = CreateDraft();
+        var lineId = Guid.NewGuid();
+        var manual = new WithholdingAdjustmentRequest(Guid.Empty, "Manual", 10m, 0.10m,
+            "Retención puntual de la factura", lineId, WithholdingKinds.IndustryCommerce,
+            "ReteICA puntual", 1m, "11001", accountId);
+        using var previewResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/goods-receipts/withholding-preview",
+            new PreviewGoodsReceiptWithholdingRequest(fixture.BusinessId, fixture.SupplierId,
+                request.SupplierInvoiceDate!.Value, request.Lines,
+                PurchaseEvidenceType: PurchaseEvidenceTypes.SupplierElectronicInvoice,
+                WithholdingAdjustments: [manual]));
+        Assert.True(previewResponse.IsSuccessStatusCode, await previewResponse.Content.ReadAsStringAsync());
+        var preview = (await previewResponse.Content.ReadFromJsonAsync<WithholdingCalculationSnapshot>())!;
+        Assert.Contains(preview.Lines, line => line.ManualLineId == lineId &&
+            line.AccountId == accountId && line.Amount == 0.10m);
+        Assert.NotNull(preview.ReviewHash);
+        var costLineId = Guid.NewGuid();
+        var costDocument = new GoodsReceiptCostDocumentRequest(
+            Guid.NewGuid(), fixture.SupplierId, PurchaseEvidenceTypes.SupplierElectronicInvoice,
+            $"FLETE-{Guid.NewGuid():N}", request.ReceivedAt, true, request.DueDate,
+            "COP", 1m, DateOnly.FromDateTime(request.ReceivedAt.Date), "FunctionalCurrency",
+            [new GoodsReceiptCostLineRequest(1, PurchaseCostKinds.Freight, "Flete", 5m, 5m,
+                "00", 0m, 0m, PurchasingTaxTreatments.NotApplicable,
+                PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)],
+            WithholdingAdjustments: [manual with { ManualLineId = costLineId,
+                TaxableBase = 5m, Amount = 0.05m }]);
+        using var costPreviewResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/goods-receipts/cost-withholding-preview",
+            new PreviewGoodsReceiptCostWithholdingRequest(fixture.BusinessId, costDocument));
+        Assert.True(costPreviewResponse.IsSuccessStatusCode,
+            await costPreviewResponse.Content.ReadAsStringAsync());
+        var costPreview = (await costPreviewResponse.Content.ReadFromJsonAsync<WithholdingCalculationSnapshot>())!;
+        Assert.Contains(costPreview.Lines, line => line.ManualLineId == costLineId &&
+            line.AccountId == accountId && line.Amount == 0.05m);
+        Assert.NotNull(costPreview.ReviewHash);
+        var confirmation = new ConfirmGoodsReceiptRequest(
+            request.DraftId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+            request.SupplierInvoiceNumber, request.SupplierInvoiceDate, request.ReceivedAt,
+            request.CreatesPayable, request.DueDate, request.CurrencyCode, request.Notes,
+            request.Lines, PurchaseEvidenceType: PurchaseEvidenceTypes.SupplierElectronicInvoice,
+            WithholdingAdjustments: [manual], WithholdingReviewHash: preview.ReviewHash,
+            AdditionalCostDocuments: [costDocument with { WithholdingReviewHash = costPreview.ReviewHash }]);
+        using (var stale = await SendConfirmationAsync(client,
+            confirmation with { WithholdingReviewHash = "stale" }))
+            Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        using var accepted = await SendConfirmationAsync(client, confirmation);
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        await using var persisted = new SqlConnection(fixture.ConnectionString);
+        await persisted.OpenAsync();
+        await using var evidence = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.DocumentWithholdingLines
+            WHERE AccountId=@AccountId AND RuleId IS NULL
+              AND ManualLineId IN (@MainLineId,@CostLineId);
+            """, persisted);
+        evidence.Parameters.AddWithValue("@AccountId", accountId);
+        evidence.Parameters.AddWithValue("@MainLineId", lineId);
+        evidence.Parameters.AddWithValue("@CostLineId", costLineId);
+        Assert.Equal(2, Convert.ToInt32(await evidence.ExecuteScalarAsync()));
+    }
+
     private static async Task<HttpResponseMessage> SendConfirmationAsync(
         HttpClient client, ConfirmGoodsReceiptRequest request)
     {

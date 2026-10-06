@@ -15,12 +15,15 @@ public interface IWithholdingRuleStore
     Task<CounterpartyTaxProfileView> SaveProfileAsync(
         Guid tenantId, Guid userId, SaveCounterpartyTaxProfileRequest request, CancellationToken ct);
     Task<IReadOnlySet<string>> GetActiveResponsibilityCodesAsync(CancellationToken ct);
+    Task<IReadOnlySet<Guid>> GetValidManualAccountIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct);
 }
 
 public sealed record WithholdingCalculationPlan(
     Guid BusinessId,
     IReadOnlyList<WithholdingRule> Rules,
-    IReadOnlyDictionary<Guid, CounterpartyTaxProfileView> Profiles);
+    IReadOnlyDictionary<Guid, CounterpartyTaxProfileView> Profiles,
+    IReadOnlySet<Guid> ValidManualAccountIds);
 
 public sealed class WithholdingService(
     IWithholdingRuleStore store,
@@ -55,11 +58,13 @@ public sealed class WithholdingService(
             Parse<WithholdingRecognitionMoment>(request.Moment, nameof(request.Moment)),
             Parse<WithholdingBaseKind>(request.BaseKind, nameof(request.BaseKind)),
             request.ConceptCode, request.JurisdictionCode, request.Rate, request.MinimumBase,
-            responsibilities, request.EffectiveFrom, request.EffectiveTo, request.IsActive);
+            responsibilities, request.EffectiveFrom, request.EffectiveTo, request.IsActive,
+            request.AppliesAutomatically, request.DefaultAccountId);
         var saved = ToView(await store.SaveVersionAsync(
             user.TenantId, user.UserId, ruleId, proposed, ct));
-        await synchronization.DispatchPendingAsync(
-            user.TenantId, user.BusinessId, CancellationToken.None);
+        if (saved.AppliesAutomatically)
+            await synchronization.DispatchPendingAsync(
+                user.TenantId, user.BusinessId, CancellationToken.None);
         return saved;
     }
 
@@ -140,16 +145,22 @@ public sealed class WithholdingService(
         Guid tenantId,
         Guid businessId,
         IReadOnlyCollection<Guid> counterpartyIds,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyCollection<Guid>? manualAccountIds = null)
     {
         var ids = counterpartyIds.Where(id => id != Guid.Empty).Distinct().ToArray();
+        var accounts = (manualAccountIds ?? []).Where(id => id != Guid.Empty).Distinct().ToArray();
         var profilesTask = store.GetProfilesAsync(tenantId, businessId, ids, ct);
         var rulesTask = store.ListAsync(tenantId, businessId, false, ct);
-        await Task.WhenAll(profilesTask, rulesTask);
+        var accountsTask = accounts.Length == 0
+            ? Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid>())
+            : store.GetValidManualAccountIdsAsync(tenantId, accounts, ct);
+        await Task.WhenAll(profilesTask, rulesTask, accountsTask);
         return new WithholdingCalculationPlan(
             businessId,
             await rulesTask,
-            await profilesTask);
+            await profilesTask,
+            await accountsTask);
     }
 
     public WithholdingCalculationSnapshot Calculate(
@@ -171,23 +182,63 @@ public sealed class WithholdingService(
     {
         if (adjustments is not { Count: > 0 }) return automatic;
         if (adjustments.Count > 20 || userId == Guid.Empty ||
-            adjustments.Select(item => item.RuleId).Distinct().Count() != adjustments.Count)
+            adjustments.Where(item => item.Action != "Manual").Select(item => item.RuleId).Distinct().Count() !=
+                adjustments.Count(item => item.Action != "Manual") ||
+            adjustments.Where(item => item.Action == "Manual").Select(item => item.ManualLineId).Distinct().Count() !=
+                adjustments.Count(item => item.Action == "Manual"))
             throw new TaxationValidationException("Las retenciones manuales son inválidas o están duplicadas.");
 
         var date = DateOnly.FromDateTime(occurredAt.UtcDateTime);
         var lines = automatic.Lines.ToDictionary(line => line.RuleId);
+        var manualLines = new List<WithholdingLineSnapshot>();
         var audit = new List<WithholdingAdjustmentSnapshot>(adjustments.Count);
         foreach (var adjustment in adjustments)
         {
+            var reason = adjustment.Reason?.Trim();
+            if (string.IsNullOrWhiteSpace(reason) || reason.Length > 500)
+                throw new TaxationValidationException("Indica el motivo del ajuste (máximo 500 caracteres).");
+            if (adjustment.Action == "Manual")
+            {
+                if (adjustment.RuleId != Guid.Empty || adjustment.ManualLineId is not { } manualId ||
+                    manualId == Guid.Empty || adjustment.AccountId is not { } accountId ||
+                    !plan.ValidManualAccountIds.Contains(accountId) ||
+                    !Enum.TryParse<WithholdingKind>(adjustment.Kind, false, out var kind) ||
+                    !Enum.IsDefined(kind) || adjustment.Name is null ||
+                    adjustment.Name.Trim().Length is < 1 or > 120 ||
+                    adjustment.Rate is not > 0 or > 100 ||
+                    decimal.Round(adjustment.Rate.Value, 6) != adjustment.Rate ||
+                    adjustment.TaxableBase is not > 0 || adjustment.Amount is not > 0 ||
+                    decimal.Round(adjustment.TaxableBase.Value, 4) != adjustment.TaxableBase ||
+                    decimal.Round(adjustment.Amount.Value, 4) != adjustment.Amount ||
+                    adjustment.TaxableBase > (kind == WithholdingKind.Vat
+                        ? vatAmount : automatic.GrossAmount - vatAmount) ||
+                    adjustment.Amount > adjustment.TaxableBase ||
+                    (kind == WithholdingKind.IndustryCommerce &&
+                        string.IsNullOrWhiteSpace(adjustment.JurisdictionCode)) ||
+                    (kind != WithholdingKind.IndustryCommerce &&
+                        !string.IsNullOrWhiteSpace(adjustment.JurisdictionCode)) ||
+                    adjustment.JurisdictionCode?.Trim().Length > 16)
+                    throw new TaxationValidationException("Completa la retención manual con base, tasa, valor y una cuenta de pasivo activa.");
+                var jurisdiction = adjustment.JurisdictionCode?.Trim().ToUpperInvariant();
+                if (lines.Values.Concat(manualLines).Any(line =>
+                    line.Kind == kind.ToString() && line.TaxableBase == adjustment.TaxableBase &&
+                    string.Equals(line.JurisdictionCode, jurisdiction, StringComparison.OrdinalIgnoreCase)))
+                    throw new TaxationValidationException("Ya existe una retención de este tipo y base. Ajusta o excluye la existente para evitar duplicarla.");
+                manualLines.Add(new WithholdingLineSnapshot(Guid.Empty, 0, "MANUAL",
+                    adjustment.Name.Trim(), kind.ToString(),
+                    kind == WithholdingKind.Vat ? WithholdingBaseKinds.VatAmount : WithholdingBaseKinds.TaxExclusiveAmount,
+                    adjustment.TaxableBase.Value, adjustment.Rate.Value, adjustment.Amount.Value,
+                    jurisdiction, accountId, manualId));
+                audit.Add(new WithholdingAdjustmentSnapshot(Guid.Empty, 0, "Manual", null, null,
+                    adjustment.TaxableBase, adjustment.Amount, reason, userId, manualId, accountId));
+                continue;
+            }
             var rule = plan.Rules.SingleOrDefault(candidate => candidate.RuleId == adjustment.RuleId);
-            if (rule is null || !rule.IsActive || rule.BusinessId != plan.BusinessId ||
+            if (rule is null || !rule.IsActive || !rule.AppliesAutomatically || rule.BusinessId != plan.BusinessId ||
                 rule.Direction != WithholdingDirection.Purchase ||
                 rule.Moment != WithholdingRecognitionMoment.Accrual ||
                 date < rule.EffectiveFrom || rule.EffectiveTo is not null && date > rule.EffectiveTo)
                 throw new TaxationValidationException("La regla manual no está vigente para esta compra.");
-            var reason = adjustment.Reason?.Trim();
-            if (string.IsNullOrWhiteSpace(reason) || reason.Length > 500)
-                throw new TaxationValidationException("Indica el motivo del ajuste (máximo 500 caracteres).");
             var exists = lines.TryGetValue(rule.RuleId, out var original);
             if (adjustment.Action == "Exclude")
             {
@@ -216,12 +267,12 @@ public sealed class WithholdingService(
                 adjustment.Action, original?.TaxableBase, original?.Amount,
                 adjustment.TaxableBase, adjustment.Amount, reason, userId));
         }
-        var total = lines.Values.Sum(line => line.Amount);
+        var total = lines.Values.Sum(line => line.Amount) + manualLines.Sum(line => line.Amount);
         if (total > automatic.GrossAmount)
             throw new TaxationValidationException("Las retenciones superan el total del documento.");
         return new WithholdingCalculationSnapshot(automatic.GrossAmount, total,
             automatic.GrossAmount - total,
-            lines.Values.OrderBy(line => line.Kind, StringComparer.Ordinal)
+            lines.Values.Concat(manualLines).OrderBy(line => line.Kind, StringComparer.Ordinal)
                 .ThenBy(line => line.RuleCode, StringComparer.Ordinal).ToArray(), audit);
     }
 
@@ -253,7 +304,8 @@ public sealed class WithholdingService(
         rule.Direction.ToString(), rule.Moment.ToString(), rule.BaseKind.ToString(),
         rule.ConceptCode, rule.JurisdictionCode,
         rule.Rate, rule.MinimumBase, rule.RequiredResponsibilities.Order().ToArray(),
-        rule.EffectiveFrom, rule.EffectiveTo, rule.IsActive);
+        rule.EffectiveFrom, rule.EffectiveTo, rule.IsActive, rule.AppliesAutomatically,
+        rule.DefaultAccountId);
 
     private static WithholdingCalculationSnapshot ToSnapshot(WithholdingCalculation result) => new(
         result.GrossAmount, result.WithholdingTotal, result.NetAmount, result.Lines.Select(line =>

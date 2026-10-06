@@ -73,7 +73,14 @@ public sealed class ExpenseSupplierSelectionTests(ServerSliceFixture fixture)
         Assert.InRange(options.Items.Count, 1, 10);
         var sites = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(
             "/api/commerce/v1/portfolio/parties/site-options?role=Supplier&page=1&pageSize=10");
-        Assert.Contains(sites!.Items, item => item.RoleId == fixture.SupplierId);
+        var selected = Assert.Single(sites!.Items.Where(item => item.RoleId == fixture.SupplierId));
+        var exact = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(
+            $"/api/commerce/v1/portfolio/parties/site-options?role=Supplier&partySiteId={selected.PartySiteId:D}&page=1&pageSize=1");
+        Assert.Equal(selected.PartySiteId, Assert.Single(exact!.Items).PartySiteId);
+        Assert.Equal(1, exact.TotalCount);
+        var supplier = Assert.Single(options.Items.Where(item => item.RoleId == fixture.SupplierId));
+        Assert.Equal(supplier.SupplierPurchaseEvidencePolicy, exact.Items.Single().SupplierPurchaseEvidencePolicy);
+        Assert.Equal(supplier.SupplierDefaultPaymentDueDays, exact.Items.Single().SupplierDefaultPaymentDueDays);
 
         foreach (var role in new[] { "Any", "Customer", "User", "Employee" })
         {

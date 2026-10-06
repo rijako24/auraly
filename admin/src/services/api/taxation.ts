@@ -11,7 +11,8 @@ export interface WithholdingRule {
   moment: WithholdingRecognitionMoment; baseKind: WithholdingBaseKind;
   conceptCode: string | null; jurisdictionCode: string | null; rate: number;
   minimumBase: number; requiredResponsibilities: string[]; effectiveFrom: string;
-  effectiveTo: string | null; isActive: boolean;
+  effectiveTo: string | null; isActive: boolean; appliesAutomatically: boolean;
+  defaultAccountId: string | null;
 }
 
 
@@ -24,7 +25,8 @@ export interface SaveCounterpartyTaxProfile {
   businessId: string; counterpartyId: string; appliesWithholding: boolean; responsibilities: string[];
   jurisdictionCode: string | null;
 }
-export type SaveWithholdingRule = Omit<WithholdingRule, "ruleId" | "version">;
+export type SaveWithholdingRule = Omit<WithholdingRule, "ruleId" | "version" | "appliesAutomatically" | "defaultAccountId"> &
+  { appliesAutomatically?: boolean; defaultAccountId?: string | null };
 
 export interface WithholdingPreview {
   businessId: string; direction: WithholdingDirection; moment: "Accrual" | "Payment";
@@ -37,14 +39,17 @@ export interface WithholdingCalculation {
   grossAmount: number; withholdingTotal: number; netAmount: number;
   lines: Array<{ ruleId: string; ruleVersion: number; ruleCode: string; name: string;
     kind: WithholdingKind; baseKind: WithholdingBaseKind; taxableBase: number;
-    rate: number; amount: number; jurisdictionCode: string | null; }>;
-  adjustments?: Array<{ruleId:string;ruleVersion:number;action:"Add"|"Override"|"Exclude";
+    rate: number; amount: number; jurisdictionCode: string | null;
+    accountId?: string | null; manualLineId?: string | null; }>;
+  adjustments?: Array<{ruleId:string;ruleVersion:number;action:"Add"|"Override"|"Exclude"|"Manual";
     automaticTaxableBase:number|null;automaticAmount:number|null;taxableBase:number|null;
     amount:number|null;reason:string;adjustedByUserId:string}>|null;
 }
 
-export type WithholdingAdjustment = {ruleId:string;action:"Add"|"Override"|"Exclude";
-  taxableBase:number|null;amount:number|null;reason:string};
+export type WithholdingAdjustment = {ruleId:string;action:"Add"|"Override"|"Exclude"|"Manual";
+  taxableBase:number|null;amount:number|null;reason:string;
+  manualLineId?:string|null;kind?:WithholdingKind|null;name?:string|null;rate?:number|null;
+  jurisdictionCode?:string|null;accountId?:string|null};
 
 export const taxationApi = {
   listRules: (includeInactive = false) => apiClient.get<WithholdingRule[]>(

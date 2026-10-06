@@ -239,6 +239,7 @@ public sealed partial class SqlAccountingStore(
             WHERE TenantId=@TenantId AND (@IncludeInactive=1 OR IsActive=1)
               AND (@IncludeStructural=1 OR AllowsPosting=1)
               AND (@ExpenseOnly=0 OR AccountType=N'Expense')
+              AND (@LiabilityOnly=0 OR AccountType=N'Liability')
               AND (@AccountId IS NULL OR AccountId=@AccountId)
               AND (@Search IS NULL OR Code LIKE N'%'+@Search+N'%' OR Name LIKE N'%'+@Search+N'%');
             SELECT * FROM #AccountOptions ORDER BY Code,AccountId
@@ -247,6 +248,7 @@ public sealed partial class SqlAccountingStore(
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@ExpenseOnly", query.ExpenseOnly);
+        command.Parameters.AddWithValue("@LiabilityOnly", query.LiabilityOnly);
         command.Parameters.AddWithValue("@IncludeInactive", query.IncludeInactive);
         command.Parameters.AddWithValue("@IncludeStructural", query.IncludeStructural);
         command.Parameters.AddWithValue("@AccountId", (object?)query.AccountId ?? DBNull.Value);

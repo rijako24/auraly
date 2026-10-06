@@ -933,9 +933,9 @@ public sealed partial class SqlAccountingPostingProcessor(
         var settlements = await LoadPurchaseWithholdingSettlementsAsync(
             connection, transaction, source, total, cancellationToken);
         return FinancialFactsResult.Ready(FinancialFacts.Purchase(
-            number, partyId, inventory, expense, deductibleVat, total, settlements,
+            number, partyId, inventory, expense, deductibleVat, total, settlements.Categories,
             decimal.Round(inventory + capitalizedCostInInventoryMovements -
-                inventoryMovementValue, 4, MidpointRounding.AwayFromZero)));
+                inventoryMovementValue, 4, MidpointRounding.AwayFromZero), settlements.Manual));
     }
 
     private static async Task<FinancialFactsResult> LoadGoodsReceiptCostDocumentFactsAsync(
@@ -1032,17 +1032,22 @@ public sealed partial class SqlAccountingPostingProcessor(
             connection, transaction, source, document.FunctionalGrandTotal, cancellationToken);
         var lines = debitByCategory.Select(value => new CategoryLineSpec(
                 value.Key, value.Value, 0, partyId, $"Costo de compra {document.DocumentNumber}"))
-            .Concat(settlements.Select(value => new CategoryLineSpec(
+            .Concat(settlements.Categories.Select(value => new CategoryLineSpec(
                 value.Category, 0, value.Amount, partyId, $"Costo de compra {document.DocumentNumber}")))
             .ToArray();
         if (decimal.Round(lines.Sum(value => value.Debit), 4) != document.FunctionalGrandTotal ||
-            decimal.Round(lines.Sum(value => value.Credit), 4) != document.FunctionalGrandTotal)
+            decimal.Round(lines.Sum(value => value.Credit) + settlements.Manual.Sum(value => value.Amount), 4)
+                != document.FunctionalGrandTotal)
             throw new InvalidOperationException("The additional cost document does not reconcile for accounting.");
         return FinancialFactsResult.Ready(FinancialFacts.PurchaseCostDocument(
-            document.DocumentNumber, lines));
+            document.DocumentNumber, lines, settlements.Manual, partyId));
     }
 
-    private static async Task<IReadOnlyList<(string Category, decimal Amount)>>
+    private sealed record PurchaseWithholdingSettlements(
+        IReadOnlyList<(string Category, decimal Amount)> Categories,
+        IReadOnlyList<(Guid AccountId, decimal Amount)> Manual);
+
+    private static async Task<PurchaseWithholdingSettlements>
         LoadPurchaseWithholdingSettlementsAsync(
             SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
             decimal grossTotal, CancellationToken cancellationToken)
@@ -1050,34 +1055,49 @@ public sealed partial class SqlAccountingPostingProcessor(
         await using var command = new SqlCommand("""
             SELECT NetAmount FROM dbo.DocumentWithholdingSnapshots
             WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType AND BusinessId=@BusinessId;
-            SELECT w.Kind,SUM(w.Amount),m.Category
+            SELECT w.Kind,SUM(w.Amount),m.Category,w.AccountId,
+                   MIN(CASE WHEN w.AccountId IS NULL OR
+                     (account.AccountId IS NOT NULL AND account.IsActive=1
+                       AND account.AllowsPosting=1 AND account.AccountType=N'Liability')
+                     THEN 1 ELSE 0 END)
             FROM dbo.DocumentWithholdingLines w
+            JOIN dbo.DocumentWithholdingSnapshots snapshot
+              ON snapshot.DocumentId=w.DocumentId AND snapshot.DocumentType=w.DocumentType
+              AND snapshot.BusinessId=@BusinessId
+            LEFT JOIN dbo.AccountingAccounts account
+              ON account.AccountId=w.AccountId AND account.TenantId=@TenantId
             LEFT JOIN (dbo.AccountingSourceCategoryMappings m
               INNER JOIN dbo.AccountingConfigurationProfiles p ON p.ProfileCode=m.ProfileCode
                 AND p.IsDefault=1 AND p.IsActive=1)
-              ON m.SourceType=N'PurchaseWithholdingKind' AND m.SourceCode=w.Kind
+              ON w.AccountId IS NULL AND m.SourceType=N'PurchaseWithholdingKind' AND m.SourceCode=w.Kind
             WHERE w.DocumentId=@DocumentId AND w.DocumentType=@DocumentType
-            GROUP BY w.Kind,m.Category ORDER BY w.Kind;
+            GROUP BY w.Kind,m.Category,w.AccountId ORDER BY w.Kind,w.AccountId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
         command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
         command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", source.TenantId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            return [(AccountingCategories.AccountsPayable, grossTotal)];
+            return new([(AccountingCategories.AccountsPayable, grossTotal)], []);
         var netAmount = reader.GetDecimal(0);
         var settlements = new List<(string Category, decimal Amount)>();
+        var manual = new List<(Guid AccountId, decimal Amount)>();
         if (netAmount > 0) settlements.Add((AccountingCategories.AccountsPayable, netAmount));
         await reader.NextResultAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            if (reader.IsDBNull(2)) throw new InvalidOperationException(
+            if (reader.GetInt32(4) != 1)
+                throw new InvalidOperationException("The manual withholding account is no longer an active liability account.");
+            if (!reader.IsDBNull(3)) manual.Add((reader.GetGuid(3), reader.GetDecimal(1)));
+            else if (!reader.IsDBNull(2)) settlements.Add((reader.GetString(2), reader.GetDecimal(1)));
+            else throw new InvalidOperationException(
                 $"Source 'PurchaseWithholdingKind:{reader.GetString(0)}' has no accounting category mapping.");
-            settlements.Add((reader.GetString(2), reader.GetDecimal(1)));
         }
-        if (decimal.Round(settlements.Sum(item => item.Amount), 4) != decimal.Round(grossTotal, 4))
+        if (decimal.Round(settlements.Sum(item => item.Amount) + manual.Sum(item => item.Amount), 4) !=
+            decimal.Round(grossTotal, 4))
             throw new InvalidOperationException("The payable and withholding settlements do not reconcile.");
-        return settlements;
+        return new(settlements, manual);
     }
 
     private static async Task<FinancialFactsResult> LoadExpenseFactsAsync(
@@ -1099,7 +1119,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             source, expense.GrossAmount, cancellationToken);
         return FinancialFactsResult.Ready(FinancialFacts.Expense(expense.DocumentNumber, party,
             expense.TaxExclusiveAmount, expense.VatAmount, expense.GrossAmount,
-            settlements, expense.ExpenseAccountId, expense.Lines));
+            settlements.Categories, expense.ExpenseAccountId, expense.Lines, settlements.Manual));
     }
 
     private static async Task<FinancialFactsResult> LoadExpenseCancellationFactsAsync(
@@ -1754,7 +1774,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         decimal RoundingAdjustment = 0m,
         IReadOnlyList<ManualLineSpec>? AdditionalDirectLines = null,
         decimal PurchaseInventoryCostAdjustment = 0m,
-        IReadOnlyList<Auraly.Contracts.Expenses.ExpenseLineSnapshot>? ExpenseLines = null)
+        IReadOnlyList<Auraly.Contracts.Expenses.ExpenseLineSnapshot>? ExpenseLines = null,
+        IReadOnlyList<(Guid AccountId, decimal Amount)>? ManualWithholdingCredits = null)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -1823,6 +1844,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 }
                 foreach (var settlement in Settlements)
                     yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
+                foreach (var withholding in ManualWithholdingCredits ?? [])
+                    yield return new(withholding.AccountId, 0, withholding.Amount, PartyId, costCenter, Description);
                 yield break;
             }
             if (DirectLines is not null)
@@ -1837,6 +1860,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 foreach (var line in DirectCategoryLines)
                     yield return new JournalLine(accounts[line.Category], line.Debit,
                         line.Credit, line.PartyId, costCenter, line.Description);
+                foreach (var withholding in ManualWithholdingCredits ?? [])
+                    yield return new(withholding.AccountId, 0, withholding.Amount, PartyId, costCenter, Description);
                 yield break;
             }
             if (IsCashMovement)
@@ -1900,6 +1925,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                     if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, costCenter, Description);
                     foreach (var settlement in Settlements)
                         yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
+                    foreach (var withholding in ManualWithholdingCredits ?? [])
+                        yield return new(withholding.AccountId, 0, withholding.Amount, PartyId, costCenter, Description);
                 }
                 yield break;
             }
@@ -1945,18 +1972,25 @@ public sealed partial class SqlAccountingPostingProcessor(
         public static FinancialFacts DebitNote(string number, Guid party, decimal untaxed, decimal tax, decimal total) =>
             new($"Nota débito de venta {number}", party, untaxed, tax, total, 0,
                 [(AccountingCategories.AccountsReceivable, total)], false, false, false, false);
-        public static FinancialFacts Purchase(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements, decimal inventoryCostAdjustment) =>
+        public static FinancialFacts Purchase(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements, decimal inventoryCostAdjustment,
+            IReadOnlyList<(Guid AccountId, decimal Amount)>? manualWithholdingCredits = null) =>
             new($"Entrada de mercancia {number}", party, expense, deductibleVat, total, inventory, settlements, false, true, false, false,
-                PurchaseInventoryCostAdjustment: inventoryCostAdjustment);
+                PurchaseInventoryCostAdjustment: inventoryCostAdjustment,
+                ManualWithholdingCredits: manualWithholdingCredits);
         public static FinancialFacts PurchaseCostDocument(
-            string number, IReadOnlyList<CategoryLineSpec> lines) =>
-            new($"Costo asociado a compra {number}", null, 0, 0, 0, 0, [],
-                false, false, false, false, DirectCategoryLines: lines);
+            string number, IReadOnlyList<CategoryLineSpec> lines,
+            IReadOnlyList<(Guid AccountId, decimal Amount)>? manualWithholdingCredits = null,
+            Guid? partyId = null) =>
+            new($"Costo asociado a compra {number}", partyId, 0, 0, 0, 0, [],
+                false, false, false, false, DirectCategoryLines: lines,
+                ManualWithholdingCredits: manualWithholdingCredits);
         public static FinancialFacts Expense(string number, Guid? party, decimal untaxed, decimal vat,
             decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements,
-            Guid accountId, IReadOnlyList<Auraly.Contracts.Expenses.ExpenseLineSnapshot>? lines = null) =>
+            Guid accountId, IReadOnlyList<Auraly.Contracts.Expenses.ExpenseLineSnapshot>? lines = null,
+            IReadOnlyList<(Guid AccountId, decimal Amount)>? manualWithholdingCredits = null) =>
                 new($"Gasto {number}", party, untaxed, vat,
-                    total, 0, settlements, false, true, false, false, false, false, accountId, ExpenseLines: lines);
+                    total, 0, settlements, false, true, false, false, false, false, accountId,
+                    ExpenseLines: lines, ManualWithholdingCredits: manualWithholdingCredits);
         public static FinancialFacts ExpenseCancellation(string number, Guid party,
             IReadOnlyList<ManualLineSpec> lines) =>
             new($"Anulación gasto {number}", party, 0, 0, 0, 0,

@@ -99,6 +99,7 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
   const supplierId = "33333333-3333-3333-3333-333333333333";
+  const partySiteId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
   const payableId = "44444444-4444-4444-4444-444444444444";
   const user = { userId: "55555555-5555-5555-5555-555555555555", tenantId,
     tenantKey: "@portfolio-test", username: "portfolio-test", firstName: "Prueba", lastName: "Proveedor",
@@ -124,13 +125,13 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
     else if (path.endsWith("/payables/suppliers")) {
       supplierReads++;
-      body = { items: [{ supplierId, supplierName: "Proveedor prueba", identification: "1001", invoiceCount: 1,
+      body = { items: [{ supplierId, supplierName: "Proveedor prueba", identification: "1001", partySiteId, partySiteName: "Sede principal", invoiceCount: 1,
         originalAmount: 12400, paidAmount: paid ? 12400 : 0, outstandingAmount: paid ? 0 : 12400, overdueAmount: 0 }], page: 1,
         pageSize: 20, totalCount: 1, totalPages: 1, totalOutstanding: paid ? 0 : 12400, totalOverdue: 0, totalInvoiceCount: 1 };
     }
     else if (path.endsWith("/payables")) {
       if (url.searchParams.get("outstandingOnly") === "true") paymentInvoiceReads++;
-      body = { items: paid ? [] : [{ payableId, supplierId, supplierName: "Proveedor prueba",
+      body = { items: paid ? [] : [{ payableId, supplierId, supplierName: "Proveedor prueba", partySiteId, partySiteName: "Sede principal",
         documentNumber: "FC-001", currencyCode: "COP", originalAmount: 12400, outstandingAmount: 12400,
         dueDate: "2026-10-01T12:00:00-05:00", status: "Open", isOverdue: false,
         createdAt: "2026-09-23T12:00:00-05:00" }], page: 1, pageSize: 20,
@@ -147,6 +148,7 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
     else if (path.endsWith("/reference-options/card-franchise")) body = [{ id: "visa", code: "Visa", label: "Visa", sortOrder: 1 }];
     else if (path.endsWith("/pos/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
     else if (path.endsWith("/parties/role-options")) body = { items: [], page: 1, totalPages: 0, totalCount: 0 };
+    else if (path.endsWith("/parties/site-options")) body = { items: [{ partyId: supplierId, roleId: supplierId, partySiteId, displayName: "Proveedor prueba", identification: "1001", siteName: "Sede principal", isPrimary: true, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 }], page: 1, totalPages: 1, totalCount: 1 };
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "77777777-7777-7777-7777-777777777777" };
     else if (path.endsWith("/payable-payments/confirm")) {
       confirmation = route.request().postDataJSON();
@@ -159,6 +161,7 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
 
   await page.goto("/dashboard/payables");
   await page.getByRole("row", { name: /Proveedor prueba/ }).click();
+  await expect(page.getByRole("dialog", { name: "Pago a proveedores" }).getByRole("combobox", { name: "Seleccionar proveedor y sede" })).toContainText("Proveedor prueba · Sede principal");
   await page.getByRole("button", { name: "Ir a pagar" }).click();
   const checkout = page.getByRole("dialog", { name: "Pago a proveedores" });
   const methodButtons = checkout.locator("button", { hasText: /F[1-4]$/ });

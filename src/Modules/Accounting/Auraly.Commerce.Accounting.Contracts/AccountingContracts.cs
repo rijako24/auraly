@@ -476,7 +476,7 @@ public sealed record AccountingPostingView(
     Guid? EntryId);
 
 public sealed record AccountingAccountOptionQuery(int Page, int PageSize, string? Search, bool ExpenseOnly = false, Guid? AccountId = null,
-    bool IncludeStructural = false, bool IncludeInactive = false);
+    bool IncludeStructural = false, bool IncludeInactive = false, bool LiabilityOnly = false);
 public sealed record AccountingAccountOptionPage(IReadOnlyList<AccountingAccountView> Items, int Page, int PageSize, int TotalCount)
 {
     public int TotalPages => (int)Math.Ceiling(TotalCount / (decimal)PageSize);

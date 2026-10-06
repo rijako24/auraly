@@ -11,6 +11,26 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlWithholdingRuleStore(
     SqlServerConnectionFactory connections, TimeProvider timeProvider) : IWithholdingRuleStore
 {
+    public async Task<IReadOnlySet<Guid>> GetValidManualAccountIdsAsync(
+        Guid tenantId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct)
+    {
+        if (accountIds.Count == 0) return new HashSet<Guid>();
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT a.AccountId FROM dbo.AccountingAccounts a
+            JOIN OPENJSON(@AccountIds) WITH(AccountId uniqueidentifier '$') requested
+              ON requested.AccountId=a.AccountId
+            WHERE a.TenantId=@TenantId AND a.IsActive=1 AND a.AllowsPosting=1
+              AND a.AccountType=N'Liability';
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@AccountIds", JsonSerializer.Serialize(accountIds.Distinct()));
+        var valid = new HashSet<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) valid.Add(reader.GetGuid(0));
+        return valid;
+    }
     public async Task<IReadOnlySet<string>> GetActiveResponsibilityCodesAsync(CancellationToken ct)
     {
         await using var connection = connections.Create();
@@ -39,7 +59,7 @@ public sealed class SqlWithholdingRuleStore(
             )
             SELECT RuleId,BusinessId,Version,Code,Name,Kind,Direction,Moment,BaseKind,
                    ConceptCode,JurisdictionCode,Rate,MinimumBase,RequiredResponsibilities,
-                   EffectiveFrom,EffectiveTo,IsActive
+                   EffectiveFrom,EffectiveTo,IsActive,AppliesAutomatically,DefaultAccountId
             FROM versions WHERE rn=1 AND (@IncludeInactive=1 OR IsActive=1)
             ORDER BY Kind,Code;
             """, connection);
@@ -62,15 +82,29 @@ public sealed class SqlWithholdingRuleStore(
         try
         {
             await EnsureScopeAsync(connection, transaction, tenantId, proposed.BusinessId, userId, ct);
+            if (proposed.DefaultAccountId is { } accountId)
+            {
+                await using var account = new SqlCommand("""
+                    SELECT COUNT_BIG(*) FROM dbo.AccountingAccounts
+                    WHERE AccountId=@AccountId AND TenantId=@TenantId AND AccountType=N'Liability'
+                      AND IsActive=1 AND AllowsPosting=1;
+                    """, connection, transaction);
+                account.Parameters.AddWithValue("@AccountId", accountId);
+                account.Parameters.AddWithValue("@TenantId", tenantId);
+                if (Convert.ToInt64(await account.ExecuteScalarAsync(ct)) != 1)
+                    throw new TaxationValidationException("Selecciona una cuenta de pasivo activa para esta regla manual.");
+            }
             var id = ruleId ?? proposed.RuleId;
             var nextVersion = await GetNextVersionAsync(connection, transaction, proposed.BusinessId, id, ct);
             var rule = WithholdingRule.Create(id, proposed.BusinessId, nextVersion, proposed.Code,
                 proposed.Name, proposed.Kind, proposed.Direction, proposed.Moment, proposed.BaseKind,
                 proposed.ConceptCode, proposed.JurisdictionCode, proposed.Rate, proposed.MinimumBase,
-                proposed.RequiredResponsibilities, proposed.EffectiveFrom, proposed.EffectiveTo, proposed.IsActive);
+                proposed.RequiredResponsibilities, proposed.EffectiveFrom, proposed.EffectiveTo,
+                proposed.IsActive, proposed.AppliesAutomatically, proposed.DefaultAccountId);
             await InsertAsync(connection, transaction, rule, userId, ct);
-            await EnqueueCustomerSynchronizationAsync(
-                connection, transaction, proposed.BusinessId, null, ct);
+            if (rule.AppliesAutomatically)
+                await EnqueueCustomerSynchronizationAsync(
+                    connection, transaction, proposed.BusinessId, null, ct);
             await transaction.CommitAsync(ct);
             return rule;
         }
@@ -303,9 +337,9 @@ public sealed class SqlWithholdingRuleStore(
             INSERT dbo.WithholdingRules
               (RuleId,Version,BusinessId,Code,Name,Kind,Direction,Moment,BaseKind,ConceptCode,
                JurisdictionCode,Rate,MinimumBase,RequiredResponsibilities,EffectiveFrom,
-               EffectiveTo,IsActive,CreatedAt,CreatedByUserId)
+               EffectiveTo,IsActive,AppliesAutomatically,DefaultAccountId,CreatedAt,CreatedByUserId)
             VALUES(@RuleId,@Version,@BusinessId,@Code,@Name,@Kind,@Direction,@Moment,@BaseKind,@Concept,
-               @Jurisdiction,@Rate,@Minimum,@Responsibilities,@From,@To,@Active,@Now,@UserId);
+               @Jurisdiction,@Rate,@Minimum,@Responsibilities,@From,@To,@Active,@Automatic,@AccountId,@Now,@UserId);
             """, connection, transaction);
         command.Parameters.AddWithValue("@RuleId", rule.RuleId);
         command.Parameters.AddWithValue("@Version", rule.Version);
@@ -325,6 +359,8 @@ public sealed class SqlWithholdingRuleStore(
         command.Parameters.AddWithValue("@To", rule.EffectiveTo is null ? DBNull.Value :
             rule.EffectiveTo.Value.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@Active", rule.IsActive);
+        command.Parameters.AddWithValue("@Automatic", rule.AppliesAutomatically);
+        command.Parameters.AddWithValue("@AccountId", (object?)rule.DefaultAccountId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         command.Parameters.AddWithValue("@UserId", userId);
         try { await command.ExecuteNonQueryAsync(ct); }
@@ -343,7 +379,8 @@ public sealed class SqlWithholdingRuleStore(
         reader.GetDecimal(12), DeserializeResponsibilities(reader.GetString(13)),
         DateOnly.FromDateTime(reader.GetDateTime(14)),
         reader.IsDBNull(15) ? null : DateOnly.FromDateTime(reader.GetDateTime(15)),
-        reader.GetBoolean(16));
+        reader.GetBoolean(16), reader.GetBoolean(17),
+        reader.IsDBNull(18) ? null : reader.GetGuid(18));
 
     private static IReadOnlyList<string> DeserializeResponsibilities(string? json) =>
         string.IsNullOrWhiteSpace(json) ? [] : JsonSerializer.Deserialize<string[]>(json) ?? [];

@@ -9,10 +9,11 @@ public static class AccountingApi
     public static IEndpointRouteBuilder MapAccountingApi(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/commerce/v1/accounting/account-options", async (HttpContext context,
-            int? page, int? pageSize, string? search, bool? expenseOnly, Guid? accountId,
+            int? page, int? pageSize, string? search, bool? expenseOnly, Guid? accountId, bool? liabilityOnly,
             AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.AccountOptionsAsync(context.User.ToAccountingIdentity(),
-                new(page ?? 1, pageSize ?? 10, search, expenseOnly == true, accountId), token), Results.Ok))
+                new(page ?? 1, pageSize ?? 10, search, expenseOnly == true, accountId,
+                    LiabilityOnly: liabilityOnly == true), token), Results.Ok))
             .RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/readiness", async (HttpContext context, DateOnly? effectiveFrom, string? openingBalanceMode, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetReadinessAsync(context.User.ToAccountingIdentity(), effectiveFrom, openingBalanceMode, token), Results.Ok)).RequireAuthorization("accounting.user");

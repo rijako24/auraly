@@ -23,7 +23,7 @@ export interface PartyRoleOption {
   supplierDefaultPaymentDueDays: number | null;
 }
 export interface PartyRoleOptionPage { items: PartyRoleOption[]; page: number; pageSize: number; totalCount: number; totalPages: number; }
-export interface PartySiteRoleOption { partyId:string; roleId:string; partySiteId:string; displayName:string; identification:string; siteName:string; isPrimary:boolean; }
+export interface PartySiteRoleOption { partyId:string; roleId:string; partySiteId:string; displayName:string; identification:string; siteName:string; isPrimary:boolean; supplierPurchaseEvidencePolicy:PurchaseEvidencePolicy|null; supplierDefaultPaymentDueDays:number|null; }
 export interface PartySiteRoleOptionPage { items:PartySiteRoleOption[]; page:number; pageSize:number; totalCount:number; totalPages:number; }
 export interface CustomerMapAssignment { routeId:string; routeName:string; sellerId:string; sellerName:string; }
 export interface CustomerMapSite { customerId:string; partyId:string; customerName:string; identification:string|null; partySiteId:string; siteName:string; addressLine:string; neighborhood:string|null; cityName:string; phone:string|null; googleMapsUrl:string|null; latitude:number|null; longitude:number|null; assignments:CustomerMapAssignment[]; }
@@ -75,7 +75,7 @@ export const partiesApi = {
     apiClient.get<PartyRoleOptionPage>("/commerce/v1/parties/role-options", params),
   portfolioRoleOptions: (params: {page:number;pageSize:number;role:"Customer"|"Supplier";search?:string;roleId?:string}) =>
     apiClient.get<PartyRoleOptionPage>("/commerce/v1/portfolio/parties/role-options",params),
-  portfolioSiteOptions: (params: {page:number;pageSize:number;role:"Customer"|"Supplier";search?:string;roleId?:string}) =>
+  portfolioSiteOptions: (params: {page:number;pageSize:number;role:"Customer"|"Supplier";search?:string;roleId?:string;partySiteId?:string}) =>
     apiClient.get<PartySiteRoleOptionPage>("/commerce/v1/portfolio/parties/site-options",params),
   posPortfolioRoleOptions: (params: {page:number;pageSize:number;role:"Customer"|"Supplier";search?:string;roleId?:string}) =>
     apiClient.get<PartyRoleOptionPage>("/commerce/v1/pos/portfolio/parties/role-options",params),

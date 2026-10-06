@@ -48,6 +48,8 @@ public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputH
         using var manualRuleResponse = await client.PostAsJsonAsync("/api/commerce/v1/taxation/withholding-rules", manualRule);
         manualRuleResponse.EnsureSuccessStatusCode();
         var savedManualRule = (await manualRuleResponse.Content.ReadFromJsonAsync<WithholdingRuleView>())!;
+        SaveWithholdingRuleRequest? oneOffTemplate = null;
+        WithholdingRuleView? savedOneOffRule = null;
         try
         {
             using (var profile = await client.PutAsJsonAsync($"/api/commerce/v1/taxation/counterparty-profiles/{fixture.SupplierId}",
@@ -176,6 +178,76 @@ public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputH
                 command.Parameters.AddWithValue("@Id", adjustedRequest.ExpenseId);
                 Assert.Contains("Tarifa pactada", (string)(await command.ExecuteScalarAsync())!);
             }
+            Guid manualAccountId;
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var accountQuery = new SqlCommand("""
+                    SELECT TOP(1) AccountId FROM dbo.AccountingAccounts
+                    WHERE TenantId=@TenantId AND AccountType=N'Liability' AND IsActive=1 AND AllowsPosting=1
+                    ORDER BY CASE WHEN Code LIKE N'236%' THEN 0 ELSE 1 END,Code;
+                    """, connection);
+                accountQuery.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                manualAccountId = (Guid)(await accountQuery.ExecuteScalarAsync())!;
+            }
+            var manualTemplate = rule with { Code = "ONE-" + Guid.NewGuid().ToString("N")[..12],
+                Name = "ReteICA puntual", Kind = WithholdingKinds.IndustryCommerce,
+                ConceptCode = null, JurisdictionCode = "11001", Rate = 1m, MinimumBase = 0,
+                AppliesAutomatically = false, DefaultAccountId = manualAccountId };
+            oneOffTemplate = manualTemplate;
+            using (var savedTemplate = await client.PostAsJsonAsync(
+                "/api/commerce/v1/taxation/withholding-rules", manualTemplate))
+            {
+                Assert.True(savedTemplate.IsSuccessStatusCode, await savedTemplate.Content.ReadAsStringAsync());
+                savedOneOffRule = (await savedTemplate.Content.ReadFromJsonAsync<WithholdingRuleView>())!;
+            }
+            var manualId = Guid.NewGuid();
+            var manualAdjustment = new WithholdingAdjustmentRequest(Guid.Empty, "Manual", 120_000m,
+                1_200m, "Aplicación puntual revisada", manualId, WithholdingKinds.IndustryCommerce,
+                "ReteICA puntual", 1m, "11001", manualAccountId);
+            var oneOffRequest = request with { ExpenseId = Guid.NewGuid(),
+                SupplierDocumentNumber = Guid.NewGuid().ToString("N"), CalculationHash = null,
+                WithholdingAdjustments = [manualAdjustment] };
+            using (var invalidAccount = await client.PostAsJsonAsync(
+                "/api/commerce/v1/expenses/preview", oneOffRequest with {
+                    WithholdingAdjustments = [manualAdjustment with { AccountId = account.AccountId }] }))
+                Assert.Equal(HttpStatusCode.BadRequest, invalidAccount.StatusCode);
+            using (var duplicateType = await client.PostAsJsonAsync(
+                "/api/commerce/v1/expenses/preview", oneOffRequest with {
+                    WithholdingAdjustments = [manualAdjustment with { Kind = WithholdingKinds.IncomeTax,
+                        JurisdictionCode = null }] }))
+                Assert.Equal(HttpStatusCode.BadRequest, duplicateType.StatusCode);
+            using var oneOffPreviewResponse = await client.PostAsJsonAsync(
+                "/api/commerce/v1/expenses/preview", oneOffRequest);
+            Assert.True(oneOffPreviewResponse.IsSuccessStatusCode,
+                await oneOffPreviewResponse.Content.ReadAsStringAsync());
+            var oneOffPreview = (await oneOffPreviewResponse.Content.ReadFromJsonAsync<ExpensePreview>())!;
+            Assert.Equal(4_200m, oneOffPreview.Withholding.WithholdingTotal);
+            Assert.Contains(oneOffPreview.Withholding.Lines,
+                line => line.ManualLineId == manualId && line.AccountId == manualAccountId);
+            using (var acceptedOneOff = await SendAsync(client,
+                oneOffRequest with { CalculationHash = oneOffPreview.CalculationHash }))
+                Assert.Equal(HttpStatusCode.Accepted, acceptedOneOff.StatusCode);
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var evidence = new SqlCommand("""
+                    SELECT l.RuleId,l.AccountId,j.Credit
+                    FROM dbo.DocumentWithholdingLines l
+                    JOIN dbo.AccountingEntries e ON e.SourceDocumentId=l.DocumentId
+                      AND e.SourceDocumentType=N'Expense'
+                    JOIN dbo.AccountingEntryLines j ON j.EntryId=e.EntryId
+                      AND j.AccountId=l.AccountId AND j.Credit=l.Amount
+                    WHERE l.DocumentId=@ExpenseId AND l.ManualLineId=@ManualId;
+                    """, connection);
+                evidence.Parameters.AddWithValue("@ExpenseId", oneOffRequest.ExpenseId);
+                evidence.Parameters.AddWithValue("@ManualId", manualId);
+                await using var reader = await evidence.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.True(reader.IsDBNull(0));
+                Assert.Equal(manualAccountId, reader.GetGuid(1));
+                Assert.Equal(1_200m, reader.GetDecimal(2));
+            }
             using var excludedPreviewResponse = await client.PostAsJsonAsync("/api/commerce/v1/expenses/preview",
                 request with { ExpenseId = Guid.NewGuid(), CalculationHash = null,
                     WithholdingAdjustments = [new WithholdingAdjustmentRequest(savedRule.RuleId,
@@ -217,6 +289,13 @@ public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputH
         }
         finally
         {
+            if (savedOneOffRule is not null && oneOffTemplate is not null)
+            {
+                using var deactivateOneOff = await client.PutAsJsonAsync(
+                    $"/api/commerce/v1/taxation/withholding-rules/{savedOneOffRule.RuleId}",
+                    oneOffTemplate with { IsActive = false });
+                deactivateOneOff.EnsureSuccessStatusCode();
+            }
             using var deactivateManual = await client.PutAsJsonAsync(
                 $"/api/commerce/v1/taxation/withholding-rules/{savedManualRule.RuleId}", manualRule with { IsActive = false });
             deactivateManual.EnsureSuccessStatusCode();

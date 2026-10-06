@@ -53,7 +53,7 @@ test("recibe compra por UI, calcula vencimiento, conserva el foco y procesa inve
   await page.getByRole("button", { name: "Nueva entrada" }).click();
   await expect(page.getByRole("heading", { name: "Recepción de compra" })).toBeVisible();
   const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
-  await selectFirst(page, dialog, "Proveedor");
+  await selectFirst(page, dialog, "Proveedor · sede");
   await selectFirst(page, dialog, "Bodega");
   const evidence = dialog.getByRole("combobox", { name: "Tipo de soporte" });
   await evidence.click();
