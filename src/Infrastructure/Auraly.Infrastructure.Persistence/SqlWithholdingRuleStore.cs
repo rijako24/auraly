@@ -365,7 +365,7 @@ public sealed class SqlWithholdingRuleStore(
         command.Parameters.AddWithValue("@UserId", userId);
         try { await command.ExecuteNonQueryAsync(ct); }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
-        { throw new TaxationConflictException("A withholding rule with this code and version already exists."); }
+        { throw new TaxationConflictException("Ya existe una regla de retención con ese código y versión."); }
     }
 
     private static WithholdingRule Read(SqlDataReader reader) => WithholdingRule.Create(

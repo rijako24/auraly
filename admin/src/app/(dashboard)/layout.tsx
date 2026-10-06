@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useSidebarStore } from "@/stores/sidebar-store";
 
 import { Header } from "@/components/layout/header";
@@ -18,7 +18,6 @@ export default function DashboardLayout({
 }) {
   const setOpen = useSidebarStore((s) => s.setOpen);
   const isMobile = useMediaQuery("(max-width: 1024px)");
-  const [viewportHeight, setViewportHeight] = useState("100dvh");
 
   const handleMobileMenuClick = () => setOpen(true);
 
@@ -27,32 +26,8 @@ export default function DashboardLayout({
     return () => document.body.classList.remove("dashboard-shell");
   }, []);
 
-  useEffect(() => {
-    const viewport = window.visualViewport;
-    let frame = 0;
-    const update = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() =>
-        setViewportHeight(`${Math.round(viewport?.height ?? window.innerHeight)}px`));
-    };
-    update();
-    viewport?.addEventListener("resize", update);
-    viewport?.addEventListener("scroll", update);
-    window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
-    window.addEventListener("pageshow", update);
-    return () => {
-      cancelAnimationFrame(frame);
-      viewport?.removeEventListener("resize", update);
-      viewport?.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
-      window.removeEventListener("pageshow", update);
-    };
-  }, []);
-
   return (
-    <div className="flex overflow-hidden bg-background" style={{ height: viewportHeight }}>
+    <div className="flex h-dvh overflow-hidden bg-background">
       {/* Desktop sidebar - hidden on mobile */}
       {!isMobile && <Sidebar />}
 

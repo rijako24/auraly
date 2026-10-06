@@ -14,6 +14,7 @@ const permissions = [
   "inventory.conversions.confirm", "inventory.damages.confirm",
   "purchasing.goods-receipts.read", "purchasing.goods-receipts.create",
   "purchasing.goods-receipts.confirm", "catalog.costs.manage",
+  "commerce.taxation.withholdings.manage",
 ];
 
 test.use({ serviceWorkers: "block" });
@@ -146,6 +147,14 @@ async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: bool
     if (path.endsWith("/goods-receipts/withholding-preview") || path.endsWith("/goods-receipts/cost-withholding-preview")) return json(route, {
       grossAmount: 14_000, withholdingTotal: 0, netAmount: 14_000, lines: [],
     });
+    if (path.endsWith("/reference-options/accounting-withholding-kind")) return json(route, [
+      { id: "kind-income", code: "IncomeTax", label: "Retefuente", isActive: true, sortOrder: 10 },
+    ]);
+    if (path.endsWith("/accounting/account-options")) return json(route, {
+      items: [{ accountId: "99999999-9999-9999-9999-999999999999", code: "236540", name: "Retenciones por pagar", accountType: "Liability", allowsPosting: true, isActive: true }],
+      page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
+    });
+    if (path.endsWith("/taxation/withholding-rules")) return json(route, []);
     if (path.includes("/goods-receipts/drafts/") && route.request().method() === "GET") return json(route, {
       draftId: path.split("/").at(-1), concurrencyToken: "server-current-token",
     });
@@ -416,6 +425,53 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
   await expect(dialog.getByRole("spinbutton", { name: "Cantidad en Caja" })).toHaveValue("7");
   await expect(dialog.getByPlaceholder("Observaciones de recepción")).toHaveValue("recepción persistente");
   await dialog.getByRole("button", { name: "Descartar borrador" }).click();
+});
+
+test("recepción permite aplicar una retención puntual y descartar en móvil sin dejar la pantalla en blanco", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await mockApi(page);
+  await authenticate(page);
+  await page.goto("/dashboard/purchasing/goods-receipts");
+  await page.evaluate(() => {
+    if (!window.visualViewport) return;
+    Object.defineProperty(window.visualViewport, "height", { configurable: true, value: 400 });
+    window.visualViewport.dispatchEvent(new Event("resize"));
+  });
+  await expect.poll(async () => {
+    const bar = await page.getByRole("navigation", { name: "Navegación principal" }).boundingBox();
+    return bar ? Math.round(bar.y + bar.height) : 0;
+  }).toBe(844);
+  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  const receipt = page.getByRole("dialog", { name: "Recepción de compra" });
+  await receipt.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).click();
+  await page.getByRole("option", { name: /Proveedor Andino.*Principal/ }).click();
+  await select(page, field(receipt, "Bodega").getByRole("combobox"), "Principal · PPL");
+  await select(page, receipt.getByRole("combobox", { name: "Tipo de soporte" }), "Comprobante interno");
+  await receipt.getByPlaceholder(/Escanea o busca/).fill("Arroz");
+  await page.getByRole("option", { name: /Arroz premium/ }).click();
+  await expect(receipt.getByRole("button", { name: "Agregar retención" })).toBeEnabled();
+  await receipt.getByRole("button", { name: "Agregar retención" }).click();
+  const manual = page.getByRole("dialog", { name: "Agregar retención manual" });
+  await manual.getByRole("combobox", { name: "Tipo de retención" }).click();
+  await page.getByRole("option", { name: "Retefuente" }).click();
+  await manual.getByLabel("Concepto o nombre").fill("Retención de prueba");
+  await manual.getByLabel("Base de retención").fill("20000");
+  await expect(manual.getByText("La base no puede superar el total del documento en COP.")).toBeVisible();
+  await manual.getByLabel("Base de retención").fill("10000");
+  await manual.getByLabel("Tarifa %").fill("2.5");
+  await manual.getByRole("combobox", { name: "Seleccionar cuenta contable" }).click();
+  await page.getByRole("option", { name: /236540/ }).click();
+  await expect(manual.getByText("Indica el motivo de la retención.")).toBeVisible();
+  await manual.getByLabel("Motivo").fill("Aplicación puntual");
+  await expect(manual.getByRole("button", { name: "Aplicar retención" })).toBeEnabled();
+  await manual.getByRole("button", { name: "Aplicar retención" }).click();
+  await expect(manual).toBeHidden();
+  await receipt.getByRole("button", { name: "Descartar borrador" }).click();
+  await expect(receipt).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Recepción de compra" })).toBeVisible();
+  expect(errors).toEqual([]);
 });
 
 test("guardar recepción recupera un token vencido sin exigir varios intentos", async ({ page }) => {

@@ -38,12 +38,20 @@ export function ManualWithholdingDialog({businessId,occurredAt,grossAmount,exist
   const duplicateKind = !!draft.kind && existingLines.some(line => line.kind === draft.kind &&
     line.taxableBase === draft.taxableBase &&
     (line.jurisdictionCode ?? "") === (draft.kind === "IndustryCommerce" ? draft.jurisdictionCode.trim().toUpperCase() : ""));
-  const valid = !duplicateKind && kinds.data?.some(item => item.code === draft.kind) && !!draft.name.trim() && !!draft.taxableBase && draft.taxableBase > 0 &&
-    draft.taxableBase <= grossAmount && !!draft.rate && draft.rate > 0 && draft.rate <= 100 &&
-    !!draft.amount && draft.amount > 0 && draft.amount <= draft.taxableBase &&
-    !!draft.accountId && !!draft.reason.trim() &&
-    (draft.kind !== "IndustryCommerce" || !!draft.jurisdictionCode.trim()) &&
-    (!draft.saveRule || !!draft.code.trim());
+  const validationMessage = duplicateKind
+    ? "Ya existe una retención de este tipo y base. Ajusta o excluye la existente antes de agregar otra."
+    : !kinds.data?.some(item => item.code === draft.kind) ? "Selecciona un tipo de retención válido."
+    : !draft.name.trim() ? "Indica el concepto o nombre de la retención."
+    : !draft.taxableBase || draft.taxableBase <= 0 ? "Indica una base de retención mayor que cero."
+    : draft.taxableBase > grossAmount ? "La base no puede superar el total del documento en COP."
+    : !draft.rate || draft.rate <= 0 || draft.rate > 100 ? "Indica una tarifa mayor que cero y hasta 100 %."
+    : !draft.amount || draft.amount <= 0 || draft.amount > draft.taxableBase ? "El valor retenido debe ser mayor que cero y no superar la base."
+    : !draft.accountId ? "Selecciona la cuenta contable de retención."
+    : !draft.reason.trim() ? "Indica el motivo de la retención."
+    : draft.kind === "IndustryCommerce" && !draft.jurisdictionCode.trim() ? "Indica la jurisdicción de ReteICA."
+    : draft.saveRule && !draft.code.trim() ? "Indica el código de la regla que deseas guardar."
+    : null;
+  const valid = validationMessage === null;
   async function apply() {
     if (!valid || saving) return;
     setSaving(true);setError(null);
@@ -89,13 +97,13 @@ export function ManualWithholdingDialog({businessId,occurredAt,grossAmount,exist
           <div className="space-y-1"><Label>Valor retenido</Label><FormattedNumberInput ariaLabel="Valor retenido" kind="currency" value={draft.amount ?? ""} onValueChange={amount => setDraft({...draft,amount})}/></div>
           {draft.kind === "IndustryCommerce" && <div className="space-y-1"><Label>Jurisdicción</Label><Input aria-label="Jurisdicción" maxLength={16} value={draft.jurisdictionCode} onChange={event => setDraft({...draft,jurisdictionCode:event.target.value})}/></div>}
         </div>
-        {duplicateKind && <p role="alert" className="text-sm text-destructive">Ya existe una retención de este tipo y base. Ajusta o excluye la existente antes de agregar otra.</p>}
         <div className="space-y-1"><Label>Cuenta contable de retención</Label><AccountSelect liabilityOnly value={draft.accountId} onChange={accountId => setDraft({...draft,accountId})}/><p className="text-xs text-muted-foreground">Busca una cuenta de pasivo por código o nombre.</p></div>
         <div className="space-y-1"><Label>Motivo</Label><Textarea aria-label="Motivo" maxLength={500} value={draft.reason} onChange={event => setDraft({...draft,reason:event.target.value})} placeholder="Explica por qué se aplica esta retención"/></div>
         <div className="space-y-3 rounded-lg border p-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={draft.saveRule} onCheckedChange={value => setDraft({...draft,saveRule:value === true})}/>Guardar como regla para usarla después</label>
           {draft.saveRule && <><div className="space-y-1"><Label>Código de la regla</Label><Input aria-label="Código de la regla" maxLength={32} value={draft.code} onChange={event => setDraft({...draft,code:event.target.value})} placeholder="Ej. RET-SERVICIOS"/></div><p className="text-xs text-muted-foreground">La regla permanecerá aunque cierres este documento. Podrás aplicarla manualmente; no se calculará automáticamente.</p></>}
         </div>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        {!error && validationMessage && <p role="status" className="text-sm text-muted-foreground">{validationMessage}</p>}
         <DialogFooter><Button type="button" variant="outline" disabled={saving} onClick={onClose}>Cerrar</Button><Button type="button" disabled={saving || !valid} onClick={() => void apply()}>{saving ? "Aplicando…" : "Aplicar retención"}</Button></DialogFooter>
       </div>
     </DialogContent>
