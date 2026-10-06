@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,6 +17,7 @@ export type PortfolioLedgerTab = "parties" | "invoices" | "payments";
 export type PartyRow={id:string;name:string;identification:string;partySiteId?:string|null;partySiteName?:string|null;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string};
 type PaymentRow={paymentId:string;paidAt:string;partyName:string|null;documentNumber:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string};
 type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding?:number;totalOverdue?:number;totalInvoiceCount?:number;totalSupplierCredit?:number;currencyTotals?:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>};
+type LedgerSort = { by: string; direction: "asc" | "desc" };
 
 export function PortfolioLedgerTabs({
   direction,
@@ -52,27 +53,31 @@ export function PortfolioLedgerTabs({
   children: ReactNode;
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
-  const pageKey=JSON.stringify([direction,search,partyId,partySiteId,status,overdue,from,to,value]);
+  const [partySort,setPartySort]=useState<LedgerSort>({by:"name",direction:"asc"});
+  const [paymentSort,setPaymentSort]=useState<LedgerSort>({by:"paidAt",direction:"desc"});
+  const toggleSort=(current:LedgerSort,setSort:(next:LedgerSort)=>void,by:string)=>
+    setSort({by,direction:current.by===by&&current.direction==="asc"?"desc":"asc"});
+  const pageKey=JSON.stringify([direction,search,partyId,partySiteId,status,overdue,from,to,value,partySort,paymentSort]);
   const [pagination,setPagination]=useState({key:pageKey,page:1});
   const page=pagination.key===pageKey?pagination.page:1;
   const setPage=(next:number)=>setPagination({key:pageKey,page:next});
   const partiesKey = [direction === "receivable" ? "receivable-customers" : "payable-suppliers",businessId];
   const loadParties = async (requestedPage: number) => {
-      const filters = { page: requestedPage, pageSize: 20, search, status, overdue: overdue || undefined, from, to };
+      const filters = { page: requestedPage, pageSize: 20, search, status, overdue: overdue || undefined, from, to, sortBy:partySort.by, sortDirection:partySort.direction };
       if(direction === "receivable") { const result=await receivablesApi.customerPortfolio({...filters,customerId:partyId,partySiteId}); return {...result,items:result.items.map(item=>({id:item.customerId,name:item.customerName,identification:item.identification,partySiteId:item.partySiteId,partySiteName:item.partySiteName,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:0,currencyCode:"COP"}))}; }
       const result=await payablesApi.supplierPortfolio({...filters,supplierId:partyId,partySiteId}); return {...result,items:result.items.map(item=>({id:item.supplierId,name:item.supplierName,identification:item.identification,partySiteId:item.partySiteId,partySiteName:item.partySiteName,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:item.supplierCreditAmount,currencyCode:item.currencyCode}))};
   };
   const partyPage = value === "parties" ? page : 1;
   const parties = useQuery<Page<PartyRow>>({
-    queryKey: [...partiesKey, partyPage, search, partyId, partySiteId, status, overdue, from, to],
+    queryKey: [...partiesKey, partyPage, search, partyId, partySiteId, status, overdue, from, to, partySort],
     queryFn: () => loadParties(partyPage),
     enabled: !!businessId,
     staleTime: 5 * 60 * 1000,
   });
   const payments = useQuery<Page<PaymentRow>>({
-    queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search, partyId, partySiteId, status, overdue, from, to],
+    queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search, partyId, partySiteId, status, overdue, from, to, paymentSort],
     queryFn: async () => {
-      const filters = { page, pageSize: 20, search, status, overdue: overdue || undefined, from, to };
+      const filters = { page, pageSize: 20, search, status, overdue: overdue || undefined, from, to, sortBy:paymentSort.by, sortDirection:paymentSort.direction };
       if(direction === "receivable") {
         const result=await receivablesApi.payments({...filters,customerId:partyId,partySiteId});
         return {...result,items:result.items.map(item=>({...item,partyName:item.customerName,
@@ -114,14 +119,17 @@ export function PortfolioLedgerTabs({
     <TabsContent value="invoices" className="mt-0">{children}</TabsContent>
     <TabsContent value="parties" className="mt-0">
       <LedgerTable loading={loading} failed={failed} isEmpty={partyItems.length === 0} empty="No hay terceros con cartera para estos filtros.">
-        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">{direction === "receivable" ? "Cliente" : "Proveedor"}</th><th>Facturas</th><th>Valor original</th><th>Pagado</th><th>Saldo</th><th className="pr-3">Vencido</th>{direction === "payable" && <th className="pr-3">A favor</th>}</tr></thead>
+        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr>
+          {[["name",direction === "receivable" ? "Cliente" : "Proveedor"],["invoiceCount","Facturas"],["originalAmount","Valor original"],["paidAmount","Pagado"],["outstandingAmount","Saldo"],["overdueAmount","Vencido"],...(direction === "payable" ? [["supplierCreditAmount","A favor"]] : [])].map(([by,label])=><SortableLedgerHeader key={by} by={by} label={label} sort={partySort} onClick={()=>toggleSort(partySort,setPartySort,by)}/>)}</tr></thead>
         <tbody>{partyItems.map(item => <tr key={`${item.id}-${item.partySiteId??"none"}-${item.currencyCode}`} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}{item.partySiteName?` · ${item.partySiteName}`:""}{direction==="payable"?` · ${item.currencyCode}`:""}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount,item.currencyCode)}</td><td>{formatCurrency(item.paidAmount,item.currencyCode)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount,item.currencyCode)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount,item.currencyCode)}</td>{direction === "payable" && <td className="pr-3 font-semibold">{formatCurrency(item.supplierCreditAmount,"COP")}</td>}</tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>
     <TabsContent value="payments" className="mt-0">
       <LedgerTable loading={loading} failed={failed} isEmpty={paymentItems.length === 0} empty={`No hay ${direction === "receivable" ? "recaudos" : "pagos"} para estos filtros.`}>
-        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3">Fecha</th><th>{direction === "receivable" ? "Cliente" : "Proveedor"}</th><th>Comprobante</th><th>Facturas</th><th>Medios</th><th className="pr-3 text-right">Total</th></tr></thead>
+        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr>
+          {[["paidAt","Fecha"],["partyName",direction === "receivable" ? "Cliente" : "Proveedor"],["documentNumber","Comprobante"]].map(([by,label])=><SortableLedgerHeader key={by} by={by} label={label} sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,by)}/>)}
+          <th>Facturas</th><th>Medios</th><SortableLedgerHeader by="totalAmount" label="Total" sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,"totalAmount")}/></tr></thead>
         <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="font-mono text-xs">{item.documentNumber}</td><td><details><summary className="cursor-pointer">{item.appliedDocumentCount} factura{item.appliedDocumentCount===1?"":"s"}</summary><div className="mt-2 space-y-1">{item.applications.map(application=><div key={application.invoiceId} className="flex items-center gap-2 whitespace-nowrap"><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={()=>onInvoiceClick(application.invoiceId)}>{application.documentNumber}</button><span>{formatCurrency(application.amount,item.currencyCode)}</span></div>)}</div></details></td><td>{item.payments.map(payment => paymentLabel(payment.methodCode)).join(" + ")}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode)}</td></tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
@@ -141,4 +149,9 @@ function Pager({page,pages,total,onPage}:{page:number;pages:number;total:number;
 
 function paymentLabel(code: string) {
   return ({ Cash: "Efectivo", Transfer: "Transferencia", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito" } as Record<string, string>)[code] ?? code;
+}
+
+function SortableLedgerHeader({by,label,sort,onClick}:{by:string;label:string;sort:LedgerSort;onClick:()=>void}) {
+  const Icon=sort.by===by?(sort.direction==="asc"?ArrowUp:ArrowDown):ArrowUpDown;
+  return <th className="p-3" aria-sort={sort.by===by?(sort.direction==="asc"?"ascending":"descending"):"none"}><button type="button" className="inline-flex items-center gap-1 whitespace-nowrap font-medium hover:text-foreground" onClick={onClick} aria-label={`Ordenar ${label}`}>{label}<Icon className="h-3.5 w-3.5"/></button></th>;
 }

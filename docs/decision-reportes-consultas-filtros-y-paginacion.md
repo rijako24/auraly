@@ -59,6 +59,11 @@ antes del conteo y la paginación, nunca solamente a las filas visibles. Totales
 y exportaciones usan los mismos filtros. Esta regla también aplica a consultas
 operativas, incluidos documentos retornables e historial de devoluciones.
 
+El ordenamiento de listados paginados usa `sortBy` y `sortDirection=asc|desc`.
+Cada endpoint publica únicamente las columnas que su consulta puede ordenar;
+se valida la lista permitida antes de consultar y SQL aplica un desempate estable
+antes de `OFFSET/FETCH`. El cliente no reordena solamente la página visible.
+
 ---
 
 ## 2. Hallazgos útiles de Xion

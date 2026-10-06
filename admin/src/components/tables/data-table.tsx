@@ -5,6 +5,7 @@ import {
   ColumnDef,
   ColumnFiltersState,
   SortingState,
+  OnChangeFn,
   VisibilityState,
   flexRender,
   getCoreRowModel,
@@ -48,6 +49,8 @@ export interface DataTableProps<TData, TValue> {
   pageCount?: number;
   totalItems?: number;
   onPaginationChange?: (page: number, pageSize: number) => void;
+  sorting?: SortingState;
+  onSortingChange?: OnChangeFn<SortingState>;
   onSearch?: (value: string) => void;
   bulkActions?: {
     label: string;
@@ -85,6 +88,8 @@ export function DataTable<TData, TValue>({
   pageCount: controlledPageCount,
   totalItems,
   onPaginationChange,
+  sorting: controlledSorting,
+  onSortingChange,
   onSearch,
   bulkActions = [],
   facetedFilters = [],
@@ -223,20 +228,21 @@ export function DataTable<TData, TValue>({
         return next;
       });
     },
-    onSortingChange: setSorting,
+    onSortingChange: onSortingChange ?? setSorting,
     getSortedRowModel: getSortedRowModel(),
     onColumnFiltersChange: setColumnFilters,
     getFilteredRowModel: getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
     state: {
-      sorting,
+      sorting: controlledSorting ?? sorting,
       columnFilters,
       columnVisibility,
       rowSelection,
       pagination,
     },
     manualPagination: !!onPaginationChange,
+    manualSorting: !!onSortingChange,
     pageCount: controlledPageCount ?? -1,
     manualFiltering: !!onSearch,
     getRowId,

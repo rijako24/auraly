@@ -98,8 +98,8 @@ export interface CustomerCreditProfile {
 }
 
 export const receivablesApi = {
-  customerPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;customerId?:string;partySiteId?:string;status?:ReceivableStatus;from?:string;to?:string})=>apiClient.get<CustomerPortfolioPage>("/commerce/v1/receivables/customers",withPagedDefaults(params)),
-  payments:(params:{page?:number;pageSize?:number;search?:string;customerId?:string;partySiteId?:string;status?:ReceivableStatus;overdue?:boolean;from?:string;to?:string})=>apiClient.get<CustomerPaymentHistoryPage>("/commerce/v1/receivable-payments",withPagedDefaults(params)),
+  customerPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;customerId?:string;partySiteId?:string;status?:ReceivableStatus;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<CustomerPortfolioPage>("/commerce/v1/receivables/customers",withPagedDefaults(params)),
+  payments:(params:{page?:number;pageSize?:number;search?:string;customerId?:string;partySiteId?:string;status?:ReceivableStatus;overdue?:boolean;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<CustomerPaymentHistoryPage>("/commerce/v1/receivable-payments",withPagedDefaults(params)),
   importPreexisting:(request:ImportPreexistingReceivablesRequest)=>apiClient.post<{acceptedCount:number;receivableIds:string[]}>("/commerce/v1/receivables/preexisting/import",request),
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
@@ -124,6 +124,8 @@ export const receivablesApi = {
     outstandingOnly?: boolean;
     from?: string;
     to?: string;
+    sortBy?: string;
+    sortDirection?: "asc" | "desc";
   }) => apiClient.get<ReceivablePage>(
     "/commerce/v1/receivables",
     withPagedDefaults(params),

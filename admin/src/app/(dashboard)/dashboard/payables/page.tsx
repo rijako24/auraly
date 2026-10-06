@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef, SortingState } from "@tanstack/react-table";
 import { CalendarClock, Landmark, FilePenLine } from "lucide-react";
 import { usePayableDetail, usePayables } from "@/hooks/use-payables";
 import { useAuthStore } from "@/stores/auth-store";
@@ -42,6 +42,7 @@ export default function PayablesPage() {
   const canPay = permissions?.includes("payables.payments.create") ?? false;
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [invoiceSorting, setInvoiceSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<PayableStatus | "all">("all");
   const [conceptId, setConceptId] = useState("all");
@@ -72,6 +73,8 @@ export default function PayablesPage() {
     overdue: overdue || undefined,
     from: from || undefined,
     to: to || undefined,
+    sortBy: invoiceSorting[0]?.id,
+    sortDirection: invoiceSorting[0] ? (invoiceSorting[0].desc ? "desc" : "asc") : undefined,
     enabled: activeTab === "invoices",
   });
   const detailQuery = usePayableDetail(selectedId);
@@ -179,7 +182,7 @@ export default function PayablesPage() {
         <><div className="mb-3 flex items-center justify-between">{supplierId?<Badge variant="secondary">Cartera de la sede seleccionada</Badge>:<span/>}{supplierId&&<Button size="sm" variant="ghost" onClick={()=>{setSupplierId(undefined);setPartySiteId(undefined);setSupplierFilter(null);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading}
           page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages}
           totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }}
-          onRowClick={(item) => setSelectedId(item.payableId)} enableRowSelection={false} /></>
+          onRowClick={(item) => setSelectedId(item.payableId)} enableRowSelection={false} sorting={invoiceSorting} onSortingChange={updater => { setInvoiceSorting(current => (typeof updater === "function" ? updater(current) : updater).slice(0, 1)); setPage(1); }} /></>
       )}
       </PortfolioLedgerTabs>
 

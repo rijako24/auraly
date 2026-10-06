@@ -25,8 +25,9 @@ public sealed partial class SqlPartyWorkspaceStore
             WHERE party.TenantId=@TenantId AND party.IsActive=1
               AND (@RoleId IS NULL OR partyRole.{role.Id}=@RoleId)
               AND (@PartySiteId IS NULL OR site.PartySiteId=@PartySiteId)
-              AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
-                OR party.LegalName LIKE N'%'+@Search+N'%'
+              AND (@Search IS NULL OR party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
+                OR party.LegalName COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
+                OR CONCAT(party.FirstName,N' ',party.LastName) COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
                 OR party.Identification LIKE N'%'+@Search+N'%'
                 OR site.Name LIKE N'%'+@Search+N'%' OR site.Code LIKE N'%'+@Search+N'%');
             SELECT party.PartyId,partyRole.{role.Id},site.PartySiteId,
@@ -40,8 +41,9 @@ public sealed partial class SqlPartyWorkspaceStore
             WHERE party.TenantId=@TenantId AND party.IsActive=1
               AND (@RoleId IS NULL OR partyRole.{role.Id}=@RoleId)
               AND (@PartySiteId IS NULL OR site.PartySiteId=@PartySiteId)
-              AND (@Search IS NULL OR party.DisplayName LIKE N'%'+@Search+N'%'
-                OR party.LegalName LIKE N'%'+@Search+N'%'
+              AND (@Search IS NULL OR party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
+                OR party.LegalName COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
+                OR CONCAT(party.FirstName,N' ',party.LastName) COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
                 OR party.Identification LIKE N'%'+@Search+N'%'
                 OR site.Name LIKE N'%'+@Search+N'%' OR site.Code LIKE N'%'+@Search+N'%')
             ORDER BY party.DisplayName,party.PartyId,site.IsPrimary DESC,site.Name,site.PartySiteId

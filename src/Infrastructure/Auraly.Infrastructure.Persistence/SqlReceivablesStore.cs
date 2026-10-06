@@ -22,8 +22,15 @@ public sealed class SqlReceivablesStore(
     public async Task<CustomerPortfolioPage> ListCustomersAsync(ReceivablesUserIdentity user,
         CustomerPortfolioQuery query, CancellationToken token)
     {
+        var order = SqlPagedSort.Build(query.SortBy, query.SortDirection,
+            new Dictionary<string, string>
+            {
+                ["name"] = "CustomerName", ["invoiceCount"] = "InvoiceCount",
+                ["originalAmount"] = "OriginalAmount", ["paidAmount"] = "PaidAmount",
+                ["outstandingAmount"] = "OutstandingAmount", ["overdueAmount"] = "OverdueAmount"
+            }, "name", "asc", "PartySiteName", "PartySiteId", "CustomerId");
         await using var connection=connections.Create(); await connection.OpenAsync(token);
-        await using var command=new SqlCommand("""
+        await using var command=new SqlCommand($"""
             WITH Paid AS(
               SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
               FROM dbo.CustomerPaymentApplications application
@@ -63,7 +70,7 @@ public sealed class SqlReceivablesStore(
             FROM #Portfolio;
             SELECT CustomerId,CustomerName,Identification,InvoiceCount,OriginalAmount,PaidAmount,
               OutstandingAmount,OverdueAmount,PartySiteId,PartySiteName FROM #Portfolio
-            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,CustomerName,PartySiteName,PartySiteId
+            ORDER BY {order}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);
@@ -83,6 +90,19 @@ public sealed class SqlReceivablesStore(
 
     public async Task<ReceivablePage> ListAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token)
     {
+        var sortColumns = new Dictionary<string, string>
+        {
+            ["default"] = "CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 0 ELSE 1 END,r.DueDate",
+            ["documentNumber"] = "r.DocumentNumber", ["dueDate"] = "r.DueDate",
+            ["originalAmount"] = "r.OriginalAmount", ["outstandingAmount"] = "r.OutstandingAmount",
+            ["status"] = "CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN N'Vencida' WHEN r.Status=N'Open' THEN N'Pendiente' WHEN r.Status=N'PartiallyPaid' THEN N'Abono parcial' WHEN r.Status=N'Paid' THEN N'Pagada' ELSE N'Cancelada' END"
+        };
+        var order = SqlPagedSort.Build(query.SortBy, query.SortDirection, sortColumns,
+            "default", "asc", "r.ReceivableId");
+        var pageOrder = SqlPagedSort.Build(query.SortBy, query.SortDirection,
+            sortColumns.ToDictionary(item => item.Key,
+                item => item.Value.Replace("r.", "page.", StringComparison.Ordinal)),
+            "default", "asc", "page.ReceivableId");
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
         const string where = """
@@ -138,7 +158,7 @@ public sealed class SqlReceivablesStore(
             INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
             INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId WHERE {where}
-            ORDER BY CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 0 ELSE 1 END,r.DueDate,r.ReceivableId
+            ORDER BY {order}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             SELECT page.ReceivableId,page.CustomerId,page.CustomerName,page.DocumentNumber,
               page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
@@ -150,7 +170,7 @@ public sealed class SqlReceivablesStore(
               JOIN #Page selected ON selected.ReceivableId=application.ReceivableId
               WHERE application.AppliedAt IS NOT NULL
               GROUP BY application.ReceivableId) paid ON paid.ReceivableId=page.ReceivableId
-            ORDER BY CASE WHEN page.IsOverdue=1 THEN 0 ELSE 1 END,page.DueDate,page.ReceivableId;
+            ORDER BY {pageOrder};
             """, connection))
         {
             AddQuery(command,user,query,timeProvider.GetUtcNow());
@@ -172,8 +192,16 @@ public sealed class SqlReceivablesStore(
     public async Task<CustomerPaymentHistoryPage> ListPaymentsAsync(ReceivablesUserIdentity user,
         CustomerPaymentHistoryQuery query,CancellationToken token)
     {
+        var paymentOrder = SqlPagedSort.Build(query.SortBy, query.SortDirection,
+            new Dictionary<string, string>
+            {
+                ["paidAt"] = "payment.PaidAt",
+                ["partyName"] = "COALESCE(party.DisplayName,party.LegalName,party.Identification)",
+                ["documentNumber"] = "payment.DocumentNumber",
+                ["totalAmount"] = "CASE WHEN @PartySiteId IS NULL THEN payment.TotalAmount ELSE siteApplied.AppliedAmount END"
+            }, "paidAt", "desc", "payment.PaymentId DESC");
         await using var connection=connections.Create(); await connection.OpenAsync(token);
-        await using var command=new SqlCommand("""
+        await using var command=new SqlCommand($"""
             SELECT application.PaymentId,SUM(application.Amount) AppliedAmount INTO #SiteApplied
             FROM dbo.CustomerPaymentApplications application
             JOIN dbo.Receivables invoice ON invoice.ReceivableId=application.ReceivableId
@@ -236,7 +264,7 @@ public sealed class SqlReceivablesStore(
                   WHERE application.PaymentId=payment.PaymentId
                     AND (@PartySiteId IS NULL OR invoice.PartySiteId=@PartySiteId)
                     AND invoice.DocumentNumber LIKE N'%' + @Search + N'%'))
-            ORDER BY payment.PaidAt DESC,payment.PaymentId DESC
+            ORDER BY {paymentOrder}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
               CASE WHEN @PartySiteId IS NULL THEN payment.TotalAmount
@@ -255,7 +283,7 @@ public sealed class SqlReceivablesStore(
             GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
               payment.TotalAmount,siteApplied.AppliedAmount,payment.Status,payment.CustomerId,
               party.DisplayName,party.LegalName,party.Identification
-            ORDER BY payment.PaidAt DESC,payment.PaymentId DESC;
+            ORDER BY {paymentOrder};
             SELECT tender.PaymentId,tender.LineNumber,tender.MethodCode,tender.Amount,tender.TenderedAmount,
               tender.BankAccountId,tender.Reference,tender.Notes,tender.CardFranchiseCode,tender.ApprovalNumber
             FROM dbo.CustomerPaymentTenders tender INNER JOIN @Page page ON page.PaymentId=tender.PaymentId

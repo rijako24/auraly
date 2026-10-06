@@ -53,8 +53,16 @@ public sealed class SqlPayablesStore(
     public async Task<SupplierPortfolioPage> ListSuppliersAsync(PayablesUserIdentity user,
         SupplierPortfolioQuery query,CancellationToken token)
     {
+        var order = SqlPagedSort.Build(query.SortBy, query.SortDirection,
+            new Dictionary<string, string>
+            {
+                ["name"] = "SupplierName", ["invoiceCount"] = "InvoiceCount",
+                ["originalAmount"] = "OriginalAmount", ["paidAmount"] = "PaidAmount",
+                ["outstandingAmount"] = "OutstandingAmount", ["overdueAmount"] = "OverdueAmount",
+                ["supplierCreditAmount"] = "SupplierCreditAmount"
+            }, "name", "asc", "PartySiteName", "PartySiteId", "SupplierId", "CurrencyCode");
         await using var connection=connections.Create();await connection.OpenAsync(token);
-        await using var command=new SqlCommand("""
+        await using var command=new SqlCommand($"""
             WITH Paid AS(
               SELECT application.PayableId,SUM(application.Amount) PaidAmount
               FROM dbo.SupplierPaymentApplications application
@@ -122,7 +130,7 @@ public sealed class SqlPayablesStore(
             FROM #Portfolio GROUP BY GROUPING SETS ((CurrencyCode),());
             SELECT SupplierId,SupplierName,Identification,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount,SupplierCreditAmount,CurrencyCode,PartySiteId,PartySiteName
             FROM #Portfolio
-            ORDER BY CASE WHEN OverdueAmount>0 THEN 0 ELSE 1 END,OutstandingAmount DESC,SupplierName,PartySiteName,PartySiteId,SupplierId
+            ORDER BY {order}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);command.Parameters.AddWithValue("@SupplierId",(object?)query.SupplierId??DBNull.Value);command.Parameters.AddWithValue("@PartySiteId",(object?)query.PartySiteId??DBNull.Value);command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);AddDateRange(command,query.From,query.To);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
@@ -150,6 +158,19 @@ public sealed class SqlPayablesStore(
         PayableQuery query,
         CancellationToken cancellationToken)
     {
+        var sortColumns = new Dictionary<string, string>
+        {
+            ["default"] = "CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN 0 ELSE 1 END,p.DueDate",
+            ["documentNumber"] = "p.DocumentNumber", ["dueDate"] = "p.DueDate",
+            ["originalAmount"] = "p.OriginalAmount", ["outstandingAmount"] = "p.OutstandingAmount",
+            ["status"] = "CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN N'Vencida' WHEN p.Status=N'Open' THEN N'Pendiente' WHEN p.Status=N'PartiallyPaid' THEN N'Pago parcial' WHEN p.Status=N'Paid' THEN N'Pagada' ELSE N'Cancelada' END"
+        };
+        var order = SqlPagedSort.Build(query.SortBy, query.SortDirection, sortColumns,
+            "default", "asc", "p.PayableId");
+        var pageOrder = SqlPagedSort.Build(query.SortBy, query.SortDirection,
+            sortColumns.ToDictionary(item => item.Key,
+                item => item.Value.Replace("p.", "page.", StringComparison.Ordinal)),
+            "default", "asc", "page.PayableId");
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         const string filters = """
@@ -216,8 +237,7 @@ public sealed class SqlPayablesStore(
             LEFT JOIN dbo.ExpenseConcepts concept ON concept.ExpenseConceptId=expense.ExpenseConceptId
               AND concept.BusinessId=p.BusinessId
             WHERE {filters}
-            ORDER BY CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN 0 ELSE 1 END,
-                     p.DueDate,p.PayableId
+            ORDER BY {order}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             SELECT page.PayableId,page.SupplierId,page.SupplierName,page.DocumentNumber,
               page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
@@ -229,7 +249,7 @@ public sealed class SqlPayablesStore(
               JOIN #Page selected ON selected.PayableId=application.PayableId
               WHERE application.AppliedAt IS NOT NULL
               GROUP BY application.PayableId) paid ON paid.PayableId=page.PayableId
-            ORDER BY CASE WHEN page.IsOverdue=1 THEN 0 ELSE 1 END,page.DueDate,page.PayableId;
+            ORDER BY {pageOrder};
             """;
         var items = new List<PayableListItem>();
         await using (var command = new SqlCommand(dataSql, connection))
@@ -260,8 +280,14 @@ public sealed class SqlPayablesStore(
     public async Task<SupplierPaymentHistoryPage> ListPaymentsAsync(PayablesUserIdentity user,
         SupplierPaymentHistoryQuery query,CancellationToken cancellationToken)
     {
+        var paymentOrder = SqlPagedSort.Build(query.SortBy, query.SortDirection,
+            new Dictionary<string, string>
+            {
+                ["paidAt"] = "payment.PaidAt", ["partyName"] = "supplier.Name",
+                ["documentNumber"] = "payment.DocumentNumber", ["totalAmount"] = "payment.TotalAmount"
+            }, "paidAt", "desc", "payment.PaymentId DESC");
         await using var connection=connections.Create(); await connection.OpenAsync(cancellationToken);
-        await using var command=new SqlCommand("""
+        await using var command=new SqlCommand($"""
             SELECT COUNT(*) FROM dbo.SupplierPayments payment
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
@@ -310,7 +336,7 @@ public sealed class SqlPayablesStore(
                   JOIN dbo.Payables invoice ON invoice.PayableId=application.PayableId
                   WHERE application.PaymentId=payment.PaymentId
                     AND invoice.DocumentNumber LIKE N'%' + @Search + N'%'))
-            ORDER BY payment.PaidAt DESC,payment.PaymentId DESC
+            ORDER BY {paymentOrder}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
               payment.TotalAmount,payment.Status,
@@ -324,7 +350,7 @@ public sealed class SqlPayablesStore(
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
             GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
               payment.TotalAmount,payment.Status,payment.SupplierId,supplier.Name
-            ORDER BY payment.PaidAt DESC,payment.PaymentId DESC;
+            ORDER BY {paymentOrder};
             SELECT tender.PaymentId,tender.LineNumber,tender.MethodCode,tender.Amount,tender.TenderedAmount,
               tender.BankAccountId,tender.Reference,tender.Notes,tender.CardFranchiseCode,tender.ApprovalNumber
             FROM dbo.SupplierPaymentTenders tender INNER JOIN @Page page ON page.PaymentId=tender.PaymentId

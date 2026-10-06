@@ -96,8 +96,8 @@ export const payablesApi = {
   expenseConcepts: (search: string, page: number, pageSize: number) =>
     apiClient.get<{ items: Array<{ conceptId: string; name: string }>; page: number; pageSize: number; totalCount: number; totalPages: number }>(
       "/commerce/v1/payables/expense-concepts", { search: search || undefined, page, pageSize }),
-  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;partySiteId?:string;status?:PayableStatus;from?:string;to?:string})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
-  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;partySiteId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
+  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;partySiteId?:string;status?:PayableStatus;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
+  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;partySiteId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   paymentHistory: (supplierId:string,page=1,pageSize=5) =>
@@ -114,6 +114,8 @@ export const payablesApi = {
     from?: string;
     to?: string;
     conceptId?: string;
+    sortBy?: string;
+    sortDirection?: "asc" | "desc";
   }) => apiClient.get<PayablePage>(
     "/commerce/v1/payables",
     withPagedDefaults(params),

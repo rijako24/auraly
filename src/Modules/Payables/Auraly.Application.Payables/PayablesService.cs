@@ -1,4 +1,5 @@
 using Auraly.BuildingBlocks.Domain.Payments;
+using Auraly.BuildingBlocks.Domain.Pagination;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Contracts.Payables;
 using Auraly.Domain.Payables;
@@ -57,6 +58,8 @@ public sealed class PayablesService(
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
             throw new PayablesValidationException("Invalid pagination.");
         ValidateLedgerFilters(query.Status,query.From,query.To);
+        if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "name", "invoiceCount", "originalAmount", "paidAmount", "outstandingAmount", "overdueAmount", "supplierCreditAmount"))
+            throw new PayablesValidationException("El ordenamiento de proveedores no es válido.");
         return store.ListSuppliersAsync(user, query with { Search = Normalize(query.Search, 120) }, cancellationToken);
     }
 
@@ -86,6 +89,8 @@ public sealed class PayablesService(
         if (query.PageSize is < 1 or > 100)
             throw new PayablesValidationException("PageSize must be between 1 and 100.");
         ValidateLedgerFilters(query.Status,query.From,query.To);
+        if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "documentNumber", "dueDate", "originalAmount", "outstandingAmount", "status"))
+            throw new PayablesValidationException("El ordenamiento de facturas no es válido.");
         if (query.ConceptId == Guid.Empty)
             throw new PayablesValidationException("El concepto de gasto no es válido.");
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, cancellationToken);
@@ -116,6 +121,8 @@ public sealed class PayablesService(
         Require(user,PayablesPermissionCodes.Read);
         if(query.Page<1||query.PageSize is <1 or >100)throw new PayablesValidationException("Invalid pagination.");
         ValidateLedgerFilters(query.Status,query.From,query.To);
+        if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "paidAt", "partyName", "documentNumber", "totalAmount"))
+            throw new PayablesValidationException("El ordenamiento de pagos no es válido.");
         return store.ListPaymentsAsync(user,query with { Search=Normalize(query.Search,120) },cancellationToken);
     }
 

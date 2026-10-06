@@ -155,9 +155,19 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&customerId={customerId:D}");
         var siteRows = bySite!.Items.Where(item => item.CustomerId == customerId).ToArray();
         Assert.Equal(2, siteRows.Length);
+        Assert.Equal(new[] { "Sede Centro", "Sede Norte" }, siteRows.Select(item => item.PartySiteName).ToArray());
         Assert.Contains(siteRows, item => item.PartySiteId == northSiteId);
         Assert.Contains(siteRows, item => item.PartySiteId == centerSiteId);
         Assert.Equal(expectedOutstanding, siteRows.Sum(item => item.OutstandingAmount));
+        var ascending = await client.GetFromJsonAsync<ReceivablePage>(
+            $"/api/commerce/v1/receivables?page=1&pageSize=2&customerId={customerId:D}&sortBy=documentNumber&sortDirection=asc");
+        var descending = await client.GetFromJsonAsync<ReceivablePage>(
+            $"/api/commerce/v1/receivables?page=1&pageSize=2&customerId={customerId:D}&sortBy=documentNumber&sortDirection=desc");
+        Assert.Equal(ascending!.Items.Select(item => item.ReceivableId).Reverse(),
+            descending!.Items.Select(item => item.ReceivableId));
+        using (var invalidSort = await client.GetAsync(
+                   "/api/commerce/v1/receivables?page=1&pageSize=2&sortBy=sql"))
+            Assert.Equal(HttpStatusCode.BadRequest, invalidSort.StatusCode);
         var siteOptions = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(
             $"/api/commerce/v1/portfolio/parties/site-options?page=1&pageSize=20&role=Customer&search={ServerSliceFixture.UniqueNit(customerId)}");
         Assert.Equal(3, siteOptions!.Items.Count(item => item.RoleId == customerId));
@@ -173,6 +183,27 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var consolidated = await profileResponse.Content.ReadFromJsonAsync<CustomerCreditProfile>();
         Assert.Equal(expectedOutstanding, consolidated!.OutstandingAmount);
         Assert.Equal(500_000m - expectedOutstanding, consolidated.AvailableCredit);
+    }
+
+    [Fact]
+    public async Task Customer_site_search_matches_full_name_without_accents()
+    {
+        var (customerId, userId, _, _) = await ConfigureWithSitesAsync();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await ExecuteAsync(connection, null, """
+            UPDATE party SET DisplayName=N'Adrián Jiménez',LegalName=N'Adrián Jiménez',
+              FirstName=N'Adrián',LastName=N'Jiménez'
+            FROM dbo.Parties party JOIN dbo.Customers customer ON customer.PartyId=party.PartyId
+            WHERE customer.CustomerId=@CustomerId;
+            """, new SqlParameter("@CustomerId", customerId));
+        using var client = fixture.CreateUserClient(userId, ReceivablesPermissionCodes.Read);
+        foreach (var search in new[] { "Adrian J", "Adrian Jimenez" })
+        {
+            var options = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(
+                $"/api/commerce/v1/portfolio/parties/site-options?role=Customer&page=1&pageSize=10&search={Uri.EscapeDataString(search)}");
+            Assert.Equal(3, options!.Items.Count(item => item.RoleId == customerId));
+        }
     }
 
     [Fact]
@@ -745,7 +776,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var createdDate=DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
         var customerFilter=$"customerId={customerId:D}&status=Paid&from={createdDate}&to={createdDate}";
         var customers=await client.GetFromJsonAsync<CustomerPortfolioPage>(
-            $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&{customerFilter}");
+            $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&{customerFilter}&sortBy=paidAmount&sortDirection=desc");
         Assert.Contains(customers!.Items,item=>item.CustomerId==customerId&&item.InvoiceCount>0);
         var invoices=await client.GetFromJsonAsync<ReceivablePage>(
             $"/api/commerce/v1/receivables?page=1&pageSize=20&{customerFilter}");
@@ -754,7 +785,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(invoices.Items.Sum(item=>item.PaidAmount),invoices.TotalPaid);
         Assert.True(invoices.TotalPaid>0);
         var payments=await client.GetFromJsonAsync<CustomerPaymentHistoryPage>(
-            $"/api/commerce/v1/receivable-payments?page=1&pageSize=20&customerId={customerId:D}&status=Paid&from={paymentDate}&to={paymentDate}");
+            $"/api/commerce/v1/receivable-payments?page=1&pageSize=20&customerId={customerId:D}&status=Paid&from={paymentDate}&to={paymentDate}&sortBy=totalAmount&sortDirection=asc");
         Assert.Contains(payments!.Items,item=>item.PaymentId==payment.PaymentId);
         Assert.Equal(payments.Items.Sum(item => item.TotalAmount), payments.TotalAmount);
 

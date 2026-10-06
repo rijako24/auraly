@@ -84,6 +84,13 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/payables/suppliers?supplierId={fixture.SupplierId:D}&page=1&pageSize=20");
             Assert.Contains(portfolio!.Items, item => item.PartySiteId == primarySiteId);
             Assert.Contains(portfolio.Items, item => item.PartySiteId == alternateSiteId);
+            var ordered = await client.GetFromJsonAsync<SupplierPortfolioPage>(
+                $"/api/commerce/v1/payables/suppliers?supplierId={fixture.SupplierId:D}&page=1&pageSize=20&sortBy=outstandingAmount&sortDirection=desc");
+            Assert.Equal(ordered!.Items.OrderByDescending(item => item.OutstandingAmount)
+                .Select(item => item.PartySiteId), ordered.Items.Select(item => item.PartySiteId));
+            using (var invalidSort = await client.GetAsync(
+                       "/api/commerce/v1/payables/suppliers?page=1&pageSize=20&sortBy=sql"))
+                Assert.Equal(HttpStatusCode.BadRequest, invalidSort.StatusCode);
             var filtered = await client.GetFromJsonAsync<SupplierPortfolioPage>(
                 $"/api/commerce/v1/payables/suppliers?supplierId={fixture.SupplierId:D}&partySiteId={alternateSiteId:D}&page=1&pageSize=20");
             Assert.All(filtered!.Items, item => Assert.Equal(alternateSiteId, item.PartySiteId));
@@ -225,10 +232,10 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/payables/suppliers?page=1&pageSize=20&{supplierFilter}");
         Assert.Contains(supplierPage!.Items, item => item.SupplierId == fixture.SupplierId && item.InvoiceCount > 0);
         var invoicePage = await client.GetFromJsonAsync<PayablePage>(
-            $"/api/commerce/v1/payables?page=1&pageSize=20&{supplierFilter}");
+            $"/api/commerce/v1/payables?page=1&pageSize=20&{supplierFilter}&sortBy=status&sortDirection=asc");
         Assert.Contains(invoicePage!.Items, item => item.PayableId == payableId && item.PaidAmount > 0);
         var paymentsPage = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
-            $"/api/commerce/v1/payable-payments?page=1&pageSize=20&supplierId={fixture.SupplierId:D}&status=PartiallyPaid&from={paymentDate}&to={paymentDate}");
+            $"/api/commerce/v1/payable-payments?page=1&pageSize=20&supplierId={fixture.SupplierId:D}&status=PartiallyPaid&from={paymentDate}&to={paymentDate}&sortBy=totalAmount&sortDirection=asc");
         Assert.Contains(paymentsPage!.Items, item => item.PaymentId == payment.PaymentId);
 
         using (var duplicate = await SendAsync(

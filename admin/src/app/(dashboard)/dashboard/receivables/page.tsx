@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { ColumnDef, SortingState } from "@tanstack/react-table";
 import { CalendarClock, CircleDollarSign, Download, FileUp, FilePenLine } from "lucide-react";
 import { useReceivableDetail, useReceivables } from "@/hooks/use-receivables";
 import { useAuthStore } from "@/stores/auth-store";
@@ -38,6 +38,7 @@ export default function ReceivablesPage() {
   const canImport = permissions?.includes("receivables.credit.manage") ?? false;
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [invoiceSorting, setInvoiceSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<ReceivableStatus | "all">("all");
   const [overdue, setOverdue] = useState(false);
@@ -64,6 +65,8 @@ export default function ReceivablesPage() {
     overdue: overdue || undefined,
     from: from || undefined,
     to: to || undefined,
+    sortBy: invoiceSorting[0]?.id,
+    sortDirection: invoiceSorting[0] ? (invoiceSorting[0].desc ? "desc" : "asc") : undefined,
     enabled: activeTab === "invoices",
   });
   const detailQuery = useReceivableDetail(selectedId);
@@ -102,7 +105,7 @@ export default function ReceivablesPage() {
       <div className="col-span-full flex justify-end"><Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setOverdue(false);setCustomerId(undefined);setPartySiteId(undefined);setCustomerFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button></div>
     </div></details>
     }>
-      {query.isError ? <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudo cargar la cartera. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div> : <><div className="mb-3 flex items-center justify-between">{customerId?<Badge variant="secondary">Cartera de la sede seleccionada</Badge>:<span/>}{customerId&&<Button size="sm" variant="ghost" onClick={()=>{setCustomerId(undefined);setPartySiteId(undefined);setCustomerFilter(null);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading} page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages} totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }} onRowClick={(item) => setSelectedId(item.receivableId)} enableRowSelection={false} /></>}
+      {query.isError ? <div className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudo cargar la cartera. <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button></div> : <><div className="mb-3 flex items-center justify-between">{customerId?<Badge variant="secondary">Cartera de la sede seleccionada</Badge>:<span/>}{customerId&&<Button size="sm" variant="ghost" onClick={()=>{setCustomerId(undefined);setPartySiteId(undefined);setCustomerFilter(null);setPage(1)}}>Ver todos</Button>}</div><DataTable columns={columns} data={query.data?.items ?? []} isLoading={query.isLoading} page={query.data?.page} pageSize={query.data?.pageSize} pageCount={query.data?.totalPages} totalItems={query.data?.totalCount} onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }} onRowClick={(item) => setSelectedId(item.receivableId)} enableRowSelection={false} sorting={invoiceSorting} onSortingChange={updater => { setInvoiceSorting(current => (typeof updater === "function" ? updater(current) : updater).slice(0, 1)); setPage(1); }} /></>}
     </PortfolioLedgerTabs>
 
     <Dialog open={!!selectedId} onOpenChange={(open) => !open && setSelectedId(undefined)}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{detail?.documentNumber ?? "Detalle de cartera"}</DialogTitle><DialogDescription>{detail ? `${receivableCustomerLabel(detail)}${detail.customerIdentification ? ` · ${detail.customerIdentification}` : ""}` : "Cargando información..."}</DialogDescription></DialogHeader>{detailQuery.isLoading ? <p className="py-8 text-center text-muted-foreground">Cargando trazabilidad...</p> : detail ? <div className="space-y-5"><dl className="grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-3"><Metric label="Valor original" value={formatCurrency(detail.originalAmount, detail.currencyCode)} /><Metric label="Saldo actual" value={formatCurrency(detail.outstandingAmount, detail.currencyCode)} emphasized /><Metric label="Vence" value={formatDate(detail.dueDate)} /></dl><section><h3 className="mb-3 text-sm font-semibold">Movimientos</h3><div className="space-y-2">{detail.transactions.map((transaction) => <div key={transaction.transactionId} className="flex items-center justify-between rounded-lg border p-3 text-sm"><div><p className="font-medium">{transaction.type === "Opening" ? "Cuenta por cobrar creada" : transaction.type === "Payment" ? "Abono aplicado" : "Ajuste de saldo"}</p><p className="text-xs text-muted-foreground">{formatDateTime(transaction.occurredAt)}</p></div><span className={transaction.type === "Payment" ? "font-semibold text-emerald-700" : "font-semibold"}>{transaction.type === "Payment" ? "−" : transaction.amount >= 0 ? "+" : ""}{formatCurrency(transaction.amount, detail.currencyCode)}</span></div>)}</div></section><DialogFooter><Button variant="outline" onClick={() => setSelectedId(undefined)}>Cerrar</Button>{permissions?.includes("accounting.manual.create") && <Button variant="outline" onClick={() => { setAdjustmentObligationId(detail.receivableId); setSelectedId(undefined); setAdjustmentOpen(true); }}>Ajuste de cartera</Button>}{canReceive && detail.outstandingAmount > 0 && <Button onClick={openPayment}><CircleDollarSign className="mr-2 h-4 w-4" /> Registrar abono</Button>}</DialogFooter></div> : <p className="py-8 text-center text-destructive">No fue posible cargar la cuenta por cobrar.</p>}</DialogContent></Dialog>

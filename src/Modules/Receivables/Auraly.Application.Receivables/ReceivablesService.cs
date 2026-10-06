@@ -1,4 +1,5 @@
 using Auraly.BuildingBlocks.Domain.Payments;
+using Auraly.BuildingBlocks.Domain.Pagination;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Contracts.Receivables;
 using Auraly.Domain.Receivables;
@@ -37,6 +38,8 @@ public sealed class ReceivablesService(
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
             throw new ReceivablesValidationException("Invalid pagination.");
         ValidateLedgerFilters(query.Status, query.From, query.To);
+        if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "name", "invoiceCount", "originalAmount", "paidAmount", "outstandingAmount", "overdueAmount"))
+            throw new ReceivablesValidationException("El ordenamiento de clientes no es válido.");
         return store.ListCustomersAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
     }
 
@@ -57,6 +60,8 @@ public sealed class ReceivablesService(
         Require(user, permission);
         if (query.Page < 1 || query.PageSize is < 1 or > 100) throw new ReceivablesValidationException("Invalid pagination.");
         ValidateLedgerFilters(query.Status, query.From, query.To);
+        if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "documentNumber", "dueDate", "originalAmount", "outstandingAmount", "status"))
+            throw new ReceivablesValidationException("El ordenamiento de facturas no es válido.");
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
     }
 
@@ -89,6 +94,8 @@ public sealed class ReceivablesService(
         Require(user,ReceivablesPermissionCodes.Read);
         if(query.Page<1||query.PageSize is <1 or >100)throw new ReceivablesValidationException("Invalid pagination.");
         ValidateLedgerFilters(query.Status, query.From, query.To);
+        if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "paidAt", "partyName", "documentNumber", "totalAmount"))
+            throw new ReceivablesValidationException("El ordenamiento de recaudos no es válido.");
         return store.ListPaymentsAsync(user,query with { Search=Normalize(query.Search,120) },token);
     }
 

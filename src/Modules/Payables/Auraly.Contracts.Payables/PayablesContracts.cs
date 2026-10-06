@@ -39,7 +39,7 @@ public sealed record PayableQuery(
     bool? Overdue,
     bool OutstandingOnly = false,
     DateOnly? From = null, DateOnly? To = null, Guid? ConceptId = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null);
 
 public sealed record PayableListItem(
     Guid PayableId,
@@ -169,7 +169,7 @@ public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentN
 public sealed record SupplierPaymentHistoryApplication(Guid PayableId,string DocumentNumber,decimal Amount);
 public sealed record SupplierPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? SupplierId,
     string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null);
 public sealed record SupplierPaymentHistoryPage(IReadOnlyList<SupplierPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount)
 {
@@ -177,7 +177,7 @@ public sealed record SupplierPaymentHistoryPage(IReadOnlyList<SupplierPaymentHis
 }
 public sealed record SupplierPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue,
     Guid? SupplierId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null);
 public sealed record SupplierPortfolioItem(Guid SupplierId, string SupplierName,
     string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
     decimal OutstandingAmount, decimal OverdueAmount, decimal SupplierCreditAmount = 0,

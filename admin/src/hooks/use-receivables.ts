@@ -18,6 +18,8 @@ export function useReceivables(params: {
   from?: string;
   to?: string;
   enabled?: boolean;
+  sortBy?: string;
+  sortDirection?: "asc" | "desc";
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
