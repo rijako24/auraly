@@ -1323,6 +1323,7 @@
           "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Inventory": "[1.0.0, )",
