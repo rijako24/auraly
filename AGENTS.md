@@ -43,6 +43,10 @@ Antes de crear una clase, servicio, flujo, handler, endpoint, tabla, configuraci
   `origin/main`. No se publica desde ramas de trabajo, commits sueltos o un
   checkout con cambios sin confirmar. El release de producción puede usar un
   tag inmutable, siempre que su commit pertenezca a `origin/main`.
+- No iniciar, aprobar ni ejecutar un despliegue a producción sin una instrucción
+  explícita del usuario para desplegar a producción. La autorización para
+  implementar, probar, integrar a `origin/main` o desplegar a DEV no autoriza
+  por sí sola la promoción a producción.
 - Trabajar siempre sobre el único checkout operativo, ya sea en la rama `main`
   o en una rama creada a partir de `main`. No crear `git worktree`, clones
   anidados ni copias paralelas del repositorio. Una tarea que requiera
