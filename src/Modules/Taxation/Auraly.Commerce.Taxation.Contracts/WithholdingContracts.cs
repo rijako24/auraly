@@ -91,3 +91,14 @@ public sealed record WithholdingCalculationSnapshot(
     IReadOnlyList<WithholdingAdjustmentSnapshot>? Adjustments = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     string? ReviewHash = null);
+
+public sealed record AppliedWithholdingLineView(
+    Guid DocumentId, string DocumentType, int LineNumber, DateTimeOffset RecognizedAt,
+    string DocumentNumber, string SupplierName, string SupplierIdentification,
+    string Kind, string Name, string RuleCode, string? JurisdictionCode,
+    decimal TaxableBase, decimal Rate, decimal Amount, bool IsManual);
+
+public sealed record AppliedWithholdingReportView(
+    DateOnly From, DateOnly To, int Page, int PageSize, long TotalCount,
+    decimal IncomeTaxTotal, decimal VatTotal, decimal IndustryCommerceTotal,
+    IReadOnlyList<AppliedWithholdingLineView> Items);

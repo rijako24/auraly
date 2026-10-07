@@ -1965,6 +1965,31 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             withheldReceipt.DocumentId, "236701", debit: false));
         Assert.Equal(1_000m, await AccountAmountAsync(
             withheldReceipt.DocumentId, "236805", debit: false));
+        const string appliedReportUrl = "/api/commerce/v1/taxation/withholdings/applied?from=2026-08-01&to=2026-08-31&page=1&pageSize=100";
+        using (var forbiddenReport = await expenseUser.GetAsync(appliedReportUrl))
+            Assert.Equal(HttpStatusCode.Forbidden, forbiddenReport.StatusCode);
+        using (var reportResponse = await accounting.GetAsync(appliedReportUrl))
+        {
+            Assert.Equal(HttpStatusCode.OK, reportResponse.StatusCode);
+            var report = await reportResponse.Content.ReadFromJsonAsync<AppliedWithholdingReportView>();
+            Assert.NotNull(report);
+            Assert.Equal(6, report.TotalCount);
+            Assert.Equal(5_000m, report.IncomeTaxTotal);
+            Assert.Equal(5_700m, report.VatTotal);
+            Assert.Equal(2_000m, report.IndustryCommerceTotal);
+            Assert.Equal(3, report.Items.Count(item => item.DocumentId == expenseId));
+            Assert.Equal(3, report.Items.Count(item => item.DocumentId == withheldReceipt.DocumentId));
+        }
+        using (var pageResponse = await accounting.GetAsync(
+                   appliedReportUrl.Replace("pageSize=100", "pageSize=1", StringComparison.Ordinal)))
+        {
+            pageResponse.EnsureSuccessStatusCode();
+            var report = await pageResponse.Content.ReadFromJsonAsync<AppliedWithholdingReportView>();
+            Assert.NotNull(report);
+            Assert.Equal(6, report.TotalCount);
+            Assert.Single(report.Items);
+            Assert.Equal(5_000m, report.IncomeTaxTotal);
+        }
         var purchaseReturn = new ConfirmPurchaseReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, receipt.DocumentId,
             new DateTimeOffset(2026, 8, 1, 9, 30, 0, TimeSpan.FromHours(-5)),

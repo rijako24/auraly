@@ -21,6 +21,16 @@ export interface CounterpartyTaxProfile {
   jurisdictionCode: string | null; updatedAt: string;
 }
 
+export interface AppliedWithholdingReport {
+  from: string; to: string; page: number; pageSize: number; totalCount: number;
+  incomeTaxTotal: number; vatTotal: number; industryCommerceTotal: number;
+  items: Array<{ documentId: string; documentType: string; lineNumber: number;
+    recognizedAt: string; documentNumber: string; supplierName: string;
+    supplierIdentification: string; kind: WithholdingKind; name: string;
+    ruleCode: string; jurisdictionCode: string | null; taxableBase: number;
+    rate: number; amount: number; isManual: boolean }>;
+}
+
 export interface SaveCounterpartyTaxProfile {
   businessId: string; counterpartyId: string; appliesWithholding: boolean; responsibilities: string[];
   jurisdictionCode: string | null;
@@ -52,6 +62,9 @@ export type WithholdingAdjustment = {ruleId:string;action:"Add"|"Override"|"Excl
   jurisdictionCode?:string|null;accountId?:string|null};
 
 export const taxationApi = {
+  listApplied: (from: string, to: string, page: number, pageSize = 25) =>
+    apiClient.get<AppliedWithholdingReport>("/commerce/v1/taxation/withholdings/applied",
+      { from, to, page, pageSize }),
   listRules: (includeInactive = false) => apiClient.get<WithholdingRule[]>(
     "/commerce/v1/taxation/withholding-rules", { includeInactive }),
   createRule: (request: SaveWithholdingRule) => apiClient.post<WithholdingRule>(

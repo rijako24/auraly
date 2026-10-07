@@ -13,6 +13,11 @@ public static class TaxationApi
         group.MapGet("/withholding-rules", async (
             HttpContext context, bool includeInactive, WithholdingService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.ListAsync(context.User.ToTaxationIdentity(), includeInactive, ct), Results.Ok));
+        group.MapGet("/withholdings/applied", async (
+            HttpContext context, DateOnly from, DateOnly to, int page, int pageSize,
+            WithholdingService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.ListAppliedAsync(
+                context.User.ToTaxationIdentity(), from, to, page, pageSize, ct), Results.Ok));
         group.MapPost("/withholding-rules", async (
             HttpContext context, SaveWithholdingRuleRequest request, WithholdingService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.SaveAsync(context.User.ToTaxationIdentity(), null, request, ct),

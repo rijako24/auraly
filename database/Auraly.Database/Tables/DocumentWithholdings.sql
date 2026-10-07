@@ -15,6 +15,10 @@ CREATE TABLE [dbo].[DocumentWithholdingSnapshots]
     CONSTRAINT [CK_DocumentWithholdingSnapshots_AdjustmentsJson] CHECK ([AdjustmentsJson] IS NULL OR ISJSON([AdjustmentsJson])=1)
 );
 GO
+CREATE INDEX [IX_DocumentWithholdingSnapshots_Business_Recognized]
+    ON [dbo].[DocumentWithholdingSnapshots] ([BusinessId],[RecognizedAt] DESC)
+    INCLUDE ([DocumentId],[DocumentType]);
+GO
 CREATE TABLE [dbo].[DocumentWithholdingLines]
 (
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,

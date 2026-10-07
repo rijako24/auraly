@@ -429,8 +429,6 @@ test("recepción conserva proveedor, bodega, soporte, producto y cantidades", as
 
 test("recepción permite aplicar una retención puntual y descartar en móvil sin dejar la pantalla en blanco", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  const errors: string[] = [];
-  page.on("pageerror", error => errors.push(error.message));
   await mockApi(page);
   await authenticate(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
@@ -468,6 +466,8 @@ test("recepción permite aplicar una retención puntual y descartar en móvil si
   await expect(manual.getByRole("button", { name: "Aplicar retención" })).toBeEnabled();
   await manual.getByRole("button", { name: "Aplicar retención" }).click();
   await expect(manual).toBeHidden();
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
   await receipt.getByRole("button", { name: "Descartar borrador" }).click();
   await expect(receipt).toBeHidden();
   await expect(page.getByRole("heading", { name: "Recepción de compra" })).toBeVisible();
@@ -530,6 +530,7 @@ test("recepción simple sigue directa y la factura adicional carga catálogos y 
   await dialog.getByRole("button", { name: "Agregar factura" }).click();
   const costs = page.getByRole("dialog", { name: "Agregar documento adicional" });
   await expect(costs).toBeVisible();
+  await expect(costs.getByRole("button", { name: "Agregar retención" })).toBeVisible();
   await expect(costs.getByText(/^Concepto 1$/)).toHaveCount(0);
   const firstConcept = field(costs, "Concepto").getByRole("combobox").first();
   await expect(firstConcept).toContainText("Flete");

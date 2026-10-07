@@ -5,6 +5,9 @@ using Auraly.BuildingBlocks.Application.Synchronization;
 namespace Auraly.Commerce.Taxation.Application;
 public interface IWithholdingRuleStore
 {
+    Task<AppliedWithholdingReportView> ListAppliedAsync(
+        Guid tenantId, Guid businessId, DateOnly from, DateOnly to,
+        int page, int pageSize, CancellationToken ct);
     Task<IReadOnlyList<WithholdingRule>> ListAsync(Guid tenantId, Guid businessId, bool includeInactive, CancellationToken ct);
     Task<WithholdingRule> SaveVersionAsync(Guid tenantId, Guid userId, Guid? ruleId, WithholdingRule proposed, CancellationToken ct);
     Task<CounterpartyTaxProfileView?> GetProfileAsync(
@@ -30,6 +33,17 @@ public sealed class WithholdingService(
     WithholdingEngine engine,
     IPosSynchronizationOutboxDispatcher synchronization)
 {
+    public Task<AppliedWithholdingReportView> ListAppliedAsync(
+        TaxationUserIdentity user, DateOnly from, DateOnly to,
+        int page, int pageSize, CancellationToken ct = default)
+    {
+        Require(user, TaxationPermissionCodes.ViewWithholdingRules);
+        if (to < from || to.DayNumber - from.DayNumber > 365 || to == DateOnly.MaxValue ||
+            page is < 1 or > 100000 || pageSize is < 1 or > 100)
+            throw new TaxationValidationException("Indica un rango de hasta un año, página y tamaño válidos.");
+        return store.ListAppliedAsync(user.TenantId, user.BusinessId, from, to, page, pageSize, ct);
+    }
+
     public async Task<IReadOnlyList<WithholdingRuleView>> ListAsync(
         TaxationUserIdentity user, bool includeInactive, CancellationToken ct = default)
     {

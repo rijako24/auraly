@@ -87,7 +87,22 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
     if (path.endsWith("/opening-balances")) return json(route, null);
     return json(route, []);
   });
-  await page.route("**/api/commerce/v1/taxation/withholding-rules**", route => json(route, [{ ruleId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", businessId, version: 1, code: "RF-COMPRA", name: "Retefuente compras", kind: "IncomeTax", direction: "Purchase", moment: "Accrual", baseKind: "TaxExclusiveAmount", conceptCode: null, jurisdictionCode: null, rate: 2.5, minimumBase: 100000, requiredResponsibilities: [], effectiveFrom: "2026-01-01", effectiveTo: null, isActive: true }]));
+  let ruleRequests = 0;
+  await page.route("**/api/commerce/v1/taxation/withholding-rules**", route => {
+    ruleRequests++;
+    return json(route, [{ ruleId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", businessId, version: 1, code: "RF-COMPRA", name: "Retefuente compras", kind: "IncomeTax", direction: "Purchase", moment: "Accrual", baseKind: "TaxExclusiveAmount", conceptCode: null, jurisdictionCode: null, rate: 2.5, minimumBase: 100000, requiredResponsibilities: [], effectiveFrom: "2026-01-01", effectiveTo: null, isActive: true }]);
+  });
+  let appliedRequest = "";
+  await page.route("**/api/commerce/v1/taxation/withholdings/applied?**", route => {
+    appliedRequest = route.request().url();
+    return json(route, { from: "2026-10-01", to: "2026-10-31", page: 1, pageSize: 25,
+      totalCount: 1, incomeTaxTotal: 250, vatTotal: 0, industryCommerceTotal: 0,
+      items: [{ documentId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", documentType: "GoodsReceiptCostDocument",
+        lineNumber: 1, recognizedAt: "2026-10-03T12:00:00-05:00", documentNumber: "FLETE-42",
+        supplierName: "Transportes Andinos", supplierIdentification: "900100200", kind: "IncomeTax",
+        name: "Retefuente flete", ruleCode: "RF-FLETE", jurisdictionCode: null,
+        taxableBase: 10000, rate: 2.5, amount: 250, isManual: false }] });
+  });
 
   await authenticate(page);
   await page.goto("/dashboard/accounting");
@@ -110,6 +125,19 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
   await page.getByRole("button", { name: "Retenciones" }).click();
   await expect(page.getByRole("heading", { name: "Reglas de retención" })).toBeVisible();
   await expect(page.getByText("RF-COMPRA · Retefuente compras")).toBeVisible();
+  expect(ruleRequests).toBe(1);
+  expect(appliedRequest).toBe("");
+  await page.getByRole("tab", { name: "Retenciones aplicadas" }).click();
+  await expect(page.getByRole("heading", { name: "Retenciones practicadas" })).toBeVisible();
+  await expect(page.getByText("FLETE-42")).toBeVisible();
+  await expect(page.getByText("Transportes Andinos")).toBeVisible();
+  expect(new URL(appliedRequest).searchParams.get("pageSize")).toBe("25");
+  await expect(page.getByRole("heading", { name: "Reglas de retención" })).toHaveCount(0);
+  expect(ruleRequests).toBe(1);
+  await page.getByRole("tab", { name: "Configuración" }).click();
+  await expect(page.getByRole("heading", { name: "Reglas de retención" })).toBeVisible();
+  await expect(page.getByText("FLETE-42")).toHaveCount(0);
+  expect(ruleRequests).toBe(1);
   await page.getByRole("button", { name: "Nueva regla" }).click();
   await expect(page.getByRole("heading", { name: "Nueva regla de retención" })).toBeVisible();
   await page.keyboard.press("Escape");

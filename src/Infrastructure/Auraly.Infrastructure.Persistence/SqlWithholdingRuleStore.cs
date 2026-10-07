@@ -11,6 +11,81 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlWithholdingRuleStore(
     SqlServerConnectionFactory connections, TimeProvider timeProvider) : IWithholdingRuleStore
 {
+    public async Task<AppliedWithholdingReportView> ListAppliedAsync(
+        Guid tenantId, Guid businessId, DateOnly from, DateOnly to,
+        int page, int pageSize, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT s.DocumentId,s.DocumentType,l.LineNumber,s.RecognizedAt,
+                   COALESCE(e.DocumentNumber,g.DocumentNumber,c.DocumentNumber) AS DocumentNumber,
+                   supplier.Name AS SupplierName,supplier.Identification AS SupplierIdentification,
+                   l.Kind,l.Name,l.RuleCode,l.JurisdictionCode,l.TaxableBase,l.Rate,l.Amount,
+                   CONVERT(bit,CASE WHEN l.ManualLineId IS NULL THEN 0 ELSE 1 END) AS IsManual
+            INTO #Applied
+            FROM dbo.DocumentWithholdingSnapshots s
+            JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId AND b.TenantId=@TenantId
+            JOIN dbo.DocumentWithholdingLines l
+              ON l.DocumentId=s.DocumentId AND l.DocumentType=s.DocumentType
+            LEFT JOIN dbo.Expenses e ON s.DocumentType=N'Expense'
+              AND e.ExpenseId=s.DocumentId AND e.BusinessId=s.BusinessId
+            LEFT JOIN dbo.GoodsReceipts g ON s.DocumentType=N'GoodsReceipt'
+              AND g.GoodsReceiptId=s.DocumentId AND g.BusinessId=s.BusinessId
+            LEFT JOIN purchasing.GoodsReceiptCostDocuments c
+              ON s.DocumentType=N'GoodsReceiptCostDocument' AND c.CostDocumentId=s.DocumentId
+              AND EXISTS (SELECT 1 FROM dbo.GoodsReceipts parent
+                          WHERE parent.GoodsReceiptId=c.GoodsReceiptId AND parent.BusinessId=s.BusinessId)
+            JOIN dbo.Suppliers supplier
+              ON supplier.SupplierId=COALESCE(e.SupplierId,g.SupplierId,c.SupplierId)
+              AND supplier.TenantId=b.TenantId
+            WHERE s.BusinessId=@BusinessId AND s.RecognizedAt>=@From AND s.RecognizedAt<@ToExclusive
+              AND s.DocumentType IN (N'Expense',N'GoodsReceipt',N'GoodsReceiptCostDocument')
+              AND (e.ExpenseId IS NULL OR e.CancelledAt IS NULL OR e.CancelledAt>=@ToExclusive);
+
+            SELECT COUNT_BIG(*),
+                   COALESCE(SUM(CASE WHEN Kind=N'IncomeTax' THEN Amount ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN Kind=N'Vat' THEN Amount ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN Kind=N'IndustryCommerce' THEN Amount ELSE 0 END),0)
+            FROM #Applied;
+
+            SELECT DocumentId,DocumentType,LineNumber,RecognizedAt,DocumentNumber,
+                   SupplierName,SupplierIdentification,Kind,Name,RuleCode,JurisdictionCode,
+                   TaxableBase,Rate,Amount,IsManual
+            FROM #Applied
+            ORDER BY RecognizedAt DESC,DocumentId DESC,LineNumber DESC
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """, connection);
+        command.Parameters.Add("@TenantId", SqlDbType.UniqueIdentifier).Value = tenantId;
+        command.Parameters.Add("@BusinessId", SqlDbType.UniqueIdentifier).Value = businessId;
+        command.Parameters.Add("@From", SqlDbType.DateTimeOffset).Value =
+            new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(-5));
+        command.Parameters.Add("@ToExclusive", SqlDbType.DateTimeOffset).Value =
+            new DateTimeOffset(to.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(-5));
+        command.Parameters.Add("@Offset", SqlDbType.Int).Value = (page - 1) * pageSize;
+        command.Parameters.Add("@PageSize", SqlDbType.Int).Value = pageSize;
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new InvalidOperationException("The applied withholding summary was not returned.");
+        var count = reader.GetInt64(0);
+        var incomeTax = reader.GetDecimal(1);
+        var vat = reader.GetDecimal(2);
+        var industryCommerce = reader.GetDecimal(3);
+        await reader.NextResultAsync(ct);
+        var items = new List<AppliedWithholdingLineView>();
+        while (await reader.ReadAsync(ct))
+            items.Add(new AppliedWithholdingLineView(
+                reader.GetGuid(0), reader.GetString(1), reader.GetInt32(2),
+                reader.GetDateTimeOffset(3), reader.GetString(4), reader.GetString(5),
+                reader.GetString(6), reader.GetString(7), reader.GetString(8),
+                reader.GetString(9), reader.IsDBNull(10) ? null : reader.GetString(10),
+                reader.GetDecimal(11), reader.GetDecimal(12), reader.GetDecimal(13),
+                reader.GetBoolean(14)));
+        return new AppliedWithholdingReportView(from, to, page, pageSize, count,
+            incomeTax, vat, industryCommerce, items);
+    }
+
     public async Task<IReadOnlySet<Guid>> GetValidManualAccountIdsAsync(
         Guid tenantId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct)
     {

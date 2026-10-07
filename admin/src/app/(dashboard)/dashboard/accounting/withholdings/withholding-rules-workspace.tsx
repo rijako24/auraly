@@ -14,14 +14,31 @@ import { Input } from "@/components/ui/input";
 import { AccountSelect } from "@/components/accounting/account-select";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { taxationApi, type SaveWithholdingRule, type WithholdingBaseKind, type WithholdingDirection, type WithholdingKind, type WithholdingRule } from "@/services/api/taxation";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { referenceOptionKeys } from "@/hooks/use-reference-options";
 import { referenceOptionsApi } from "@/services/api/reference-options";
+import { AppliedWithholdingsReport } from "./applied-withholdings-report";
 
 export function WithholdingRulesWorkspace({ embedded = false }: { embedded?: boolean }) {
+  const [section, setSection] = useState("configuration");
+  return <div className="space-y-6">
+    {!embedded && <header><p className="text-sm font-medium text-emerald-600">Impuestos y cumplimiento</p><h1 className="text-3xl font-bold tracking-tight">Retenciones</h1><p className="mt-1 text-muted-foreground">Consulta las retenciones practicadas y administra sus reglas desde la misma sección.</p></header>}
+    <Tabs value={section} onValueChange={setSection}>
+      <TabsList className="h-auto rounded-2xl border bg-muted/50 p-1">
+        <TabsTrigger value="configuration" className="rounded-xl">Configuración</TabsTrigger>
+        <TabsTrigger value="report" className="rounded-xl">Retenciones aplicadas</TabsTrigger>
+      </TabsList>
+      <TabsContent value="configuration" className="mt-5"><WithholdingConfiguration embedded={embedded} /></TabsContent>
+      <TabsContent value="report" className="mt-5"><AppliedWithholdingsReport /></TabsContent>
+    </Tabs>
+  </div>;
+}
+
+function WithholdingConfiguration({ embedded }: { embedded: boolean }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const canManage = useAuthStore((state) => state.user?.permissions.includes("commerce.taxation.withholdings.manage") ?? false);
   const canManageCatalog = useAuthStore((state) => state.user?.permissions.includes("catalog.update") ?? false);
@@ -33,10 +50,6 @@ export function WithholdingRulesWorkspace({ embedded = false }: { embedded?: boo
   const active = grouped.filter((rule) => rule.isActive).length;
 
   return <div className="space-y-6">
-    {!embedded && <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-      <div><p className="text-sm font-medium text-emerald-600">Impuestos y cumplimiento</p><h1 className="text-3xl font-bold tracking-tight">Retenciones</h1><p className="mt-1 text-muted-foreground">Consulta primero las reglas vigentes. Cada cambio crea una versión trazable para no alterar documentos anteriores.</p></div>
-      {canManage && <Button onClick={() => setEditing(null)}><Plus className="mr-2 h-4 w-4" />Nueva regla</Button>}
-    </header>}
     {!embedded && <div className="grid gap-4 sm:grid-cols-3"><Metric label="Reglas configuradas" value={grouped.length}/><Metric label="Reglas activas" value={active}/><Metric label="Tipos cubiertos" value={new Set(grouped.map((rule) => rule.kind)).size}/></div>}
     <Card className="overflow-hidden rounded-3xl"><CardHeader className="border-b bg-muted/30"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><CardTitle>Reglas de retención</CardTitle><p className="mt-1 text-sm text-muted-foreground">Cada regla define tarifa, base, operación y vigencia. El motor la cruza con el perfil tributario del cliente o proveedor.</p></div>{canManage && <Button onClick={() => setEditing(null)}><Plus className="mr-2 h-4 w-4" />Nueva regla</Button>}</div></CardHeader><CardContent className="p-0">
       {rules.isLoading ? <p className="p-8 text-center text-sm text-muted-foreground">Cargando reglas…</p> : grouped.length === 0 ? <div className="p-10 text-center"><ReceiptText className="mx-auto mb-3 h-9 w-9 text-primary"/><p className="font-medium">Aún no hay reglas de retención</p><p className="mt-1 text-sm text-muted-foreground">Crea la primera regla para comenzar el cálculo automático.</p></div> :

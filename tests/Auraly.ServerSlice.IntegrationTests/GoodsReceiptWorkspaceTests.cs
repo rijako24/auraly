@@ -441,7 +441,8 @@ public sealed class GoodsReceiptWorkspaceTests(
         using var client = fixture.CreateAdminClient(
             PurchasingPermissionCodes.CreateGoodsReceipts,
             PurchasingPermissionCodes.ConfirmGoodsReceipts,
-            TaxationPermissionCodes.ManageWithholdingRules);
+            TaxationPermissionCodes.ManageWithholdingRules,
+            TaxationPermissionCodes.ViewWithholdingRules);
         Guid accountId;
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
@@ -512,6 +513,16 @@ public sealed class GoodsReceiptWorkspaceTests(
         evidence.Parameters.AddWithValue("@MainLineId", lineId);
         evidence.Parameters.AddWithValue("@CostLineId", costLineId);
         Assert.Equal(2, Convert.ToInt32(await evidence.ExecuteScalarAsync()));
+
+        using var reportResponse = await client.GetAsync(
+            "/api/commerce/v1/taxation/withholdings/applied?from=2026-08-01&to=2026-08-02&page=1&pageSize=100");
+        reportResponse.EnsureSuccessStatusCode();
+        var report = await reportResponse.Content.ReadFromJsonAsync<AppliedWithholdingReportView>();
+        Assert.NotNull(report);
+        Assert.Contains(report.Items, item => item.DocumentId == request.DraftId &&
+            item.DocumentType == "GoodsReceipt" && item.Amount == 0.10m && item.IsManual);
+        Assert.Contains(report.Items, item => item.DocumentId == costDocument.CostDocumentId &&
+            item.DocumentType == "GoodsReceiptCostDocument" && item.Amount == 0.05m && item.IsManual);
     }
 
     private static async Task<HttpResponseMessage> SendConfirmationAsync(
