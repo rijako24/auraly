@@ -27,7 +27,7 @@ export default function DashboardLayout({
   }, []);
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-background">
+    <div className="fixed inset-0 flex overflow-hidden bg-background">
       {/* Desktop sidebar - hidden on mobile */}
       {!isMobile && <Sidebar />}
 

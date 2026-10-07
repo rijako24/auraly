@@ -285,12 +285,14 @@ test("confirmar una orden borra la copia local solo después de la aceptación",
 });
 
 test("confirmar una recepción conserva la captura ante fallo y la borra al aceptar", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await prepare(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
   const key = `goods-receipt:${userId}:${businessId}`;
   const id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
   await writePurchasingDraft(page, "goods-receipt-drafts", key, {
     draftId: id, warehouseId, supplierId: "77777777-7777-7777-7777-777777777777",
+    partySiteId: "88888888-8888-8888-8888-888888888888",
     supplierInvoiceNumber: "", supplierInvoiceDate: "2026-09-28",
     purchaseEvidenceType: "BuyerElectronicSupportDocument", receivedAt: "2026-09-28T09:00",
     createsPayable: false, dueDate: "", notes: "Recepción de prueba", concurrencyToken: null,
@@ -321,6 +323,16 @@ test("confirmar una recepción conserva la captura ante fallo y la borra al acep
   await expect.poll(() => attempts).toBe(2);
   await expect(dialog).toBeHidden();
   expect(await readPurchasingDraft(page, "goods-receipt-drafts", key)).toBeNull();
+  await page.evaluate(() => {
+    // Mobile Safari can leave the root document scrolled after closing the keyboard and dialog.
+    document.documentElement.style.minHeight = "1600px";
+    window.scrollTo(0, 600);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await expect(page.getByRole("heading", { name: "Recepción de compra" })).toBeInViewport();
+  const nav = page.getByRole("navigation", { name: "Navegación principal" });
+  await expect(nav).toBeInViewport();
+  expect((await nav.boundingBox())!.y).toBeGreaterThan(600);
 });
 
 test("aplicar un conteo conserva la captura ante fallo y la borra al aceptar", async ({ page }) => {
