@@ -515,6 +515,16 @@ SELECT
   CASE WHEN roleValue.IsActive=1 AND roleValue.IsSystemRole=1 THEN 1 ELSE 0 END,
   (SELECT COUNT(*) FROM dbo.Permissions),
   (SELECT COUNT(*) FROM dbo.RolePermissions assignment WHERE assignment.RoleId=roleValue.RoleId),
+  (SELECT COUNT(*) FROM dbo.Permissions permissionValue
+   WHERE permissionValue.Resource NOT LIKE N'agents.%'
+     AND permissionValue.Resource NOT LIKE N'conversations.%'
+     AND permissionValue.Resource NOT LIKE N'leads.%'
+     AND permissionValue.Resource NOT LIKE N'campaigns.%'
+     AND permissionValue.Resource NOT LIKE N'reservations.%'
+     AND NOT EXISTS (
+       SELECT 1 FROM dbo.RolePermissions assignment
+       WHERE assignment.RoleId=roleValue.RoleId
+         AND assignment.PermissionId=permissionValue.PermissionId)),
   (SELECT COUNT(*) FROM dbo.AppUsers obsoleteUser
    WHERE obsoleteUser.IsActive=1
      AND (obsoleteUser.NormalizedUsername=N'ADMIN2222'
@@ -538,15 +548,16 @@ WHERE tenantValue.TenantKey=N'@auraly';
                 $roleActive = $reader.GetInt32(1) -eq 1
                 $permissionCount = $reader.GetInt32(2)
                 $assignedPermissionCount = $reader.GetInt32(3)
-                $activeTechnicalAdminUsers = $reader.GetInt32(4)
-                $technicalAdminAssignments = $reader.GetInt32(5)
+                $missingPlatformPermissions = $reader.GetInt32(4)
+                $activeTechnicalAdminUsers = $reader.GetInt32(5)
+                $technicalAdminAssignments = $reader.GetInt32(6)
                 $expectedTechnicalAdminUsers = if ($Environment -eq 'dev') { 1 } else { 0 }
                 $expectedTechnicalAdminAssignments = if ($Environment -eq 'dev') { 1 } else { 0 }
                 if (-not $tenantActive -or -not $roleActive -or
-                    $permissionCount -ne $assignedPermissionCount -or
+                    $missingPlatformPermissions -ne 0 -or
                     $activeTechnicalAdminUsers -ne $expectedTechnicalAdminUsers -or
                     $technicalAdminAssignments -ne $expectedTechnicalAdminAssignments) {
-                    throw "El rol administrador @auraly no quedo aprovisionado correctamente. Tenant=$tenantActive Role=$roleActive Permissions=$assignedPermissionCount/$permissionCount ActiveTechnicalAdminUsers=$activeTechnicalAdminUsers/$expectedTechnicalAdminUsers TechnicalAdminAssignments=$technicalAdminAssignments/$expectedTechnicalAdminAssignments."
+                    throw "El rol administrador @auraly no quedo aprovisionado correctamente. Tenant=$tenantActive Role=$roleActive Permissions=$assignedPermissionCount/$permissionCount MissingPlatformPermissions=$missingPlatformPermissions ActiveTechnicalAdminUsers=$activeTechnicalAdminUsers/$expectedTechnicalAdminUsers TechnicalAdminAssignments=$technicalAdminAssignments/$expectedTechnicalAdminAssignments."
                 }
                 Write-Information "Rol administrador @auraly verificado con $assignedPermissionCount permisos y $activeTechnicalAdminUsers identidad(es) tecnica(s) activa(s), segun politica de $Environment." -InformationAction Continue
             }
