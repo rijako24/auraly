@@ -53,6 +53,8 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
     { ...movement("sale-transfer", "Sale", "SalesInvoice", "FV-TRANSFER", 9000), paymentMethodCode: "Transfer" },
     { ...movement("in-1", "CashIn", "CashMovement", "ING-999", 10000), reasonName: "Base adicional", notes: "Cambio para comenzar el turno" },
     { ...movement("out-1", "CashOut", "CashMovement", "EGR-888", -10000), reasonName: "Consignación", notes: "Entrega en banco" },
+    { ...movement("collection-1", "CashIn", "CashMovement", "RCC-102", 5000), movementType: "ReceivablePayment" as const, counterpartyName: "Cliente de prueba" },
+    { ...movement("supplier-payment-1", "CashOut", "CashMovement", "PGC-103", -5000), movementType: "PayablePayment" as const, counterpartyName: "Proveedor de prueba" },
   ];
   await page.route(`**/api/commerce/v1/work-sessions/closures/${closureId}/payment-verifications/page?**`, route => {
     const url = new URL(route.request().url());
@@ -119,6 +121,12 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await cash.getByRole("button", { name: "Verificado", exact: true }).first().click();
   await cash.getByRole("button", { name: "Verificado", exact: true }).last().click();
   await expect(cash.getByText(/Total confirmado:/)).toContainText("130.000");
+  await cash.getByRole("button", { name: /Abonos a cartera/ }).click();
+  await cash.getByRole("button", { name: /Pagos a proveedores/ }).click();
+  await expect(cash.getByText("Cliente de prueba")).toBeVisible();
+  await expect(cash.getByText("Proveedor de prueba")).toBeVisible();
+  await expect(cash.getByText("Comprobante: RCC-102", { exact: false })).toBeVisible();
+  await expect(cash.getByText("Comprobante: PGC-103", { exact: false })).toBeVisible();
   expect(snapshotReads).toBe(1);
 });
 

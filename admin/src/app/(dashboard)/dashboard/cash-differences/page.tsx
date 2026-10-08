@@ -375,6 +375,7 @@ function VerificationRow({ item, status, disabled, informational = false, correc
   const isInformational = informational || item.movementType === "Sale" || item.movementType === "Refund";
   const isCreditSale = item.movementType === "CreditSale";
   const isCashMovement = item.movementType === "CashIn" || item.movementType === "CashOut";
+  const isThirdPartyPayment = item.movementType === "ReceivablePayment" || item.movementType === "PayablePayment";
   const displayedCorrection = correction ?? (item.correctedPaymentMethodCode && item.correctedAmount != null ? {
     verificationKey: item.verificationKey, paymentMethodCode: item.correctedPaymentMethodCode,
     amount: item.correctedAmount, reason: item.correctionReason ?? "",
@@ -391,11 +392,13 @@ function VerificationRow({ item, status, disabled, informational = false, correc
       <div className="flex flex-wrap items-center gap-2">
         <ReceiptText className="h-4 w-4 shrink-0 text-slate-500" />
         <strong className="break-words">{title}</strong>
-        {!isCashMovement && <span>{item.documentNumber}</span>}
+        {isThirdPartyPayment
+          ? <span className="break-words text-sm text-slate-700">{item.counterpartyName?.trim() || "Tercero no disponible"}</span>
+          : !isCashMovement && <span>{item.documentNumber}</span>}
         {item.cardFranchiseCode && <Badge variant="secondary">{item.cardFranchiseCode}</Badge>}
       </div>
       {isCashMovement && item.notes?.trim() && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{item.notes}</p>}
-      {!isCashMovement && !isCreditSale && <p className="mt-1 truncate text-xs text-muted-foreground">Referencia: {item.approvalNumber || item.reference || "Sin referencia"} · {new Date(item.occurredAt).toLocaleString("es-CO")}</p>}
+      {!isCashMovement && !isCreditSale && <p className="mt-1 text-xs text-muted-foreground">{isThirdPartyPayment && item.documentNumber && <>Comprobante: {item.documentNumber} · </>}Referencia: {item.approvalNumber || item.reference || "Sin referencia"} · {new Date(item.occurredAt).toLocaleString("es-CO")}</p>}
       {displayedCorrection && <p className="mt-1 text-xs font-semibold text-teal-800">Corregido: {workSessionPaymentMethodName(displayedCorrection.tenderMethodCode ?? displayedCorrection.paymentMethodCode)} · {money.format(Math.abs(displayedCorrection.amount))}{displayedCorrection.cardFranchiseCode && ` · ${displayedCorrection.cardFranchiseCode}`}{(displayedCorrection.approvalNumber || displayedCorrection.reference) && ` · ${displayedCorrection.approvalNumber || displayedCorrection.reference}`} · {displayedCorrection.reason}</p>}
     </div>
     <strong className={item.amount < 0 ? "text-red-700" : "text-slate-950"}>{money.format(Math.abs(item.amount))}</strong>

@@ -102,7 +102,7 @@ public sealed partial class SqlWorkSessionStore
               SourceDocumentType,CustomerName,Status,ReasonName,Notes,
               CorrectedPaymentMethodCode,CorrectedAmount,CorrectionReason,
               TenderMethodCode,CorrectedTenderMethodCode,CorrectedCardFranchiseCode,
-              CorrectedApprovalNumber,CorrectedReference
+              CorrectedApprovalNumber,CorrectedReference,CounterpartyName
             FROM #PaymentVerifications
             ORDER BY SortOrder,OccurredAt,VerificationKey
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
@@ -444,7 +444,7 @@ public sealed partial class SqlWorkSessionStore
     private const string PaymentVerificationRowsSql = """
             WITH ClosureContext AS
             (
-                SELECT session.WorkSessionId,session.UserId,session.OpenedAt,closure.ClosedAt,closure.ReceiptSnapshotJson SnapshotJson
+                SELECT session.WorkSessionId,session.BusinessId,session.UserId,session.OpenedAt,closure.ClosedAt,closure.ReceiptSnapshotJson SnapshotJson
                 FROM dbo.WorkSessionClosures closure
                 INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
                 WHERE closure.WorkSessionClosureId=@ClosureId
@@ -560,7 +560,10 @@ public sealed partial class SqlWorkSessionStore
                 CROSS APPLY OPENJSON(reconciliation.SnapshotJson,N'$.paymentCorrections') value
             )
             SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType,movement.SourceId,
-              movement.DocumentNumber,movement.SourceNumber,movement.Amount,movement.Reference,
+              CASE WHEN movement.MovementType IN(N'ReceivablePayment',N'PayablePayment')
+                THEN COALESCE(customerPayment.DocumentNumber,supplierPayment.DocumentNumber,N'')
+                ELSE movement.DocumentNumber END DocumentNumber,
+              movement.SourceNumber,movement.Amount,movement.Reference,
               movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt,
               movement.SourceDocumentType,movement.CustomerName,decision.Status,detail.ReasonName,detail.Notes,
               correction.PaymentMethodCode CorrectedPaymentMethodCode,
@@ -569,11 +572,25 @@ public sealed partial class SqlWorkSessionStore
               correction.CardFranchiseCode CorrectedCardFranchiseCode,
               correction.ApprovalNumber CorrectedApprovalNumber,
               correction.Reference CorrectedReference,
+              COALESCE(NULLIF(customerParty.DisplayName,N''),NULLIF(customerParty.LegalName,N''),
+                NULLIF(customerParty.Identification,N''),NULLIF(supplierParty.DisplayName,N''),
+                NULLIF(supplierParty.LegalName,N''),NULLIF(supplierParty.Identification,N'')) CounterpartyName,
               COALESCE(closureOption.SortOrder,15) SortOrder
             INTO #PaymentVerifications
             FROM VerificationMovements movement
+            CROSS JOIN ClosureContext context
             LEFT JOIN dbo.WorkSessionMovements cashMovement ON cashMovement.WorkSessionMovementId=movement.SourceId
               AND movement.MovementType IN(N'CashIn',N'CashOut',N'ReceivablePayment',N'PayablePayment')
+            LEFT JOIN dbo.CustomerPayments customerPayment ON movement.MovementType=N'ReceivablePayment'
+              AND customerPayment.PaymentId=COALESCE(cashMovement.DocumentId,movement.SourceId)
+              AND customerPayment.BusinessId=context.BusinessId
+            LEFT JOIN dbo.Customers paymentCustomer ON paymentCustomer.CustomerId=customerPayment.CustomerId
+            LEFT JOIN dbo.Parties customerParty ON customerParty.PartyId=paymentCustomer.PartyId
+            LEFT JOIN dbo.SupplierPayments supplierPayment ON movement.MovementType=N'PayablePayment'
+              AND supplierPayment.PaymentId=COALESCE(cashMovement.DocumentId,movement.SourceId)
+              AND supplierPayment.BusinessId=context.BusinessId
+            LEFT JOIN dbo.Suppliers paymentSupplier ON paymentSupplier.SupplierId=supplierPayment.SupplierId
+            LEFT JOIN dbo.Parties supplierParty ON supplierParty.PartyId=paymentSupplier.PartyId
             LEFT JOIN CashMovementDescriptions detail
               ON detail.DocumentId=CASE WHEN detail.TemplateVersion>=4 THEN COALESCE(cashMovement.DocumentId,movement.SourceId)
                    ELSE COALESCE(cashMovement.DocumentId,cashMovement.WorkSessionMovementId) END
@@ -599,7 +616,7 @@ public sealed partial class SqlWorkSessionStore
               SourceDocumentType,CustomerName,Status,ReasonName,Notes,
               CorrectedPaymentMethodCode,CorrectedAmount,CorrectionReason,
               TenderMethodCode,CorrectedTenderMethodCode,CorrectedCardFranchiseCode,
-              CorrectedApprovalNumber,CorrectedReference
+              CorrectedApprovalNumber,CorrectedReference,CounterpartyName
             FROM #PaymentVerifications ORDER BY SortOrder,OccurredAt,VerificationKey;
             """, connection, transaction);
         command.Parameters.AddWithValue("@ClosureId", closureId);
@@ -1001,7 +1018,8 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(20) ? null : reader.GetString(20),
                 reader.IsDBNull(21) ? null : reader.GetString(21),
                 reader.IsDBNull(22) ? null : reader.GetString(22),
-                reader.IsDBNull(23) ? null : reader.GetString(23));
+                reader.IsDBNull(23) ? null : reader.GetString(23),
+                reader.IsDBNull(24) ? null : reader.GetString(24));
 
     private static void AddClosureSearchParameters(SqlCommand command, WorkSessionIdentity identity,
         DateOnly from, DateOnly to, string? status)

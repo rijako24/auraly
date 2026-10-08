@@ -4,7 +4,7 @@ for (const scenario of [
   { direction: "receivable", shortcut: "Control+f", role: "Customer", dialog: "Abono a cartera", invoicePath: "/pos/receivables", confirmationPath: "/pos/receivable-payments/confirm", documentNumber: "ABO-001" },
   { direction: "payable", shortcut: "Control+g", role: "Supplier", dialog: "Pago a proveedores", invoicePath: "/pos/payables", confirmationPath: "/pos/payable-payments/confirm", documentNumber: "PGP-001" },
 ] as const) for (const installed of [false, true]) for (const printOption of [
-  { label: "Predeterminado", button: null, format: "Receipt" },
+  { label: "Predeterminado", button: null, format: "HalfLetter" },
   { label: "Sin imprimir", button: "Sin imprimir", format: null },
   { label: "Tirilla", button: "Tirilla", format: "Receipt" },
   { label: "Media carta", button: "Media carta", format: "HalfLetter" },
@@ -12,6 +12,7 @@ for (const scenario of [
   { label: "Carta", button: "Carta", format: "Letter" },
 ] as const) {
   test(`${scenario.dialog} en POS ${installed ? "instalado en línea" : "web"} · ${printOption.label}`, async ({ page, baseURL }) => {
+    const defaultFormat = printOption.label === "Predeterminado" ? "HalfLetter" : "Receipt";
     const tenantId = "11111111-1111-1111-1111-111111111111";
     const businessId = "22222222-2222-2222-2222-222222222222";
     const warehouseId = "33333333-3333-3333-3333-333333333333";
@@ -24,13 +25,14 @@ for (const scenario of [
     const workspace = { businessId, warehouseId, businessName: "Sede prueba", warehouseName: "Principal",
       warehouseCode: "B01", warehouseAllowsNegativeStockSales: true, hasActiveEdgeEnrollment: false };
     await page.context().addCookies([{ name: "auth_token", value: "e2e", url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
-    await page.addInitScript(({ tenantId, businessId, warehouseId, user, installed }) => {
+    await page.addInitScript(({ tenantId, businessId, warehouseId, user, installed, defaultFormat }) => {
       localStorage.setItem("selected_tenant_id", tenantId);
       localStorage.setItem("selected_business_id", businessId);
       localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user }, version: 0 }));
       localStorage.setItem(`auraly.pos.sales-workspace:${tenantId}:${user.userId}`, `${businessId}:${warehouseId}`);
+      localStorage.setItem("auraly.printing.configuration.v1", JSON.stringify({ posOutputFormat: defaultFormat }));
       if (installed) sessionStorage.setItem("auraly.pos.edge-token", "e2e-edge");
-    }, { tenantId, businessId, warehouseId, user, installed });
+    }, { tenantId, businessId, warehouseId, user, installed, defaultFormat });
 
     let renderBody: { format: string; receipt: { direction: string; documentNumber: string; nit: string; responsibleName: string; allocations: Array<{ documentNumber: string }> } } | null = null;
     let localPrint: { direction: string; documentNumber: string; partyIdentification: string; allocations: Array<{ documentNumber: string }> } | null = null;
@@ -56,7 +58,7 @@ for (const scenario of [
           body: JSON.stringify({ status: "EnrollmentRequired", identityReady: false }) });
       if (path.endsWith("/configuration/printers"))
         return route.fulfill({ status: 200, headers, contentType: "application/json",
-          body: JSON.stringify({ configuration: { posOutputFormat: "Receipt", posPrinterName: "Impresora facturas",
+          body: JSON.stringify({ configuration: { posOutputFormat: defaultFormat, posPrinterName: "Impresora facturas",
             templateRoutes: ["Receipt", "HalfLetter", "HalfLegal", "Letter"].map(format =>
               ({ documentType: "SalesInvoice", format, printerName: `Impresora ${format}` })) },
             installedPrinters: ["Impresora facturas"] }) });

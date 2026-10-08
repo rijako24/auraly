@@ -285,7 +285,8 @@ public sealed record WorkSessionPaymentVerificationItem(
     string? CorrectedTenderMethodCode = null,
     string? CorrectedCardFranchiseCode = null,
     string? CorrectedApprovalNumber = null,
-    string? CorrectedReference = null);
+    string? CorrectedReference = null,
+    string? CounterpartyName = null);
 
 public sealed record WorkSessionPaymentVerificationGroup(
     string PaymentMethodCode,

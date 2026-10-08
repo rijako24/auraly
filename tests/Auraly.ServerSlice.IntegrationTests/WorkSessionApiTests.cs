@@ -1345,6 +1345,13 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
             $"{path}/payment-verifications");
         var collection = Assert.Single(items!, item => item.MovementType == "ReceivablePayment");
+        Assert.Equal("Cliente de corrección", collection.CounterpartyName);
+        Assert.StartsWith("RCC-", collection.DocumentNumber);
+        Assert.DoesNotContain("receivable-payment:", collection.DocumentNumber);
+        var collectionPage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?movementType=ReceivablePayment&page=1&pageSize=10");
+        Assert.Equal(collection.CounterpartyName, Assert.Single(collectionPage!.Items).CounterpartyName);
+        Assert.Equal(collection.DocumentNumber, collectionPage.Items[0].DocumentNumber);
         var creditSale = Assert.Single(items!, item => item.MovementType == "CreditSale");
         using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
         {
@@ -1470,6 +1477,13 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
             $"{path}/payment-verifications");
         var payment = Assert.Single(items!, item => item.MovementType == "PayablePayment");
+        Assert.Equal("Proveedor E2E", payment.CounterpartyName);
+        Assert.StartsWith("PGC-", payment.DocumentNumber);
+        Assert.DoesNotContain("payable-payment:", payment.DocumentNumber);
+        var paymentPage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?movementType=PayablePayment&page=1&pageSize=10");
+        Assert.Equal(payment.CounterpartyName, Assert.Single(paymentPage!.Items).CounterpartyName);
+        Assert.Equal(payment.DocumentNumber, paymentPage.Items[0].DocumentNumber);
         using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
         {
             Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
