@@ -2,7 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, FileText, RefreshCw } from "lucide-react";
+import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,6 +13,7 @@ import type { ReceivableStatus } from "@/services/api/receivables";
 import type { PayableStatus } from "@/services/api/payables";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useAuthStore } from "@/stores/auth-store";
 
 export type PortfolioLedgerTab = "parties" | "invoices" | "payments";
 export type PartyRow={id:string;name:string;identification:string;partySiteId?:string|null;partySiteName?:string|null;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string};
@@ -53,6 +55,8 @@ export function PortfolioLedgerTabs({
   children: ReactNode;
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
+  const canViewVoucher=useAuthStore(state=>state.user?.permissions.includes("accounting.read")??false);
+  const [selectedPaymentId,setSelectedPaymentId]=useState<string>();
   const [partySort,setPartySort]=useState<LedgerSort>({by:"name",direction:"asc"});
   const [paymentSort,setPaymentSort]=useState<LedgerSort>({by:"paidAt",direction:"desc"});
   const toggleSort=(current:LedgerSort,setSort:(next:LedgerSort)=>void,by:string)=>
@@ -130,10 +134,13 @@ export function PortfolioLedgerTabs({
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr>
           {[["paidAt","Fecha"],["partyName",direction === "receivable" ? "Cliente" : "Proveedor"],["documentNumber","Comprobante"]].map(([by,label])=><SortableLedgerHeader key={by} by={by} label={label} sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,by)}/>)}
           <th>Facturas</th><th>Medios</th><SortableLedgerHeader by="totalAmount" label="Total" sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,"totalAmount")}/></tr></thead>
-        <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="font-mono text-xs">{item.documentNumber}</td><td><details><summary className="cursor-pointer">{item.appliedDocumentCount} factura{item.appliedDocumentCount===1?"":"s"}</summary><div className="mt-2 space-y-1">{item.applications.map(application=><div key={application.invoiceId} className="flex items-center gap-2 whitespace-nowrap"><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={()=>onInvoiceClick(application.invoiceId)}>{application.documentNumber}</button><span>{formatCurrency(application.amount,item.currencyCode)}</span></div>)}</div></details></td><td>{item.payments.map(payment => paymentLabel(payment.methodCode)).join(" + ")}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode)}</td></tr>)}</tbody>
+        <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="py-2"><span className="block font-mono text-xs">{item.documentNumber}</span>{canViewVoucher&&<Button type="button" variant="ghost" size="sm" className="mt-1 -ml-2" onClick={()=>setSelectedPaymentId(item.paymentId)}><FileText className="mr-1 h-4 w-4"/>Ver e imprimir</Button>}</td><td><details><summary className="cursor-pointer">{item.appliedDocumentCount} factura{item.appliedDocumentCount===1?"":"s"}</summary><div className="mt-2 space-y-1">{item.applications.map(application=><div key={application.invoiceId} className="flex items-center gap-2 whitespace-nowrap"><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={()=>onInvoiceClick(application.invoiceId)}>{application.documentNumber}</button><span>{formatCurrency(application.amount,item.currencyCode)}</span></div>)}</div></details></td><td>{item.payments.map(payment => paymentLabel(payment.methodCode)).join(" + ")}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode)}</td></tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>
+    {selectedPaymentId&&<AccountingDocumentDialog documentId={selectedPaymentId} hasFiscalDocument={false}
+      sourceLabel={direction==="receivable"?"Recaudo de cartera":"Pago a proveedor"}
+      onClose={()=>setSelectedPaymentId(undefined)}/>}
   </Tabs>;
 }
 
