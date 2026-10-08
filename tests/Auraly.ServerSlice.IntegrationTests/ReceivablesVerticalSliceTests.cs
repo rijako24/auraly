@@ -233,7 +233,8 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(1, searchedReport.TotalCount);
         var printedDetail = await client.GetStringAsync(
             $"/api/commerce/v1/receivables/report/print?consolidated=false&cutoff={reportCutoff:yyyy-MM-dd}&customerId={customerId:D}&search=Sede%20Norte");
-        Assert.Contains("class=\"group\"", printedDetail);
+        Assert.Contains("class=\"party-head\"", printedDetail);
+        Assert.Contains("Abonos aplicados", printedDetail);
         Assert.Contains("Sede Norte", printedDetail);
         Assert.DoesNotContain("Sede Centro", printedDetail);
         using (var badSort = await client.GetAsync(
