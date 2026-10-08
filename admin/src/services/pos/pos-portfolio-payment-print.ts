@@ -2,7 +2,7 @@ import { businessesApi } from "@/services/api/businesses";
 import { apiClient } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
 import { printPosHtmlDocument } from "./pos-browser-print";
-import type { PosEdgeClient } from "./pos-edge-client";
+import { loadBrowserPrinterConfiguration, type PosEdgeClient, type PosPrintTemplateFormat } from "./pos-edge-client";
 
 export type PortfolioPaymentReceipt = {
   paymentId: string;
@@ -29,16 +29,17 @@ export async function printPortfolioPayment(
   receipt: PortfolioPaymentReceipt,
   businessId: string,
   printerClient: Pick<PosEdgeClient, "printPortfolioPayment"> | null,
+  format: PosPrintTemplateFormat,
 ): Promise<void> {
   if (printerClient) {
-    await printerClient.printPortfolioPayment(receipt);
+    await printerClient.printPortfolioPayment(receipt, format);
     return;
   }
   const branding = tenantsApi.readyPrintBranding();
   const business = await businessesApi.getById(businessId);
   const complete = {
     ...receipt,
-    companyName: branding?.displayName || branding?.legalName || receipt.companyName,
+    companyName: branding?.displayName || branding?.legalName || receipt.companyName || business.name,
     legalName: branding?.legalName ?? receipt.legalName,
     nit: branding?.nit ?? receipt.nit,
     verificationDigit: branding?.verificationDigit ?? receipt.verificationDigit,
@@ -49,7 +50,7 @@ export async function printPortfolioPayment(
   };
   const { html } = await apiClient.post<{ html: string }>(
     "/commerce/v1/pos/drafts/portfolio-payments/receipt/render",
-    { receipt: complete, paperWidthMillimeters: 80 },
+    { receipt: complete, format, paperWidthMillimeters: loadBrowserPrinterConfiguration().receiptPaperWidthMillimeters },
   );
   await printPosHtmlDocument(html, "El pago quedó registrado, pero no se pudo abrir la impresión.");
 }

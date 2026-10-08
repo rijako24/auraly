@@ -81,6 +81,25 @@ export interface CustomerPaymentHistoryPage {
   page:number;pageSize:number;totalCount:number;totalPages:number;totalAmount:number;
 }
 export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;partySiteId:string|null;partySiteName:string|null}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalOriginal:number;totalPaid:number}
+export interface ReceivablesReportItem {
+  customerId: string; customerName: string; identification: string;
+  partySiteId: string; partySiteName: string | null; currencyCode: string;
+  invoiceCount: number; originalAmount: number; paidAmount: number;
+  outstandingAmount: number; overdueAmount: number; otherImpact: number; receivableId: string | null;
+  documentNumber: string | null; issuedAt: string | null; dueDate: string | null;
+  applications: Array<{documentNumber:string;appliedAt:string;amount:number}> | null;
+}
+export interface ReceivablesReportPage {
+  items: ReceivablesReportItem[]; page: number; pageSize: number; totalCount: number;
+  totalPages: number; totalInvoiceCount: number; totalOriginal: number;
+  totalPaid: number; totalOutstanding: number; totalOverdue: number; totalOtherImpact: number;
+}
+export interface ReceivablesReportFilters {
+  page: number; pageSize: number; consolidated: boolean; cutoff: string;
+  customerId?: string; partySiteId?: string; from?: string; to?: string;
+  status?: ReceivableStatus; outstandingOnly?: boolean; overdueOnly?: boolean;
+  sortBy?: string; sortDirection?: "asc" | "desc";
+}
 export interface ImportPreexistingReceivablesRequest {businessId:string;items:Array<{receivableId:string;customerId:string|null;customerIdentification:string|null;partySiteId:string|null;documentNumber:string;issuedAt:string;dueDate:string;amount:number;counterpartAccountId:string;notes:string|null}>}
 
 export interface PaymentSettlementConfiguration {
@@ -98,6 +117,10 @@ export interface CustomerCreditProfile {
 }
 
 export const receivablesApi = {
+  report: (filters: ReceivablesReportFilters) =>
+    apiClient.get<ReceivablesReportPage>("/commerce/v1/receivables/report", { ...filters }),
+  printReport: (filters: ReceivablesReportFilters) =>
+    apiClient.getText("/commerce/v1/receivables/report/print", { ...filters, page: undefined, pageSize: undefined }),
   customerPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;customerId?:string;partySiteId?:string;status?:ReceivableStatus;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<CustomerPortfolioPage>("/commerce/v1/receivables/customers",withPagedDefaults(params)),
   payments:(params:{page?:number;pageSize?:number;search?:string;customerId?:string;partySiteId?:string;status?:ReceivableStatus;overdue?:boolean;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<CustomerPaymentHistoryPage>("/commerce/v1/receivable-payments",withPagedDefaults(params)),
   importPreexisting:(request:ImportPreexistingReceivablesRequest)=>apiClient.post<{acceptedCount:number;receivableIds:string[]}>("/commerce/v1/receivables/preexisting/import",request),

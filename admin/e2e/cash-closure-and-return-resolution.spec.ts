@@ -34,24 +34,53 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
     ] });
   });
   await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, { items: [{
-    workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId, businessName: "Auraly", warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero", openedAt: "2026-08-31T08:00:00-05:00", closedAt: "2026-08-31T18:00:00-05:00", salesCount: 2, creditSalesCount: 0, returnCount: 1, totalSales: 150000, totalRefunds: 20000, netAmount: 130000, reconciliationStatus: "Pending", accountingStatus: "AccountingDisabled", paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 150000, refundAmount: 20000, otherAmount: 0, netAmount: 130000, countedAmount: 130000, difference: 0, requiresCount: true }],
+    workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId, businessName: "Auraly", warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero", openedAt: "2026-08-31T08:00:00-05:00", closedAt: "2026-08-31T18:00:00-05:00", salesCount: 3, creditSalesCount: 0, returnCount: 1, totalSales: 159000, totalRefunds: 20000, netAmount: 139000, expectedCash: 135000, reconciliationStatus: "Pending", accountingStatus: "AccountingDisabled", paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 150000, refundAmount: 20000, otherAmount: 0, netAmount: 130000, countedAmount: 130000, difference: 0, requiresCount: true }, { paymentMethodCode: "Transfer", salesAmount: 9000, refundAmount: 0, otherAmount: 0, netAmount: 9000, countedAmount: 9000, difference: 0, requiresCount: true }],
   }], page: 1, pageSize: 50, totalItems: 1 }));
-  await page.route(`**/api/commerce/v1/work-sessions/closures/${closureId}/payment-verifications`, route => json(route, [
+  const allMovements = [
     movement("sale-1", "Sale", "SalesInvoice", "FV-101", 100000),
     movement("sale-2", "Sale", "SalesReceipt", "POS-202", 50000),
     movement("return-1", "Refund", "SalesReturn", "DVT-1", -20000),
+    { ...movement("sale-transfer", "Sale", "SalesInvoice", "FV-TRANSFER", 9000), paymentMethodCode: "Transfer" },
     { ...movement("in-1", "CashIn", "CashMovement", "ING-999", 10000), reasonName: "Base adicional", notes: "Cambio para comenzar el turno" },
     { ...movement("out-1", "CashOut", "CashMovement", "EGR-888", -10000), reasonName: "Consignación", notes: "Entrega en banco" },
-  ]));
+  ];
+  await page.route(`**/api/commerce/v1/work-sessions/closures/${closureId}/payment-verifications/page?**`, route => {
+    const url = new URL(route.request().url());
+    const method = url.searchParams.get("paymentMethodCode");
+    const movementType = url.searchParams.get("movementType");
+    const pageNumber = Number(url.searchParams.get("page") ?? "1");
+    const pageSize = Number(url.searchParams.get("pageSize") ?? "100");
+    const filtered = allMovements.filter(item => (!method || item.paymentMethodCode === method) &&
+      (!movementType || item.movementType === movementType));
+    const groups = [...new Set(allMovements.map(item => `${item.paymentMethodCode}:${item.movementType}`))].map(key => {
+      const [paymentMethodCode, movementType] = key.split(":");
+      const inGroup = allMovements.filter(item => item.paymentMethodCode === paymentMethodCode && item.movementType === movementType);
+      return { paymentMethodCode, movementType, count: inGroup.length, totalAmount: inGroup.reduce((sum, item) => sum + item.amount, 0) };
+    });
+    return json(route, { items: filtered.slice((pageNumber - 1) * pageSize, pageNumber * pageSize),
+      groups, page: pageNumber, pageSize, totalItems: filtered.length });
+  });
   await page.route("**/api/commerce/v1/reference-options/cash-reconciliation-reason", route => json(route, []));
 
   await page.goto("/dashboard/cash-differences");
   await page.getByRole("button", { name: "Conciliar" }).click();
   const dialog = page.getByRole("dialog", { name: "Conciliar cierre" });
   const cash = dialog.locator("section").filter({ hasText: "Efectivo" }).first();
+  await expect(cash.getByText(/Esperado.*135.000/)).toBeVisible();
+  await expect(cash.getByText(/Faltante.*5.000/)).toBeVisible();
   await expect(cash.getByText("Domicilio", { exact: true })).toBeVisible();
   await expect(cash.getByText("Agotados", { exact: true })).toHaveCount(0);
   await expect(dialog.getByText("Agotados", { exact: true })).toBeVisible();
+  await cash.getByRole("button", { name: /Facturas/ }).click();
+  await cash.getByRole("button", { name: /Devoluciones/ }).click();
+  await expect(cash.getByText("FV-101", { exact: true })).toBeVisible();
+  await expect(cash.getByText("DVT-1", { exact: true })).toBeVisible();
+  await expect(cash.getByRole("button", { name: "No encontrado", exact: true })).toHaveCount(0);
+  await cash.getByRole("button", { name: "Corregir", exact: true }).first().click();
+  const correction = page.getByRole("dialog", { name: "Corregir comprobante" });
+  await expect(correction).toBeVisible();
+  await correction.getByRole("button", { name: "Cerrar" }).click();
+  await expect(dialog).toBeVisible();
   await cash.getByRole("button", { name: /Entradas de dinero/ }).click();
   await cash.getByRole("button", { name: /Salidas de dinero/ }).click();
   await expect(cash.getByText("Base adicional", { exact: true })).toBeVisible();
@@ -61,10 +90,61 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await expect(cash.getByText("ING-999", { exact: true })).toHaveCount(0);
   await expect(cash.getByText("EGR-888", { exact: true })).toHaveCount(0);
   await expect(cash.getByRole("button", { name: "Verificado", exact: true })).toHaveCount(2);
+  const transfer = dialog.locator("section").filter({ hasText: "Transferencia" }).first();
+  await transfer.getByRole("button", { name: /1 comprobantes/ }).click();
+  await expect(transfer.getByText("FV-TRANSFER", { exact: true })).toBeVisible();
+  await expect(transfer.getByRole("button", { name: "Verificado", exact: true })).toHaveCount(0);
+  await expect(transfer.getByRole("button", { name: "No encontrado", exact: true })).toHaveCount(0);
+  await expect(transfer.getByText(/9.000 registrados/)).toBeVisible();
   await cash.getByRole("button", { name: "Verificado", exact: true }).first().click();
   await cash.getByRole("button", { name: "Verificado", exact: true }).last().click();
   await expect(cash.getByText(/Total efectivo confirmado:/)).toContainText("130.000");
   expect(snapshotReads).toBe(1);
+});
+
+test("el detalle de efectivo carga 100 facturas por página sin descargarlas al abrir", async ({ page }) => {
+  await authenticate(page);
+  const workSessionId = crypto.randomUUID();
+  const invoices = Array.from({ length: 101 }, (_, index) =>
+    movement(`sale-${index + 1}`, "Sale", "SalesInvoice", `FV-${String(index + 1).padStart(3, "0")}`, 1000));
+  const requests: string[] = [];
+  await page.route("**/api/commerce/v1/work-sessions/*/closure", route => json(route, { invoiceCharges: [] }));
+  await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, {
+    items: [{ workSessionClosureId: closureId, workSessionId, businessId, businessName: "Auraly",
+      warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero",
+      openedAt: "2026-08-31T08:00:00-05:00", closedAt: "2026-08-31T18:00:00-05:00",
+      salesCount: 101, creditSalesCount: 0, returnCount: 0, totalSales: 101000,
+      totalRefunds: 0, netAmount: 101000, reconciliationStatus: "Pending",
+      accountingStatus: "AccountingDisabled", paymentTotals: [{ paymentMethodCode: "Cash",
+        salesAmount: 101000, refundAmount: 0, otherAmount: 0, netAmount: 101000,
+        countedAmount: 101000, difference: 0, requiresCount: true }] }],
+    page: 1, pageSize: 50, totalItems: 1,
+  }));
+  await page.route(`**/api/commerce/v1/work-sessions/closures/${closureId}/payment-verifications/page?**`, route => {
+    const url = new URL(route.request().url());
+    requests.push(url.search);
+    const filtered = url.searchParams.get("movementType") === "Sale" ? invoices :
+      url.searchParams.has("movementType") ? [] : invoices;
+    const currentPage = Number(url.searchParams.get("page"));
+    const pageSize = Number(url.searchParams.get("pageSize"));
+    return json(route, { items: filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+      groups: [{ paymentMethodCode: "Cash", movementType: "Sale", count: 101, totalAmount: 101000 }],
+      page: currentPage, pageSize, totalItems: filtered.length });
+  });
+  await page.route("**/api/commerce/v1/reference-options/cash-reconciliation-reason", route => json(route, []));
+  await page.goto("/dashboard/cash-differences");
+  await page.getByRole("button", { name: "Conciliar" }).click();
+  const dialog = page.getByRole("dialog", { name: "Conciliar cierre" });
+  await expect(dialog.getByText("101 registros · Total")).toBeVisible();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toContain("pageSize=1");
+  await dialog.getByRole("button", { name: /Facturas y comprobantes/ }).click();
+  await expect(dialog.getByText("FV-100", { exact: true })).toBeAttached();
+  await dialog.getByText("FV-100", { exact: true }).scrollIntoViewIfNeeded();
+  await expect(dialog.getByText("FV-101", { exact: true })).toBeAttached();
+  expect(requests).toHaveLength(3);
+  expect(requests[1]).toContain("pageSize=100");
+  expect(requests[2]).toContain("page=2");
 });
 
 test("la devolución ofrece destinos independientes y enlaza la reversión de tarjeta", async ({ page }) => {
@@ -84,7 +164,7 @@ test("la devolución ofrece destinos independientes y enlaza la reversión de ta
   await page.route("**/api/commerce/v1/pos/settlement-configuration**", route => json(route, { isAccountingEnabled: false, bankAccounts: [] }));
   await page.route("**/api/commerce/v1/sales-returns/sales?**", route => json(route, { items: [{ documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, hasAvailableQuantity: true, fiscalStatus: "Accepted" }], page: 1, pageSize: 25, totalCount: 1, totalPages: 1 }));
   await page.route(`**/api/commerce/v1/sales-returns/sales/${saleId}**`, route => json(route, {
-    documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, receivableOutstanding: 90000, fiscalStatus: "Accepted", payments: [{ paymentNumber: 1, methodCode: "CreditCard", originalAmount: 29000, refundedAmount: 0, availableAmount: 29000, cardFranchiseCode: "Visa", approvalNumber: "APP-900" }], charges: [
+    documentId: saleId, documentNumber: "FV-900", fiscalNumber: "SETT-900", cufe: "CUFE", issuedAt: "2026-08-30T10:00:00-05:00", customerId: crypto.randomUUID(), customerName: "Cliente crédito", customerIdentification: "900123", warehouseId: crypto.randomUUID(), warehouseName: "Principal", totalAmount: 119000, returnedAmount: 0, originalUnrounded: 119000, originalRounding: 0, unroundedOutstanding: 119000, remainingRounding: 0, receivableOutstanding: 90000, fiscalStatus: "Accepted", payments: [{ paymentNumber: 1, methodCode: "CreditCard", originalAmount: 29000, refundedAmount: 0, availableAmount: 29000, cardFranchiseCode: "Visa", approvalNumber: "APP-900" }], charges: [
       { appliedChargeId: crypto.randomUUID(), code: "BILLED", name: "Domicilio", amount: 5000, invoicedAmount: 5000, expenseAmount: 0, isReturned: false, expenseStatus: "Cancelled" },
       { appliedChargeId: crypto.randomUUID(), code: "ABSORBED", name: "Mensajería", amount: 2000, invoicedAmount: 0, expenseAmount: 2000, isReturned: false, expenseStatus: "Cancelled" },
     ], lines: [{ originalLineNumber: 1, productId: crypto.randomUUID(), productCode: "P-1", reference: null, description: "Producto", soldQuantity: 1, returnedQuantity: 0, availableQuantity: 1, unitPrice: 100000, discountAmount: 0, taxCode: "01", taxRate: 19, untaxedAmount: 100000, taxAmount: 19000, lineTotal: 119000, barcodes: "" }],
@@ -211,7 +291,7 @@ test("historial de cargos pagina y consulta sin cargar pestañas ocultas", async
   await page.getByLabel("Desde", { exact: true }).click();
   await page.getByRole("button", { name: "Mes anterior" }).click();
   await page.getByRole("button", { name: "Mes anterior" }).click();
-  await page.getByRole("button", { name: /^1 de / }).click();
+  await page.getByRole("button", { name: /^1 de / }).first().click();
   await expect(page.getByRole("main").getByRole("alert")).toContainText("31 días");
   expect(historyReads).toBe(2);
 });

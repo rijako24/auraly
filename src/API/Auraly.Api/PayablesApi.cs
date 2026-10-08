@@ -11,6 +11,29 @@ public static class PayablesApi
 {
     public static IEndpointRouteBuilder MapPayablesApi(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/commerce/v1/payables/report", async (
+            HttpContext context, int page, int pageSize, bool consolidated, DateOnly cutoff,
+            Guid? supplierId, Guid? partySiteId, DateOnly? from, DateOnly? to,
+            string? status, bool? outstandingOnly, bool? overdueOnly,
+            string? sortBy, string? sortDirection, PayablesService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ReportAsync(context.User.ToPayablesIdentity(),
+                new(page, pageSize, consolidated, cutoff, supplierId, partySiteId, from, to,
+                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection), token), Results.Ok))
+            .RequireAuthorization("payables.user");
+        endpoints.MapGet("/api/commerce/v1/payables/report/print", async (
+            HttpContext context, bool consolidated, DateOnly cutoff,
+            Guid? supplierId, Guid? partySiteId, DateOnly? from, DateOnly? to,
+            string? status, bool? outstandingOnly, bool? overdueOnly,
+            string? sortBy, string? sortDirection, PayablesService service, CancellationToken token) =>
+            await ExecuteAsync(async () =>
+            {
+                var html = await PortfolioReportPrint.PayablesAsync(
+                    service, context.User.ToPayablesIdentity(),
+                    new(1, 100, consolidated, cutoff, supplierId, partySiteId, from, to,
+                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection), token);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Content(html, "text/html; charset=utf-8");
+            })).RequireAuthorization("payables.user");
         endpoints.MapGet("/api/commerce/v1/payables/expense-concepts",
                 async (HttpContext context, string? search, int page, int pageSize,
                     PayablesService service, CancellationToken cancellationToken) =>
@@ -128,6 +151,8 @@ public static class PayablesApi
         { return Results.Problem(exception.Message, statusCode: 400); }
         catch (PayablesConflictException exception)
         { return Results.Problem(exception.Message, statusCode: 409); }
+        catch (PortfolioReportPrintException exception)
+        { return Results.Problem(exception.Message, statusCode: exception.StatusCode); }
     }
 
     private static async Task<IResult> ExecuteAsync<T>(

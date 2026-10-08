@@ -1229,7 +1229,7 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
-    public async Task Closure_cash_movements_and_portfolio_payments_use_invoice_printer_as_receipt()
+    public async Task Closure_cash_movements_and_portfolio_payments_use_invoice_print_routes()
     {
         var directory = Path.Combine(
             Path.GetTempPath(), "auraly-fixed-receipts-" + Guid.NewGuid().ToString("N"));
@@ -1256,6 +1256,7 @@ public sealed class PosConfigurationTests
                 store, rendered, workstation).PrintAsync(
                 new PosCashMovementTicket(
                     Guid.NewGuid(), "In", "Base", 10m, now, null, null, "Cajero"),
+                PrintTemplateFormats.Receipt,
                 CancellationToken.None);
             await new PosPortfolioPaymentTicketPrinter(
                 store, rendered, new PortfolioPaymentReceiptRenderer(), workstation with
@@ -1265,6 +1266,7 @@ public sealed class PosConfigurationTests
                     "Nombre del navegador", null, null, null, null,
                     "Sede", null, null, "Proveedor", "NIT 800", "Cajero", 10m,
                     [new("FC-1", 10m)], [new("Efectivo", 10m, null)]),
+                null,
                 CancellationToken.None);
             await new PosWorkSessionClosurePrinter(
                 store, rendered, workstation).PrintAsync(
@@ -1276,9 +1278,10 @@ public sealed class PosConfigurationTests
                 CancellationToken.None);
 
             Assert.Equal(
-                new[] { "Microsoft XPS Document Writer", "Microsoft XPS Document Writer", "Microsoft XPS Document Writer" },
+                new[] { "Legacy receipt printer", "Letter printer", "Microsoft XPS Document Writer" },
                 rendered.PrinterNames);
-            Assert.Equal(new int?[] { 58, 58, 58 }, rendered.PaperWidths);
+            Assert.Equal(new int?[] { 58, null, 58 }, rendered.PaperWidths);
+            Assert.Contains("@page{size:215.9mm 139.7mm", rendered.Documents[1]);
             Assert.Contains("NIT 900123456-7", rendered.Documents[1]);
             Assert.Contains("Firma de recibido", rendered.Documents[1]);
             Assert.DoesNotContain("Nombre del navegador", rendered.Documents[1]);
@@ -1288,6 +1291,45 @@ public sealed class PosConfigurationTests
         {
             if (Directory.Exists(directory))
                 Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Portfolio_payment_uses_the_invoice_printer_for_each_requested_format()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "auraly-portfolio-formats-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"), Path.Combine(directory, "receipts"));
+            var formats = new[] { PrintTemplateFormats.Receipt, PrintTemplateFormats.HalfLetter,
+                PrintTemplateFormats.HalfLegal, PrintTemplateFormats.Letter };
+            store.Save(new PosPrinterConfiguration(PosPrinterModes.WindowsRaw, "Tirilla", 80,
+                "Carta", TemplateRoutes: formats.Select(format =>
+                    new PrintTemplateRoute("SalesInvoice", format, $"Facturas-{format}")).ToArray(),
+                PosOutputFormat: PrintTemplateFormats.Receipt, PosPrinterName: "Facturas-Receipt",
+                OrderPrinterName: "Carta"));
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new PosPortfolioPaymentTicketPrinter(store, rendered,
+                new PortfolioPaymentReceiptRenderer(),
+                new PosWorkstationIdentity("POS", "Sede", "Bodega", "Cajero", "Empresa", null));
+            var receipt = new PortfolioPaymentReceipt(Guid.NewGuid(), "Receivable", "ABO-1",
+                DateTimeOffset.UtcNow, "Empresa", null, null, null, null, "Sede", null, null,
+                "Cliente", "1001", "Cajero", 10m, [new("FV-1", 10m)], [new("Efectivo", 10m, null)]);
+
+            foreach (var format in formats)
+                await printer.PrintAsync(receipt, format, CancellationToken.None);
+
+            Assert.Equal(formats.Select(format => $"Facturas-{format}"), rendered.PrinterNames);
+            Assert.Equal(new int?[] { 80, null, null, null }, rendered.PaperWidths);
+            Assert.Contains("@page{size:80mm auto", rendered.Documents[0]);
+            Assert.Contains("@page{size:215.9mm 139.7mm", rendered.Documents[1]);
+            Assert.Contains("@page{size:215.9mm 165.1mm", rendered.Documents[2]);
+            Assert.Contains("@page{size:Letter portrait", rendered.Documents[3]);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 

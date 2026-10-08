@@ -174,12 +174,13 @@ internal static class PosPeripheralModule
 
         edge.MapPost("/print/cash-movement", async (
             PosCashMovementTicket request,
+            string? format,
             PosCashMovementTicketPrinter printer,
             CancellationToken ct) =>
         {
             try
             {
-                await printer.PrintAsync(request, ct);
+                await printer.PrintAsync(request, format, ct);
                 return Results.NoContent();
             }
             catch (ArgumentException exception)
@@ -200,12 +201,13 @@ internal static class PosPeripheralModule
 
         edge.MapPost("/print/portfolio-payment", async (
             PortfolioPaymentReceipt request,
+            string? format,
             PosPortfolioPaymentTicketPrinter printer,
             CancellationToken ct) =>
         {
             try
             {
-                await printer.PrintAsync(request, ct);
+                await printer.PrintAsync(request, format, ct);
                 return Results.NoContent();
             }
             catch (ArgumentException exception)

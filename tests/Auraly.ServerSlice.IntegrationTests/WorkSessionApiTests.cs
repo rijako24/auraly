@@ -391,8 +391,10 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
 
         var from = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
         var to = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
-        var page = await client.GetFromJsonAsync<WorkSessionClosurePage>(
+        using var listResponse = await client.GetAsync(
             $"/api/commerce/v1/work-sessions/closures?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        Assert.True(listResponse.IsSuccessStatusCode, await listResponse.Content.ReadAsStringAsync());
+        var page = await listResponse.Content.ReadFromJsonAsync<WorkSessionClosurePage>();
         var listed = Assert.Single(page!.Items,
             item => item.WorkSessionClosureId == closure.WorkSessionClosureId);
         Assert.DoesNotContain(listed.PaymentTotals,
@@ -779,6 +781,23 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(2, verificationItems.Count(item => item.PaymentMethodCode == "Cash"));
         Assert.Equal(2, verificationItems.Count(item => item.PaymentMethodCode == "Card"));
         Assert.Equal(2, verificationItems.Count(item => item.PaymentMethodCode == "Transfer"));
+        var verificationPage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications/page?page=1&pageSize=1");
+        Assert.NotNull(verificationPage);
+        Assert.Equal(6, verificationPage.TotalItems);
+        Assert.Equal(6, verificationPage.Groups.Sum(group => group.Count));
+        var filteredFirst = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications/page?paymentMethodCode=Transfer&page=1&pageSize=1");
+        var filteredSecond = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications/page?paymentMethodCode=Transfer&page=2&pageSize=1");
+        Assert.NotNull(filteredFirst);
+        Assert.NotNull(filteredSecond);
+        Assert.Equal(2, filteredFirst.TotalItems);
+        Assert.Equal(2, filteredSecond.TotalItems);
+        Assert.Single(filteredFirst.Items);
+        Assert.Single(filteredSecond.Items);
+        Assert.NotEqual(filteredFirst.Items[0].VerificationKey, filteredSecond.Items[0].VerificationKey);
+        Assert.Equal(2, filteredSecond.Groups.Sum(group => group.Count));
         Assert.Equal(listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Cash").NetAmount,
             verificationItems.Where(item => item.PaymentMethodCode == "Cash").Sum(item => item.Amount));
         Assert.Contains(verificationItems, item => item.PaymentMethodCode == "Cash" &&
@@ -832,8 +851,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         }
 
         var verificationDecisions = verificationItems
-            .Where(item => item.PaymentMethodCode != "Cash" ||
-                item.MovementType is "CashIn" or "CashOut" or "CreditSale")
+            .Where(item => item.MovementType is not ("Sale" or "Refund") &&
+                (item.PaymentMethodCode != "Cash" ||
+                 item.MovementType is "CashIn" or "CashOut" or "CreditSale"))
             .Select(item =>
             new WorkSessionPaymentVerificationDecision(item.VerificationKey,
                 (item.PaymentMethodCode == "Transfer" && item.Amount == 20_000m) ||
@@ -841,18 +861,36 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                     ? "Missing"
                     : "Verified")).ToArray();
 
-        using var message = new HttpRequestMessage(HttpMethod.Post,
-            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
+        using (var duplicated = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
+               {
+                   Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                       [new("Cash", 100_000m, true, null), new("Card", 50_000m, true, null),
+                           new("Transfer", 10_000m, true, null)],
+                       [new("Transfer", "Cash", 20_000m)], "Comprobante duplicado",
+                       [.. verificationDecisions, verificationDecisions[0]]))
+               })
         {
-            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+            duplicated.Headers.Add("Idempotency-Key", $"reconcile-duplicated-{Guid.NewGuid():N}");
+            using var duplicatedResponse = await client.SendAsync(duplicated);
+            Assert.Equal(HttpStatusCode.BadRequest, duplicatedResponse.StatusCode);
+        }
+
+        var reconciliationRequest = new ReconcileWorkSessionClosureRequest(
             [
                 new("Cash", 100_000m, true, null),
                 new("Card", 50_000m, true, null),
                 new("Transfer", 10_000m, true, null)
             ], [new("Transfer", "Cash", 20_000m)], "Transferencia registrada como efectivo",
-                verificationDecisions))
+                verificationDecisions);
+        var reconciliationKey = $"reconcile-{Guid.NewGuid():N}";
+        var reconciliationUrl =
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile";
+        using var message = new HttpRequestMessage(HttpMethod.Post, reconciliationUrl)
+        {
+            Content = JsonContent.Create(reconciliationRequest)
         };
-        message.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        message.Headers.Add("Idempotency-Key", reconciliationKey);
         using var response = await client.SendAsync(message);
         response.EnsureSuccessStatusCode();
         var reconciliation = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
@@ -864,6 +902,26 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal("Cash", reclassification.ToPaymentMethodCode);
         Assert.Equal(20_000m, reclassification.Amount);
 
+        using (var replay = new HttpRequestMessage(HttpMethod.Post, reconciliationUrl)
+               { Content = JsonContent.Create(reconciliationRequest) })
+        {
+            replay.Headers.Add("Idempotency-Key", reconciliationKey);
+            using var replayResponse = await client.SendAsync(replay);
+            replayResponse.EnsureSuccessStatusCode();
+            var replayed = await replayResponse.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+            Assert.NotNull(replayed);
+            Assert.Equal(reconciliation.ReconciliationId, replayed.ReconciliationId);
+            Assert.Equal(reconciliation.Status, replayed.Status);
+            Assert.True(replayed.IdempotentReplay);
+        }
+        using (var changedReplay = new HttpRequestMessage(HttpMethod.Post, reconciliationUrl)
+               { Content = JsonContent.Create(reconciliationRequest with { Note = "Otros valores" }) })
+        {
+            changedReplay.Headers.Add("Idempotency-Key", reconciliationKey);
+            using var changedResponse = await client.SendAsync(changedReplay);
+            Assert.Equal(HttpStatusCode.Conflict, changedResponse.StatusCode);
+        }
+
         var persistedDecisions = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
             $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
         Assert.NotNull(persistedDecisions);
@@ -874,6 +932,584 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 verificationDecisions.Single(decision =>
                     decision.VerificationKey == item.VerificationKey).Status,
                 item.Status));
+    }
+
+    [Fact]
+    public async Task Closure_reconciliation_accepts_a_corrected_physical_cash_count()
+    {
+        var userId = await CreateUserAsync("work-session-cash-correction");
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, null));
+        await InsertMovementsAsync(opened.WorkSessionId, userId);
+        var closure = await CloseAsync(client, opened.WorkSessionId, $"close-{Guid.NewGuid():N}",
+            new CloseWorkSessionRequest(80_000m, null, PaymentCounts:
+            [
+                new WorkSessionPaymentCount("Cash", 80_000m),
+                new WorkSessionPaymentCount("Card", 50_000m),
+                new WorkSessionPaymentCount("Transfer", 30_000m)
+            ]));
+        var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
+        Assert.NotNull(items);
+        var decisions = items.Where(item => item.MovementType is not ("Sale" or "Refund") &&
+                (item.PaymentMethodCode != "Cash" ||
+                 item.MovementType is "CashIn" or "CashOut" or "CreditSale"))
+            .Select(item => new WorkSessionPaymentVerificationDecision(item.VerificationKey, "Verified"))
+            .ToArray();
+        using var message = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+            [
+                new("Cash", 75_000m, true, "COUNT_DIFFERENCE"),
+                new("Card", 50_000m, true, null),
+                new("Transfer", 30_000m, true, null)
+            ], [], "Conteo físico corregido", decisions))
+        };
+        message.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(message);
+        response.EnsureSuccessStatusCode();
+        var reconciliation = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("ReconciledWithDifferences", reconciliation.Status);
+        Assert.Equal(75_000m, reconciliation.Lines.Single(line => line.PaymentMethodCode == "Cash").VerifiedAmount);
+    }
+
+    [Fact]
+    public async Task Paid_sales_are_informational_even_when_the_payment_is_a_transfer()
+    {
+        var userId = await CreateUserAsync("work-session-sale-information");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        var documentId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT dbo.SalesDocuments
+                  (DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
+                   DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
+                   DocumentType,IdempotencyKey,PayloadHash,IssuedAt,
+                   CustomerIdentification,UntaxedAmount,TaxAmount,PayableAmount,
+                   CreditAmount,ProcessingStatus,ReceivedAt,SoldByUserId,WorkSessionId)
+                VALUES(@DocumentId,@BusinessId,@WarehouseId,N'Online',@SeriesId,
+                  @Number,N'CVI',N'00',@Consecutive,N'SalesReceipt',@Key,@Hash,
+                  SYSDATETIMEOFFSET(),N'222222222222',9000,0,9000,0,
+                  N'Processed',SYSDATETIMEOFFSET(),@UserId,@SessionId);
+                INSERT dbo.SalesPayments
+                  (DocumentId,PaymentNumber,MethodCode,Amount,RegisteredAt)
+                VALUES(@DocumentId,1,N'Transfer',9000,SYSDATETIMEOFFSET());
+                """;
+            command.Parameters.AddWithValue("@DocumentId", documentId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            command.Parameters.AddWithValue("@SeriesId", fixture.OnlineSalesReceiptSeriesId);
+            command.Parameters.AddWithValue("@Number", $"CVI-{documentId:N}");
+            command.Parameters.AddWithValue("@Consecutive", (long)BitConverter.ToUInt32(documentId.ToByteArray(), 0) + 1L);
+            command.Parameters.AddWithValue("@Key", $"sale-{documentId:N}");
+            command.Parameters.Add("@Hash", System.Data.SqlDbType.Binary, 32).Value = new byte[32];
+            command.Parameters.AddWithValue("@UserId", userId);
+            command.Parameters.AddWithValue("@SessionId", opened.WorkSessionId);
+            Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        }
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null,
+                PaymentCounts: [new("Cash", 0m), new("Card", 0m), new("Transfer", 9000m)]));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var page = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?paymentMethodCode=Transfer&page=1&pageSize=100");
+        var sale = Assert.Single(page!.Items);
+        Assert.Equal("Sale", sale.MovementType);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                closure.PaymentTotals.Where(item => item.RequiresCount)
+                    .Select(item => new ReconcileWorkSessionClosureLine(
+                        item.PaymentMethodCode, item.NetAmount, true, null)).ToArray(),
+                [], null, []))
+        };
+        request.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var reconciliation = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("Reconciled", reconciliation.Status);
+        Assert.Equal(9000m, reconciliation.Lines.Single(line =>
+            line.PaymentMethodCode == "Transfer").VerifiedAmount);
+    }
+
+    [Fact]
+    public async Task Closure_reconciliation_validates_all_verifications_across_server_pages()
+    {
+        var userId = await CreateUserAsync("work-session-paged-reconciliation");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                WITH numbers AS
+                (
+                    SELECT TOP(250) ROW_NUMBER() OVER(ORDER BY object_id) RowNumber
+                    FROM sys.all_objects
+                )
+                INSERT dbo.WorkSessionMovements
+                  (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,
+                   BusinessDate,MovementType,PaymentMethodCode,Amount,Reference,
+                   SourceKey,OccurredAt,RecordedByUserId)
+                SELECT NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
+                  N'CashIn',N'Transfer',1,NULL,
+                  CONCAT(N'test:bulk:',CONVERT(nvarchar(36),@SessionId),N':',RowNumber),
+                  SYSUTCDATETIME(),@UserId FROM numbers;
+                """;
+            command.Parameters.AddWithValue("@SessionId", opened.WorkSessionId);
+            command.Parameters.AddWithValue("@UserId", userId);
+            Assert.Equal(250, await command.ExecuteNonQueryAsync());
+        }
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null,
+                PaymentCounts: [new("Cash", 0m), new("Card", 0m),
+                    new("Transfer", 250m)]));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var decisions = new List<WorkSessionPaymentVerificationDecision>();
+        for (var pageNumber = 1; pageNumber <= 3; pageNumber++)
+        {
+            var page = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+                $"{path}/payment-verifications/page?paymentMethodCode=Transfer&page={pageNumber}&pageSize=100");
+            Assert.NotNull(page);
+            Assert.Equal(250, page.TotalItems);
+            Assert.Equal(pageNumber == 3 ? 50 : 100, page.Items.Count);
+            decisions.AddRange(page.Items.Select(item =>
+                new WorkSessionPaymentVerificationDecision(item.VerificationKey, "Verified")));
+        }
+        Assert.Equal(250, decisions.Select(item => item.VerificationKey).Distinct().Count());
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                closure.PaymentTotals.Where(item => item.RequiresCount)
+                    .Select(item => new ReconcileWorkSessionClosureLine(
+                        item.PaymentMethodCode, item.NetAmount, true, null)).ToArray(),
+                [], null, decisions))
+        };
+        message.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(message);
+        response.EnsureSuccessStatusCode();
+        var reconciliation = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("Reconciled", reconciliation.Status);
+    }
+
+    [Fact]
+    public async Task Closure_reconciliation_accepts_a_negative_non_cash_net_from_outflows()
+    {
+        var userId = await CreateUserAsync("work-session-negative-transfer");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT dbo.WorkSessionMovements
+                  (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,
+                   BusinessDate,MovementType,PaymentMethodCode,Amount,Reference,
+                   SourceKey,OccurredAt,RecordedByUserId)
+                VALUES(NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
+                  N'CashOut',N'Transfer',-1000,NULL,@SourceKey,SYSUTCDATETIME(),@UserId);
+                """;
+            command.Parameters.AddWithValue("@SessionId", opened.WorkSessionId);
+            command.Parameters.AddWithValue("@UserId", userId);
+            command.Parameters.AddWithValue("@SourceKey", $"test:negative-transfer:{opened.WorkSessionId:N}");
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        }
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null,
+                PaymentCounts: [new("Cash", 0m), new("Card", 0m),
+                    new("Transfer", 0m)]));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var page = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?paymentMethodCode=Transfer&page=1&pageSize=100");
+        var transfer = Assert.Single(page!.Items);
+        Assert.Equal(-1000m, transfer.Amount);
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                closure.PaymentTotals.Where(item => item.RequiresCount)
+                    .Select(item => new ReconcileWorkSessionClosureLine(
+                        item.PaymentMethodCode, item.NetAmount, true, null)).ToArray(),
+                [], null,
+                [new WorkSessionPaymentVerificationDecision(transfer.VerificationKey, "Verified")]))
+        };
+        message.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(message);
+        response.EnsureSuccessStatusCode();
+        var reconciliation = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("Reconciled", reconciliation.Status);
+        Assert.Equal(-1000m, reconciliation.Lines.Single(line =>
+            line.PaymentMethodCode == "Transfer").VerifiedAmount);
+        Assert.Equal("Pending", reconciliation.AccountingStatus);
+        await using var postingConnection = new SqlConnection(fixture.ConnectionString);
+        await postingConnection.OpenAsync();
+        await using var posting = postingConnection.CreateCommand();
+        posting.CommandText = """
+            SELECT Status FROM dbo.AccountingPostingJobs
+            WHERE SourceDocumentId=@ReconciliationId
+              AND SourceDocumentType=N'WorkSessionClosureReconciliation';
+            """;
+        posting.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
+        Assert.Equal("Posted", (string?)await posting.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task Closure_correction_keeps_the_original_cash_receipt_and_posts_its_amount_delta()
+    {
+        var userId = await CreateUserAsync("work-session-correct-cash");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ManageCash,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        var reasons = await client.GetFromJsonAsync<CashMovementReasonView[]>(
+            $"/api/commerce/v1/work-sessions/cash-reasons?businessId={fixture.BusinessId:D}&direction=In");
+        var reason = Assert.Single(reasons!, value => value.Code == "OTHER_INCOME");
+        var documentId = Guid.NewGuid();
+        using (var message = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/cash-movements")
+               {
+                   Content = JsonContent.Create(new ConfirmCashMovementRequest(
+                       documentId, fixture.BusinessId, opened.WorkSessionId,
+                       reason.ReasonId, 5_000m, DateTimeOffset.UtcNow,
+                       "Corrección de prueba", null, null))
+               })
+        {
+            message.Headers.Add("Idempotency-Key", $"cash-{documentId:N}");
+            using var response = await client.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(7_000m, null));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"{path}/payment-verifications");
+        var cash = Assert.Single(items!, item => item.MovementType == "CashIn");
+        using var reconciliationRequest = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                closure.PaymentTotals.Where(item => item.RequiresCount)
+                    .Select(item => new ReconcileWorkSessionClosureLine(item.PaymentMethodCode,
+                        item.PaymentMethodCode == "Cash" ? 7_000m : item.NetAmount,
+                        true, null)).ToArray(), [], "Ingreso contado",
+                [new WorkSessionPaymentVerificationDecision(cash.VerificationKey, "Verified")],
+                [new WorkSessionPaymentCorrection(cash.VerificationKey, "Cash", 7_000m,
+                    "Se recibieron dos mil más")]))
+        };
+        reconciliationRequest.Headers.Add("Idempotency-Key", $"correct-{Guid.NewGuid():N}");
+        using var accepted = await client.SendAsync(reconciliationRequest);
+        accepted.EnsureSuccessStatusCode();
+        var reconciliation = await accepted.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("Reconciled", reconciliation.Status);
+        Assert.Equal("Pending", reconciliation.AccountingStatus);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var persisted = connection.CreateCommand();
+        persisted.CommandText = """
+            SELECT document.Amount,job.Status
+            FROM dbo.CashMovementDocuments document
+            JOIN dbo.AccountingPostingJobs job
+              ON job.SourceDocumentId=@ReconciliationId
+                AND job.SourceDocumentType=N'WorkSessionClosureReconciliation'
+            WHERE document.DocumentId=@DocumentId;
+            """;
+        persisted.Parameters.AddWithValue("@DocumentId", documentId);
+        persisted.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
+        await using var reader = await persisted.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(5_000m, reader.GetDecimal(0));
+        Assert.Equal("Posted", reader.GetString(1));
+        await reader.CloseAsync();
+        var revised = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"{path}/payment-verifications");
+        var corrected = Assert.Single(revised!, item => item.VerificationKey == cash.VerificationKey);
+        Assert.Equal(7_000m, corrected.CorrectedAmount);
+        Assert.Equal("Cash", corrected.CorrectedPaymentMethodCode);
+        Assert.Equal("Se recibieron dos mil más", corrected.CorrectionReason);
+    }
+
+    [Fact]
+    public async Task Closure_correction_of_a_collection_updates_the_customer_balance_once()
+    {
+        var userId = await CreateUserAsync("work-session-correct-receivable");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        var customerId = await CreateCustomerAsync(userId, "Cliente de corrección");
+        var invoiceNumber = $"CVI-{Guid.NewGuid():N}"[..20];
+        await InsertCreditSaleAsync(opened.WorkSessionId, userId, customerId, invoiceNumber, 10_000m);
+        var paymentId = Guid.NewGuid();
+        var receivableId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                DECLARE @SaleId uniqueidentifier,@SeriesId uniqueidentifier;
+                SELECT @SaleId=DocumentId FROM dbo.SalesDocuments WHERE BusinessId=@BusinessId
+                  AND DocumentNumber=@InvoiceNumber;
+                SELECT TOP(1) @SeriesId=DocumentSeriesId FROM dbo.DocumentSeries
+                  WHERE BusinessId=@BusinessId AND DocumentType=N'ReceivablePayment'
+                    AND DeviceId IS NULL AND IsActive=1;
+                IF @SeriesId IS NULL
+                BEGIN
+                  SET @SeriesId=NEWID();
+                  INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,
+                    DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,
+                    IsOfflineCapable,IsActive,CreatedAt)
+                  VALUES(@SeriesId,@BusinessId,NULL,N'ReceivablePayment',N'RCC',N'00',
+                    8,1,99999999,0,1,SYSDATETIMEOFFSET());
+                END;
+                INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,
+                  SourceDocumentId,SourceDocumentType,SourcePayloadHash,OccurredAt,
+                  Status,AttemptCount,CreatedAt)
+                VALUES(NEWID(),@TenantId,@BusinessId,@SaleId,N'SalesReceipt',
+                  CONVERT(binary(32),0),SYSDATETIMEOFFSET(),N'Posted',1,SYSDATETIMEOFFSET());
+                INSERT dbo.Receivables(ReceivableId,BusinessId,CustomerId,PartySiteId,
+                  SourceDocumentId,SourceDocumentType,DocumentNumber,CurrencyCode,
+                  OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
+                SELECT @ReceivableId,@BusinessId,@CustomerId,sale.CustomerPartySiteId,
+                  @SaleId,N'SalesReceipt',@InvoiceNumber,N'COP',10000,5000,
+                  DATEADD(day,30,SYSDATETIMEOFFSET()),N'PartiallyPaid',SYSDATETIMEOFFSET()
+                FROM dbo.SalesDocuments sale WHERE sale.DocumentId=@SaleId;
+                INSERT dbo.CustomerPayments(PaymentId,BusinessId,CustomerId,WorkSessionId,
+                  DocumentSeriesId,DocumentNumber,DocumentPrefix,DocumentSeriesCode,
+                  DocumentConsecutive,IdempotencyKey,PayloadHash,PaidAt,CurrencyCode,
+                  TotalAmount,Status,ConfirmedByUserId,AcceptedAt,ProcessedAt)
+                VALUES(@PaymentId,@BusinessId,@CustomerId,@SessionId,@SeriesId,@PaymentNumber,
+                  N'RCC',N'00',@Consecutive,@IdempotencyKey,CONVERT(binary(32),0),
+                  SYSDATETIMEOFFSET(),N'COP',5000,N'Processed',@UserId,
+                  SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+                INSERT dbo.CustomerPaymentTenders(PaymentId,LineNumber,MethodCode,Amount)
+                VALUES(@PaymentId,1,N'Cash',5000);
+                INSERT dbo.CustomerPaymentApplications(PaymentId,LineNumber,ReceivableId,Amount,AppliedAt)
+                VALUES(@PaymentId,1,@ReceivableId,5000,SYSDATETIMEOFFSET());
+                INSERT dbo.WorkSessionMovements(WorkSessionMovementId,WorkSessionId,DocumentId,
+                  PaymentNumber,BusinessDate,MovementType,PaymentMethodCode,Amount,
+                  SourceKey,OccurredAt,RecordedByUserId)
+                VALUES(NEWID(),@SessionId,@PaymentId,NULL,CONVERT(date,SYSDATETIMEOFFSET()),
+                  N'ReceivablePayment',N'Cash',5000,@SourceKey,SYSDATETIMEOFFSET(),@UserId);
+                """;
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@SessionId", opened.WorkSessionId);
+            command.Parameters.AddWithValue("@CustomerId", customerId);
+            command.Parameters.AddWithValue("@InvoiceNumber", invoiceNumber);
+            command.Parameters.AddWithValue("@ReceivableId", receivableId);
+            command.Parameters.AddWithValue("@PaymentId", paymentId);
+            command.Parameters.AddWithValue("@PaymentNumber", $"RCC-{paymentId:N}"[..20]);
+            command.Parameters.AddWithValue("@Consecutive", (long)BitConverter.ToUInt32(paymentId.ToByteArray(), 0) + 1);
+            command.Parameters.AddWithValue("@IdempotencyKey", $"payment-{paymentId:N}");
+            command.Parameters.AddWithValue("@SourceKey", $"receivable-payment:{paymentId:N}:1");
+            command.Parameters.AddWithValue("@UserId", userId);
+            await command.ExecuteNonQueryAsync();
+        }
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(7_000m, null));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"{path}/payment-verifications");
+        var collection = Assert.Single(items!, item => item.MovementType == "ReceivablePayment");
+        var creditSale = Assert.Single(items!, item => item.MovementType == "CreditSale");
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                closure.PaymentTotals.Where(item => item.RequiresCount)
+                    .Select(item => new ReconcileWorkSessionClosureLine(item.PaymentMethodCode,
+                        item.PaymentMethodCode == "Cash" ? 7_000m : item.NetAmount,
+                        true, null)).ToArray(), [], null,
+                [new(collection.VerificationKey, "Verified"),
+                 new(creditSale.VerificationKey, "Verified")],
+                [new(collection.VerificationKey, "Cash", 7_000m, "Cobro real corregido")]))
+        };
+        message.Headers.Add("Idempotency-Key", $"correct-{Guid.NewGuid():N}");
+        using var accepted = await client.SendAsync(message);
+        Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
+        var reconciliation = await accepted.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("Reconciled", reconciliation.Status);
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT balance.OutstandingAmount,payment.TotalAmount,job.Status,
+              (SELECT COUNT(*) FROM dbo.ReceivableTransactions trans
+               WHERE trans.ReceivableId=balance.ReceivableId
+                 AND trans.SourceDocumentId=@ReconciliationId
+                 AND trans.TransactionType=N'Adjustment')
+            FROM dbo.Receivables balance
+            JOIN dbo.CustomerPayments payment ON payment.PaymentId=@PaymentId
+            JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=@ReconciliationId
+              AND job.SourceDocumentType=N'WorkSessionClosureReconciliation'
+            WHERE balance.ReceivableId=@ReceivableId;
+            """;
+        verify.Parameters.AddWithValue("@PaymentId", paymentId);
+        verify.Parameters.AddWithValue("@ReceivableId", receivableId);
+        verify.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
+        await using var checkedRow = await verify.ExecuteReaderAsync();
+        Assert.True(await checkedRow.ReadAsync());
+        Assert.Equal(3_000m, checkedRow.GetDecimal(0));
+        Assert.Equal(5_000m, checkedRow.GetDecimal(1));
+        Assert.Equal("Posted", checkedRow.GetString(2));
+        Assert.Equal(1, checkedRow.GetInt32(3));
+    }
+
+    [Fact]
+    public async Task Closure_correction_of_a_supplier_payment_restores_the_supplier_balance()
+    {
+        var userId = await CreateUserAsync("work-session-correct-payable");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null, 5_000m));
+        var paymentId = Guid.NewGuid();
+        var payableId = Guid.NewGuid();
+        var sourceId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                DECLARE @SeriesId uniqueidentifier;
+                SELECT TOP(1) @SeriesId=DocumentSeriesId FROM dbo.DocumentSeries
+                  WHERE BusinessId=@BusinessId AND DocumentType=N'PayablePayment'
+                    AND DeviceId IS NULL AND IsActive=1;
+                IF @SeriesId IS NULL
+                BEGIN
+                  SET @SeriesId=NEWID();
+                  INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,
+                    DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,
+                    IsOfflineCapable,IsActive,CreatedAt)
+                  VALUES(@SeriesId,@BusinessId,NULL,N'PayablePayment',N'PGC',N'00',
+                    8,1,99999999,0,1,SYSDATETIMEOFFSET());
+                END;
+                INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,
+                  SourceDocumentId,SourceDocumentType,SourcePayloadHash,OccurredAt,
+                  Status,AttemptCount,CreatedAt)
+                VALUES(NEWID(),@TenantId,@BusinessId,@SourceId,N'GoodsReceipt',
+                  CONVERT(binary(32),0),SYSDATETIMEOFFSET(),N'Posted',1,SYSDATETIMEOFFSET());
+                INSERT dbo.Payables(PayableId,BusinessId,SupplierId,SourceDocumentId,
+                  SourceDocumentType,DocumentNumber,CurrencyCode,OriginalAmount,
+                  OutstandingAmount,DueDate,Status,CreatedAt)
+                VALUES(@PayableId,@BusinessId,@SupplierId,@SourceId,N'GoodsReceipt',
+                  @InvoiceNumber,N'COP',10000,5000,DATEADD(day,30,SYSDATETIMEOFFSET()),
+                  N'PartiallyPaid',SYSDATETIMEOFFSET());
+                INSERT dbo.SupplierPayments(PaymentId,BusinessId,WorkSessionId,SupplierId,
+                  DocumentSeriesId,DocumentNumber,DocumentPrefix,DocumentSeriesCode,
+                  DocumentConsecutive,IdempotencyKey,PayloadHash,PaidAt,CurrencyCode,
+                  TotalAmount,Status,ConfirmedByUserId,AcceptedAt,ProcessedAt)
+                VALUES(@PaymentId,@BusinessId,@SessionId,@SupplierId,@SeriesId,
+                  @PaymentNumber,N'PGC',N'00',@Consecutive,@IdempotencyKey,
+                  CONVERT(binary(32),0),SYSDATETIMEOFFSET(),N'COP',5000,N'Processed',
+                  @UserId,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
+                INSERT dbo.SupplierPaymentTenders(PaymentId,LineNumber,MethodCode,Amount)
+                VALUES(@PaymentId,1,N'Cash',5000);
+                INSERT dbo.SupplierPaymentApplications(PaymentId,LineNumber,PayableId,Amount,AppliedAt)
+                VALUES(@PaymentId,1,@PayableId,5000,SYSDATETIMEOFFSET());
+                INSERT dbo.WorkSessionMovements(WorkSessionMovementId,WorkSessionId,DocumentId,
+                  PaymentNumber,BusinessDate,MovementType,PaymentMethodCode,Amount,
+                  SourceKey,OccurredAt,RecordedByUserId)
+                VALUES(NEWID(),@SessionId,@PaymentId,NULL,CONVERT(date,SYSDATETIMEOFFSET()),
+                  N'PayablePayment',N'Cash',-5000,@SourceKey,SYSDATETIMEOFFSET(),@UserId);
+                """;
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@SessionId", opened.WorkSessionId);
+            command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
+            command.Parameters.AddWithValue("@SourceId", sourceId);
+            command.Parameters.AddWithValue("@PayableId", payableId);
+            command.Parameters.AddWithValue("@PaymentId", paymentId);
+            command.Parameters.AddWithValue("@InvoiceNumber", $"RC-{sourceId:N}"[..20]);
+            command.Parameters.AddWithValue("@PaymentNumber", $"PGC-{paymentId:N}"[..20]);
+            command.Parameters.AddWithValue("@Consecutive", (long)BitConverter.ToUInt32(paymentId.ToByteArray(), 0) + 1);
+            command.Parameters.AddWithValue("@IdempotencyKey", $"payment-{paymentId:N}");
+            command.Parameters.AddWithValue("@SourceKey", $"payable-payment:{paymentId:N}:1");
+            command.Parameters.AddWithValue("@UserId", userId);
+            await command.ExecuteNonQueryAsync();
+        }
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(2_000m, null));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"{path}/payment-verifications");
+        var payment = Assert.Single(items!, item => item.MovementType == "PayablePayment");
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                closure.PaymentTotals.Where(item => item.RequiresCount)
+                    .Select(item => new ReconcileWorkSessionClosureLine(item.PaymentMethodCode,
+                        item.PaymentMethodCode == "Cash" ? 2_000m : item.NetAmount,
+                        true, null)).ToArray(), [], null,
+                [new(payment.VerificationKey, "Verified")],
+                [new(payment.VerificationKey, "Cash", -3_000m, "Pago real corregido")]))
+        };
+        message.Headers.Add("Idempotency-Key", $"correct-{Guid.NewGuid():N}");
+        using var accepted = await client.SendAsync(message);
+        Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
+        var reconciliation = await accepted.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("Reconciled", reconciliation.Status);
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT balance.OutstandingAmount,payment.TotalAmount,job.Status,
+              (SELECT COUNT(*) FROM dbo.PayableTransactions trans
+               WHERE trans.PayableId=balance.PayableId
+                 AND trans.SourceDocumentId=@ReconciliationId
+                 AND trans.TransactionType=N'Adjustment')
+            FROM dbo.Payables balance
+            JOIN dbo.SupplierPayments payment ON payment.PaymentId=@PaymentId
+            JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=@ReconciliationId
+              AND job.SourceDocumentType=N'WorkSessionClosureReconciliation'
+            WHERE balance.PayableId=@PayableId;
+            """;
+        verify.Parameters.AddWithValue("@PaymentId", paymentId);
+        verify.Parameters.AddWithValue("@PayableId", payableId);
+        verify.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
+        await using var row = await verify.ExecuteReaderAsync();
+        Assert.True(await row.ReadAsync());
+        Assert.Equal(7_000m, row.GetDecimal(0));
+        Assert.Equal(5_000m, row.GetDecimal(1));
+        Assert.Equal("Posted", row.GetString(2));
+        Assert.Equal(1, row.GetInt32(3));
     }
 
     private static async Task<WorkSessionView> OpenAsync(

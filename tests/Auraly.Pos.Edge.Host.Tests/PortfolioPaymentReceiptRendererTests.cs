@@ -38,6 +38,22 @@ public sealed class PortfolioPaymentReceiptRendererTests
             new PortfolioPaymentReceiptRenderer().Render(receipt, 80));
     }
 
+    [Theory]
+    [InlineData("HalfLetter", "215.9mm 139.7mm")]
+    [InlineData("HalfLegal", "215.9mm 165.1mm")]
+    [InlineData("Letter", "Letter portrait")]
+    public void Sheet_formats_keep_the_same_payment_and_allocation_details(
+        string format, string pageSize)
+    {
+        var html = new PortfolioPaymentReceiptRenderer().Render(Sample("Payable"), format, 80);
+
+        Assert.Contains($"data-auraly-format=\"{format}\"", html);
+        Assert.Contains($"@page{{size:{pageSize}", html);
+        Assert.Contains("VTA-123", html);
+        Assert.Contains("BAN-88291", html);
+        Assert.Contains("Firma de recibido", html);
+    }
+
     private static PortfolioPaymentReceipt Sample(string direction) => new(
         Guid.Parse("30000000-0000-0000-0000-000000000003"), direction,
         "ABO-123", new DateTimeOffset(2026, 9, 24, 22, 42, 0, TimeSpan.Zero),

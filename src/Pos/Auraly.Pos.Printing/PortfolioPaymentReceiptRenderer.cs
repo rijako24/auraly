@@ -32,9 +32,13 @@ public sealed class PortfolioPaymentReceiptRenderer
     private static readonly CultureInfo Culture = CultureInfo.GetCultureInfo("es-CO");
 
     public string Render(PortfolioPaymentReceipt receipt, int paperWidthMillimeters)
+        => Render(receipt, "Receipt", paperWidthMillimeters);
+
+    public string Render(PortfolioPaymentReceipt receipt, string format, int paperWidthMillimeters)
     {
         ArgumentNullException.ThrowIfNull(receipt);
-        if (paperWidthMillimeters is not (58 or 80) ||
+        if (format is not ("Receipt" or "HalfLetter" or "HalfLegal" or "Letter") ||
+            (format == "Receipt" && paperWidthMillimeters is not (58 or 80)) ||
             receipt.PaymentId == Guid.Empty ||
             receipt.Direction is not ("Receivable" or "Payable") ||
             string.IsNullOrWhiteSpace(receipt.DocumentNumber) ||
@@ -53,16 +57,26 @@ public sealed class PortfolioPaymentReceiptRenderer
             throw new ArgumentException("El comprobante de pago no contiene datos consistentes.", nameof(receipt));
 
         var incoming = receipt.Direction == "Receivable";
+        var sheet = format != "Receipt";
         var template = incoming
-            ? PosPrintTemplateCatalog.ReceivablePayment
-            : PosPrintTemplateCatalog.PayablePayment;
+            ? sheet ? PosPrintTemplateCatalog.ReceivablePaymentSheet : PosPrintTemplateCatalog.ReceivablePayment
+            : sheet ? PosPrintTemplateCatalog.PayablePaymentSheet : PosPrintTemplateCatalog.PayablePayment;
+        var pageSize = format switch
+        {
+            "Receipt" => $"{paperWidthMillimeters}mm auto",
+            "HalfLetter" => "215.9mm 139.7mm",
+            "HalfLegal" => "215.9mm 165.1mm",
+            _ => "Letter portrait"
+        };
         var width = paperWidthMillimeters == 58 ? 50 : 72;
+        var formatAttribute = sheet ? $" data-auraly-format=\"{format}\"" : string.Empty;
+        var maxWidth = sheet ? "max-width:185mm;" : string.Empty;
         var date = receipt.PaidAt.ToOffset(TimeSpan.FromHours(-5));
         var html = new StringBuilder();
         html.Append($$"""
-            <!doctype html><html lang="es" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><head><meta charset="utf-8"><title>{{(incoming ? "Recibo de abono a cartera" : "Comprobante de pago a proveedor")}}</title><style>
-            @page{size:{{paperWidthMillimeters}}mm auto;margin:4mm}
-            *{box-sizing:border-box}body{width:{{width}}mm;margin:0 auto;color:#17212b;font:11px/1.38 Arial,sans-serif}
+            <!doctype html><html lang="es" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"{{formatAttribute}}><head><meta charset="utf-8"><title>{{(incoming ? "Recibo de abono a cartera" : "Comprobante de pago a proveedor")}}</title><style>
+            @page{size:{{pageSize}};margin:{{(sheet ? "10mm" : "4mm")}}}
+            *{box-sizing:border-box}body{width:{{(sheet ? "auto" : $"{width}mm")}};{{maxWidth}}margin:0 auto;color:#17212b;font:{{(sheet ? "12px/1.45" : "11px/1.38")}} Arial,sans-serif}
             .brand{text-align:center;border-bottom:2px solid #0c7772;padding:2mm 0 3mm}
             .brand img{display:block;max-width:28mm;max-height:18mm;margin:0 auto 2mm;object-fit:contain}
             .brand h1{margin:0;font-size:17px;line-height:1.15;overflow-wrap:anywhere}

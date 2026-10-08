@@ -23,6 +23,7 @@ public sealed class PosCashMovementTicketPrinter(
 {
     public Task PrintAsync(
         PosCashMovementTicket ticket,
+        string? requestedFormat,
         CancellationToken cancellationToken)
     {
         if (ticket.DocumentId == Guid.Empty || ticket.Amount <= 0 ||
@@ -32,19 +33,25 @@ public sealed class PosCashMovementTicketPrinter(
             throw new ArgumentException("El movimiento para imprimir no es válido.");
 
         var settings = configuration.LoadForPosPrinting();
-        var printerName = settings.PosPrinterName;
-        if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
+        var format = requestedFormat ?? settings.PosOutputFormat;
+        if (format is not (PrintTemplateFormats.Receipt or PrintTemplateFormats.HalfLetter or
+                PrintTemplateFormats.HalfLegal or PrintTemplateFormats.Letter))
+            throw new ArgumentException("El formato de impresión no es válido.", nameof(requestedFormat));
+        var printerName = settings.InvoicePrinterForFormat(format);
+        if ((format == PrintTemplateFormats.Receipt
+                ? settings.ReceiptMode != PosPrinterModes.WindowsRaw
+                : settings.OrderMode != OrderPrinterModes.WindowsPrint) ||
             string.IsNullOrWhiteSpace(printerName))
             throw new InvalidOperationException(
-                "Configura la impresora de facturación en formato tirilla para imprimir este ticket.");
+                "Configura la impresora de facturación para este formato antes de imprimir el movimiento.");
 
         var documentName = $"Movimiento-{ticket.DocumentId:N}";
         return renderedPrintJob.PrintAsync(
             printerName,
             documentName,
-            RenderHtml(ticket, workstation, settings.ReceiptPaperWidthMillimeters),
+            RenderHtml(ticket, workstation, settings.ReceiptPaperWidthMillimeters, format),
             configuration.ReceiptOutputDirectory,
-            settings.ReceiptPaperWidthMillimeters,
+            format == PrintTemplateFormats.Receipt ? settings.ReceiptPaperWidthMillimeters : null,
             cancellationToken);
     }
 
@@ -87,20 +94,24 @@ public sealed class PosCashMovementTicketPrinter(
     internal static string RenderHtml(
         PosCashMovementTicket ticket,
         PosWorkstationIdentity? workstation,
-        int paperWidthMillimeters) =>
+        int paperWidthMillimeters,
+        string format = PrintTemplateFormats.Receipt) =>
         RenderHtml(
             ticket,
             workstation,
             paperWidthMillimeters,
             ticket.Direction == "In"
-                ? PosPrintTemplateCatalog.CashEntry
-                : PosPrintTemplateCatalog.CashExit,
+                ? format == PrintTemplateFormats.Receipt
+                    ? PosPrintTemplateCatalog.CashEntry : PosPrintTemplateCatalog.CashEntrySheet
+                : format == PrintTemplateFormats.Receipt
+                    ? PosPrintTemplateCatalog.CashExit : PosPrintTemplateCatalog.CashExitSheet,
             "1mm",
             "26mm",
             "6px",
             includeWarehouse: false,
             dashedAmount: true,
-            separateResponsible: true);
+            separateResponsible: true,
+            format: format);
 
     internal static string RenderHtmlV2(
         PosCashMovementTicket ticket,
@@ -148,10 +159,23 @@ public sealed class PosCashMovementTicketPrinter(
         string footerMargin,
         bool includeWarehouse,
         bool dashedAmount,
-        bool separateResponsible)
+        bool separateResponsible,
+        string format = PrintTemplateFormats.Receipt)
     {
-        if (paperWidthMillimeters is not (58 or 80))
+        if (format is not (PrintTemplateFormats.Receipt or PrintTemplateFormats.HalfLetter or
+                PrintTemplateFormats.HalfLegal or PrintTemplateFormats.Letter) ||
+            (format == PrintTemplateFormats.Receipt && paperWidthMillimeters is not (58 or 80)))
             throw new ArgumentOutOfRangeException(nameof(paperWidthMillimeters));
+        var pageSize = format switch
+        {
+            PrintTemplateFormats.Receipt => $"{paperWidthMillimeters}mm auto",
+            PrintTemplateFormats.HalfLetter => "215.9mm 139.7mm",
+            PrintTemplateFormats.HalfLegal => "215.9mm 165.1mm",
+            _ => "Letter portrait"
+        };
+        var sheet = format != PrintTemplateFormats.Receipt;
+        var maxWidth = sheet ? "max-width:185mm;" : string.Empty;
+        var bodyMargin = sheet ? "0 auto" : "0";
         var logoSource = workstation?.PrintLogoSource;
         var logo = string.IsNullOrWhiteSpace(logoSource)
             ? string.Empty
@@ -179,7 +203,7 @@ public sealed class PosCashMovementTicketPrinter(
             : string.Empty;
         var amountBorder = dashedAmount ? "dashed" : "solid";
         var html = $$"""
-<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{paperWidthMillimeters}}mm auto;margin:3mm}*{box-sizing:border-box}body{width:{{paperWidthMillimeters}}mm;margin:0;padding:5mm 3mm {{bottomPadding}} 2mm;font:10px/1.4 Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:19px;margin:3px;font-weight:800;text-transform:uppercase}h2{font-size:12px;margin:6px 0 3px;font-weight:800;text-transform:uppercase}.scope{margin:2px 0}.detail{font-size:12px;line-height:1.5;overflow-wrap:anywhere}.detail p{margin:6px 0}{{responsibleStyle}}.amount{display:flex;justify-content:space-between;border-block:2px {{amountBorder}} #111;padding:8px 0;margin:12px 0 0;font-size:14px;font-weight:800}.signature{margin-top:{{signatureMargin}};border-top:1px solid #111;text-align:center;padding-top:3px}</style></head><body><header>{{logo}}<h1>{{Encode(companyName)}}</h1><h2>{{(ticket.Direction == "In" ? "Entrada de dinero" : "Salida de dinero")}}</h2>{{business}}</header>{{responsibleBlock}}<div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}{{responsibleInDetails}}<p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="amount"><span>Valor</span><span>{{Money(ticket.Amount)}}</span></div><div class="signature">Firma</div></body></html>
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Movimiento de caja</title><style>@page{size:{{pageSize}};margin:{{(sheet ? "10mm" : "3mm")}}}*{box-sizing:border-box}body{width:{{(sheet ? "auto" : $"{paperWidthMillimeters}mm")}};{{maxWidth}}margin:{{bodyMargin}};padding:5mm 3mm {{bottomPadding}} 2mm;font:{{(sheet ? "12px/1.45" : "10px/1.4")}} Arial,sans-serif;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}img{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{font-size:19px;margin:3px;font-weight:800;text-transform:uppercase}h2{font-size:12px;margin:6px 0 3px;font-weight:800;text-transform:uppercase}.scope{margin:2px 0}.detail{font-size:12px;line-height:1.5;overflow-wrap:anywhere}.detail p{margin:6px 0}{{responsibleStyle}}.amount{display:flex;justify-content:space-between;border-block:2px {{amountBorder}} #111;padding:8px 0;margin:12px 0 0;font-size:14px;font-weight:800}.signature{margin-top:{{signatureMargin}};border-top:1px solid #111;text-align:center;padding-top:3px}</style></head><body><header>{{logo}}<h1>{{Encode(companyName)}}</h1><h2>{{(ticket.Direction == "In" ? "Entrada de dinero" : "Salida de dinero")}}</h2>{{business}}</header>{{responsibleBlock}}<div class="detail"><p><strong>Motivo:</strong> {{Encode(ticket.ReasonName)}}</p>{{reference}}{{notes}}{{responsibleInDetails}}<p><strong>Fecha:</strong> {{ticket.OccurredAt.ToLocalTime():dd/MM/yyyy HH:mm}}</p></div><div class="amount"><span>Valor</span><span>{{Money(ticket.Amount)}}</span></div><div class="signature">Firma</div></body></html>
 """;
         return html
             .Replace(
@@ -192,7 +216,7 @@ public sealed class PosCashMovementTicketPrinter(
                 StringComparison.Ordinal)
             .Replace(
                 "<html lang=\"es\">",
-                $"<html lang=\"es\" data-auraly-report=\"{template.Code}\" data-auraly-report-version=\"{template.Version}\">",
+                $"<html lang=\"es\" data-auraly-report=\"{template.Code}\" data-auraly-report-version=\"{template.Version}\"{(sheet ? $" data-auraly-format=\"{format}\"" : string.Empty)}>",
                 StringComparison.Ordinal);
     }
 

@@ -18,7 +18,7 @@ internal static class SqlPagedSort
         foreach (var tieBreaker in tieBreakers)
         {
             if (!seen.Add(tieBreaker))
-                throw new InvalidOperationException($"La columna {tieBreaker} se repite en el ordenamiento paginado.");
+                continue;
             terms.Add(tieBreaker);
         }
         return string.Join(",", terms);

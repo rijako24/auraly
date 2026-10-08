@@ -436,7 +436,7 @@ group.MapPost("/{draftId:guid}/items", async (
             try
             {
                 var html = new PortfolioPaymentReceiptRenderer().Render(
-                    request.Receipt, request.PaperWidthMillimeters);
+                    request.Receipt, request.Format ?? "Receipt", request.PaperWidthMillimeters);
                 return Results.Ok(new { html });
             }
             catch (ArgumentException exception)
@@ -737,7 +737,8 @@ group.MapPost("/{draftId:guid}/items", async (
 
 public sealed record PortfolioPaymentRenderRequest(
     PortfolioPaymentReceipt Receipt,
-    int PaperWidthMillimeters);
+    int PaperWidthMillimeters,
+    string? Format = null);
 
 public static class OnlineSalesDraftClaimsPrincipalExtensions
 {

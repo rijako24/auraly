@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowRightLeft, Banknote, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, CreditCard, Landmark, Loader2, ReceiptText, Scale, TimerReset, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, ArrowRightLeft, Banknote, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, CreditCard, Landmark, Loader2, Pencil, ReceiptText, Scale, TimerReset, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,13 +14,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
-import { workSessionDifferencesApi, type ClosurePaymentVerification, type ReconcileClosureRequest, type WorkSessionClosure } from "@/services/api/work-session-differences";
+import { workSessionDifferencesApi, type ClosurePaymentCorrection, type ClosurePaymentTotal, type ClosurePaymentVerification, type ReconcileClosureRequest, type WorkSessionClosure } from "@/services/api/work-session-differences";
 import { tenantsApi } from "@/services/api/tenants";
 import { InvoiceChargeSummary } from "@/app/(pos)/pos/pos-invoice-charge-summary";
 import { PosCashClosureDialog } from "@/app/(pos)/pos/pos-cash-closure-dialog";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession, type PosAuthorizedClosurePreview, type PosWorkSessionPaymentCount } from "@/services/pos/pos-edge-client";
 import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, printWorkSessionClosure, workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
-import { cashClosureCashGroups, cashClosureVerificationDecisions, isCashClosureMethodConfirmed, verifiedCashClosureAmount } from "@/services/pos/cash-closure-reconciliation";
+import { cashClosureCashGroups, cashClosureVerificationDecisions, correctedCashClosureAmount, isCashClosureMethodConfirmed, requiresIndividualCashClosureVerification } from "@/services/pos/cash-closure-reconciliation";
 import { useAuthStore } from "@/stores/auth-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
@@ -43,7 +43,7 @@ export default function CashClosuresPage() {
   const pending = rows.filter(row => row.reconciliationStatus === "Pending").length;
 
   return <div className="space-y-5">
-    <header className="rounded-3xl bg-gradient-to-r from-slate-950 via-teal-950 to-cyan-700 p-6 text-white shadow-lg"><p className="text-xs font-bold uppercase tracking-[.2em] text-teal-200">Control y conciliación</p><h1 className="mt-2 text-3xl font-black">Cierres de sesión</h1><p className="mt-2 max-w-3xl text-sm text-teal-50/80">Revisa el efectivo y confirma cada comprobante de tarjeta, transferencia o venta a crédito antes de conciliar.</p></header>
+    <header className="rounded-3xl bg-gradient-to-r from-slate-950 via-teal-950 to-cyan-700 p-6 text-white shadow-lg"><p className="text-xs font-bold uppercase tracking-[.2em] text-teal-200">Control y conciliación</p><h1 className="mt-2 text-3xl font-black">Cierres de sesión</h1><p className="mt-2 max-w-3xl text-sm text-teal-50/80">Revisa las ventas y devoluciones, confirma los demás movimientos y cuadra el efectivo antes de conciliar.</p></header>
     {canReadOwnSession && <ActiveWorkSessionPanel />}
     <div className="grid gap-4 sm:grid-cols-3"><Summary title="Cierres encontrados" value={closures.isError ? "—" : String(closures.data?.totalItems ?? 0)} icon={<Scale className="h-5 w-5" />} /><Summary title="Pendientes en esta página" value={closures.isError ? "—" : String(pending)} icon={<Clock3 className="h-5 w-5 text-amber-600" />} /><Summary title="Otros estados en esta página" value={closures.isError ? "—" : String(rows.length - pending)} icon={<CheckCircle2 className="h-5 w-5 text-emerald-600" />} /></div>
     <Card className="overflow-hidden rounded-3xl"><CardHeader className="gap-5 border-b"><div><CardTitle>Historial de cierres</CardTitle><p className="mt-1 text-sm text-muted-foreground">Cada cierre conserva el cuadre y su resultado contable.</p></div><div className="grid w-full max-w-4xl gap-3 md:grid-cols-3"><div className="min-w-0 space-y-1.5"><Label htmlFor="closure-from">Desde</Label><DatePicker id="closure-from" value={from} onChange={value => { setFrom(value); setPage(1); }} /></div><div className="min-w-0 space-y-1.5"><Label htmlFor="closure-to">Hasta</Label><DatePicker id="closure-to" value={to} onChange={value => { setTo(value); setPage(1); }} /></div><div className="min-w-0 space-y-1.5"><Label htmlFor="closure-status">Estado</Label><Select value={status} onValueChange={value => { setStatus(value); setPage(1); }}><SelectTrigger id="closure-status" aria-label="Estado del cierre" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Pending">Pendientes</SelectItem><SelectItem value="Partial">Parciales</SelectItem><SelectItem value="Reconciled">Conciliados</SelectItem><SelectItem value="ReconciledWithDifferences">Conciliados con diferencias</SelectItem><SelectItem value="all">Todos</SelectItem></SelectContent></Select></div></div></CardHeader><CardContent className="p-0">
@@ -161,21 +161,36 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
   const queryClient = useQueryClient();
   const countable = closure.paymentTotals.filter(item => item.requiresCount);
   const editable = canReconcile && closure.reconciliationStatus === "Pending";
-  const verificationQuery = useQuery({ queryKey: ["work-session-payment-verifications", closure.workSessionClosureId], queryFn: () => workSessionDifferencesApi.listPaymentVerifications(closure.workSessionClosureId) });
+  const verificationQuery = useQuery({ queryKey: ["work-session-payment-verification-groups", closure.workSessionClosureId], queryFn: () => workSessionDifferencesApi.listPaymentVerifications(closure.workSessionClosureId, 1, 1), staleTime: Infinity, refetchOnWindowFocus: false });
   const snapshotQuery = useQuery({ queryKey: ["work-session-closure-snapshot", closure.workSessionId],
     queryFn: () => workSessionDifferencesApi.closureSnapshot(closure.workSessionId), staleTime: Infinity,
     refetchOnWindowFocus: false, retry: false });
   const invoiceCharges = snapshotQuery.data?.invoiceCharges ?? [];
-  const verificationItems = useMemo(() => verificationQuery.data ?? [], [verificationQuery.data]);
+  const [loadedItems, setLoadedItems] = useState<Record<string, ClosurePaymentVerification>>({});
+  const verificationItems = useMemo(() => Object.values(loadedItems), [loadedItems]);
   const byMethod = useMemo(() => verificationItems.reduce<Record<string, ClosurePaymentVerification[]>>((groups, item) => { (groups[item.paymentMethodCode] ??= []).push(item); return groups; }, {}), [verificationItems]);
+  const onItemsLoaded = useCallback((items: ClosurePaymentVerification[]) => setLoadedItems(current => {
+    const pending = items.filter(item => current[item.verificationKey] === undefined);
+    if (!pending.length) return current;
+    return { ...current, ...Object.fromEntries(pending.map(item => [item.verificationKey, item])) };
+  }), []);
   const [verified, setVerified] = useState<Record<string, string>>(() => Object.fromEntries(countable.map(item => [item.paymentMethodCode, String(item.countedAmount ?? item.netAmount)])));
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>(() => Object.fromEntries(countable.map(item => [item.paymentMethodCode, false])));
   const [verificationStatus, setVerificationStatus] = useState<Record<string, VerificationStatus>>({});
+  const [paymentCorrections, setPaymentCorrections] = useState<Record<string, ClosurePaymentCorrection>>({});
+  const [editingCorrection, setEditingCorrection] = useState<ClosurePaymentVerification | null>(null);
   const [expandedMethods, setExpandedMethods] = useState<Record<string, boolean>>({});
   const [reclassifications, setReclassifications] = useState<ReconcileClosureRequest["reclassifications"]>([]);
   const [note, setNote] = useState("");
   const reasons = useReferenceOptions("cash-reconciliation-reason", editable);
   const [reasonCode, setReasonCode] = useState("COUNT_DIFFERENCE");
+  const changeVerificationStatus = (key: string, status: VerificationStatus) => {
+    setVerificationStatus(current => ({ ...current, [key]: status }));
+    if (status === "Missing") setPaymentCorrections(current => {
+      if (!current[key]) return current;
+      const next = { ...current }; delete next[key]; return next;
+    });
+  };
   useEffect(() => {
     const persisted = Object.fromEntries(
       verificationItems
@@ -183,24 +198,50 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
           item.status === "Verified" || item.status === "Missing")
         .map(item => [item.verificationKey, item.status]),
     );
-    if (Object.keys(persisted).length) setVerificationStatus(persisted);
+    if (Object.keys(persisted).length) setVerificationStatus(current => ({ ...persisted, ...current }));
   }, [verificationItems]);
   useEffect(() => setReclassifications([]), [verificationStatus]);
   const methodItems = (code: string) => byMethod[code] ?? [];
   const requiredVerificationItems = cashClosureVerificationDecisions(verificationItems);
   const cashGroups = cashClosureCashGroups(methodItems("Cash"));
+  const groupCount = (code: string, movementType?: string) => (verificationQuery.data?.groups ?? [])
+    .filter(group => group.paymentMethodCode === code && (!movementType || group.movementType === movementType))
+    .reduce((total, group) => total + group.count, 0);
+  const groupTotal = (code: string, movementType?: string) => (verificationQuery.data?.groups ?? [])
+    .filter(group => group.paymentMethodCode === code && (!movementType || group.movementType === movementType))
+    .reduce((total, group) => total + group.totalAmount, 0);
+  const groupRequiresVerification = (code: string) => (verificationQuery.data?.groups ?? [])
+    .some(group => group.paymentMethodCode === code && requiresIndividualCashClosureVerification({
+      verificationKey: "", paymentMethodCode: code, movementType: group.movementType,
+      amount: group.totalAmount,
+    }));
   const creditItems = methodItems("Credit").filter(item => item.movementType === "CreditSale");
-  const methodVerifiedAmount = (code: string) => verifiedCashClosureAmount(
-    code, verificationItems, verificationStatus, Number(verified[code] ?? 0));
+  const methodVerifiedAmount = (code: string) => correctedCashClosureAmount(
+    code, verificationItems, verificationStatus, paymentCorrections,
+    Number(verified.Cash ?? 0), Object.fromEntries((verificationQuery.data?.groups ?? [])
+      .filter(group => group.movementType === "Sale" || group.movementType === "Refund")
+      .map(group => [group.paymentMethodCode, groupTotal(group.paymentMethodCode, "Sale") + groupTotal(group.paymentMethodCode, "Refund")])));
   const methodIsConfirmed = (code: string) => isCashClosureMethodConfirmed(
-    code, verificationItems, verificationStatus, confirmed[code] ?? false);
-  const differences = Object.fromEntries(countable.map(item => [item.paymentMethodCode, methodVerifiedAmount(item.paymentMethodCode) - item.netAmount]));
+    code, verificationItems, verificationStatus, (confirmed[code] ?? false) ||
+      (groupCount(code) > 0 && !groupRequiresVerification(code)));
+  const expectedAmount = (item: ClosurePaymentTotal) => item.paymentMethodCode === "Cash"
+    ? closure.expectedCash ?? item.netAmount : item.netAmount;
+  const differences = Object.fromEntries(countable.map(item => [item.paymentMethodCode,
+    methodVerifiedAmount(item.paymentMethodCode) - expectedAmount(item)]));
   const adjustedDifferences = { ...differences }; for (const item of reclassifications) { adjustedDifferences[item.fromPaymentMethodCode] = (adjustedDifferences[item.fromPaymentMethodCode] ?? 0) + item.amount; adjustedDifferences[item.toPaymentMethodCode] = (adjustedDifferences[item.toPaymentMethodCode] ?? 0) - item.amount; }
-  const mutation = useMutation({ mutationFn: () => workSessionDifferencesApi.reconcile(closure.workSessionClosureId, { lines: countable.map(item => ({ paymentMethodCode: item.paymentMethodCode, verifiedAmount: methodVerifiedAmount(item.paymentMethodCode), isConfirmed: methodIsConfirmed(item.paymentMethodCode), reasonCode: adjustedDifferences[item.paymentMethodCode] === 0 ? null : reasonCode })), paymentVerifications: requiredVerificationItems.map(item => ({ verificationKey: item.verificationKey, status: verificationStatus[item.verificationKey]! })), reclassifications, note: note.trim() || null }), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["work-session-closures"] }); onClose(); } });
-  const shortage = countable.find(item => differences[item.paymentMethodCode] < 0); const surplus = countable.find(item => differences[item.paymentMethodCode] > 0);
+  for (const item of Object.values(paymentCorrections)) { const original = loadedItems[item.verificationKey]; if (original) { adjustedDifferences[original.paymentMethodCode] = (adjustedDifferences[original.paymentMethodCode] ?? 0) + original.amount; adjustedDifferences[item.paymentMethodCode] = (adjustedDifferences[item.paymentMethodCode] ?? 0) - item.amount; } }
+  const mutation = useMutation({ mutationFn: () => workSessionDifferencesApi.reconcile(closure.workSessionClosureId, { lines: countable.map(item => ({ paymentMethodCode: item.paymentMethodCode, verifiedAmount: methodVerifiedAmount(item.paymentMethodCode), isConfirmed: methodIsConfirmed(item.paymentMethodCode), reasonCode: adjustedDifferences[item.paymentMethodCode] === 0 ? null : reasonCode })), paymentVerifications: requiredVerificationItems.map(item => ({ verificationKey: item.verificationKey, status: verificationStatus[item.verificationKey]! })), paymentCorrections: Object.values(paymentCorrections), reclassifications, note: note.trim() || null }), onSuccess: async () => { void queryClient.invalidateQueries({ queryKey: ["work-session-payment-verification-groups", closure.workSessionClosureId], refetchType: "none" }); void queryClient.invalidateQueries({ queryKey: ["work-session-payment-verifications", closure.workSessionClosureId], refetchType: "none" }); await queryClient.invalidateQueries({ queryKey: ["work-session-closures"] }); onClose(); } });
+  const shortage = Object.keys(paymentCorrections).length ? undefined : countable.find(item => differences[item.paymentMethodCode] < 0); const surplus = Object.keys(paymentCorrections).length ? undefined : countable.find(item => differences[item.paymentMethodCode] > 0);
   const suggestReclassification = () => { if (shortage && surplus) setReclassifications([{ fromPaymentMethodCode: shortage.paymentMethodCode, toPaymentMethodCode: surplus.paymentMethodCode, amount: Math.min(Math.abs(differences[shortage.paymentMethodCode]), differences[surplus.paymentMethodCode]) }]); };
-  const allVerificationDecisionsMade = requiredVerificationItems.every(item => verificationStatus[item.verificationKey] !== undefined);
-  const valid = !verificationQuery.isLoading && !verificationQuery.isError && allVerificationDecisionsMade && countable.every(item => { const amount = methodVerifiedAmount(item.paymentMethodCode); return Number.isFinite(amount) && amount >= 0 && methodIsConfirmed(item.paymentMethodCode); });
+  const requiredTotal = (verificationQuery.data?.groups ?? [])
+    .filter(group => requiresIndividualCashClosureVerification({
+      verificationKey: "", paymentMethodCode: group.paymentMethodCode,
+      movementType: group.movementType, amount: group.totalAmount,
+    }))
+    .reduce((total, group) => total + group.count, 0);
+  const allVerificationDecisionsMade = requiredVerificationItems.length === requiredTotal &&
+    requiredVerificationItems.every(item => verificationStatus[item.verificationKey] !== undefined);
+  const valid = !verificationQuery.isLoading && !verificationQuery.isError && allVerificationDecisionsMade && countable.every(item => { const amount = methodVerifiedAmount(item.paymentMethodCode); return Number.isFinite(amount) && (item.paymentMethodCode !== "Cash" || amount >= 0) && methodIsConfirmed(item.paymentMethodCode); });
 
   return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent className="flex max-h-[94vh] max-w-4xl flex-col overflow-hidden p-0"><DialogHeader className="shrink-0 border-b bg-gradient-to-r from-slate-950 to-teal-900 p-6 text-left text-white"><DialogTitle className="text-xl text-white">{editable ? "Conciliar cierre" : "Detalle del cierre"}</DialogTitle><DialogDescription className="text-slate-200">{closure.userName} · {closure.businessName} · {new Date(closure.closedAt).toLocaleString("es-CO")}</DialogDescription></DialogHeader><div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-2">
     {verificationQuery.isLoading && <div className="flex items-center justify-center gap-2 rounded-2xl bg-muted p-5 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Cargando comprobantes…</div>}{verificationQuery.isError && <div className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"><AlertCircle className="h-5 w-5" />No fue posible cargar los comprobantes. No se habilitará la conciliación.</div>}
@@ -210,29 +251,31 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
       const visibleItems = cash ? [] : items;
       const difference = differences[item.paymentMethodCode];
       return <section key={item.paymentMethodCode} className="overflow-hidden rounded-2xl border bg-white shadow-sm">
-        <div className="flex flex-col gap-3 border-b bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="rounded-xl bg-teal-100 p-2 text-teal-800"><PaymentIcon code={item.paymentMethodCode} /></div><div><strong className="text-base">{workSessionPaymentMethodName(item.paymentMethodCode)}</strong><p className="text-sm text-muted-foreground">Esperado {money.format(item.netAmount)} · reportado al cerrar {money.format(item.countedAmount ?? 0)}</p></div></div><div className={`text-left sm:text-right ${difference < 0 ? "text-red-700" : difference > 0 ? "text-emerald-700" : "text-slate-700"}`}><span className="block text-xs font-semibold uppercase tracking-wide">Resultado</span><strong>{result(difference)}</strong></div></div>
+        <div className="flex flex-col gap-3 border-b bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="rounded-xl bg-teal-100 p-2 text-teal-800"><PaymentIcon code={item.paymentMethodCode} /></div><div><strong className="text-base">{workSessionPaymentMethodName(item.paymentMethodCode)}</strong><p className="text-sm text-muted-foreground">Esperado {money.format(expectedAmount(item))} · reportado al cerrar {money.format(item.countedAmount ?? 0)}</p></div></div><div className={`text-left sm:text-right ${difference < 0 ? "text-red-700" : difference > 0 ? "text-emerald-700" : "text-slate-700"}`}><span className="block text-xs font-semibold uppercase tracking-wide">Resultado</span><strong>{result(difference)}</strong></div></div>
         {snapshotQuery.isSuccess && <InvoiceChargeSummary charges={invoiceCharges} paymentMethod={item.paymentMethodCode} />}
         {cash && <div className="space-y-3 p-4">
-          <p className="text-sm text-muted-foreground">Verifica individualmente las entradas y salidas. Las ventas de contado, comprobantes y devoluciones no requieren confirmación.</p>
+          <p className="text-sm text-muted-foreground">Revisa las facturas, devoluciones, abonos, pagos a proveedores, entradas y salidas. El efectivo confirmado es el valor que realmente contaste.</p>
           {cashGroups.map(group => {
             const expansionKey = `Cash:${group.key}`;
-            const groupTotal = group.items.filter(value => verificationStatus[value.verificationKey] === "Verified").reduce((sum, value) => sum + value.amount, 0);
+            const requiresVerification = group.key !== "Sale" && group.key !== "Refund";
+            const total = Math.abs(groupTotal("Cash", group.key));
+            const count = groupCount("Cash", group.key);
+            const reviewed = group.items.filter(value => verificationStatus[value.verificationKey]).length;
             return <div key={group.key} className="overflow-hidden rounded-xl border">
-              <button type="button" className="flex w-full items-center justify-between gap-3 bg-white p-3 text-left transition hover:bg-slate-50" onClick={() => setExpandedMethods(current => ({ ...current, [expansionKey]: !current[expansionKey] }))}><span><strong>{group.label}</strong><small className="mt-1 block text-muted-foreground">{group.items.filter(value => verificationStatus[value.verificationKey]).length} de {group.items.length} revisados · {money.format(groupTotal)} confirmados</small></span><span className="inline-flex items-center gap-2 text-sm font-semibold text-teal-800">{expandedMethods[expansionKey] ? "Ocultar" : "Ver detalle"}{expandedMethods[expansionKey] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span></button>
-              {expandedMethods[expansionKey] && <div className="space-y-2 border-t bg-slate-50/50 p-3">{group.items.map(value => <VerificationRow key={value.verificationKey} item={value} status={verificationStatus[value.verificationKey]} disabled={!editable} onChange={status => setVerificationStatus(current => ({ ...current, [value.verificationKey]: status }))} />)}</div>}
+              <button type="button" className="flex w-full items-center justify-between gap-3 bg-white p-3 text-left transition hover:bg-slate-50" onClick={() => setExpandedMethods(current => ({ ...current, [expansionKey]: !current[expansionKey] }))}><span><strong>{group.label}</strong><small className="mt-1 block text-muted-foreground">{count} registro{count === 1 ? "" : "s"} · Total {money.format(total)}{requiresVerification ? ` · ${reviewed} revisados` : ""}</small></span><span className="inline-flex items-center gap-2 text-sm font-semibold text-teal-800">{expandedMethods[expansionKey] ? "Ocultar" : "Ver detalle"}{expandedMethods[expansionKey] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span></button>
+              {expandedMethods[expansionKey] && <PagedVerificationRows closureId={closure.workSessionClosureId} paymentMethodCode="Cash" movementType={group.key} informational={!requiresVerification} disabled={!editable} statuses={verificationStatus} onStatus={changeVerificationStatus} onItemsLoaded={onItemsLoaded} corrections={paymentCorrections} onCorrect={setEditingCorrection} />}
             </div>;
           })}
-          {cashGroups.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">No hay entradas ni salidas pendientes de verificar.</p>}
-          <div className="flex justify-end text-sm"><span className="rounded-xl bg-teal-50 px-3 py-2 text-teal-900">Total efectivo confirmado: <strong>{money.format(methodVerifiedAmount(item.paymentMethodCode))}</strong></span></div>
+          <div className="grid gap-3 border-t pt-3 sm:grid-cols-[1fr_auto] sm:items-end"><div className="space-y-1.5"><Label htmlFor="closure-cash-verified">Efectivo contado y confirmado</Label><Input id="closure-cash-verified" inputMode="numeric" disabled={!editable} value={formatWorkSessionCountInput(verified.Cash ?? "")} onChange={event => setVerified(current => ({ ...current, Cash: normalizeWorkSessionCountInput(event.target.value) }))} /></div><span className="rounded-xl bg-teal-50 px-3 py-2 text-sm text-teal-900">Total efectivo confirmado: <strong>{money.format(methodVerifiedAmount(item.paymentMethodCode))}</strong></span></div>
         </div>}
-        {visibleItems.length > 0 && <div className="px-4 pt-4"><button type="button" className="flex w-full items-center justify-between gap-3 rounded-xl border bg-white p-3 text-left transition hover:bg-slate-50" onClick={() => setExpandedMethods(current => ({ ...current, [item.paymentMethodCode]: !current[item.paymentMethodCode] }))}><span><strong>{visibleItems.length} comprobante{visibleItems.length === 1 ? "" : "s"}</strong><small className="mt-1 block text-muted-foreground">{visibleItems.filter(value => verificationStatus[value.verificationKey]).length} revisados · {money.format(methodVerifiedAmount(item.paymentMethodCode))} confirmados</small></span><span className="inline-flex items-center gap-2 text-sm font-semibold text-teal-800">{expandedMethods[item.paymentMethodCode] ? "Ocultar detalle" : "Ver y conciliar detalle"}{expandedMethods[item.paymentMethodCode] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span></button>{expandedMethods[item.paymentMethodCode] && <div className="mt-3"><p className="mb-3 text-sm text-muted-foreground">Confirma cada comprobante. Si no está físicamente, márcalo como no encontrado.</p><div className="space-y-2">{visibleItems.map(value => <VerificationRow key={value.verificationKey} item={value} status={verificationStatus[value.verificationKey]} disabled={!editable} onChange={status => setVerificationStatus(current => ({ ...current, [value.verificationKey]: status }))} />)}</div><div className="mt-3 flex justify-end text-sm"><span className="rounded-xl bg-teal-50 px-3 py-2 text-teal-900">Total confirmado: <strong>{money.format(methodVerifiedAmount(item.paymentMethodCode))}</strong></span></div></div>}</div>}
-        {!cash && items.length === 0 && <div className="grid gap-4 p-4 sm:grid-cols-[1fr_190px_auto] sm:items-end"><p className="text-sm text-muted-foreground">No hay comprobantes individuales asociados; verifica el total.</p><div className="space-y-1.5"><Label>Total verificado</Label><Input inputMode="numeric" disabled={!editable} value={formatWorkSessionCountInput(verified[item.paymentMethodCode] ?? "")} onChange={event => setVerified(current => ({ ...current, [item.paymentMethodCode]: normalizeWorkSessionCountInput(event.target.value) }))} /></div><label className="flex h-10 items-center gap-2 rounded-xl border px-3"><Checkbox disabled={!editable} checked={confirmed[item.paymentMethodCode]} onCheckedChange={value => setConfirmed(current => ({ ...current, [item.paymentMethodCode]: value === true }))} />Revisado</label></div>}
+        {!cash && groupCount(item.paymentMethodCode) > 0 && <div className="px-4 pt-4"><button type="button" className="flex w-full items-center justify-between gap-3 rounded-xl border bg-white p-3 text-left transition hover:bg-slate-50" onClick={() => setExpandedMethods(current => ({ ...current, [item.paymentMethodCode]: !current[item.paymentMethodCode] }))}><span><strong>{groupCount(item.paymentMethodCode)} comprobantes</strong><small className="mt-1 block text-muted-foreground">{groupRequiresVerification(item.paymentMethodCode) ? `${visibleItems.filter(value => verificationStatus[value.verificationKey]).length} revisados · ` : ""}{money.format(methodVerifiedAmount(item.paymentMethodCode))} registrados</small></span><span className="inline-flex items-center gap-2 text-sm font-semibold text-teal-800">{expandedMethods[item.paymentMethodCode] ? "Ocultar detalle" : "Ver detalle"}{expandedMethods[item.paymentMethodCode] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span></button>{expandedMethods[item.paymentMethodCode] && <div className="mt-3"><p className="mb-3 text-sm text-muted-foreground">{groupRequiresVerification(item.paymentMethodCode) ? "Confirma los movimientos distintos de ventas y devoluciones; si uno no está físicamente, márcalo como no encontrado." : "Las ventas y devoluciones se muestran como información del cierre."}</p><PagedVerificationRows closureId={closure.workSessionClosureId} paymentMethodCode={item.paymentMethodCode} disabled={!editable} statuses={verificationStatus} onStatus={changeVerificationStatus} onItemsLoaded={onItemsLoaded} corrections={paymentCorrections} onCorrect={setEditingCorrection} /><div className="mt-3 flex justify-end text-sm"><span className="rounded-xl bg-teal-50 px-3 py-2 text-teal-900">Total registrado: <strong>{money.format(methodVerifiedAmount(item.paymentMethodCode))}</strong></span></div></div>}</div>}
+        {!cash && groupCount(item.paymentMethodCode) === 0 && <div className="grid gap-4 p-4 sm:grid-cols-[1fr_190px_auto] sm:items-end"><p className="text-sm text-muted-foreground">No hay comprobantes individuales asociados; verifica el total.</p><div className="space-y-1.5"><Label>Total verificado</Label><Input inputMode="numeric" disabled={!editable} value={formatWorkSessionCountInput(verified[item.paymentMethodCode] ?? "")} onChange={event => setVerified(current => ({ ...current, [item.paymentMethodCode]: normalizeWorkSessionCountInput(event.target.value) }))} /></div><label className="flex h-10 items-center gap-2 rounded-xl border px-3"><Checkbox disabled={!editable} checked={confirmed[item.paymentMethodCode]} onCheckedChange={value => setConfirmed(current => ({ ...current, [item.paymentMethodCode]: value === true }))} />Revisado</label></div>}
       </section>;
     })}
     <section className="overflow-hidden rounded-2xl border bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="rounded-xl bg-teal-100 p-2 text-teal-800"><CreditCard className="h-5 w-5" /></div><div><strong className="text-base">Ventas a crédito</strong><p className="text-sm text-muted-foreground">{creditItems.length} factura{creditItems.length === 1 ? "" : "s"} · Total {money.format(creditItems.reduce((sum, item) => sum + item.amount, 0))}</p></div></div><div className="text-left text-slate-700 sm:text-right"><span className="block text-xs font-semibold uppercase tracking-wide">Revisión</span><strong>{creditItems.filter(item => verificationStatus[item.verificationKey]).length} de {creditItems.length}</strong></div></div>
+      <div className="flex flex-col gap-3 border-b bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="rounded-xl bg-teal-100 p-2 text-teal-800"><CreditCard className="h-5 w-5" /></div><div><strong className="text-base">Ventas a crédito</strong><p className="text-sm text-muted-foreground">{groupCount("Credit", "CreditSale")} facturas · Total {money.format(groupTotal("Credit", "CreditSale"))}</p></div></div><div className="text-left text-slate-700 sm:text-right"><span className="block text-xs font-semibold uppercase tracking-wide">Revisión</span><strong>{creditItems.filter(item => verificationStatus[item.verificationKey]).length} de {groupCount("Credit", "CreditSale")}</strong></div></div>
       {snapshotQuery.isSuccess && <InvoiceChargeSummary charges={invoiceCharges} paymentMethod="Credit" />}
-      <div className="p-4">{creditItems.length > 0 ? <><button type="button" className="flex w-full items-center justify-between gap-3 rounded-xl border bg-white p-3 text-left transition hover:bg-slate-50" onClick={() => setExpandedMethods(current => ({ ...current, Credit: !current.Credit }))}><span><strong>Facturas a crédito</strong><small className="mt-1 block text-muted-foreground">{money.format(methodVerifiedAmount("Credit"))} confirmados</small></span><span className="inline-flex items-center gap-2 text-sm font-semibold text-teal-800">{expandedMethods.Credit ? "Ocultar detalle" : "Ver y conciliar detalle"}{expandedMethods.Credit ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span></button>{expandedMethods.Credit && <div className="mt-3"><p className="mb-3 text-sm text-muted-foreground">Verifica cada venta a crédito contra la factura y el cliente.</p><div className="space-y-2">{creditItems.map(value => <VerificationRow key={value.verificationKey} item={value} status={verificationStatus[value.verificationKey]} disabled={!editable} onChange={status => setVerificationStatus(current => ({ ...current, [value.verificationKey]: status }))} />)}</div><div className="mt-3 flex justify-end text-sm"><span className="rounded-xl bg-teal-50 px-3 py-2 text-teal-900">Total confirmado: <strong>{money.format(methodVerifiedAmount("Credit"))}</strong></span></div></div>}</> : <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">No hay ventas a crédito en este cierre.</p>}</div>
+      <div className="p-4">{groupCount("Credit", "CreditSale") > 0 ? <><button type="button" className="flex w-full items-center justify-between gap-3 rounded-xl border bg-white p-3 text-left transition hover:bg-slate-50" onClick={() => setExpandedMethods(current => ({ ...current, Credit: !current.Credit }))}><span><strong>Facturas a crédito</strong><small className="mt-1 block text-muted-foreground">{money.format(methodVerifiedAmount("Credit"))} confirmados</small></span><span className="inline-flex items-center gap-2 text-sm font-semibold text-teal-800">{expandedMethods.Credit ? "Ocultar detalle" : "Ver y conciliar detalle"}{expandedMethods.Credit ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span></button>{expandedMethods.Credit && <div className="mt-3"><p className="mb-3 text-sm text-muted-foreground">Verifica cada venta a crédito contra la factura y el cliente.</p><PagedVerificationRows closureId={closure.workSessionClosureId} paymentMethodCode="Credit" movementType="CreditSale" disabled={!editable} statuses={verificationStatus} onStatus={(key, status) => setVerificationStatus(current => ({ ...current, [key]: status }))} onItemsLoaded={onItemsLoaded} /><div className="mt-3 flex justify-end text-sm"><span className="rounded-xl bg-teal-50 px-3 py-2 text-teal-900">Total confirmado: <strong>{money.format(methodVerifiedAmount("Credit"))}</strong></span></div></div>}</> : <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">No hay ventas a crédito en este cierre.</p>}</div>
     </section>
     {snapshotQuery.isLoading && <p className="p-4 text-sm text-muted-foreground">Cargando cargos del cierre…</p>}
     {snapshotQuery.isError && <div className="flex items-center justify-between gap-3 p-4 text-sm text-destructive">No fue posible cargar los cargos.<Button variant="outline" onClick={() => void snapshotQuery.refetch()}>Reintentar</Button></div>}
@@ -240,16 +283,76 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
     {editable && shortage && surplus && <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 text-indigo-950"><div className="flex flex-col items-center gap-3 text-center"><ArrowRightLeft className="h-6 w-6" /><div><strong>Hay un faltante y un sobrante que se pueden cruzar</strong><p className="mt-1 text-sm text-indigo-800">Faltan {money.format(Math.abs(differences[shortage.paymentMethodCode]))} en {workSessionPaymentMethodName(shortage.paymentMethodCode)} y sobran {money.format(differences[surplus.paymentMethodCode])} en {workSessionPaymentMethodName(surplus.paymentMethodCode)}.</p></div>{!reclassifications.length && <Button type="button" variant="outline" onClick={suggestReclassification}>Cruzar diferencias</Button>}</div>{reclassifications.map((item, index) => <div key={index} className="mx-auto mt-4 flex max-w-xl items-center justify-between gap-3 rounded-xl bg-white p-3 text-sm font-semibold shadow-sm"><span>{workSessionPaymentMethodName(item.fromPaymentMethodCode)} → {workSessionPaymentMethodName(item.toPaymentMethodCode)} · {money.format(item.amount)}</span><button type="button" className="inline-flex items-center gap-1 text-red-700" onClick={() => setReclassifications([])}><X className="h-4 w-4" />Quitar</button></div>)}</div>}
     {editable && Object.values(adjustedDifferences).some(value => value !== 0) && <div className="space-y-2"><Label>Motivo de la diferencia</Label><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(reasons.data ?? []).map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></div>}
     <div className="space-y-2"><Label>Observación</Label><Textarea disabled={!editable} value={note} onChange={event => setNote(event.target.value)} maxLength={500} placeholder="Agrega una nota si hace falta explicar el cierre." /></div>{mutation.isError && <p className="rounded-xl bg-red-50 p-3 text-sm text-destructive">No fue posible conciliar. Revisa los comprobantes, diferencias y motivos.</p>}
-  </div><footer className="flex shrink-0 items-center justify-end gap-3 border-t bg-slate-50 p-5"><Button variant="outline" onClick={onClose}>Cerrar</Button>{editable && <Button disabled={!valid || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Conciliando…</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Confirmar conciliación</>}</Button>}</footer></DialogContent></Dialog>;
+  </div><footer className="flex shrink-0 items-center justify-end gap-3 border-t bg-slate-50 p-5"><Button variant="outline" onClick={onClose}>Cerrar</Button>{editable && <Button disabled={!valid || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Conciliando…</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Confirmar conciliación</>}</Button>}</footer></DialogContent>{editingCorrection && <CorrectionEditor item={editingCorrection} methods={countable.map(item => item.paymentMethodCode)} current={paymentCorrections[editingCorrection.verificationKey]} onClose={() => setEditingCorrection(null)} onRemove={() => { setPaymentCorrections(current => { const next = { ...current }; delete next[editingCorrection.verificationKey]; return next; }); setEditingCorrection(null); }} onApply={correction => { setPaymentCorrections(current => ({ ...current, [correction.verificationKey]: correction })); setReclassifications([]); if (requiresIndividualCashClosureVerification(editingCorrection)) changeVerificationStatus(editingCorrection.verificationKey, "Verified"); setEditingCorrection(null); }} />}</Dialog>;
 }
 
-function VerificationRow({ item, status, disabled, informational = false, onChange }: { item: ClosurePaymentVerification; status?: VerificationStatus; disabled: boolean; informational?: boolean; onChange: (status: VerificationStatus) => void }) {
+function CorrectionEditor({ item, methods, current, onClose, onRemove, onApply }: {
+  item: ClosurePaymentVerification; methods: string[]; current?: ClosurePaymentCorrection;
+  onClose: () => void; onRemove: () => void; onApply: (value: ClosurePaymentCorrection) => void;
+}) {
+  const [method, setMethod] = useState(current?.paymentMethodCode ?? item.paymentMethodCode);
+  const [amountInput, setAmountInput] = useState(String(Math.abs(current?.amount ?? item.amount)));
+  const [reason, setReason] = useState(current?.reason ?? "");
+  const amount = Number(amountInput) * Math.sign(item.amount);
+  const available = item.movementType === "CashIn" || item.movementType === "CashOut" ? ["Cash"] : methods;
+  const valid = Number.isFinite(amount) && amount !== 0 && reason.trim().length > 0 &&
+    (method !== item.paymentMethodCode || amount !== item.amount) &&
+    (item.movementType !== "Refund" || Math.abs(amount) <= Math.abs(item.amount));
+  return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Corregir comprobante</DialogTitle><DialogDescription>{item.documentNumber} · {verificationMovementName(item)}. El cambio se aplicará al confirmar la conciliación.</DialogDescription></DialogHeader><div className="space-y-4 py-2"><p className="rounded-xl bg-slate-50 p-3 text-sm">Registrado: <strong>{workSessionPaymentMethodName(item.paymentMethodCode)} · {money.format(Math.abs(item.amount))}</strong></p><div className="space-y-1.5"><Label>Medio real</Label><Select value={method} onValueChange={setMethod}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{available.map(code => <SelectItem key={code} value={code}>{workSessionPaymentMethodName(code)}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1.5"><Label htmlFor="closure-correction-amount">Valor real</Label><Input id="closure-correction-amount" inputMode="decimal" value={formatWorkSessionCountInput(amountInput)} onChange={event => setAmountInput(normalizeWorkSessionCountInput(event.target.value))} /></div><div className="space-y-1.5"><Label htmlFor="closure-correction-reason">Motivo de la corrección</Label><Textarea id="closure-correction-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={500} /></div></div><div className="flex justify-end gap-2">{current && <Button variant="ghost" className="mr-auto" onClick={onRemove}>Quitar corrección</Button>}<Button variant="outline" onClick={onClose}>Cerrar</Button><Button disabled={!valid} onClick={() => onApply({ verificationKey: item.verificationKey, paymentMethodCode: method, amount, reason: reason.trim() })}>Aplicar</Button></div></DialogContent></Dialog>;
+}
+
+function PagedVerificationRows({ closureId, paymentMethodCode, movementType, informational = false, disabled,
+  statuses, onStatus, onItemsLoaded, corrections = {}, onCorrect }: {
+    closureId: string; paymentMethodCode: string; movementType?: string; informational?: boolean;
+    disabled: boolean; statuses: Record<string, VerificationStatus>;
+    onStatus: (key: string, status: VerificationStatus) => void;
+    onItemsLoaded: (items: ClosurePaymentVerification[]) => void;
+    corrections?: Record<string, ClosurePaymentCorrection>;
+    onCorrect?: (item: ClosurePaymentVerification) => void;
+  }) {
+  const sentinel = useRef<HTMLDivElement>(null);
+  const pages = useInfiniteQuery({
+    queryKey: ["work-session-payment-verifications", closureId, paymentMethodCode, movementType],
+    queryFn: ({ pageParam }) => workSessionDifferencesApi.listPaymentVerifications(
+      closureId, pageParam, 100, paymentMethodCode, movementType),
+    initialPageParam: 1,
+    getNextPageParam: last => last.page * last.pageSize < last.totalItems ? last.page + 1 : undefined,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+  const items = useMemo(() => pages.data?.pages.flatMap(page => page.items) ?? [], [pages.data]);
+  useEffect(() => { if (items.length) onItemsLoaded(items); }, [items, onItemsLoaded]);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = pages;
+  useEffect(() => {
+    if (!sentinel.current || !hasNextPage) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting && !isFetchingNextPage) void fetchNextPage();
+    }, { rootMargin: "120px" });
+    observer.observe(sentinel.current);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  if (pages.isPending) return <p className="border-t p-3 text-sm text-muted-foreground">Cargando movimientos…</p>;
+  if (pages.isError && !pages.data) return <div className="flex items-center justify-between gap-3 border-t p-3 text-sm text-destructive">No fue posible cargar los movimientos.<Button variant="outline" onClick={() => void pages.refetch()}>Reintentar</Button></div>;
+  return <div className="space-y-2 border-t bg-slate-50/50 p-3">
+    {items.length ? items.map(item => <VerificationRow key={item.verificationKey} item={item} status={statuses[item.verificationKey]} disabled={disabled} informational={informational} correction={corrections[item.verificationKey]} onCorrect={onCorrect ? () => onCorrect(item) : undefined} onChange={status => onStatus(item.verificationKey, status)} />) : <p className="text-sm text-muted-foreground">Sin movimientos en este grupo.</p>}
+    <div ref={sentinel} className="h-px" aria-hidden="true" />
+    {pages.isFetchingNextPage && <p className="text-center text-sm text-muted-foreground">Cargando más movimientos…</p>}
+    {pages.isFetchNextPageError && <Button variant="outline" onClick={() => void pages.fetchNextPage()}>Reintentar carga</Button>}
+  </div>;
+}
+
+function VerificationRow({ item, status, disabled, informational = false, correction, onCorrect, onChange }: { item: ClosurePaymentVerification; status?: VerificationStatus; disabled: boolean; informational?: boolean; correction?: ClosurePaymentCorrection; onCorrect?: () => void; onChange: (status: VerificationStatus) => void }) {
+  const isInformational = informational || item.movementType === "Sale" || item.movementType === "Refund";
   const isCreditSale = item.movementType === "CreditSale";
   const isCashMovement = item.movementType === "CashIn" || item.movementType === "CashOut";
+  const displayedCorrection = correction ?? (item.correctedPaymentMethodCode && item.correctedAmount != null ? {
+    verificationKey: item.verificationKey, paymentMethodCode: item.correctedPaymentMethodCode,
+    amount: item.correctedAmount, reason: item.correctionReason ?? "",
+  } : undefined);
   const title = isCreditSale ? item.customerName ?? "Cliente"
     : isCashMovement ? item.reasonName?.trim() || "Motivo no registrado"
     : verificationMovementName(item);
-  return <div className={`grid gap-3 rounded-xl border p-3 ${informational ? "sm:grid-cols-[1fr_auto]" : "sm:grid-cols-[1fr_auto_auto]"} sm:items-center`}>
+  return <div className={`grid gap-3 rounded-xl border p-3 ${isInformational ? "sm:grid-cols-[1fr_auto]" : "sm:grid-cols-[1fr_auto_auto]"} sm:items-center`}>
     <div className="min-w-0">
       <div className="flex flex-wrap items-center gap-2">
         <ReceiptText className="h-4 w-4 shrink-0 text-slate-500" />
@@ -259,13 +362,14 @@ function VerificationRow({ item, status, disabled, informational = false, onChan
       </div>
       {isCashMovement && item.notes?.trim() && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{item.notes}</p>}
       {!isCashMovement && !isCreditSale && <p className="mt-1 truncate text-xs text-muted-foreground">Referencia: {item.approvalNumber || item.reference || "Sin referencia"} · {new Date(item.occurredAt).toLocaleString("es-CO")}</p>}
+      {displayedCorrection && <p className="mt-1 text-xs font-semibold text-teal-800">Corregido: {workSessionPaymentMethodName(displayedCorrection.paymentMethodCode)} · {money.format(Math.abs(displayedCorrection.amount))} · {displayedCorrection.reason}</p>}
     </div>
-    <strong className={item.amount < 0 ? "text-red-700" : "text-slate-950"}>{money.format(isCashMovement ? Math.abs(item.amount) : item.amount)}</strong>
-    {!informational && <div className="flex gap-2"><Button type="button" size="sm" variant={status === "Verified" ? "default" : "outline"} disabled={disabled} onClick={() => onChange("Verified")}><Check className="mr-1 h-4 w-4" />Verificado</Button><Button type="button" size="sm" variant={status === "Missing" ? "destructive" : "outline"} disabled={disabled} onClick={() => onChange("Missing")}><X className="mr-1 h-4 w-4" />No encontrado</Button></div>}
+    <strong className={item.amount < 0 ? "text-red-700" : "text-slate-950"}>{money.format(Math.abs(item.amount))}</strong>
+    <div className="flex flex-wrap gap-2">{!isInformational && <><Button type="button" size="sm" variant={status === "Verified" ? "default" : "outline"} disabled={disabled} onClick={() => onChange("Verified")}><Check className="mr-1 h-4 w-4" />Verificado</Button><Button type="button" size="sm" variant={status === "Missing" ? "destructive" : "outline"} disabled={disabled} onClick={() => onChange("Missing")}><X className="mr-1 h-4 w-4" />No encontrado</Button></>}{!disabled && !isCreditSale && onCorrect && <Button type="button" size="sm" variant="outline" onClick={onCorrect}><Pencil className="mr-1 h-4 w-4" />Corregir</Button>}</div>
   </div>;
 }
 
-function verificationMovementName(item: ClosurePaymentVerification) { if (item.movementType === "Refund") return "Devolución"; if (item.movementType === "CashIn") return "Entrada"; if (item.movementType === "CashOut") return "Salida"; if (item.movementType === "CreditSale") return "Venta a cartera"; if (item.sourceDocumentType === "SalesInvoice") return "Factura electrónica"; if (item.sourceDocumentType === "ServiceInvoice") return "Factura de servicio"; if (item.sourceDocumentType === "SalesReceipt") return "Comprobante"; return "Movimiento"; }
+function verificationMovementName(item: ClosurePaymentVerification) { if (item.movementType === "Refund") return "Devolución"; if (item.movementType === "ReceivablePayment") return "Abono a cartera"; if (item.movementType === "PayablePayment") return "Pago a proveedor"; if (item.movementType === "CashIn") return "Entrada"; if (item.movementType === "CashOut") return "Salida"; if (item.movementType === "CreditSale") return "Venta a cartera"; if (item.sourceDocumentType === "SalesInvoice") return "Factura electrónica"; if (item.sourceDocumentType === "ServiceInvoice") return "Factura de servicio"; if (item.sourceDocumentType === "SalesReceipt") return "Comprobante"; return "Movimiento"; }
 function PaymentIcon({ code }: { code: string }) { if (code === "Cash") return <Banknote className="h-5 w-5" />; if (code === "Transfer") return <Landmark className="h-5 w-5" />; return <CreditCard className="h-5 w-5" />; }
 function Summary({ title, value, icon }: { title: string; value: string; icon: ReactNode }) { return <Card className="rounded-3xl"><CardContent className="flex items-center gap-3 p-5"><div className="rounded-2xl bg-muted p-3">{icon}</div><div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p><strong className="text-xl">{value}</strong></div></CardContent></Card>; }
 function Status({ value }: { value: WorkSessionClosure["reconciliationStatus"] }) { return <Badge variant={value === "Pending" ? "destructive" : "secondary"}>{value === "Pending" ? "Pendiente" : value === "Reconciled" ? "Conciliado" : value === "ReconciledWithDifferences" ? "Conciliado con diferencias" : "Parcial"}</Badge>; }

@@ -7,6 +7,22 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PosCashMovementTicketTests
 {
     [Theory]
+    [InlineData("HalfLetter", "215.9mm 139.7mm")]
+    [InlineData("HalfLegal", "215.9mm 165.1mm")]
+    [InlineData("Letter", "Letter portrait")]
+    public void Current_movement_renders_sheet_formats(string format, string pageSize)
+    {
+        var ticket = new PosCashMovementTicket(Guid.NewGuid(), "Out", "Entrega",
+            125000m, DateTimeOffset.UtcNow, null, null, "Cajero");
+        var html = PosCashMovementTicketPrinter.RenderHtml(ticket, null, 80, format);
+
+        Assert.Contains($"data-auraly-format=\"{format}\"", html);
+        Assert.Contains($"@page{{size:{pageSize}", html);
+        Assert.Contains("Salida de dinero", html);
+        Assert.Contains("Firma", html);
+    }
+
+    [Theory]
     [InlineData("In", "Entrada de dinero")]
     [InlineData("Out", "Salida de dinero")]
     public void Ticket_contains_professional_movement_details_and_signature(

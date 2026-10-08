@@ -156,6 +156,13 @@ public static class WorkSessionApi
             await Handle(async () => Results.Ok(await service.ListClosurePaymentVerificationsAsync(
                 context.User.ToWorkSessionIdentity(), closureId, cancellationToken))));
 
+        group.MapGet("/closures/{closureId:guid}/payment-verifications/page", async (
+            HttpContext context, Guid closureId, string? paymentMethodCode, string? movementType,
+            int? page, int? pageSize, WorkSessionService service, CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.ListClosurePaymentVerificationPageAsync(
+                context.User.ToWorkSessionIdentity(), closureId, paymentMethodCode,
+                movementType, page ?? 1, pageSize ?? 100, cancellationToken))));
+
         group.MapPost("/closures/{closureId:guid}/reconcile", async (HttpContext context, Guid closureId,
             ReconcileWorkSessionClosureRequest request, WorkSessionService service, CancellationToken cancellationToken) =>
             await Handle(async () => Results.Ok(await service.ReconcileClosureAsync(

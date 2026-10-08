@@ -21,18 +21,22 @@ La [prohibición de descuentos salariales sin autorización individual o mandami
 
 ## Informes de cuentas por cobrar y por pagar
 
-Cada módulo tendrá un botón **Reportes** que abre el selector de tarjetas usado en despachos. Los tres informes por módulo son:
+Cada módulo tendrá un único botón **Reportes** en su encabezado. Abre dos tarjetas, **Detallado** y **Consolidado**, y después el visor de reportes vigente. La elección y los filtros permanecen visibles en el encabezado del visor. No se crea un tercer informe de movimientos: los abonos y pagos se consultan dentro del detallado.
 
-| Módulo | Por tercero | Por factura | Por movimiento |
-| --- | --- | --- | --- |
-| CxC | Cliente: original, recaudado, saldo y vencido | Factura: origen, fechas, original, abonos y saldo | Recaudos: fecha, comprobante, cliente, aplicaciones por factura y desglose por medio de pago |
-| CxP | Proveedor: original, pagado, saldo y vencido | Factura o gasto: origen, concepto, fechas, original, pagos y saldo | Pagos: fecha, comprobante, proveedor, aplicaciones por obligación y desglose por medio de pago |
+| Informe | Cuentas por cobrar | Cuentas por pagar |
+| --- | --- | --- |
+| Detallado | Cliente y sede → factura → fecha, número e importe de cada abono aplicado; original, total abonado y saldo por factura y por cliente/sede. | Proveedor y sede → factura de compra o gasto → fecha, comprobante e importe de cada pago aplicado; original, total pagado y saldo por obligación y por proveedor/sede. |
+| Consolidado | Una fila por cliente y sede: número de facturas, original, total abonado, saldo pendiente y vencido. | Una fila por proveedor y sede, separada además por moneda: número de obligaciones, original, total pagado, saldo pendiente y vencido. |
 
-El reporte toma una instantánea visible de los filtros de la pestaña correspondiente al abrirse. El visor muestra esos filtros, totales del conjunto filtrado, detalle paginado desde servidor, impresión y exportación. Sin filtros, consulta el conjunto completo por páginas; nunca descarga todas las obligaciones al navegador. Para movimientos, la fecha filtra la fecha del recaudo/pago; para facturas, la fecha de emisión o creación que usa la lista. El visor no reinterpreta un filtro de estado de factura como estado del comprobante: solo ofrece los filtros pertinentes a cada tipo y los muestra antes de generar.
+Ambos informes tienen los mismos filtros de negocio: tercero con su sede mediante el combo paginado de `Parties`, fecha de emisión desde/hasta, fecha de corte, estado de la obligación, **solo con saldo** y **solo vencidas**. Los días se interpretan en la zona horaria configurada para la sede, incluida su medianoche final; el corte determina qué facturas y aplicaciones existían a esa fecha. Un abono posterior no reduce retroactivamente el saldo. Sin tercero seleccionado se incluyen todos, no solo los que aparecen en la grilla de la página. El estado y el vencimiento se evalúan al corte y los filtros se aplican en servidor antes de paginar y totalizar. Los totales del encabezado representan todo el conjunto filtrado, no la página visible. Al abrir desde CxC/CxP se copian los filtros compatibles como valores iniciales y el usuario puede cambiarlos dentro del visor sin alterar la grilla de origen.
 
-`ReceivablesService` y `PayablesService` siguen siendo propietarios de importes, aplicaciones, permisos y lectura paginada. Reporting compone la presentación con un contrato de proyección compartido y consultas SQL acotadas por tenant, negocio, filtros y página. Exportaciones completas se preparan fuera de la solicitud interactiva con los mismos filtros; la vista previa no hace N+1 ni un GET por fila. Objetivo de respuesta de página y totales: menos de un segundo en el volumen operativo medido, con índices y plan de ejecución verificados.
+El detallado pagina facturas u obligaciones y carga las aplicaciones de esa misma página por lote; la paginación nunca divide la historia de pagos de una factura. El consolidado pagina clientes/proveedores con sede y moneda. Ambos permiten ordenar columnas en servidor e imprimir el reporte completo con una presentación coherente con el visor vigente. La consulta normal descarga solo la página visible. La impresión es una acción explícita: una consulta del servidor reutiliza los filtros, totales y ordenamiento del informe, obtiene hasta 5.001 filas en el mismo viaje y prepara una vista imprimible solo si hay como máximo 5.000; si supera ese límite solicita acotar los filtros, sin truncar datos. No se hace una lectura por tercero, factura o pago. `ReceivablesService` y `PayablesService` conservan la autoridad sobre importes, aplicaciones, permisos y filtros; Reporting compone la presentación sin recalcular saldos ni crear un ledger alterno. Objetivo de respuesta de página y totales: menos de un segundo en el volumen operativo medido, con índices y plan de ejecución verificados.
 
-CxC opera en COP. CxP admite varias monedas: sus informes deben separar importes originales, pagos y saldos por `CurrencyCode`, o mostrar una conversión funcional a COP con tasa y fecha explícitas. No se presenta una suma de USD y COP como si fuera un único total monetario.
+El saldo al corte incluye únicamente movimientos cuya fecha efectiva y cuya fecha de aplicación/registro son anteriores al final del día de corte. Así un pago registrado después no altera retroactivamente el informe aunque su fecha de pago se haya escrito hacia atrás. **Notas y ajustes** muestra la diferencia entre original, pagos y saldo; hace visibles devoluciones, notas crédito y ajustes de cartera sin llamarlos pagos. La consulta del informe y la exportación deben usar el mismo cálculo autoritativo.
+
+CxC opera en COP. CxP admite varias monedas y nunca suma USD y COP como un único importe: los subtotales y el consolidado se separan por `CurrencyCode`. La sede es parte de la agrupación; una obligación histórica asignada a la sede principal aparece allí conforme a la migración de cartera aprobada.
+
+Cuando se imprime el informe con corte en el día actual, el servidor limita los movimientos al instante en que inicia la consulta para que las aplicaciones nuevas no aparezcan a mitad del documento.
 
 ## Cruce de CxP con CxC
 
@@ -46,5 +50,5 @@ La [compensación civil requiere obligaciones recíprocas, líquidas y exigibles
 
 - Historial de cierres: filtro inicial pendiente, cuatro estados y todos, fecha de cierre arriba, paginación correcta, moneda `es-CO`.
 - Faltante: sin deudor acreditado solo gasto; reclamo parcial y total, abonos, reversión, sin descuento de nómina; suma de gasto y CxC igual al faltante, asiento balanceado y sin segunda salida de caja.
-- Informes: seis variantes, filtros y permisos idénticos a las vistas, totales correctos entre páginas, medios y aplicaciones visibles, cero consultas por fila, impresión y exportación fieles.
+- Informes: detallado y consolidado para CxC y CxP, filtro por tercero/sede independiente de la grilla, corte histórico, solo con saldo, totales correctos entre páginas, aplicaciones visibles, monedas separadas, cero consultas por fila e impresión fiel.
 - Cruce: tercero con ambos roles, múltiples facturas, saldo parcial, concurrencia, reintento idempotente, fallo atómico, asiento balanceado, sin caja ni documento fiscal nuevo.

@@ -68,6 +68,23 @@ test("current web cash entry and exit leave printing to the browser adapter", ()
   }
 });
 
+test("cash movements render all three sheet formats without changing the movement", () => {
+  for (const [format, pageSize] of [
+    ["HalfLetter", "215.9mm 139.7mm"],
+    ["HalfLegal", "215.9mm 165.1mm"],
+    ["Letter", "Letter portrait"],
+  ] as const) {
+    const html = cashMovementTicketHtml({
+      documentId: "movement-sheet", direction: "In", reasonName: "Base",
+      amount: 10000, occurredAt: "2026-09-29T14:30:00-05:00",
+      reference: null, notes: null, responsibleName: "Cajero",
+    }, "Empresa", null, null, format);
+    assert.match(html, new RegExp(`@page\\{size:${pageSize.replaceAll(".", "\\.")}`));
+    assert.match(html, /Entrada de dinero/);
+    assert.match(html, /Firma/);
+  }
+});
+
 test("cash movement receipt escapes user-controlled content", () => {
   const html = cashMovementTicketHtml({
     documentId: "movement-2", direction: "In", reasonName: "<script>alert(1)</script>",

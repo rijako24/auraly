@@ -565,6 +565,21 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             && item.OutstandingAmount >= 20m);
         Assert.Equal(supplierPage.CurrencyTotals.Single(item => item.CurrencyCode == "COP").OutstandingAmount,
             supplierPage.TotalOutstanding);
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow);
+        var report = await client.GetFromJsonAsync<PayablesReportPage>(
+            $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=true&cutoff={cutoff:yyyy-MM-dd}&supplierId={fixture.SupplierId:D}");
+        Assert.Contains(report!.CurrencyTotals, item => item.CurrencyCode == "USD" && item.OutstandingAmount >= 20m);
+        Assert.Contains(report.CurrencyTotals, item => item.CurrencyCode == "COP" && item.OutstandingAmount >= 27_100m);
+        var sortedByCurrency = await client.GetFromJsonAsync<PayablesReportPage>(
+            $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=true&cutoff={cutoff:yyyy-MM-dd}&supplierId={fixture.SupplierId:D}&sortBy=currency&sortDirection=asc");
+        Assert.Equal(sortedByCurrency!.Items.OrderBy(item => item.CurrencyCode, StringComparer.Ordinal)
+            .Select(item => item.CurrencyCode), sortedByCurrency.Items.Select(item => item.CurrencyCode));
+        var printedReport = await client.GetStringAsync(
+            $"/api/commerce/v1/payables/report/print?consolidated=true&cutoff={cutoff:yyyy-MM-dd}&supplierId={fixture.SupplierId:D}");
+        Assert.Contains("USD", printedReport);
+        Assert.Contains("COP", printedReport);
+        Assert.Contains(report.Items, item => item.CurrencyCode == "USD" && item.OutstandingAmount >= 20m);
+        Assert.Contains(report.Items, item => item.CurrencyCode == "COP" && item.OutstandingAmount >= 27_100m);
     }
 
     [Fact]

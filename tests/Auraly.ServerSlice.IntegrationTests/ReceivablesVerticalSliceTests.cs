@@ -50,6 +50,17 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE DocumentId=@Id",receivableId));
         Assert.Equal(1,await CountAsync("AccountingEntries","SourceDocumentId",receivableId));
 
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
+        var report = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&customerId={customerId:D}&partySiteId={partySiteId:D}");
+        var reported = Assert.Single(report!.Items, item => item.ReceivableId == receivableId);
+        Assert.Equal(125_000m, reported.OutstandingAmount);
+        Assert.Empty(reported.Applications!);
+        var consolidatedReport = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=true&cutoff={cutoff}&customerId={customerId:D}&partySiteId={partySiteId:D}");
+        Assert.Contains(consolidatedReport!.Items, item => item.CustomerId == customerId &&
+            item.PartySiteId == partySiteId && item.OutstandingAmount >= 125_000m);
+
         using var replay=await client.PostAsJsonAsync(
             "/api/commerce/v1/receivables/preexisting/import",request);
         Assert.Equal(HttpStatusCode.Accepted,replay.StatusCode);
@@ -159,6 +170,18 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Contains(siteRows, item => item.PartySiteId == northSiteId);
         Assert.Contains(siteRows, item => item.PartySiteId == centerSiteId);
         Assert.Equal(expectedOutstanding, siteRows.Sum(item => item.OutstandingAmount));
+        var reportCutoff = DateOnly.FromDateTime(DateTime.UtcNow);
+        var reportFirst = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=1&consolidated=true&cutoff={reportCutoff:yyyy-MM-dd}&customerId={customerId:D}&sortBy=name&sortDirection=asc");
+        var reportSecond = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=2&pageSize=1&consolidated=true&cutoff={reportCutoff:yyyy-MM-dd}&customerId={customerId:D}&sortBy=name&sortDirection=asc");
+        Assert.Equal(2, reportFirst!.TotalCount);
+        Assert.Equal(2, reportFirst.TotalPages);
+        Assert.NotEqual(Assert.Single(reportFirst.Items).PartySiteId, Assert.Single(reportSecond!.Items).PartySiteId);
+        Assert.Equal(expectedOutstanding, reportFirst.TotalOutstanding);
+        using (var badSort = await client.GetAsync(
+                   $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=true&cutoff={reportCutoff:yyyy-MM-dd}&sortBy=sql"))
+            Assert.Equal(HttpStatusCode.BadRequest, badSort.StatusCode);
         var ascending = await client.GetFromJsonAsync<ReceivablePage>(
             $"/api/commerce/v1/receivables?page=1&pageSize=2&customerId={customerId:D}&sortBy=documentNumber&sortDirection=asc");
         var descending = await client.GetFromJsonAsync<ReceivablePage>(
@@ -586,6 +609,42 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(partialAmount,
             await AccountAmountAsync(payment.PaymentId, "130505", false));
 
+        var historicalCutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-2));
+        var lateLocalIssue = new DateTimeOffset(historicalCutoff.Year, historicalCutoff.Month,
+            historicalCutoff.Day, 23, 30, 0, TimeSpan.FromHours(-5));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await ExecuteAsync(connection, null, """
+                UPDATE dbo.Receivables SET CreatedAt=@Before WHERE ReceivableId=@Id;
+                UPDATE dbo.ReceivableTransactions SET CreatedAt=@Before,OccurredAt=@Late
+                  WHERE ReceivableId=@Id AND TransactionType=N'Opening';
+                UPDATE source SET OccurredAt=@Late
+                FROM dbo.AccountingSourceDocuments source
+                JOIN dbo.Receivables receivable ON receivable.SourceDocumentId=source.SourceDocumentId
+                  AND receivable.SourceDocumentType=source.SourceDocumentType
+                WHERE receivable.ReceivableId=@Id;
+                """, new SqlParameter("@Before", historicalCutoff.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)),
+                new SqlParameter("@Late", lateLocalIssue),
+                new SqlParameter("@Id", receivable.ReceivableId));
+        }
+        var historical = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&cutoff={historicalCutoff:yyyy-MM-dd}&customerId={customerId:D}");
+        var historicalInvoice = Assert.Single(historical!.Items, item => item.ReceivableId == receivable.ReceivableId);
+        Assert.Equal(receivable.OriginalAmount, historicalInvoice.OutstandingAmount);
+        Assert.Empty(historicalInvoice.Applications!);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var current = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}");
+        var currentInvoice = Assert.Single(current!.Items, item => item.ReceivableId == receivable.ReceivableId);
+        Assert.Equal(partialAmount, currentInvoice.PaidAmount);
+        Assert.Equal(receivable.OriginalAmount - partialAmount, currentInvoice.OutstandingAmount);
+        Assert.Equal(partialAmount, Assert.Single(currentInvoice.Applications!).Amount);
+        var printedReport = await client.GetStringAsync(
+            $"/api/commerce/v1/receivables/report/print?consolidated=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}");
+        Assert.Contains(checkout.Receipt.DocumentNumber, printedReport);
+        Assert.Contains(acceptance.DocumentNumber, printedReport);
+
         using (var response = await SendAsync(client,
                    "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))
         {
@@ -761,6 +820,11 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(0, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.CustomerCredits WHERE SourceReturnId=@Id",
             request.ReturnId));
+        var returnReportCutoff = DateOnly.FromDateTime(DateTime.UtcNow);
+        var returnReport = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&cutoff={returnReportCutoff:yyyy-MM-dd}&customerId={customerId:D}");
+        Assert.Equal(applied, Assert.Single(returnReport!.Items,
+            item => item.ReceivableId == receivable.ReceivableId).OtherImpact);
         using (var portfolioResponse=await client.GetAsync(
                    $"/api/commerce/v1/receivables/customers?page=1&pageSize=20&search={ServerSliceFixture.UniqueNit(customerId)}"))
         {
@@ -809,6 +873,12 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         using var list = await denied.GetAsync(
             "/api/commerce/v1/receivables?page=1&pageSize=20");
         Assert.Equal(HttpStatusCode.Forbidden, list.StatusCode);
+        using var deniedReport = await denied.GetAsync(
+            "/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=true&cutoff=2026-10-07");
+        Assert.Equal(HttpStatusCode.Forbidden, deniedReport.StatusCode);
+        using var deniedPrint = await denied.GetAsync(
+            "/api/commerce/v1/receivables/report/print?consolidated=true&cutoff=2026-10-07");
+        Assert.Equal(HttpStatusCode.Forbidden, deniedPrint.StatusCode);
 
         using var scoped = fixture.CreateAdminClient(
             ReceivablesPermissionCodes.RegisterPayment);

@@ -813,7 +813,7 @@ export interface PosClient {
   printHistoricalReceipt(receipt: PosPrintableReceipt): Promise<void>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
-  printCashMovement(ticket: PosCashMovementTicket): Promise<void>;
+  printCashMovement(ticket: PosCashMovementTicket, format?: PosPrintTemplateFormat): Promise<void>;
   printCashDenominationCount(ticket: PosCashDenominationCount): Promise<void>;
   previewWorkSessionClosure(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosAuthorizedClosurePreview>;
   closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure>;
@@ -1864,14 +1864,16 @@ export class PosEdgeClient implements PosClient {
     return (await response.json()) as T;
   }
 
-  printCashMovement(ticket: PosCashMovementTicket) {
-    return this.requestVoid("/edge/v1/print/cash-movement", {
+  printCashMovement(ticket: PosCashMovementTicket, format?: PosPrintTemplateFormat) {
+    const query = format ? `?format=${encodeURIComponent(format)}` : "";
+    return this.requestVoid(`/edge/v1/print/cash-movement${query}`, {
       method: "POST", body: JSON.stringify(ticket),
     });
   }
 
-  printPortfolioPayment(receipt: PortfolioPaymentReceipt) {
-    return this.requestVoid("/edge/v1/print/portfolio-payment", {
+  printPortfolioPayment(receipt: PortfolioPaymentReceipt, format?: PosPrintTemplateFormat) {
+    const query = format ? `?format=${encodeURIComponent(format)}` : "";
+    return this.requestVoid(`/edge/v1/print/portfolio-payment${query}`, {
       method: "POST", body: JSON.stringify(receipt),
     });
   }

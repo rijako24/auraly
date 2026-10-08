@@ -109,7 +109,9 @@ public sealed record WorkSessionCashMovementDetail(
     DateTimeOffset OccurredAt,
     string ResponsibleName,
     string? Reference = null,
-    string? Notes = null);
+    string? Notes = null,
+    Guid? WorkSessionMovementId = null,
+    string? MovementType = null);
 
 public sealed record WorkSessionInvoiceChargePayment(int PaymentNumber, string PaymentMethodCode, decimal Amount);
 
@@ -250,7 +252,8 @@ public sealed record WorkSessionClosureListItem(
     decimal NetAmount,
     string ReconciliationStatus,
     string AccountingStatus,
-    IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals);
+    IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals,
+    decimal? ExpectedCash = null);
 
 public sealed record WorkSessionClosurePage(
     IReadOnlyList<WorkSessionClosureListItem> Items,
@@ -274,7 +277,23 @@ public sealed record WorkSessionPaymentVerificationItem(
     string? CustomerName,
     string? Status,
     string? ReasonName = null,
-    string? Notes = null);
+    string? Notes = null,
+    string? CorrectedPaymentMethodCode = null,
+    decimal? CorrectedAmount = null,
+    string? CorrectionReason = null);
+
+public sealed record WorkSessionPaymentVerificationGroup(
+    string PaymentMethodCode,
+    string MovementType,
+    int Count,
+    decimal TotalAmount);
+
+public sealed record WorkSessionPaymentVerificationPage(
+    IReadOnlyList<WorkSessionPaymentVerificationItem> Items,
+    IReadOnlyList<WorkSessionPaymentVerificationGroup> Groups,
+    int Page,
+    int PageSize,
+    int TotalItems);
 
 public sealed record WorkSessionPaymentVerificationDecision(
     string VerificationKey,
@@ -291,11 +310,33 @@ public sealed record WorkSessionPaymentReclassification(
     string ToPaymentMethodCode,
     decimal Amount);
 
+public sealed record WorkSessionPaymentCorrection(
+    string VerificationKey,
+    string PaymentMethodCode,
+    decimal Amount,
+    string Reason);
+
+public sealed record WorkSessionAppliedPaymentCorrection(
+    string VerificationKey,
+    string MovementType,
+    Guid SourceId,
+    int SourceNumber,
+    string OriginalPaymentMethodCode,
+    decimal OriginalAmount,
+    string PaymentMethodCode,
+    decimal Amount,
+    string Reason,
+    Guid? PartyId,
+    Guid? CustomerId,
+    Guid? SubledgerId,
+    string? CounterpartCategory);
+
 public sealed record ReconcileWorkSessionClosureRequest(
     IReadOnlyList<ReconcileWorkSessionClosureLine> Lines,
     IReadOnlyList<WorkSessionPaymentReclassification> Reclassifications,
     string? Note,
-    IReadOnlyList<WorkSessionPaymentVerificationDecision>? PaymentVerifications = null);
+    IReadOnlyList<WorkSessionPaymentVerificationDecision>? PaymentVerifications = null,
+    IReadOnlyList<WorkSessionPaymentCorrection>? PaymentCorrections = null);
 
 public sealed record WorkSessionClosureReconciliationView(
     Guid ReconciliationId,
@@ -307,7 +348,8 @@ public sealed record WorkSessionClosureReconciliationView(
     IReadOnlyList<ReconcileWorkSessionClosureLine> Lines,
     IReadOnlyList<WorkSessionPaymentReclassification> Reclassifications,
     string? Note,
-    string AccountingStatus);
+    string AccountingStatus,
+    bool IdempotentReplay = false);
 
 public sealed record WorkSessionClosureReconciliationAccountingLine(
     string PaymentMethodCode,
@@ -326,7 +368,8 @@ public sealed record WorkSessionClosureReconciliationPayload(
     Guid ReconciledByUserId,
     DateTimeOffset ReconciledAt,
     IReadOnlyList<WorkSessionClosureReconciliationAccountingLine> Lines,
-    IReadOnlyList<WorkSessionPaymentReclassification> Reclassifications);
+    IReadOnlyList<WorkSessionPaymentReclassification> Reclassifications,
+    IReadOnlyList<WorkSessionAppliedPaymentCorrection>? PaymentCorrections = null);
 public static class CashMovementDirections
 {
     public const string In = "In";

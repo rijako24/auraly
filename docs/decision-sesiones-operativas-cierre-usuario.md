@@ -90,12 +90,68 @@ La conciliación de efectivo se conserva como parte del cierre de sesión del us
 
 La conciliación posterior reutiliza el mismo `WorkSessionClosure` y su snapshot
 inmutable. El efectivo se verifica como un total contado. Tarjeta y transferencia se
-verifican comprobante por comprobante desde los pagos, devoluciones y movimientos que
+verifican comprobante por comprobante desde los pagos y movimientos que
 ya pertenecen a la sesión; cada uno queda marcado como verificado o no encontrado. El
+detalle de ventas y devoluciones es informativo en todos los medios: no exige esos dos estados.
+Los abonos, pagos a proveedores, entradas y salidas en efectivo sí conservan la
+verificación individual. El esperado de efectivo usado al conciliar es el mismo
+`ExpectedCash` persistido al cerrar la sesión, incluida su base inicial; no se
+compara el conteo físico con el neto aislado de los movimientos de efectivo. El
 servidor vuelve a obtener esas fuentes dentro de la transacción, exige una decisión
-exactamente una vez por comprobante y calcula el valor verificado, por lo que el cliente
-no puede omitir comprobantes ni alterar sus importes. Un faltante y un sobrante se pueden
+exactamente una vez por comprobante y calcula el valor verificado de los medios no
+efectivos; el efectivo se toma del conteo físico confirmado. El cliente no puede omitir
+comprobantes ni cambiar los importes de los documentos mediante el conteo. Un faltante y un sobrante se pueden
 cruzar mediante la reclasificación existente, sin crear otro motor ni otra conciliación.
+La confirmación coteja las claves y suma los importes en SQL en un solo viaje; no
+materializa todas las filas de la sesión en memoria del servidor.
+Las devoluciones y salidas conservan su signo en medios distintos de efectivo;
+su neto verificado puede ser negativo. El efectivo físico contado permanece no negativo.
+
+## Correcciones durante la conciliación
+
+El diálogo existente conserva **Verificado** y **No encontrado** por comprobante.
+**Corregir** es una tercera acción, no un tercer estado de verificación: abre una
+ventana breve con el documento original, medio e importe registrados, y permite
+indicar el medio y el importe realmente recibido o entregado, con motivo obligatorio.
+La fila muestra después ambos valores y el efecto en el cuadre. No se presentan
+todas las filas como campos editables. Los seis grupos de efectivo —facturas y
+comprobantes, devoluciones, abonos a cartera, pagos a proveedores, entradas y salidas—
+muestran cantidad y total y se expanden por separado. Al expandir, se solicitan
+100 movimientos por página al servidor y el siguiente lote se carga al llegar al
+final; nunca se traen todas las facturas para calcular un total visible. Los
+totales y cantidades del grupo cubren toda la sesión aunque solo se haya cargado
+la primera página. Las verificaciones ya decididas se conservan al cargar más
+páginas. El efectivo físico confirmado puede corregirse como conteo, sin cambiar
+por ello el importe de un documento.
+
+Por compatibilidad con versiones de escritorio ya instaladas, la lectura
+`/payment-verifications` conserva temporalmente su respuesta de arreglo completo.
+La vista nueva usa `/payment-verifications/page`, con resumen agregado y páginas
+de máximo 100 filas filtradas en SQL. Ambas lecturas comparten la misma consulta
+y autorización; no escriben ni tienen motores distintos. Se retira la lectura
+anterior cuando no haya clientes instalados que consuman ese contrato. No debe
+utilizarse en pantallas nuevas por su costo para sesiones grandes.
+
+La corrección de un medio conserva el comprobante original y su snapshot; registra
+el movimiento corregido asociado a su identificador y aplica la reclasificación por
+la fuente contable `WorkSessionClosureReconciliation` existente. Corregir un importe
+no es un simple cambio del total del cierre: se valida el documento fuente y el
+motor contable registra un ajuste ligado a la aplicación original y actualiza el
+saldo de CxC/CxP que corresponda. El recibo y la aplicación originales permanecen
+inmutables para auditoría. Si la nueva cuantía excede
+lo aplicable a la factura, falta tercero para abrir cartera, o no se puede precisar
+qué aplicación corregir, la operación se bloquea y pide resolver esa situación; no
+se transforma la diferencia en ingreso/gasto ni se inventa un abono. Los valores
+fiscales, productos e impuestos de la factura no se reescriben.
+
+La confirmación de la conciliación es la única aceptación de sus correcciones: el
+servidor vuelve a leer y bloquear las fuentes, valida importes y saldos, registra
+actor, fecha, motivo, antes/después e idempotencia, y crea el trabajo contable
+canónico en la misma transacción. Un fallo de aceptación no modifica parcialmente
+cartera, caja ni comprobantes; un fallo posterior del procesamiento contable queda
+visible y reintentable por el motor existente. Tras confirmar, el cierre y sus correcciones quedan
+inmutables. Las diferencias genuinas que subsistan se muestran como sobrante o
+faltante con observación y motivo. No se crea todavía cuenta por cobrar al empleado.
 
 ## Pruebas obligatorias
 

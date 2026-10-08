@@ -551,6 +551,15 @@ public sealed class PosPrinterConfigurationStore(
 
 public static class PosPrinterConfigurationExtensions
 {
+    public static string? InvoicePrinterForFormat(
+        this PosPrinterConfiguration configuration, string format)
+    {
+        var route = configuration.TemplateRoutes?.FirstOrDefault(item =>
+            item.DocumentType == "SalesInvoice" && item.Format == format);
+        return route is not null ? route.PrinterName :
+            format == configuration.PosOutputFormat ? configuration.PosPrinterName : null;
+    }
+
     public static string? PrinterFor(
         this PosPrinterConfiguration configuration,
         string documentType,

@@ -100,6 +100,13 @@ public sealed partial class SqlAccountingPostingProcessor
                 await ApplyAccountAdjustmentFinancialEffectsAsync(
                     connection, transaction, source, cancellationToken);
                 break;
+            case WorkSessionAccountingDocumentTypes.ClosureReconciliation:
+                var closure = JsonSerializer.Deserialize<WorkSessionClosureReconciliationPayload>(
+                    source.PayloadJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                    ?? throw new InvalidOperationException("The closure correction payload is invalid.");
+                await ApplyClosureCorrectionFinancialEffectsAsync(
+                    connection, transaction, closure, cancellationToken);
+                break;
         }
 
         if (affectedCustomerId is Guid customerId)

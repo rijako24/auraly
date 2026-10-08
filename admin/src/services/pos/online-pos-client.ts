@@ -661,25 +661,26 @@ export class OnlinePosClient implements PosClient {
       },
     );
   }
-  async printCashMovement(ticket: PosCashMovementTicket) {
-    if (this.edgeSessionToken) return this.localEdge().printCashMovement(ticket);
+  async printCashMovement(ticket: PosCashMovementTicket, format?: PosPrintTemplateFormat) {
+    if (this.edgeSessionToken) return this.localEdge().printCashMovement(ticket, format);
     const branding = tenantsApi.readyPrintBranding();
     return printCashMovementTicket(cashMovementTicketHtml(
       ticket,
       resolveReceiptCompanyName(branding, null, this.tenantName, this.context.businessName),
       this.context.businessName,
       this.context.warehouseName,
+      format ?? loadBrowserPrinterConfiguration().posOutputFormat,
     ));
   }
 
-  async printPortfolioPayment(receipt: PortfolioPaymentReceipt) {
+  async printPortfolioPayment(receipt: PortfolioPaymentReceipt, format?: PosPrintTemplateFormat) {
     const branding = this.preparedPrintBranding
       ? null : tenantsApi.readyLocalPrintBranding();
     return this.localEdge().printPortfolioPayment({
       ...receipt,
       companyLogoSource: localPrintLogoSource(
         branding, this.preparedPrintBranding),
-    });
+    }, format);
   }
   async printCashDenominationCount(ticket: import("./pos-edge-client").PosCashDenominationCount) {
     if (this.edgeSessionToken) return this.localEdge().printCashDenominationCount(ticket);

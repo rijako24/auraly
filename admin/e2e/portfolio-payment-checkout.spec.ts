@@ -18,6 +18,7 @@ test("abono usa la caja de pago del POS y refresca la cartera al confirmar", asy
   let paid = false;
   let customerReads = 0;
   let paymentInvoiceReads = 0;
+  let printed: { format: string; receipt: { direction: string; documentNumber: string; companyName: string } } | null = null;
   let confirmation: { payments: Array<{ methodCode: string; amount: number; cardFranchiseCode: string; approvalNumber: string }> } | null = null;
   const invoice = { receivableId, customerId, customerName: "Cliente prueba", partySiteId: null,
     partySiteName: null, documentNumber: "FV-001", currencyCode: "COP", originalAmount: 10450.45,
@@ -56,6 +57,11 @@ test("abono usa la caja de pago del POS y refresca la cartera al confirmar", asy
     else if (path.endsWith("/pos/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
     else if (path.endsWith("/parties/role-options")) body = { items: [], page: 1, totalPages: 0, totalCount: 0 };
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "77777777-7777-7777-7777-777777777777" };
+    else if (path.endsWith(`/businesses/${businessId}`)) body = { businessId, name: "Sede pruebas", address: "Calle 1", phone: "3001234567" };
+    else if (path.endsWith("/portfolio-payments/receipt/render")) {
+      printed = route.request().postDataJSON();
+      body = { html: "<!doctype html><html><body>Abono registrado</body></html>" };
+    }
     else if (path.endsWith("/receivable-payments/confirm")) {
       confirmation = route.request().postDataJSON();
       paid = true;
@@ -83,8 +89,10 @@ test("abono usa la caja de pago del POS y refresca la cartera al confirmar", asy
   await expect(card).toBeVisible();
   await card.getByPlaceholder("Aprobación del datáfono").fill("AP-001");
   await card.getByRole("button", { name: /Guardar datos/ }).click();
-  await checkout.getByRole("button", { name: "Confirmar pago" }).click();
+  await checkout.getByRole("button", { name: "Media carta", exact: true }).click();
   await expect(checkout).not.toBeVisible();
+  await expect.poll(() => printed).not.toBeNull();
+  expect(printed).toMatchObject({ format: "HalfLetter", receipt: { direction: "Receivable", documentNumber: "RCC-001", companyName: "Sede pruebas" } });
   expect(confirmation).toMatchObject({ payments: [{ methodCode: "DebitCard", amount: 10450.45,
     cardFranchiseCode: "Visa", approvalNumber: "AP-001" }] });
   await expect.poll(() => customerReads).toBeGreaterThan(1);
@@ -114,6 +122,7 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
   let paid = false;
   let paymentInvoiceReads = 0;
   let supplierReads = 0;
+  let printed: { format: string; receipt: { direction: string; documentNumber: string; companyName: string } } | null = null;
   let confirmation: { payments: Array<{ methodCode: string; amount: number; cardFranchiseCode: string; approvalNumber: string }> } | null = null;
   await page.route("**/api/**", async route => {
     const url = new URL(route.request().url());
@@ -150,6 +159,11 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
     else if (path.endsWith("/parties/role-options")) body = { items: [], page: 1, totalPages: 0, totalCount: 0 };
     else if (path.endsWith("/parties/site-options")) body = { items: [{ partyId: supplierId, roleId: supplierId, partySiteId, displayName: "Proveedor prueba", identification: "1001", siteName: "Sede principal", isPrimary: true, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 }], page: 1, totalPages: 1, totalCount: 1 };
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "77777777-7777-7777-7777-777777777777" };
+    else if (path.endsWith(`/businesses/${businessId}`)) body = { businessId, name: "Sede pruebas", address: "Calle 1", phone: "3001234567" };
+    else if (path.endsWith("/portfolio-payments/receipt/render")) {
+      printed = route.request().postDataJSON();
+      body = { html: "<!doctype html><html><body>Pago registrado</body></html>" };
+    }
     else if (path.endsWith("/payable-payments/confirm")) {
       confirmation = route.request().postDataJSON();
       paid = true;
@@ -183,8 +197,10 @@ test("pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta", asyn
   await expect(card).toBeVisible();
   await card.getByPlaceholder("Aprobación del datáfono").fill("CREDIT-001");
   await card.getByRole("button", { name: /Guardar datos/ }).click();
-  await checkout.getByRole("button", { name: "Confirmar pago" }).click();
+  await checkout.getByRole("button", { name: "Oficio", exact: true }).click();
   await expect(checkout).not.toBeVisible();
+  await expect.poll(() => printed).not.toBeNull();
+  expect(printed).toMatchObject({ format: "HalfLegal", receipt: { direction: "Payable", documentNumber: "PGP-001", companyName: "Sede pruebas" } });
   expect(confirmation).toMatchObject({ payments: [{ methodCode: "CreditCard", amount: 12400,
     cardFranchiseCode: "Visa", approvalNumber: "CREDIT-001" }] });
   await expect.poll(() => supplierReads).toBeGreaterThan(1);

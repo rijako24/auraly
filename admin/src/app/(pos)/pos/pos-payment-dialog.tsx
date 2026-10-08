@@ -146,13 +146,13 @@ export function PosPaymentDialog({
   }, [client]);
 
   useEffect(() => {
-    if (portfolioDirection || !client.printerConfigurationForSale) return;
+    if (!client.printerConfigurationForSale) return;
     let active = true;
     void client.printerConfigurationForSale()
       .then(configuration => { if (active) setPrintConfiguration(configuration); })
       .catch(() => { if (active) setPrintError("No fue posible consultar las impresoras. Revisa Periféricos antes de emitir."); });
     return () => { active = false; };
-  }, [client, portfolioDirection]);
+  }, [client]);
 
   const openTransferCapture = useCallback((paymentId: string, payment?: PaymentRow) => {
     if (!settlementConfigurationLoaded) {
@@ -277,7 +277,7 @@ export function PosPaymentDialog({
   }, [focusAmount, pendingFocusId, payments]);
 
   const choosePrint = useCallback((choice: PosPrintTemplateFormat | "none" | null) => {
-    if (busy || portfolioDirection) return;
+    if (busy) return;
     if (choice !== "none") {
       if (!printConfiguration) {
         printChoiceRef.current = null;
@@ -301,7 +301,7 @@ export function PosPaymentDialog({
     setPrintError(null);
     printChoiceRef.current = choice;
     modal.current?.requestSubmit();
-  }, [busy, portfolioDirection, printConfiguration]);
+  }, [busy, printConfiguration]);
 
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
@@ -309,7 +309,7 @@ export function PosPaymentDialog({
       const target = event.target instanceof HTMLElement ? event.target : null;
       const editingText = Boolean(target?.closest("input:not([data-payment-amount]), textarea, [role=combobox], [role=listbox], [contenteditable=true]"));
       const printChoice = paymentPrintChoiceForShortcut(event.key);
-      if (!portfolioDirection && printChoice !== null && !editingText &&
+      if (printChoice !== null && !editingText &&
           !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -338,12 +338,12 @@ export function PosPaymentDialog({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!portfolioDirection && printChoiceRef.current !== "none" && !printConfiguration) {
+    if (printChoiceRef.current !== "none" && !printConfiguration) {
       printChoiceRef.current = null;
       setPrintError("Espera a que cargue la configuración de impresión.");
       return;
     }
-    if (!portfolioDirection && printChoiceRef.current === null && printConfiguration?.direct) {
+    if (printChoiceRef.current === null && printConfiguration?.direct) {
       const configuration = printConfiguration.configuration;
       const route = configuration.templateRoutes?.find(item => item.documentType === "SalesInvoice" && item.format === configuration.posOutputFormat);
       if (!(route ? route.printerName : configuration.posPrinterName)) {
@@ -375,7 +375,9 @@ export function PosPaymentDialog({
         tenderedAmount: methodCode === "Cash" ? tenderedAmount ?? null : null,
       })),
       settlement,
-      printChoice,
+      portfolioDirection && printChoice === null
+        ? printConfiguration?.configuration.posOutputFormat ?? null
+        : printChoice,
     );
   }
 
@@ -612,12 +614,12 @@ export function PosPaymentDialog({
         )}
         </div>
 
-        {printError && !portfolioDirection && <p role="alert" className="shrink-0 border-t border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{printError}</p>}
-        <div className={`grid shrink-0 gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:items-center sm:justify-between sm:px-5 sm:pb-4 sm:pt-4 ${portfolioDirection ? "grid-cols-3" : "grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]"}`}>
-          {!portfolioDirection && <div className="col-span-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:col-auto" aria-label="Opciones de impresión">
+        {printError && <p role="alert" className="shrink-0 border-t border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{printError}</p>}
+        <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:items-center sm:justify-between sm:px-5 sm:pb-4 sm:pt-4">
+          <div className="col-span-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:col-auto" aria-label="Opciones de impresión">
             {PAYMENT_PRINT_SHORTCUTS.map(({ key, label, choice }) =>
               <button key={key} type="button" aria-keyshortcuts={key} aria-label={label} disabled={busy} onClick={() => choosePrint(choice)} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 font-medium transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/30 disabled:opacity-50"><span className="font-bold text-teal-700 underline decoration-teal-500/60 decoration-2 underline-offset-4">{key}</span>{label.slice(1)}</button>)}
-          </div>}
+          </div>
           <div className="col-span-2 flex justify-end gap-2 sm:col-auto">
           {portfolioDirection && <button type="button" onClick={onBack} disabled={busy} className="h-11 rounded-lg border border-slate-300 px-3 font-medium sm:px-5">Atrás</button>}
           <button

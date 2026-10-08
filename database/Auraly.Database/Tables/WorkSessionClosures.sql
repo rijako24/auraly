@@ -72,7 +72,7 @@ CREATE TABLE [dbo].[WorkSessionClosureReconciliationLines]
     [ReasonCode] NVARCHAR(40) NULL,
     CONSTRAINT [PK_WorkSessionClosureReconciliationLines] PRIMARY KEY CLUSTERED ([ReconciliationId],[PaymentMethodCode]),
     CONSTRAINT [FK_WorkSessionClosureReconciliationLines_Header] FOREIGN KEY ([ReconciliationId]) REFERENCES [dbo].[WorkSessionClosureReconciliations]([ReconciliationId]),
-    CONSTRAINT [CK_WorkSessionClosureReconciliationLines_Amounts] CHECK ([VerifiedAmount]>=0 AND ([CountedAmount] IS NULL OR [CountedAmount]>=0) AND [Difference]=[VerifiedAmount]-[ExpectedAmount])
+    CONSTRAINT [CK_WorkSessionClosureReconciliationLines_Amounts] CHECK (([PaymentMethodCode]<>N'Cash' OR [VerifiedAmount]>=0) AND ([CountedAmount] IS NULL OR [CountedAmount]>=0) AND [Difference]=[VerifiedAmount]-[ExpectedAmount])
 );
 GO
 

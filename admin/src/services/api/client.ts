@@ -244,6 +244,18 @@ class ApiClient {
     return this.handleResponse<T>(response);
   }
 
+  async getText(
+    path: string,
+    params?: Record<string, string | number | boolean | undefined>,
+  ): Promise<string> {
+    const response = await fetchWithSessionRetry(this.buildUrl(path, params), {
+      method: "GET",
+      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
+    });
+    if (!response.ok) await this.handleResponse<void>(response);
+    return response.text();
+  }
+
   async getConditional<T>(path: string, etag: string | null): Promise<
     { notModified: true } | { notModified: false; value: T; etag: string | null }
   > {

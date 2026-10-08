@@ -12,7 +12,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlPayablesStore(
+public sealed partial class SqlPayablesStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider) : IPayablesStore

@@ -6,11 +6,13 @@ import type {
   PosCashMovementDirection,
   PosCashMovementReason,
   PosClient,
+  PosPrintTemplateFormat,
 } from "@/services/pos/pos-edge-client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatMoneyDraft, parseMoneyDraft } from "./pos-money-input";
 import { cashMovementKeyboardAction } from "./pos-cash-movement-keyboard";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
+import { PAYMENT_PRINT_SHORTCUTS } from "./pos-payment-keyboard";
 
 export function PosCashMovementDialog({
   client,
@@ -31,6 +33,7 @@ export function PosCashMovementDialog({
   const [amount, setAmount] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
+  const [printChoice, setPrintChoice] = useState<PosPrintTemplateFormat | "none" | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +94,7 @@ export function PosCashMovementDialog({
       });
       let printWarning = "";
       try {
-        await client.printCashMovement({
+        if (printChoice !== "none") await client.printCashMovement({
           documentId: result.documentId,
           direction,
           reasonName: reason.name,
@@ -100,7 +103,7 @@ export function PosCashMovementDialog({
           reference: reference.trim() || null,
           notes: notes.trim() || null,
           responsibleName,
-        });
+        }, printChoice ?? undefined);
       } catch (caught) {
         printWarning = `. Movimiento guardado; ${caught instanceof Error ? caught.message : "no fue posible imprimir el ticket"}`;
       }
@@ -191,6 +194,7 @@ export function PosCashMovementDialog({
           Cuenta: {reason.accountCode||"sin configurar"} {reason.accountName||""}
           {reason.defaultCostCenterName?" / Centro: "+reason.defaultCostCenterName:""}
         </p>}
+        <div className="space-y-1.5"><p className="text-xs font-semibold text-slate-600">Impresión · sin elegir usa Facturas por defecto</p><div className="flex flex-wrap gap-1.5" aria-label="Formato del comprobante de caja">{PAYMENT_PRINT_SHORTCUTS.map(option=><button key={option.key} type="button" aria-pressed={printChoice===option.choice} onClick={()=>setPrintChoice(option.choice)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${printChoice===option.choice?"border-teal-700 bg-teal-50 text-teal-900":"border-slate-200 text-slate-600"}`}><strong>{option.key}</strong> {option.label}</button>)}</div></div>
         {error&&<p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       </div>
       <footer className="flex justify-end gap-2 border-t px-6 py-4">

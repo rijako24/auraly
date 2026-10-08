@@ -11,6 +11,29 @@ public static class ReceivablesApi
 {
     public static IEndpointRouteBuilder MapReceivablesApi(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/commerce/v1/receivables/report", async (
+            HttpContext context, int page, int pageSize, bool consolidated, DateOnly cutoff,
+            Guid? customerId, Guid? partySiteId, DateOnly? from, DateOnly? to,
+            string? status, bool? outstandingOnly, bool? overdueOnly,
+            string? sortBy, string? sortDirection, ReceivablesService service, CancellationToken token) =>
+            await Execute(() => service.ReportAsync(context.User.ToReceivablesIdentity(),
+                new(page, pageSize, consolidated, cutoff, customerId, partySiteId, from, to,
+                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection), token), Results.Ok))
+            .RequireAuthorization("receivables.user");
+        endpoints.MapGet("/api/commerce/v1/receivables/report/print", async (
+            HttpContext context, bool consolidated, DateOnly cutoff,
+            Guid? customerId, Guid? partySiteId, DateOnly? from, DateOnly? to,
+            string? status, bool? outstandingOnly, bool? overdueOnly,
+            string? sortBy, string? sortDirection, ReceivablesService service, CancellationToken token) =>
+            await Execute(async () =>
+            {
+                var html = await PortfolioReportPrint.ReceivablesAsync(
+                    service, context.User.ToReceivablesIdentity(),
+                    new(1, 100, consolidated, cutoff, customerId, partySiteId, from, to,
+                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection), token);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Content(html, "text/html; charset=utf-8");
+            })).RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/receivables/customers",async(HttpContext context,int page,int pageSize,string? search,bool? overdue,Guid? customerId,Guid? partySiteId,string? status,DateOnly? from,DateOnly? to,string? sortBy,string? sortDirection,ReceivablesService service,CancellationToken token)=>
             await Execute(()=>service.ListCustomersAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,overdue,customerId,status,from,to,partySiteId,sortBy,sortDirection),token),Results.Ok)).RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/receivables",async(HttpContext context,int page,int pageSize,string? search,Guid? customerId,Guid? partySiteId,string? status,bool? overdue,bool? outstandingOnly,DateOnly? from,DateOnly? to,string? sortBy,string? sortDirection,ReceivablesService service,CancellationToken token)=>
@@ -68,7 +91,7 @@ public static class ReceivablesApi
             }));
         return endpoints;
     }
-    private static async Task<IResult> Execute(Func<Task<IResult>> action){try{return await action();}catch(ReceivablesForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(WorkSessionForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(ReceivablesValidationException ex){return Results.Problem(ex.Message,statusCode:400);}catch(ReceivablesConflictException ex){return Results.Problem(ex.Message,statusCode:409);}}
+    private static async Task<IResult> Execute(Func<Task<IResult>> action){try{return await action();}catch(ReceivablesForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(WorkSessionForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(ReceivablesValidationException ex){return Results.Problem(ex.Message,statusCode:400);}catch(ReceivablesConflictException ex){return Results.Problem(ex.Message,statusCode:409);}catch(PortfolioReportPrintException ex){return Results.Problem(ex.Message,statusCode:ex.StatusCode);}}
     private static async Task<IResult> Execute<T>(Func<Task<T>> action,Func<T,IResult> success){try{return success(await action());}catch(ReceivablesForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(ReceivablesValidationException ex){return Results.Problem(ex.Message,statusCode:400);}catch(ReceivablesConflictException ex){return Results.Problem(ex.Message,statusCode:409);}}
 }
 

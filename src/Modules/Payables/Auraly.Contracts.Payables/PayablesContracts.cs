@@ -189,6 +189,33 @@ public sealed record SupplierPortfolioPage(IReadOnlyList<SupplierPortfolioItem> 
     public IReadOnlyList<PayableCurrencyTotal> CurrencyTotals { get; init; } = [];
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
+public sealed record PayablesReportQuery(int Page, int PageSize, bool Consolidated,
+    DateOnly Cutoff, Guid? SupplierId = null, Guid? PartySiteId = null,
+    DateOnly? From = null, DateOnly? To = null, string? Status = null,
+    bool OutstandingOnly = false, bool OverdueOnly = false,
+    string? SortBy = null, string? SortDirection = null);
+public sealed record PayablesReportApplication(string DocumentNumber, DateTimeOffset AppliedAt,
+    decimal Amount);
+public sealed record PayablesReportItem(Guid SupplierId, string SupplierName,
+    string Identification, Guid? PartySiteId, string? PartySiteName, string CurrencyCode,
+    int InvoiceCount, decimal OriginalAmount, decimal PaidAmount, decimal OutstandingAmount,
+    decimal OverdueAmount, Guid? PayableId = null, string? DocumentNumber = null,
+    DateTimeOffset? IssuedAt = null, DateTimeOffset? DueDate = null,
+    IReadOnlyList<PayablesReportApplication>? Applications = null)
+{
+    public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
+}
+public sealed record PayablesReportCurrencyTotal(string CurrencyCode, int InvoiceCount,
+    decimal OriginalAmount, decimal PaidAmount, decimal OutstandingAmount, decimal OverdueAmount)
+{
+    public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
+}
+public sealed record PayablesReportPage(IReadOnlyList<PayablesReportItem> Items,
+    IReadOnlyList<PayablesReportCurrencyTotal> CurrencyTotals,
+    int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
 
 public static class SupplierPaymentContractSerializer
 {

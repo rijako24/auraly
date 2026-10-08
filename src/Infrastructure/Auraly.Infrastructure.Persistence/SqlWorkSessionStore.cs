@@ -869,13 +869,16 @@ public sealed partial class SqlWorkSessionStore(
 
             SELECT detail.DocumentId,detail.Direction,detail.DocumentNumber,
                    detail.ReasonName,detail.Amount,detail.OccurredAt,
-                   detail.ResponsibleName,detail.Reference,detail.Notes
+                   detail.ResponsibleName,detail.Reference,detail.Notes,
+                   detail.WorkSessionMovementId,detail.MovementType
             FROM
             (
                 SELECT document.DocumentId,document.Direction,document.DocumentNumber,
                        reason.Name ReasonName,document.Amount,document.OccurredAt,
                        LTRIM(RTRIM(CONCAT(users.FirstName,N' ',users.LastName))) ResponsibleName,
-                       document.Reference,document.Notes
+                       document.Reference,document.Notes,
+                       CAST(NULL AS uniqueidentifier) WorkSessionMovementId,
+                       CASE WHEN document.Direction=N'In' THEN N'CashIn' ELSE N'CashOut' END MovementType
                 FROM dbo.CashMovementDocuments document
                 INNER JOIN dbo.WorkSessions session
                   ON session.WorkSessionId=document.WorkSessionId
@@ -899,7 +902,8 @@ public sealed partial class SqlWorkSessionStore(
                             THEN N'Entrada de dinero' ELSE N'Salida de dinero' END),
                        ABS(movement.Amount),movement.OccurredAt,
                        LTRIM(RTRIM(CONCAT(users.FirstName,N' ',users.LastName))),
-                       movement.Reference,COALESCE(supplierPayment.Notes,customerPayment.Notes)
+                       movement.Reference,COALESCE(supplierPayment.Notes,customerPayment.Notes),
+                       movement.WorkSessionMovementId,movement.MovementType
                 FROM dbo.WorkSessionMovements movement
                 INNER JOIN dbo.WorkSessions session
                   ON session.WorkSessionId=movement.WorkSessionId
@@ -980,7 +984,9 @@ public sealed partial class SqlWorkSessionStore(
                 reader.GetString(3), reader.GetDecimal(4),
                 reader.GetDateTimeOffset(5), reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8)));
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetGuid(9),
+                reader.GetString(10)));
         await reader.NextResultAsync(cancellationToken);
         var invoiceCharges = new List<WorkSessionInvoiceCharge>();
         while (await reader.ReadAsync(cancellationToken))

@@ -8,6 +8,10 @@ namespace Auraly.Application.Payables;
 
 public interface IPayablesStore
 {
+    Task<PayablesReportPage> ReportAsync(PayablesUserIdentity user,
+        PayablesReportQuery query, CancellationToken cancellationToken);
+    Task<PayablesReportPage> PrintReportAsync(PayablesUserIdentity user,
+        PayablesReportQuery query, CancellationToken cancellationToken);
     Task<PayableExpenseConceptPage> ListExpenseConceptsAsync(
         PayablesUserIdentity user, string? search, int page, int pageSize, CancellationToken cancellationToken);
     Task<PayablePage> ListAsync(
@@ -42,6 +46,33 @@ public sealed class PayablesService(
     IPayablesStore store,
     AccountingProcessingCoordinator accounting)
 {
+    public Task<PayablesReportPage> ReportAsync(PayablesUserIdentity user,
+        PayablesReportQuery query, CancellationToken cancellationToken = default)
+    {
+        ValidateReport(user, query);
+        return store.ReportAsync(user, query, cancellationToken);
+    }
+    public Task<PayablesReportPage> PrintReportAsync(PayablesUserIdentity user,
+        PayablesReportQuery query, CancellationToken cancellationToken = default)
+    {
+        ValidateReport(user, query);
+        return store.PrintReportAsync(user, query, cancellationToken);
+    }
+    private static void ValidateReport(PayablesUserIdentity user, PayablesReportQuery query)
+    {
+        Require(user, PayablesPermissionCodes.Read);
+        if (query.Page < 1 || query.PageSize is < 1 or > 100 ||
+            (long)(query.Page - 1) * query.PageSize > int.MaxValue ||
+            query.Cutoff == DateOnly.MaxValue || query.To == DateOnly.MaxValue ||
+            query.SupplierId == Guid.Empty || query.PartySiteId == Guid.Empty ||
+            query.From > query.To || query.From > query.Cutoff || query.To > query.Cutoff)
+            throw new PayablesValidationException("Los filtros del informe no son válidos.");
+        ValidateLedgerFilters(query.Status, query.From, query.To);
+        if (!PagedSort.IsValid(query.SortBy, query.SortDirection,
+            "name", "issuedAt", "dueDate", "documentNumber", "originalAmount",
+            "paidAmount", "outstandingAmount", "overdueAmount", "invoiceCount", "currency"))
+            throw new PayablesValidationException("El orden del informe no es válido.");
+    }
     public Task<PayableExpenseConceptPage> ListExpenseConceptsAsync(
         PayablesUserIdentity user, string? search, int page, int pageSize,
         CancellationToken cancellationToken = default)

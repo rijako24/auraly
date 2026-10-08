@@ -91,8 +91,32 @@ export interface SupplierPaymentHistoryPage {
   page:number;pageSize:number;totalCount:number;totalPages:number;
 }
 export interface SupplierPortfolioPage {items:Array<{supplierId:string;supplierName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string;partySiteId:string|null;partySiteName:string|null}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalSupplierCredit:number;currencyTotals:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>}
+export interface PayablesReportItem {
+  supplierId: string; supplierName: string; identification: string;
+  partySiteId: string | null; partySiteName: string | null; currencyCode: string;
+  invoiceCount: number; originalAmount: number; paidAmount: number;
+  outstandingAmount: number; overdueAmount: number; otherImpact: number; payableId: string | null;
+  documentNumber: string | null; issuedAt: string | null; dueDate: string | null;
+  applications: Array<{documentNumber:string;appliedAt:string;amount:number}> | null;
+}
+export interface PayablesReportPage {
+  items: PayablesReportItem[]; currencyTotals: Array<{currencyCode:string;
+    invoiceCount:number;originalAmount:number;paidAmount:number;
+    outstandingAmount:number;overdueAmount:number;otherImpact:number}>;
+  page: number; pageSize: number; totalCount: number; totalPages: number;
+}
+export interface PayablesReportFilters {
+  page: number; pageSize: number; consolidated: boolean; cutoff: string;
+  supplierId?: string; partySiteId?: string; from?: string; to?: string;
+  status?: PayableStatus; outstandingOnly?: boolean; overdueOnly?: boolean;
+  sortBy?: string; sortDirection?: "asc" | "desc";
+}
 
 export const payablesApi = {
+  report: (filters: PayablesReportFilters) =>
+    apiClient.get<PayablesReportPage>("/commerce/v1/payables/report", { ...filters }),
+  printReport: (filters: PayablesReportFilters) =>
+    apiClient.getText("/commerce/v1/payables/report/print", { ...filters, page: undefined, pageSize: undefined }),
   expenseConcepts: (search: string, page: number, pageSize: number) =>
     apiClient.get<{ items: Array<{ conceptId: string; name: string }>; page: number; pageSize: number; totalCount: number; totalPages: number }>(
       "/commerce/v1/payables/expense-concepts", { search: search || undefined, page, pageSize }),

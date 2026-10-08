@@ -343,8 +343,13 @@ public sealed partial class SqlAccountingPostingProcessor(
             ?? throw new InvalidOperationException("The work-session reconciliation payload is invalid.");
         if (payload.ReconciliationId!=source.DocumentId || payload.BusinessId!=source.BusinessId ||
             payload.TenantId!=source.TenantId || payload.Lines.Count==0 || payload.Lines.Any(line=>
-                string.IsNullOrWhiteSpace(line.AccountingCategory) || line.CountedAmount<0 || line.VerifiedAmount<0 ||
-                decimal.Round(line.VerifiedAmount-line.ExpectedAmount,4)!=decimal.Round(line.Difference,4)))
+                string.IsNullOrWhiteSpace(line.AccountingCategory) || line.CountedAmount<0 ||
+                (line.PaymentMethodCode.Equals("Cash",StringComparison.OrdinalIgnoreCase) && line.VerifiedAmount<0) ||
+                decimal.Round(line.VerifiedAmount-line.ExpectedAmount,4)!=decimal.Round(line.Difference,4)) ||
+            (payload.PaymentCorrections?.Any(correction =>
+                correction.Amount == 0 || Math.Sign(correction.Amount) != Math.Sign(correction.OriginalAmount) ||
+                (correction.Amount != correction.OriginalAmount &&
+                  string.IsNullOrWhiteSpace(correction.CounterpartCategory))) == true))
             throw new InvalidOperationException("The work-session reconciliation payload is inconsistent.");
         return FinancialFacts.ClosureReconciliation(
             $"Conciliación del cierre {payload.WorkSessionClosureId:D}",payload);
@@ -2080,6 +2085,22 @@ public sealed partial class SqlAccountingPostingProcessor(
             {
                 residual[reclassification.FromPaymentMethodCode]+=reclassification.Amount;
                 residual[reclassification.ToPaymentMethodCode]-=reclassification.Amount;
+            }
+            foreach(var correction in payload.PaymentCorrections ?? [])
+            {
+                residual[correction.OriginalPaymentMethodCode]+=correction.OriginalAmount;
+                residual[correction.PaymentMethodCode]-=correction.Amount;
+                var delta=correction.Amount-correction.OriginalAmount;
+                if(delta>0)
+                {
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending,delta,0,null,description));
+                    lines.Add(new(correction.CounterpartCategory!,0,delta,correction.PartyId,description));
+                }
+                else if(delta<0)
+                {
+                    lines.Add(new(correction.CounterpartCategory!,-delta,0,correction.PartyId,description));
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending,0,-delta,null,description));
+                }
             }
             foreach(var difference in residual.Values)
             {

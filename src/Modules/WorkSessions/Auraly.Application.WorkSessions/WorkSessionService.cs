@@ -62,6 +62,9 @@ public interface IWorkSessionStore
         int page, int pageSize, CancellationToken cancellationToken);
     Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ListClosurePaymentVerificationsAsync(
         WorkSessionIdentity identity, Guid closureId, CancellationToken cancellationToken);
+    Task<WorkSessionPaymentVerificationPage> ListClosurePaymentVerificationPageAsync(
+        WorkSessionIdentity identity, Guid closureId, string? paymentMethodCode,
+        string? movementType, int page, int pageSize, CancellationToken cancellationToken);
     Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
         WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken);
@@ -344,6 +347,22 @@ public sealed class WorkSessionService(
         return store.ListClosurePaymentVerificationsAsync(identity, closureId, cancellationToken);
     }
 
+    public Task<WorkSessionPaymentVerificationPage> ListClosurePaymentVerificationPageAsync(
+        WorkSessionIdentity identity, Guid closureId, string? paymentMethodCode,
+        string? movementType, int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.ReadCashDifferences);
+        if (closureId == Guid.Empty || page < 1 || pageSize is < 1 or > 100 ||
+            page > int.MaxValue / pageSize ||
+            (paymentMethodCode is not null && (paymentMethodCode.Length is < 1 or > 32 ||
+                paymentMethodCode.Any(character => !char.IsLetterOrDigit(character)))) ||
+            (movementType is not null && (movementType.Length is < 1 or > 40 ||
+                movementType.Any(character => !char.IsLetterOrDigit(character)))))
+            throw new WorkSessionValidationException("El cierre, filtro o paginación de comprobantes no es válido.");
+        return store.ListClosurePaymentVerificationPageAsync(identity, closureId,
+            paymentMethodCode, movementType, page, pageSize, cancellationToken);
+    }
+
     public async Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
         WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken = default)
@@ -351,14 +370,22 @@ public sealed class WorkSessionService(
         Demand(identity,WorkSessionPermissionCodes.ReconcileClosures);
         if (closureId==Guid.Empty || string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length>128)
             throw new WorkSessionValidationException("El cierre y la clave idempotente son obligatorios.");
-        if (request.Lines.Count==0 || request.Lines.Any(line=>string.IsNullOrWhiteSpace(line.PaymentMethodCode) || line.VerifiedAmount<0) ||
+        if (request.Lines.Count==0 || request.Lines.Any(line=>string.IsNullOrWhiteSpace(line.PaymentMethodCode) ||
+                (line.PaymentMethodCode.Equals("Cash",StringComparison.OrdinalIgnoreCase) && line.VerifiedAmount<0)) ||
             request.Reclassifications.Any(line=>line.Amount<=0) || request.Note?.Trim().Length>500)
             throw new WorkSessionValidationException("Los valores de conciliación no son válidos.");
         if (request.PaymentVerifications?.Any(item => string.IsNullOrWhiteSpace(item.VerificationKey) ||
                 item.Status is not ("Verified" or "Missing")) == true)
             throw new WorkSessionValidationException("La verificación individual de pagos no es válida.");
+        if (request.PaymentCorrections?.Any(item =>
+                string.IsNullOrWhiteSpace(item.VerificationKey) || item.VerificationKey.Length > 200 ||
+                string.IsNullOrWhiteSpace(item.PaymentMethodCode) || item.PaymentMethodCode.Length > 32 ||
+                item.PaymentMethodCode.Any(character => !char.IsLetterOrDigit(character)) ||
+                item.Amount == 0 || string.IsNullOrWhiteSpace(item.Reason) ||
+                item.Reason.Trim().Length > 500) == true)
+            throw new WorkSessionValidationException("La corrección del comprobante requiere medio, valor y motivo válidos.");
         var result=await store.ReconcileClosureAsync(identity,closureId,idempotencyKey.Trim(),request with { Note=NullIfWhiteSpace(request.Note) },cancellationToken);
-        if (result.AccountingStatus == "Pending")
+        if (!result.IdempotentReplay && result.AccountingStatus == "Pending")
             await accountingProcessing.RequestPostingAsync(result.BusinessId,result.ReconciliationId,
                 WorkSessionAccountingDocumentTypes.ClosureReconciliation,cancellationToken);
         return result;

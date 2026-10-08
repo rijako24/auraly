@@ -21,7 +21,7 @@ import { workSessionsApi } from "@/services/api/work-sessions";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { formatCurrency,formatDate } from "@/lib/utils";
-import type { PosEdgeClient,PosPaymentInput } from "@/services/pos/pos-edge-client";
+import { PosEdgeClient,loadBrowserPrinterConfiguration,readEdgeTokenFromLaunch,readEdgeUserSession,type PosPaymentInput,type PosPrintTemplateFormat } from "@/services/pos/pos-edge-client";
 import { printPortfolioPayment,type PortfolioPaymentReceipt } from "@/services/pos/pos-portfolio-payment-print";
 
 type Direction="receivable"|"payable";
@@ -32,7 +32,7 @@ type PaymentAttempt={fingerprint:string;paymentId:string;paidAt:string;sessionId
 const toPortfolioMethod=(code:string):CustomerPaymentMethod|null=>
   code==="Transfer"||code==="Cash"||code==="DebitCard"||code==="CreditCard"?code:null;
 
-export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty,initialInvoice,initialPartySiteId,initialPartySiteName,workSessionId,onCompleted,edgeClient,receiptPrinter,businessId:businessIdOverride,printOnPos=false,businessName:posBusinessName}:{direction:Direction;open:boolean;onOpenChange:(open:boolean)=>void;initialParty?:PartyRoleSelection|null;initialInvoice?:Invoice|null;initialPartySiteId?:string;initialPartySiteName?:string;workSessionId?:string|null;onCompleted?:()=>void;edgeClient?:PosEdgeClient|null;receiptPrinter?:Pick<PosEdgeClient,"printPortfolioPayment">|null;businessId?:string|null;printOnPos?:boolean;businessName?:string}){
+export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty,initialInvoice,initialPartySiteId,initialPartySiteName,workSessionId,onCompleted,edgeClient,receiptPrinter,businessId:businessIdOverride,printOnPos=false,businessName:posBusinessName}:{direction:Direction;open:boolean;onOpenChange:(open:boolean)=>void;initialParty?:PartyRoleSelection|null;initialInvoice?:Invoice|null;initialPartySiteId?:string;initialPartySiteName?:string;workSessionId?:string|null;onCompleted?:()=>void;edgeClient?:PosEdgeClient|null;receiptPrinter?:Pick<PosEdgeClient,"printPortfolioPayment"|"printerConfigurationForSale">|null;businessId?:string|null;printOnPos?:boolean;businessName?:string}){
   const initialPartyRef=useRef(initialParty);initialPartyRef.current=initialParty;
   const initialInvoiceRef=useRef(initialInvoice);initialInvoiceRef.current=initialInvoice;
   const initialPartySiteIdRef=useRef(initialPartySiteId);initialPartySiteIdRef.current=initialPartySiteId;
@@ -51,6 +51,8 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
   const invoiceRequestEpoch=useRef(0);
   const pendingAttempt=useRef<PaymentAttempt|null>(null);
   const role=direction==="receivable"?"Customer":"Supplier";
+  const installedPrinter=useMemo(()=>{if(!open||receiptPrinter)return null;const token=readEdgeTokenFromLaunch();return token?new PosEdgeClient(token,readEdgeUserSession()):null;},[open,receiptPrinter]);
+  const printClient=receiptPrinter??installedPrinter;
   const partyId=direction==="receivable"?party?.customerId:party?.supplierId;
   useEffect(()=>{if(open){const party=initialPartyRef.current;setStep(1);setParty(party??null);setPartySiteId(initialPartySiteIdRef.current);setPartySiteName(initialPartySiteNameRef.current);setInvoicePage(1);setSelected({});setSelectedLimits({});setSelectedNumbers({});}},[open]);
   const requiresSupplierSite=direction==="payable"&&!edgeClient&&!printOnPos;
@@ -98,8 +100,9 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     mode:edgeClient?"edge" as const:"online" as const,
     referenceOptions:(catalogCode:string)=>edgeClient?edgeClient.referenceOptions(catalogCode):referenceOptionsApi.list(catalogCode),
     settlementConfiguration:()=>edgeClient?edgeClient.portfolioSettlementConfiguration():receivablesApi.settlementConfiguration(),
-  }),[edgeClient]);
-  const mutation=useMutation({mutationFn:async(tenders:PosPaymentInput[])=>{
+    printerConfigurationForSale:()=>printClient?printClient.printerConfigurationForSale():Promise.resolve({configuration:loadBrowserPrinterConfiguration(),direct:false}),
+  }),[edgeClient,printClient]);
+  const mutation=useMutation({mutationFn:async({tenders,printChoice}:{tenders:PosPaymentInput[];printChoice:PosPrintTemplateFormat|"none"|null})=>{
     if(!businessId||!partyId)throw new Error("Falta el tercero.");
     const fingerprint=JSON.stringify({direction,businessId,partyId,workSessionId,allocations,tenders});
     let attempt=pendingAttempt.current;
@@ -113,7 +116,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     const {paymentId,paidAt,sessionId}=attempt;
     const printedAllocations=allocations.map(x=>({documentNumber:selectedNumbers[x.id],amount:x.amount}));
     if(printOnPos&&printedAllocations.some(x=>!x.documentNumber))throw new Error("Falta el número de una factura seleccionada.");
-    const printContext={paidAt,tenders,printedAllocations,partyName:party?.displayName??"",partyIdentification:party?.identification??"",total};
+    const printContext={paidAt,tenders,printedAllocations,partyName:party?.displayName??"",partyIdentification:party?.identification??"",total,printChoice};
     if(direction==="receivable"){
       const request={paymentId,businessId,customerId:partyId,workSessionId:sessionId,paidAt,currencyCode:"COP",notes:null,allocations:allocations.map(x=>({receivableId:x.id,amount:x.amount})),payments:tenders.map(toCustomerTender)};
       const accepted=await(edgeClient?edgeClient.confirmPortfolioReceivable(request,`receivable-payment-${paymentId}`):printOnPos?receivablesApi.confirmPosPayment(request,`receivable-payment-${paymentId}`):receivablesApi.confirmPayment(request,`receivable-payment-${paymentId}`));
@@ -128,7 +131,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     toast.success(`${accepted.documentNumber} quedó registrado. El saldo se actualizará al aplicar el movimiento.`);
     changeOpen(false);
     onCompleted?.();
-    if(!printOnPos||accepted.idempotentReplay||!businessId)return;
+    if(accepted.idempotentReplay||!businessId||printContext.printChoice==="none")return;
     const receipt:PortfolioPaymentReceipt={
       paymentId:accepted.paymentId,
       direction:direction==="receivable"?"Receivable":"Payable",
@@ -146,7 +149,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
         reference:value.reference?.trim()||null,
       })),
     };
-    void printPortfolioPayment(receipt,businessId,receiptPrinter??null).catch(error=>
+    void printPortfolioPayment(receipt,businessId,printClient,printContext.printChoice??"Receipt").catch(error=>
       toast.error(`El pago quedó registrado, pero no se pudo imprimir: ${error instanceof Error?error.message:"revisa la impresora."}`));
   },onError:error=>toast.error(error instanceof Error?error.message:"No fue posible registrar el movimiento. Si no recibiste confirmación, reintenta sin cambiar los valores.")});
   const validateStepOne=()=>{if(!partyId||allocations.length===0){toast.error("Selecciona un tercero y al menos una factura.");return false;}if(requiresSupplierSite&&!partySiteId){toast.error("Selecciona la sede del proveedor.");return false;}if(allocations.some(x=>x.amount>(selectedLimits[x.id]??0))){toast.error("Ningún abono puede superar el saldo de la factura.");return false;}return true;};
@@ -157,7 +160,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     onChangeDocumentType={()=>{}} onCancel={()=>changeOpen(false)}
     onBack={()=>setStep(1)} portfolioDirection={direction}
     maxPaymentMethods={allocations.length>1?1:undefined}
-    onConfirm={async payments=>{if(allocations.length>1&&payments.length>1){toast.error("Para varias facturas se usa un solo medio de pago.");return;}mutation.mutate(payments);}}
+    onConfirm={async (payments,_,printChoice)=>{if(allocations.length>1&&payments.length>1){toast.error("Para varias facturas se usa un solo medio de pago.");return;}mutation.mutate({tenders:payments,printChoice});}}
   />;
   return <Dialog open={open} onOpenChange={next=>{if(!next&&mutation.isPending)return;changeOpen(next)}}><DialogContent className="flex max-h-[92dvh] w-[96vw] max-w-4xl flex-col overflow-hidden p-0">
     <DialogHeader className="border-b border-slate-200 px-6 py-5 text-left"><DialogTitle className="flex items-center gap-2 text-xl"><CreditCard className="h-5 w-5 text-teal-700"/>{direction==="receivable"?"Abono a cartera":"Pago a proveedores"}</DialogTitle><DialogDescription>Selecciona las facturas y el valor de cada una.</DialogDescription></DialogHeader>

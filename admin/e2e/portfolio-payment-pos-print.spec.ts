@@ -3,8 +3,15 @@ import { expect, test } from "@playwright/test";
 for (const scenario of [
   { direction: "receivable", shortcut: "Control+f", role: "Customer", dialog: "Abono a cartera", invoicePath: "/pos/receivables", confirmationPath: "/pos/receivable-payments/confirm", documentNumber: "ABO-001" },
   { direction: "payable", shortcut: "Control+g", role: "Supplier", dialog: "Pago a proveedores", invoicePath: "/pos/payables", confirmationPath: "/pos/payable-payments/confirm", documentNumber: "PGP-001" },
-] as const) for (const installed of [false, true]) {
-  test(`${scenario.dialog} en POS ${installed ? "instalado en línea" : "web"} despacha su tirilla`, async ({ page, baseURL }) => {
+] as const) for (const installed of [false, true]) for (const printOption of [
+  { label: "Predeterminado", button: null, format: "Receipt" },
+  { label: "Sin imprimir", button: "Sin imprimir", format: null },
+  { label: "Tirilla", button: "Tirilla", format: "Receipt" },
+  { label: "Media carta", button: "Media carta", format: "HalfLetter" },
+  { label: "Oficio", button: "Oficio", format: "HalfLegal" },
+  { label: "Carta", button: "Carta", format: "Letter" },
+] as const) {
+  test(`${scenario.dialog} en POS ${installed ? "instalado en línea" : "web"} · ${printOption.label}`, async ({ page, baseURL }) => {
     const tenantId = "11111111-1111-1111-1111-111111111111";
     const businessId = "22222222-2222-2222-2222-222222222222";
     const warehouseId = "33333333-3333-3333-3333-333333333333";
@@ -25,9 +32,10 @@ for (const scenario of [
       if (installed) sessionStorage.setItem("auraly.pos.edge-token", "e2e-edge");
     }, { tenantId, businessId, warehouseId, user, installed });
 
-    let renderBody: { receipt: { direction: string; documentNumber: string; nit: string; responsibleName: string; allocations: Array<{ documentNumber: string }> } } | null = null;
+    let renderBody: { format: string; receipt: { direction: string; documentNumber: string; nit: string; responsibleName: string; allocations: Array<{ documentNumber: string }> } } | null = null;
     let localPrint: { direction: string; documentNumber: string; partyIdentification: string; allocations: Array<{ documentNumber: string }> } | null = null;
     let localPrintCount = 0;
+    let localPrintFormat: string | null = null;
     const edgePaths: string[] = [];
     const renderGate: { release?: () => void } = {};
     let confirmCount = 0;
@@ -46,8 +54,15 @@ for (const scenario of [
       if (path.endsWith("/health"))
         return route.fulfill({ status: 200, headers, contentType: "application/json",
           body: JSON.stringify({ status: "EnrollmentRequired", identityReady: false }) });
+      if (path.endsWith("/configuration/printers"))
+        return route.fulfill({ status: 200, headers, contentType: "application/json",
+          body: JSON.stringify({ configuration: { posOutputFormat: "Receipt", posPrinterName: "Impresora facturas",
+            templateRoutes: ["Receipt", "HalfLetter", "HalfLegal", "Letter"].map(format =>
+              ({ documentType: "SalesInvoice", format, printerName: `Impresora ${format}` })) },
+            installedPrinters: ["Impresora facturas"] }) });
       if (path.endsWith("/print/portfolio-payment")) {
         localPrintCount++;
+        localPrintFormat = new URL(route.request().url()).searchParams.get("format");
         localPrint = route.request().postDataJSON();
         return route.fulfill({ status: 204, headers });
       }
@@ -81,7 +96,8 @@ for (const scenario of [
         accountingJobId: "99999999-9999-9999-9999-999999999999", status: "Accepted",
         idempotentReplay: false }; }
       else if (path.endsWith(`/${paymentId}`)) paymentDetailReads++;
-      else if (path.endsWith("/tenants/branding")) body = { tenantId, displayName: "Empresa prueba", legalName: "Empresa prueba SAS", nit: "900123456", verificationDigit: "7", logoUrl: null };
+      else if (path.endsWith("/tenants/branding") || path.endsWith("/tenants/branding/print"))
+        body = { tenantId, displayName: "Empresa prueba", legalName: "Empresa prueba SAS", nit: "900123456", verificationDigit: "7", logoUrl: null };
       else if (path.endsWith(`/businesses/${businessId}`)) body = { businessId, name: "Sede prueba", address: "Calle 1", phone: "3001234567" };
       else if (path.endsWith("/portfolio-payments/receipt/render")) {
         renderBody = route.request().postDataJSON();
@@ -103,24 +119,33 @@ for (const scenario of [
     await page.getByRole("option", { name: /Tercero prueba/ }).click();
     await expect(dialog.getByText("FV-001")).toBeVisible();
     await dialog.getByRole("button", { name: "Ir a pagar" }).click();
-    await dialog.getByRole("button", { name: "Confirmar pago" }).click();
+    if (printOption.button) await dialog.getByRole("button", { name: printOption.button, exact: true }).click();
+    else await dialog.getByRole("button", { name: "Confirmar pago" }).click();
 
     await expect(dialog).not.toBeVisible();
-    if (installed) await expect.poll(() => localPrint, { message: JSON.stringify({ edgePaths, renderBody }) }).not.toBeNull();
-    else await expect.poll(() => renderBody).not.toBeNull();
+    if (printOption.format && installed)
+      await expect.poll(() => localPrint, { message: JSON.stringify({ edgePaths, renderBody }) }).not.toBeNull();
+    if (printOption.format && !installed) await expect.poll(() => renderBody).not.toBeNull();
     expect(confirmCount).toBe(1);
     expect(paymentDetailReads).toBe(0);
+    if (!printOption.format) {
+      expect(localPrintCount).toBe(0);
+      expect(renderBody).toBeNull();
+      return;
+    }
     expect(installed ? localPrint : renderBody!.receipt).toMatchObject({
       direction: scenario.direction === "receivable" ? "Receivable" : "Payable",
       documentNumber: scenario.documentNumber,
     });
     if (!installed) {
+      expect(renderBody!.format).toBe(printOption.format);
       expect(renderBody!.receipt).toMatchObject({
         nit: "900123456", responsibleName: "Laura Prueba",
         allocations: [{ documentNumber: "FV-001" }],
       });
       renderGate.release?.();
     } else {
+      expect(localPrintFormat).toBe(printOption.format);
       expect(localPrint).toMatchObject({ partyIdentification: "1001",
         allocations: [{ documentNumber: "FV-001" }] });
       expect(localPrintCount).toBe(1);

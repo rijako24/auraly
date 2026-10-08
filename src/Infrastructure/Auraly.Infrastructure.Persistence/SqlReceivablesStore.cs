@@ -13,7 +13,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlReceivablesStore(
+public sealed partial class SqlReceivablesStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider) : IReceivablesStore

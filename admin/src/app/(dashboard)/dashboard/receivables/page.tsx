@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { ColumnDef, SortingState } from "@tanstack/react-table";
-import { CalendarClock, CircleDollarSign, Download, FileUp, FilePenLine } from "lucide-react";
+import { CalendarClock, CircleDollarSign, Download, FileUp, FilePenLine, Files } from "lucide-react";
 import { useReceivableDetail, useReceivables } from "@/hooks/use-receivables";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -23,6 +23,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { PagedEntitySelect, type PagedEntityOption } from "@/components/forms/paged-entity-select";
 import { partiesApi, type PartySiteRoleOption } from "@/services/api/parties";
 import { PreexistingReceivablesImport, downloadPreexistingReceivablesTemplate } from "@/components/payments/preexisting-receivables-import";
+import { PortfolioReportDialog } from "@/components/payments/portfolio-report-dialog";
 
 const statusLabels: Record<ReceivableStatus, string> = {
   Open: "Pendiente",
@@ -55,6 +56,7 @@ export default function ReceivablesPage() {
   const [adjustmentObligationId, setAdjustmentObligationId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [portfolioPaymentOpen,setPortfolioPaymentOpen]=useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [paymentTarget,setPaymentTarget]=useState<ReceivableDetail>();
 
   const query = useReceivables({
@@ -93,7 +95,7 @@ export default function ReceivablesPage() {
   };
 
   return <div className="space-y-6">
-    <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por cobrar</h1><p className="text-muted-foreground">Facturas financiadas, vencimientos y recaudos aplicados por el motor contable.</p></div><div className="ml-auto flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={downloadPreexistingReceivablesTemplate}><Download className="mr-2 h-4 w-4"/>Descargar plantilla</Button>{canImport&&<Button variant="outline" onClick={()=>setImportOpen(true)}><FileUp className="mr-2 h-4 w-4"/>Importar cartera</Button>}{permissions?.includes("accounting.manual.create")&&<Button variant="outline" onClick={()=>{setAdjustmentObligationId(null);setAdjustmentOpen(true)}}><FilePenLine className="mr-2 h-4 w-4"/>Ajuste de cartera</Button>}{canReceive&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPaymentPartySiteId(undefined);setPortfolioPaymentOpen(true)}}><CircleDollarSign className="mr-2 h-4 w-4"/>Abono a cartera</Button>}</div></header>
+    <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por cobrar</h1><p className="text-muted-foreground">Facturas financiadas, vencimientos y recaudos aplicados por el motor contable.</p></div><div className="ml-auto flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={() => setReportOpen(true)}><Files className="mr-2 h-4 w-4"/>Reportes</Button><Button variant="outline" onClick={downloadPreexistingReceivablesTemplate}><Download className="mr-2 h-4 w-4"/>Descargar plantilla</Button>{canImport&&<Button variant="outline" onClick={()=>setImportOpen(true)}><FileUp className="mr-2 h-4 w-4"/>Importar cartera</Button>}{permissions?.includes("accounting.manual.create")&&<Button variant="outline" onClick={()=>{setAdjustmentObligationId(null);setAdjustmentOpen(true)}}><FilePenLine className="mr-2 h-4 w-4"/>Ajuste de cartera</Button>}{canReceive&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPaymentPartySiteId(undefined);setPortfolioPaymentOpen(true)}}><CircleDollarSign className="mr-2 h-4 w-4"/>Abono a cartera</Button>}</div></header>
     <PortfolioLedgerTabs direction="receivable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={customerId} partySiteId={partySiteId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} filters={
     <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Filtros</summary><div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
       <PagedEntitySelect<PartySiteRoleOption> queryKey={["receivable-customer-site-options",businessId]} value={partySiteId??""} selectedOption={customerFilter} placeholder="Filtrar por cliente y sede" ariaLabel="Filtrar cliente y sede" loadPage={(term,page,pageSize)=>partiesApi.portfolioSiteOptions({role:"Customer",search:term||undefined,page,pageSize})} getOption={item=>({value:item.partySiteId,label:`${item.displayName} · ${item.siteName}`,description:item.identification})} onChange={(_,option,item)=>{if(!item)return;setCustomerId(item.roleId);setPartySiteId(item.partySiteId);setCustomerFilter(option);setPage(1)}} onClear={()=>{setCustomerId(undefined);setPartySiteId(undefined);setCustomerFilter(null);setPage(1)}}/>
@@ -118,6 +120,10 @@ export default function ReceivablesPage() {
       onOpenChange={setImportOpen}
       onCompleted={() => setActiveTab("invoices")}
     />}
+    {reportOpen && <PortfolioReportDialog direction="receivable" onClose={() => setReportOpen(false)}
+      initialPartyId={customerId} initialPartySiteId={partySiteId} initialPartyOption={customerFilter}
+      initialFrom={from} initialTo={to} initialStatus={status === "all" ? undefined : status}
+      initialOverdue={overdue} />}
   </div>;
 }
 

@@ -95,6 +95,16 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/payables/suppliers?supplierId={fixture.SupplierId:D}&partySiteId={alternateSiteId:D}&page=1&pageSize=20");
             Assert.All(filtered!.Items, item => Assert.Equal(alternateSiteId, item.PartySiteId));
             Assert.NotEmpty(filtered.Items);
+            var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
+            var detailReport = await client.GetFromJsonAsync<PayablesReportPage>(
+                $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&supplierId={fixture.SupplierId:D}&partySiteId={alternateSiteId:D}");
+            Assert.Contains(detailReport!.Items, item => item.PayableId == payableIds[1] &&
+                item.PartySiteId == alternateSiteId && item.OutstandingAmount > 0);
+            var summaryReport = await client.GetFromJsonAsync<PayablesReportPage>(
+                $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=true&cutoff={cutoff}&supplierId={fixture.SupplierId:D}");
+            Assert.Contains(summaryReport!.Items, item => item.PartySiteId == primarySiteId);
+            Assert.Contains(summaryReport.Items, item => item.PartySiteId == alternateSiteId);
+            Assert.Contains(summaryReport.CurrencyTotals, item => item.CurrencyCode == "COP" && item.InvoiceCount >= 2);
         }
         finally
         {
@@ -334,6 +344,12 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         using var list = await denied.GetAsync(
             "/api/commerce/v1/payables?page=1&pageSize=20");
         Assert.Equal(HttpStatusCode.Forbidden, list.StatusCode);
+        using var deniedReport = await denied.GetAsync(
+            "/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=true&cutoff=2026-10-07");
+        Assert.Equal(HttpStatusCode.Forbidden, deniedReport.StatusCode);
+        using var deniedPrint = await denied.GetAsync(
+            "/api/commerce/v1/payables/report/print?consolidated=true&cutoff=2026-10-07");
+        Assert.Equal(HttpStatusCode.Forbidden, deniedPrint.StatusCode);
 
         var request = new ConfirmSupplierPaymentRequest(
             Guid.NewGuid(), Guid.NewGuid(), fixture.SupplierId,

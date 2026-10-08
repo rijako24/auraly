@@ -9,13 +9,21 @@ public sealed class PosPortfolioPaymentTicketPrinter(
     PortfolioPaymentReceiptRenderer renderer,
     PosWorkstationIdentity? workstation = null)
 {
-    public Task PrintAsync(PortfolioPaymentReceipt receipt, CancellationToken cancellationToken)
+    public Task PrintAsync(PortfolioPaymentReceipt receipt, string? requestedFormat,
+        CancellationToken cancellationToken)
     {
         var settings = configuration.LoadForPosPrinting();
-        if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
-            string.IsNullOrWhiteSpace(settings.PosPrinterName))
+        var format = requestedFormat ?? settings.PosOutputFormat;
+        if (format is not (PrintTemplateFormats.Receipt or PrintTemplateFormats.HalfLetter or
+                PrintTemplateFormats.HalfLegal or PrintTemplateFormats.Letter))
+            throw new ArgumentException("El formato de impresión no es válido.", nameof(requestedFormat));
+        var printerName = settings.InvoicePrinterForFormat(format);
+        if ((format == PrintTemplateFormats.Receipt
+                ? settings.ReceiptMode != PosPrinterModes.WindowsRaw
+                : settings.OrderMode != OrderPrinterModes.WindowsPrint) ||
+            string.IsNullOrWhiteSpace(printerName))
             throw new InvalidOperationException(
-                "Configura la impresora de facturación en formato tirilla para imprimir este comprobante.");
+                "Configura la impresora de facturación para este formato antes de imprimir el comprobante.");
 
         var html = renderer.Render(receipt with
         {
@@ -29,13 +37,13 @@ public sealed class PosPortfolioPaymentTicketPrinter(
             BusinessName = workstation?.BusinessName ?? receipt.BusinessName,
             BusinessAddress = workstation?.BusinessAddress ?? receipt.BusinessAddress,
             BusinessPhone = workstation?.BusinessPhone ?? receipt.BusinessPhone
-        }, settings.ReceiptPaperWidthMillimeters);
+        }, format, settings.ReceiptPaperWidthMillimeters);
         return renderedPrintJob.PrintAsync(
-            settings.PosPrinterName,
+            printerName,
             $"{(receipt.Direction == "Receivable" ? "Abono-cartera" : "Pago-proveedor")}-{receipt.PaymentId:N}",
             html,
             configuration.ReceiptOutputDirectory,
-            settings.ReceiptPaperWidthMillimeters,
+            format == PrintTemplateFormats.Receipt ? settings.ReceiptPaperWidthMillimeters : null,
             cancellationToken);
     }
 }

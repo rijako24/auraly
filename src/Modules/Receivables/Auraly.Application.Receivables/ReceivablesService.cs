@@ -8,6 +8,10 @@ namespace Auraly.Application.Receivables;
 
 public interface IReceivablesStore
 {
+    Task<ReceivablesReportPage> ReportAsync(ReceivablesUserIdentity user,
+        ReceivablesReportQuery query, CancellationToken token);
+    Task<ReceivablesReportPage> PrintReportAsync(ReceivablesUserIdentity user,
+        ReceivablesReportQuery query, CancellationToken token);
     Task<ReceivablePage> ListAsync(ReceivablesUserIdentity user, ReceivableQuery query, CancellationToken token);
     Task<CustomerPortfolioPage> ListCustomersAsync(ReceivablesUserIdentity user, CustomerPortfolioQuery query,
         CancellationToken token);
@@ -31,6 +35,34 @@ public sealed class ReceivablesService(
     AccountingProcessingCoordinator accounting,
     Auraly.BuildingBlocks.Application.Synchronization.IPosSynchronizationOutboxDispatcher synchronization)
 {
+    public Task<ReceivablesReportPage> ReportAsync(ReceivablesUserIdentity user,
+        ReceivablesReportQuery query, CancellationToken token = default)
+    {
+        ValidateReport(user, query);
+        return store.ReportAsync(user, query, token);
+    }
+    public Task<ReceivablesReportPage> PrintReportAsync(ReceivablesUserIdentity user,
+        ReceivablesReportQuery query, CancellationToken token = default)
+    {
+        ValidateReport(user, query);
+        return store.PrintReportAsync(user, query, token);
+    }
+    private static void ValidateReport(ReceivablesUserIdentity user, ReceivablesReportQuery query)
+    {
+        Require(user, ReceivablesPermissionCodes.Read);
+        if (query.Page < 1 || query.PageSize is < 1 or > 100 ||
+            (long)(query.Page - 1) * query.PageSize > int.MaxValue ||
+            query.Cutoff == DateOnly.MaxValue || query.To == DateOnly.MaxValue ||
+            query.CustomerId == Guid.Empty || query.PartySiteId == Guid.Empty ||
+            query.From > query.To || query.From > query.Cutoff ||
+            query.To > query.Cutoff)
+            throw new ReceivablesValidationException("Los filtros del informe no son válidos.");
+        ValidateLedgerFilters(query.Status, query.From, query.To);
+        if (!PagedSort.IsValid(query.SortBy, query.SortDirection,
+            "name", "issuedAt", "dueDate", "documentNumber", "originalAmount",
+            "paidAmount", "outstandingAmount", "overdueAmount", "invoiceCount"))
+            throw new ReceivablesValidationException("El orden del informe no es válido.");
+    }
     public Task<CustomerPortfolioPage> ListCustomersAsync(ReceivablesUserIdentity user,
         CustomerPortfolioQuery query, CancellationToken token = default)
     {

@@ -151,15 +151,27 @@ después imprime y corta el comprobante. La secuencia aplica a tirilla de 58/80
 mm, media carta, media oficio y carta.
 
 `receivable-payment` y `payable-payment` versión 1 son las tirillas de abono a
-cartera y pago a proveedor confirmados desde punto de venta. El comprobante
+cartera y pago a proveedor. El comprobante
 incluye empresa, NIT cuando está disponible, sede, tercero, fecha y hora,
 facturas aplicadas, medios, valor y responsable; el pago a proveedor reserva
 espacio para la firma de recibido. Ambos usan
 `PortfolioPaymentReceiptRenderer` en servidor y POS Edge, con el resultado de
-confirmación y las selecciones ya presentes en el POS. La operación termina al
-confirmarse el pago: después se despacha la impresión sin bloquear la caja ni
-volver a consultar el pago. Una respuesta de reintento idempotente no genera
-una segunda impresión automática. Las otras vistas de cartera no imprimen.
+confirmación y las selecciones ya presentes en el wizard compartido de caja y
+cartera. La operación termina al confirmarse el pago: después se despacha la
+impresión sin bloquear la caja ni volver a consultar el pago. Una respuesta de
+reintento idempotente no genera una segunda impresión automática. El mismo
+modal de medios permite S sin imprimir, T tirilla, M media carta, O media oficio
+y C carta; Enter usa el formato predeterminado de Facturas. La versión 2 de
+estos comprobantes representa los tres formatos de hoja y conserva los datos
+de la versión 1. En la aplicación instalada cada formato usa su ruta de
+impresora de Facturas; en navegador abre el diálogo de impresión. Las vistas
+de CxC y CxP usan exactamente este wizard y no abren un segundo modal.
+
+`cash-entry` y `cash-exit` versión 3 conservan su tirilla. La versión 4 usa los
+tres formatos de hoja con los mismos datos del movimiento. En la caja instalada
+usan las rutas de Facturas; el navegador presenta su diálogo de impresión.
+La selección de formato se hace antes de registrar el movimiento. Un fallo de
+impresión no revierte ni repite el documento confirmado.
 
 La versión 2 de `sales-invoice` y la versión 2 de `sales-receipt` conservan el contenido
 de la versión 1 y agregan, cuando el pago en efectivo registró un valor entregado,

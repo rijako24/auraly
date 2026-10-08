@@ -99,6 +99,29 @@ public sealed record CustomerPortfolioPage(IReadOnlyList<CustomerPortfolioItem> 
 {
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
+public sealed record ReceivablesReportQuery(int Page, int PageSize, bool Consolidated,
+    DateOnly Cutoff, Guid? CustomerId = null, Guid? PartySiteId = null,
+    DateOnly? From = null, DateOnly? To = null, string? Status = null,
+    bool OutstandingOnly = false, bool OverdueOnly = false,
+    string? SortBy = null, string? SortDirection = null);
+public sealed record ReceivablesReportApplication(string DocumentNumber, DateTimeOffset AppliedAt,
+    decimal Amount);
+public sealed record ReceivablesReportItem(Guid CustomerId, string CustomerName,
+    string Identification, Guid PartySiteId, string? PartySiteName, string CurrencyCode,
+    int InvoiceCount, decimal OriginalAmount, decimal PaidAmount, decimal OutstandingAmount,
+    decimal OverdueAmount, Guid? ReceivableId = null, string? DocumentNumber = null,
+    DateTimeOffset? IssuedAt = null, DateTimeOffset? DueDate = null,
+    IReadOnlyList<ReceivablesReportApplication>? Applications = null)
+{
+    public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
+}
+public sealed record ReceivablesReportPage(IReadOnlyList<ReceivablesReportItem> Items,
+    int Page, int PageSize, int TotalCount, int TotalInvoiceCount,
+    decimal TotalOriginal, decimal TotalPaid, decimal TotalOutstanding, decimal TotalOverdue)
+{
+    public decimal TotalOtherImpact => TotalOriginal - TotalPaid - TotalOutstanding;
+    public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
 public sealed record PreexistingReceivableItemRequest(Guid ReceivableId,Guid? CustomerId,string? CustomerIdentification,
     Guid? PartySiteId,string DocumentNumber,DateTimeOffset IssuedAt,DateTimeOffset DueDate,
     decimal Amount,Guid CounterpartAccountId,string? Notes);
