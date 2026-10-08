@@ -257,6 +257,25 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
+resource communicationEmailDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (environment == 'prod') {
+  name: 'acs-email-delivery'
+  scope: communicationService
+  properties: {
+    workspaceId: workspace.id
+    logAnalyticsDestinationType: 'Dedicated'
+    logs: [
+      {
+        category: 'EmailSendMailOperational'
+        enabled: true
+      }
+      {
+        category: 'EmailStatusUpdateOperational'
+        enabled: true
+      }
+    ]
+  }
+}
+
 resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: 'appi-auraly-${compactEnvironment}'
   location: location

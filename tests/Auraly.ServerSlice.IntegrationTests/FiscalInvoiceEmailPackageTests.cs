@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using Azure;
 using Azure.Communication.Email;
 using Auraly.Api;
 using Auraly.Application.Sales;
@@ -10,6 +11,28 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed class FiscalInvoiceEmailPackageTests
 {
+    [Theory]
+    [InlineData("EmailDroppedAllRecipientsSuppressed", true)]
+    [InlineData("DnsDomainDoesNotExist", true)]
+    [InlineData("BadDestinationMailboxAddress", true)]
+    [InlineData("RecipientAddressRejected", true)]
+    [InlineData("RecipientAddressReservedByRFC2606", true)]
+    [InlineData("MessageExpired", false)]
+    [InlineData("ExceededStorageAllocation", false)]
+    public void Permanent_recipient_failures_are_not_retried(string code, bool expected)
+    {
+        var failure = new RequestFailedException(400, "Email send failed", code, null);
+        Assert.Equal(expected, PlatformEmailOutboxHostedService.IsPermanentRecipientFailure(failure));
+    }
+
+    [Fact]
+    public void Suppressed_recipient_is_terminal_when_acs_only_includes_code_in_message()
+    {
+        var failure = new RequestFailedException(200,
+            "Message dropped because all recipients were suppressed. ErrorCode: EmailDroppedAllRecipientsSuppressed");
+        Assert.True(PlatformEmailOutboxHostedService.IsPermanentRecipientFailure(failure));
+    }
+
     [Theory]
     [InlineData(11900, 0)]
     [InlineData(3000, 0.75)]

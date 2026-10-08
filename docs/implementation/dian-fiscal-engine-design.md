@@ -183,6 +183,17 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   declara esos valores para despliegues completos. Producción envía desde el
   único dominio propio verificado `mail.auralyapp.co`; DEV no conserva dominio
   vinculado ni remitente y mantiene el envío deshabilitado.
+- El consumidor considera definitivos los rechazos de destinatario suprimido,
+  dominio inexistente, buzón inválido, dirección rechazada y dominio reservado:
+  conserva el error en el outbox sin repetir el envío a ese destinatario.
+  Las fallas temporales conservan el reintento existente. Una recuperación de
+  contraseña que ya expiró se cierra sin enviarse. `ProcessedAt` y el actual
+  `FiscalDocuments.DeliveredAt` se fijan cuando ACS acepta el envío; no son
+  confirmación de recepción del buzón. La entrega y los rebotes posteriores
+  requieren los informes de entrega de ACS. En producción, el recurso ACS
+  envía las categorías `EmailSendMailOperational` y
+  `EmailStatusUpdateOperational` al workspace existente para poder investigar
+  los rechazos posteriores al envío sin registrar contenido ni adjuntos.
 - Las notas crédito de devoluciones procesadas entran al mismo outbox
   `FiscalInvoiceDelivery` dentro de la transacción de aceptación DIAN y usan
   `DeliveryOutboxMessageId` para impedir entregas duplicadas. El destinatario

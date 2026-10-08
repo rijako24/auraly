@@ -119,6 +119,57 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Permanent_recipient_failure_exhausts_only_its_claimed_message()
+    {
+        var messageId = Guid.NewGuid();
+        var leaseId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        try
+        {
+            await using (var seed = new SqlCommand("""
+                INSERT dbo.TenantProvisioningOutboxMessages
+                    (MessageId,TenantId,Type,Payload,OccurredAt,AvailableAt)
+                VALUES (@MessageId,@TenantId,N'FiscalInvoiceDelivery',N'{}',
+                        '1900-01-01T00:00:00+00:00','1900-01-01T00:00:00+00:00');
+                """, connection, transaction))
+            {
+                seed.Parameters.AddWithValue("@MessageId", messageId);
+                seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                await seed.ExecuteNonQueryAsync();
+            }
+
+            Assert.Equal(messageId, await ClaimAsync(connection, transaction, leaseId));
+            await using (var fail = Procedure("dbo.AuthenticationEmailOutboxRetry", connection, transaction))
+            {
+                fail.Parameters.AddWithValue("@MessageId", messageId);
+                fail.Parameters.AddWithValue("@LeaseId", leaseId);
+                fail.Parameters.AddWithValue("@Delay", 15);
+                fail.Parameters.AddWithValue("@Error", "EmailDroppedAllRecipientsSuppressed");
+                fail.Parameters.AddWithValue("@Permanent", true);
+                await fail.ExecuteNonQueryAsync();
+            }
+
+            await using var state = new SqlCommand("""
+                SELECT AttemptCount,ProcessedAt,LeaseId,LastError
+                FROM dbo.TenantProvisioningOutboxMessages WHERE MessageId=@MessageId;
+                """, connection, transaction);
+            state.Parameters.AddWithValue("@MessageId", messageId);
+            await using var reader = await state.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(10, reader.GetInt32(0));
+            Assert.True(reader.IsDBNull(1));
+            Assert.True(reader.IsDBNull(2));
+            Assert.Equal("EmailDroppedAllRecipientsSuppressed", reader.GetString(3));
+        }
+        finally
+        {
+            await transaction.RollbackAsync();
+        }
+    }
+
+    [Fact]
     public async Task Price_channel_settings_endpoint_uses_the_versioned_procedure_and_restores_state()
     {
         using var client = fixture.CreateAdminClient(

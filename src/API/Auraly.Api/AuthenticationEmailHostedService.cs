@@ -81,16 +81,17 @@ public sealed class PlatformEmailOutboxHostedService(
     {
         try
         {
+            var sent = true;
             switch (message.Type)
             {
                 case "TenantAdministratorInvitation":
                     await DeliverInvitationAsync(client, message, cancellationToken);
                     break;
                 case "PasswordRecoveryEmail":
-                    await DeliverPasswordRecoveryAsync(client, message, cancellationToken);
+                    sent = await DeliverPasswordRecoveryAsync(client, message, cancellationToken);
                     break;
                 case "SubscriptionPaymentReminder":
-                    await DeliverSubscriptionReminderAsync(client, message, cancellationToken);
+                    sent = await DeliverSubscriptionReminderAsync(client, message, cancellationToken);
                     break;
                 case "FiscalInvoiceDelivery":
                     await DeliverFiscalSalesDocumentAsync(client, message, cancellationToken);
@@ -99,7 +100,8 @@ public sealed class PlatformEmailOutboxHostedService(
                     throw new InvalidOperationException($"El tipo de correo '{message.Type}' no está admitido.");
             }
             await CompleteAsync(message, cancellationToken);
-            logger.LogInformation("Platform email {Type}/{MessageId} delivered.", message.Type, message.MessageId);
+            logger.LogInformation("Platform email {Type}/{MessageId} {Outcome}.",
+                message.Type, message.MessageId, sent ? "accepted by ACS" : "skipped because the recipient is no longer eligible");
         }
         catch (Exception exception)
         {
@@ -117,27 +119,30 @@ public sealed class PlatformEmailOutboxHostedService(
         await SendAsync(client, payload.Email, $"Activa tu acceso a {recipient.TenantName} en Auraly", BuildHtml(recipient, activationUrl), BuildPlain(recipient, activationUrl), cancellationToken);
     }
 
-    private async Task DeliverPasswordRecoveryAsync(EmailClient client, ClaimedMessage message, CancellationToken cancellationToken)
+    private async Task<bool> DeliverPasswordRecoveryAsync(EmailClient client, ClaimedMessage message, CancellationToken cancellationToken)
     {
         var payload = JsonSerializer.Deserialize<PasswordRecoveryPayload>(message.Payload, Json)
             ?? throw new InvalidOperationException("The password recovery payload is empty.");
         var recipient = await LoadPasswordRecoveryRecipientAsync(payload.RequestId, cancellationToken);
+        if (recipient is null) return false;
         var resetUrl = $"{options.PublicAppUrl.TrimEnd('/')}/reset-password?token={Uri.EscapeDataString(payload.ResetToken)}";
         await SendAsync(client, recipient.Email, "Recupera tu acceso a Auraly", BuildPasswordRecoveryHtml(recipient, resetUrl), BuildPasswordRecoveryPlain(recipient, resetUrl), cancellationToken);
+        return true;
     }
 
-    private async Task DeliverSubscriptionReminderAsync(
+    private async Task<bool> DeliverSubscriptionReminderAsync(
         EmailClient client, ClaimedMessage message, CancellationToken cancellationToken)
     {
         var payload = JsonSerializer.Deserialize<SubscriptionReminderPayload>(message.Payload, Json)
             ?? throw new InvalidOperationException("The subscription reminder payload is empty.");
         var recipient = await LoadSubscriptionReminderAsync(
             payload.NotificationId, message.MessageId, message.TenantId, cancellationToken);
-        if (recipient is null) return;
+        if (recipient is null) return false;
         var paymentUrl = $"{options.PublicAppUrl.TrimEnd('/')}/dashboard/subscription?order={recipient.RenewalOrderId:D}";
         await SendAsync(client, recipient.Email, recipient.Title,
             BuildSubscriptionReminderHtml(recipient, paymentUrl),
             BuildSubscriptionReminderPlain(recipient, paymentUrl), cancellationToken);
+        return true;
     }
 
     private async Task DeliverFiscalSalesDocumentAsync(
@@ -334,14 +339,14 @@ public sealed class PlatformEmailOutboxHostedService(
         return new RecipientContext(reader.GetString(0), "Administrador");
     }
 
-    private async Task<PasswordRecoveryRecipient> LoadPasswordRecoveryRecipientAsync(Guid requestId, CancellationToken cancellationToken)
+    private async Task<PasswordRecoveryRecipient?> LoadPasswordRecoveryRecipientAsync(Guid requestId, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = Procedure("dbo.AuthenticationPasswordRecoveryRecipientGet", connection);
         command.Parameters.AddWithValue("@RequestId", requestId);
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("The password recovery request is no longer available.");
+        if (!await reader.ReadAsync(cancellationToken)) return null;
         return new PasswordRecoveryRecipient(reader.GetString(0), reader.GetString(1), reader.GetString(2));
     }
 
@@ -431,14 +436,27 @@ public sealed class PlatformEmailOutboxHostedService(
     private async Task RetryAsync(ClaimedMessage message, Exception exception, CancellationToken cancellationToken)
     {
         var delay = RetrySeconds[Math.Min(message.AttemptCount - 1, RetrySeconds.Length - 1)];
+        var permanent = IsPermanentRecipientFailure(exception);
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = Procedure("dbo.AuthenticationEmailOutboxRetry", connection);
         command.Parameters.AddWithValue("@Delay", delay);
+        command.Parameters.AddWithValue("@Permanent", permanent);
         command.Parameters.AddWithValue("@Error", exception.Message.Length > 1900 ? exception.Message[..1900] : exception.Message);
         command.Parameters.AddWithValue("@MessageId", message.MessageId);
         command.Parameters.AddWithValue("@LeaseId", message.LeaseId);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    internal static bool IsPermanentRecipientFailure(Exception exception)
+    {
+        if (exception is not RequestFailedException failure) return false;
+        return failure.ErrorCode is "EmailDroppedAllRecipientsSuppressed"
+            or "DnsDomainDoesNotExist"
+            or "BadDestinationMailboxAddress"
+            or "RecipientAddressRejected"
+            or "RecipientAddressReservedByRFC2606"
+            || failure.Message.Contains("EmailDroppedAllRecipientsSuppressed", StringComparison.Ordinal);
     }
 
     private static SqlCommand Procedure(string name, SqlConnection connection) =>
