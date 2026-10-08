@@ -212,6 +212,25 @@ public sealed class ServerSliceArchitectureTests
     }
 
     [Fact]
+    public void Azure_email_uses_only_the_verified_production_domain()
+    {
+        var root = FindRepositoryRoot();
+        var template = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "main.bicep"));
+        var readiness = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Test-AuralyDeploymentReadiness.ps1"));
+
+        Assert.DoesNotContain("resource emailDomain 'Microsoft.Communication/emailServices/domains", template,
+            StringComparison.Ordinal);
+        Assert.Contains("linkedDomains: environment == 'prod' ? [customerEmailDomain.id] : []", template,
+            StringComparison.Ordinal);
+        Assert.Contains("value: environment == 'prod' ? 'DoNotReply@${customerEmailDomain.name}' : ''", template,
+            StringComparison.Ordinal);
+        Assert.Contains("$linkedDomains.Count -eq 1", readiness, StringComparison.Ordinal);
+        Assert.Contains("$linkedDomains.Count -eq 0", readiness, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Azure_api_uses_the_canonical_authentication_configuration_contract()
     {
         var root = FindRepositoryRoot();

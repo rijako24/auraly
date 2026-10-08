@@ -34,13 +34,14 @@ Política de costo:
 - Storage: Standard LRS, claves compartidas y acceso público a blobs deshabilitados.
 - Application Insights: límite de ingestión de 0,1 GB por día.
 
-La plantilla crea en ambos ambientes Azure Communication Services, Email
-Services y un dominio administrado por Azure, y entrega a la API
-`Auraly__Email__ConnectionString` y `Auraly__Email__SenderAddress`. La paridad
-declarativa no sustituye la validación posterior al despliegue: PROD debe
-confirmar que los tres recursos existen, que el dominio está vinculado y que
-un correo de prueba llega antes de habilitar invitaciones o recuperación de
-contraseña para clientes.
+La plantilla crea Azure Communication Services y Email Services en ambos
+ambientes. Solo PROD vincula el dominio propio verificado `mail.auralyapp.co`;
+DEV no tiene dominio vinculado, remitente configurado ni entrega de correo
+habilitada. Los dominios administrados por Azure se retiraron para conservar
+un único dominio de envío. La paridad declarativa no sustituye la validación
+posterior al despliegue: PROD debe confirmar que el dominio está vinculado y
+que un correo de prueba llega antes de habilitar invitaciones o recuperación
+de contraseña para clientes.
 
 Azure AI Foundry existe una sola vez en `RG-AURALY-SHARED`. DEV y PROD consumen los despliegues `gpt-4.1-mini` y `whisper` mediante Managed Identity; no se crean cuentas ni llaves de OpenAI por ambiente.
 

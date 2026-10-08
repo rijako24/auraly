@@ -140,7 +140,7 @@ function Test-RemoteEnvironment {
         'Notifications__WebPush__Subject',
         'Notifications__WebPush__PublicAppUrl',
         'Auraly__Email__ConnectionString',
-        'Auraly__Email__SenderAddress',
+        'Auraly__Email__DeliveryEnabled',
         'Auraly__Email__PublicAppUrl',
         'Auraly__Email__LogoUrl',
         'Auraly__Email__SupportEmail',
@@ -185,13 +185,18 @@ function Test-RemoteEnvironment {
         'Notifications__WebPush__Subject debe ser mailto: o https://.'
     Assert-Condition ($settings['Notifications__WebPush__PublicAppUrl'] -match '^https://[^/]+/?$') `
         'Notifications__WebPush__PublicAppUrl debe ser el origen HTTPS de la aplicación.'
-    $expectedSenderAddress = if ($Environment -eq 'Prod') {
-        'DoNotReply@mail.auralyapp.co'
+    if ($Environment -eq 'Prod') {
+        Assert-Condition ($settings['Auraly__Email__SenderAddress'] -eq 'DoNotReply@mail.auralyapp.co') `
+            'Auraly__Email__SenderAddress no corresponde al dominio propio de producción.'
+        Assert-Condition ($settings['Auraly__Email__DeliveryEnabled'] -eq 'true') `
+            'PROD debe tener la entrega de correo habilitada.'
     }
-    else { $null }
-    Assert-Condition (($Environment -eq 'Prod' -and $settings['Auraly__Email__SenderAddress'] -eq $expectedSenderAddress) -or
-        ($Environment -eq 'Dev' -and $settings['Auraly__Email__SenderAddress'] -match '^DoNotReply@.+\.azurecomm\.net$')) `
-        'Auraly__Email__SenderAddress no corresponde al remitente esperado para el ambiente.'
+    else {
+        Assert-Condition ([string]::IsNullOrWhiteSpace($settings['Auraly__Email__SenderAddress'])) `
+            'DEV no debe configurar un remitente de correo.'
+        Assert-Condition ($settings['Auraly__Email__DeliveryEnabled'] -eq 'false') `
+            'DEV debe mantener la entrega de correo deshabilitada.'
+    }
     Assert-Condition ($settings['Release__Version'] -eq $ReleaseVersion) `
         'La version configurada en la API no coincide con el release solicitado.'
     Assert-Condition ($settings['PosInstaller__Version'] -eq $ReleaseVersion) `
@@ -237,14 +242,14 @@ function Test-RemoteEnvironment {
     Assert-Condition ($emailService.Properties.provisioningState -eq 'Succeeded') `
         "Email Service $emailServiceName no termino de aprovisionarse."
 
-    $emailDomain = Get-AzResource `
+    $managedEmailDomain = Get-AzResource `
         -ResourceGroupName $resourceGroup `
         -ResourceType 'Microsoft.Communication/emailServices/domains' `
         -Name "$emailServiceName/AzureManagedDomain" `
         -ExpandProperties `
         -ErrorAction SilentlyContinue
-    Assert-Condition ($null -ne $emailDomain) `
-        "Falta el dominio administrado de $emailServiceName."
+    Assert-Condition ($null -eq $managedEmailDomain) `
+        "El dominio administrado de $emailServiceName debe retirarse."
 
     $communicationService = Get-AzResource `
         -ResourceGroupName $resourceGroup `
@@ -256,8 +261,23 @@ function Test-RemoteEnvironment {
         "Falta Communication Service $communicationServiceName."
     Assert-Condition ($communicationService.Properties.provisioningState -eq 'Succeeded') `
         "Communication Service $communicationServiceName no termino de aprovisionarse."
-    Assert-Condition (@($communicationService.Properties.linkedDomains) -contains $emailDomain.ResourceId) `
-        "Communication Service $communicationServiceName no esta vinculado al dominio de correo."
+    $linkedDomains = @($communicationService.Properties.linkedDomains | Where-Object { $_ })
+    if ($Environment -eq 'Prod') {
+        $customerEmailDomain = Get-AzResource `
+            -ResourceGroupName $resourceGroup `
+            -ResourceType 'Microsoft.Communication/emailServices/domains' `
+            -Name "$emailServiceName/mail.auralyapp.co" `
+            -ExpandProperties `
+            -ErrorAction SilentlyContinue
+        Assert-Condition ($null -ne $customerEmailDomain) `
+            "Falta el dominio propio de $emailServiceName."
+        Assert-Condition ($linkedDomains.Count -eq 1 -and $linkedDomains[0] -eq $customerEmailDomain.ResourceId) `
+            "Communication Service $communicationServiceName debe vincular solo el dominio propio."
+    }
+    else {
+        Assert-Condition ($linkedDomains.Count -eq 0) `
+            "Communication Service $communicationServiceName no debe tener dominios de correo."
+    }
 
     $database = Get-AzResource `
         -ResourceGroupName $resourceGroup `
@@ -316,7 +336,7 @@ function Test-RemoteEnvironment {
         RuntimeSettings = 'Complete (values hidden)'
         Queues = $requiredQueues.Count
         WebPubSub = "$($webPubSub.Name) ($($webPubSub.Sku.Name))"
-        Email = "$communicationServiceName -> $emailServiceName/AzureManagedDomain"
+        Email = if ($Environment -eq 'Prod') { "$communicationServiceName -> mail.auralyapp.co" } else { 'Deshabilitado (sin dominio)' }
         Database = "$databaseName ($($database.Sku.Name))"
         Frontend = $staticAdmin.Properties.defaultHostname
         Health = if ($SkipHealth) { 'Skipped' } else { 'Healthy' }

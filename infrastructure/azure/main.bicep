@@ -148,17 +148,6 @@ resource emailService 'Microsoft.Communication/emailServices@2025-09-01' = {
   }
 }
 
-resource emailDomain 'Microsoft.Communication/emailServices/domains@2025-09-01' = {
-  parent: emailService
-  name: 'AzureManagedDomain'
-  location: 'global'
-  tags: tags
-  properties: {
-    domainManagement: 'AzureManaged'
-    userEngagementTracking: 'Disabled'
-  }
-}
-
 resource customerEmailDomain 'Microsoft.Communication/emailServices/domains@2025-09-01' existing = {
   parent: emailService
   name: 'mail.auralyapp.co'
@@ -170,12 +159,7 @@ resource communicationService 'Microsoft.Communication/communicationServices@202
   tags: tags
   properties: {
     dataLocation: 'United States'
-    linkedDomains: environment == 'prod' ? [
-      emailDomain.id
-      customerEmailDomain.id
-    ] : [
-      emailDomain.id
-    ]
+    linkedDomains: environment == 'prod' ? [customerEmailDomain.id] : []
   }
 }
 
@@ -798,7 +782,7 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
         }
         {
           name: 'Auraly__Email__SenderAddress'
-          value: environment == 'prod' ? 'DoNotReply@${customerEmailDomain.name}' : 'DoNotReply@${emailDomain.properties.mailFromSenderDomain}'
+          value: environment == 'prod' ? 'DoNotReply@${customerEmailDomain.name}' : ''
         }
         {
           name: 'Auraly__Email__PublicAppUrl'

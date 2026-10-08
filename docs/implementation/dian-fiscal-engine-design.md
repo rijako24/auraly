@@ -181,8 +181,8 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
   permanecen en el outbox. El pipeline de API fija y verifica `false` en DEV y
   `true` en producción al publicar cada release; la infraestructura también
   declara esos valores para despliegues completos. Producción envía desde el
-  dominio propio verificado `mail.auralyapp.co`; DEV conserva el dominio
-  administrado por Azure y el envío deshabilitado.
+  único dominio propio verificado `mail.auralyapp.co`; DEV no conserva dominio
+  vinculado ni remitente y mantiene el envío deshabilitado.
 - Las notas crédito de devoluciones procesadas entran al mismo outbox
   `FiscalInvoiceDelivery` dentro de la transacción de aceptación DIAN y usan
   `DeliveryOutboxMessageId` para impedir entregas duplicadas. El destinatario
