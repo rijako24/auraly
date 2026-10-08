@@ -124,6 +124,21 @@ la primera página. Las verificaciones ya decididas se conservan al cargar más
 páginas. El efectivo físico confirmado puede corregirse como conteo, sin cambiar
 por ello el importe de un documento.
 
+Tarjeta y transferencia muestran los mismos cuatro grupos de comprobantes,
+devoluciones, abonos y pagos a proveedores; entradas y salidas son exclusivos
+de efectivo. Cada grupo verificable indica total registrado, total revisado,
+cantidad revisada y si la revisión está completa, con su sobrante o faltante.
+Los totales confirmados comparten la misma presentación en móvil. Cuando lo
+verificado difiere del valor reportado al cerrar, la vista señala la diferencia
+frente a ese valor, incluso si coincide con el esperado contable; así no muestra
+un «Cuadra» aislado para una transferencia reportada sin comprobantes.
+
+La corrección de medio distingue efectivo, tarjeta débito, tarjeta crédito y
+transferencia. Las tarjetas requieren franquicia y aprobación; la transferencia
+requiere referencia. Esos datos se conservan en el snapshot de auditoría y la
+contabilidad usa la categoría configurada para el medio real, manteniendo el
+resumen de débito y crédito en el grupo de tarjeta.
+
 Por compatibilidad con versiones de escritorio ya instaladas, la lectura
 `/payment-verifications` conserva temporalmente su respuesta de arreglo completo.
 La vista nueva usa `/payment-verifications/page`, con resumen agregado y páginas
@@ -143,6 +158,10 @@ lo aplicable a la factura, falta tercero para abrir cartera, o no se puede preci
 qué aplicación corregir, la operación se bloquea y pide resolver esa situación; no
 se transforma la diferencia en ingreso/gasto ni se inventa un abono. Los valores
 fiscales, productos e impuestos de la factura no se reescriben.
+Una factura electrónica emitida de contado puede corregir el medio de pago en
+el cierre, pero no su valor. Una diferencia de valor se resuelve en el proceso
+fiscal o de cartera correspondiente. La factura a crédito conserva las
+validaciones del saldo de cartera antes de ajustar su valor.
 
 La confirmación de la conciliación es la única aceptación de sus correcciones: el
 servidor vuelve a leer y bloquear las fuentes, valida importes y saldos, registra

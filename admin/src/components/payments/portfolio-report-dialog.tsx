@@ -60,7 +60,8 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
     ...(direction === "receivable" ? { customerId: partyId } : { supplierId: partyId }),
     partySiteId: siteId, from: from || undefined, to: to || undefined,
     status: status === "all" ? undefined : status,
-    outstandingOnly, overdueOnly, sortBy, sortDirection };
+    outstandingOnly, overdueOnly, sortBy,
+    sortDirection: sortBy ? sortDirection : undefined };
   const report = useQuery<ReceivablesReportPage | PayablesReportPage>({
     queryKey: ["portfolio-report", direction, businessId, filters],
     queryFn: () => direction === "receivable"

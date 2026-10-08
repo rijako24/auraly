@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  cashClosureCashGroups,
+  cashClosurePaymentGroups,
   cashClosureVerificationDecisions,
   correctedCashClosureAmount,
   isCashClosureMethodConfirmed,
@@ -26,8 +26,12 @@ test("cash groups its six source types and keeps individual verification where r
     ["receivable", "payable", "in", "out", "credit"],
   );
   assert.deepEqual(
-    cashClosureCashGroups(items.filter(item => item.paymentMethodCode === "Cash")).map(group => [group.label, group.items.length]),
+    cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Cash"), true).map(group => [group.label, group.items.length]),
     [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 1], ["Pagos a proveedores", 1], ["Entradas de dinero", 1], ["Salidas de dinero", 1]],
+  );
+  assert.deepEqual(
+    cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Transfer"), false).map(group => [group.label, group.items.length]),
+    [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 0], ["Pagos a proveedores", 0]],
   );
 });
 

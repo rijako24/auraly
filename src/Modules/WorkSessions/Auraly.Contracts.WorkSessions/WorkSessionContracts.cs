@@ -280,13 +280,20 @@ public sealed record WorkSessionPaymentVerificationItem(
     string? Notes = null,
     string? CorrectedPaymentMethodCode = null,
     decimal? CorrectedAmount = null,
-    string? CorrectionReason = null);
+    string? CorrectionReason = null,
+    string? TenderMethodCode = null,
+    string? CorrectedTenderMethodCode = null,
+    string? CorrectedCardFranchiseCode = null,
+    string? CorrectedApprovalNumber = null,
+    string? CorrectedReference = null);
 
 public sealed record WorkSessionPaymentVerificationGroup(
     string PaymentMethodCode,
     string MovementType,
     int Count,
-    decimal TotalAmount);
+    decimal TotalAmount,
+    int ReviewedCount = 0,
+    decimal ReviewedAmount = 0);
 
 public sealed record WorkSessionPaymentVerificationPage(
     IReadOnlyList<WorkSessionPaymentVerificationItem> Items,
@@ -314,7 +321,11 @@ public sealed record WorkSessionPaymentCorrection(
     string VerificationKey,
     string PaymentMethodCode,
     decimal Amount,
-    string Reason);
+    string Reason,
+    string? TenderMethodCode = null,
+    string? CardFranchiseCode = null,
+    string? ApprovalNumber = null,
+    string? Reference = null);
 
 public sealed record WorkSessionAppliedPaymentCorrection(
     string VerificationKey,
@@ -329,7 +340,14 @@ public sealed record WorkSessionAppliedPaymentCorrection(
     Guid? PartyId,
     Guid? CustomerId,
     Guid? SubledgerId,
-    string? CounterpartCategory);
+    string? CounterpartCategory,
+    string? OriginalTenderMethodCode = null,
+    string? TenderMethodCode = null,
+    string? CardFranchiseCode = null,
+    string? ApprovalNumber = null,
+    string? Reference = null,
+    string? OriginalTenderCategory = null,
+    string? TenderCategory = null);
 
 public sealed record ReconcileWorkSessionClosureRequest(
     IReadOnlyList<ReconcileWorkSessionClosureLine> Lines,

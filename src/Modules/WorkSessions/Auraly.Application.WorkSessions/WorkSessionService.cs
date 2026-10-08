@@ -382,7 +382,11 @@ public sealed class WorkSessionService(
                 string.IsNullOrWhiteSpace(item.PaymentMethodCode) || item.PaymentMethodCode.Length > 32 ||
                 item.PaymentMethodCode.Any(character => !char.IsLetterOrDigit(character)) ||
                 item.Amount == 0 || string.IsNullOrWhiteSpace(item.Reason) ||
-                item.Reason.Trim().Length > 500) == true)
+                item.Reason.Trim().Length > 500 ||
+                item.TenderMethodCode?.Length > 32 ||
+                item.CardFranchiseCode?.Length > 64 ||
+                item.ApprovalNumber?.Length > 100 ||
+                item.Reference?.Length > 160) == true)
             throw new WorkSessionValidationException("La corrección del comprobante requiere medio, valor y motivo válidos.");
         var result=await store.ReconcileClosureAsync(identity,closureId,idempotencyKey.Trim(),request with { Note=NullIfWhiteSpace(request.Note) },cancellationToken);
         if (!result.IdempotentReplay && result.AccountingStatus == "Pending")

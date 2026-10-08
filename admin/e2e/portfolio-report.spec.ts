@@ -65,6 +65,7 @@ for (const direction of ["receivables", "payables"] as const) {
     await expect(dialog.getByText(/AB-1/)).toBeVisible();
     expect(reportRequests).toHaveLength(1);
     expect(reportRequests[0].searchParams.get("pageSize")).toBe("50");
+    expect(reportRequests[0].searchParams.has("sortDirection")).toBe(false);
     await dialog.getByRole("button", { name: "Siguiente" }).click();
     await expect(dialog.getByText("FAC-2", { exact: true })).toBeVisible();
     expect(reportRequests).toHaveLength(2);
@@ -81,6 +82,7 @@ for (const direction of ["receivables", "payables"] as const) {
     const summaryRequest = reportRequests.at(-1)!;
     expect(summaryRequest.searchParams.get("page")).toBe("1");
     expect(summaryRequest.searchParams.get("sortBy")).toBeNull();
+    expect(summaryRequest.searchParams.has("sortDirection")).toBe(false);
     expect(summaryRequest.searchParams.get("consolidated")).toBe("true");
     const popupPromise = page.waitForEvent("popup");
     await dialog.getByRole("button", { name: "Imprimir informe" }).click();

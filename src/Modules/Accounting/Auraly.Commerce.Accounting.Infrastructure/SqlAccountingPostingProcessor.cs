@@ -2091,6 +2091,63 @@ public sealed partial class SqlAccountingPostingProcessor(
                 residual[correction.OriginalPaymentMethodCode]+=correction.OriginalAmount;
                 residual[correction.PaymentMethodCode]-=correction.Amount;
                 var delta=correction.Amount-correction.OriginalAmount;
+                if(!correction.OriginalPaymentMethodCode.Equals(correction.PaymentMethodCode,StringComparison.OrdinalIgnoreCase))
+                {
+                    var originalGroup=payload.Lines.Single(line=>line.PaymentMethodCode.Equals(
+                        correction.OriginalPaymentMethodCode,StringComparison.OrdinalIgnoreCase)).AccountingCategory;
+                    var correctedGroup=payload.Lines.Single(line=>line.PaymentMethodCode.Equals(
+                        correction.PaymentMethodCode,StringComparison.OrdinalIgnoreCase)).AccountingCategory;
+                    var originalDestination=correction.OriginalTenderCategory ?? originalGroup;
+                    var correctedDestination=correction.TenderCategory ?? correctedGroup;
+                    if(!originalDestination.Equals(originalGroup,StringComparison.OrdinalIgnoreCase))
+                    {
+                        var value=Math.Abs(correction.OriginalAmount);
+                        if(correction.OriginalAmount>0)
+                        {
+                            lines.Add(new(originalGroup,value,0,null,description));
+                            lines.Add(new(originalDestination,0,value,null,description));
+                        }
+                        else
+                        {
+                            lines.Add(new(originalDestination,value,0,null,description));
+                            lines.Add(new(originalGroup,0,value,null,description));
+                        }
+                    }
+                    if(!correctedDestination.Equals(correctedGroup,StringComparison.OrdinalIgnoreCase))
+                    {
+                        var value=Math.Abs(correction.Amount);
+                        if(correction.Amount>0)
+                        {
+                            lines.Add(new(correctedDestination,value,0,null,description));
+                            lines.Add(new(correctedGroup,0,value,null,description));
+                        }
+                        else
+                        {
+                            lines.Add(new(correctedGroup,value,0,null,description));
+                            lines.Add(new(correctedDestination,0,value,null,description));
+                        }
+                    }
+                }
+                if(correction.OriginalPaymentMethodCode.Equals(correction.PaymentMethodCode,StringComparison.OrdinalIgnoreCase) &&
+                    correction.OriginalTenderCategory is { } originalCategory &&
+                    correction.TenderCategory is { } correctedCategory &&
+                    !originalCategory.Equals(correctedCategory,StringComparison.OrdinalIgnoreCase))
+                {
+                    var groupCategory=payload.Lines.Single(line=>line.PaymentMethodCode.Equals(
+                        correction.PaymentMethodCode,StringComparison.OrdinalIgnoreCase)).AccountingCategory;
+                    if(correction.OriginalAmount>0)
+                        lines.Add(new(originalCategory,0,correction.OriginalAmount,null,description));
+                    else
+                        lines.Add(new(originalCategory,-correction.OriginalAmount,0,null,description));
+                    if(correction.Amount>0)
+                        lines.Add(new(correctedCategory,correction.Amount,0,null,description));
+                    else
+                        lines.Add(new(correctedCategory,0,-correction.Amount,null,description));
+                    if(delta>0)
+                        lines.Add(new(groupCategory,0,delta,null,description));
+                    else if(delta<0)
+                        lines.Add(new(groupCategory,-delta,0,null,description));
+                }
                 if(delta>0)
                 {
                     lines.Add(new(AccountingCategories.CashClosureDifferencesPending,delta,0,null,description));
