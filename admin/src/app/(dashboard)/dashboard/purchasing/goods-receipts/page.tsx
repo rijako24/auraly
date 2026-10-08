@@ -526,6 +526,7 @@ function ReceiptEditor({
     () => draft?.pendingCostDocument ?? undefined,
   );
   const [costSupplierNames, setCostSupplierNames] = useState<Record<string, string>>({});
+  const [costSupplierPolicies, setCostSupplierPolicies] = useState<Record<string, SupplierSiteSelection["supplierPurchaseEvidencePolicy"]>>({});
   const [pendingSupplierChange, setPendingSupplierChange] = useState<PendingSupplierChange>();
   const [selectedSupplier, setSelectedSupplier] = useState<PartyRoleSelection | null>(null);
   const products = useGoodsReceiptProducts(
@@ -719,6 +720,13 @@ function ReceiptEditor({
   });
   const saveCostDocument = () => {
     if (!editingCostDocument) return;
+    const supplierPolicy = costSupplierPolicies[editingCostDocument.supplierId] ??
+      costSupplierQueries[costSupplierIds.indexOf(editingCostDocument.supplierId)]?.data?.supplierPurchaseEvidencePolicy ?? null;
+    if (editingCostDocument.purchaseEvidenceType !== "ImportDeclaration" &&
+        !allowedPurchaseEvidenceTypes(supplierPolicy).includes(editingCostDocument.purchaseEvidenceType)) {
+      toast.error("El tipo de soporte no está permitido para este proveedor. Selecciona uno de los soportes disponibles.");
+      return;
+    }
     if (!editingCostDocument.supplierId || !editingCostDocument.partySiteId ||
         (editingCostDocument.purchaseEvidenceType !== "BuyerElectronicSupportDocument" &&
          !editingCostDocument.documentNumber.trim()) ||
@@ -1429,6 +1437,9 @@ function ReceiptEditor({
             const functionalGross = (documentNet + documentTax) * rate;
             const evidenceLabel = options.data?.purchaseCostEvidenceTypes.find((item) =>
               item.code === document.purchaseEvidenceType)?.label ?? document.purchaseEvidenceType;
+            const supplierPolicy = costSupplierPolicies[document.supplierId] ??
+              costSupplierQueries[costSupplierIds.indexOf(document.supplierId)]?.data?.supplierPurchaseEvidencePolicy ?? null;
+            const allowedCostEvidenceTypes = allowedPurchaseEvidenceTypes(supplierPolicy);
             return <Dialog key={document.costDocumentId} open onOpenChange={(value) => !value && closeCostDocument()}>
               <DialogContent className="flex max-h-[92dvh] max-w-6xl flex-col overflow-hidden p-0">
               <DialogHeader className="border-b px-6 py-5">
@@ -1438,12 +1449,23 @@ function ReceiptEditor({
               <div className="space-y-4 overflow-y-auto px-6 py-5">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <Field label="Proveedor · sede"><SupplierSiteSelect value={document.partySiteId??""} placeholder="Buscar proveedor y sede"
-                  onResolved={(supplier) => supplier && setCostSupplierNames((names) => ({ ...names, [supplier.supplierId ?? supplier.partyId]: supplier.displayName }))}
+                  onResolved={(supplier) => {
+                    setCostSupplierNames((names) => ({ ...names, [supplier.supplierId]: supplier.displayName }));
+                    setCostSupplierPolicies((policies) => ({ ...policies, [supplier.supplierId]: supplier.supplierPurchaseEvidencePolicy ?? null }));
+                  }}
                   onChange={(partySiteId, supplier) => {
-                    if (supplier) setCostSupplierNames((names) => ({ ...names, [supplier.supplierId]: supplier.displayName }));
-                    updateCostDocument({ supplierId: supplier?.supplierId ?? "", partySiteId: partySiteId || null });
+                    if (supplier) {
+                      setCostSupplierNames((names) => ({ ...names, [supplier.supplierId]: supplier.displayName }));
+                      setCostSupplierPolicies((policies) => ({ ...policies, [supplier.supplierId]: supplier.supplierPurchaseEvidencePolicy ?? null }));
+                    }
+                    const policy = supplier?.supplierPurchaseEvidencePolicy ?? null;
+                    const nextEvidence = supplier && document.purchaseEvidenceType !== "ImportDeclaration" &&
+                      !allowedPurchaseEvidenceTypes(policy).includes(document.purchaseEvidenceType)
+                      ? (policy ?? "InternalReceiptVoucher") : document.purchaseEvidenceType;
+                    updateCostDocument({ supplierId: supplier?.supplierId ?? "", partySiteId: partySiteId || null,
+                      purchaseEvidenceType: nextEvidence, documentNumber: nextEvidence === "BuyerElectronicSupportDocument" ? "" : document.documentNumber });
                   }} /></Field>
-                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).filter((item) => item.code === "ImportDeclaration" || allowedCostEvidenceTypes.includes(item.code)).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                 <Field label="Número">{document.purchaseEvidenceType === "BuyerElectronicSupportDocument" ? <Input readOnly value="Se asignará al confirmar" /> : <Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} />}</Field>
                 <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
                 <Field label="Moneda"><Select value={document.currencyCode} onValueChange={(currencyCode) => updateCostDocument({ currencyCode, exchangeRate: currencyCode === "COP" ? 1 : document.exchangeRate, exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" : (document.exchangeRateSource === "FunctionalCurrency" ? options.data?.exchangeRateSources[0]?.code ?? "" : document.exchangeRateSource) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>

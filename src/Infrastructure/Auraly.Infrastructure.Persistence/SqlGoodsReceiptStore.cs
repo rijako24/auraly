@@ -254,7 +254,7 @@ public sealed class SqlGoodsReceiptStore(
               THROW 51101,'Selecciona una bodega activa para recibir mercancía.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId
               AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1)
-              THROW 51102,'El proveedor no está activo en este tenant.',1;
+              THROW 51102,'El proveedor no está activo en esta empresa.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers supplier JOIN dbo.PartySites site
               ON site.PartyId=supplier.PartyId AND site.IsActive=1
               WHERE supplier.SupplierId=@SupplierId AND
@@ -277,7 +277,7 @@ public sealed class SqlGoodsReceiptStore(
               LEFT JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId
                 AND s.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND s.IsActive=1
               WHERE s.SupplierId IS NULL)
-              THROW 51105,'Un proveedor de costo adicional no está activo en este tenant.',1;
+              THROW 51105,'Un proveedor de costo adicional no está activo en esta empresa.',1;
             IF @CurrencyCode<>N'COP' AND NOT EXISTS (
               SELECT 1 FROM reference.Options
               WHERE CatalogCode=N'exchange-rate-source' AND Code=@ExchangeRateSource AND IsActive=1)

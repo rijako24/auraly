@@ -385,6 +385,71 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Two_freight_suppliers_and_repeated_freight_concepts_create_independent_payables()
+    {
+        var secondPartyId = Guid.NewGuid();
+        var secondSupplierId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                VALUES(@PartyId,@TenantId,N'Organization',N'Segundo transportador',N'Segundo transportador',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+                INSERT dbo.Suppliers(SupplierId,TenantId,PartyId,Identification,Name,PurchaseEvidencePolicy,IsActive,CreatedAt)
+                VALUES(@SupplierId,@TenantId,@PartyId,@Identification,N'Segundo transportador',N'InternalReceiptVoucher',1,SYSDATETIMEOFFSET());
+                INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+                  AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                SELECT NEWID(),@PartyId,N'PRINCIPAL',N'Sede principal',CountryId,AdministrativeDivisionId,CityId,
+                  AddressLine,1,1,@UserId,SYSDATETIMEOFFSET()
+                FROM dbo.PartySites WHERE PartyId=@OriginalPartyId AND IsPrimary=1 AND IsActive=1;
+                """;
+            command.Parameters.AddWithValue("@PartyId", secondPartyId);
+            command.Parameters.AddWithValue("@SupplierId", secondSupplierId);
+            command.Parameters.AddWithValue("@OriginalPartyId", fixture.SupplierPartyId);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@UserId", fixture.UserId);
+            command.Parameters.AddWithValue("@Identification", $"FLETE-{secondSupplierId:N}");
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var request = CreateRequest();
+        GoodsReceiptCostLineRequest FreightLine(int number, decimal amount) =>
+            new(number, PurchaseCostKinds.Freight, $"Flete {number}", amount, 0m,
+                "IVA-0", 0m, 0m, PurchasingTaxTreatments.NotApplicable,
+                PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value);
+        GoodsReceiptCostDocumentRequest FreightDocument(Guid supplierId, string evidenceType, string number,
+            params GoodsReceiptCostLineRequest[] lines) =>
+            new(Guid.NewGuid(), supplierId, evidenceType,
+                number, request.ReceivedAt, true, request.ReceivedAt.AddDays(30), "COP", 1m,
+                DateOnly.FromDateTime(request.ReceivedAt.Date), "FunctionalCurrency", lines);
+        var first = FreightDocument(fixture.SupplierId, PurchaseEvidenceTypes.SupplierElectronicInvoice,
+            $"FLETE-A-{Guid.NewGuid():N}",
+            FreightLine(1, 2_000m), FreightLine(2, 3_000m));
+        var second = FreightDocument(secondSupplierId, PurchaseEvidenceTypes.InternalReceiptVoucher,
+            $"FLETE-B-{Guid.NewGuid():N}",
+            FreightLine(1, 4_000m));
+        request = request with { AdditionalCostDocuments = [first, second] };
+
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts,
+            PayablesPermissionCodes.Read);
+        using var message = CreateMessage(request, $"two-freight-{request.DocumentId:N}");
+        using var response = await client.SendAsync(message);
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            await response.Content.ReadAsStringAsync());
+        Assert.Equal("Completed", (await ReadJobAsync(request.DocumentId)).Status);
+        Assert.Equal(3, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Payables WHERE ParentGoodsReceiptId=@Id", request.DocumentId));
+        Assert.Equal(2, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM purchasing.GoodsReceiptCostDocuments WHERE GoodsReceiptId=@Id", request.DocumentId));
+        Assert.Equal(9_000m, await ScalarAsync<decimal>(
+            "SELECT SUM(FunctionalAmount) FROM purchasing.GoodsReceiptCostAllocations WHERE GoodsReceiptId=@Id",
+            request.DocumentId));
+    }
+
+    [Fact]
     public async Task Freight_not_attributable_to_merchandise_posts_expense_without_increasing_inventory()
     {
         var request = CreateRequest();
