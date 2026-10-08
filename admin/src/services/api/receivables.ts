@@ -96,7 +96,7 @@ export interface ReceivablesReportPage {
 }
 export interface ReceivablesReportFilters {
   page: number; pageSize: number; consolidated: boolean; cutoff: string;
-  customerId?: string; partySiteId?: string; from?: string; to?: string;
+  customerId?: string; partySiteId?: string; from?: string; to?: string; search?: string;
   status?: ReceivableStatus; outstandingOnly?: boolean; overdueOnly?: boolean;
   sortBy?: string; sortDirection?: "asc" | "desc";
 }

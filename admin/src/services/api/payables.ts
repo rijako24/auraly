@@ -107,7 +107,7 @@ export interface PayablesReportPage {
 }
 export interface PayablesReportFilters {
   page: number; pageSize: number; consolidated: boolean; cutoff: string;
-  supplierId?: string; partySiteId?: string; from?: string; to?: string;
+  supplierId?: string; partySiteId?: string; from?: string; to?: string; search?: string; conceptId?: string;
   status?: PayableStatus; outstandingOnly?: boolean; overdueOnly?: boolean;
   sortBy?: string; sortDirection?: "asc" | "desc";
 }

@@ -15,22 +15,22 @@ public static class ReceivablesApi
             HttpContext context, int page, int pageSize, bool consolidated, DateOnly cutoff,
             Guid? customerId, Guid? partySiteId, DateOnly? from, DateOnly? to,
             string? status, bool? outstandingOnly, bool? overdueOnly,
-            string? sortBy, string? sortDirection, ReceivablesService service, CancellationToken token) =>
+            string? sortBy, string? sortDirection, string? search, ReceivablesService service, CancellationToken token) =>
             await Execute(() => service.ReportAsync(context.User.ToReceivablesIdentity(),
                 new(page, pageSize, consolidated, cutoff, customerId, partySiteId, from, to,
-                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection), token), Results.Ok))
+                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search), token), Results.Ok))
             .RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/receivables/report/print", async (
             HttpContext context, bool consolidated, DateOnly cutoff,
             Guid? customerId, Guid? partySiteId, DateOnly? from, DateOnly? to,
             string? status, bool? outstandingOnly, bool? overdueOnly,
-            string? sortBy, string? sortDirection, ReceivablesService service, CancellationToken token) =>
+            string? sortBy, string? sortDirection, string? search, ReceivablesService service, CancellationToken token) =>
             await Execute(async () =>
             {
                 var html = await PortfolioReportPrint.ReceivablesAsync(
                     service, context.User.ToReceivablesIdentity(),
                     new(1, 100, consolidated, cutoff, customerId, partySiteId, from, to,
-                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection), token);
+                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search), token);
                 context.Response.Headers.CacheControl = "no-store";
                 return Results.Content(html, "text/html; charset=utf-8");
             })).RequireAuthorization("receivables.user");

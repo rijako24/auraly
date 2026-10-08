@@ -15,22 +15,22 @@ public static class PayablesApi
             HttpContext context, int page, int pageSize, bool consolidated, DateOnly cutoff,
             Guid? supplierId, Guid? partySiteId, DateOnly? from, DateOnly? to,
             string? status, bool? outstandingOnly, bool? overdueOnly,
-            string? sortBy, string? sortDirection, PayablesService service, CancellationToken token) =>
+            string? sortBy, string? sortDirection, string? search, Guid? conceptId, PayablesService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ReportAsync(context.User.ToPayablesIdentity(),
                 new(page, pageSize, consolidated, cutoff, supplierId, partySiteId, from, to,
-                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection), token), Results.Ok))
+                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search, conceptId), token), Results.Ok))
             .RequireAuthorization("payables.user");
         endpoints.MapGet("/api/commerce/v1/payables/report/print", async (
             HttpContext context, bool consolidated, DateOnly cutoff,
             Guid? supplierId, Guid? partySiteId, DateOnly? from, DateOnly? to,
             string? status, bool? outstandingOnly, bool? overdueOnly,
-            string? sortBy, string? sortDirection, PayablesService service, CancellationToken token) =>
+            string? sortBy, string? sortDirection, string? search, Guid? conceptId, PayablesService service, CancellationToken token) =>
             await ExecuteAsync(async () =>
             {
                 var html = await PortfolioReportPrint.PayablesAsync(
                     service, context.User.ToPayablesIdentity(),
                     new(1, 100, consolidated, cutoff, supplierId, partySiteId, from, to,
-                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection), token);
+                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search, conceptId), token);
                 context.Response.Headers.CacheControl = "no-store";
                 return Results.Content(html, "text/html; charset=utf-8");
             })).RequireAuthorization("payables.user");

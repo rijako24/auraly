@@ -103,7 +103,7 @@ public sealed record ReceivablesReportQuery(int Page, int PageSize, bool Consoli
     DateOnly Cutoff, Guid? CustomerId = null, Guid? PartySiteId = null,
     DateOnly? From = null, DateOnly? To = null, string? Status = null,
     bool OutstandingOnly = false, bool OverdueOnly = false,
-    string? SortBy = null, string? SortDirection = null);
+    string? SortBy = null, string? SortDirection = null, string? Search = null);
 public sealed record ReceivablesReportApplication(string DocumentNumber, DateTimeOffset AppliedAt,
     decimal Amount);
 public sealed record ReceivablesReportItem(Guid CustomerId, string CustomerName,

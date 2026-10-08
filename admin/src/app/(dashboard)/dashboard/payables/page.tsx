@@ -234,9 +234,10 @@ export default function PayablesPage() {
       {businessId && <PortfolioAdjustmentDialog direction="Payable" businessId={businessId} open={adjustmentOpen} obligationId={adjustmentObligationId} onClose={() => setAdjustmentOpen(false)} />}
       <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null);setPaymentPartySiteId(undefined);setPaymentPartySiteName(undefined)}}} onCompleted={()=>{for(const key of ["payables","payable-suppliers","payable-payments","payable"]){void queryClient.invalidateQueries({queryKey:[key,businessId]});}}} initialInvoice={paymentTarget?{id:paymentTarget.payableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialPartySiteId={paymentPartySiteId} initialPartySiteName={paymentPartySiteName} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
       {reportOpen && <PortfolioReportDialog direction="payable" onClose={() => setReportOpen(false)}
-        initialPartyId={supplierId} initialPartySiteId={partySiteId} initialPartyOption={supplierFilter}
+        initialPartyId={supplierId} initialPartySiteId={partySiteId} initialPartyLabel={supplierFilter?.label}
         initialFrom={from} initialTo={to} initialStatus={status === "all" ? undefined : status}
-        initialOverdue={overdue} />}
+        initialOverdue={overdue} initialSearch={search.trim()}
+        initialConceptId={conceptId === "all" ? undefined : conceptId} initialConceptLabel={selectedConcept?.label} />}
     </div>
   );
 }

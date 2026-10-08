@@ -18,7 +18,7 @@ public sealed partial class SqlPayablesStore
     private async Task<PayablesReportPage> ReportCoreAsync(PayablesUserIdentity user,
         PayablesReportQuery query, int take, CancellationToken token)
     {
-        var order = SqlPagedSort.Build(query.SortBy, query.SortDirection,
+        var selectedOrder = SqlPagedSort.Build(query.SortBy, query.SortDirection,
             new Dictionary<string, string>
             {
                 ["name"] = "SupplierName", ["issuedAt"] = "IssuedAt",
@@ -29,6 +29,9 @@ public sealed partial class SqlPayablesStore
                 ["currency"] = "CurrencyCode"
             }, query.Consolidated ? "name" : "issuedAt", "asc",
             "SupplierId", "PartySiteId", "CurrencyCode", "PayableId");
+        var order = query.Consolidated ? selectedOrder : SqlPagedSort.PrependDistinct(selectedOrder,
+            query.SortBy == "name" && query.SortDirection == "desc" ? "SupplierName DESC" : "SupplierName ASC",
+            "PartySiteId ASC");
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
         var zone = await SqlBusinessLocalDates.ReadTimeZoneAsync(connection, user.TenantId,
@@ -52,8 +55,22 @@ public sealed partial class SqlPayablesStore
                 AND p.CreatedAt<@Cutoff AND source.OccurredAt<@Cutoff
                 AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
                 AND (@PartySiteId IS NULL OR p.PartySiteId=@PartySiteId)
-                AND (@From IS NULL OR source.OccurredAt>=@From)
-                AND (@To IS NULL OR source.OccurredAt<@To)
+                AND (@ConceptId IS NULL OR EXISTS (
+                  SELECT 1 FROM dbo.Expenses expense
+                  WHERE p.SourceDocumentType=N'Expense' AND expense.ExpenseId=p.SourceDocumentId
+                    AND expense.BusinessId=p.BusinessId AND (expense.ExpenseConceptId=@ConceptId OR EXISTS (
+                      SELECT 1 FROM dbo.AccountingSourceDocuments conceptSource
+                      CROSS APPLY OPENJSON(conceptSource.PayloadJson,'$.lines')
+                        WITH(ConceptId uniqueidentifier '$.conceptId') line
+                      WHERE conceptSource.SourceDocumentId=expense.ExpenseId
+                        AND conceptSource.SourceDocumentType=N'Expense'
+                        AND conceptSource.BusinessId=expense.BusinessId
+                        AND line.ConceptId=@ConceptId))))
+                AND (@Search IS NULL OR p.DocumentNumber LIKE N'%' + @Search + N'%'
+                  OR s.Name LIKE N'%' + @Search + N'%'
+                  OR s.Identification LIKE N'%' + @Search + N'%')
+                AND (@From IS NULL OR p.CreatedAt>=@From)
+                AND (@To IS NULL OR p.CreatedAt<@To)
             ), Movement AS (
               SELECT tx.PayableId,
                 SUM(CASE WHEN tx.TransactionType IN(N'Opening',N'Adjustment') THEN tx.Amount
@@ -127,14 +144,16 @@ public sealed partial class SqlPayablesStore
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@SupplierId", (object?)query.SupplierId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PartySiteId", (object?)query.PartySiteId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@ConceptId", (object?)query.ConceptId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Search", (object?)query.Search?.Trim() is string { Length: > 0 } search ? search : DBNull.Value);
         command.Parameters.AddWithValue("@Consolidated", query.Consolidated);
         command.Parameters.AddWithValue("@OutstandingOnly", query.OutstandingOnly);
         command.Parameters.AddWithValue("@OverdueOnly", query.OverdueOnly);
         command.Parameters.AddWithValue("@Status", (object?)query.Status ?? DBNull.Value);
         command.Parameters.Add("@From", SqlDbType.DateTimeOffset).Value = query.From is DateOnly from
-            ? SqlBusinessLocalDates.StartOfDay(from, zone) : DBNull.Value;
+            ? new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)) : DBNull.Value;
         command.Parameters.Add("@To", SqlDbType.DateTimeOffset).Value = query.To is DateOnly to
-            ? SqlBusinessLocalDates.StartOfDay(to.AddDays(1), zone) : DBNull.Value;
+            ? new DateTimeOffset(to.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)) : DBNull.Value;
         var cutoff = SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(1), zone);
         if (take > 100)
         {

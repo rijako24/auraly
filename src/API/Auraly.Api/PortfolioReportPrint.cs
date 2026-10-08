@@ -62,13 +62,13 @@ internal static class PortfolioReportPrint
             .meta{color:#526478}.totals{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.total{border:1px solid #d9e4e5;border-radius:8px;padding:7px 10px}
             table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #d9e4e5;padding:6px;text-align:left;vertical-align:top}
             th{background:#eaf4f3;color:#174d4a}td.num,th.num{text-align:right;white-space:nowrap}.sub{font-size:10px;color:#536271}
-            tr{break-inside:avoid}thead{display:table-header-group}.empty{text-align:center;padding:24px}.footer{margin-top:14px;border-top:1px solid #d9e4e5;padding-top:7px;color:#526478;font-size:10px}
+            tr{break-inside:avoid}thead{display:table-header-group}.group td{background:#eaf4f3;color:#174d4a;font-weight:700;border-top:2px solid #0c7772}.empty{text-align:center;padding:24px}.footer{margin-top:14px;border-top:1px solid #d9e4e5;padding-top:7px;color:#526478;font-size:10px}
             </style></head><body><header><div class="eyebrow">Auraly · reporte corporativo</div>
             """);
         html.Append("<h1>").Append(Encode(title)).Append(consolidated ? " · consolidado" : " · detallado")
             .Append("</h1><div class=\"meta\">Corte: ").Append(cutoff.ToString("dd/MM/yyyy", Culture));
         if (from is not null || to is not null)
-            html.Append(" · Emisión ").Append(from?.ToString("dd/MM/yyyy", Culture) ?? "inicio")
+            html.Append(" · Registro ").Append(from?.ToString("dd/MM/yyyy", Culture) ?? "inicio")
                 .Append(" a ").Append(to?.ToString("dd/MM/yyyy", Culture) ?? "corte");
         html.Append(" · ").Append(first.TotalCount.ToString("N0", Culture)).Append(" filas</div></header><div class=\"totals\">");
         foreach (var total in first.Totals)
@@ -83,25 +83,41 @@ internal static class PortfolioReportPrint
                 .Append(" · Vencido ").Append(Money(total.Overdue, total.Currency))
                 .Append("</strong></div>");
         }
-        html.Append("</div><table><thead><tr><th>Tercero y sede</th>");
-        if (consolidated) html.Append("<th>Documentos</th>");
-        else html.Append("<th>Documento y aplicaciones</th><th>Emisión</th><th>Vence</th>");
+        html.Append("</div><table><thead><tr>");
+        if (consolidated) html.Append("<th>Tercero y sede</th><th>Documentos</th>");
+        else html.Append("<th>Documento</th><th>").Append(Encode(applicationLabel)).Append("s aplicados</th><th>Emisión</th><th>Vence</th>");
         html.Append("<th>Moneda</th><th class=\"num\">Original</th><th class=\"num\">Pagado</th><th class=\"num\">Notas y ajustes</th><th class=\"num\">Saldo</th></tr></thead><tbody>");
+        string? previousGroup = null;
         foreach (var row in first.Rows)
         {
             token.ThrowIfCancellationRequested();
-                html.Append("<tr><td><strong>").Append(Encode(row.Name)).Append("</strong><br><span class=\"sub\">")
-                    .Append(Encode(row.Identification)).Append(" · ").Append(Encode(row.Site ?? "Sede principal"))
-                    .Append("</span></td>");
-                if (consolidated) html.Append("<td>").Append(row.InvoiceCount.ToString("N0", Culture)).Append("</td>");
+                if (!consolidated)
+                {
+                    var group = string.Join('\u001f', row.Name, row.Identification, row.Site, row.Currency);
+                    if (group != previousGroup)
+                    {
+                        html.Append("<tr class=\"group\"><td colspan=\"9\">").Append(Encode(row.Name))
+                            .Append(" · ").Append(Encode(row.Identification)).Append(" · ")
+                            .Append(Encode(row.Site ?? "Sede principal")).Append(" · ")
+                            .Append(Encode(row.Currency)).Append("</td></tr>");
+                        previousGroup = group;
+                    }
+                }
+                html.Append("<tr><td><strong>").Append(Encode(consolidated ? row.Name : row.DocumentNumber ?? "—"))
+                    .Append("</strong>");
+                if (consolidated)
+                    html.Append("<br><span class=\"sub\">").Append(Encode(row.Identification))
+                        .Append(" · ").Append(Encode(row.Site ?? "Sede principal"))
+                        .Append("</span></td><td>").Append(row.InvoiceCount.ToString("N0", Culture)).Append("</td>");
                 else
                 {
-                    html.Append("<td><strong>").Append(Encode(row.DocumentNumber ?? "—")).Append("</strong>");
+                    html.Append("</td><td>");
                     foreach (var application in row.Applications)
                         html.Append("<div class=\"sub\">").Append(applicationLabel).Append(' ')
                             .Append(Encode(application.DocumentNumber))
                             .Append(" · ").Append(Date(application.AppliedAt)).Append(" · ")
                             .Append(Money(application.Amount, row.Currency)).Append("</div>");
+                    if (row.Applications.Count == 0) html.Append("<span class=\"sub\">Sin aplicaciones al corte</span>");
                     html.Append("</td><td>").Append(Date(row.IssuedAt)).Append("</td><td>")
                         .Append(Date(row.DueDate)).Append("</td>");
                 }

@@ -56,38 +56,37 @@ for (const direction of ["receivables", "payables"] as const) {
     });
 
     await page.goto(`/dashboard/${direction}`);
+    await page.getByText("Filtros", { exact: true }).click();
+    const filteredList = page.waitForResponse(response => response.url().includes(`/api/commerce/v1/${direction}`)
+      && new URL(response.url()).searchParams.get("search") === "FAC");
+    await page.getByPlaceholder("Número de documento o identificación").fill("FAC");
+    await filteredList;
     await page.getByRole("button", { name: "Reportes" }).click();
-    expect(reportRequests).toHaveLength(0);
     const dialog = page.getByRole("dialog", { name: direction === "receivables"
       ? "Informe de cuentas por cobrar" : "Informe de cuentas por pagar" });
-    await dialog.getByRole("button", { name: /Detallado/ }).click();
     await expect(dialog.getByText("FAC-1", { exact: true })).toBeVisible();
     await expect(dialog.getByText(/AB-1/)).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: direction === "receivables" ? "Cliente A" : "Proveedor A" })).toBeVisible();
     expect(reportRequests).toHaveLength(1);
     expect(reportRequests[0].searchParams.get("pageSize")).toBe("50");
+    expect(reportRequests[0].searchParams.get("search")).toBe("FAC");
     expect(reportRequests[0].searchParams.has("sortDirection")).toBe(false);
     await dialog.getByRole("button", { name: "Siguiente" }).click();
     await expect(dialog.getByText("FAC-2", { exact: true })).toBeVisible();
     expect(reportRequests).toHaveLength(2);
     expect(reportRequests[1].searchParams.get("page")).toBe("2");
-    if (direction === "payables") {
-      await dialog.getByRole("button", { name: "Moneda" }).click();
-      await expect.poll(() => reportRequests.length).toBe(3);
-      expect(reportRequests[2].searchParams.get("sortBy")).toBe("currency");
-      expect(reportRequests[2].searchParams.get("page")).toBe("1");
-    }
-    await dialog.getByRole("button", { name: "Elegir informe" }).click();
     await dialog.getByRole("button", { name: /Consolidado/ }).click();
-    await expect.poll(() => reportRequests.length).toBe(direction === "payables" ? 4 : 3);
+    await expect.poll(() => reportRequests.length).toBe(3);
     const summaryRequest = reportRequests.at(-1)!;
     expect(summaryRequest.searchParams.get("page")).toBe("1");
     expect(summaryRequest.searchParams.get("sortBy")).toBeNull();
     expect(summaryRequest.searchParams.has("sortDirection")).toBe(false);
     expect(summaryRequest.searchParams.get("consolidated")).toBe("true");
-    const popupPromise = page.waitForEvent("popup");
-    await dialog.getByRole("button", { name: "Imprimir informe" }).click();
-    const popup = await popupPromise;
-    await expect(popup.getByRole("heading", { name: "Informe completo" })).toBeVisible();
+    let popups = 0;
+    page.on("popup", () => popups++);
+    await dialog.getByRole("button", { name: "Imprimir informe completo" }).click();
+    await expect(dialog.frameLocator('iframe[title="Impresión del informe"]').getByRole("heading", { name: "Informe completo" })).toHaveText("Informe completo");
+    expect(popups).toBe(0);
     expect(printRequests).toHaveLength(1);
     expect(printRequests[0].searchParams.has("pageSize")).toBe(false);
   });

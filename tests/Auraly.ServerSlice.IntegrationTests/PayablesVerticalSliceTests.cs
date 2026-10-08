@@ -105,6 +105,12 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Contains(summaryReport!.Items, item => item.PartySiteId == primarySiteId);
             Assert.Contains(summaryReport.Items, item => item.PartySiteId == alternateSiteId);
             Assert.Contains(summaryReport.CurrencyTotals, item => item.CurrencyCode == "COP" && item.InvoiceCount >= 2);
+            var unmatched = await client.GetFromJsonAsync<PayablesReportPage>(
+                $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&supplierId={fixture.SupplierId:D}&search=sin-coincidencias-98765");
+            Assert.Equal(0, unmatched!.TotalCount);
+            var otherConcept = await client.GetFromJsonAsync<PayablesReportPage>(
+                $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&supplierId={fixture.SupplierId:D}&conceptId={Guid.NewGuid():D}");
+            Assert.Equal(0, otherConcept!.TotalCount);
         }
         finally
         {

@@ -121,9 +121,9 @@ export default function ReceivablesPage() {
       onCompleted={() => setActiveTab("invoices")}
     />}
     {reportOpen && <PortfolioReportDialog direction="receivable" onClose={() => setReportOpen(false)}
-      initialPartyId={customerId} initialPartySiteId={partySiteId} initialPartyOption={customerFilter}
+      initialPartyId={customerId} initialPartySiteId={partySiteId} initialPartyLabel={customerFilter?.label}
       initialFrom={from} initialTo={to} initialStatus={status === "all" ? undefined : status}
-      initialOverdue={overdue} />}
+      initialOverdue={overdue} initialSearch={search.trim()} />}
   </div>;
 }
 

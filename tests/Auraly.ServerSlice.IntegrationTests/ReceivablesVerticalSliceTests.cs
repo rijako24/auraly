@@ -56,6 +56,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var reported = Assert.Single(report!.Items, item => item.ReceivableId == receivableId);
         Assert.Equal(125_000m, reported.OutstandingAmount);
         Assert.Empty(reported.Applications!);
+        var registeredAfterIssue = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&customerId={customerId:D}&from=2026-09-30&to={cutoff}");
+        Assert.Contains(registeredAfterIssue!.Items, item => item.ReceivableId == receivableId);
         var consolidatedReport = await client.GetFromJsonAsync<ReceivablesReportPage>(
             $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=true&cutoff={cutoff}&customerId={customerId:D}&partySiteId={partySiteId:D}");
         Assert.Contains(consolidatedReport!.Items, item => item.CustomerId == customerId &&
@@ -179,6 +182,15 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(2, reportFirst.TotalPages);
         Assert.NotEqual(Assert.Single(reportFirst.Items).PartySiteId, Assert.Single(reportSecond!.Items).PartySiteId);
         Assert.Equal(expectedOutstanding, reportFirst.TotalOutstanding);
+        var searchedReport = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&cutoff={reportCutoff:yyyy-MM-dd}&customerId={customerId:D}&search=Sede%20Norte");
+        Assert.All(searchedReport!.Items, item => Assert.Equal(northSiteId, item.PartySiteId));
+        Assert.Equal(1, searchedReport.TotalCount);
+        var printedDetail = await client.GetStringAsync(
+            $"/api/commerce/v1/receivables/report/print?consolidated=false&cutoff={reportCutoff:yyyy-MM-dd}&customerId={customerId:D}&search=Sede%20Norte");
+        Assert.Contains("class=\"group\"", printedDetail);
+        Assert.Contains("Sede Norte", printedDetail);
+        Assert.DoesNotContain("Sede Centro", printedDetail);
         using (var badSort = await client.GetAsync(
                    $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=true&cutoff={reportCutoff:yyyy-MM-dd}&sortBy=sql"))
             Assert.Equal(HttpStatusCode.BadRequest, badSort.StatusCode);

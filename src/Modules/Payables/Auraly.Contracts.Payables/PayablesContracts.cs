@@ -193,7 +193,8 @@ public sealed record PayablesReportQuery(int Page, int PageSize, bool Consolidat
     DateOnly Cutoff, Guid? SupplierId = null, Guid? PartySiteId = null,
     DateOnly? From = null, DateOnly? To = null, string? Status = null,
     bool OutstandingOnly = false, bool OverdueOnly = false,
-    string? SortBy = null, string? SortDirection = null);
+    string? SortBy = null, string? SortDirection = null, string? Search = null,
+    Guid? ConceptId = null);
 public sealed record PayablesReportApplication(string DocumentNumber, DateTimeOffset AppliedAt,
     decimal Amount);
 public sealed record PayablesReportItem(Guid SupplierId, string SupplierName,

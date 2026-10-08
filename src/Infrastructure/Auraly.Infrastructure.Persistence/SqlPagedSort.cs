@@ -2,6 +2,13 @@ namespace Auraly.Infrastructure.Persistence;
 
 internal static class SqlPagedSort
 {
+    public static string PrependDistinct(string order, params string[] leadingTerms)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return string.Join(",", leadingTerms.Concat(order.Split(','))
+            .Where(term => seen.Add(term.Trim().Split(' ', 2)[0])));
+    }
+
     public static string Build(string? field, string? direction,
         IReadOnlyDictionary<string, string> allowedColumns, string defaultField,
         string defaultDirection, params string[] tieBreakers)

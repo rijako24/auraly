@@ -64,7 +64,7 @@ public sealed class PayablesService(
         if (query.Page < 1 || query.PageSize is < 1 or > 100 ||
             (long)(query.Page - 1) * query.PageSize > int.MaxValue ||
             query.Cutoff == DateOnly.MaxValue || query.To == DateOnly.MaxValue ||
-            query.SupplierId == Guid.Empty || query.PartySiteId == Guid.Empty ||
+            query.SupplierId == Guid.Empty || query.PartySiteId == Guid.Empty || query.ConceptId == Guid.Empty ||
             query.From > query.To || query.From > query.Cutoff || query.To > query.Cutoff)
             throw new PayablesValidationException("Los filtros del informe no son válidos.");
         ValidateLedgerFilters(query.Status, query.From, query.To);

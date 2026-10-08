@@ -18,7 +18,7 @@ public sealed partial class SqlReceivablesStore
     private async Task<ReceivablesReportPage> ReportCoreAsync(ReceivablesUserIdentity user,
         ReceivablesReportQuery query, int take, CancellationToken token)
     {
-        var order = SqlPagedSort.Build(query.SortBy, query.SortDirection,
+        var selectedOrder = SqlPagedSort.Build(query.SortBy, query.SortDirection,
             new Dictionary<string, string>
             {
                 ["name"] = "CustomerName", ["issuedAt"] = "IssuedAt",
@@ -28,6 +28,9 @@ public sealed partial class SqlReceivablesStore
                 ["overdueAmount"] = "OverdueAmount", ["invoiceCount"] = "InvoiceCount"
             }, query.Consolidated ? "name" : "issuedAt", "asc",
             "CustomerId", "PartySiteId", "CurrencyCode", "ReceivableId");
+        var order = query.Consolidated ? selectedOrder : SqlPagedSort.PrependDistinct(selectedOrder,
+            query.SortBy == "name" && query.SortDirection == "desc" ? "CustomerName DESC" : "CustomerName ASC",
+            "PartySiteId ASC");
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
         var zone = await SqlBusinessLocalDates.ReadTimeZoneAsync(connection, user.TenantId,
@@ -52,8 +55,13 @@ public sealed partial class SqlReceivablesStore
                 AND r.CreatedAt<@Cutoff AND source.OccurredAt<@Cutoff
                 AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
                 AND (@PartySiteId IS NULL OR r.PartySiteId=@PartySiteId)
-                AND (@From IS NULL OR source.OccurredAt>=@From)
-                AND (@To IS NULL OR source.OccurredAt<@To)
+                AND (@Search IS NULL OR r.DocumentNumber LIKE N'%' + @Search + N'%'
+                  OR p.DisplayName LIKE N'%' + @Search + N'%'
+                  OR p.Identification LIKE N'%' + @Search + N'%'
+                  OR site.Name LIKE N'%' + @Search + N'%'
+                  OR site.Code LIKE N'%' + @Search + N'%')
+                AND (@From IS NULL OR r.CreatedAt>=@From)
+                AND (@To IS NULL OR r.CreatedAt<@To)
             ), Movement AS (
               SELECT tx.ReceivableId,
                 SUM(CASE WHEN tx.TransactionType IN(N'Opening',N'Adjustment') THEN tx.Amount
@@ -125,14 +133,15 @@ public sealed partial class SqlReceivablesStore
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@CustomerId", (object?)query.CustomerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PartySiteId", (object?)query.PartySiteId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Search", (object?)query.Search?.Trim() is string { Length: > 0 } search ? search : DBNull.Value);
         command.Parameters.AddWithValue("@Consolidated", query.Consolidated);
         command.Parameters.AddWithValue("@OutstandingOnly", query.OutstandingOnly);
         command.Parameters.AddWithValue("@OverdueOnly", query.OverdueOnly);
         command.Parameters.AddWithValue("@Status", (object?)query.Status ?? DBNull.Value);
         command.Parameters.Add("@From", SqlDbType.DateTimeOffset).Value = query.From is DateOnly from
-            ? SqlBusinessLocalDates.StartOfDay(from, zone) : DBNull.Value;
+            ? new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)) : DBNull.Value;
         command.Parameters.Add("@To", SqlDbType.DateTimeOffset).Value = query.To is DateOnly to
-            ? SqlBusinessLocalDates.StartOfDay(to.AddDays(1), zone) : DBNull.Value;
+            ? new DateTimeOffset(to.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)) : DBNull.Value;
         var cutoff = SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(1), zone);
         if (take > 100)
         {
