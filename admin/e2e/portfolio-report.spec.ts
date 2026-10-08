@@ -36,13 +36,19 @@ for (const direction of ["receivables", "payables"] as const) {
             : { customerId: "cus-1", customerName: "Cliente A", receivableId: `rec-${currentPage}` }),
             identification: "900100001", partySiteId: "site-1", partySiteName: "Centro", currencyCode: "COP",
             invoiceCount: 1, originalAmount: 10000, paidAmount: 2500, outstandingAmount: 7500, otherImpact: 0,
-            overdueAmount: 0, documentNumber: `FAC-${currentPage}`, issuedAt: "2026-10-01T12:00:00Z",
+            overdueAmount: 0, notDueAmount: 7500, overdue1To30Amount: 0,
+            overdue31To60Amount: 0, overdue61To90Amount: 0, overdueOver90Amount: 0,
+            documentNumber: `FAC-${currentPage}`, issuedAt: "2026-10-01T12:00:00Z",
             dueDate: "2026-10-20T12:00:00Z", applications: [{ documentNumber: "AB-1", appliedAt: "2026-10-05T12:00:00Z", amount: 2500 }] }],
           page: currentPage, pageSize: 50, totalCount: 51, totalPages: 2,
           ...(isPayable ? { currencyTotals: [{ currencyCode: "COP", invoiceCount: 51,
-            originalAmount: 510000, paidAmount: 127500, outstandingAmount: 382500, overdueAmount: 0, otherImpact: 0 }] }
+            originalAmount: 510000, paidAmount: 127500, outstandingAmount: 382500, overdueAmount: 0, otherImpact: 0,
+            notDueAmount: 382500, overdue1To30Amount: 0, overdue31To60Amount: 0,
+            overdue61To90Amount: 0, overdueOver90Amount: 0 }] }
             : { totalInvoiceCount: 51, totalOriginal: 510000, totalPaid: 127500,
-              totalOutstanding: 382500, totalOverdue: 0, totalOtherImpact: 0 }),
+              totalOutstanding: 382500, totalOverdue: 0, totalOtherImpact: 0,
+              totalNotDue: 382500, totalOverdue1To30: 0, totalOverdue31To60: 0,
+              totalOverdue61To90: 0, totalOverdueOver90: 0 }),
         };
       } else if (path.endsWith(`/${direction}/customers`) || path.endsWith(`/${direction}/suppliers`)) {
         body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0,
@@ -67,6 +73,15 @@ for (const direction of ["receivables", "payables"] as const) {
     await expect(dialog.getByText("FAC-1", { exact: true })).toBeVisible();
     await expect(dialog.getByText(/AB-1/)).toBeVisible();
     await expect(dialog.getByRole("heading", { name: direction === "receivables" ? "Cliente A" : "Proveedor A" })).toBeVisible();
+    const document = dialog.locator("article").filter({ hasText: "FAC-1" });
+    await expect(document.getByText("Saldo pendiente")).toBeVisible();
+    await expect(document.getByText(/AB-1/)).toBeVisible();
+    await expect(document.getByText("Al día", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("region", { name: "Edades de cartera" })).toBeVisible();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(document).toBeVisible();
+    expect(await document.evaluate(element => element.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 1000 });
     expect(reportRequests).toHaveLength(1);
     expect(reportRequests[0].searchParams.get("pageSize")).toBe("50");
     expect(reportRequests[0].searchParams.get("search")).toBe("FAC");
@@ -89,5 +104,11 @@ for (const direction of ["receivables", "payables"] as const) {
     expect(popups).toBe(0);
     expect(printRequests).toHaveLength(1);
     expect(printRequests[0].searchParams.has("pageSize")).toBe(false);
+    await dialog.getByRole("button", { name: "Detallado" }).click();
+    await dialog.getByRole("combobox", { name: "Ordenar documentos por" }).click();
+    await page.getByRole("option", { name: "Valor original" }).click();
+    await expect.poll(() => reportRequests.at(-1)?.searchParams.get("sortBy")).toBe("originalAmount");
+    await dialog.getByRole("button", { name: "Ascendente" }).click();
+    await expect.poll(() => reportRequests.at(-1)?.searchParams.get("sortDirection")).toBe("desc");
   });
 }

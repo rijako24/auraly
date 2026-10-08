@@ -205,11 +205,21 @@ public sealed record PayablesReportItem(Guid SupplierId, string SupplierName,
     IReadOnlyList<PayablesReportApplication>? Applications = null)
 {
     public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
+    public decimal NotDueAmount { get; init; }
+    public decimal Overdue1To30Amount { get; init; }
+    public decimal Overdue31To60Amount { get; init; }
+    public decimal Overdue61To90Amount { get; init; }
+    public decimal OverdueOver90Amount { get; init; }
 }
 public sealed record PayablesReportCurrencyTotal(string CurrencyCode, int InvoiceCount,
     decimal OriginalAmount, decimal PaidAmount, decimal OutstandingAmount, decimal OverdueAmount)
 {
     public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
+    public decimal NotDueAmount { get; init; }
+    public decimal Overdue1To30Amount { get; init; }
+    public decimal Overdue31To60Amount { get; init; }
+    public decimal Overdue61To90Amount { get; init; }
+    public decimal OverdueOver90Amount { get; init; }
 }
 public sealed record PayablesReportPage(IReadOnlyList<PayablesReportItem> Items,
     IReadOnlyList<PayablesReportCurrencyTotal> CurrencyTotals,

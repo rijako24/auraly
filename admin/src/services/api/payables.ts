@@ -98,11 +98,15 @@ export interface PayablesReportItem {
   outstandingAmount: number; overdueAmount: number; otherImpact: number; payableId: string | null;
   documentNumber: string | null; issuedAt: string | null; dueDate: string | null;
   applications: Array<{documentNumber:string;appliedAt:string;amount:number}> | null;
+  notDueAmount:number;overdue1To30Amount:number;overdue31To60Amount:number;
+  overdue61To90Amount:number;overdueOver90Amount:number;
 }
 export interface PayablesReportPage {
   items: PayablesReportItem[]; currencyTotals: Array<{currencyCode:string;
     invoiceCount:number;originalAmount:number;paidAmount:number;
-    outstandingAmount:number;overdueAmount:number;otherImpact:number}>;
+    outstandingAmount:number;overdueAmount:number;otherImpact:number;
+    notDueAmount:number;overdue1To30Amount:number;overdue31To60Amount:number;
+    overdue61To90Amount:number;overdueOver90Amount:number}>;
   page: number; pageSize: number; totalCount: number; totalPages: number;
 }
 export interface PayablesReportFilters {

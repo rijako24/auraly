@@ -99,17 +99,25 @@ public sealed partial class SqlPayablesStore
             JOIN Movement movement ON movement.PayableId=scoped.PayableId
             LEFT JOIN Paid paid ON paid.PayableId=scoped.PayableId;
 
-            SELECT *,CASE WHEN OutstandingAmount>0 AND DueDate<@Cutoff
-              THEN OutstandingAmount ELSE CONVERT(decimal(19,4),0) END OverdueAmount
+            SELECT *,CASE WHEN OutstandingAmount>0 AND DueDate<@AgeDay
+              THEN OutstandingAmount ELSE CONVERT(decimal(19,4),0) END OverdueAmount,
+              CASE WHEN OutstandingAmount>0 AND DueDate>=@AgeDay THEN OutstandingAmount ELSE CONVERT(decimal(19,4),0) END NotDueAmount,
+              CASE WHEN OutstandingAmount>0 AND DueDate<@AgeDay AND DueDate>=@Age30 THEN OutstandingAmount ELSE CONVERT(decimal(19,4),0) END Overdue1To30Amount,
+              CASE WHEN OutstandingAmount>0 AND DueDate<@Age30 AND DueDate>=@Age60 THEN OutstandingAmount ELSE CONVERT(decimal(19,4),0) END Overdue31To60Amount,
+              CASE WHEN OutstandingAmount>0 AND DueDate<@Age60 AND DueDate>=@Age90 THEN OutstandingAmount ELSE CONVERT(decimal(19,4),0) END Overdue61To90Amount,
+              CASE WHEN OutstandingAmount>0 AND DueDate<@Age90 THEN OutstandingAmount ELSE CONVERT(decimal(19,4),0) END OverdueOver90Amount
             INTO #Filtered FROM #Ledger
             WHERE (@Status IS NULL OR HistoricalStatus=@Status)
               AND (@OutstandingOnly=0 OR OutstandingAmount>0)
-              AND (@OverdueOnly=0 OR (OutstandingAmount>0 AND DueDate<@Cutoff));
+              AND (@OverdueOnly=0 OR (OutstandingAmount>0 AND DueDate<@AgeDay));
 
             SELECT SupplierId,SupplierName,Identification,PartySiteId,PartySiteName,
               CurrencyCode,COUNT(*) InvoiceCount,SUM(OriginalAmount) OriginalAmount,
               SUM(PaidAmount) PaidAmount,SUM(OutstandingAmount) OutstandingAmount,
               SUM(OverdueAmount) OverdueAmount,
+              SUM(NotDueAmount) NotDueAmount,SUM(Overdue1To30Amount) Overdue1To30Amount,
+              SUM(Overdue31To60Amount) Overdue31To60Amount,SUM(Overdue61To90Amount) Overdue61To90Amount,
+              SUM(OverdueOver90Amount) OverdueOver90Amount,
               CAST(NULL AS uniqueidentifier) PayableId,CAST(NULL AS nvarchar(80)) DocumentNumber,
               CAST(NULL AS datetimeoffset(7)) IssuedAt,CAST(NULL AS datetimeoffset(7)) DueDate
             INTO #Report FROM #Filtered WHERE @Consolidated=1
@@ -117,19 +125,24 @@ public sealed partial class SqlPayablesStore
             UNION ALL
             SELECT SupplierId,SupplierName,Identification,PartySiteId,PartySiteName,
               CurrencyCode,1,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount,
+              NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount,
               PayableId,DocumentNumber,IssuedAt,DueDate
             FROM #Filtered WHERE @Consolidated=0;
 
             SELECT CurrencyCode,COUNT(*) Rows,COALESCE(SUM(InvoiceCount),0),
               COALESCE(SUM(OriginalAmount),0),COALESCE(SUM(PaidAmount),0),
-              COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0)
+              COALESCE(SUM(OutstandingAmount),0),COALESCE(SUM(OverdueAmount),0),
+              COALESCE(SUM(NotDueAmount),0),COALESCE(SUM(Overdue1To30Amount),0),
+              COALESCE(SUM(Overdue31To60Amount),0),COALESCE(SUM(Overdue61To90Amount),0),
+              COALESCE(SUM(OverdueOver90Amount),0)
             FROM #Report GROUP BY CurrencyCode;
             SELECT COUNT(*) FROM #Report;
             SELECT * INTO #Page FROM #Report
             ORDER BY {order} OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             SELECT SupplierId,SupplierName,Identification,PartySiteId,PartySiteName,
               CurrencyCode,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,
-              OverdueAmount,PayableId,DocumentNumber,IssuedAt,DueDate
+              OverdueAmount,PayableId,DocumentNumber,IssuedAt,DueDate,
+              NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount
             FROM #Page ORDER BY {order};
             SELECT application.PayableId,payment.DocumentNumber,application.AppliedAt,
               application.Amount
@@ -161,13 +174,22 @@ public sealed partial class SqlPayablesStore
             if (observed < cutoff) cutoff = observed;
         }
         command.Parameters.AddWithValue("@Cutoff", cutoff);
+        command.Parameters.AddWithValue("@AgeDay", SqlBusinessLocalDates.StartOfDay(query.Cutoff, zone));
+        command.Parameters.AddWithValue("@Age30", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(-30), zone));
+        command.Parameters.AddWithValue("@Age60", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(-60), zone));
+        command.Parameters.AddWithValue("@Age90", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(-90), zone));
         command.Parameters.AddWithValue("@Skip", (query.Page - 1) * query.PageSize);
         command.Parameters.AddWithValue("@Take", take);
         await using var reader = await command.ExecuteReaderAsync(token);
         var currencies = new List<PayablesReportCurrencyTotal>();
         while (await reader.ReadAsync(token))
-            currencies.Add(new(reader.GetString(0), reader.GetInt32(2), reader.GetDecimal(3),
-                reader.GetDecimal(4), reader.GetDecimal(5), reader.GetDecimal(6)));
+            currencies.Add(new PayablesReportCurrencyTotal(reader.GetString(0), reader.GetInt32(2), reader.GetDecimal(3),
+                reader.GetDecimal(4), reader.GetDecimal(5), reader.GetDecimal(6))
+            {
+                NotDueAmount = reader.GetDecimal(7), Overdue1To30Amount = reader.GetDecimal(8),
+                Overdue31To60Amount = reader.GetDecimal(9), Overdue61To90Amount = reader.GetDecimal(10),
+                OverdueOver90Amount = reader.GetDecimal(11)
+            });
         await reader.NextResultAsync(token);
         await reader.ReadAsync(token);
         var count = reader.GetInt32(0);
@@ -182,7 +204,12 @@ public sealed partial class SqlPayablesStore
                 reader.IsDBNull(11) ? null : reader.GetGuid(11),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetDateTimeOffset(13),
-                reader.IsDBNull(14) ? null : reader.GetDateTimeOffset(14)));
+                reader.IsDBNull(14) ? null : reader.GetDateTimeOffset(14))
+            {
+                NotDueAmount = reader.GetDecimal(15), Overdue1To30Amount = reader.GetDecimal(16),
+                Overdue31To60Amount = reader.GetDecimal(17), Overdue61To90Amount = reader.GetDecimal(18),
+                OverdueOver90Amount = reader.GetDecimal(19)
+            });
         await reader.NextResultAsync(token);
         var applications = new Dictionary<Guid, List<PayablesReportApplication>>();
         while (await reader.ReadAsync(token))

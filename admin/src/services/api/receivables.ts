@@ -88,11 +88,15 @@ export interface ReceivablesReportItem {
   outstandingAmount: number; overdueAmount: number; otherImpact: number; receivableId: string | null;
   documentNumber: string | null; issuedAt: string | null; dueDate: string | null;
   applications: Array<{documentNumber:string;appliedAt:string;amount:number}> | null;
+  notDueAmount:number;overdue1To30Amount:number;overdue31To60Amount:number;
+  overdue61To90Amount:number;overdueOver90Amount:number;
 }
 export interface ReceivablesReportPage {
   items: ReceivablesReportItem[]; page: number; pageSize: number; totalCount: number;
   totalPages: number; totalInvoiceCount: number; totalOriginal: number;
   totalPaid: number; totalOutstanding: number; totalOverdue: number; totalOtherImpact: number;
+  totalNotDue:number;totalOverdue1To30:number;totalOverdue31To60:number;
+  totalOverdue61To90:number;totalOverdueOver90:number;
 }
 export interface ReceivablesReportFilters {
   page: number; pageSize: number; consolidated: boolean; cutoff: string;

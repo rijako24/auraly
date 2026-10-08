@@ -144,19 +144,19 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
           <Button type="button" variant="outline" disabled={lines.length >= 100} onClick={() => setEditingLine(newLine(options))}><Plus className="mr-2 h-4 w-4"/>Agregar gasto</Button>
         </div>
         <div className="overflow-x-auto rounded-xl border">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="block w-full text-sm md:table md:min-w-[760px]">
             <caption className="sr-only">Gastos agregados</caption>
-            <thead className="bg-muted/50 text-left"><tr><th className="p-3">Cuenta / descripción</th><th className="p-3">Centro de costo</th><th className="p-3 text-right">Base</th><th className="p-3">IVA</th><th className="p-3">Concepto tributario</th><th className="p-3 text-right">Acciones</th></tr></thead>
-            <tbody>{lines.map((line, index) => {
+            <thead className="hidden bg-muted/50 text-left md:table-header-group"><tr><th className="p-3">Cuenta / descripción</th><th className="p-3">Centro de costo</th><th className="p-3 text-right">Base</th><th className="p-3">IVA</th><th className="p-3">Concepto tributario</th><th className="p-3 text-right">Acciones</th></tr></thead>
+            <tbody className="block md:table-row-group">{lines.map((line, index) => {
               const tax = options.taxes?.find(item => item.taxProfileId === line.taxProfileId);
               const calculated = preview?.lines[index];
-              return <tr key={line.key} className="border-t">
-                <td className="p-3"><b>{line.accountCode} · {line.accountName}</b><p>{line.description}</p></td>
-                <td className="p-3">{options.costCenters.find(center => center.costCenterId === line.costCenterId)?.name ?? "Predeterminado"}</td>
-                <td className="whitespace-nowrap p-3 text-right font-medium">{money.format(line.taxExclusiveAmount)}</td>
-                <td className="p-3">{tax ? `${tax.name} · ${tax.rate}%` : "Sin IVA"}{tax && <small className="block text-muted-foreground">{options.taxTreatments?.find(item => item.code === line.taxTreatment)?.label}</small>}{calculated && <span className="block whitespace-nowrap">{money.format(calculated.vatAmount)}</span>}</td>
-                <td className="p-3">{line.withholdingConceptCode ?? "Sin clasificación específica"}</td>
-                <td className="p-3"><div className="flex justify-end gap-1"><Button type="button" size="icon" variant="ghost" aria-label={`Editar gasto ${index + 1}`} onClick={() => setEditingLine({ ...line })}><Pencil className="h-4 w-4"/></Button><Button type="button" size="icon" variant="ghost" aria-label={`Quitar gasto ${index + 1}`} onClick={() => { const remaining = lines.filter(item => item.key !== line.key); invalidate(); setLines(remaining); if (canPreview(remaining)) void calculate(remaining); }}><Trash2 className="h-4 w-4"/></Button></div></td>
+              return <tr key={line.key} className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 border-t p-3 md:table-row md:p-0">
+                <td className="col-span-2 min-w-0 break-words md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Cuenta / descripción</span><b>{line.accountCode} · {line.accountName}</b><p>{line.description}</p></td>
+                <td className="col-span-2 min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Centro de costo</span>{options.costCenters.find(center => center.costCenterId === line.costCenterId)?.name ?? "Predeterminado"}</td>
+                <td className="min-w-0 font-medium md:whitespace-nowrap md:p-3 md:text-right"><span className="mb-1 block text-xs font-normal text-muted-foreground md:hidden">Base</span>{money.format(line.taxExclusiveAmount)}</td>
+                <td className="min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">IVA</span>{tax ? `${tax.name} · ${tax.rate}%` : "Sin IVA"}{tax && <small className="block text-muted-foreground">{options.taxTreatments?.find(item => item.code === line.taxTreatment)?.label}</small>}{calculated && <span className="block md:whitespace-nowrap">{money.format(calculated.vatAmount)}</span>}</td>
+                <td className="col-span-2 min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Concepto tributario</span>{line.withholdingConceptCode ?? "Sin clasificación específica"}</td>
+                <td className="col-span-2 min-w-0 md:p-3"><div className="flex justify-end gap-1"><Button type="button" size="icon" variant="ghost" aria-label={`Editar gasto ${index + 1}`} onClick={() => setEditingLine({ ...line })}><Pencil className="h-4 w-4"/></Button><Button type="button" size="icon" variant="ghost" aria-label={`Quitar gasto ${index + 1}`} onClick={() => { const remaining = lines.filter(item => item.key !== line.key); invalidate(); setLines(remaining); if (canPreview(remaining)) void calculate(remaining); }}><Trash2 className="h-4 w-4"/></Button></div></td>
               </tr>;
             })}</tbody>
           </table>
@@ -181,7 +181,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
     </DialogFooter>
   </form>
     <Dialog open={!!editingLine} onOpenChange={open => { if (!open) setEditingLine(null); }}>
-      <DialogContent className="max-h-[90dvh] overflow-visible sm:max-w-3xl">
+      <DialogContent className="max-h-[90dvh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-visible p-4 sm:max-w-3xl sm:p-6">
         <DialogHeader><DialogTitle>{existingLine ? "Editar gasto" : "Agregar gasto"}</DialogTitle><DialogDescription>Completa la cuenta y los valores de la línea. Si usas un gasto frecuente, se cargarán sus datos.</DialogDescription></DialogHeader>
         {editingLine && <form onSubmit={saveLine} className="max-h-[calc(90dvh-8rem)] space-y-5 overflow-y-auto pr-1">
           <div className="rounded-xl border bg-muted/20 p-3">

@@ -108,6 +108,40 @@ test("cerrar gasto durante el cálculo libera la página y permite abrirlo otra 
   }
 });
 
+test("captura de gasto se puede leer y editar en móvil", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { dialog } = await openExpenses(page, baseURL!, false);
+  expect(await dialog.evaluate(element => element.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+  await expect(dialog.locator("span").filter({ hasText: "Cuenta / descripción" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Editar gasto 1" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Editar gasto 1" }).click();
+  const editing = page.getByRole("dialog", { name: "Editar gasto" });
+  await expect(editing.getByLabel("Base antes de IVA")).toBeVisible();
+  expect(await editing.evaluate(element => element.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+});
+
+test("historial de gastos presenta cada documento sin desplazamiento horizontal en móvil", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { dialog } = await openExpenses(page, baseURL!, false);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.route("**/api/commerce/v1/expenses*", async route => {
+    if (!new URL(route.request().url()).pathname.endsWith("/expenses")) return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      items: [{ expenseId: "88888888-8888-8888-8888-888888888888", documentNumber: "G-100",
+        supplierDocumentNumber: "FV-100", supplierName: "Proveedor de prueba", conceptName: "Servicios",
+        grossAmount: 120000, withholdingAmount: 3000, netPayable: 117000,
+        outstandingAmount: 117000, payableStatus: "Open", status: "Processed", chargeReturned: false }],
+      page: 1, pageSize: 25, totalCount: 1, totalPages: 1,
+      grossTotal: 120000, withholdingTotal: 3000, netPayableTotal: 117000,
+    }) });
+  });
+  await page.getByPlaceholder("Documento, proveedor o concepto").fill("G-100");
+  const row = page.getByRole("button", { name: "Ver gasto G-100" });
+  await expect(row).toBeVisible();
+  await expect(row.getByText("Saldo por pagar")).toBeVisible();
+  expect(await row.evaluate(element => element.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+});
+
 test("agregar retención manual funciona sin reglas configuradas", async ({ page, baseURL }) => {
   const { dialog, state } = await openExpenses(page, baseURL!, false, {manageWithholdings:true,rules:[]});
   const add = dialog.getByRole("button", {name:"Agregar retención"});

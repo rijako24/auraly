@@ -114,12 +114,22 @@ public sealed record ReceivablesReportItem(Guid CustomerId, string CustomerName,
     IReadOnlyList<ReceivablesReportApplication>? Applications = null)
 {
     public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
+    public decimal NotDueAmount { get; init; }
+    public decimal Overdue1To30Amount { get; init; }
+    public decimal Overdue31To60Amount { get; init; }
+    public decimal Overdue61To90Amount { get; init; }
+    public decimal OverdueOver90Amount { get; init; }
 }
 public sealed record ReceivablesReportPage(IReadOnlyList<ReceivablesReportItem> Items,
     int Page, int PageSize, int TotalCount, int TotalInvoiceCount,
     decimal TotalOriginal, decimal TotalPaid, decimal TotalOutstanding, decimal TotalOverdue)
 {
     public decimal TotalOtherImpact => TotalOriginal - TotalPaid - TotalOutstanding;
+    public decimal TotalNotDue { get; init; }
+    public decimal TotalOverdue1To30 { get; init; }
+    public decimal TotalOverdue31To60 { get; init; }
+    public decimal TotalOverdue61To90 { get; init; }
+    public decimal TotalOverdueOver90 { get; init; }
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
 public sealed record PreexistingReceivableItemRequest(Guid ReceivableId,Guid? CustomerId,string? CustomerIdentification,

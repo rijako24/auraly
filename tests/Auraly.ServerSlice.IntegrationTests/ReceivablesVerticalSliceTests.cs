@@ -19,6 +19,42 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Report_ages_outstanding_by_local_due_day_before_pagination()
+    {
+        var (customerId, userId, _) = await ConfigureAsync();
+        using var client = fixture.CreateUserClient(userId,
+            ReceivablesPermissionCodes.Read, ReceivablesPermissionCodes.ManageCredit);
+        var cutoff = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-5)).DateTime);
+        var counterpart = await AccountIdByCodeAsync("413595");
+        var dueDays = new[] { 0, 1, 30, 31, 60, 61, 90, 91 };
+        var entries = dueDays.Select(days =>
+        {
+            var due = cutoff.AddDays(-days);
+            var issued = due.AddDays(-1);
+            var id = Guid.NewGuid();
+            return new PreexistingReceivableItemRequest(id, null, ServerSliceFixture.UniqueNit(customerId), null,
+                $"AGE-{days}-{id:N}", new DateTimeOffset(issued.ToDateTime(new TimeOnly(9, 0)), TimeSpan.FromHours(-5)),
+                new DateTimeOffset(due.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(-5)),
+                1_000m, counterpart, null);
+        }).ToArray();
+        using (var response = await client.PostAsJsonAsync("/api/commerce/v1/receivables/preexisting/import",
+                   new ImportPreexistingReceivablesRequest(fixture.BusinessId, entries)))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        var report = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=3&consolidated=false&cutoff={cutoff:yyyy-MM-dd}&customerId={customerId:D}");
+        Assert.NotNull(report);
+        Assert.Equal(8, report.TotalCount);
+        Assert.Equal(1_000m, report.TotalNotDue);
+        Assert.Equal(2_000m, report.TotalOverdue1To30);
+        Assert.Equal(2_000m, report.TotalOverdue31To60);
+        Assert.Equal(2_000m, report.TotalOverdue61To90);
+        Assert.Equal(1_000m, report.TotalOverdueOver90);
+        Assert.Equal(7_000m, report.TotalOverdue);
+        Assert.Equal(3, report.Items.Count);
+    }
+
+    [Fact]
     public async Task Preexisting_portfolio_is_created_without_a_sale_and_posts_through_accounting()
     {
         var (customerId,userId,partySiteId)=await ConfigureAsync();
@@ -55,6 +91,12 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&customerId={customerId:D}&partySiteId={partySiteId:D}");
         var reported = Assert.Single(report!.Items, item => item.ReceivableId == receivableId);
         Assert.Equal(125_000m, reported.OutstandingAmount);
+        Assert.Equal(reported.OutstandingAmount, reported.NotDueAmount + reported.Overdue1To30Amount +
+            reported.Overdue31To60Amount + reported.Overdue61To90Amount + reported.OverdueOver90Amount);
+        Assert.Equal(report.TotalOutstanding, report.TotalNotDue + report.TotalOverdue1To30 +
+            report.TotalOverdue31To60 + report.TotalOverdue61To90 + report.TotalOverdueOver90);
+        Assert.Equal(report.TotalOverdue, report.TotalOverdue1To30 + report.TotalOverdue31To60 +
+            report.TotalOverdue61To90 + report.TotalOverdueOver90);
         Assert.Empty(reported.Applications!);
         var registeredAfterIssue = await client.GetFromJsonAsync<ReceivablesReportPage>(
             $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&customerId={customerId:D}&from=2026-09-30&to={cutoff}");
@@ -63,6 +105,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=true&cutoff={cutoff}&customerId={customerId:D}&partySiteId={partySiteId:D}");
         Assert.Contains(consolidatedReport!.Items, item => item.CustomerId == customerId &&
             item.PartySiteId == partySiteId && item.OutstandingAmount >= 125_000m);
+        Assert.All(consolidatedReport.Items, item => Assert.Equal(item.OutstandingAmount,
+            item.NotDueAmount + item.Overdue1To30Amount + item.Overdue31To60Amount +
+            item.Overdue61To90Amount + item.OverdueOver90Amount));
 
         using var replay=await client.PostAsJsonAsync(
             "/api/commerce/v1/receivables/preexisting/import",request);
@@ -656,6 +701,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/receivables/report/print?consolidated=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}");
         Assert.Contains(checkout.Receipt.DocumentNumber, printedReport);
         Assert.Contains(acceptance.DocumentNumber, printedReport);
+        Assert.Contains("Edades de cartera", printedReport);
 
         using (var response = await SendAsync(client,
                    "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))

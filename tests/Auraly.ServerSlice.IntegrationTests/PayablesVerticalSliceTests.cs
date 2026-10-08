@@ -100,11 +100,17 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&supplierId={fixture.SupplierId:D}&partySiteId={alternateSiteId:D}");
             Assert.Contains(detailReport!.Items, item => item.PayableId == payableIds[1] &&
                 item.PartySiteId == alternateSiteId && item.OutstandingAmount > 0);
+            Assert.All(detailReport.Items, item => Assert.Equal(item.OutstandingAmount,
+                item.NotDueAmount + item.Overdue1To30Amount + item.Overdue31To60Amount +
+                item.Overdue61To90Amount + item.OverdueOver90Amount));
             var summaryReport = await client.GetFromJsonAsync<PayablesReportPage>(
                 $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=true&cutoff={cutoff}&supplierId={fixture.SupplierId:D}");
             Assert.Contains(summaryReport!.Items, item => item.PartySiteId == primarySiteId);
             Assert.Contains(summaryReport.Items, item => item.PartySiteId == alternateSiteId);
             Assert.Contains(summaryReport.CurrencyTotals, item => item.CurrencyCode == "COP" && item.InvoiceCount >= 2);
+            Assert.All(summaryReport.CurrencyTotals, item =>
+                Assert.Equal(item.OutstandingAmount, item.NotDueAmount + item.Overdue1To30Amount +
+                    item.Overdue31To60Amount + item.Overdue61To90Amount + item.OverdueOver90Amount));
             var unmatched = await client.GetFromJsonAsync<PayablesReportPage>(
                 $"/api/commerce/v1/payables/report?page=1&pageSize=20&consolidated=false&cutoff={cutoff}&supplierId={fixture.SupplierId:D}&search=sin-coincidencias-98765");
             Assert.Equal(0, unmatched!.TotalCount);
