@@ -1353,6 +1353,21 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(collection.CounterpartyName, Assert.Single(collectionPage!.Items).CounterpartyName);
         Assert.Equal(collection.DocumentNumber, collectionPage.Items[0].DocumentNumber);
         var creditSale = Assert.Single(items!, item => item.MovementType == "CreditSale");
+        using (var invalid = await client.PostAsJsonAsync($"{path}/payment-corrections/validate",
+                   new[] { new WorkSessionPaymentCorrection(collection.VerificationKey, "Cash", 11_000m,
+                       "Importe superior al saldo") }))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+            Assert.Contains("saldo", await invalid.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        }
+        using (var valid = await client.PostAsJsonAsync($"{path}/payment-corrections/validate",
+                   new[] { new WorkSessionPaymentCorrection(collection.VerificationKey, "Cash", 7_000m,
+                       "Cobro real corregido") }))
+            Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
+        var beforeReconciliation = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"{path}/payment-verifications");
+        Assert.Null(Assert.Single(beforeReconciliation!, item => item.VerificationKey == collection.VerificationKey)
+            .CorrectedAmount);
         using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
         {
             Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
@@ -1370,6 +1385,11 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var reconciliation = await accepted.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
         Assert.NotNull(reconciliation);
         Assert.Equal("Reconciled", reconciliation.Status);
+        var correctedPage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?movementType=ReceivablePayment&page=1&pageSize=10");
+        var correctedGroup = Assert.Single(correctedPage!.Groups);
+        Assert.Equal(5_000m, correctedGroup.TotalAmount);
+        Assert.Equal(7_000m, correctedGroup.EffectiveTotalAmount);
         await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
         await verifyConnection.OpenAsync();
         await using var verify = verifyConnection.CreateCommand();
@@ -1477,7 +1497,22 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
             $"{path}/payment-verifications");
         var payment = Assert.Single(items!, item => item.MovementType == "PayablePayment");
-        Assert.Equal("Proveedor E2E", payment.CounterpartyName);
+        await using var supplierConnection = new SqlConnection(fixture.ConnectionString);
+        await supplierConnection.OpenAsync();
+        await using var supplierName = supplierConnection.CreateCommand();
+        supplierName.CommandText = """
+            SELECT COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),
+                NULLIF(party.Identification,N''))
+            FROM dbo.SupplierPayments payment
+            JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
+            JOIN dbo.Parties party ON party.PartyId=supplier.PartyId
+            WHERE payment.PaymentId=@PaymentId AND payment.BusinessId=@BusinessId;
+            """;
+        supplierName.Parameters.AddWithValue("@PaymentId", paymentId);
+        supplierName.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        var expectedSupplierName = Assert.IsType<string>(await supplierName.ExecuteScalarAsync());
+        Assert.False(string.IsNullOrWhiteSpace(expectedSupplierName));
+        Assert.Equal(expectedSupplierName, payment.CounterpartyName);
         Assert.StartsWith("PGC-", payment.DocumentNumber);
         Assert.DoesNotContain("payable-payment:", payment.DocumentNumber);
         var paymentPage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(

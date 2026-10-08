@@ -76,10 +76,17 @@ public sealed partial class SqlWorkSessionStore
     public async Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ListClosurePaymentVerificationsAsync(
         WorkSessionIdentity identity, Guid closureId, CancellationToken cancellationToken)
     {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await EnsureClosureScopeAsync(connection, null, identity.TenantId, closureId, cancellationToken);
-        return await ReadPaymentVerificationsAsync(connection, null, closureId, cancellationToken);
+        var items = new List<WorkSessionPaymentVerificationItem>();
+        for (var page = 1; ; page++)
+        {
+            var result = await ListClosurePaymentVerificationPageAsync(identity, closureId,
+                null, null, page, 100, cancellationToken);
+            items.AddRange(result.Items);
+            if (items.Count >= result.TotalItems)
+                return items;
+            if (result.Items.Count == 0)
+                throw new WorkSessionValidationException("Los comprobantes del cierre cambiaron durante la consulta. Vuelve a intentarlo.");
+        }
     }
 
     public async Task<WorkSessionPaymentVerificationPage> ListClosurePaymentVerificationPageAsync(
@@ -89,14 +96,61 @@ public sealed partial class SqlWorkSessionStore
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await EnsureClosureScopeAsync(connection, null, identity.TenantId, closureId, cancellationToken);
-        await using var command = new SqlCommand(PaymentVerificationRowsSql + """
-            SELECT PaymentMethodCode,MovementType,COUNT(1),SUM(Amount),
-              SUM(CASE WHEN Status IN(N'Verified',N'Missing') THEN 1 ELSE 0 END),
-              SUM(CASE WHEN Status=N'Verified' AND
-                (CorrectedPaymentMethodCode IS NULL OR CorrectedPaymentMethodCode=PaymentMethodCode)
-                THEN ABS(COALESCE(CorrectedAmount,Amount)) ELSE CONVERT(decimal(19,4),0) END)
-            FROM #PaymentVerifications GROUP BY PaymentMethodCode,MovementType;
-            SELECT COUNT(1) FROM #PaymentVerifications;
+        await using var command = new SqlCommand(PaymentVerificationSourceSql + "\n" + """
+            , SummaryRows AS
+            (
+              SELECT movement.PaymentMethodCode,movement.MovementType,movement.Amount,
+                decision.Status,correction.PaymentMethodCode CorrectedPaymentMethodCode,
+                correction.Amount CorrectedAmount
+              FROM EligibleMovements movement
+              LEFT JOIN DecisionStatuses decision ON decision.VerificationKey=movement.VerificationKey
+              LEFT JOIN CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
+              WHERE (@Method IS NULL OR COALESCE(correction.PaymentMethodCode,movement.PaymentMethodCode)=@Method)
+                AND (@Movement IS NULL OR movement.MovementType=@Movement)
+            ),
+            """ + """
+            OriginalGroups AS
+            (
+              SELECT PaymentMethodCode,MovementType,COUNT(1) ItemCount,SUM(Amount) TotalAmount,
+                SUM(CASE WHEN Status IN(N'Verified',N'Missing') THEN 1 ELSE 0 END) ReviewedCount,
+                SUM(CASE WHEN Status=N'Verified' AND
+                  (CorrectedPaymentMethodCode IS NULL OR CorrectedPaymentMethodCode=PaymentMethodCode)
+                  THEN ABS(COALESCE(CorrectedAmount,Amount)) ELSE CONVERT(decimal(19,4),0) END) ReviewedAmount
+              FROM SummaryRows GROUP BY PaymentMethodCode,MovementType
+            ), EffectiveGroups AS
+            (
+              SELECT COALESCE(CorrectedPaymentMethodCode,PaymentMethodCode) PaymentMethodCode,
+                MovementType,COUNT(1) ItemCount,SUM(COALESCE(CorrectedAmount,Amount)) TotalAmount,
+                SUM(CASE WHEN Status IN(N'Verified',N'Missing') THEN 1 ELSE 0 END) ReviewedCount,
+                SUM(CASE WHEN Status=N'Verified' THEN ABS(COALESCE(CorrectedAmount,Amount))
+                  ELSE CONVERT(decimal(19,4),0) END) ReviewedAmount
+              FROM SummaryRows
+              GROUP BY COALESCE(CorrectedPaymentMethodCode,PaymentMethodCode),MovementType
+            )
+            SELECT COALESCE(original.PaymentMethodCode,effective.PaymentMethodCode),
+              COALESCE(original.MovementType,effective.MovementType),
+              COALESCE(original.ItemCount,0),COALESCE(original.TotalAmount,0),
+              COALESCE(original.ReviewedCount,0),COALESCE(original.ReviewedAmount,0),
+              COALESCE(effective.ItemCount,0),COALESCE(effective.TotalAmount,0),
+              COALESCE(effective.ReviewedCount,0),COALESCE(effective.ReviewedAmount,0),
+              SUM(COALESCE(original.ItemCount,0)) OVER() TotalItems
+            FROM OriginalGroups original FULL OUTER JOIN EffectiveGroups effective
+              ON original.PaymentMethodCode=effective.PaymentMethodCode
+                AND original.MovementType=effective.MovementType
+            OPTION (RECOMPILE);
+            """ + PaymentVerificationSourceSql + "\n" + """
+            , PagedMovements AS
+            (
+              SELECT movement.*
+              FROM EligibleMovements movement
+              LEFT JOIN CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
+              WHERE (@Method IS NULL OR COALESCE(correction.PaymentMethodCode,movement.PaymentMethodCode)=@Method)
+                AND (@Movement IS NULL OR movement.MovementType=@Movement)
+              ORDER BY movement.SortOrder,movement.OccurredAt,movement.VerificationKey
+              OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY
+            )
+            """ + PaymentVerificationSelectSql + " PagedMovements " + PaymentVerificationJoinsSql + """
+            OPTION (RECOMPILE);
             SELECT VerificationKey,PaymentMethodCode,MovementType,SourceId,DocumentNumber,
               SourceNumber,Amount,Reference,CardFranchiseCode,ApprovalNumber,OccurredAt,
               SourceDocumentType,CustomerName,Status,ReasonName,Notes,
@@ -104,8 +158,7 @@ public sealed partial class SqlWorkSessionStore
               TenderMethodCode,CorrectedTenderMethodCode,CorrectedCardFranchiseCode,
               CorrectedApprovalNumber,CorrectedReference,CounterpartyName
             FROM #PaymentVerifications
-            ORDER BY SortOrder,OccurredAt,VerificationKey
-            OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
+            ORDER BY SortOrder,OccurredAt,VerificationKey;
             """, connection);
         command.Parameters.AddWithValue("@ClosureId", closureId);
         command.Parameters.AddWithValue("@Method", (object?)paymentMethodCode ?? DBNull.Value);
@@ -114,13 +167,15 @@ public sealed partial class SqlWorkSessionStore
         command.Parameters.AddWithValue("@Take", pageSize);
         var groups = new List<WorkSessionPaymentVerificationGroup>();
         var items = new List<WorkSessionPaymentVerificationItem>();
+        var total = 0;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
+        {
             groups.Add(new(reader.GetString(0), reader.GetString(1), reader.GetInt32(2),
-                reader.GetDecimal(3), reader.GetInt32(4), reader.GetDecimal(5)));
-        await reader.NextResultAsync(cancellationToken);
-        await reader.ReadAsync(cancellationToken);
-        var total = reader.GetInt32(0);
+                reader.GetDecimal(3), reader.GetInt32(4), reader.GetDecimal(5),
+                reader.GetInt32(6), reader.GetDecimal(7), reader.GetInt32(8), reader.GetDecimal(9)));
+            total = reader.GetInt32(10);
+        }
         await reader.NextResultAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             items.Add(ReadPaymentVerificationItem(reader));
@@ -173,7 +228,7 @@ public sealed partial class SqlWorkSessionStore
             var requestedVerifications = request.PaymentVerifications ?? [];
             var verification = await ValidatePaymentVerificationsAsync(
                 connection, transaction, closureId, businessId, requestedVerifications,
-                request.PaymentCorrections ?? [], cancellationToken);
+                request.PaymentCorrections ?? [], false, cancellationToken);
             if (verification.Corrections.Any(item =>
                 countable.All(method => !method.PaymentMethodCode.Equals(item.PaymentMethodCode, StringComparison.OrdinalIgnoreCase))) ||
                 verification.Corrections.Count > 0 && request.Reclassifications.Count > 0)
@@ -441,7 +496,7 @@ public sealed partial class SqlWorkSessionStore
             throw new WorkSessionNotFoundException("El cierre no existe en la empresa autenticada.");
     }
 
-    private const string PaymentVerificationRowsSql = """
+    private const string PaymentVerificationSourceSql = """
             WITH ClosureContext AS
             (
                 SELECT session.WorkSessionId,session.BusinessId,session.UserId,session.OpenedAt,closure.ClosedAt,closure.ReceiptSnapshotJson SnapshotJson
@@ -486,13 +541,9 @@ public sealed partial class SqlWorkSessionStore
                 SELECT CONCAT(N'CreditSale:',CONVERT(nvarchar(36),document.DocumentId)),
                   N'Credit',N'CreditSale',document.DocumentId,document.DocumentNumber,0,
                   document.CreditAmount,NULL,NULL,NULL,document.IssuedAt,document.DocumentType,
-                  COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),
-                     NULLIF(party.Identification,N''),NULLIF(document.CustomerIdentification,N''),N'Cliente'),
-                   N'Credit'
+                  CAST(NULL AS nvarchar(300)),N'Credit'
                 FROM dbo.SalesDocuments document
                 INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
-                LEFT JOIN dbo.Customers customer ON customer.CustomerId=document.CustomerId
-                LEFT JOIN dbo.Parties party ON party.PartyId=customer.PartyId
                 WHERE document.CreditAmount>0
                 UNION ALL
                 SELECT CONCAT(N'Refund:',CONVERT(nvarchar(36),settlement.ReturnId),N':',settlement.SettlementNumber),
@@ -558,14 +609,29 @@ public sealed partial class SqlWorkSessionStore
                    JSON_VALUE(value.value,N'$.reference') Reference
                 FROM LatestReconciliation reconciliation
                 CROSS APPLY OPENJSON(reconciliation.SnapshotJson,N'$.paymentCorrections') value
+            ), EligibleMovements AS
+            (
+                SELECT movement.*,COALESCE(closureOption.SortOrder,15) SortOrder
+                FROM VerificationMovements movement
+                LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
+                  AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
+                WHERE closureOption.OptionId IS NOT NULL OR movement.PaymentMethodCode=N'Credit'
             )
+            """;
+
+    private const string PaymentVerificationSelectSql = """
             SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType,movement.SourceId,
               CASE WHEN movement.MovementType IN(N'ReceivablePayment',N'PayablePayment')
                 THEN COALESCE(customerPayment.DocumentNumber,supplierPayment.DocumentNumber,N'')
                 ELSE movement.DocumentNumber END DocumentNumber,
               movement.SourceNumber,movement.Amount,movement.Reference,
               movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt,
-              movement.SourceDocumentType,movement.CustomerName,decision.Status,detail.ReasonName,detail.Notes,
+              movement.SourceDocumentType,
+              CASE WHEN movement.MovementType=N'CreditSale' THEN
+                COALESCE(NULLIF(creditParty.DisplayName,N''),NULLIF(creditParty.LegalName,N''),
+                  NULLIF(creditParty.Identification,N''),NULLIF(creditSale.CustomerIdentification,N''),N'Cliente')
+                ELSE movement.CustomerName END CustomerName,
+              decision.Status,detail.ReasonName,detail.Notes,
               correction.PaymentMethodCode CorrectedPaymentMethodCode,
               correction.Amount CorrectedAmount,correction.Reason CorrectionReason,
               movement.TenderMethodCode,correction.TenderMethodCode CorrectedTenderMethodCode,
@@ -575,10 +641,18 @@ public sealed partial class SqlWorkSessionStore
               COALESCE(NULLIF(customerParty.DisplayName,N''),NULLIF(customerParty.LegalName,N''),
                 NULLIF(customerParty.Identification,N''),NULLIF(supplierParty.DisplayName,N''),
                 NULLIF(supplierParty.LegalName,N''),NULLIF(supplierParty.Identification,N'')) CounterpartyName,
-              COALESCE(closureOption.SortOrder,15) SortOrder
+              movement.SortOrder
             INTO #PaymentVerifications
-            FROM VerificationMovements movement
+            FROM
+            """;
+
+    private const string PaymentVerificationJoinsSql = """
+            movement
             CROSS JOIN ClosureContext context
+            LEFT JOIN dbo.SalesDocuments creditSale ON movement.MovementType=N'CreditSale'
+              AND creditSale.DocumentId=movement.SourceId AND creditSale.BusinessId=context.BusinessId
+            LEFT JOIN dbo.Customers creditCustomer ON creditCustomer.CustomerId=creditSale.CustomerId
+            LEFT JOIN dbo.Parties creditParty ON creditParty.PartyId=creditCustomer.PartyId
             LEFT JOIN dbo.WorkSessionMovements cashMovement ON cashMovement.WorkSessionMovementId=movement.SourceId
               AND movement.MovementType IN(N'CashIn',N'CashOut',N'ReceivablePayment',N'PayablePayment')
             LEFT JOIN dbo.CustomerPayments customerPayment ON movement.MovementType=N'ReceivablePayment'
@@ -596,36 +670,41 @@ public sealed partial class SqlWorkSessionStore
                    ELSE COALESCE(cashMovement.DocumentId,cashMovement.WorkSessionMovementId) END
                 AND (detail.WorkSessionMovementId IS NULL OR detail.WorkSessionMovementId=movement.SourceId)
                 AND movement.MovementType IN(N'CashIn',N'CashOut',N'ReceivablePayment',N'PayablePayment')
-            LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
-              AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
             LEFT JOIN DecisionStatuses decision ON decision.VerificationKey=movement.VerificationKey
             LEFT JOIN CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
-            WHERE (closureOption.OptionId IS NOT NULL OR movement.PaymentMethodCode=N'Credit')
-              AND (@Method IS NULL OR movement.PaymentMethodCode=@Method)
-              AND (@Movement IS NULL OR movement.MovementType=@Movement);
+            WHERE (@Method IS NULL OR COALESCE(correction.PaymentMethodCode,movement.PaymentMethodCode)=@Method)
+              AND (@Movement IS NULL OR movement.MovementType=@Movement)
             """;
 
-    private static async Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ReadPaymentVerificationsAsync(
-        SqlConnection connection, SqlTransaction? transaction, Guid closureId,
-        CancellationToken cancellationToken)
+    private static string PaymentVerificationRowsSql => PaymentVerificationSourceSql + "\n" +
+        "SELECT * INTO #BaseVerifications FROM EligibleMovements OPTION (RECOMPILE);\n" +
+        PaymentVerificationSourceSql + "\n" + PaymentVerificationSelectSql +
+        " #BaseVerifications " + PaymentVerificationJoinsSql;
+
+    public async Task ValidatePaymentCorrectionsAsync(WorkSessionIdentity identity, Guid closureId,
+        IReadOnlyList<WorkSessionPaymentCorrection> corrections, CancellationToken cancellationToken)
     {
-        var result = new List<WorkSessionPaymentVerificationItem>();
-        await using var command = new SqlCommand(PaymentVerificationRowsSql + """
-            SELECT VerificationKey,PaymentMethodCode,MovementType,SourceId,DocumentNumber,
-              SourceNumber,Amount,Reference,CardFranchiseCode,ApprovalNumber,OccurredAt,
-              SourceDocumentType,CustomerName,Status,ReasonName,Notes,
-              CorrectedPaymentMethodCode,CorrectedAmount,CorrectionReason,
-              TenderMethodCode,CorrectedTenderMethodCode,CorrectedCardFranchiseCode,
-              CorrectedApprovalNumber,CorrectedReference,CounterpartyName
-            FROM #PaymentVerifications ORDER BY SortOrder,OccurredAt,VerificationKey;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await using var scope = new SqlCommand("""
+            SELECT session.BusinessId
+            FROM dbo.WorkSessionClosures closure
+            JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+            JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
+            WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId
+              AND closure.ReconciliationStatus=N'Pending';
             """, connection, transaction);
-        command.Parameters.AddWithValue("@ClosureId", closureId);
-        command.Parameters.AddWithValue("@Method", DBNull.Value);
-        command.Parameters.AddWithValue("@Movement", DBNull.Value);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            result.Add(ReadPaymentVerificationItem(reader));
-        return result;
+        scope.Parameters.AddWithValue("@ClosureId", closureId);
+        scope.Parameters.AddWithValue("@TenantId", identity.TenantId);
+        var businessId = (Guid?)await scope.ExecuteScalarAsync(cancellationToken)
+            ?? throw new WorkSessionValidationException("El cierre ya no está pendiente o no pertenece a la empresa autenticada.");
+        var decisions = corrections.Select(item => new WorkSessionPaymentVerificationDecision(
+            item.VerificationKey, "Verified")).ToArray();
+        await ValidatePaymentVerificationsAsync(connection, transaction, closureId, businessId,
+            decisions, corrections, true, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static async Task<(Dictionary<string, decimal> VerifiedAmounts, bool HasMissingCreditSale,
@@ -634,9 +713,19 @@ public sealed partial class SqlWorkSessionStore
             Guid closureId, Guid businessId,
             IReadOnlyList<WorkSessionPaymentVerificationDecision> decisions,
             IReadOnlyList<WorkSessionPaymentCorrection> corrections,
-            CancellationToken cancellationToken)
+            bool preview, CancellationToken cancellationToken)
     {
-        await using var command = new SqlCommand(PaymentVerificationRowsSql + """
+        var rowsSql = corrections.Count == 0
+            ? PaymentVerificationSourceSql + "\n" + """
+                SELECT movement.VerificationKey,movement.PaymentMethodCode,
+                  movement.MovementType,movement.Amount
+                INTO #PaymentVerifications
+                FROM EligibleMovements movement OPTION (RECOMPILE);
+                """ + "\n"
+            : preview
+                ? PaymentVerificationRowsSql + " AND movement.VerificationKey IN (SELECT [value] FROM OPENJSON(@TargetKeys)) OPTION (RECOMPILE);\n"
+                : PaymentVerificationRowsSql + " OPTION (RECOMPILE);\n";
+        var validationSql = rowsSql + """
             CREATE TABLE #Decisions(VerificationKey nvarchar(200) COLLATE Latin1_General_100_CI_AS,
               Status nvarchar(12));
             INSERT #Decisions(VerificationKey,Status)
@@ -670,10 +759,10 @@ public sealed partial class SqlWorkSessionStore
                 EXISTS(SELECT 1 FROM #Decisions GROUP BY VerificationKey HAVING COUNT(*)<>1)
                 OR EXISTS(SELECT 1 FROM #Corrections GROUP BY VerificationKey HAVING COUNT(*)<>1)
                 OR EXISTS(SELECT 1 FROM Required GROUP BY VerificationKey HAVING COUNT(*)<>1)
-                OR EXISTS(
+                OR (@Preview=0 AND EXISTS(
                     SELECT 1 FROM Required source FULL OUTER JOIN #Decisions decision
                       ON source.VerificationKey=decision.VerificationKey
-                    WHERE source.VerificationKey IS NULL OR decision.VerificationKey IS NULL)
+                    WHERE source.VerificationKey IS NULL OR decision.VerificationKey IS NULL))
                 THEN 1 ELSE 0 END AS bit);
 
             SELECT source.PaymentMethodCode,
@@ -687,7 +776,10 @@ public sealed partial class SqlWorkSessionStore
             LEFT JOIN #Decisions decision ON source.VerificationKey COLLATE Latin1_General_100_CI_AS =
               decision.VerificationKey
             GROUP BY source.PaymentMethodCode;
+            """;
 
+        if (corrections.Count > 0)
+            validationSql += """
             SELECT correction.VerificationKey,source.MovementType,source.SourceId,
               source.SourceNumber,source.PaymentMethodCode,source.Amount,
               correction.PaymentMethodCode,correction.Amount,correction.Reason,
@@ -814,16 +906,21 @@ public sealed partial class SqlWorkSessionStore
                 AND cashDocument.BusinessId=@BusinessId
             LEFT JOIN dbo.CashMovementReasons cashReason
               ON cashReason.ReasonId=cashDocument.ReasonId AND cashReason.BusinessId=@BusinessId;
-            """, connection, transaction);
+            """;
+        await using var command = new SqlCommand(validationSql, connection, transaction);
         command.Parameters.AddWithValue("@ClosureId", closureId);
         command.Parameters.AddWithValue("@Method", DBNull.Value);
         command.Parameters.AddWithValue("@Movement", DBNull.Value);
+        if (preview)
+            command.Parameters.Add("@TargetKeys", SqlDbType.NVarChar, -1).Value =
+                JsonSerializer.Serialize(corrections.Select(item => item.VerificationKey));
         command.Parameters.Add("@DecisionsJson", SqlDbType.NVarChar, -1).Value =
             JsonSerializer.Serialize(decisions.Select(value => new
             {
                 VerificationKey = value.VerificationKey.Trim(), value.Status
             }));
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@Preview", preview);
         command.Parameters.Add("@CorrectionsJson", SqlDbType.NVarChar, -1).Value =
             JsonSerializer.Serialize(corrections);
         var verifiedAmounts = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
@@ -838,10 +935,11 @@ public sealed partial class SqlWorkSessionStore
             verifiedAmounts.Add(reader.GetString(0), reader.GetDecimal(1));
             hasMissingCreditSale |= reader.GetInt32(2) != 0;
         }
-        await reader.NextResultAsync(cancellationToken);
         var applied = new List<WorkSessionAppliedPaymentCorrection>(corrections.Count);
         var balances = new Dictionary<(string Kind, Guid Id), (decimal Outstanding, decimal Adjustment)>();
-        while (await reader.ReadAsync(cancellationToken))
+        if (corrections.Count > 0)
+            await reader.NextResultAsync(cancellationToken);
+        while (corrections.Count > 0 && await reader.ReadAsync(cancellationToken))
         {
             if (reader.IsDBNull(1) || reader.IsDBNull(9) && reader.GetString(1) is not ("Sale" or "Refund"))
                 throw new WorkSessionValidationException("El comprobante corregido no pertenece al cierre o no fue verificado.");

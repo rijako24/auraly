@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowRightLeft, Banknote, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, CreditCard, Landmark, Loader2, Pencil, ReceiptText, Scale, TimerReset, X } from "lucide-react";
+import { AlertCircle, Banknote, Check, CheckCircle2, ChevronDown, ChevronUp, Clock3, CreditCard, Landmark, Loader2, Pencil, ReceiptText, Scale, TimerReset, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
-import { workSessionDifferencesApi, type ClosurePaymentCorrection, type ClosurePaymentTotal, type ClosurePaymentVerification, type ReconcileClosureRequest, type WorkSessionClosure } from "@/services/api/work-session-differences";
+import { workSessionDifferencesApi, type ClosurePaymentCorrection, type ClosurePaymentTotal, type ClosurePaymentVerification, type WorkSessionClosure } from "@/services/api/work-session-differences";
 import { tenantsApi } from "@/services/api/tenants";
 import { InvoiceChargeSummary } from "@/app/(pos)/pos/pos-invoice-charge-summary";
 import { PosCashClosureDialog } from "@/app/(pos)/pos/pos-cash-closure-dialog";
@@ -168,7 +168,6 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
   const invoiceCharges = snapshotQuery.data?.invoiceCharges ?? [];
   const [loadedItems, setLoadedItems] = useState<Record<string, ClosurePaymentVerification>>({});
   const verificationItems = useMemo(() => Object.values(loadedItems), [loadedItems]);
-  const byMethod = useMemo(() => verificationItems.reduce<Record<string, ClosurePaymentVerification[]>>((groups, item) => { (groups[item.paymentMethodCode] ??= []).push(item); return groups; }, {}), [verificationItems]);
   const onItemsLoaded = useCallback((items: ClosurePaymentVerification[]) => setLoadedItems(current => {
     const pending = items.filter(item => current[item.verificationKey] === undefined);
     if (!pending.length) return current;
@@ -178,9 +177,28 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
   const [verificationStatus, setVerificationStatus] = useState<Record<string, VerificationStatus>>({});
   const [paymentCorrections, setPaymentCorrections] = useState<Record<string, ClosurePaymentCorrection>>({});
+  const displayCorrections = useMemo(() => ({
+    ...Object.fromEntries(verificationItems.filter(item => item.correctedPaymentMethodCode && item.correctedAmount != null)
+      .map(item => [item.verificationKey, {
+        verificationKey: item.verificationKey, paymentMethodCode: item.correctedPaymentMethodCode!,
+        amount: item.correctedAmount!, reason: item.correctionReason ?? "",
+        tenderMethodCode: item.correctedTenderMethodCode,
+        cardFranchiseCode: item.correctedCardFranchiseCode,
+        approvalNumber: item.correctedApprovalNumber, reference: item.correctedReference,
+      }])),
+    ...paymentCorrections,
+  }), [verificationItems, paymentCorrections]);
+  const byMethod = useMemo(() => verificationItems.reduce<Record<string, ClosurePaymentVerification[]>>((groups, item) => {
+    const method = displayCorrections[item.verificationKey]?.paymentMethodCode ?? item.paymentMethodCode;
+    (groups[method] ??= []).push(item);
+    return groups;
+  }, {}), [verificationItems, displayCorrections]);
+  const effectiveVerificationItems = useMemo(() => verificationItems.map(item => {
+    const method = displayCorrections[item.verificationKey]?.paymentMethodCode;
+    return method ? { ...item, paymentMethodCode: method } : item;
+  }), [verificationItems, displayCorrections]);
   const [editingCorrection, setEditingCorrection] = useState<ClosurePaymentVerification | null>(null);
   const [expandedMethods, setExpandedMethods] = useState<Record<string, boolean>>({});
-  const [reclassifications, setReclassifications] = useState<ReconcileClosureRequest["reclassifications"]>([]);
   const [note, setNote] = useState("");
   const reasons = useReferenceOptions("cash-reconciliation-reason", editable);
   const [reasonCode, setReasonCode] = useState("COUNT_DIFFERENCE");
@@ -200,7 +218,6 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
     );
     if (Object.keys(persisted).length) setVerificationStatus(current => ({ ...persisted, ...current }));
   }, [verificationItems]);
-  useEffect(() => setReclassifications([]), [verificationStatus]);
   const methodItems = (code: string) => byMethod[code] ?? [];
   const requiredVerificationItems = cashClosureVerificationDecisions(verificationItems);
   const groupCount = (code: string, movementType?: string) => (verificationQuery.data?.groups ?? [])
@@ -209,29 +226,45 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
   const groupTotal = (code: string, movementType?: string) => (verificationQuery.data?.groups ?? [])
     .filter(group => group.paymentMethodCode === code && (!movementType || group.movementType === movementType))
     .reduce((total, group) => total + group.totalAmount, 0);
+  const displayedGroup = (code: string, movementType: string) => {
+    if (!editable) {
+      const group = verificationQuery.data?.groups.find(value =>
+        value.paymentMethodCode === code && value.movementType === movementType);
+      return { count: group?.effectiveCount ?? group?.count ?? 0,
+        total: group?.effectiveTotalAmount ?? group?.totalAmount ?? 0 };
+    }
+    let count = groupCount(code, movementType);
+    let total = groupTotal(code, movementType);
+    for (const correction of Object.values(paymentCorrections)) {
+      const original = loadedItems[correction.verificationKey];
+      if (!original || original.movementType !== movementType) continue;
+      if (original.paymentMethodCode === code) { count--; total -= original.amount; }
+      if (correction.paymentMethodCode === code) { count++; total += correction.amount; }
+    }
+    return { count, total };
+  };
   const groupRequiresVerification = (code: string) => (verificationQuery.data?.groups ?? [])
     .some(group => group.paymentMethodCode === code && requiresIndividualCashClosureVerification({
       verificationKey: "", paymentMethodCode: code, movementType: group.movementType,
       amount: group.totalAmount,
-    }));
+    })) || effectiveVerificationItems.some(item => item.paymentMethodCode === code &&
+      requiresIndividualCashClosureVerification(item));
   const creditItems = methodItems("Credit").filter(item => item.movementType === "CreditSale");
   const methodVerifiedAmount = (code: string) => correctedCashClosureAmount(
-    code, verificationItems, verificationStatus, paymentCorrections,
+    code, verificationItems, verificationStatus, displayCorrections,
     Number(verified.Cash ?? 0), Object.fromEntries((verificationQuery.data?.groups ?? [])
       .filter(group => group.movementType === "Sale" || group.movementType === "Refund")
       .map(group => [group.paymentMethodCode, groupTotal(group.paymentMethodCode, "Sale") + groupTotal(group.paymentMethodCode, "Refund")])));
   const methodIsConfirmed = (code: string) => isCashClosureMethodConfirmed(
-    code, verificationItems, verificationStatus,
+    code, effectiveVerificationItems, verificationStatus,
     (confirmed[code] ?? false) || groupCount(code) > 0 && !groupRequiresVerification(code));
   const expectedAmount = (item: ClosurePaymentTotal) => item.paymentMethodCode === "Cash"
     ? closure.expectedCash ?? item.netAmount : item.netAmount;
   const differences = Object.fromEntries(countable.map(item => [item.paymentMethodCode,
     methodVerifiedAmount(item.paymentMethodCode) - expectedAmount(item)]));
-  const adjustedDifferences = { ...differences }; for (const item of reclassifications) { adjustedDifferences[item.fromPaymentMethodCode] = (adjustedDifferences[item.fromPaymentMethodCode] ?? 0) + item.amount; adjustedDifferences[item.toPaymentMethodCode] = (adjustedDifferences[item.toPaymentMethodCode] ?? 0) - item.amount; }
-  for (const item of Object.values(paymentCorrections)) { const original = loadedItems[item.verificationKey]; if (original) { adjustedDifferences[original.paymentMethodCode] = (adjustedDifferences[original.paymentMethodCode] ?? 0) + original.amount; adjustedDifferences[item.paymentMethodCode] = (adjustedDifferences[item.paymentMethodCode] ?? 0) - item.amount; } }
-  const mutation = useMutation({ mutationFn: () => workSessionDifferencesApi.reconcile(closure.workSessionClosureId, { lines: countable.map(item => ({ paymentMethodCode: item.paymentMethodCode, verifiedAmount: methodVerifiedAmount(item.paymentMethodCode), isConfirmed: methodIsConfirmed(item.paymentMethodCode), reasonCode: adjustedDifferences[item.paymentMethodCode] === 0 ? null : reasonCode })), paymentVerifications: requiredVerificationItems.map(item => ({ verificationKey: item.verificationKey, status: verificationStatus[item.verificationKey]! })), paymentCorrections: Object.values(paymentCorrections), reclassifications, note: note.trim() || null }), onSuccess: async () => { void queryClient.invalidateQueries({ queryKey: ["work-session-payment-verification-groups", closure.workSessionClosureId], refetchType: "none" }); void queryClient.invalidateQueries({ queryKey: ["work-session-payment-verifications", closure.workSessionClosureId], refetchType: "none" }); await queryClient.invalidateQueries({ queryKey: ["work-session-closures"] }); onClose(); } });
-  const shortage = Object.keys(paymentCorrections).length ? undefined : countable.find(item => differences[item.paymentMethodCode] < 0); const surplus = Object.keys(paymentCorrections).length ? undefined : countable.find(item => differences[item.paymentMethodCode] > 0);
-  const suggestReclassification = () => { if (shortage && surplus) setReclassifications([{ fromPaymentMethodCode: shortage.paymentMethodCode, toPaymentMethodCode: surplus.paymentMethodCode, amount: Math.min(Math.abs(differences[shortage.paymentMethodCode]), differences[surplus.paymentMethodCode]) }]); };
+  const adjustedDifferences = { ...differences };
+  for (const item of Object.values(displayCorrections)) { const original = loadedItems[item.verificationKey]; if (original) { adjustedDifferences[original.paymentMethodCode] = (adjustedDifferences[original.paymentMethodCode] ?? 0) + original.amount; adjustedDifferences[item.paymentMethodCode] = (adjustedDifferences[item.paymentMethodCode] ?? 0) - item.amount; } }
+  const mutation = useMutation({ mutationFn: () => workSessionDifferencesApi.reconcile(closure.workSessionClosureId, { lines: countable.map(item => ({ paymentMethodCode: item.paymentMethodCode, verifiedAmount: methodVerifiedAmount(item.paymentMethodCode), isConfirmed: methodIsConfirmed(item.paymentMethodCode), reasonCode: adjustedDifferences[item.paymentMethodCode] === 0 ? null : reasonCode })), paymentVerifications: requiredVerificationItems.map(item => ({ verificationKey: item.verificationKey, status: verificationStatus[item.verificationKey]! })), paymentCorrections: Object.values(paymentCorrections), reclassifications: [], note: note.trim() || null }), onSuccess: async () => { void queryClient.invalidateQueries({ queryKey: ["work-session-payment-verification-groups", closure.workSessionClosureId], refetchType: "none" }); void queryClient.invalidateQueries({ queryKey: ["work-session-payment-verifications", closure.workSessionClosureId], refetchType: "none" }); await queryClient.invalidateQueries({ queryKey: ["work-session-closures"] }); onClose(); } });
   const requiredTotal = (verificationQuery.data?.groups ?? [])
     .filter(group => requiresIndividualCashClosureVerification({
       verificationKey: "", paymentMethodCode: group.paymentMethodCode,
@@ -248,9 +281,10 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
       const items = methodItems(item.paymentMethodCode);
       const cash = item.paymentMethodCode === "Cash";
       const groups = cashClosurePaymentGroups(items, cash);
-      const difference = differences[item.paymentMethodCode];
+      const difference = adjustedDifferences[item.paymentMethodCode];
       const reportedDifference = cash ? difference :
-        methodVerifiedAmount(item.paymentMethodCode) - (item.countedAmount ?? expectedAmount(item));
+        methodVerifiedAmount(item.paymentMethodCode) - (item.countedAmount ?? expectedAmount(item)) +
+        difference - differences[item.paymentMethodCode];
       const headlineDifference = !cash && difference === 0 && reportedDifference !== 0
         ? reportedDifference : difference;
       return <section key={item.paymentMethodCode} className="overflow-hidden rounded-2xl border bg-white shadow-sm">
@@ -261,26 +295,26 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
           {groups.map(group => {
             const expansionKey = `${item.paymentMethodCode}:${group.key}`;
             const requiresVerification = group.key !== "Sale" && group.key !== "Refund";
-            const total = Math.abs(groupTotal(item.paymentMethodCode, group.key));
-            const count = groupCount(item.paymentMethodCode, group.key);
+            const displayed = displayedGroup(item.paymentMethodCode, group.key);
+            const total = Math.abs(displayed.total);
+            const count = displayed.count;
             const savedSummary = verificationQuery.data?.groups.find(value =>
               value.paymentMethodCode === item.paymentMethodCode && value.movementType === group.key);
             const reviewed = editable ? group.items.filter(value => verificationStatus[value.verificationKey]).length
-              : savedSummary?.reviewedCount ?? 0;
+              : savedSummary?.effectiveReviewedCount ?? savedSummary?.reviewedCount ?? 0;
             const reviewedTotal = editable ? group.items.filter(value => verificationStatus[value.verificationKey] === "Verified")
               .reduce((sum, value) => {
-                const correction = paymentCorrections[value.verificationKey];
-                return sum + (correction && correction.paymentMethodCode !== item.paymentMethodCode
-                  ? 0 : Math.abs(correction?.amount ?? value.amount));
-              }, 0) : savedSummary?.reviewedAmount ?? 0;
+                const correction = displayCorrections[value.verificationKey];
+                return sum + Math.abs(correction?.amount ?? value.amount);
+              }, 0) : savedSummary?.effectiveReviewedAmount ?? savedSummary?.reviewedAmount ?? 0;
             const fullyReviewed = count > 0 && reviewed === count;
             const reviewedDifference = reviewedTotal - total;
             return <div key={group.key} className="overflow-hidden rounded-xl border">
               <button type="button" className="flex w-full flex-wrap items-center justify-between gap-3 bg-white p-3 text-left transition hover:bg-slate-50" onClick={() => setExpandedMethods(current => ({ ...current, [expansionKey]: !current[expansionKey] }))}><span><strong>{group.label}</strong><small className="mt-1 block text-muted-foreground">{count} registro{count === 1 ? "" : "s"} · Total {money.format(total)}{requiresVerification ? ` · Revisado ${money.format(reviewedTotal)} (${reviewed} de ${count})` : ""}</small></span><span className="inline-flex items-center gap-2 text-sm font-semibold text-teal-800">{requiresVerification && <Badge variant={fullyReviewed && reviewedDifference === 0 ? "default" : "secondary"} className={fullyReviewed && reviewedDifference === 0 ? "bg-emerald-700" : fullyReviewed ? "bg-amber-100 text-amber-900" : ""}>{count === 0 ? "Sin movimientos" : fullyReviewed ? `Revisión completa · ${result(reviewedDifference)}` : `Pendientes ${count - reviewed}`}</Badge>}{expandedMethods[expansionKey] ? "Ocultar" : "Ver detalle"}{expandedMethods[expansionKey] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span></button>
-              {expandedMethods[expansionKey] && <PagedVerificationRows closureId={closure.workSessionClosureId} paymentMethodCode={item.paymentMethodCode} movementType={group.key} informational={!requiresVerification} disabled={!editable} statuses={verificationStatus} onStatus={changeVerificationStatus} onItemsLoaded={onItemsLoaded} corrections={paymentCorrections} onCorrect={setEditingCorrection} />}
+              {expandedMethods[expansionKey] && <PagedVerificationRows closureId={closure.workSessionClosureId} paymentMethodCode={item.paymentMethodCode} movementType={group.key} informational={!requiresVerification} disabled={!editable} queryEnabled={!editable || groupCount(item.paymentMethodCode, group.key) > 0} statuses={verificationStatus} onStatus={changeVerificationStatus} onItemsLoaded={onItemsLoaded} corrections={displayCorrections} movedIn={group.items.filter(value => value.paymentMethodCode !== item.paymentMethodCode)} onCorrect={setEditingCorrection} />}
             </div>;
           })}
-          {!cash && groupCount(item.paymentMethodCode) === 0 && <label className="flex items-center gap-2 rounded-xl border bg-slate-50 px-3 py-2 text-sm"><Checkbox checked={confirmed[item.paymentMethodCode] ?? false} disabled={!editable} onCheckedChange={value => setConfirmed(current => ({ ...current, [item.paymentMethodCode]: value === true }))} />Confirmo que no hay comprobantes de este medio en el cierre.</label>}
+          {!cash && groups.every(group => displayedGroup(item.paymentMethodCode, group.key).count === 0) && <label className="flex items-center gap-2 rounded-xl border bg-slate-50 px-3 py-2 text-sm"><Checkbox checked={confirmed[item.paymentMethodCode] ?? false} disabled={!editable} onCheckedChange={value => setConfirmed(current => ({ ...current, [item.paymentMethodCode]: value === true }))} />Confirmo que no hay comprobantes de este medio en el cierre.</label>}
           <div className="flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-end sm:justify-between">{cash && <div className="space-y-1.5"><Label htmlFor="closure-cash-verified">Efectivo contado y confirmado</Label><Input id="closure-cash-verified" inputMode="numeric" disabled={!editable} value={formatWorkSessionCountInput(verified.Cash ?? "")} onChange={event => setVerified(current => ({ ...current, Cash: normalizeWorkSessionCountInput(event.target.value) }))} /></div>}<span className="w-full rounded-xl bg-teal-50 px-3 py-2 text-center text-sm text-teal-900 sm:ml-auto sm:w-auto sm:text-right">Total confirmado: <strong>{money.format(methodVerifiedAmount(item.paymentMethodCode))}</strong></span></div>
         </div>
       </section>;
@@ -293,15 +327,14 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
     {snapshotQuery.isLoading && <p className="p-4 text-sm text-muted-foreground">Cargando cargos del cierre…</p>}
     {snapshotQuery.isError && <div className="flex items-center justify-between gap-3 p-4 text-sm text-destructive">No fue posible cargar los cargos.<Button variant="outline" onClick={() => void snapshotQuery.refetch()}>Reintentar</Button></div>}
     {snapshotQuery.isSuccess && <InvoiceChargeSummary charges={invoiceCharges} />}
-    {editable && shortage && surplus && <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 text-indigo-950"><div className="flex flex-col items-center gap-3 text-center"><ArrowRightLeft className="h-6 w-6" /><div><strong>Hay un faltante y un sobrante que se pueden cruzar</strong><p className="mt-1 text-sm text-indigo-800">Faltan {money.format(Math.abs(differences[shortage.paymentMethodCode]))} en {workSessionPaymentMethodName(shortage.paymentMethodCode)} y sobran {money.format(differences[surplus.paymentMethodCode])} en {workSessionPaymentMethodName(surplus.paymentMethodCode)}.</p></div>{!reclassifications.length && <Button type="button" variant="outline" onClick={suggestReclassification}>Cruzar diferencias</Button>}</div>{reclassifications.map((item, index) => <div key={index} className="mx-auto mt-4 flex max-w-xl items-center justify-between gap-3 rounded-xl bg-white p-3 text-sm font-semibold shadow-sm"><span>{workSessionPaymentMethodName(item.fromPaymentMethodCode)} → {workSessionPaymentMethodName(item.toPaymentMethodCode)} · {money.format(item.amount)}</span><button type="button" className="inline-flex items-center gap-1 text-red-700" onClick={() => setReclassifications([])}><X className="h-4 w-4" />Quitar</button></div>)}</div>}
     {editable && Object.values(adjustedDifferences).some(value => value !== 0) && <div className="space-y-2"><Label>Motivo de la diferencia</Label><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(reasons.data ?? []).map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></div>}
     <div className="space-y-2"><Label>Observación</Label><Textarea disabled={!editable} value={note} onChange={event => setNote(event.target.value)} maxLength={500} placeholder="Agrega una nota si hace falta explicar el cierre." /></div>{mutation.isError && <p className="rounded-xl bg-red-50 p-3 text-sm text-destructive">No fue posible conciliar. Revisa los comprobantes, diferencias y motivos.</p>}
-  </div><footer className="flex shrink-0 items-center justify-end gap-3 border-t bg-slate-50 p-5"><Button variant="outline" onClick={onClose}>Cerrar</Button>{editable && <Button disabled={!valid || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Conciliando…</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Confirmar conciliación</>}</Button>}</footer></DialogContent>{editingCorrection && <CorrectionEditor item={editingCorrection} methods={countable.map(item => item.paymentMethodCode)} current={paymentCorrections[editingCorrection.verificationKey]} onClose={() => setEditingCorrection(null)} onRemove={() => { setPaymentCorrections(current => { const next = { ...current }; delete next[editingCorrection.verificationKey]; return next; }); setEditingCorrection(null); }} onApply={correction => { setPaymentCorrections(current => ({ ...current, [correction.verificationKey]: correction })); setReclassifications([]); if (requiresIndividualCashClosureVerification(editingCorrection)) changeVerificationStatus(editingCorrection.verificationKey, "Verified"); setEditingCorrection(null); }} />}</Dialog>;
+  </div><footer className="flex shrink-0 items-center justify-end gap-3 border-t bg-slate-50 p-5"><Button variant="outline" onClick={onClose}>Cerrar</Button>{editable && <Button disabled={!valid || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Conciliando…</> : <><CheckCircle2 className="mr-2 h-4 w-4" />Confirmar conciliación</>}</Button>}</footer></DialogContent>{editingCorrection && <CorrectionEditor item={editingCorrection} methods={countable.map(item => item.paymentMethodCode)} current={paymentCorrections[editingCorrection.verificationKey]} onClose={() => setEditingCorrection(null)} onRemove={() => { setPaymentCorrections(current => { const next = { ...current }; delete next[editingCorrection.verificationKey]; return next; }); setEditingCorrection(null); }} onApply={async correction => { await workSessionDifferencesApi.validatePaymentCorrections(closure.workSessionClosureId, [...Object.values(paymentCorrections).filter(value => value.verificationKey !== correction.verificationKey), correction]); setPaymentCorrections(current => ({ ...current, [correction.verificationKey]: correction })); if (requiresIndividualCashClosureVerification(editingCorrection)) changeVerificationStatus(editingCorrection.verificationKey, "Verified"); setExpandedMethods(current => ({ ...current, [`${correction.paymentMethodCode}:${editingCorrection.movementType}`]: true })); setEditingCorrection(null); }} />}</Dialog>;
 }
 
 function CorrectionEditor({ item, methods, current, onClose, onRemove, onApply }: {
   item: ClosurePaymentVerification; methods: string[]; current?: ClosurePaymentCorrection;
-  onClose: () => void; onRemove: () => void; onApply: (value: ClosurePaymentCorrection) => void;
+  onClose: () => void; onRemove: () => void; onApply: (value: ClosurePaymentCorrection) => Promise<void>;
 }) {
   const paymentMethods = useReferenceOptions("payment-method");
   const cardFranchises = useReferenceOptions("card-franchise");
@@ -312,6 +345,8 @@ function CorrectionEditor({ item, methods, current, onClose, onRemove, onApply }
   const [reference, setReference] = useState(current?.reference ?? item.reference ?? "");
   const [amountInput, setAmountInput] = useState(String(Math.abs(current?.amount ?? item.amount)));
   const [reason, setReason] = useState(current?.reason ?? "");
+  const [validating, setValidating] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const amount = Number(amountInput) * Math.sign(item.amount);
   const method = tender === "DebitCard" || tender === "CreditCard" ? "Card" : tender;
   const isCard = tender === "DebitCard" || tender === "CreditCard";
@@ -328,16 +363,29 @@ function CorrectionEditor({ item, methods, current, onClose, onRemove, onApply }
       (isCard && (franchise !== (item.cardFranchiseCode ?? "") || approval.trim() !== (item.approvalNumber ?? ""))) ||
       (tender === "Transfer" && reference.trim() !== (item.reference ?? ""))) &&
     (item.movementType !== "Refund" || Math.abs(amount) <= Math.abs(item.amount));
-  return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Corregir comprobante</DialogTitle><DialogDescription>{item.documentNumber} · {verificationMovementName(item)}. El cambio se aplicará al confirmar la conciliación.</DialogDescription></DialogHeader><div className="space-y-4 py-2"><p className="rounded-xl bg-slate-50 p-3 text-sm">Registrado: <strong>{workSessionPaymentMethodName(originalTender)} · {money.format(Math.abs(item.amount))}</strong></p><div className="space-y-1.5"><Label>Medio real</Label><Select value={tender} onValueChange={setTender}><SelectTrigger><SelectValue placeholder="Selecciona el medio real" /></SelectTrigger><SelectContent>{available.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div>{isCard && <><div className="space-y-1.5"><Label>Tipo de tarjeta</Label><Select value={franchise} onValueChange={setFranchise}><SelectTrigger><SelectValue placeholder="Selecciona la franquicia" /></SelectTrigger><SelectContent>{(cardFranchises.data ?? []).map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1.5"><Label htmlFor="closure-correction-approval">Número de aprobación o referencia</Label><Input id="closure-correction-approval" value={approval} onChange={event => setApproval(event.target.value)} maxLength={100} /></div></>}{tender === "Transfer" && <div className="space-y-1.5"><Label htmlFor="closure-correction-reference">Referencia de transferencia</Label><Input id="closure-correction-reference" value={reference} onChange={event => setReference(event.target.value)} maxLength={160} /></div>}<div className="space-y-1.5"><Label htmlFor="closure-correction-amount">Valor real</Label><Input id="closure-correction-amount" inputMode="decimal" value={formatWorkSessionCountInput(amountInput)} onChange={event => setAmountInput(normalizeWorkSessionCountInput(event.target.value))} /></div><div className="space-y-1.5"><Label htmlFor="closure-correction-reason">Motivo de la corrección</Label><Textarea id="closure-correction-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={500} /></div></div><div className="flex justify-end gap-2">{current && <Button variant="ghost" className="mr-auto" onClick={onRemove}>Quitar corrección</Button>}<Button variant="outline" onClick={onClose}>Cerrar</Button><Button disabled={!valid} onClick={() => onApply({ verificationKey: item.verificationKey, paymentMethodCode: method, tenderMethodCode: tender, cardFranchiseCode: isCard ? franchise : null, approvalNumber: isCard ? approval.trim() : null, reference: tender === "Transfer" ? reference.trim() : null, amount, reason: reason.trim() })}>Aplicar</Button></div></DialogContent></Dialog>;
+  const apply = async () => {
+    setValidating(true);
+    setValidationError(null);
+    try {
+      await onApply({ verificationKey: item.verificationKey, paymentMethodCode: method,
+        tenderMethodCode: tender, cardFranchiseCode: isCard ? franchise : null,
+        approvalNumber: isCard ? approval.trim() : null,
+        reference: tender === "Transfer" ? reference.trim() : null, amount, reason: reason.trim() });
+    } catch (error) {
+      setValidationError(error instanceof Error ? error.message : "No fue posible validar esta corrección.");
+    } finally { setValidating(false); }
+  };
+  return <Dialog open onOpenChange={open => !open && !validating && onClose()}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Corregir comprobante</DialogTitle><DialogDescription>{item.documentNumber} · {verificationMovementName(item)}. El cambio se aplicará al confirmar la conciliación.</DialogDescription></DialogHeader><div className="space-y-4 py-2"><p className="rounded-xl bg-slate-50 p-3 text-sm">Registrado: <strong>{workSessionPaymentMethodName(originalTender)} · {money.format(Math.abs(item.amount))}</strong></p><div className="space-y-1.5"><Label>Medio real</Label><Select value={tender} onValueChange={setTender}><SelectTrigger><SelectValue placeholder="Selecciona el medio real" /></SelectTrigger><SelectContent>{available.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div>{isCard && <><div className="space-y-1.5"><Label>Tipo de tarjeta</Label><Select value={franchise} onValueChange={setFranchise}><SelectTrigger><SelectValue placeholder="Selecciona la franquicia" /></SelectTrigger><SelectContent>{(cardFranchises.data ?? []).map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div><div className="space-y-1.5"><Label htmlFor="closure-correction-approval">Número de aprobación o referencia</Label><Input id="closure-correction-approval" value={approval} onChange={event => setApproval(event.target.value)} maxLength={100} /></div></>}{tender === "Transfer" && <div className="space-y-1.5"><Label htmlFor="closure-correction-reference">Referencia de transferencia</Label><Input id="closure-correction-reference" value={reference} onChange={event => setReference(event.target.value)} maxLength={160} /></div>}<div className="space-y-1.5"><Label htmlFor="closure-correction-amount">Valor real</Label><Input id="closure-correction-amount" inputMode="decimal" value={formatWorkSessionCountInput(amountInput)} onChange={event => setAmountInput(normalizeWorkSessionCountInput(event.target.value))} /></div><div className="space-y-1.5"><Label htmlFor="closure-correction-reason">Motivo de la corrección</Label><Textarea id="closure-correction-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={500} /></div></div>{validationError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{validationError}</p>}<div className="flex justify-end gap-2">{current && <Button variant="ghost" className="mr-auto" disabled={validating} onClick={onRemove}>Quitar corrección</Button>}<Button variant="outline" disabled={validating} onClick={onClose}>Cerrar</Button><Button disabled={!valid || validating} onClick={() => void apply()}>{validating ? "Validando…" : "Aplicar"}</Button></div></DialogContent></Dialog>;
 }
 
 function PagedVerificationRows({ closureId, paymentMethodCode, movementType, informational = false, disabled,
-  statuses, onStatus, onItemsLoaded, corrections = {}, onCorrect }: {
+  queryEnabled = true, statuses, onStatus, onItemsLoaded, corrections = {}, movedIn = [], onCorrect }: {
     closureId: string; paymentMethodCode: string; movementType?: string; informational?: boolean;
-    disabled: boolean; statuses: Record<string, VerificationStatus>;
+    disabled: boolean; queryEnabled?: boolean; statuses: Record<string, VerificationStatus>;
     onStatus: (key: string, status: VerificationStatus) => void;
     onItemsLoaded: (items: ClosurePaymentVerification[]) => void;
     corrections?: Record<string, ClosurePaymentCorrection>;
+    movedIn?: ClosurePaymentVerification[];
     onCorrect?: (item: ClosurePaymentVerification) => void;
   }) {
   const sentinel = useRef<HTMLDivElement>(null);
@@ -346,11 +394,18 @@ function PagedVerificationRows({ closureId, paymentMethodCode, movementType, inf
     queryFn: ({ pageParam }) => workSessionDifferencesApi.listPaymentVerifications(
       closureId, pageParam, 100, paymentMethodCode, movementType),
     initialPageParam: 1,
+    enabled: queryEnabled,
     getNextPageParam: last => last.page * last.pageSize < last.totalItems ? last.page + 1 : undefined,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
   const items = useMemo(() => pages.data?.pages.flatMap(page => page.items) ?? [], [pages.data]);
+  const movedKeys = new Set(movedIn.map(item => item.verificationKey));
+  const displayedItems = [
+    ...movedIn,
+    ...items.filter(item => !movedKeys.has(item.verificationKey) &&
+      (corrections[item.verificationKey]?.paymentMethodCode ?? item.correctedPaymentMethodCode ?? item.paymentMethodCode) === paymentMethodCode),
+  ];
   useEffect(() => { if (items.length) onItemsLoaded(items); }, [items, onItemsLoaded]);
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = pages;
   useEffect(() => {
@@ -361,10 +416,10 @@ function PagedVerificationRows({ closureId, paymentMethodCode, movementType, inf
     observer.observe(sentinel.current);
     return () => observer.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-  if (pages.isPending) return <p className="border-t p-3 text-sm text-muted-foreground">Cargando movimientos…</p>;
+  if (queryEnabled && pages.isPending) return <p className="border-t p-3 text-sm text-muted-foreground">Cargando movimientos…</p>;
   if (pages.isError && !pages.data) return <div className="flex items-center justify-between gap-3 border-t p-3 text-sm text-destructive">No fue posible cargar los movimientos.<Button variant="outline" onClick={() => void pages.refetch()}>Reintentar</Button></div>;
   return <div className="space-y-2 border-t bg-slate-50/50 p-3">
-    {items.length ? items.map(item => <VerificationRow key={item.verificationKey} item={item} status={statuses[item.verificationKey]} disabled={disabled} informational={informational} correction={corrections[item.verificationKey]} onCorrect={onCorrect ? () => onCorrect(item) : undefined} onChange={status => onStatus(item.verificationKey, status)} />) : <p className="text-sm text-muted-foreground">Sin movimientos en este grupo.</p>}
+    {displayedItems.length ? displayedItems.map(item => <VerificationRow key={item.verificationKey} item={item} status={statuses[item.verificationKey]} disabled={disabled} informational={informational} correction={corrections[item.verificationKey]} onCorrect={onCorrect ? () => onCorrect(item) : undefined} onChange={status => onStatus(item.verificationKey, status)} />) : <p className="text-sm text-muted-foreground">Sin movimientos en este grupo.</p>}
     <div ref={sentinel} className="h-px" aria-hidden="true" />
     {pages.isFetchingNextPage && <p className="text-center text-sm text-muted-foreground">Cargando más movimientos…</p>}
     {pages.isFetchNextPageError && <Button variant="outline" onClick={() => void pages.fetchNextPage()}>Reintentar carga</Button>}
@@ -401,7 +456,7 @@ function VerificationRow({ item, status, disabled, informational = false, correc
       {!isCashMovement && !isCreditSale && <p className="mt-1 text-xs text-muted-foreground">{isThirdPartyPayment && item.documentNumber && <>Comprobante: {item.documentNumber} · </>}Referencia: {item.approvalNumber || item.reference || "Sin referencia"} · {new Date(item.occurredAt).toLocaleString("es-CO")}</p>}
       {displayedCorrection && <p className="mt-1 text-xs font-semibold text-teal-800">Corregido: {workSessionPaymentMethodName(displayedCorrection.tenderMethodCode ?? displayedCorrection.paymentMethodCode)} · {money.format(Math.abs(displayedCorrection.amount))}{displayedCorrection.cardFranchiseCode && ` · ${displayedCorrection.cardFranchiseCode}`}{(displayedCorrection.approvalNumber || displayedCorrection.reference) && ` · ${displayedCorrection.approvalNumber || displayedCorrection.reference}`} · {displayedCorrection.reason}</p>}
     </div>
-    <strong className={item.amount < 0 ? "text-red-700" : "text-slate-950"}>{money.format(Math.abs(item.amount))}</strong>
+    <span className="text-left sm:text-right"><strong className={(displayedCorrection?.amount ?? item.amount) < 0 ? "text-red-700" : "text-slate-950"}>{money.format(Math.abs(displayedCorrection?.amount ?? item.amount))}</strong>{displayedCorrection && <small className="block text-xs text-muted-foreground">Antes {money.format(Math.abs(item.amount))}</small>}</span>
     <div className="flex flex-wrap gap-2">{!isInformational && <><Button type="button" size="sm" variant={status === "Verified" ? "default" : "outline"} disabled={disabled} onClick={() => onChange("Verified")}><Check className="mr-1 h-4 w-4" />Verificado</Button><Button type="button" size="sm" variant={status === "Missing" ? "destructive" : "outline"} disabled={disabled} onClick={() => onChange("Missing")}><X className="mr-1 h-4 w-4" />No encontrado</Button></>}{!disabled && !isCreditSale && onCorrect && <Button type="button" size="sm" variant="outline" onClick={onCorrect}><Pencil className="mr-1 h-4 w-4" />Corregir</Button>}</div>
   </div>;
 }

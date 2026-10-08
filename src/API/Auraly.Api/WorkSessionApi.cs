@@ -163,6 +163,16 @@ public static class WorkSessionApi
                 context.User.ToWorkSessionIdentity(), closureId, paymentMethodCode,
                 movementType, page ?? 1, pageSize ?? 100, cancellationToken))));
 
+        group.MapPost("/closures/{closureId:guid}/payment-corrections/validate", async (
+            HttpContext context, Guid closureId, WorkSessionPaymentCorrection[] corrections,
+            WorkSessionService service, CancellationToken cancellationToken) =>
+            await Handle(async () =>
+            {
+                await service.ValidatePaymentCorrectionsAsync(
+                    context.User.ToWorkSessionIdentity(), closureId, corrections, cancellationToken);
+                return Results.Ok(new { valid = true });
+            }));
+
         group.MapPost("/closures/{closureId:guid}/reconcile", async (HttpContext context, Guid closureId,
             ReconcileWorkSessionClosureRequest request, WorkSessionService service, CancellationToken cancellationToken) =>
             await Handle(async () => Results.Ok(await service.ReconcileClosureAsync(

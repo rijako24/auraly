@@ -68,6 +68,8 @@ public interface IWorkSessionStore
     Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
         WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken);
+    Task ValidatePaymentCorrectionsAsync(WorkSessionIdentity identity, Guid closureId,
+        IReadOnlyList<WorkSessionPaymentCorrection> corrections, CancellationToken cancellationToken);
     Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(
         WorkSessionIdentity identity,
         Guid businessId,
@@ -377,7 +379,27 @@ public sealed class WorkSessionService(
         if (request.PaymentVerifications?.Any(item => string.IsNullOrWhiteSpace(item.VerificationKey) ||
                 item.Status is not ("Verified" or "Missing")) == true)
             throw new WorkSessionValidationException("La verificación individual de pagos no es válida.");
-        if (request.PaymentCorrections?.Any(item =>
+        ValidatePaymentCorrections(request.PaymentCorrections ?? []);
+        var result=await store.ReconcileClosureAsync(identity,closureId,idempotencyKey.Trim(),request with { Note=NullIfWhiteSpace(request.Note) },cancellationToken);
+        if (!result.IdempotentReplay && result.AccountingStatus == "Pending")
+            await accountingProcessing.RequestPostingAsync(result.BusinessId,result.ReconciliationId,
+                WorkSessionAccountingDocumentTypes.ClosureReconciliation,cancellationToken);
+        return result;
+    }
+
+    public Task ValidatePaymentCorrectionsAsync(WorkSessionIdentity identity, Guid closureId,
+        IReadOnlyList<WorkSessionPaymentCorrection> corrections, CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.ReconcileClosures);
+        if (closureId == Guid.Empty || corrections.Count == 0)
+            throw new WorkSessionValidationException("Selecciona un comprobante del cierre para corregir.");
+        ValidatePaymentCorrections(corrections);
+        return store.ValidatePaymentCorrectionsAsync(identity, closureId, corrections, cancellationToken);
+    }
+
+    private static void ValidatePaymentCorrections(IReadOnlyList<WorkSessionPaymentCorrection> corrections)
+    {
+        if (corrections.Any(item =>
                 string.IsNullOrWhiteSpace(item.VerificationKey) || item.VerificationKey.Length > 200 ||
                 string.IsNullOrWhiteSpace(item.PaymentMethodCode) || item.PaymentMethodCode.Length > 32 ||
                 item.PaymentMethodCode.Any(character => !char.IsLetterOrDigit(character)) ||
@@ -386,13 +408,8 @@ public sealed class WorkSessionService(
                 item.TenderMethodCode?.Length > 32 ||
                 item.CardFranchiseCode?.Length > 64 ||
                 item.ApprovalNumber?.Length > 100 ||
-                item.Reference?.Length > 160) == true)
+                item.Reference?.Length > 160))
             throw new WorkSessionValidationException("La corrección del comprobante requiere medio, valor y motivo válidos.");
-        var result=await store.ReconcileClosureAsync(identity,closureId,idempotencyKey.Trim(),request with { Note=NullIfWhiteSpace(request.Note) },cancellationToken);
-        if (!result.IdempotentReplay && result.AccountingStatus == "Pending")
-            await accountingProcessing.RequestPostingAsync(result.BusinessId,result.ReconciliationId,
-                WorkSessionAccountingDocumentTypes.ClosureReconciliation,cancellationToken);
-        return result;
     }
 
     public Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(

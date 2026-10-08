@@ -294,7 +294,11 @@ public sealed record WorkSessionPaymentVerificationGroup(
     int Count,
     decimal TotalAmount,
     int ReviewedCount = 0,
-    decimal ReviewedAmount = 0);
+    decimal ReviewedAmount = 0,
+    int EffectiveCount = 0,
+    decimal EffectiveTotalAmount = 0,
+    int EffectiveReviewedCount = 0,
+    decimal EffectiveReviewedAmount = 0);
 
 public sealed record WorkSessionPaymentVerificationPage(
     IReadOnlyList<WorkSessionPaymentVerificationItem> Items,

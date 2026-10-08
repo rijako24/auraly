@@ -100,8 +100,10 @@ compara el conteo físico con el neto aislado de los movimientos de efectivo. El
 servidor vuelve a obtener esas fuentes dentro de la transacción, exige una decisión
 exactamente una vez por comprobante y calcula el valor verificado de los medios no
 efectivos; el efectivo se toma del conteo físico confirmado. El cliente no puede omitir
-comprobantes ni cambiar los importes de los documentos mediante el conteo. Un faltante y un sobrante se pueden
-cruzar mediante la reclasificación existente, sin crear otro motor ni otra conciliación.
+comprobantes ni cambiar los importes de los documentos mediante el conteo. Un
+faltante y un sobrante entre medios se resuelven corrigiendo el comprobante
+concreto que se registró con el medio equivocado; la vista no ofrece un cruce
+global sin identificar el documento.
 La confirmación coteja las claves y suma los importes en SQL en un solo viaje; no
 materializa todas las filas de la sesión en memoria del servidor.
 Las devoluciones y salidas conservan su signo en medios distintos de efectivo;
@@ -120,7 +122,9 @@ muestran cantidad y total y se expanden por separado. Al expandir, se solicitan
 100 movimientos por página al servidor y el siguiente lote se carga al llegar al
 final; nunca se traen todas las facturas para calcular un total visible. Los
 totales y cantidades del grupo cubren toda la sesión aunque solo se haya cargado
-la primera página. Las verificaciones ya decididas se conservan al cargar más
+la primera página: se agregan sobre la fuente filtrada y los nombres y documentos
+se enriquecen solo después de limitar el detalle a la página. Las verificaciones
+ya decididas se conservan al cargar más
 páginas. El efectivo físico confirmado puede corregirse como conteo, sin cambiar
 por ello el importe de un documento.
 
@@ -139,16 +143,27 @@ requiere referencia. Esos datos se conservan en el snapshot de auditoría y la
 contabilidad usa la categoría configurada para el medio real, manteniendo el
 resumen de débito y crédito en el grupo de tarjeta.
 
+Al pulsar **Aplicar** en una corrección, el servidor valida la propuesta y las
+correcciones acumuladas con las mismas reglas de fuente, saldo y contabilidad de
+la confirmación, sin persistir un borrador ni ejecutar efectos. Un error se
+muestra en ese diálogo. La confirmación vuelve a validar dentro de su transacción.
+La vista mueve el comprobante al grupo del medio corregido, actualiza cantidades,
+importes y resultado de ambos medios, y conserva visible el valor original. En
+un cierre ya conciliado, el resumen agregado y las páginas usan el medio
+corregido persistido en el snapshot; el documento fuente sigue inmutable.
+
 Por compatibilidad con versiones de escritorio ya instaladas, la lectura
 `/payment-verifications` conserva temporalmente su respuesta de arreglo completo.
 La vista nueva usa `/payment-verifications/page`, con resumen agregado y páginas
-de máximo 100 filas filtradas en SQL. Ambas lecturas comparten la misma consulta
-y autorización; no escriben ni tienen motores distintos. Se retira la lectura
+de máximo 100 filas filtradas en SQL. La lectura anterior reúne esas páginas
+internamente para conservar el contrato de clientes instalados; no se usa en
+pantallas nuevas. Ambas lecturas comparten la misma consulta y autorización;
+no escriben ni tienen motores distintos. Se retira la lectura
 anterior cuando no haya clientes instalados que consuman ese contrato. No debe
 utilizarse en pantallas nuevas por su costo para sesiones grandes.
 
 La corrección de un medio conserva el comprobante original y su snapshot; registra
-el movimiento corregido asociado a su identificador y aplica la reclasificación por
+el movimiento corregido asociado a su identificador y aplica el ajuste por
 la fuente contable `WorkSessionClosureReconciliation` existente. Corregir un importe
 no es un simple cambio del total del cierre: se valida el documento fuente y el
 motor contable registra un ajuste ligado a la aplicación original y actualiza el

@@ -35,6 +35,13 @@ async function authenticate(page: Page) {
 
 test("el cierre muestra motivos y observaciones sin números de egreso", async ({ page }) => {
   await authenticate(page);
+  let validationRequests = 0;
+  await page.route(`**/api/commerce/v1/work-sessions/closures/${closureId}/payment-corrections/validate`, route => {
+    validationRequests++;
+    if (validationRequests === 1) return route.fulfill({ status: 400, contentType: "application/problem+json",
+      body: JSON.stringify({ detail: "Falta la configuración contable del medio de pago corregido." }) });
+    return json(route, { valid: true });
+  });
   let snapshotReads = 0;
   await page.route("**/api/commerce/v1/work-sessions/*/closure", route => {
     snapshotReads++;
@@ -44,7 +51,7 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
     ] });
   });
   await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, { items: [{
-    workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId, businessName: "Auraly", warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero", openedAt: "2026-08-31T08:00:00-05:00", closedAt: "2026-08-31T18:00:00-05:00", salesCount: 3, creditSalesCount: 0, returnCount: 1, totalSales: 159000, totalRefunds: 20000, netAmount: 139000, expectedCash: 135000, reconciliationStatus: "Pending", accountingStatus: "AccountingDisabled", paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 150000, refundAmount: 20000, otherAmount: 0, netAmount: 130000, countedAmount: 130000, difference: 0, requiresCount: true }, { paymentMethodCode: "Card", salesAmount: 0, refundAmount: 0, otherAmount: 0, netAmount: 0, countedAmount: 0, difference: 0, requiresCount: true }, { paymentMethodCode: "Transfer", salesAmount: 9000, refundAmount: 0, otherAmount: 0, netAmount: 9000, countedAmount: 9000, difference: 0, requiresCount: true }],
+    workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId, businessName: "Auraly", warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero", openedAt: "2026-08-31T08:00:00-05:00", closedAt: "2026-08-31T18:00:00-05:00", salesCount: 3, creditSalesCount: 0, returnCount: 1, totalSales: 159000, totalRefunds: 20000, netAmount: 139000, expectedCash: 135000, reconciliationStatus: "Pending", accountingStatus: "AccountingDisabled", paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 150000, refundAmount: 20000, otherAmount: 0, netAmount: 130000, countedAmount: 130000, difference: 0, requiresCount: true }, { paymentMethodCode: "Card", salesAmount: 0, refundAmount: 0, otherAmount: 0, netAmount: 0, countedAmount: 0, difference: 0, requiresCount: true }, { paymentMethodCode: "Transfer", salesAmount: 9000, refundAmount: 0, otherAmount: 0, netAmount: 8000, countedAmount: 8000, difference: 0, requiresCount: true }],
   }], page: 1, pageSize: 50, totalItems: 1 }));
   const allMovements = [
     movement("sale-1", "Sale", "SalesInvoice", "FV-101", 100000),
@@ -80,6 +87,8 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   const cash = dialog.locator("section").filter({ hasText: "Efectivo" }).first();
   await expect(cash.getByText(/Esperado.*135.000/)).toBeVisible();
   await expect(cash.getByText(/Faltante.*5.000/)).toBeVisible();
+  await expect(dialog.getByText(/Sobrante.*1.000/).first()).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Cruzar diferencias" })).toHaveCount(0);
   await expect(cash.getByText("Domicilio", { exact: true })).toBeVisible();
   await expect(cash.getByText("Agotados", { exact: true })).toHaveCount(0);
   await expect(dialog.getByText("Agotados", { exact: true })).toBeVisible();
@@ -101,7 +110,15 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await correction.getByLabel("Número de aprobación o referencia").fill("AP-123");
   await correction.getByLabel("Motivo de la corrección").fill("Datáfono débito");
   await expect(correction.getByRole("button", { name: "Aplicar" })).toBeEnabled();
-  await correction.getByRole("button", { name: "Cerrar" }).click();
+  await correction.getByRole("button", { name: "Aplicar" }).click();
+  await expect(correction.getByRole("alert")).toContainText("Falta la configuración contable");
+  await expect(correction).toBeVisible();
+  await correction.getByRole("button", { name: "Aplicar" }).click();
+  await expect(correction).not.toBeVisible();
+  expect(validationRequests).toBe(2);
+  await expect(cash.getByText("FV-101", { exact: true })).toHaveCount(0);
+  const card = dialog.locator("section").filter({ hasText: "Tarjeta" }).first();
+  await expect(card.getByText("FV-101", { exact: true })).toBeVisible();
   await expect(dialog).toBeVisible();
   await cash.getByRole("button", { name: /Entradas de dinero/ }).click();
   await cash.getByRole("button", { name: /Salidas de dinero/ }).click();
