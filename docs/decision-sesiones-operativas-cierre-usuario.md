@@ -128,6 +128,13 @@ ya decididas se conservan al cargar más
 páginas. El efectivo físico confirmado puede corregirse como conteo, sin cambiar
 por ello el importe de un documento.
 
+La validación previa de **Corregir** consulta únicamente las claves
+de los movimientos seleccionados y los campos necesarios para validar; no
+enriquece filas para presentación ni materializa toda la sesión para luego
+filtrar. Las ventas con estado operativo `Completed` se reconocen como procesadas
+para esta validación. La aplicación final conserva sus bloqueos y comprobaciones
+transaccionales sobre el conjunto completo de la sesión.
+
 Tarjeta y transferencia muestran los mismos cuatro grupos de comprobantes,
 devoluciones, abonos y pagos a proveedores; entradas y salidas son exclusivos
 de efectivo. Cada grupo verificable indica total registrado, total revisado,

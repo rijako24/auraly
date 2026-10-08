@@ -676,10 +676,13 @@ public sealed partial class SqlWorkSessionStore
               AND (@Movement IS NULL OR movement.MovementType=@Movement)
             """;
 
-    private static string PaymentVerificationRowsSql => PaymentVerificationSourceSql + "\n" +
-        "SELECT * INTO #BaseVerifications FROM EligibleMovements OPTION (RECOMPILE);\n" +
-        PaymentVerificationSourceSql + "\n" + PaymentVerificationSelectSql +
-        " #BaseVerifications " + PaymentVerificationJoinsSql;
+    private static string PaymentVerificationRowsSql(bool preview) => PaymentVerificationSourceSql + "\n" +
+        "SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType," +
+        "movement.SourceId,movement.SourceNumber,movement.Amount,movement.Reference," +
+        "movement.CardFranchiseCode,movement.ApprovalNumber,movement.SourceDocumentType," +
+        "movement.TenderMethodCode INTO #PaymentVerifications FROM EligibleMovements movement" +
+        (preview ? " WHERE movement.VerificationKey IN (SELECT [value] FROM OPENJSON(@TargetKeys))" : "") +
+        " OPTION (RECOMPILE);\n";
 
     public async Task ValidatePaymentCorrectionsAsync(WorkSessionIdentity identity, Guid closureId,
         IReadOnlyList<WorkSessionPaymentCorrection> corrections, CancellationToken cancellationToken)
@@ -722,9 +725,7 @@ public sealed partial class SqlWorkSessionStore
                 INTO #PaymentVerifications
                 FROM EligibleMovements movement OPTION (RECOMPILE);
                 """ + "\n"
-            : preview
-                ? PaymentVerificationRowsSql + " AND movement.VerificationKey IN (SELECT [value] FROM OPENJSON(@TargetKeys)) OPTION (RECOMPILE);\n"
-                : PaymentVerificationRowsSql + " OPTION (RECOMPILE);\n";
+            : PaymentVerificationRowsSql(preview);
         var validationSql = rowsSql + """
             CREATE TABLE #Decisions(VerificationKey nvarchar(200) COLLATE Latin1_General_100_CI_AS,
               Status nvarchar(12));
@@ -795,7 +796,7 @@ public sealed partial class SqlWorkSessionStore
               COALESCE(NULLIF(customerTender.TenderCount,0),supplierTender.TenderCount,1) TenderCount,
               cashReason.CounterpartAccountingCategory,
               CAST(CASE WHEN
-                (source.MovementType=N'Sale' AND sale.ProcessingStatus=N'Processed') OR
+                (source.MovementType=N'Sale' AND sale.ProcessingStatus=N'Completed') OR
                 (source.MovementType=N'Refund' AND saleReturn.Status=N'Processed') OR
                 (source.MovementType=N'ReceivablePayment' AND customerPayment.Status=N'Processed') OR
                 (source.MovementType=N'PayablePayment' AND supplierPayment.Status=N'Processed') OR

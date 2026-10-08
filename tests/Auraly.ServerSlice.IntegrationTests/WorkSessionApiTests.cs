@@ -982,7 +982,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Paid_sales_are_informational_even_when_the_payment_is_a_transfer()
+    public async Task Completed_sales_are_informational_and_can_preview_a_payment_correction()
     {
         var userId = await CreateUserAsync("work-session-sale-information");
         using var client = fixture.CreateUserClient(userId,
@@ -1006,7 +1006,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 VALUES(@DocumentId,@BusinessId,@WarehouseId,N'Online',@SeriesId,
                   @Number,N'CVI',N'00',@Consecutive,N'SalesReceipt',@Key,@Hash,
                   SYSDATETIMEOFFSET(),N'222222222222',9000,0,9000,0,
-                  N'Processed',SYSDATETIMEOFFSET(),@UserId,@SessionId);
+                  N'Completed',SYSDATETIMEOFFSET(),@UserId,@SessionId);
                 INSERT dbo.SalesPayments
                   (DocumentId,PaymentNumber,MethodCode,Amount,RegisteredAt)
                 VALUES(@DocumentId,1,N'Transfer',9000,SYSDATETIMEOFFSET());
@@ -1031,6 +1031,10 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             $"{path}/payment-verifications/page?paymentMethodCode=Transfer&page=1&pageSize=100");
         var sale = Assert.Single(page!.Items);
         Assert.Equal("Sale", sale.MovementType);
+        using (var preview = await client.PostAsJsonAsync($"{path}/payment-corrections/validate",
+                   new[] { new WorkSessionPaymentCorrection(sale.VerificationKey, "Cash", 9_000m,
+                       "La transferencia se recibió en efectivo", "Cash") }))
+            Assert.True(preview.IsSuccessStatusCode, await preview.Content.ReadAsStringAsync());
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
         {
             Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
@@ -1059,6 +1063,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             WorkSessionPermissionCodes.ReconcileClosures);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        var saleId = Guid.NewGuid();
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
             await connection.OpenAsync();
@@ -1077,25 +1082,57 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                   N'CashIn',N'Transfer',1,NULL,
                   CONCAT(N'test:bulk:',CONVERT(nvarchar(36),@SessionId),N':',RowNumber),
                   SYSUTCDATETIME(),@UserId FROM numbers;
+                INSERT dbo.SalesDocuments
+                  (DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
+                   DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
+                   DocumentType,IdempotencyKey,PayloadHash,IssuedAt,
+                   CustomerIdentification,UntaxedAmount,TaxAmount,PayableAmount,
+                   CreditAmount,ProcessingStatus,ReceivedAt,SoldByUserId,WorkSessionId)
+                VALUES(@SaleId,@BusinessId,@WarehouseId,N'Online',@SeriesId,
+                  @SaleNumber,N'CVI',N'00',@Consecutive,N'SalesReceipt',@SaleKey,@Hash,
+                  SYSDATETIMEOFFSET(),N'222222222222',9000,0,9000,0,
+                  N'Completed',SYSDATETIMEOFFSET(),@UserId,@SessionId);
+                INSERT dbo.SalesPayments
+                  (DocumentId,PaymentNumber,MethodCode,Amount,RegisteredAt)
+                VALUES(@SaleId,1,N'Transfer',9000,SYSDATETIMEOFFSET());
                 """;
             command.Parameters.AddWithValue("@SessionId", opened.WorkSessionId);
             command.Parameters.AddWithValue("@UserId", userId);
-            Assert.Equal(250, await command.ExecuteNonQueryAsync());
+            command.Parameters.AddWithValue("@SaleId", saleId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            command.Parameters.AddWithValue("@SeriesId", fixture.OnlineSalesReceiptSeriesId);
+            command.Parameters.AddWithValue("@SaleNumber", $"CVI-{saleId:N}");
+            command.Parameters.AddWithValue("@Consecutive", (long)BitConverter.ToUInt32(saleId.ToByteArray(), 0) + 1L);
+            command.Parameters.AddWithValue("@SaleKey", $"sale-{saleId:N}");
+            command.Parameters.Add("@Hash", System.Data.SqlDbType.Binary, 32).Value = new byte[32];
+            Assert.Equal(252, await command.ExecuteNonQueryAsync());
         }
         var closure = await CloseAsync(client, opened.WorkSessionId,
             $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null,
                 PaymentCounts: [new("Cash", 0m), new("Card", 0m),
-                    new("Transfer", 250m)]));
+                    new("Transfer", 9_250m)]));
         var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var salePage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?movementType=Sale&page=1&pageSize=10");
+        var sale = Assert.Single(salePage!.Items);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        using (var preview = await client.PostAsJsonAsync($"{path}/payment-corrections/validate",
+                   new[] { new WorkSessionPaymentCorrection(sale.VerificationKey, "Cash", 9_000m,
+                       "La transferencia se recibió en efectivo", "Cash") }))
+            Assert.True(preview.IsSuccessStatusCode, await preview.Content.ReadAsStringAsync());
+        watch.Stop();
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(1),
+            $"La vista previa de una corrección tardó {watch.Elapsed.TotalMilliseconds:F0} ms con 251 movimientos.");
         var decisions = new List<WorkSessionPaymentVerificationDecision>();
         for (var pageNumber = 1; pageNumber <= 3; pageNumber++)
         {
             var page = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
                 $"{path}/payment-verifications/page?paymentMethodCode=Transfer&page={pageNumber}&pageSize=100");
             Assert.NotNull(page);
-            Assert.Equal(250, page.TotalItems);
-            Assert.Equal(pageNumber == 3 ? 50 : 100, page.Items.Count);
-            decisions.AddRange(page.Items.Select(item =>
+            Assert.Equal(251, page.TotalItems);
+            Assert.Equal(pageNumber == 3 ? 51 : 100, page.Items.Count);
+            decisions.AddRange(page.Items.Where(item => item.MovementType != "Sale").Select(item =>
                 new WorkSessionPaymentVerificationDecision(item.VerificationKey, "Verified")));
         }
         Assert.Equal(250, decisions.Select(item => item.VerificationKey).Distinct().Count());
