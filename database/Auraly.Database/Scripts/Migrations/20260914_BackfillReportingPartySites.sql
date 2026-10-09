@@ -78,8 +78,11 @@ IF EXISTS(
     JOIN dbo.Orders orders ON orders.OrderId=link.OrderId AND orders.BusinessId=link.BusinessId
     JOIN dbo.SalesDocuments document
       ON document.DocumentId=link.DocumentId AND document.BusinessId=link.BusinessId
-    WHERE orders.Source=1 AND document.CustomerPartySiteId IS NULL)
-    THROW 51323, 'An invoiced seller order still has no customer site on its sales document.', 1;
+    -- Las facturas a consumidor final no tienen cliente ni sede, aunque el pedido sí los tenga.
+    -- Su identidad fiscal no se altera durante el backfill.
+    WHERE orders.Source=1 AND document.CustomerId IS NOT NULL
+      AND document.CustomerPartySiteId IS NULL)
+    THROW 51323, 'Una factura de pedido con cliente sigue sin sede del cliente.', 1;
 
 IF EXISTS(
     SELECT 1

@@ -83,6 +83,8 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("COMMIT TRANSACTION", migration, StringComparison.Ordinal);
         Assert.Contains("THROW 51322", migration, StringComparison.Ordinal);
         Assert.Contains("THROW 51323", migration, StringComparison.Ordinal);
+        Assert.Contains("WHERE orders.Source=1 AND document.CustomerId IS NOT NULL", migration,
+            StringComparison.Ordinal);
         Assert.Contains("THROW 51324", migration, StringComparison.Ordinal);
         Assert.DoesNotContain("PartySites candidate", migration, StringComparison.Ordinal);
     }
