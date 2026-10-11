@@ -87,7 +87,7 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   const cash = dialog.locator("section").filter({ hasText: "Efectivo" }).first();
   await expect(cash.getByText(/Esperado.*135.000/)).toBeVisible();
   await expect(cash.getByText(/Faltante.*5.000/)).toBeVisible();
-  await expect(dialog.getByText(/Sobrante.*1.000/).first()).toBeVisible();
+  await expect(dialog.getByText(/Faltante.*8.000/).first()).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Cruzar diferencias" })).toHaveCount(0);
   await expect(cash.getByText("Domicilio", { exact: true })).toBeVisible();
   await expect(cash.getByText("Agotados", { exact: true })).toHaveCount(0);
@@ -132,9 +132,15 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   const transfer = dialog.locator("section").filter({ hasText: "Transferencia" }).first();
   await transfer.getByRole("button", { name: /Facturas y comprobantes/ }).click();
   await expect(transfer.getByText("FV-TRANSFER", { exact: true })).toBeVisible();
-  await expect(transfer.getByRole("button", { name: "Verificado", exact: true })).toHaveCount(0);
-  await expect(transfer.getByRole("button", { name: "No encontrado", exact: true })).toHaveCount(0);
+  await expect(transfer.getByRole("button", { name: "Verificado", exact: true })).toHaveCount(1);
+  await expect(transfer.getByRole("button", { name: "No encontrado", exact: true })).toHaveCount(1);
+  await expect(transfer.getByRole("button", { name: "Corregir", exact: true })).toHaveCount(1);
+  await expect(transfer.getByText(/Total confirmado:/)).toContainText("0");
+  await transfer.getByRole("button", { name: "No encontrado", exact: true }).click();
+  await expect(transfer.getByText(/Total confirmado:/)).toContainText("0");
+  await transfer.getByRole("button", { name: "Verificado", exact: true }).click();
   await expect(transfer.getByText(/Total confirmado:/)).toContainText("9.000");
+  await expect(transfer.getByText(/Sobrante.*1.000/).first()).toBeVisible();
   await cash.getByRole("button", { name: "Verificado", exact: true }).first().click();
   await cash.getByRole("button", { name: "Verificado", exact: true }).last().click();
   await expect(cash.getByText(/Total confirmado:/)).toContainText("130.000");

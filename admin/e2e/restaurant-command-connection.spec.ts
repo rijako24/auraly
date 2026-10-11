@@ -8,14 +8,26 @@ const password = process.env.AURALY_E2E_KDS_PASSWORD;
 test("las comandas conectan con la sede seleccionada", async ({ page }) => {
   test.skip(!businessId || !username || !password, "Requiere usuario de comandas de desarrollo.");
   const negotiations: number[] = [];
+  const contextResponses: string[] = [];
+  const requestFailures: string[] = [];
   page.on("response", (response) => {
     if (response.url().includes("/restaurant/command-cards/synchronization/negotiate"))
       negotiations.push(response.status());
+    if (response.url().includes("/execution-context/"))
+      contextResponses.push(`${new URL(response.url()).pathname} ${response.status()}`);
   });
+  page.on("requestfailed", request => requestFailures.push(`${new URL(request.url()).pathname}: ${request.failure()?.errorText}`));
   await login(page, { tenantKey: process.env.AURALY_E2E_TENANT_KEY ?? "", username: username!, password: password! }, 60_000);
   await page.addInitScript((id) => localStorage.setItem("selected_business_id", id), businessId!.toLowerCase());
   await page.goto("/restaurant/commands");
-  await expect(page.getByText("En vivo", { exact: true })).toBeVisible({ timeout: 30_000 });
+  try {
+    await expect(page.getByText("En vivo", { exact: true })).toBeVisible({ timeout: 30_000 });
+  } catch (error) {
+    console.log("Diagnóstico de comandas:", { contextResponses, requestFailures, negotiations,
+      selectedTenantId: await page.evaluate(() => localStorage.getItem("selected_tenant_id")),
+      selectedBusinessId: await page.evaluate(() => localStorage.getItem("selected_business_id")) });
+    throw error;
+  }
   expect(negotiations).toContain(200);
 });
 
@@ -31,22 +43,32 @@ test("las comandas conectan en WebKit móvil", async () => {
     const page = await context.newPage();
     const negotiations: number[] = [];
     const sockets: string[] = [];
+    const browserIssues: string[] = [];
+    page.on("pageerror", error => browserIssues.push(`page: ${error.message}`));
+    page.on("requestfailed", request => browserIssues.push(`${new URL(request.url()).pathname}: ${request.failure()?.errorText}`));
     page.on("response", (response) => {
       if (response.url().includes("/restaurant/command-cards/synchronization/negotiate"))
         negotiations.push(response.status());
+      if (response.status() >= 400)
+        browserIssues.push(`${new URL(response.url()).pathname}: HTTP ${response.status()}`);
     });
     page.on("websocket", (socket) => {
       sockets.push("created");
       socket.on("socketerror", () => sockets.push("error"));
       socket.on("close", () => sockets.push("closed"));
     });
-    await login(page, { tenantKey: process.env.AURALY_E2E_TENANT_KEY ?? "", username: username!, password: password! }, 60_000);
+    try {
+      await login(page, { tenantKey: process.env.AURALY_E2E_TENANT_KEY ?? "", username: username!, password: password! }, 60_000);
+    } catch (error) {
+      console.log("WebKit acceso a comandas:", { url: page.url(), browserIssues: browserIssues.slice(-12) });
+      throw error;
+    }
     await page.addInitScript((id) => localStorage.setItem("selected_business_id", id), businessId!.toLowerCase());
     await page.goto("/restaurant/commands");
     try {
       await expect(page.getByText("En vivo", { exact: true })).toBeVisible({ timeout: 30_000 });
     } catch (error) {
-      console.log("WebKit comandas:", { negotiations, sockets, body: (await page.locator("body").innerText()).slice(0, 400) });
+      console.log("WebKit comandas:", { negotiations, sockets, browserIssues: browserIssues.slice(-12) });
       throw error;
     }
     expect(negotiations).toContain(200);
