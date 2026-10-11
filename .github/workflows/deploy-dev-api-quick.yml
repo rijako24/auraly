@@ -1,0 +1,61 @@
+name: Deploy DEV API quick
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: auraly-dev-api-quick
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    environment: dev
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish API
+        shell: pwsh
+        run: |
+          dotnet publish src/API/Auraly.Api/Auraly.Api.csproj --configuration Release --output artifacts/api
+          if ($LASTEXITCODE) { throw 'API publish failed.' }
+          Compress-Archive -Path artifacts/api/* -DestinationPath artifacts/auraly-api-dev.zip -Force
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy API to DEV
+        shell: pwsh
+        run: |
+          az webapp deploy --resource-group RG-AURALY-DEV --name api-auraly-dev-w5usmo6w --src-path artifacts/auraly-api-dev.zip --type zip --restart true --clean true --async true --track-status false --output none
+          if ($LASTEXITCODE) { throw 'DEV API deployment failed.' }
+
+          for ($attempt = 1; $attempt -le 18; $attempt++) {
+            try {
+              $health = Invoke-WebRequest -Uri 'https://api-auraly-dev-w5usmo6w.azurewebsites.net/health' -TimeoutSec 15
+              if ($health.StatusCode -eq 200) {
+                $auth = Invoke-WebRequest -Uri 'https://api-auraly-dev-w5usmo6w.azurewebsites.net/api/v1/auth/me' -SkipHttpErrorCheck -TimeoutSec 15
+                if ($auth.StatusCode -eq 401) {
+                  Write-Host 'DEV API is healthy and authentication middleware responds.'
+                  exit 0
+                }
+              }
+            } catch {
+              Write-Host "DEV API startup attempt $attempt/18: $($_.Exception.Message)"
+            }
+            Start-Sleep -Seconds 10
+          }
+          throw 'DEV API did not become healthy after deployment.'
