@@ -376,6 +376,10 @@ export default function RestaurantCommandsPage() {
         <Button variant="outline" className="h-12 rounded-2xl" onClick={() => { void cards.refetch(); setPushRevision((revision) => revision + 1); }} aria-label="Actualizar comandas y conexión en vivo" title={pushIssue || "Actualizar comandas y conexión en vivo"}><RefreshCw className="h-5 w-5"/></Button>
       </div>
     </header>
+    {businessId && !pushConnected && !pushConnecting && pushIssue &&
+      <p role="alert" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+        {pushIssue} Las comandas se pueden actualizar con el botón de recarga.
+      </p>}
     <div className="grid items-start gap-4 lg:grid-cols-[196px_minmax(0,1fr)]">
       <aside className="min-w-0 rounded-[1.5rem] border bg-card p-3 shadow-sm lg:sticky lg:top-4">
         <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">Estado</p>
