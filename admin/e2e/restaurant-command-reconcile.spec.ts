@@ -72,6 +72,7 @@ test("respuesta perdida del envío se reconcilia sin duplicar la comanda", async
     } else await route.continue();
   });
   await page.getByRole("button", { name: /Enviar pendientes/ }).click();
+  await expect.poll(() => operations.length, { timeout: 30_000 }).toBe(2);
   await expect(page.getByRole("button", { name: /Enviar pendientes/ })).toHaveCount(0);
   expect(firstResponseStatus).toBe(200);
   expect(operations).toHaveLength(2);
