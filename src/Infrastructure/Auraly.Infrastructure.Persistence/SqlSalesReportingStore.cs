@@ -228,7 +228,7 @@ public sealed class SqlSalesReportingStore(
                    d.UntaxedAmount,d.TaxAmount,d.TotalAmount,d.RoundingAdjustmentAmount,d.ReturnedTotalAmount,
                    d.TotalAmount-d.ReturnedTotalAmount,
                    (d.TotalAmount-d.ReturnedTotalAmount)-
-                     (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus,
+                     (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus,d.RestaurantTipAmount,
                    COUNT(*) OVER()
             FROM reporting.SalesReportDocuments d
             WHERE d.TenantId=@TenantId AND d.BusinessId=@BusinessId
@@ -266,7 +266,7 @@ public sealed class SqlSalesReportingStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            rows.Add(ReadDocument(reader)); total = reader.GetInt32(18);
+            rows.Add(ReadDocument(reader)); total = reader.GetInt32(19);
         }
         return new(rows, page, pageSize, total);
     }
@@ -283,7 +283,7 @@ public sealed class SqlSalesReportingStore(
                    d.UntaxedAmount,d.TaxAmount,d.TotalAmount,d.RoundingAdjustmentAmount,d.ReturnedTotalAmount,
                    d.TotalAmount-d.ReturnedTotalAmount,
                    (d.TotalAmount-d.ReturnedTotalAmount)-
-                     (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus
+                     (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus,d.RestaurantTipAmount
             FROM reporting.SalesReportDocuments d
             WHERE d.DocumentId=@DocumentId AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId
               AND (@AccessSellerId IS NULL OR d.SellerId=@AccessSellerId)
@@ -509,7 +509,7 @@ public sealed class SqlSalesReportingStore(
     private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadBreakdownRowsAsync(SqlCommand command,CancellationToken token)
     {var rows=new List<SalesReportBreakdownRow>();await using var r=await command.ExecuteReaderAsync(token);while(await r.ReadAsync(token))rows.Add(new(r.GetString(0),r.GetString(1),r.GetInt64(2),r.GetDecimal(3),r.GetDecimal(4),r.GetDecimal(5),r.GetDecimal(6),r.GetDecimal(7),r.GetDecimal(8),r.GetDecimal(9),r.GetDecimal(10),r.GetDecimal(11),decimal.Round(r.GetDecimal(12),2),decimal.Round(r.GetDecimal(13),2)));return rows;}
 
-    private static SalesReportDocumentRow ReadDocument(SqlDataReader r)=>new(r.GetGuid(0),r.GetString(1),r.GetString(2),r.IsDBNull(3)?null:r.GetString(3),r.GetDateTimeOffset(4),r.GetString(5),r.GetString(6),r.GetString(7),r.GetDecimal(8),r.GetDecimal(9),r.GetDecimal(10),r.GetDecimal(11),r.GetDecimal(12),r.GetDecimal(13),r.GetDecimal(14),r.GetDecimal(15),r.GetDecimal(16),r.IsDBNull(17)?null:r.GetString(17));
+    private static SalesReportDocumentRow ReadDocument(SqlDataReader r)=>new(r.GetGuid(0),r.GetString(1),r.GetString(2),r.IsDBNull(3)?null:r.GetString(3),r.GetDateTimeOffset(4),r.GetString(5),r.GetString(6),r.GetString(7),r.GetDecimal(8),r.GetDecimal(9),r.GetDecimal(10),r.GetDecimal(11),r.GetDecimal(12),r.GetDecimal(13),r.GetDecimal(14),r.GetDecimal(15),r.GetDecimal(16),r.IsDBNull(17)?null:r.GetString(17),r.GetDecimal(18));
     private async Task<SalesReportFilter> ConstrainAsync(SqlConnection connection,SalesReportingUserIdentity user,
         SalesReportFilter filter,CancellationToken token)
     {

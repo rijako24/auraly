@@ -61,7 +61,7 @@ public sealed class SqlRestaurantCollectionStore(SqlServerConnectionFactory conn
             }
 
             await using (var guard = new SqlCommand("""
-                SELECT account.Version,business.RestaurantSuggestedTipPercent,
+                SELECT account.Version,
                        (SELECT TOP(1) prior.WorkSessionId
                         FROM sales.RestaurantAccountCollections prior
                         WHERE prior.AccountId=account.AccountId
@@ -104,10 +104,7 @@ public sealed class SqlRestaurantCollectionStore(SqlServerConnectionFactory conn
                 if (reader.GetInt64(0) != request.ExpectedAccountVersion)
                     throw new RestaurantAccountConflictException(
                         "La cuenta cambió. Revisa el saldo antes de cobrar.");
-                if (request.TipPayment is not null && reader.GetDecimal(1) <= 0)
-                    throw new RestaurantAccountValidationException(
-                        "Esta sede no tiene habilitada la propina sugerida.");
-                if (!reader.IsDBNull(2) && reader.GetGuid(2) != request.WorkSessionId)
+                if (!reader.IsDBNull(1) && reader.GetGuid(1) != request.WorkSessionId)
                     throw new RestaurantAccountConflictException(
                         "Los cobros de esta mesa pertenecen a otra sesión de caja.");
             }

@@ -123,7 +123,8 @@ public sealed record OnlineSalesReceipt(
     decimal PayableRoundingAmount = 0m,
     CreditNotePrintDetails? CreditNotePrintDetails = null,
     SalesReturnPrintDetails? SalesReturnPrintDetails = null,
-    bool IsRestaurantSale = false);
+    bool IsRestaurantSale = false,
+    decimal RestaurantTipAmount = 0m);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

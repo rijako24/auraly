@@ -395,6 +395,8 @@ export type PosPrintableReceipt = {
     softwareName: string;
   } | null;
   payableRoundingAmount?: number;
+  isRestaurantSale?: boolean;
+  restaurantTipAmount?: number;
   salesReturnPrintDetails?: { originalDocumentNumber: string; reason: string; economicResolution: string; templateVersion: number } | null;
   creditAcknowledgement?: {
     documentId: string;

@@ -233,6 +233,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         string idempotencyKey,
         FiscalVerificationMaterial? fiscalMaterial,
         PreparedOnlineSaleSettlement settlement,
+        decimal restaurantTipAmount,
         CancellationToken ct)
     {
         for (var attempt = 1; ; attempt++)
@@ -241,7 +242,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             {
                 return await PrepareRestaurantAttemptAsync(
                     user, source, request, idempotencyKey,
-                    fiscalMaterial, settlement, ct);
+                    fiscalMaterial, settlement, restaurantTipAmount, ct);
             }
             catch (SqlException error) when (error.Number == 1205 && attempt < 4)
             {
@@ -257,6 +258,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         string idempotencyKey,
         FiscalVerificationMaterial? fiscalMaterial,
         PreparedOnlineSaleSettlement settlement,
+        decimal restaurantTipAmount,
         CancellationToken ct)
     {
         var hash = CapturedCheckoutHash(
@@ -345,10 +347,12 @@ public sealed partial class SqlOnlineSalesDraftStore
                     "La cuenta cambió o tiene productos sin enviar.");
         }
 
-        var upload = await BuildCapturedSaleUploadAsync(
+        var upload = (await BuildCapturedSaleUploadAsync(
             connection, transaction, user,
             CapturedCheckoutSource.FromRestaurant(source),
-            request, fiscalMaterial, settlement, ct);
+            request, fiscalMaterial, settlement, ct)) with {
+                RestaurantTipAmount = restaurantTipAmount
+            };
         await using (var mapping = new SqlCommand("""
             INSERT sales.RestaurantCheckoutLines
               (DocumentId,LineNumber,TenantId,BusinessId,AccountId,

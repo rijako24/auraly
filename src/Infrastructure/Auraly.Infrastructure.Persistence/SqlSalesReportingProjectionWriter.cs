@@ -372,7 +372,7 @@ public sealed class SqlSalesReportingProjectionWriter(
               IssuedAt,BusinessLocalDate,TimeZoneId,WarehouseId,WarehouseName,WorkSessionId,SellerId,SellerName,
               CustomerId,PartySiteId,CustomerIdentification,CustomerName,SourceMode,FiscalStatus,
               CurrencyCode,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,RoundingAdjustmentAmount,
-              CreditAmount,CollectedAmount,RecognizedCostAmount,ProjectionVersion,
+              CreditAmount,CollectedAmount,RestaurantTipAmount,RecognizedCostAmount,ProjectionVersion,
               SourcePayloadHash,ProjectedAt
             )
             SELECT d.DocumentId,@TenantId,d.BusinessId,d.DocumentType,d.DocumentNumber,d.FiscalNumber,
@@ -381,7 +381,7 @@ public sealed class SqlSalesReportingProjectionWriter(
                    COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
                             NULLIF(CONCAT(p.FirstName,N' ',p.LastName),N' '),N'Consumidor final'),
                    d.SourceMode,d.FiscalStatus,@Currency,@Gross,@Discount,d.UntaxedAmount,
-                   d.TaxAmount,d.PayableAmount,@Rounding,d.CreditAmount,@Collected,@Cost,@Version,
+                   d.TaxAmount,d.PayableAmount,@Rounding,d.CreditAmount,@Collected,@RestaurantTip,@Cost,@Version,
                    d.PayloadHash,@ProjectedAt
             FROM dbo.SalesDocuments d
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
@@ -402,6 +402,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         AddDecimal(command, "@Discount", value.Lines.Sum(x => x.DiscountAmount), 19, 4);
         AddDecimal(command, "@Rounding", value.CommercialSnapshot.PayableRoundingAmount, 19, 4);
         AddDecimal(command, "@Collected", value.Payments.Sum(x => x.CollectedAmount), 19, 4);
+        AddDecimal(command, "@RestaurantTip", value.RestaurantTipAmount, 19, 4);
         AddDecimal(command, "@Cost", recognizedCost, 19, 4);
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@ProjectedAt", now);

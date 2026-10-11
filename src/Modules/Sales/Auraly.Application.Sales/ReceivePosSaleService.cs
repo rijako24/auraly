@@ -370,20 +370,22 @@ public sealed class ReceivePosSaleService(
     }
 
     private static bool HasRestaurantMetadata(PosSaleUploadRequest request) =>
-        request.TableId is not null || request.Lines.Any(line =>
+        request.TableId is not null || request.RestaurantTipAmount != 0 || request.Lines.Any(line =>
             line.AddedByUserId is not null || line.AddedAt is not null);
 
     private static void ValidateRestaurantMetadata(PosSaleUploadRequest request)
     {
         if (request.TableId is null)
         {
-            if (request.Lines.Any(line => line.AddedByUserId is not null ||
+            if (request.RestaurantTipAmount != 0 ||
+                request.Lines.Any(line => line.AddedByUserId is not null ||
                                           line.AddedAt is not null))
                 throw new PosSaleInvalidException(
                     "La autoría de mesa requiere una mesa de origen.");
             return;
         }
         if (request.TableId == Guid.Empty ||
+            request.RestaurantTipAmount < 0 ||
             request.SourceMode != SaleSourceModes.Online ||
             request.Lines.Count == 0 ||
             request.Lines.Any(line => !line.AddedByUserId.HasValue ||

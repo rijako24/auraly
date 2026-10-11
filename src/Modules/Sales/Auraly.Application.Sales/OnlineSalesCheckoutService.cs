@@ -189,6 +189,7 @@ public interface IOnlineSalesCheckoutStore
         string idempotencyKey,
         FiscalVerificationMaterial? fiscalMaterial,
         PreparedOnlineSaleSettlement settlement,
+        decimal restaurantTipAmount,
         CancellationToken cancellationToken);
 
     Task AbandonUnissuedRestaurantAsync(
@@ -418,6 +419,7 @@ public sealed class OnlineSalesCheckoutService(
             user, accountId, workSessionId, request,
             idempotencyKey.Trim(), cancellationToken);
         OnlineSalesRestaurantCheckoutSource source;
+        RestaurantCollectionSummary? collectedSummary = null;
         if (prepared is null)
         {
             source = await checkouts.ReadRestaurantSourceAsync(
@@ -435,6 +437,7 @@ public sealed class OnlineSalesCheckoutService(
                 new RestaurantAccountActor(user.UserId, user.TenantId,
                     source.BusinessId, user.Permissions), accountId,
                 cancellationToken);
+            collectedSummary = collections;
             if (collections.Collections.Count > 0)
             {
                 if (collections.Collections.Any(item =>
@@ -483,7 +486,7 @@ public sealed class OnlineSalesCheckoutService(
             }
             prepared = await checkouts.PrepareRestaurantAsync(
                 user, source, request, idempotencyKey.Trim(), material,
-                settlement, cancellationToken);
+                settlement, collectedSummary!.TipsCollected, cancellationToken);
         }
         else
         {

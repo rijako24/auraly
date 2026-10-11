@@ -36,6 +36,34 @@ public sealed class EscPosReceiptRendererTests
         Assert.Equal(direct.PayableAmount, restaurant.PayableAmount);
     }
 
+    [Theory]
+    [InlineData("Receipt", "SalesInvoice")]
+    [InlineData("Receipt", "SalesReceipt")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter, "SalesInvoice")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal, "SalesReceipt")]
+    [InlineData(HalfLetterDocumentRenderer.Letter, "SalesInvoice")]
+    public void Restaurant_print_discriminates_actual_tip_without_changing_fiscal_sale(
+        string format, string documentType)
+    {
+        var receipt = OnlineReceipt() with {
+            DocumentType = documentType, IsRestaurantSale = true,
+            RestaurantTipAmount = 2_000m
+        };
+        var direct = receipt with { IsRestaurantSale = false };
+        var html = format == "Receipt"
+            ? new SalesReceiptHtmlRenderer().Render(receipt)
+            : new HalfLetterDocumentRenderer().Render([receipt], format);
+        var directHtml = format == "Receipt"
+            ? new SalesReceiptHtmlRenderer().Render(direct)
+            : new HalfLetterDocumentRenderer().Render([direct], format);
+
+        Assert.Contains("Subtotal consumo", html);
+        Assert.Contains("Propina voluntaria", html);
+        Assert.Contains("Total recibido", html);
+        Assert.DoesNotContain("Propina voluntaria", directHtml);
+        Assert.Equal(receipt.PayableAmount, direct.PayableAmount);
+    }
+
     [Fact]
     public void Browser_portfolio_receipt_renders_the_cached_company_logo()
     {

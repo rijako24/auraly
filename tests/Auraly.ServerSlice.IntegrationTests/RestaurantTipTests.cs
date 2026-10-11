@@ -65,7 +65,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             using (var response = await waiter.PostAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions",
                 new AddRestaurantAccountItemRequest(Guid.NewGuid(), fixture.ProductId,
-                    1, account.Version)))
+                    2, account.Version)))
             {
                 response.EnsureSuccessStatusCode();
                 draft = (await response.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!;
@@ -83,6 +83,15 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                     MidpointRounding.AwayFromZero),
                     prebill.SuggestedTipAmount);
             }
+            await using (var disableSuggestion = new SqlCommand("""
+                UPDATE dbo.Businesses SET RestaurantSuggestedTipPercent=0
+                WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
+                """, connection))
+            {
+                disableSuggestion.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                disableSuggestion.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                await disableSuggestion.ExecuteNonQueryAsync();
+            }
             var workSessionId = await fixture.OpenWebWorkSessionAsync();
             RestaurantCollectionSummary initial;
             using (var response = await cashier.GetAsync(
@@ -90,25 +99,46 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             {
                 response.EnsureSuccessStatusCode();
                 initial = (await response.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
+                Assert.Equal(0, initial.SuggestedTipPercent);
             }
             var tipAmount = decimal.Round(initial.Total / 10, 0,
                 MidpointRounding.AwayFromZero);
+            var half = initial.Total / 2;
             var productCollectionId = Guid.NewGuid();
-            RestaurantCollectionSummary paid;
+            RestaurantCollectionSummary partial;
             using (var request = new HttpRequestMessage(HttpMethod.Post,
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/collections"))
             {
                 request.Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(
                     productCollectionId, workSessionId, initial.AccountVersion,
                     [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
-                    [new OnlineSalesPayment("Cash", initial.Total, null)]));
+                    [new OnlineSalesPayment("Cash", half, null)],
+                    new OnlineSalesPayment("Cash", 1_000m, null)));
                 request.Headers.Add("Idempotency-Key", productCollectionId.ToString("N"));
+                using var response = await cashier.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+                partial = (await response.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
+                Assert.Equal(half, partial.Remaining);
+                Assert.Equal(half, partial.Collected);
+                Assert.Equal(1_000m, partial.TipsCollected);
+            }
+            var secondCollectionId = Guid.NewGuid();
+            RestaurantCollectionSummary paid;
+            using (var request = new HttpRequestMessage(HttpMethod.Post,
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/collections"))
+            {
+                request.Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(
+                    secondCollectionId, workSessionId, partial.AccountVersion,
+                    [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
+                    [new OnlineSalesPayment("Cash", half, null)],
+                    new OnlineSalesPayment("Cash", 2_000m, null)));
+                request.Headers.Add("Idempotency-Key", secondCollectionId.ToString("N"));
                 using var response = await cashier.SendAsync(request);
                 response.EnsureSuccessStatusCode();
                 paid = (await response.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
                 Assert.Equal(0, paid.Remaining);
                 Assert.Equal(initial.Total, paid.Collected);
-                Assert.Equal(0, paid.TipsCollected);
+                Assert.Equal(3_000m, paid.TipsCollected);
             }
             var collectionId = Guid.NewGuid();
             using (var request = new HttpRequestMessage(HttpMethod.Post,
@@ -123,14 +153,15 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 var captured = (await response.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
                 Assert.Equal(0, captured.Remaining);
                 Assert.Equal(initial.Total, captured.Collected);
-                Assert.Equal(tipAmount, captured.TipsCollected);
+                Assert.Equal(3_000m + tipAmount, captured.TipsCollected);
                 using var complete = new HttpRequestMessage(HttpMethod.Post,
                     $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/complete")
                 {
                     Content = JsonContent.Create(new CompleteRestaurantAccountRequest(
                         workSessionId, new CompleteOnlineSalesDraftRequest(
                             captured.AccountVersion,
-                            [new OnlineSalesPayment("Cash", initial.Total, null)],
+                            [new OnlineSalesPayment("Cash", initial.Total, null,
+                                TenderedAmount: initial.Total)],
                             DocumentType: PosSaleDocumentTypes.Receipt)))
                 };
                 complete.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
@@ -139,6 +170,26 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 var result = (await issued.Content.ReadFromJsonAsync<CompleteOnlineOrderSaleResponse>())!;
                 Assert.Equal(initial.Total, result.Receipt.PayableAmount);
                 Assert.True(result.Receipt.IsRestaurantSale);
+                Assert.Equal(3_000m + tipAmount, result.Receipt.RestaurantTipAmount);
+                using var reprintUser = fixture.CreateAdminClient("sales.reprint");
+                using var reprint = await reprintUser.PostAsJsonAsync(
+                    $"/api/commerce/v1/pos/drafts/sales/{result.Receipt.DocumentId}/receipt",
+                    new OnlineSalesHistoryContext(fixture.BusinessId));
+                reprint.EnsureSuccessStatusCode();
+                var copy = (await reprint.Content.ReadFromJsonAsync<OnlineSalesReceipt>())!;
+                Assert.Equal(initial.Total, copy.PayableAmount);
+                Assert.Equal(3_000m + tipAmount, copy.RestaurantTipAmount);
+                await using var projected = new SqlCommand("""
+                    SELECT TotalAmount,RestaurantTipAmount
+                    FROM reporting.SalesReportDocuments
+                    WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+                    """, connection);
+                projected.Parameters.AddWithValue("@DocumentId", result.Receipt.DocumentId);
+                projected.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                await using var projectionReader = await projected.ExecuteReaderAsync();
+                Assert.True(await projectionReader.ReadAsync());
+                Assert.Equal(initial.Total, projectionReader.GetDecimal(0));
+                Assert.Equal(3_000m + tipAmount, projectionReader.GetDecimal(1));
             }
             await using (var verify = new SqlCommand("""
                 SELECT collection.TipAmount,

@@ -52,7 +52,7 @@ public static class SalesInvoicePresentationMapper
                 request.DocumentId, request.DocumentNumber.FullNumber, snapshot.IssuedAt,
                 customerName, snapshot.CustomerIdentification, request.Credit.Amount,
                 request.Credit.RemainingCredit, request.Credit.SoldByName ?? "Usuario"),
-            request.TableId is not null);
+            request.TableId is not null, request.RestaurantTipAmount);
     }
 
     public static OnlineSalesReceipt From(
@@ -88,7 +88,8 @@ public static class SalesInvoicePresentationMapper
         IReadOnlyList<OnlineSalesPayment> payments, PosSaleUblSnapshotContract? ubl,
         string customerName, string? fiscalStatus,
         CreditSaleAcknowledgement? creditAcknowledgement,
-        bool isRestaurantSale = false) => new(
+        bool isRestaurantSale = false,
+        decimal restaurantTipAmount = 0m) => new(
             documentId, documentType, documentNumber, fiscalNumber, commercial.IssuedAt,
             commercial.CustomerIdentification, lines, payments, commercial.UntaxedAmount,
             commercial.TaxAmount, commercial.PayableAmount, fiscal?.Cufe, fiscal?.QrPayload,
@@ -101,7 +102,8 @@ public static class SalesInvoicePresentationMapper
             CustomerPhone: ubl?.Customer.Telephone ?? commercial.CustomerPhone,
             CustomerAddress: ubl?.Customer.Address.AddressLine ?? commercial.CustomerAddress,
             PayableRoundingAmount: commercial.PayableRoundingAmount,
-            IsRestaurantSale: isRestaurantSale);
+            IsRestaurantSale: isRestaurantSale,
+            RestaurantTipAmount: restaurantTipAmount);
 
     private static OnlineSalesPayment Payment(PosSalePaymentContract payment) => new(
         payment.MethodCode, payment.Amount, payment.Reference, payment.CardFranchiseCode,

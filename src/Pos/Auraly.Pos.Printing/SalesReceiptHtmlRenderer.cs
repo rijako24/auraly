@@ -148,11 +148,17 @@ public sealed class SalesReceiptHtmlRenderer
             ? receipt.NetPayableAmount
             : receipt.PayableAmount;
         var cashTender = CashTender(receipt.Payments);
+        var restaurantTip = receipt.IsRestaurantSale && receipt.RestaurantTipAmount > 0 && !isReturn && !isOrder
+            ? $"<hr class=\"rule summary\"><div class=\"section-title\">Cobro restaurante</div>" +
+              Pair("Subtotal consumo", Money(netPayable)) +
+              Pair("Propina voluntaria", Money(receipt.RestaurantTipAmount)) +
+              $"<div class=\"pair total\"><span>Total recibido</span><strong>{Money(netPayable + receipt.RestaurantTipAmount)}</strong></div>"
+            : string.Empty;
         var summary = isReturn
             ? $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Base de la devolución", Money(receipt.UntaxedAmount))}{Pair("Impuestos", Money(receipt.TaxAmount))}{rounding}<div class=\"pair total\"><span>Total devuelto</span><strong>{Money(receipt.PayableAmount)}</strong></div>"
             : isOrder
             ? $"<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div><hr class=\"rule summary\">"
-            : $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Subtotal factura", Money(invoiceSubtotal))}{rounding}{grossTotal}{withholdings}<hr class=\"rule summary\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div>{cashTender}<hr class=\"rule summary\"><div class=\"section-title\">Medios de pago</div>{payments}<hr class=\"rule\">";
+            : $"<div class=\"section-title\">Impuestos por tarifa</div><table class=\"tax-table\"><thead><tr><th>Impuesto</th><th>Base</th><th>Valor</th></tr></thead><tbody>{taxes}</tbody></table>{Pair("Subtotal factura", Money(invoiceSubtotal))}{rounding}{grossTotal}{withholdings}<hr class=\"rule summary\"><div class=\"pair total\"><span>{(receipt.IsRestaurantSale ? "Total venta" : "Total")}</span><strong>{Money(netPayable)}</strong></div>{cashTender}{restaurantTip}<hr class=\"rule summary\"><div class=\"section-title\">{(receipt.IsRestaurantSale ? "Medios de pago del consumo" : "Medios de pago")}</div>{payments}<hr class=\"rule\">";
 
         var companyName = Encode(receipt.CompanyName ?? string.Empty);
         var scope = Scope(businessName);

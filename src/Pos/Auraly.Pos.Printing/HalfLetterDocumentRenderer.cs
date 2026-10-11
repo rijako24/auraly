@@ -259,6 +259,11 @@ public sealed class HalfLetterDocumentRenderer
         var grossTotal = receipt.WithholdingTotal <= 0 ? string.Empty :
             $"<div class=\"pair\"><span>Total bruto</span><strong>{Money(receipt.PayableAmount)}</strong></div>";
         var netPayable = receipt.WithholdingTotal > 0 ? receipt.NetPayableAmount : receipt.PayableAmount;
+        var restaurantTip = receipt.IsRestaurantSale && receipt.RestaurantTipAmount > 0 && !isReturn
+            ? $"<div class=\"pair\"><span>Subtotal consumo</span><strong>{Money(netPayable)}</strong></div>" +
+              $"<div class=\"pair\"><span>Propina voluntaria</span><strong>{Money(receipt.RestaurantTipAmount)}</strong></div>" +
+              $"<div class=\"pair total\"><span>Total recibido</span><strong>{Money(netPayable + receipt.RestaurantTipAmount)}</strong></div>"
+            : string.Empty;
         var companyName = Encode(receipt.CompanyName);
         var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
             ? string.Empty
@@ -272,7 +277,7 @@ public sealed class HalfLetterDocumentRenderer
             ? $"<section class=\"details\"><div><div class=\"caption\">Detalle del pedido · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair total\"><span>Total</span><strong>{Money(netPayable)}</strong></div></div></div></section>"
             : isCreditNote
             ? $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Base de la devolución</span><strong>{Money(receipt.UntaxedAmount)}</strong></div><div class=\"pair\"><span>Impuestos</span><strong>{Money(receipt.TaxAmount)}</strong></div><div class=\"pair total\"><span>Total nota crédito</span><strong>{Money(receipt.PayableAmount)}</strong></div>{qr}</div></div></section>"
-            : $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section><section class=\"breakdown\"><div class=\"breakdown-title\">Medios de pago</div>{payments}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Subtotal factura</span><strong>{Money(invoiceSubtotal)}</strong></div>{rounding}{grossTotal}{withholdingTotals}<div class=\"pair total\"><span>Total a pagar</span><strong>{Money(netPayable)}</strong></div>{cashTender}{qr}</div></div></section>";
+            : $"<section class=\"details\"><div>{cufe}<div class=\"breakdowns\"><section class=\"breakdown\"><div class=\"breakdown-title\">Impuestos por tarifa</div>{taxes}</section><section class=\"breakdown\"><div class=\"breakdown-title\">{(receipt.IsRestaurantSale ? "Medios de pago del consumo" : "Medios de pago")}</div>{payments}</section></div><div class=\"caption\">Representación gráfica · copia cliente / control</div></div><div><div class=\"totals\"><div class=\"pair\"><span>Subtotal factura</span><strong>{Money(invoiceSubtotal)}</strong></div>{rounding}{grossTotal}{withholdingTotals}<div class=\"pair total\"><span>{(receipt.IsRestaurantSale ? "Total venta" : "Total a pagar")}</span><strong>{Money(netPayable)}</strong></div>{restaurantTip}{cashTender}{qr}</div></div></section>";
 
         return $$"""
           <article class="document{{(showLogoInsteadOfName ? " logo-primary" : string.Empty)}}" data-auraly-report="{{template.Code}}" data-auraly-report-version="{{template.Version}}"><div class="document-content">

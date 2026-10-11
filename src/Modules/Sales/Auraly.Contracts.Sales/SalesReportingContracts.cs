@@ -73,7 +73,8 @@ public sealed record SalesReportDocumentRow(
     decimal GrossAmount, decimal DiscountAmount, decimal UntaxedAmount, decimal TaxAmount,
     decimal TotalAmount, decimal RoundingAdjustmentAmount,
     decimal ReturnedTotalAmount, decimal NetTotalAmount,
-    decimal GrossProfit, string? FiscalStatus);
+    decimal GrossProfit, string? FiscalStatus,
+    decimal RestaurantTipAmount = 0m);
 
 public sealed record SalesReportDocumentPage(
     IReadOnlyList<SalesReportDocumentRow> Items, int Page, int PageSize, int TotalCount);

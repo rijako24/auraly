@@ -201,7 +201,9 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
             .ReadFromJsonAsync<SalesReportDocumentPage>();
         Assert.NotNull(documents);
         Assert.Equal(1, documents.TotalCount);
-        Assert.Equal(sale.DocumentId, Assert.Single(documents.Items).DocumentId);
+        var directDocument = Assert.Single(documents.Items);
+        Assert.Equal(sale.DocumentId, directDocument.DocumentId);
+        Assert.Equal(0m, directDocument.RestaurantTipAmount);
 
         using var detailResponse = await reporting.GetAsync(
             $"/api/commerce/v1/sales-reports/documents/{sale.DocumentId:D}");
@@ -210,6 +212,7 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
             .ReadFromJsonAsync<SalesReportDocumentDetail>();
         Assert.NotNull(detail);
         Assert.Equal(sale.DocumentId, detail.Document.DocumentId);
+        Assert.Equal(0m, detail.Document.RestaurantTipAmount);
         Assert.Single(detail.Lines);
 
         using var hourlyResponse = await reporting.GetAsync(

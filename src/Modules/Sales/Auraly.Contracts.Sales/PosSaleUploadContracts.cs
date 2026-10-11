@@ -312,7 +312,9 @@ public sealed record PosSaleUploadRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    Guid? TableId = null);
+    Guid? TableId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    decimal RestaurantTipAmount = 0m);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,
