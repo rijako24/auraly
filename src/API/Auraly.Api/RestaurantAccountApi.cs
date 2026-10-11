@@ -20,8 +20,9 @@ public static class RestaurantAccountApi
             IPosSynchronizationPushGateway gateway, CancellationToken ct) =>
             await Handle(async () =>
             {
-                var identity = context.User.ToSalesWorkspaceUserIdentity();
                 var actor = Actor(context);
+                var identity = new SalesWorkspaceUserIdentity(
+                    actor.UserId, actor.TenantId, actor.Permissions);
                 if (!await workspaces.CanReadRestaurantCommandsAsync(
                     identity, actor.BusinessId, ct))
                     throw new RestaurantAccountForbiddenException(

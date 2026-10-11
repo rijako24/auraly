@@ -252,9 +252,7 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
   const creditItems = methodItems("Credit").filter(item => item.movementType === "CreditSale");
   const methodVerifiedAmount = (code: string) => correctedCashClosureAmount(
     code, verificationItems, verificationStatus, displayCorrections,
-    Number(verified.Cash ?? 0), Object.fromEntries((verificationQuery.data?.groups ?? [])
-      .filter(group => group.movementType === "Sale" || group.movementType === "Refund")
-      .map(group => [group.paymentMethodCode, groupTotal(group.paymentMethodCode, "Sale") + groupTotal(group.paymentMethodCode, "Refund")])));
+    Number(verified.Cash ?? 0));
   const methodIsConfirmed = (code: string) => isCashClosureMethodConfirmed(
     code, effectiveVerificationItems, verificationStatus,
     (confirmed[code] ?? false) || groupCount(code) > 0 && !groupRequiresVerification(code));
@@ -291,10 +289,13 @@ function ReconciliationDialog({ closure, canReconcile, onClose }: { closure: Wor
         <div className="flex flex-col gap-3 border-b bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="rounded-xl bg-teal-100 p-2 text-teal-800"><PaymentIcon code={item.paymentMethodCode} /></div><div><strong className="text-base">{workSessionPaymentMethodName(item.paymentMethodCode)}</strong><p className="text-sm text-muted-foreground">Esperado {money.format(expectedAmount(item))} · reportado al cerrar {money.format(item.countedAmount ?? 0)}</p></div></div><div className={`text-left sm:text-right ${headlineDifference < 0 ? "text-red-700" : headlineDifference > 0 ? "text-emerald-700" : "text-slate-700"}`}><span className="block text-xs font-semibold uppercase tracking-wide">{!cash && difference === 0 && reportedDifference !== 0 ? "Frente a lo reportado" : "Frente a lo esperado"}</span><strong>{result(headlineDifference)}</strong>{!cash && difference !== 0 && reportedDifference !== 0 && <small className="block text-muted-foreground">Frente a lo reportado: {result(reportedDifference)}</small>}</div></div>
         {snapshotQuery.isSuccess && <InvoiceChargeSummary charges={invoiceCharges} paymentMethod={item.paymentMethodCode} />}
         <div className="space-y-4 p-5">
-          <p className="text-sm text-muted-foreground">{cash ? "Revisa las facturas, devoluciones, abonos, pagos a proveedores, entradas y salidas. El efectivo confirmado es el valor que realmente contaste." : "Revisa facturas, devoluciones, abonos a cartera y pagos a proveedores. Las ventas y devoluciones son informativas."}</p>
+          <p className="text-sm text-muted-foreground">{cash ? "Revisa las facturas, devoluciones, abonos, pagos a proveedores, entradas y salidas. El efectivo confirmado es el valor que realmente contaste." : "Verifica cada factura, comprobante, devolución, abono y pago de este medio antes de conciliar."}</p>
           {groups.map(group => {
             const expansionKey = `${item.paymentMethodCode}:${group.key}`;
-            const requiresVerification = group.key !== "Sale" && group.key !== "Refund";
+            const requiresVerification = requiresIndividualCashClosureVerification({
+              verificationKey: "", paymentMethodCode: item.paymentMethodCode,
+              movementType: group.key, amount: 0,
+            });
             const displayed = displayedGroup(item.paymentMethodCode, group.key);
             const total = Math.abs(displayed.total);
             const count = displayed.count;
@@ -427,7 +428,7 @@ function PagedVerificationRows({ closureId, paymentMethodCode, movementType, inf
 }
 
 function VerificationRow({ item, status, disabled, informational = false, correction, onCorrect, onChange }: { item: ClosurePaymentVerification; status?: VerificationStatus; disabled: boolean; informational?: boolean; correction?: ClosurePaymentCorrection; onCorrect?: () => void; onChange: (status: VerificationStatus) => void }) {
-  const isInformational = informational || item.movementType === "Sale" || item.movementType === "Refund";
+  const isInformational = informational || !requiresIndividualCashClosureVerification(item);
   const isCreditSale = item.movementType === "CreditSale";
   const isCashMovement = item.movementType === "CashIn" || item.movementType === "CashOut";
   const isThirdPartyPayment = item.movementType === "ReceivablePayment" || item.movementType === "PayablePayment";

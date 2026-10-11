@@ -851,9 +851,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         }
 
         var verificationDecisions = verificationItems
-            .Where(item => item.MovementType is not ("Sale" or "Refund") &&
-                (item.PaymentMethodCode != "Cash" ||
-                 item.MovementType is "CashIn" or "CashOut" or "CreditSale"))
+            .Where(item => item.PaymentMethodCode != "Cash" ||
+                 item.MovementType is "CashIn" or "CashOut" or "CreditSale")
             .Select(item =>
             new WorkSessionPaymentVerificationDecision(item.VerificationKey,
                 (item.PaymentMethodCode == "Transfer" && item.Amount == 20_000m) ||
@@ -957,9 +956,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var items = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
             $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
         Assert.NotNull(items);
-        var decisions = items.Where(item => item.MovementType is not ("Sale" or "Refund") &&
-                (item.PaymentMethodCode != "Cash" ||
-                 item.MovementType is "CashIn" or "CashOut" or "CreditSale"))
+        var decisions = items.Where(item => item.PaymentMethodCode != "Cash" ||
+                 item.MovementType is "CashIn" or "CashOut" or "CreditSale")
             .Select(item => new WorkSessionPaymentVerificationDecision(item.VerificationKey, "Verified"))
             .ToArray();
         using var message = new HttpRequestMessage(HttpMethod.Post,
@@ -982,7 +980,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Completed_sales_are_informational_and_can_preview_a_payment_correction()
+    public async Task Non_cash_sales_require_verification_and_can_preview_a_payment_correction()
     {
         var userId = await CreateUserAsync("work-session-sale-information");
         using var client = fixture.CreateUserClient(userId,
@@ -1045,8 +1043,20 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         };
         request.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
         using var response = await client.SendAsync(request);
-        response.EnsureSuccessStatusCode();
-        var reconciliation = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using var verifiedRequest = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                closure.PaymentTotals.Where(item => item.RequiresCount)
+                    .Select(item => new ReconcileWorkSessionClosureLine(
+                        item.PaymentMethodCode, item.NetAmount, true, null)).ToArray(),
+                [], null,
+                [new WorkSessionPaymentVerificationDecision(sale.VerificationKey, "Verified")]))
+        };
+        verifiedRequest.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var verifiedResponse = await client.SendAsync(verifiedRequest);
+        verifiedResponse.EnsureSuccessStatusCode();
+        var reconciliation = await verifiedResponse.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
         Assert.NotNull(reconciliation);
         Assert.Equal("Reconciled", reconciliation.Status);
         Assert.Equal(9000m, reconciliation.Lines.Single(line =>
@@ -1132,10 +1142,10 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             Assert.NotNull(page);
             Assert.Equal(251, page.TotalItems);
             Assert.Equal(pageNumber == 3 ? 51 : 100, page.Items.Count);
-            decisions.AddRange(page.Items.Where(item => item.MovementType != "Sale").Select(item =>
+            decisions.AddRange(page.Items.Select(item =>
                 new WorkSessionPaymentVerificationDecision(item.VerificationKey, "Verified")));
         }
-        Assert.Equal(250, decisions.Select(item => item.VerificationKey).Distinct().Count());
+        Assert.Equal(251, decisions.Select(item => item.VerificationKey).Distinct().Count());
         using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
         {
             Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(

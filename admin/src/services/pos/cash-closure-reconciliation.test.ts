@@ -18,12 +18,14 @@ const items = [
   { verificationKey: "credit", paymentMethodCode: "Credit", movementType: "CreditSale", amount: 30_000 },
   { verificationKey: "transfer-sale", paymentMethodCode: "Transfer", movementType: "Sale", amount: 9_000 },
   { verificationKey: "transfer-refund", paymentMethodCode: "Transfer", movementType: "Refund", amount: -2_000 },
+  { verificationKey: "debit-sale", paymentMethodCode: "DebitCard", movementType: "Sale", amount: 11_000 },
+  { verificationKey: "credit-refund", paymentMethodCode: "CreditCard", movementType: "Refund", amount: -3_000 },
 ];
 
 test("cash groups its six source types and keeps individual verification where required", () => {
   assert.deepEqual(
     cashClosureVerificationDecisions(items).map(item => item.verificationKey),
-    ["receivable", "payable", "in", "out", "credit"],
+    ["receivable", "payable", "in", "out", "credit", "transfer-sale", "transfer-refund", "debit-sale", "credit-refund"],
   );
   assert.deepEqual(
     cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Cash"), true).map(group => [group.label, group.items.length]),
@@ -42,13 +44,13 @@ test("source correction moves a confirmed tender without changing physical cash"
   ];
   const corrections = { "sale-cash": { verificationKey: "sale-cash", paymentMethodCode: "Transfer", amount: 7_000 } };
   assert.equal(correctedCashClosureAmount("Cash", tender, { "sale-transfer": "Verified" }, corrections, 0), 0);
-  assert.equal(correctedCashClosureAmount("Transfer", tender, {}, corrections, 0), 16_000);
-  assert.equal(isCashClosureMethodConfirmed("Transfer", tender, {}, false), true);
-  assert.equal(correctedCashClosureAmount("Transfer", [], {}, {}, 0, { Transfer: 9_000 }), 9_000);
-  assert.equal(correctedCashClosureAmount("Transfer", tender, {}, corrections, 0, { Transfer: 9_000 }), 16_000);
-  assert.equal(correctedCashClosureAmount("Transfer", tender, {}, {
+  assert.equal(correctedCashClosureAmount("Transfer", tender, {}, corrections, 0), 7_000);
+  assert.equal(isCashClosureMethodConfirmed("Transfer", tender, {}, false), false);
+  assert.equal(correctedCashClosureAmount("Transfer", tender, { "sale-transfer": "Verified" }, corrections, 0), 16_000);
+  assert.equal(correctedCashClosureAmount("Transfer", tender, { "sale-transfer": "Missing" }, corrections, 0), 7_000);
+  assert.equal(correctedCashClosureAmount("Transfer", tender, { "sale-transfer": "Verified" }, {
     "sale-transfer": { verificationKey: "sale-transfer", paymentMethodCode: "Cash", amount: 9_000 },
-  }, 0, { Transfer: 9_000 }), 0);
+  }, 0), 0);
 });
 
 test("cash uses the corrected physical count while movements still require a decision", () => {
@@ -64,4 +66,8 @@ test("cash uses the corrected physical count while movements still require a dec
   ), true);
   assert.equal(isCashClosureMethodConfirmed("Credit", items, {}, false), false);
   assert.equal(isCashClosureMethodConfirmed("Credit", items, { credit: "Verified" }, false), true);
+  assert.equal(isCashClosureMethodConfirmed("DebitCard", items, {}, false), false);
+  assert.equal(isCashClosureMethodConfirmed("DebitCard", items, { "debit-sale": "Missing" }, false), true);
+  assert.equal(correctedCashClosureAmount("CreditCard", items, { "credit-refund": "Verified" }, {}, 0), -3_000);
+  assert.equal(correctedCashClosureAmount("CreditCard", items, { "credit-refund": "Missing" }, {}, 0), 0);
 });

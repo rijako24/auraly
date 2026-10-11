@@ -225,7 +225,8 @@ export default function RestaurantCommandsPage() {
     const scheduleReconnect = () => {
       if (closed || reconnectTimer !== null || !navigator.onLine ||
           document.visibilityState !== "visible") return;
-      const delay = realtimeReconnectDelay(failedAttempts++) ?? 30_000;
+      const delay = realtimeReconnectDelay(failedAttempts++);
+      if (delay === null) return;
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
         void connect();
@@ -238,6 +239,7 @@ export default function RestaurantCommandsPage() {
       setPushConnected(false);
       setPushConnecting(true);
       setPushIssue("");
+      let retryNegotiation = true;
       try {
         const negotiation = await apiClient.post<{ clientAccessUri: string; groups?: string[] }>(
           "/commerce/v1/restaurant/command-cards/synchronization/negotiate", {});
@@ -298,6 +300,8 @@ export default function RestaurantCommandsPage() {
           current.close();
         });
       } catch (error) {
+        const statusCode = (error as { statusCode?: number } | null)?.statusCode;
+        retryNegotiation = statusCode !== 401 && statusCode !== 403;
         if (!closed) {
           setPushConnected(false);
           setPushConnecting(false);
@@ -307,7 +311,7 @@ export default function RestaurantCommandsPage() {
       }
       finally {
         connecting = false;
-        if (!closed && !socket) scheduleReconnect();
+        if (!closed && !socket && retryNegotiation) scheduleReconnect();
       }
     };
     const resume = () => {

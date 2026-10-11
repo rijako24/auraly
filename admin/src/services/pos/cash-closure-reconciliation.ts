@@ -11,7 +11,6 @@ export type CashClosureCorrection = { verificationKey: string; paymentMethodCode
 export function requiresIndividualCashClosureVerification(
   item: CashClosureVerification,
 ) {
-  if (item.movementType === "Sale" || item.movementType === "Refund") return false;
   return item.paymentMethodCode !== "Cash" ||
     item.movementType === "CashIn" ||
     item.movementType === "CashOut" ||
@@ -32,25 +31,16 @@ export function correctedCashClosureAmount(
   statuses: Readonly<Record<string, CashClosureVerificationStatus | undefined>>,
   corrections: Readonly<Record<string, CashClosureCorrection | undefined>>,
   cashCount: number,
-  informationalTotals?: Readonly<Record<string, number>>,
 ) {
   if (paymentMethodCode === "Cash") return cashCount;
-  const informationalAmount = informationalTotals?.[paymentMethodCode] ?? 0;
   return items.reduce((sum, item) => {
     const correction = corrections[item.verificationKey];
-    const informational = item.movementType === "Sale" || item.movementType === "Refund";
-    if (informationalTotals && informational) {
-      if (!correction) return sum;
-      if (item.paymentMethodCode === paymentMethodCode) sum -= item.amount;
-      if (correction.paymentMethodCode === paymentMethodCode) sum += correction.amount;
-      return sum;
-    }
     const confirmed = !requiresIndividualCashClosureVerification(item) ||
       statuses[item.verificationKey] === "Verified";
     if (!confirmed && !(correction && item.paymentMethodCode === "Cash")) return sum;
     const method = correction?.paymentMethodCode ?? item.paymentMethodCode;
     return method === paymentMethodCode ? sum + (correction?.amount ?? item.amount) : sum;
-  }, informationalAmount);
+  }, 0);
 }
 
 export function isCashClosureMethodConfirmed(

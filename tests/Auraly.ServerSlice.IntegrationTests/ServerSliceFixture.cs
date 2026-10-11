@@ -270,6 +270,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         .FailNext();
 
     public HttpClient CreateAdminClient(params string[] permissions)
+        => CreateAdminClient(TenantId, permissions);
+
+    public HttpClient CreateAdminClient(
+        Guid identityTenantId, params string[] permissions)
     {
         var session = EnsureAuthenticationSession(UserId);
         var executionAccessId = RegisterExecutionPermissions(permissions);
@@ -278,6 +282,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             new(JwtRegisteredClaimNames.Sub, UserId.ToString("D")),
             new(ClaimTypes.NameIdentifier, UserId.ToString("D")),
             new("tenant_id", TenantId.ToString("D")),
+            new(AuthenticationDefaults.IdentityTenantIdClaim,
+                identityTenantId.ToString("D")),
             new("business_id", BusinessId.ToString("D")),
             new(AuthenticationDefaults.SessionIdClaim,
                 session.AuthenticationSessionId.ToString("D")),

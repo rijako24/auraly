@@ -5,7 +5,7 @@ const businessId = process.env.AURALY_E2E_RESTAURANT_BUSINESS_ID;
 const username = process.env.AURALY_E2E_KDS_USERNAME;
 const password = process.env.AURALY_E2E_KDS_PASSWORD;
 
-test("las comandas conectan desde el acceso normal", async ({ page }) => {
+test("las comandas conectan con la sede seleccionada", async ({ page }) => {
   test.skip(!businessId || !username || !password, "Requiere usuario de comandas de desarrollo.");
   const negotiations: number[] = [];
   page.on("response", (response) => {
@@ -13,6 +13,7 @@ test("las comandas conectan desde el acceso normal", async ({ page }) => {
       negotiations.push(response.status());
   });
   await login(page, { tenantKey: process.env.AURALY_E2E_TENANT_KEY ?? "", username: username!, password: password! }, 60_000);
+  await page.addInitScript((id) => localStorage.setItem("selected_business_id", id), businessId!.toLowerCase());
   await page.goto("/restaurant/commands");
   await expect(page.getByText("En vivo", { exact: true })).toBeVisible({ timeout: 30_000 });
   expect(negotiations).toContain(200);
@@ -53,4 +54,19 @@ test("las comandas conectan en WebKit móvil", async () => {
   } finally {
     await browser.close();
   }
+});
+
+test("un permiso rechazado no provoca negociaciones repetidas", async ({ page }) => {
+  test.skip(!businessId || !username || !password, "Requiere usuario de comandas de desarrollo.");
+  await login(page, { tenantKey: process.env.AURALY_E2E_TENANT_KEY ?? "", username: username!, password: password! }, 60_000);
+  await page.addInitScript((id) => localStorage.setItem("selected_business_id", id), businessId!.toLowerCase());
+  let negotiations = 0;
+  await page.route("**/restaurant/command-cards/synchronization/negotiate", async (route) => {
+    negotiations += 1;
+    await route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ detail: "No tienes permiso para recibir comandas de esta sede." }) });
+  });
+  await page.goto("/restaurant/commands");
+  await expect(page.getByRole("alert").filter({ hasText: "No tienes permiso para recibir comandas" })).toBeVisible();
+  await page.waitForTimeout(2_500);
+  expect(negotiations).toBe(1);
 });

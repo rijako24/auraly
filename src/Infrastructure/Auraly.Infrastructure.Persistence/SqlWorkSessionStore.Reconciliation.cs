@@ -752,9 +752,8 @@ public sealed partial class SqlWorkSessionStore
             (
                 SELECT VerificationKey COLLATE Latin1_General_100_CI_AS VerificationKey
                 FROM #PaymentVerifications
-                WHERE (PaymentMethodCode<>N'Cash' OR MovementType IN
-                  (N'CashIn',N'CashOut',N'ReceivablePayment',N'PayablePayment',N'CreditSale'))
-                  AND MovementType NOT IN(N'Sale',N'Refund')
+                WHERE PaymentMethodCode<>N'Cash' OR MovementType IN
+                  (N'CashIn',N'CashOut',N'ReceivablePayment',N'PayablePayment',N'CreditSale')
             )
             SELECT CAST(CASE WHEN
                 EXISTS(SELECT 1 FROM #Decisions GROUP BY VerificationKey HAVING COUNT(*)<>1)
@@ -769,7 +768,6 @@ public sealed partial class SqlWorkSessionStore
             SELECT source.PaymentMethodCode,
               SUM(CASE WHEN (source.PaymentMethodCode=N'Cash' AND source.MovementType NOT IN
                     (N'CashIn',N'CashOut',N'ReceivablePayment',N'PayablePayment',N'CreditSale'))
-                  OR source.MovementType IN(N'Sale',N'Refund')
                   OR decision.Status=N'Verified' THEN source.Amount ELSE 0 END),
               MAX(CASE WHEN source.MovementType=N'CreditSale' AND decision.Status=N'Missing'
                 THEN 1 ELSE 0 END)
@@ -942,7 +940,9 @@ public sealed partial class SqlWorkSessionStore
             await reader.NextResultAsync(cancellationToken);
         while (corrections.Count > 0 && await reader.ReadAsync(cancellationToken))
         {
-            if (reader.IsDBNull(1) || reader.IsDBNull(9) && reader.GetString(1) is not ("Sale" or "Refund"))
+            if (reader.IsDBNull(1) ||
+                (reader.IsDBNull(9) || reader.GetString(9) != "Verified") &&
+                (reader.GetString(4) != "Cash" || reader.GetString(1) is not ("Sale" or "Refund")))
                 throw new WorkSessionValidationException("El comprobante corregido no pertenece al cierre o no fue verificado.");
             var movementType = reader.GetString(1);
             if (movementType == "CreditSale" || !reader.GetBoolean(18))

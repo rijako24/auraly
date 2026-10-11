@@ -198,6 +198,19 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
         try
         {
             await SetWarehouseSalesAsync(false);
+            using var crossTenantAdministrator = fixture.CreateAdminClient(
+                Guid.NewGuid(), "restaurant.commands.read");
+            using (var selectedTenant = await crossTenantAdministrator.PostAsync(
+                negotiationPath, null))
+            {
+                selectedTenant.EnsureSuccessStatusCode();
+                var scopedConnection = await selectedTenant.Content.ReadFromJsonAsync<
+                    PosSynchronizationNegotiationResponse>();
+                Assert.Contains(
+                    PosSynchronizationGroups.RestaurantCommands(
+                        fixture.TenantId, fixture.BusinessId),
+                    scopedConnection!.Groups!);
+            }
             using var allowed = await kitchen.PostAsync(negotiationPath, null);
             allowed.EnsureSuccessStatusCode();
             var connection = await allowed.Content.ReadFromJsonAsync<
