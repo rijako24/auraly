@@ -85,5 +85,16 @@ WHERE (role.NormalizedName IN (N'ADMINISTRATOR',N'ADMINISTRATIVE')
         AND business.PointOfSaleMode=N'RestaurantBar')
   AND NOT EXISTS (SELECT 1 FROM dbo.RolePermissions existing
       WHERE existing.RoleId=role.RoleId AND existing.PermissionId=permission.PermissionId);
+
+-- The platform administrator is provisioned earlier in PostDeployment. Keep its
+-- global permission set complete when a new restaurant permission is introduced.
+INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+SELECT NEWID(),role.RoleId,permission.PermissionId,SYSUTCDATETIME()
+FROM dbo.AppRoles role
+JOIN dbo.Tenants tenant ON tenant.TenantId=role.TenantId AND tenant.TenantKey=N'@auraly'
+JOIN dbo.Permissions permission ON permission.Resource=N'restaurant.tables.open_without_waiter'
+WHERE role.NormalizedName=N'ADMINISTRATOR'
+  AND NOT EXISTS (SELECT 1 FROM dbo.RolePermissions existing
+      WHERE existing.RoleId=role.RoleId AND existing.PermissionId=permission.PermissionId);
 COMMIT TRANSACTION;
 GO
