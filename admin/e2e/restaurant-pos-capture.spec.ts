@@ -38,6 +38,8 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
     pointOfSaleMode: "RestaurantBar" };
   let accountId = "";
   let version = 0;
+  let openings = 0;
+  let occupancyReads = 0;
   const attentionToken = "attention-test-token";
   let attentionEnded = false;
   const additions: Array<Record<string, unknown>> = [];
@@ -72,10 +74,13 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
       return json(route, { items: [{ tableId, businessId, roomId: null,
         code: "M-01", name: null, capacity: 4, isActive: true,
         rowVersion: "AAAAAAAAAAA=" }], page: 1, pageSize: 100, totalCount: 1 });
-    if (path.endsWith("/commerce/v1/restaurant/occupancy"))
+    if (path.endsWith("/commerce/v1/restaurant/occupancy")) {
+      occupancyReads++;
       return json(route, [{ tableId, accountId: accountId || null,
-        state: accountId ? "Open" : "Free", responsibleUserId: accountId ? userId : null,
+        state: additions.some((item) => item.status !== "Cancelled") ? "Open" : "Free",
+        responsibleUserId: accountId ? userId : null,
         openedAt: accountId ? now : null, accountVersion: accountId ? version : null }]);
+    }
     if (path.endsWith("/commerce/v1/restaurant/waiters"))
       return json(route, { requireCredential: true, restrictTableToWaiter: false,
         items: [{ userId, name: "Mesero Prueba", shortName: "Mesero" }],
@@ -96,6 +101,7 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
     const account = () => ({ accountId, businessId, tableId, warehouseId,
       responsibleUserId: userId, status: "Open", version, openedAt: now, updatedAt: now });
     if (path.endsWith("/commerce/v1/restaurant/accounts") && method === "POST") {
+      openings++;
       accountId = route.request().postDataJSON().accountId;
       version = 1;
       return json(route, account(), 201);
@@ -173,6 +179,7 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
     window.scrollTo(0, 250);
   });
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+  const occupancyReadsBeforeEntry = occupancyReads;
   await page.getByRole("button", { name: /M-01/ }).click();
   await expect(page.getByRole("dialog", { name: "Identificar mesero" })).toBeVisible();
   await page.getByRole("button", { name: "Mesero" }).click();
@@ -181,9 +188,18 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await expect(page.getByLabel("Teclado numérico")).toHaveCount(0);
   await page.getByRole("button", { name: "Abrir mesa", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Elige productos" })).toBeVisible();
+  expect(occupancyReads).toBe(occupancyReadsBeforeEntry);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await page.evaluate(() => document.body.style.removeProperty("min-height"));
+  await page.getByRole("button", { name: "Mesas" }).click();
+  await expect(page.getByRole("button", { name: /M-01/ }).getByText("Libre")).toBeVisible();
+  await page.getByRole("button", { name: /M-01/ }).click();
+  await page.getByRole("button", { name: "Mesero" }).click();
+  await page.getByPlaceholder("Principal o secundaria").fill("1234");
+  await page.getByRole("button", { name: "Abrir mesa", exact: true }).click();
+  expect(openings).toBe(1);
   await page.getByRole("button", { name: "Agregar Hamburguesa clásica" }).click();
+  expect(openings).toBe(1);
   await page.getByRole("button", { name: /Cuenta ·/ }).click();
   await expect(page.getByText("Consumo estimado")).toBeVisible();
   await expect(page.getByRole("button", { name: "Observación de la unidad 1" })).toBeVisible();
@@ -204,6 +220,13 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await expect(page.getByRole("button", { name: /Eliminar producto pendiente Hamburguesa clásica/ })).toBeEnabled();
   await page.getByRole("button", { name: /Eliminar producto pendiente Hamburguesa clásica/ }).click();
   await expect(page.getByText("Toca un producto para empezar el pedido.")).toBeVisible();
+  await page.getByRole("button", { name: "Mesas" }).click();
+  await expect(page.getByRole("button", { name: /M-01/ }).getByText("Libre")).toBeVisible();
+  await page.getByRole("button", { name: /M-01/ }).click();
+  await page.getByRole("button", { name: "Mesero" }).click();
+  await page.getByPlaceholder("Principal o secundaria").fill("1234");
+  await page.getByRole("button", { name: "Abrir mesa", exact: true }).click();
+  expect(openings).toBe(1);
   await page.getByRole("button", { name: "Productos", exact: true }).click();
   const headerBottom = await page.locator("main > header").evaluate((header) =>
     header.getBoundingClientRect().bottom);
@@ -231,6 +254,8 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await page.getByRole("button", { name: "Quitar uno de Gaseosa" }).click();
   await expect(page.getByText("Sin comanda · se cobra directamente")).toHaveCount(0);
   await page.getByRole("button", { name: "Mesas" }).click();
+  await expect(page.getByRole("button", { name: /M-01/ }).getByText("Ocupada")).toBeVisible();
+  expect(openings).toBe(1);
   await expect.poll(() => attentionEnded).toBe(true);
   await page.goto("/pos");
   await expect(page).toHaveURL(/\/pos\/restaurant$/);

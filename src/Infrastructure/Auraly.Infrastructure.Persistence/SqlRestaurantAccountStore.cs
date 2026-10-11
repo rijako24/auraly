@@ -114,7 +114,13 @@ public sealed partial class SqlRestaurantAccountStore(
     {
         const string sql = """
             SELECT [table].TableId,account.AccountId,account.ResponsibleUserId,
-                   account.OpenedAt,account.Version,account.Status
+                   account.OpenedAt,account.Version,
+                   CASE WHEN account.AccountId IS NULL OR
+                             (account.Status=N'Open' AND NOT EXISTS (
+                                 SELECT 1 FROM sales.RestaurantAccountAdditions addition
+                                 WHERE addition.AccountId=account.AccountId
+                                   AND addition.Status IN (N'Pending',N'Sent',N'Direct')))
+                        THEN N'Free' ELSE account.Status END
             FROM sales.RestaurantTables [table]
             LEFT JOIN sales.RestaurantAccounts account
               ON account.BusinessId=[table].BusinessId
@@ -133,7 +139,7 @@ public sealed partial class SqlRestaurantAccountStore(
         while (await reader.ReadAsync(ct))
             items.Add(new RestaurantTableOccupancy(
                 reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1),
-                reader.IsDBNull(1) ? "Free" : reader.GetString(5),
+                reader.GetString(5),
                 reader.IsDBNull(2) ? null : reader.GetGuid(2),
                 reader.IsDBNull(3) ? null : reader.GetDateTimeOffset(3),
                 reader.IsDBNull(4) ? null : reader.GetInt64(4)));

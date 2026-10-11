@@ -329,6 +329,21 @@ export function RestaurantPosWorkspace({ option }: {
     finally { setBusy(false); }
   }
 
+  function rememberOccupancy(accountDraft: RestaurantAccountDraft) {
+    queryClient.setQueryData<RestaurantTableOccupancy[]>(
+      [...scope, "occupancy"], (current) => current?.map((item) =>
+        item.tableId === accountDraft.account.tableId ? {
+          ...item,
+          accountId: accountDraft.account.accountId,
+          state: accountDraft.account.status === "Open" &&
+            !accountDraft.additions.some((addition) => addition.status !== "Cancelled")
+            ? "Free" : accountDraft.account.status,
+          responsibleUserId: accountDraft.account.responsibleUserId,
+          openedAt: accountDraft.account.openedAt,
+          accountVersion: accountDraft.account.version,
+        } : item));
+  }
+
   async function openTable(table: RestaurantTable, token?: string): Promise<boolean> {
     if (busy) return false;
     setBusy(true);
@@ -340,6 +355,7 @@ export function RestaurantPosWorkspace({ option }: {
               accountId: crypto.randomUUID(), tableId: table.tableId,
               warehouseId: option.warehouseId,
             }, token), additions: [] };
+      rememberOccupancy(accountDraft);
       setSelectedTable(table);
       setDraft(accountDraft);
       setCategoryId(null);
@@ -347,8 +363,6 @@ export function RestaurantPosWorkspace({ option }: {
       setProductPage(0);
       setMobileSection("products");
       setPendingSend(null);
-      if (!state?.accountId)
-        void queryClient.invalidateQueries({ queryKey: [...scope, "occupancy"] });
       return true;
     } catch {
       toast.error("No fue posible abrir la mesa. Revisa la conexión y vuelve a intentarlo.");
@@ -686,6 +700,7 @@ export function RestaurantPosWorkspace({ option }: {
     if (busy && !force) {
       return;
     }
+    if (draft?.account.status === "Open") rememberOccupancy(draft);
     setDraft(null);
     setSelectedTable(null);
     if (attention) void restaurantAccountApi.endAttention(attention.token)
@@ -762,7 +777,8 @@ export function RestaurantPosWorkspace({ option }: {
         {activeFloorPlan.objects.filter((object) => object.kind === "Table").map((object) => {
           const table = activeFloorPlan.tables.find((entry) => entry.tableId === object.tableId);
           if (!table) return null;
-          const occupied = !!tableStates.get(table.tableId)?.accountId;
+          const occupied = tableStates.get(table.tableId)?.state !== "Free" &&
+            !!tableStates.get(table.tableId)?.accountId;
           return <button key={object.objectId} type="button" disabled={busy} onClick={() => selectTable(table)}
             className={`absolute flex min-h-8 items-center justify-center rounded-2xl border-2 px-1 text-center text-xs font-bold shadow-[0_6px_12px_-5px_#39443b99] transition hover:z-20 hover:scale-105 focus-visible:outline-4 focus-visible:outline-primary sm:text-base ${occupied ? "border-amber-500 bg-amber-100 text-amber-950 dark:bg-amber-900 dark:text-amber-50" : "border-teal-500 bg-teal-50 text-teal-950 dark:bg-teal-900 dark:text-teal-50"}`}
             style={{ left: `${object.x / 10}%`, top: `${object.y / 7}%`, width: `${object.width / 10}%`, height: `${object.height / 7}%`, rotate: `${object.rotation}deg`,
@@ -845,7 +861,7 @@ function TableCard({ table, roomName, occupancy, disabled, onClick }: {
   disabled: boolean;
   onClick: () => void;
 }) {
-  const occupied = !!occupancy?.accountId;
+  const occupied = !!occupancy?.accountId && occupancy.state !== "Free";
   return <button disabled={disabled} onClick={onClick} className="group min-h-52 rounded-[1.75rem] border bg-card p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-md focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60">
     <div className="flex items-start justify-between gap-2"><div className={`grid h-14 w-14 place-items-center rounded-2xl ${occupied ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}><LayoutGrid className="h-7 w-7"/></div><span className={`rounded-full px-3 py-1 text-xs font-bold ${occupied ? "bg-amber-500/10 text-amber-700 dark:text-amber-300" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}>{occupied ? occupancy?.state === "Invoiced" ? "Pagada" : "Ocupada" : "Libre"}</span></div>
     <h3 className="mt-5 text-3xl font-bold">{table.code}</h3><p className="mt-1 text-sm text-muted-foreground">{roomName ?? "Sin salón"}{table.capacity ? ` · ${table.capacity} personas` : ""}</p>

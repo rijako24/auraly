@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Sales;
@@ -75,7 +76,7 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                 IReadOnlyList<RestaurantTableOccupancy>>(
                 "/api/commerce/v1/restaurant/occupancy");
             Assert.Contains(states!, state => state.TableId == tableId &&
-                state.AccountId == account.AccountId && state.State == "Open");
+                state.AccountId == account.AccountId && state.State == "Free");
             var products = await waiter.GetFromJsonAsync<OnlineSalesProductPage>(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/products?take=50");
             Assert.Contains(products!.Items,
@@ -99,6 +100,7 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
             var first = new AddRestaurantAccountItemRequest(Guid.NewGuid(),
                 fixture.ProductId, 2, account.Version);
             RestaurantAccountDraft draft;
+            var addStarted = Stopwatch.GetTimestamp();
             using (var added = await waiter.PostAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions",
                 first))
@@ -106,9 +108,17 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                 Assert.Equal(HttpStatusCode.OK, added.StatusCode);
                 draft = (await added.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!;
             }
+            var addElapsed = Stopwatch.GetElapsedTime(addStarted);
+            Assert.True(addElapsed < TimeSpan.FromSeconds(1),
+                $"Agregar el primer producto tardó {addElapsed.TotalMilliseconds:F0} ms.");
             Assert.Equal(2, draft.Account.Version);
             Assert.Contains(draft.Additions, item => item.AdditionId == first.AdditionId &&
                 item.AddedByUserId == waiterId && item.Status == "Direct");
+            states = await administrator.GetFromJsonAsync<
+                IReadOnlyList<RestaurantTableOccupancy>>(
+                "/api/commerce/v1/restaurant/occupancy");
+            Assert.Contains(states!, state => state.TableId == tableId &&
+                state.AccountId == account.AccountId && state.State == "Open");
             using (var noCommand = await waiter.PostAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/commands",
                 new SendRestaurantPendingRequest(Guid.NewGuid(), 2)))
@@ -154,6 +164,7 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
             }
             var reduction = new ChangeRestaurantAccountQuantityRequest(
                 Guid.NewGuid(), 1, 3);
+            var removeStarted = Stopwatch.GetTimestamp();
             using (var changed = await nextWaiter.PutAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions/{first.AdditionId}/quantity",
                 reduction))
@@ -164,6 +175,9 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                 Assert.Equal(1, adjusted.Additions.Single(item =>
                     item.AdditionId == first.AdditionId).Quantity);
             }
+            var removeElapsed = Stopwatch.GetElapsedTime(removeStarted);
+            Assert.True(removeElapsed < TimeSpan.FromSeconds(1),
+                $"Reducir el producto tardó {removeElapsed.TotalMilliseconds:F0} ms.");
             using (var replayChange = await nextWaiter.PutAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions/{first.AdditionId}/quantity",
                 reduction))
@@ -231,6 +245,11 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                     .ReadFromJsonAsync<RestaurantAccount>())!;
             }
             Assert.Equal(directCashierId, cashierAccount.ResponsibleUserId);
+            states = await administrator.GetFromJsonAsync<
+                IReadOnlyList<RestaurantTableOccupancy>>(
+                "/api/commerce/v1/restaurant/occupancy");
+            Assert.Contains(states!, state => state.TableId == cashierTableId &&
+                state.AccountId == cashierAccount.AccountId && state.State == "Free");
             var cashierProducts = await directCashier.GetFromJsonAsync<OnlineSalesProductPage>(
                 $"/api/commerce/v1/restaurant/accounts/{cashierAccount.AccountId}/products?take=50");
             Assert.Contains(cashierProducts!.Items,
@@ -252,6 +271,15 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                     item.AdditionId == cashierAddition.AdditionId &&
                     item.AddedByUserId == directCashierId);
             }
+            using (var removed = await directCashier.PutAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{cashierAccount.AccountId}/additions/{cashierAddition.AdditionId}/quantity",
+                new ChangeRestaurantAccountQuantityRequest(Guid.NewGuid(), 0, 2)))
+                removed.EnsureSuccessStatusCode();
+            states = await administrator.GetFromJsonAsync<
+                IReadOnlyList<RestaurantTableOccupancy>>(
+                "/api/commerce/v1/restaurant/occupancy");
+            Assert.Contains(states!, state => state.TableId == cashierTableId &&
+                state.AccountId == cashierAccount.AccountId && state.State == "Free");
 
             var parallelTableId = Guid.NewGuid();
             using (var tableCreated = await administrator.PostAsJsonAsync(
