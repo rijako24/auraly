@@ -355,15 +355,19 @@ public sealed class ArchitectureDebtRatchetTests
             "SqlOnlineSalesDraftStore.Temporaries.cs");
         var source = File.ReadAllText(path);
         var start = source.IndexOf(
-            "public async Task<OnlineSalesProductPage> SearchProductsAsync(",
+            "public Task<OnlineSalesProductPage> SearchProductsAsync(",
             StringComparison.Ordinal);
         var end = source.IndexOf(
-            "public async Task<OnlineSalesCustomerPage> SearchCustomersAsync(",
+            "private sealed record SearchProductCandidate(",
             start,
             StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
         var search = source[start..end];
 
+        Assert.Contains("SearchProductsCoreAsync(user, request, null, null, null,",
+            search, StringComparison.Ordinal);
+        Assert.Contains("public async Task<OnlineSalesProductPage> SearchAsync(",
+            search, StringComparison.Ordinal);
         Assert.Contains("dbo.OnlineSalesProductSearch", search, StringComparison.Ordinal);
         Assert.Contains("CommandType.StoredProcedure", search, StringComparison.Ordinal);
         Assert.Single(Regex.Matches(search, @"ExecuteReaderAsync\s*\("));

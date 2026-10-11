@@ -271,7 +271,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         command.CommandText = """
             SELECT p.*
             FROM PosCatalogProducts p
-            WHERE p.IsActive=1
+            WHERE p.IsActive=1 AND p.IsIngredient=0
               AND (
                 @Exact='' OR
                 p.ProductCode LIKE @Prefix OR
@@ -329,7 +329,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             FROM PosCatalogProducts product
             INNER JOIN json_each(@ProductIdsJson) requested
               ON requested.value=product.ProductId
-            WHERE product.IsActive=1;
+            WHERE product.IsActive=1 AND product.IsIngredient=0;
             """;
         command.Parameters.Add(P(
             "@ProductIdsJson",
@@ -418,7 +418,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             SELECT DISTINCT p.* FROM PosCatalogProducts p
             LEFT JOIN PosCatalogBarcodes b ON b.ProductId=p.ProductId
             LEFT JOIN PosCatalogIdentifiers i ON i.ProductId=p.ProductId
-            WHERE p.IsActive=1 AND (p.ProductCode=@Value OR p.Reference=@Value OR b.Value=@Value OR i.Value=@Value)
+            WHERE p.IsActive=1 AND p.IsIngredient=0 AND (p.ProductCode=@Value OR p.Reference=@Value OR b.Value=@Value OR i.Value=@Value)
             LIMIT 2;
             """;
         command.Parameters.Add(P("@Value", value));
@@ -435,7 +435,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM PosCatalogProducts WHERE IsActive=1 AND ScaleJson IS NOT NULL AND @Code LIKE ScalePrefix || '%';";
+        command.CommandText = "SELECT * FROM PosCatalogProducts WHERE IsActive=1 AND IsIngredient=0 AND ScaleJson IS NOT NULL AND @Code LIKE ScalePrefix || '%';";
         command.Parameters.Add(P("@Code", barcode));
         var values = new List<(PosCatalogItem, ScaleBarcodeRule)>();
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -509,13 +509,14 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             item.TargetMarginPercent,
             InventoryProductId = (item.InventoryProductId ?? item.ProductId).ToString("D"),
             item.InventoryFactor,
-            IsGenericProduct = item.IsGenericProduct ? 1 : 0
+            IsGenericProduct = item.IsGenericProduct ? 1 : 0,
+            IsIngredient = item.IsIngredient ? 1 : 0
         });
         await ExecuteAsync(connection, transaction, $"""
             INSERT INTO {products}
               (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
                ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent,
-               InventoryProductId,InventoryFactor,IsGenericProduct)
+               InventoryProductId,InventoryFactor,IsGenericProduct,IsIngredient)
             SELECT
               json_extract(value,'$.ProductId'),json_extract(value,'$.ProductCode'),json_extract(value,'$.Reference'),json_extract(value,'$.Name'),
               json_extract(value,'$.BaseUnitCode'),json_extract(value,'$.TaxCode'),json_extract(value,'$.TaxRate'),json_extract(value,'$.UnitPrice'),
@@ -524,7 +525,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               json_extract(value,'$.CategoryName'),json_extract(value,'$.ProductCategoryId'),json_extract(value,'$.ProductBrandId'),
               json_extract(value,'$.ProductCategoryAncestorIds'),json_extract(value,'$.AverageUnitCost'),json_extract(value,'$.LatestUnitCost'),
               json_extract(value,'$.TargetMarginPercent'),json_extract(value,'$.InventoryProductId'),json_extract(value,'$.InventoryFactor'),
-              json_extract(value,'$.IsGenericProduct')
+              json_extract(value,'$.IsGenericProduct'),json_extract(value,'$.IsIngredient')
             FROM json_each(@Rows)
             WHERE true
             ON CONFLICT(ProductId) DO UPDATE SET
@@ -538,7 +539,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               AverageUnitCost=excluded.AverageUnitCost,LatestUnitCost=excluded.LatestUnitCost,
               TargetMarginPercent=excluded.TargetMarginPercent,
               InventoryProductId=excluded.InventoryProductId,InventoryFactor=excluded.InventoryFactor,
-              IsGenericProduct=excluded.IsGenericProduct;
+              IsGenericProduct=excluded.IsGenericProduct,IsIngredient=excluded.IsIngredient;
             """, [P("@Rows", JsonSerializer.Serialize(productRows))], ct);
 
         var barcodeRows = effectiveItems.SelectMany(item =>
@@ -595,7 +596,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             reader.IsDBNull(reader.GetOrdinal("InventoryProductId")) ? null :
                 Guid.Parse(reader.GetString(reader.GetOrdinal("InventoryProductId"))),
             Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("InventoryFactor")), CultureInfo.InvariantCulture),
-            reader.GetInt64(reader.GetOrdinal("IsGenericProduct")) == 1);
+            reader.GetInt64(reader.GetOrdinal("IsGenericProduct")) == 1,
+            reader.GetInt64(reader.GetOrdinal("IsIngredient")) == 1);
     }
 
     private static async Task<PosCatalogStatus> StatusAsync(
@@ -698,6 +700,12 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 alter.CommandText = $"ALTER TABLE {table} ADD COLUMN IsGenericProduct INTEGER NOT NULL DEFAULT 0;";
                 await alter.ExecuteNonQueryAsync(ct);
             }
+            if (!columns.Contains("IsIngredient"))
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN IsIngredient INTEGER NOT NULL DEFAULT 0;";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
             if (!columns.Contains("InventoryProductId"))
             {
                 await using var alter = connection.CreateCommand();
@@ -769,7 +777,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         TargetMarginPercent TEXT NULL,
         InventoryProductId TEXT NULL,
         InventoryFactor TEXT NOT NULL DEFAULT '1',
-        IsGenericProduct INTEGER NOT NULL DEFAULT 0
+        IsGenericProduct INTEGER NOT NULL DEFAULT 0,
+        IsIngredient INTEGER NOT NULL DEFAULT 0
         """;
 
     private static readonly string Schema = $"""

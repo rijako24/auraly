@@ -25,6 +25,11 @@ public static class ReturnInventoryDispositions
         [Sellable, Inspection, Damaged, NotReturned], StringComparer.Ordinal);
 }
 
+public static class SalesReturnReasonCodes
+{
+    public const string RestaurantPreparedCancellation = "RESTAURANT_PREPARED_CANCEL";
+}
+
 public static class ReturnEconomicResolutions
 {
     public const string Refund = "Refund";

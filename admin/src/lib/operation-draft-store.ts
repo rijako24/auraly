@@ -24,7 +24,7 @@ export type DurableOperationLine = {
 export type DurableInventoryOperationDraft = {
   key: string;
   businessId: string;
-  kind: "count" | "adjustment" | "transfer" | "conversion" | "damage";
+  kind: "count" | "adjustment" | "transfer" | "conversion" | "damage" | "production";
   documentId: string;
   warehouseId: string;
   destinationId: string;
@@ -33,6 +33,7 @@ export type DurableInventoryOperationDraft = {
   countDocumentId: string | null;
   conversionType: "SPLIT" | "MERGE";
   valuationBasis?: "Cost" | "SalePrice";
+  productionOccurredAt?: string;
   countCaptureStage?: "Count" | "Recount";
   lines: DurableOperationLine[];
   updatedAt: string;

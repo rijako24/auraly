@@ -33,7 +33,9 @@ CREATE TABLE [dbo].[CommercialRoleCreationReceipts] (
     [RoleType] NVARCHAR(16) NOT NULL,
     [RoleId] UNIQUEIDENTIFIER NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [RequestHash] BINARY(32) NULL,
     CONSTRAINT [PK_CommercialRoleCreationReceipts] PRIMARY KEY ([BusinessId],[OperationId]),
     CONSTRAINT [FK_CommercialRoleCreationReceipts_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [CK_CommercialRoleCreationReceipts_Type] CHECK ([RoleType] IN (N'Seller',N'Carrier'))
+    CONSTRAINT [CK_CommercialRoleCreationReceipts_Type] CHECK ([RoleType] IN (N'Seller',N'Carrier',N'Waiter')),
+    CONSTRAINT [CK_CommercialRoleCreationReceipts_WaiterHash] CHECK ([RoleType]<>N'Waiter' OR [RequestHash] IS NOT NULL)
 );

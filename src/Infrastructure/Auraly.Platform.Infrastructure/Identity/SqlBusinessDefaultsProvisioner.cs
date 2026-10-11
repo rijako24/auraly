@@ -13,6 +13,77 @@ public sealed class SqlBusinessDefaultsProvisioner(
     ApplicationDbContext db,
     IAuralyIdGenerator ids) : IBusinessDefaultsProvisioner
 {
+    public async Task ReconcileRestaurantRolePermissionsAsync(
+        Guid tenantId, CancellationToken cancellationToken)
+    {
+        var transaction = (SqlTransaction)(db.Database.CurrentTransaction
+            ?? throw new InvalidOperationException("Restaurant role permissions require the business transaction."))
+            .GetDbTransaction();
+        var connection = (SqlConnection)db.Database.GetDbConnection();
+        await using var command = new SqlCommand("""
+            DECLARE @HasRestaurant BIT = CASE WHEN EXISTS(
+                SELECT 1 FROM dbo.Businesses
+                WHERE TenantId=@TenantId AND IsActive=1
+                  AND PointOfSaleMode=N'RestaurantBar') THEN 1 ELSE 0 END;
+            IF @HasRestaurant=1
+            BEGIN
+                INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+                SELECT NEWID(),role.RoleId,permission.PermissionId,SYSUTCDATETIME()
+                FROM dbo.AppRoles role
+                CROSS JOIN dbo.Permissions permission
+                WHERE role.TenantId=@TenantId AND
+                    (role.NormalizedName IN (N'ADMINISTRATOR',N'ADMINISTRATIVE')
+                     OR role.NormalizedName IN (N'CASHIER',N'SUPERVISOR')
+                        AND permission.Resource=N'restaurant.tables.open_without_waiter')
+                  AND permission.Resource IN
+                    (N'restaurant.attend',N'restaurant.commands.read',N'restaurant.commands.manage',
+                     N'restaurant.cancellations.approve',N'restaurant.tables.open_without_waiter')
+                  AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing
+                      WHERE existing.RoleId=role.RoleId
+                        AND existing.PermissionId=permission.PermissionId);
+                EXEC dbo.RestaurantWaiterRoleEnsure @TenantId=@TenantId;
+                INSERT dbo.BusinessReasons
+                  (ReasonId,BusinessId,ReasonType,Code,Name,Direction,
+                   CounterpartAccountingCategory,DefaultCostCenterId,
+                   RequiresReference,IsSystem,IsActive,DisplayOrder,
+                   CreatedAt,UpdatedAt)
+                SELECT NEWID(),business.BusinessId,template.ReasonType,
+                       template.Code,template.Name,template.Direction,
+                       template.CounterpartAccountingCategory,NULL,
+                       template.RequiresReference,1,1,template.DisplayOrder,
+                       SYSUTCDATETIME(),SYSUTCDATETIME()
+                FROM dbo.Businesses business
+                JOIN dbo.ReasonTemplates template
+                  ON template.ProfileCode=N'AURALY_CO'
+                 AND ((template.ReasonType=N'RestaurantCancellation')
+                   OR (template.ReasonType=N'Damage' AND
+                       template.Code=N'RESTAURANT_LOSS')
+                   OR (template.ReasonType=N'SalesReturn' AND
+                       template.Code=N'RESTAURANT_PREPARED_CANCEL'))
+                 AND template.IsActive=1
+                WHERE business.TenantId=@TenantId AND business.IsActive=1
+                  AND business.PointOfSaleMode=N'RestaurantBar'
+                  AND NOT EXISTS(SELECT 1 FROM dbo.BusinessReasons existing
+                    WHERE existing.BusinessId=business.BusinessId
+                      AND existing.ReasonType=template.ReasonType
+                      AND existing.Code=template.Code);
+            END
+            ELSE
+            BEGIN
+                DELETE assignment FROM dbo.RolePermissions assignment
+                JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId
+                JOIN dbo.Permissions permission ON permission.PermissionId=assignment.PermissionId
+                WHERE role.TenantId=@TenantId AND role.NormalizedName IN
+                    (N'ADMINISTRATOR',N'ADMINISTRATIVE',N'CASHIER',N'SUPERVISOR')
+                  AND permission.Resource IN
+                    (N'restaurant.attend',N'restaurant.commands.read',N'restaurant.commands.manage',
+                     N'restaurant.cancellations.approve',N'restaurant.tables.open_without_waiter');
+            END;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task ProvisionWarehousesAsync(
         Guid tenantId,
         Guid businessId,

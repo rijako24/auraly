@@ -960,6 +960,46 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     }
 
     [Fact]
+    public async Task Irreversible_damage_consumes_ingredients_without_moving_them_to_damage_warehouse()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        await SeedAsync(first, second, Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Adjust, InventoryPermissionCodes.Damage);
+        await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId,
+            fixture.WarehouseId, DateTimeOffset.UtcNow, "INITIAL_BALANCE", null,
+            null, [new(1, first, 10m, 5m), new(2, second, 10m, 7m)]));
+        var documentId = Guid.NewGuid();
+        var request = new ConfirmInventoryDamageRequest(documentId,
+            fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "DAMAGE", null, "Platos preparados descartados",
+            [new(1, first, 3m), new(2, second, 2m)], "Irreversible");
+        var key = $"irreversible-{documentId:N}";
+        var accepted = await SendAsync(client,
+            "/api/commerce/v1/inventory-damages/confirm", request, key);
+        var replay = await SendAsync(client,
+            "/api/commerce/v1/inventory-damages/confirm", request, key);
+        Assert.False(accepted.IdempotentReplay);
+        Assert.True(replay.IdempotentReplay);
+        Assert.Equal((7m, 5m, 35m), await BalanceAsync(fixture.WarehouseId, first));
+        Assert.Equal((8m, 7m, 56m), await BalanceAsync(fixture.WarehouseId, second));
+        Assert.Equal("Irreversible", await ScalarAsync<string>(
+            "SELECT DamageDisposition FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id",
+            documentId));
+        Assert.Equal(2, await CountAsync("InventoryMovements", documentId));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'DamageWarehouseIn'",
+            documentId));
+        Assert.Equal(29m, await ScalarAsync<decimal>(
+            "SELECT -SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id",
+            documentId));
+        Assert.Equal("Posted", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'Damage'",
+            documentId));
+    }
+
+    [Fact]
     public async Task Damage_after_negative_sellable_stock_does_not_zero_the_cost_of_a_later_count()
     {
         var product = Guid.NewGuid();

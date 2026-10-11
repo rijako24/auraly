@@ -119,6 +119,9 @@ public sealed record WorkSessionInvoiceCharge(Guid DocumentId, string DocumentNu
     Guid ChargeId, string Code, string Name, string SupplierName, decimal Amount, decimal InvoicedAmount,
     decimal ExpenseAmount, decimal WithholdingAmount, IReadOnlyList<WorkSessionInvoiceChargePayment> Payments);
 
+public sealed record WorkSessionWaiterSale(
+    Guid? UserId, string UserName, decimal Quantity, decimal Amount);
+
 public sealed record WorkSessionClosureView(
     Guid WorkSessionClosureId,
     Guid WorkSessionId,
@@ -149,7 +152,8 @@ public sealed record WorkSessionClosureView(
     IReadOnlyList<WorkSessionCashMovementDetail>? CashMovements = null,
     IReadOnlyList<WorkSessionInvoiceCharge>? InvoiceCharges = null,
     IReadOnlyList<WorkSessionPortfolioPayment>? ReceivablePayments = null,
-    IReadOnlyList<WorkSessionPortfolioPayment>? PayablePayments = null);
+    IReadOnlyList<WorkSessionPortfolioPayment>? PayablePayments = null,
+    IReadOnlyList<WorkSessionWaiterSale>? WaiterSales = null);
 
 public sealed record WorkSessionClosureReceiptRequest(
     string? CompanyName = null,

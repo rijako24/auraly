@@ -7,6 +7,26 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connections)
     : ISalesWorkspaceDirectory
 {
+    public async Task<bool> IsActiveRestaurantBusinessAsync(
+        Guid tenantId,
+        Guid businessId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT CONVERT(bit,CASE WHEN EXISTS(
+                SELECT 1 FROM dbo.Businesses
+                WHERE TenantId=@TenantId AND BusinessId=@BusinessId
+                  AND IsActive=1 AND PointOfSaleMode=N'RestaurantBar'
+            ) THEN 1 ELSE 0 END);
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
     public async Task<string?> ResolveTenantNameAsync(
         Guid tenantId,
         CancellationToken cancellationToken)
@@ -25,7 +45,7 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
     {
         const string sql = """
             SELECT b.BusinessId,b.Name,w.WarehouseId,w.Code,w.Name,
-                   w.AllowNegativeStockSales,
+                   w.AllowNegativeStockSales,b.PointOfSaleMode,
                    CONVERT(bit,CASE WHEN EXISTS(
                        SELECT 1
                        FROM dbo.PosEnrollmentSessions e
@@ -50,7 +70,8 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
             rows.Add(new SalesWorkspaceOption(
                 reader.GetGuid(0), reader.GetString(1),
                 reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
-                reader.GetBoolean(5), reader.GetBoolean(6)));
+                reader.GetBoolean(5), reader.GetBoolean(7),
+                PointOfSaleMode: reader.GetString(6)));
         }
         return rows;
     }
@@ -62,7 +83,7 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
     {
         const string sql = """
             SELECT b.BusinessId,b.Name,w.WarehouseId,w.Code,w.Name,
-                   w.AllowNegativeStockSales
+                   w.AllowNegativeStockSales,b.PointOfSaleMode
             FROM dbo.Businesses b
             INNER JOIN dbo.Warehouses w
               ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
@@ -82,6 +103,6 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
         return new SalesWorkspaceContext(
             reader.GetGuid(0), reader.GetString(1),
             reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
-            reader.GetBoolean(5));
+            reader.GetBoolean(5),reader.GetString(6));
     }
 }

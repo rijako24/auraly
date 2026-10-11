@@ -10,6 +10,7 @@
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Application\Auraly.BuildingBlocks.Application.csproj" />
     <ProjectReference Include="..\..\..\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
     <ProjectReference Include="..\..\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
+    <ProjectReference Include="..\..\Authentication\Auraly.Application.Authentication\Auraly.Application.Authentication.csproj" />
     <ProjectReference Include="..\..\Catalog\Auraly.Contracts.Catalog\Auraly.Contracts.Catalog.csproj" />
     <ProjectReference Include="..\..\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
     <ProjectReference Include="..\..\DocumentProcessing\Auraly.Contracts.DocumentProcessing\Auraly.Contracts.DocumentProcessing.csproj" />

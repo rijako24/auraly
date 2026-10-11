@@ -9,6 +9,8 @@
     "rootDir": "src"
   },
   "include": [
+    "src/components/restaurant/restaurant-payment-calculation.ts",
+    "src/components/restaurant/restaurant-payment-calculation.test.ts",
     "src/components/payments/preexisting-receivables-template.ts",
     "src/components/payments/preexisting-receivables-template.test.ts",
     "src/app/(pos)/pos/pos-money-input.ts",
@@ -188,6 +190,8 @@
     "src/lib/pwa-install-visibility.test.ts",
     "src/lib/pos-approval-push-key.ts",
     "src/lib/pos-approval-push-key.test.ts",
+    "src/lib/restaurant-command-notice.ts",
+    "src/lib/restaurant-command-notice.test.ts",
     "src/lib/sales-payment-breakdown.ts",
     "src/lib/sales-payment-breakdown.test.ts"
     ,"src/lib/inventory-operation-launch.ts"

@@ -1,8 +1,13 @@
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 const root = process.cwd();
-const nextRoot = join(root, ".next");
+const nextRoot = resolve(root, process.env.AURALY_NEXT_DIST_DIR || ".next");
+const relativeDist = relative(root, nextRoot);
+if (!relativeDist || relativeDist === ".." || relativeDist.startsWith(`..\\`) ||
+    relativeDist.startsWith("../") || isAbsolute(relativeDist)) {
+  throw new Error("The Next.js output directory must stay inside the admin workspace.");
+}
 const standaloneRoot = join(nextRoot, "standalone");
 
 if (!existsSync(standaloneRoot)) {
@@ -15,7 +20,7 @@ function replaceDirectory(source, destination) {
   cpSync(source, destination, { recursive: true });
 }
 
-replaceDirectory(join(nextRoot, "static"), join(standaloneRoot, ".next", "static"));
+replaceDirectory(join(nextRoot, "static"), join(standaloneRoot, relativeDist, "static"));
 
 const publicRoot = join(root, "public");
 if (existsSync(publicRoot)) {

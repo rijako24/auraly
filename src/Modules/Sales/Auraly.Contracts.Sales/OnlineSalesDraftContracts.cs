@@ -79,7 +79,10 @@ public sealed record OnlineSalesProduct(
     bool IsWeighable,
     bool AllowsFractionalSale,
     string PriceSource,
-    decimal PromotionDiscount = 0);
+    decimal PromotionDiscount = 0,
+    Guid? ProductCategoryId = null,
+    string? CategoryName = null,
+    string? ImageUrl = null);
 
 public sealed record OnlineSalesProductPage(
     IReadOnlyList<OnlineSalesProduct> Items,

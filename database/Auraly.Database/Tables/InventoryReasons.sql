@@ -13,7 +13,7 @@ CREATE TABLE [dbo].[InventoryReasons]
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_InventoryReasons] PRIMARY KEY CLUSTERED ([InventoryReasonId]),
     CONSTRAINT [FK_InventoryReasons_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [CK_InventoryReasons_OperationType] CHECK ([OperationType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Damage')),
+    CONSTRAINT [CK_InventoryReasons_OperationType] CHECK ([OperationType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Production',N'Damage')),
     CONSTRAINT [CK_InventoryReasons_DisplayOrder] CHECK ([DisplayOrder] BETWEEN 0 AND 9999)
 );
 GO

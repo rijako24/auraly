@@ -37,15 +37,21 @@ public sealed class AzureWebPubSubSynchronizationGateway(
             ],
             cancellationToken);
 
+    public Uri CreateRestaurantCommandsClientAccessUri(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
+        CancellationToken cancellationToken = default) =>
+        CreateAccessUri(
+            userId,
+            [PosSynchronizationGroups.RestaurantCommands(tenantId, businessId)],
+            cancellationToken);
+
     public Task SendAsync(
         PosSynchronizationInvalidation invalidation,
         CancellationToken cancellationToken = default) =>
         client.SendToGroupAsync(
-            invalidation.TargetDeviceId is { } deviceId
-                ? PosSynchronizationGroups.Device(invalidation.TenantId, deviceId)
-                : PosSynchronizationGroups.Business(
-                    invalidation.TenantId,
-                    invalidation.BusinessId),
+            PosSynchronizationGroups.Target(invalidation),
             RequestContent.Create(JsonSerializer.Serialize(invalidation)),
             ContentType.ApplicationJson,
             excluded: null,

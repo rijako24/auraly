@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { inventoryApi, type InventoryProductItem } from "@/services/api/inventory";
 import { productsApi } from "@/services/api/products";
+import { productRecipesApi } from "@/services/api/product-recipes";
 import { useActiveProductOptionScroll } from "./use-active-product-option-scroll";
 
 const PRODUCT_PAGE_SIZE = 10;
@@ -21,6 +22,7 @@ export function ProductPicker({
   onSelect,
   label = "Agregar productos",
   conversionOnly = false,
+  ingredientOnly = false,
   conversionFamilyRootProductId,
   inputId = "product-picker-search",
   showAddButton = true,
@@ -33,6 +35,7 @@ export function ProductPicker({
   onSelect: (product: InventoryProductItem) => void;
   label?: string;
   conversionOnly?: boolean;
+  ingredientOnly?: boolean;
   conversionFamilyRootProductId?: string;
   inputId?: string;
   showAddButton?: boolean;
@@ -50,8 +53,16 @@ export function ProductPicker({
   }, [search]);
 
   const query = useInfiniteQuery({
-    queryKey: ["product-picker", businessId, warehouseId ?? "catalog", conversionOnly, conversionFamilyRootProductId ?? "all-families", debouncedSearch],
-    queryFn: async ({ pageParam }) => {
+    queryKey: ["product-picker", businessId, warehouseId ?? "catalog", conversionOnly, ingredientOnly, conversionFamilyRootProductId ?? "all-families", debouncedSearch],
+    queryFn: async ({ pageParam }): Promise<{ items: InventoryProductItem[]; page: number; totalPages: number; totalCount: number }> => {
+      if (ingredientOnly) {
+        const page = await productRecipesApi.ingredientOptions(debouncedSearch, pageParam, PRODUCT_PAGE_SIZE);
+        return { ...page, items: page.items.map((product) => ({
+          productId: product.productId, productCode: product.productCode,
+          reference: null, productName: product.name, unitCode: product.baseUnitCode,
+          quantityOnHand: 0, averageUnitCost: null, saleUnitPrice: null,
+        })) };
+      }
       if (warehouseId && conversionOnly) return inventoryApi.conversionProducts({ warehouseId, familyRootProductId: conversionFamilyRootProductId, search: debouncedSearch || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
       if (warehouseId) return inventoryApi.products({ warehouseId, search: debouncedSearch || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
       const page = await productsApi.list(businessId, { page: pageParam, pageSize: PRODUCT_PAGE_SIZE, search: debouncedSearch || undefined, includeInactive: false });
@@ -65,7 +76,7 @@ export function ProductPicker({
   const products = useMemo(() => allProducts.filter((product) => !excludedProductIds.has(product.productId)), [allProducts, excludedProductIds]);
   const totalCount = Math.max(0, (query.data?.pages[0]?.totalCount ?? 0) - allProducts.filter((product) => excludedProductIds.has(product.productId)).length);
 
-  useEffect(() => { setActiveIndex(null); listRef.current?.scrollTo({ top: 0 }); }, [search, warehouseId, conversionOnly, conversionFamilyRootProductId]);
+  useEffect(() => { setActiveIndex(null); listRef.current?.scrollTo({ top: 0 }); }, [search, warehouseId, conversionOnly, ingredientOnly, conversionFamilyRootProductId]);
   useEffect(() => {
     if (!open) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
@@ -107,7 +118,9 @@ export function ProductPicker({
     const messageClass = "p-4 text-sm text-muted-foreground";
     if (search.trim() !== debouncedSearch || query.isLoading) return <p className={`${messageClass} flex items-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>;
     if (query.isError) return <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>;
-    if (products.length === 0) return <p className={messageClass}>{conversionOnly
+    if (products.length === 0) return <p className={messageClass}>{ingredientOnly
+      ? "No hay ingredientes activos que coincidan. El saldo disponible puede ser cero; revisa que el producto esté marcado como ingrediente y controle inventario."
+      : conversionOnly
       ? "No hay productos habilitados para conversión que coincidan. Revisa la familia del producto principal y activa «Permitir conversión» en sus vínculos."
       : "No hay productos activos que coincidan con la búsqueda."}</p>;
     return <>
@@ -115,7 +128,7 @@ export function ProductPicker({
       {products.map((product, index) => <button key={product.productId} type="button" role="option" data-product-option-index={index} aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 border-t px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}>
         <span className="min-w-0"><strong className="block truncate">{product.productName}</strong>{conversionOnly && product.conversionFactor && <small className="block truncate text-muted-foreground">Factor {product.conversionFactor}</small>}</span>
         <small className="min-w-0 truncate text-muted-foreground">{product.productCode || "Sin código"}{product.reference ? ` · ${product.reference}` : ""}</small>
-        <span className="flex items-center justify-end gap-3 text-xs text-muted-foreground">{product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span>
+        <span className="flex items-center justify-end gap-3 text-xs text-muted-foreground">{ingredientOnly ? product.unitCode : product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span>
       </button>)}
       {query.isFetchingNextPage && <p className={`${messageClass} flex items-center justify-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Cargando 10 más…</p>}
     </>;

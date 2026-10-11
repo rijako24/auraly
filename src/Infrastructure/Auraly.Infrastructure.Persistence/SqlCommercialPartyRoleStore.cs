@@ -1,6 +1,9 @@
 using Auraly.Application.Parties;
 using Auraly.Contracts.Parties;
 using Microsoft.Data.SqlClient;
+using System.Security.Cryptography;
+using System.Text.Json;
+using Auraly.Domain.Parties;
 
 namespace Auraly.Infrastructure.Persistence;
 
@@ -16,6 +19,16 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
         CreateCarrierRequest request, string normalizedIdentification, DateTimeOffset now, CancellationToken ct) =>
         CreateAsync(actor, partyId, roleId, siteId, request.OperationId, request.BusinessId, request.Party, request.PrimarySite,
             normalizedIdentification, now, "Carrier", request.Code, null, request.TransportationMode, null, ct);
+
+    public Task<CommercialRoleAcceptance> CreateWaiterAsync(PartyActorIdentity actor, Guid partyId,
+        Guid roleId, Guid siteId, CreateWaiterRequest request, string normalizedIdentification,
+        DateTimeOffset now, CancellationToken ct) =>
+        CreateAsync(actor, partyId, roleId, siteId, request.OperationId, request.BusinessId,
+            request.Party, request.PrimarySite, normalizedIdentification, now, "Waiter",
+            string.IsNullOrWhiteSpace(request.Code) ? $"MES-{roleId.ToString("N")[^12..].ToUpperInvariant()}" :
+                PartyValidation.NormalizeCode(request.Code, "Code", 32),
+            null, string.Empty, null, ct, request.ShortName,
+            SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
 
     public async Task<CustomerPricingOptions> PricingOptionsAsync(PartyActorIdentity actor, CancellationToken ct)
     {
@@ -44,24 +57,27 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
     private async Task<CommercialRoleAcceptance> CreateAsync(
         PartyActorIdentity actor, Guid partyId, Guid roleId, Guid siteId, Guid operationId, Guid businessId,
         PartyInput party, PartySiteInput site, string normalized, DateTimeOffset now, string role,
-        string code, decimal? commission, string option1, string? option2, CancellationToken ct)
+        string code, decimal? commission, string option1, string? option2, CancellationToken ct,
+        string? shortName = null, byte[]? requestHash = null)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
         try
         {
-            var replay = await ReadReceiptAsync(connection, transaction, businessId, operationId, role, ct);
+            var replay = await ReadReceiptAsync(connection, transaction, actor.TenantId, businessId,
+                operationId, role, requestHash, ct);
             if (replay is not null)
             {
                 await transaction.CommitAsync(ct);
                 return replay;
             }
 
-            await ValidateScopeAsync(connection, transaction, actor, businessId, site, ct);
+            await ValidateScopeAsync(connection, transaction, actor, businessId, site, role, ct);
             if (role == "Seller")
                 await EnsureSellerCapacityAsync(connection, transaction, actor.TenantId, ct);
-            var resolution = await FindPartyAsync(connection, transaction, actor.TenantId, party, normalized, ct);
+            var resolution = await FindPartyAsync(connection, transaction, actor.TenantId, party,
+                normalized, ct, allowLinkedEmailResolution: role != "Waiter");
             var resolvedPartyId = resolution?.PartyId ?? partyId;
             if (resolvedPartyId == partyId)
             {
@@ -105,6 +121,17 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
                           AND assigned.BusinessId=@BusinessId);
                     """, [P("@RoleId",roleId),P("@BusinessId",businessId),P("@TenantId",actor.TenantId),P("@PartyId",resolvedPartyId),P("@Code",code.Trim().ToUpperInvariant()),
                     P("@Commission",commission),P("@Option1",option1),P("@Option2",option2),P("@Actor",actor.ActorId),P("@Now",now)], ct);
+            else if (role == "Waiter")
+                await ExecuteAsync(connection, transaction, """
+                    INSERT parties.Waiters(WaiterId,TenantId,PartyId,Code,ShortName,IsActive,CreatedBy,CreatedAt)
+                    VALUES(@RoleId,@TenantId,@PartyId,@Code,@ShortName,1,@Actor,@Now);
+                    INSERT dbo.AuditLogs(AuditLogId,UserId,TenantId,BusinessId,Action,EntityType,EntityId,NewValues,Timestamp)
+                    VALUES(NEWID(),@Actor,@TenantId,@BusinessId,N'RestaurantWaiterCreated',N'Waiter',
+                      CONVERT(nvarchar(100),@RoleId),@AuditValues,@Now);
+                    """, [P("@RoleId",roleId),P("@TenantId",actor.TenantId),P("@PartyId",resolvedPartyId),
+                    P("@Code",code),P("@ShortName",Empty(shortName)),P("@Actor",actor.ActorId),P("@Now",now),
+                    P("@BusinessId",businessId),P("@AuditValues",JsonSerializer.Serialize(new
+                    { WaiterId=roleId, PartyId=resolvedPartyId, Code=code, ShortName=Empty(shortName) }))], ct);
             else
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.Carriers(CarrierId,TenantId,PartyId,Code,TransportationMode,IsActive,CreatedAt)
@@ -114,9 +141,11 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
 
             await InsertSiteAsync(connection, transaction, actor, resolvedPartyId, siteId, site, now, ct);
             await ExecuteAsync(connection, transaction, """
-                INSERT dbo.CommercialRoleCreationReceipts(BusinessId,OperationId,RoleType,RoleId,CreatedAt)
-                VALUES(@BusinessId,@OperationId,@Role,@RoleId,@Now);
-                """, [P("@BusinessId",businessId),P("@OperationId",operationId),P("@Role",role),P("@RoleId",roleId),P("@Now",now)], ct);
+                INSERT dbo.CommercialRoleCreationReceipts(BusinessId,OperationId,RoleType,RoleId,RequestHash,CreatedAt)
+                VALUES(@BusinessId,@OperationId,@Role,@RoleId,@RequestHash,@Now);
+                """, [P("@BusinessId",businessId),P("@OperationId",operationId),P("@Role",role),P("@RoleId",roleId),
+                new SqlParameter("@RequestHash",System.Data.SqlDbType.Binary,32)
+                  { Value=(object?)requestHash??DBNull.Value },P("@Now",now)], ct);
             await transaction.CommitAsync(ct);
             return new(roleId, resolvedPartyId, role, false);
         }
@@ -145,34 +174,48 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task<CommercialRoleAcceptance?> ReadReceiptAsync(SqlConnection c, SqlTransaction t, Guid business, Guid operation, string role, CancellationToken ct)
+    private static async Task<CommercialRoleAcceptance?> ReadReceiptAsync(SqlConnection c, SqlTransaction t,
+        Guid tenant, Guid business, Guid operation, string role, byte[]? requestHash, CancellationToken ct)
     {
         await using var x=c.CreateCommand(); x.Transaction=t; x.CommandText="""
             SELECT r.RoleType,r.RoleId,
               CASE WHEN r.RoleType=N'Seller' THEN (SELECT PartyId FROM dbo.CommerceSellers WHERE SellerId=r.RoleId)
-                   ELSE (SELECT PartyId FROM dbo.Carriers WHERE CarrierId=r.RoleId) END
+                   WHEN r.RoleType=N'Waiter' THEN (SELECT PartyId FROM parties.Waiters WHERE WaiterId=r.RoleId)
+                   ELSE (SELECT PartyId FROM dbo.Carriers WHERE CarrierId=r.RoleId) END,r.RequestHash
             FROM dbo.CommercialRoleCreationReceipts r WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@Business AND OperationId=@Operation;
-            """; x.Parameters.AddRange([P("@Business",business),P("@Operation",operation)]);
+            JOIN dbo.Businesses businessValue ON businessValue.BusinessId=r.BusinessId AND businessValue.TenantId=@Tenant
+            WHERE r.BusinessId=@Business AND r.OperationId=@Operation;
+            """; x.Parameters.AddRange([P("@Business",business),P("@Operation",operation),P("@Tenant",tenant)]);
         await using var reader=await x.ExecuteReaderAsync(ct);
         if(!await reader.ReadAsync(ct)) return null;
         if(!string.Equals(reader.GetString(0),role,StringComparison.Ordinal)) throw new PartyConflictException("Operation ID was already used for another role.");
+        if(requestHash is not null && (reader.IsDBNull(3) ||
+            !CryptographicOperations.FixedTimeEquals((byte[])reader[3],requestHash)))
+            throw new PartyConflictException("Operation ID was already used with different data.");
         return new(reader.GetGuid(1),reader.GetGuid(2),role,true);
     }
 
-    private static async Task ValidateScopeAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity actor,Guid business,PartySiteInput site,CancellationToken ct)
+    private static async Task ValidateScopeAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity actor,Guid business,PartySiteInput site,string role,CancellationToken ct)
     {
         await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="""
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@Business AND TenantId=@Tenant AND IsActive=1)
               THROW 51060,'Business is outside the authenticated tenant.',1;
+            IF @Role=N'Waiter' AND NOT EXISTS(SELECT 1 FROM reference.Options
+              WHERE CatalogCode=N'party-role' AND Code=N'Waiter' AND IsActive=1)
+              THROW 51061,'The waiter role is unavailable in the reference catalog.',1;
+            IF @Role=N'Waiter' AND NOT EXISTS(SELECT 1 FROM dbo.Businesses
+              WHERE BusinessId=@Business AND TenantId=@Tenant AND IsActive=1
+                AND PointOfSaleMode=N'RestaurantBar')
+              THROW 51061,'Selecciona una sede de Restaurante y bar para crear meseros.',1;
             IF NOT EXISTS(SELECT 1 FROM dbo.Cities ci JOIN dbo.AdministrativeDivisions d ON d.AdministrativeDivisionId=ci.AdministrativeDivisionId
               WHERE ci.CityId=@City AND d.AdministrativeDivisionId=@Division AND d.CountryId=@Country AND ci.IsActive=1 AND d.IsActive=1)
               THROW 51061,'The geographic hierarchy is invalid or inactive.',1;
-            """;x.Parameters.AddRange([P("@Business",business),P("@Tenant",actor.TenantId),P("@City",site.CityId),P("@Division",site.AdministrativeDivisionId),P("@Country",site.CountryId)]);
+            """;x.Parameters.AddRange([P("@Business",business),P("@Tenant",actor.TenantId),P("@City",site.CityId),P("@Division",site.AdministrativeDivisionId),P("@Country",site.CountryId),P("@Role",role)]);
         try{await x.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51060){throw new PartyForbiddenException(ex.Message);}catch(SqlException ex) when(ex.Number==51061){throw new PartyValidationException(ex.Message);}
     }
 
-    private static async Task<PartyResolution?> FindPartyAsync(SqlConnection c,SqlTransaction t,Guid tenant,PartyInput party,string normalized,CancellationToken ct)
+    private static async Task<PartyResolution?> FindPartyAsync(SqlConnection c,SqlTransaction t,Guid tenant,PartyInput party,string normalized,CancellationToken ct,
+        bool allowLinkedEmailResolution)
     {
         await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="""
             SELECT
@@ -188,14 +231,14 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
               (SELECT TOP (1) p.PartyId
                FROM dbo.AppUsers app WITH(UPDLOCK,HOLDLOCK)
                JOIN dbo.Parties p ON p.PartyId=app.PartyId AND p.TenantId=app.TenantId
-               WHERE app.TenantId=@Tenant AND app.NormalizedEmail=@Email
+               WHERE @AllowLinkedEmailResolution=1 AND app.TenantId=@Tenant AND app.NormalizedEmail=@Email
                  AND app.PartyId IS NOT NULL AND p.IsActive=1
                  AND NULLIF(LTRIM(RTRIM(p.NormalizedIdentification)),N'') IS NULL
                ORDER BY app.CreatedAt,app.UserId);
             """;
         x.Parameters.AddRange([P("@Tenant",tenant),P("@Country",party.IdentificationCountryId),
             P("@Type",party.IdentificationTypeCode.Trim().ToUpperInvariant()),P("@Normalized",normalized),
-            P("@Email",party.Email?.Trim().ToUpperInvariant())]);
+            P("@Email",party.Email?.Trim().ToUpperInvariant()),P("@AllowLinkedEmailResolution",allowLinkedEmailResolution)]);
         await using var reader=await x.ExecuteReaderAsync(ct);await reader.ReadAsync(ct);
         var byIdentification=reader.IsDBNull(0)?(Guid?)null:reader.GetGuid(0);
         var byLinkedEmail=reader.IsDBNull(1)?(Guid?)null:reader.GetGuid(1);
@@ -223,7 +266,14 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
 
     private sealed record PartyResolution(Guid PartyId,bool CompleteIdentity);
     private static async Task<bool> RoleExistsAsync(SqlConnection c,SqlTransaction t,Guid business,Guid party,string role,CancellationToken ct)
-    {await using var x=c.CreateCommand();x.Transaction=t;x.CommandText=role=="Seller"?"SELECT COUNT(1) FROM dbo.CommerceSellers WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@Business) AND PartyId=@Party":"SELECT COUNT(1) FROM dbo.Carriers WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@Business) AND PartyId=@Party";x.Parameters.AddRange([P("@Business",business),P("@Party",party)]);return Convert.ToInt32(await x.ExecuteScalarAsync(ct))>0;}
+    {
+        var table = role switch { "Seller" => "dbo.CommerceSellers", "Carrier" => "dbo.Carriers",
+            "Waiter" => "parties.Waiters", _ => throw new ArgumentOutOfRangeException(nameof(role)) };
+        await using var x=c.CreateCommand();x.Transaction=t;
+        x.CommandText=$"SELECT COUNT(1) FROM {table} WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@Business) AND PartyId=@Party";
+        x.Parameters.AddRange([P("@Business",business),P("@Party",party)]);
+        return Convert.ToInt32(await x.ExecuteScalarAsync(ct))>0;
+    }
     private static async Task AddContactAsync(SqlConnection c,SqlTransaction t,Guid party,string type,string? value,DateTimeOffset now,CancellationToken ct)
     {if(string.IsNullOrWhiteSpace(value))return;var v=value.Trim();await ExecuteAsync(c,t,"INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt) VALUES(NEWID(),@Party,@Type,@Value,@Normalized,1,1,@Now)",[P("@Party",party),P("@Type",type),P("@Value",v),P("@Normalized",type=="Email"?v.ToUpperInvariant():string.Concat(v.Where(char.IsDigit))),P("@Now",now)],ct);}
     private static Task InsertSiteAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity actor,Guid party,Guid siteId,PartySiteInput s,DateTimeOffset now,CancellationToken ct)=>ExecuteAsync(c,t,"""

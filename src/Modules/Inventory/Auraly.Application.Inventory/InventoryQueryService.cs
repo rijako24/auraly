@@ -7,6 +7,8 @@ public interface IInventoryQueryStore
 {
     Task<InventoryProductPage> GetProductsAsync(InventoryUserIdentity user, InventoryProductQuery query, bool includeCosts, CancellationToken token);
     Task<ProductConversionProductPage> GetConversionProductsAsync(InventoryUserIdentity user, ProductConversionProductQuery query, CancellationToken token);
+    Task<ProductionProductPage> GetProductionProductsAsync(InventoryUserIdentity user, ProductionProductQuery query, CancellationToken token);
+    Task<ProductionPreview?> GetProductionPreviewAsync(InventoryUserIdentity user, Guid warehouseId, Guid productId, decimal quantity, bool includeCosts, CancellationToken token);
     Task<IReadOnlyList<InventoryWarehouseOption>> GetWarehousesAsync(InventoryUserIdentity user, CancellationToken token);
     Task<IReadOnlyList<WarehouseMasterItem>> GetWarehouseMastersAsync(InventoryUserIdentity user, CancellationToken token);
     Task<WarehouseMasterItem> SaveWarehouseAsync(InventoryUserIdentity user, Guid? warehouseId, SaveWarehouseRequest request, CancellationToken token);
@@ -38,6 +40,22 @@ public sealed class InventoryQueryService(
         if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("WarehouseId is required.");
         if (query.FamilyRootProductId == Guid.Empty) throw new InventoryValidationException("FamilyRootProductId is invalid.");
         return store.GetConversionProductsAsync(user, query with { Search = Normalize(query.Search) }, token);
+    }
+
+    public Task<ProductionProductPage> GetProductionProductsAsync(InventoryUserIdentity user, ProductionProductQuery query, CancellationToken token = default)
+    {
+        Validate(user, query.BusinessId, query.Page, query.PageSize);
+        if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("WarehouseId is required.");
+        return store.GetProductionProductsAsync(user, query with { Search = Normalize(query.Search) }, token);
+    }
+
+    public Task<ProductionPreview?> GetProductionPreviewAsync(InventoryUserIdentity user, Guid warehouseId, Guid productId, decimal quantity, CancellationToken token = default)
+    {
+        Validate(user, user.BusinessId, 1, 1);
+        if (warehouseId == Guid.Empty || productId == Guid.Empty || quantity <= 0 || quantity > 9999999999999.999999m)
+            throw new InventoryValidationException("Selecciona producto, bodega y una cantidad válida.");
+        return store.GetProductionPreviewAsync(user, warehouseId, productId, quantity,
+            user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
     }
 
     public Task<IReadOnlyList<InventoryWarehouseOption>> GetWarehousesAsync(InventoryUserIdentity user, CancellationToken token = default)

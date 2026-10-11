@@ -233,13 +233,16 @@ class ApiClient {
   async get<T>(
     path: string,
     params?: Record<string, string | number | boolean | undefined>,
-    options?: Pick<RequestInit, "cache">,
+    options?: Pick<RequestInit, "cache" | "headers">,
   ): Promise<T> {
     const url = this.buildUrl(path, params);
     const response = await fetchWithSessionRetry(url, {
       method: "GET",
       cache: options?.cache,
-      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
+      headers: {
+        ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
+        ...options?.headers,
+      },
     });
     return this.handleResponse<T>(response);
   }
@@ -275,10 +278,14 @@ class ApiClient {
     };
   }
 
-  async post<T>(path: string, body?: unknown): Promise<T> {
+  async post<T>(path: string, body?: unknown,
+    options?: Pick<RequestInit, "headers">): Promise<T> {
     const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "POST",
-      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
+      headers: {
+        ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
+        ...options?.headers,
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(response);
@@ -296,10 +303,14 @@ class ApiClient {
     return this.handleResponse<T>(response);
   }
 
-  async put<T>(path: string, body?: unknown): Promise<T> {
+  async put<T>(path: string, body?: unknown,
+    options?: Pick<RequestInit, "headers">): Promise<T> {
     const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "PUT",
-      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
+      headers: {
+        ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
+        ...options?.headers,
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(response);
@@ -323,10 +334,14 @@ class ApiClient {
     return this.handleResponse<T>(response);
   }
 
-  async delete<T = void>(path: string): Promise<T> {
+  async delete<T = void>(path: string,
+    options?: Pick<RequestInit, "headers">): Promise<T> {
     const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "DELETE",
-      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
+      headers: {
+        ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
+        ...options?.headers,
+      },
     });
     return this.handleResponse<T>(response);
   }

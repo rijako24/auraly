@@ -546,7 +546,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (product is null && !string.IsNullOrWhiteSpace(request.Name))
             product = await FindCachedProductByNameAsync(ctx.BusinessId, request.Name, ct);
 
-        return product is null || !product.HasPublishedPrice
+        return product is null || product.IsIngredient || !product.HasPublishedPrice
             ? null
             : new ProductReference(
                 product.ProductId,
@@ -568,7 +568,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
     {
         var products = await _unitOfWork.Products.SearchAsync(businessId, sku, null, 50, ct);
         return products.FirstOrDefault(p =>
-            p.IsActive &&
+            p.IsActive && !p.IsIngredient &&
             (!connectionId.HasValue || p.IntegrationConnectionId == connectionId) &&
             !string.IsNullOrWhiteSpace(p.Sku) &&
             p.Sku.Equals(sku, StringComparison.OrdinalIgnoreCase));

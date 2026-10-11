@@ -11,6 +11,8 @@ public static class PartyWorkspacePermissionCodes
     public const string CarrierCreate = "carriers.create";
     public const string EmployeeCreate = "employees.create";
     public const string UserCreate = "users.create";
+    public const string WaiterCreate = "parties.waiters.create";
+    public const string WaiterConfigure = "parties.waiters.configure";
 }
 
 public sealed record CreatePartyIdentityRequest(
@@ -44,7 +46,10 @@ public sealed record UpdatePartyRequest(
     UpdateCustomerRoleRequest? Customer = null,
     UpdateSellerRoleRequest? Seller = null,
     UpdateCarrierRoleRequest? Carrier = null,
-    UpdateSupplierRoleRequest? Supplier = null);
+    UpdateSupplierRoleRequest? Supplier = null,
+    UpdateWaiterRoleRequest? Waiter = null);
+
+public sealed record UpdateWaiterRoleRequest(string? ShortName);
 
 public sealed record UpdateSupplierRoleRequest(
     string? PurchaseEvidencePolicy,
@@ -105,7 +110,8 @@ public sealed record PartyWorkspaceItem(
     Guid? EmployeeId,
     Guid? UserId,
     string? SupplierPurchaseEvidencePolicy,
-    int? SupplierDefaultPaymentDueDays);
+    int? SupplierDefaultPaymentDueDays,
+    WaiterRoleDetail? Waiter = null);
 
 public sealed record PartyWorkspacePage(
     IReadOnlyCollection<PartyWorkspaceItem> Items,
@@ -156,6 +162,8 @@ public sealed record CustomerMapSite(
 public sealed record SupplierAcceptance(Guid SupplierId, Guid PartyId, bool IdempotentReplay);
 public sealed record CreateSellerRequest(Guid OperationId, Guid BusinessId, PartyInput Party, PartySiteInput PrimarySite, string Code, decimal? DefaultCommissionPercent, string CommissionBasis, string CommissionTrigger);
 public sealed record CreateCarrierRequest(Guid OperationId, Guid BusinessId, PartyInput Party, PartySiteInput PrimarySite, string Code, string TransportationMode);
+public sealed record CreateWaiterRequest(Guid OperationId, Guid BusinessId, PartyInput Party,
+    PartySiteInput PrimarySite, string? Code = null, string? ShortName = null);
 public sealed record CommercialRoleAcceptance(Guid RoleId, Guid PartyId, string Role, bool IdempotentReplay);
 public sealed record CustomerPricingOption(Guid Id, string Code, string Name);
 public sealed record CustomerPricingOptions(IReadOnlyCollection<CustomerPricingOption> PriceChannels);
@@ -206,6 +214,7 @@ public sealed record CarrierRoleDetail(
     bool IsActive);
 
 public sealed record EmployeeRoleDetail(Guid EmployeeId, bool IsActive);
+public sealed record WaiterRoleDetail(Guid WaiterId, string Code, string? ShortName, bool IsActive);
 
 public sealed record PartyUserRoleAssignment(
     Guid RoleId,
@@ -218,7 +227,8 @@ public sealed record UserRoleDetail(
     string Username,
     string Email,
     bool IsActive,
-    IReadOnlyList<PartyUserRoleAssignment> Roles);
+    IReadOnlyList<PartyUserRoleAssignment> Roles,
+    bool RestaurantAttentionAllowed = false);
 
 public sealed record PartyWorkspaceDetail(
     Guid PartyId,
@@ -242,7 +252,8 @@ public sealed record PartyWorkspaceDetail(
     EmployeeRoleDetail? Employee,
     UserRoleDetail? User,
     string RowVersion,
-    IReadOnlyCollection<PartyWorkspaceSiteDetail>? Sites = null);
+    IReadOnlyCollection<PartyWorkspaceSiteDetail>? Sites = null,
+    WaiterRoleDetail? Waiter = null);
 
 public sealed record PartyIdentityLookupResult(
     bool Exists,

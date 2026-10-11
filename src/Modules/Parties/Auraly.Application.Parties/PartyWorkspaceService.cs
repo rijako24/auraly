@@ -52,8 +52,8 @@ public sealed class PartyWorkspaceService(
         if (page < 1 || query.PageSize is < 1 or > 100)
             throw new PartyValidationException("Page and PageSize are outside the allowed range.");
         var role = query.Role?.Trim();
-        if (role is not null && role is not ("Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User"))
-            throw new PartyValidationException("Role must be Customer, Supplier, Seller, Carrier, Employee or User.");
+        if (role is not null && role is not ("Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User" or "Waiter"))
+            throw new PartyValidationException("Role must be Customer, Supplier, Seller, Carrier, Employee, User or Waiter.");
         return store.PageAsync(actor, page, query with { Search = query.Search?.Trim(), Role = role }, ct);
     }
 
@@ -72,8 +72,8 @@ public sealed class PartyWorkspaceService(
         if (page < 1 || query.PageSize is < 1 or > 100)
             throw new PartyValidationException("Page and PageSize are outside the allowed range.");
         var role = query.Role?.Trim();
-        if (role is not ("Any" or "Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User"))
-            throw new PartyValidationException("Role must be Any, Customer, Supplier, Seller, Carrier, Employee or User.");
+        if (role is not ("Any" or "Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User" or "Waiter"))
+            throw new PartyValidationException("Role must be Any, Customer, Supplier, Seller, Carrier, Employee, User or Waiter.");
         return store.RoleOptionsAsync(
             actor, page, query with { Role = role, Search = query.Search?.Trim() }, ct);
     }
@@ -111,11 +111,12 @@ public sealed class PartyWorkspaceService(
             PartyWorkspacePermissionCodes.SellerCreate,
             PartyWorkspacePermissionCodes.CarrierCreate,
             PartyWorkspacePermissionCodes.EmployeeCreate,
+            PartyWorkspacePermissionCodes.WaiterCreate,
             PartyWorkspacePermissionCodes.UserCreate);
         if (countryId == Guid.Empty)
             throw new PartyValidationException("Identification country is required.");
         var role = requestedRole?.Trim();
-        if (role is not ("Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User"))
+        if (role is not ("Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User" or "Waiter"))
             throw new PartyValidationException("Requested role is invalid.");
         if (string.IsNullOrWhiteSpace(identificationTypeCode))
             throw new PartyValidationException("Identification type is required.");
@@ -187,6 +188,9 @@ public sealed class PartyWorkspaceService(
         Translate(() => { PartyValidation.RequireText(request.DisplayName, "DisplayName", 200); return true; });
         if (request.PartyType == PartyTypes.Organization && string.IsNullOrWhiteSpace(request.LegalName))
             throw new PartyValidationException("Legal name is required for an organization.");
+        if (request.LegalName?.Length > 200 || request.FirstName?.Length > 100 || request.LastName?.Length > 100 ||
+            request.Email?.Length > 254 || request.Phone?.Length > 254 || request.VerificationDigit?.Length > 4)
+            throw new PartyValidationException("Party name or contact exceeds its allowed length.");
         if (request.Sites is not null)
         {
             Require(actor, PartyPermissionCodes.ManageSites);
@@ -223,6 +227,12 @@ public sealed class PartyWorkspaceService(
             Translate(() => PartyValidation.NormalizeCode(request.Carrier.Code, "CarrierCode", 32));
             if (request.Carrier.TransportationMode is not "Road" and not "Air" and not "Maritime" and not "Other")
                 throw new PartyValidationException("Transportation mode is invalid.");
+        }
+        if (request.Waiter is not null)
+        {
+            Require(actor, PartyWorkspacePermissionCodes.WaiterConfigure);
+            if (request.Waiter.ShortName?.Trim().Length > 80)
+                throw new PartyValidationException("ShortName cannot exceed 80 characters.");
         }
         var updated = await store.UpdateAsync(actor, partyId, request, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
         await synchronization.DispatchTenantPendingAsync(actor.TenantId, CancellationToken.None);
@@ -274,6 +284,8 @@ public sealed class PartyWorkspaceService(
 
     private static byte[] RowVersion(string value)
     {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new PartyValidationException("RowVersion is required.");
         try
         {
             var bytes = Convert.FromBase64String(value);

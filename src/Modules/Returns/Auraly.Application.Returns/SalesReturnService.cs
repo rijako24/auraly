@@ -86,9 +86,16 @@ public sealed class SalesReturnService(
         {
             if (line.OriginalLineNumber <= 0 || line.Quantity <= 0)
                 throw new SalesReturnValidationException("Return line and quantity must be positive.");
-            if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable)
-                throw new SalesReturnValidationException("Every sales return must re-enter sellable inventory.");
+            if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable &&
+                !(request.ReasonCode == SalesReturnReasonCodes.RestaurantPreparedCancellation &&
+                  line.InventoryDisposition == ReturnInventoryDispositions.NotReturned))
+                throw new SalesReturnValidationException(
+                    "Solo una cancelación de plato preparado admite devolución sin reingreso de inventario.");
         }
+        if (request.ReasonCode == SalesReturnReasonCodes.RestaurantPreparedCancellation &&
+            request.Lines.Any(line => line.InventoryDisposition != ReturnInventoryDispositions.NotReturned))
+            throw new SalesReturnValidationException(
+                "La cancelación de plato preparado no puede reingresar productos al inventario.");
 
         var normalized = request with
         {

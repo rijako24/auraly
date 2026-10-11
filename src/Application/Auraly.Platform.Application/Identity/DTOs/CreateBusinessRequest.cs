@@ -9,4 +9,7 @@ public record CreateBusinessRequest(
     string? Website,
     string? TimeZone = null,
     bool SharesProductPrices = false,
-    Guid PriceSourceBusinessId = default);
+    Guid PriceSourceBusinessId = default,
+    string? PointOfSaleMode = null,
+    bool RestaurantRequireWaiterCredential = true,
+    bool RestaurantRestrictTableToWaiter = false);

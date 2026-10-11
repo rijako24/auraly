@@ -59,7 +59,11 @@ public sealed record PosSaleLineContract(
     decimal DocumentUnitCost,
     decimal PromotionDiscountAmount = 0m,
     bool IsGenericProductSnapshot = false,
-    string ProductCodeSnapshot = "");
+    string ProductCodeSnapshot = "",
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Guid? AddedByUserId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    DateTimeOffset? AddedAt = null);
 
 public sealed record PosSalePaymentContract(
     int PaymentNumber,
@@ -306,7 +310,9 @@ public sealed record PosSaleUploadRequest(
     PosSaleCreditContract? Credit = null,
     Guid? CustomerPartySiteId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Guid? TableId = null);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

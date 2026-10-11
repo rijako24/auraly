@@ -31,7 +31,10 @@ public sealed record OnlineSalesOrderCheckoutLine(
     decimal DocumentUnitCost,
     string CurrencyCode,
     string PriceSource,
-    bool IsGenericProductSnapshot = false);
+    bool IsGenericProductSnapshot = false,
+    Guid? AddedByUserId = null,
+    DateTimeOffset? AddedAt = null,
+    Guid? RecipeVersionId = null);
 
 public sealed record OnlineSalesOrderCheckoutSource(
     Guid OperationId,
@@ -43,7 +46,17 @@ public sealed record OnlineSalesOrderCheckoutSource(
     Guid? CustomerPartySiteId,
     byte[] SnapshotVersion,
     IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines,
-    IReadOnlyList<AppliedInvoiceCharge>? Charges = null);
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
+    Guid? TableId = null);
+
+public sealed record OnlineSalesRestaurantCheckoutSource(
+    Guid AccountId,
+    Guid BusinessId,
+    Guid TableId,
+    Guid WarehouseId,
+    Guid WorkSessionId,
+    long Version,
+    IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines);
 
 public static class OnlineSalesOrderCheckoutLineMapper
 {
@@ -150,6 +163,47 @@ public interface IOnlineSalesCheckoutStore
         PreparedOnlineSaleSettlement settlement,
         CancellationToken cancellationToken);
 
+    Task<OnlineSalesRestaurantCheckoutSource> ReadRestaurantSourceAsync(
+        OnlineSalesUserIdentity user,
+        Guid accountId,
+        Guid workSessionId,
+        CancellationToken cancellationToken);
+
+    Task<PreparedOnlineOrderCheckout?> FindRestaurantReplayAsync(
+        OnlineSalesUserIdentity user,
+        Guid accountId,
+        Guid workSessionId,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    Task<OnlineSalesFiscalKeyContext> ResolveRestaurantFiscalKeyContextAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesRestaurantCheckoutSource source,
+        CancellationToken cancellationToken);
+
+    Task<PreparedOnlineOrderCheckout> PrepareRestaurantAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesRestaurantCheckoutSource source,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        FiscalVerificationMaterial? fiscalMaterial,
+        PreparedOnlineSaleSettlement settlement,
+        CancellationToken cancellationToken);
+
+    Task AbandonUnissuedRestaurantAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesRestaurantCheckoutSource source,
+        Guid documentId,
+        CancellationToken cancellationToken);
+
+    Task MarkRestaurantResultAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesRestaurantCheckoutSource source,
+        Guid documentId,
+        string status,
+        CancellationToken cancellationToken);
+
     Task AbandonUnissuedOrderAsync(
         OnlineSalesUserIdentity user,
         OnlineSalesOrderCheckoutSource source,
@@ -173,6 +227,7 @@ public interface IOnlineSalesCheckoutStore
 
 public sealed class OnlineSalesCheckoutService(
     IOnlineSalesCheckoutStore checkouts,
+    IRestaurantCollectionStore restaurantCollections,
     IFiscalTechnicalKeyProvider technicalKeys,
     ReceivePosSaleService receiver,
     IOnlineSaleWithholdingCalculator withholdings,
@@ -344,6 +399,162 @@ public sealed class OnlineSalesCheckoutService(
         return new(
             SalesInvoicePresentationMapper.From(prepared.Request, reception.Status),
             prepared.IsReplay || reception.IsDuplicate);
+    }
+
+    public async Task<CompleteOnlineOrderSaleResponse> CompleteRestaurantAsync(
+        OnlineSalesUserIdentity user,
+        Guid accountId,
+        Guid workSessionId,
+        CompleteOnlineSalesDraftRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        Validate(accountId, request, idempotencyKey);
+        if (workSessionId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "Abre tu sesión de caja antes de facturar la mesa.");
+        var prepared = await checkouts.FindRestaurantReplayAsync(
+            user, accountId, workSessionId, request,
+            idempotencyKey.Trim(), cancellationToken);
+        OnlineSalesRestaurantCheckoutSource source;
+        if (prepared is null)
+        {
+            source = await checkouts.ReadRestaurantSourceAsync(
+                user, accountId, workSessionId, cancellationToken);
+            if (source.Version != request.ExpectedVersion ||
+                source.Lines.Count is < 1 or > 500 ||
+                source.Lines.Any(line => line.AddedByUserId is null ||
+                    line.AddedAt is null || line.ProductId == Guid.Empty ||
+                    line.Quantity <= 0 || line.PublicLineTotal < 0))
+                throw new OnlineSalesDraftConcurrencyException(
+                    "La cuenta cambió o no tiene productos válidos para facturar.");
+            var settlement = await PrepareRestaurantSettlementAsync(
+                user, source, cancellationToken);
+            var collections = await restaurantCollections.GetAsync(
+                new RestaurantAccountActor(user.UserId, user.TenantId,
+                    source.BusinessId, user.Permissions), accountId,
+                cancellationToken);
+            if (collections.Collections.Count > 0)
+            {
+                if (collections.Collections.Any(item =>
+                        item.WorkSessionId != workSessionId) ||
+                    collections.CoveredQuantities.Count != source.Lines.Count ||
+                    source.Lines.Any(line => collections.CoveredQuantities
+                        .SingleOrDefault(item => item.AdditionId == line.LineId)
+                        ?.Quantity != line.Quantity) ||
+                    collections.Remaining != 0 ||
+                    collections.Collected != settlement.Withholding.NetAmount)
+                    throw new OnlineSalesDraftValidationException(
+                        "La mesa aún tiene un saldo o cantidades sin cubrir. Revisa sus cobros.");
+                var storedPayments = collections.Collections
+                    .SelectMany(item => item.Payments).ToList();
+                var cash = storedPayments.Where(item => item.MethodCode == "Cash")
+                    .ToArray();
+                if (cash.Length > 1)
+                {
+                    storedPayments.RemoveAll(item => item.MethodCode == "Cash");
+                    storedPayments.Insert(0, new OnlineSalesPayment("Cash",
+                        cash.Sum(item => item.Amount), null,
+                        TenderedAmount: cash.Sum(item =>
+                            item.TenderedAmount ?? item.Amount)));
+                }
+                if (storedPayments.Count > 10 ||
+                    !string.Equals(System.Text.Json.JsonSerializer.Serialize(
+                        request.Payments),
+                        System.Text.Json.JsonSerializer.Serialize(storedPayments),
+                        StringComparison.Ordinal))
+                    throw new OnlineSalesDraftValidationException(
+                        "Los medios de pago cambiaron. Actualiza el cobro de la mesa.");
+            }
+            if (settlement.Context.HasBelowCostLine &&
+                !user.Permissions.Contains(CommercePermissionCodes.SalesBelowCost))
+                throw new OnlineSalesDraftForbiddenException(
+                    $"Permission '{CommercePermissionCodes.SalesBelowCost}' is required.");
+            FiscalVerificationMaterial? material = null;
+            if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
+            {
+                var keyContext = await checkouts.ResolveRestaurantFiscalKeyContextAsync(
+                    user, source, cancellationToken);
+                material = await ResolveFiscalMaterialAsync(
+                    keyContext.Reference, cancellationToken)
+                    ?? throw new OnlineSalesDraftValidationException(
+                        "La clave técnica de la resolución fiscal activa no está disponible.");
+            }
+            prepared = await checkouts.PrepareRestaurantAsync(
+                user, source, request, idempotencyKey.Trim(), material,
+                settlement, cancellationToken);
+        }
+        else
+        {
+            source = new OnlineSalesRestaurantCheckoutSource(
+                accountId, prepared.Request.BusinessId,
+                prepared.Request.TableId ?? throw new InvalidDataException(
+                    "El recibo de mesa perdió su origen."),
+                prepared.Request.WarehouseId, workSessionId,
+                request.ExpectedVersion, []);
+        }
+        PosSaleUploadResponse reception;
+        try
+        {
+            reception = await receiver.ReceivePreparedOnlineAsync(
+                user, $"online:{prepared.Request.DocumentId:N}",
+                prepared.Request, prepared.IsReplay, cancellationToken);
+        }
+        catch
+        {
+            await checkouts.AbandonUnissuedRestaurantAsync(
+                user, source, prepared.Request.DocumentId,
+                CancellationToken.None);
+            throw;
+        }
+        var status = reception.Status == PosSaleRemoteStatuses.FiscalIntegrityConflict
+            ? "FiscalConflict" : "Completed";
+        await checkouts.MarkRestaurantResultAsync(
+            user, source, prepared.Request.DocumentId, status,
+            cancellationToken);
+        if (status == "FiscalConflict")
+            throw new OnlineSalesDraftValidationException(
+                "La factura no superó la validación fiscal interna y no fue enviada a la DIAN. " +
+                "Consulta el documento fiscal antes de volver a facturar la mesa.");
+        return new(
+            SalesInvoicePresentationMapper.From(prepared.Request, reception.Status),
+            prepared.IsReplay || reception.IsDuplicate);
+    }
+
+    public async Task<WithholdingCalculationSnapshot> PreviewRestaurantSettlementAsync(
+        OnlineSalesUserIdentity user, Guid accountId, Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        if (accountId == Guid.Empty || workSessionId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "La cuenta y la sesión de caja son obligatorias.");
+        var source = await checkouts.ReadRestaurantSourceAsync(
+            user, accountId, workSessionId, cancellationToken);
+        if (source.Lines.Count == 0)
+            throw new OnlineSalesDraftValidationException(
+                "La cuenta no tiene productos para facturar.");
+        return (await PrepareRestaurantSettlementAsync(
+            user, source, cancellationToken)).Withholding;
+    }
+
+    private async Task<PreparedOnlineSaleSettlement> PrepareRestaurantSettlementAsync(
+        OnlineSalesUserIdentity user,
+        OnlineSalesRestaurantCheckoutSource source,
+        CancellationToken cancellationToken)
+    {
+        var lines = OnlineSalesOrderCheckoutLineMapper.Normalize(source.Lines);
+        var context = new OnlineSaleSettlementContext(
+            source.BusinessId, null,
+            lines.Sum(line => line.Net),
+            lines.Sum(line => line.Tax),
+            time.GetUtcNow(),
+            lines.Any(line => SaleBelowCostPolicy.IsBelowCost(
+                line.Quantity, line.Net, line.DocumentUnitCost)));
+        var withholding = await withholdings.CalculateAsync(
+            user.TenantId, context, cancellationToken);
+        return new(context, withholding);
     }
 
     private async Task<CompleteOnlineSalesDraftResponse> CompletePreparedAsync(

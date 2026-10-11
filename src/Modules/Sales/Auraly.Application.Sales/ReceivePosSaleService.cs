@@ -126,6 +126,9 @@ public sealed class ReceivePosSaleService(
                 StringComparison.Ordinal))
             throw new PosSaleInvalidException(
                 "The POS upload endpoint only accepts PosEdge documents.");
+        if (HasRestaurantMetadata(request))
+            throw new PosSaleInvalidException(
+                "Los datos de mesa solo pueden proceder de una cuenta preparada en el servidor.");
         DemandDeviceContext(device, request);
         if (request.CustomerId is Guid sourceCustomerId)
         {
@@ -152,6 +155,9 @@ public sealed class ReceivePosSaleService(
         CancellationToken cancellationToken = default)
     {
         ValidateOnlineRequest(user, idempotencyKey, request);
+        if (HasRestaurantMetadata(request))
+            throw new PosSaleInvalidException(
+                "Los datos de mesa solo pueden proceder de una cuenta preparada en el servidor.");
         return await ReceiveCoreAsync(
             idempotencyKey, request, validateDeviceContext: false,
             lookupExisting: true, cancellationToken);
@@ -274,6 +280,7 @@ public sealed class ReceivePosSaleService(
         CancellationToken cancellationToken)
     {
         ValidateDocumentNumber(request);
+        ValidateRestaurantMetadata(request);
         ValidateSettlement(request);
         var snapshotJson = PosSaleContractSerializer.Serialize(request);
         var payloadHash = PosSaleContractSerializer.Hash(request);
@@ -360,6 +367,32 @@ public sealed class ReceivePosSaleService(
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 128)
             throw new PosSaleInvalidException(
                 "A valid Idempotency-Key header is required.");
+    }
+
+    private static bool HasRestaurantMetadata(PosSaleUploadRequest request) =>
+        request.TableId is not null || request.Lines.Any(line =>
+            line.AddedByUserId is not null || line.AddedAt is not null);
+
+    private static void ValidateRestaurantMetadata(PosSaleUploadRequest request)
+    {
+        if (request.TableId is null)
+        {
+            if (request.Lines.Any(line => line.AddedByUserId is not null ||
+                                          line.AddedAt is not null))
+                throw new PosSaleInvalidException(
+                    "La autoría de mesa requiere una mesa de origen.");
+            return;
+        }
+        if (request.TableId == Guid.Empty ||
+            request.SourceMode != SaleSourceModes.Online ||
+            request.Lines.Count == 0 ||
+            request.Lines.Any(line => !line.AddedByUserId.HasValue ||
+                                      line.AddedByUserId == Guid.Empty ||
+                                      !line.AddedAt.HasValue ||
+                                      line.AddedAt.Value == default ||
+                                      line.AddedAt.Value > request.CommercialSnapshot.IssuedAt))
+            throw new PosSaleInvalidException(
+                "La mesa o la autoría de sus productos no es válida.");
     }
 
     private static void DemandDeviceContext(

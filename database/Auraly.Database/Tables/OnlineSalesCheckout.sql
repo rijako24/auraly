@@ -39,6 +39,9 @@ CREATE TABLE [dbo].[OnlineSalesCheckoutReceipts]
     [Status] NVARCHAR(24) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [CompletedAt] DATETIMEOFFSET(7) NULL,
+    [RestaurantAccountId] UNIQUEIDENTIFIER NULL,
+    [CheckoutUserId] UNIQUEIDENTIFIER NULL,
+    [WorkSessionId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_OnlineSalesCheckoutReceipts]
         PRIMARY KEY CLUSTERED ([OnlineSalesCheckoutReceiptId]),
     CONSTRAINT [FK_OnlineSalesCheckoutReceipts_Businesses]
@@ -49,6 +52,14 @@ CREATE TABLE [dbo].[OnlineSalesCheckoutReceipts]
         FOREIGN KEY ([NextSalesDraftId]) REFERENCES [dbo].[SalesDrafts] ([SalesDraftId]),
     CONSTRAINT [FK_OnlineSalesCheckoutReceipts_Orders]
         FOREIGN KEY ([SourceOrderId]) REFERENCES [dbo].[Orders] ([OrderId]),
+    CONSTRAINT [FK_OnlineSalesCheckoutReceipts_RestaurantAccount]
+        FOREIGN KEY ([BusinessId],[RestaurantAccountId])
+        REFERENCES [sales].[RestaurantAccounts] ([BusinessId],[AccountId]),
+    CONSTRAINT [FK_OnlineSalesCheckoutReceipts_CheckoutUser]
+        FOREIGN KEY ([CheckoutUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [FK_OnlineSalesCheckoutReceipts_WorkSession]
+        FOREIGN KEY ([WorkSessionId],[BusinessId])
+        REFERENCES [dbo].[WorkSessions] ([WorkSessionId],[BusinessId]),
     CONSTRAINT [FK_OnlineSalesCheckoutReceipts_OrderBatch]
         FOREIGN KEY ([OperationId]) REFERENCES [dbo].[OrderInvoiceBatchReceipts] ([OperationId]),
     CONSTRAINT [UQ_OnlineSalesCheckoutReceipts_Business_Key]
@@ -58,9 +69,17 @@ CREATE TABLE [dbo].[OnlineSalesCheckoutReceipts]
         CHECK ([Status] IN (N'Prepared', N'Completed', N'FiscalConflict')),
     CONSTRAINT [CK_OnlineSalesCheckoutReceipts_Source]
         CHECK (([SalesDraftId] IS NOT NULL AND [NextSalesDraftId] IS NOT NULL
-                AND [SourceOrderId] IS NULL AND [OperationId] IS NULL)
+                AND [SourceOrderId] IS NULL AND [RestaurantAccountId] IS NULL
+                AND [OperationId] IS NULL AND [CheckoutUserId] IS NULL
+                AND [WorkSessionId] IS NULL)
             OR ([SalesDraftId] IS NULL AND [NextSalesDraftId] IS NULL
-                AND [SourceOrderId] IS NOT NULL AND [OperationId] IS NOT NULL))
+                AND [SourceOrderId] IS NOT NULL AND [RestaurantAccountId] IS NULL
+                AND [OperationId] IS NOT NULL AND [CheckoutUserId] IS NULL
+                AND [WorkSessionId] IS NULL)
+            OR ([SalesDraftId] IS NULL AND [NextSalesDraftId] IS NULL
+                AND [SourceOrderId] IS NULL AND [RestaurantAccountId] IS NOT NULL
+                AND [OperationId] IS NULL AND [CheckoutUserId] IS NOT NULL
+                AND [WorkSessionId] IS NOT NULL))
 );
 
 GO
@@ -73,6 +92,11 @@ GO
 CREATE UNIQUE INDEX [UX_OnlineSalesCheckoutReceipts_Order]
     ON [dbo].[OnlineSalesCheckoutReceipts] ([SourceOrderId])
     WHERE [SourceOrderId] IS NOT NULL;
+GO
+
+CREATE UNIQUE INDEX [UX_OnlineSalesCheckoutReceipts_RestaurantAccount]
+    ON [dbo].[OnlineSalesCheckoutReceipts] ([RestaurantAccountId])
+    WHERE [RestaurantAccountId] IS NOT NULL;
 GO
 
 CREATE INDEX [IX_OnlineSalesCheckoutReceipts_Business_Status]

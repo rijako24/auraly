@@ -12,6 +12,8 @@ public static class PosSynchronizationStreams
     public const string Authentication = "Authentication";
     public const string Configuration = "Configuration";
     public const string DeviceEnrollment = "DeviceEnrollment";
+    public const string RestaurantCommands = "RestaurantCommands";
+    public const string RestaurantCommandPrint = "RestaurantCommandPrint";
 }
 
 public static class PosSynchronizationGroups
@@ -24,6 +26,16 @@ public static class PosSynchronizationGroups
 
     public static string User(Guid tenantId, Guid userId) =>
         $"tenant:{tenantId:D}:user:{userId:D}";
+
+    public static string RestaurantCommands(Guid tenantId, Guid businessId) =>
+        $"tenant:{tenantId:D}:business:{businessId:D}:restaurant-commands";
+
+    public static string Target(PosSynchronizationInvalidation notice) =>
+        notice.TargetDeviceId is { } deviceId
+            ? Device(notice.TenantId, deviceId)
+            : notice.Stream == PosSynchronizationStreams.RestaurantCommands
+                ? RestaurantCommands(notice.TenantId, notice.BusinessId)
+                : Business(notice.TenantId, notice.BusinessId);
 }
 
 public sealed record PosSynchronizationInvalidation(
@@ -44,6 +56,12 @@ public interface IPosSynchronizationPushGateway
         CancellationToken cancellationToken = default);
 
     Uri CreateUserClientAccessUri(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
+    Uri CreateRestaurantCommandsClientAccessUri(
         Guid tenantId,
         Guid businessId,
         Guid userId,

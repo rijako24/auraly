@@ -219,6 +219,12 @@ public sealed class CatalogService(
 
     private static void Validate(SaveProductRequest request)
     {
+        if (request.RecipeIngredients is not null &&
+            (request.IsIngredient == true || request.IsGenericProduct ||
+             request.RecipeIngredients.Any(line => line.IngredientProductId == Guid.Empty || line.QuantityPerUnit <= 0) ||
+             request.RecipeIngredients.GroupBy(line => line.IngredientProductId).Any(group => group.Count() > 1) ||
+             request.RecipeExpectedVersion is null or < 0))
+            throw new CatalogValidationException("La receta contiene ingredientes inválidos o una versión incorrecta.");
         if (string.IsNullOrWhiteSpace(request.Name) ||
             string.IsNullOrWhiteSpace(request.BaseUnitCode) || request.TaxProfileId == Guid.Empty ||
             (!request.IsGenericProduct && (!request.PurchaseTaxProfileId.HasValue || request.PurchaseTaxProfileId.Value == Guid.Empty)))

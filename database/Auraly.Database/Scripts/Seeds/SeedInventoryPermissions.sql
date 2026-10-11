@@ -13,6 +13,7 @@ INSERT @InventoryPermissions VALUES
 (N'Receive',N'inventory.transfers.receive',N'Recuperar y confirmar la entrada de traslados'),
 (N'Resolve',N'inventory.transfers.resolve-difference',N'Resolver diferencias definitivas de traslados'),
 (N'Confirm',N'inventory.conversions.confirm',N'Confirmar conversiones de productos'),
+(N'Confirm',N'inventory.production.confirm',N'Confirmar producción de productos con receta'),
 (N'Confirm',N'inventory.damages.confirm',N'Registrar averías de inventario');
 INSERT dbo.Permissions(PermissionId,[Module],[Action],[Resource],[Description],CreatedAt)
 SELECT NEWID(),N'Inventory',p.Action,p.Resource,p.Description,SYSUTCDATETIME()
@@ -23,6 +24,12 @@ FROM dbo.AppRoles r JOIN dbo.Permissions p ON p.Resource IN
 (N'inventory.read',N'inventory.costs.read',N'inventory.warehouses.manage',N'inventory.reasons.manage',N'inventory.physical-counts.manage',N'inventory.physical-counts.capture',N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',N'inventory.conversions.confirm',N'inventory.damages.confirm')
 WHERE r.IsActive=1 AND (r.NormalizedName=N'ADMINISTRATOR' OR EXISTS (SELECT 1 FROM dbo.RolePermissions existingRp JOIN dbo.Permissions existingPermission ON existingPermission.PermissionId=existingRp.PermissionId WHERE existingRp.RoleId=r.RoleId AND existingPermission.Resource=N'inventory.read'))
 AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions rp WHERE rp.RoleId=r.RoleId AND rp.PermissionId=p.PermissionId);
+
+INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+SELECT NEWID(),r.RoleId,p.PermissionId,SYSUTCDATETIME()
+FROM dbo.AppRoles r JOIN dbo.Permissions p ON p.Resource=N'inventory.production.confirm'
+WHERE r.IsActive=1 AND r.NormalizedName=N'ADMINISTRATOR'
+  AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions rp WHERE rp.RoleId=r.RoleId AND rp.PermissionId=p.PermissionId);
 
 DELETE rp FROM dbo.RolePermissions rp INNER JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId WHERE p.Resource=N'inventory.transfers.confirm';
 DELETE dbo.Permissions WHERE Resource=N'inventory.transfers.confirm';

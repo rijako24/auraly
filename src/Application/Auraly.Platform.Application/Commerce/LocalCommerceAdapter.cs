@@ -29,6 +29,7 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter, IAuthoritativeComme
             ctx.BusinessId, products.Select(product => product.ProductId).ToArray(), ct);
         var filtered = products
             .Concat(family)
+            .Where(product => !product.IsIngredient)
             .DistinctBy(product => product.ProductId)
             .Select(Map)
             .Where(product => ProductMatches(product, request))
@@ -68,7 +69,7 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter, IAuthoritativeComme
             product = matches.FirstOrDefault(p => string.Equals(p.Name, request.Name, StringComparison.OrdinalIgnoreCase));
         }
 
-        return product is null || !product.HasPublishedPrice ? null : Map(product);
+        return product is null || product.IsIngredient || !product.HasPublishedPrice ? null : Map(product);
     }
 
     public Task<CreateExternalOrderResult> CreateOrderAsync(Order order, IReadOnlyList<OrderItem> items, CommerceAdapterContext ctx, CancellationToken ct = default)

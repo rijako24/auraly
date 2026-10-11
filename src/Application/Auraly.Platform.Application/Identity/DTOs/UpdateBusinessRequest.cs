@@ -8,4 +8,7 @@ public record UpdateBusinessRequest(
     string? Email,
     string? Website,
     string? TimeZone,
-    bool? SharesProductPrices = null);
+    bool? SharesProductPrices = null,
+    string? PointOfSaleMode = null,
+    bool? RestaurantRequireWaiterCredential = null,
+    bool? RestaurantRestrictTableToWaiter = null);

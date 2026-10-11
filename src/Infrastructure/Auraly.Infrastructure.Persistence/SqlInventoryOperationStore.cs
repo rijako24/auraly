@@ -103,7 +103,7 @@ public sealed class SqlInventoryOperationStore(
             var lines = draft.Lines.Select(line => line with { Quantity = counted[line.ProductId].CountedQuantity }).ToArray();
             var acceptance = await AcceptDraftAsync(connection, transaction, user, documentId, InventoryDocumentTypes.StockCount,
                 draft.WarehouseId, null, draft.OccurredAt, draft.ReasonCode, null, null, draft.BaseSequence, draft.Notes,
-                idempotencyKey, requestHash, lines, null, cancellationToken);
+                idempotencyKey, requestHash, lines, null, null, cancellationToken);
             foreach (var line in lines)
             {
                 const string update = "UPDATE dbo.InventoryOperationLines SET Quantity=@Quantity WHERE InventoryOperationId=@Id AND ProductId=@ProductId;";
@@ -395,7 +395,7 @@ public sealed class SqlInventoryOperationStore(
         var acceptance = await AcceptDraftAsync(connection, transaction, user, request.DocumentId,
             InventoryDocumentTypes.Transfer, request.SourceWarehouseId, request.DestinationWarehouseId,
             request.OccurredAt, request.ReasonCode, null, null, null, request.Notes,
-            idempotencyKey, requestHash, lines, null, cancellationToken);
+            idempotencyKey, requestHash, lines, null, null, cancellationToken);
         await ProcessAcceptedInsideTransactionAsync(connection, transaction, user, acceptance, cancellationToken);
         return acceptance with { Status = "Processed" };
     }
@@ -403,25 +403,109 @@ public sealed class SqlInventoryOperationStore(
     public Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken) =>
         AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Damage,
             request.WarehouseId, null, request.OccurredAt, request.ReasonCode, null, request.CostCenterId, null, request.Notes,
-            request.Lines.Select(line => new LineInput(line.LineNumber, "DAMAGE", line.ProductId, line.Quantity, null, null, null)).ToArray(), request, cancellationToken);
+            request.Lines.Select(line => new LineInput(line.LineNumber, "DAMAGE", line.ProductId, line.Quantity, null, null, null)).ToArray(), request, cancellationToken,
+            damageDisposition: request.Disposition);
+
+    public Task<InventoryOperationAcceptance> ConfirmDamageAtomicallyAsync(
+        InventoryUserIdentity user, string idempotencyKey,
+        ConfirmInventoryDamageRequest request,
+        SqlConnection connection, SqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        if (request.BusinessId != user.BusinessId ||
+            !user.Permissions.Contains(InventoryPermissionCodes.Damage) ||
+            request.Disposition != "Irreversible" ||
+            request.Lines.Count == 0 ||
+            request.Lines.Any(line => line.Quantity <= 0 ||
+                line.ProductId == Guid.Empty))
+            throw new InventoryValidationException(
+                "La pérdida irreversible no es válida.");
+        return AcceptNewAttemptAsync(user, idempotencyKey, request.DocumentId,
+            InventoryDocumentTypes.Damage, request.WarehouseId, null,
+            request.OccurredAt, request.ReasonCode, null, request.CostCenterId,
+            null, request.Notes,
+            request.Lines.Select(line => new LineInput(line.LineNumber,
+                "DAMAGE", line.ProductId, line.Quantity, null, null, null)).ToArray(),
+            Hash(request), null, request.Disposition, cancellationToken,
+            connection, transaction, processNow: true);
+    }
 
     public Task<InventoryOperationAcceptance> ConfirmConversionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductConversionRequest request, CancellationToken cancellationToken) =>
         AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Conversion,
             request.WarehouseId, null, request.OccurredAt, request.ReasonCode, request.ConversionType, request.CostCenterId, null, request.Notes,
             request.Lines.Select(line => new LineInput(line.LineNumber, line.Direction, line.ProductId, line.Quantity, null, null, line.AllocationWeight)).ToArray(), request, cancellationToken);
 
+    public Task<InventoryOperationAcceptance> ConfirmProductionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductionRequest request, CancellationToken cancellationToken) =>
+        AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Production,
+            request.WarehouseId, null, request.OccurredAt, "RECIPE_PRODUCTION", null, null, null, request.Notes,
+            [], request, cancellationToken, new ProductionSpec(request.ProductId, request.ExpectedRecipeVersion, request.Quantity));
+
+    private static async Task<(Guid VersionId, IReadOnlyList<LineInput> Lines)> LoadProductionRecipeAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId,
+        ProductionSpec production, CancellationToken ct)
+    {
+        const string sql = """
+            DECLARE @RecipeVersionId uniqueidentifier, @Version int, @Enabled bit;
+            SELECT TOP(1) @RecipeVersionId=v.ProductRecipeVersionId,@Version=v.[Version],@Enabled=v.IsEnabled
+            FROM dbo.ProductRecipeVersions v WITH(UPDLOCK,HOLDLOCK)
+            JOIN dbo.Products finished WITH(UPDLOCK,HOLDLOCK)
+              ON finished.TenantId=v.TenantId AND finished.ProductId=v.ProductId
+            WHERE v.TenantId=@TenantId AND v.ProductId=@ProductId
+              AND finished.IsActive=1 AND finished.IsIngredient=0 AND finished.ManageStock=1
+              AND NOT EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId
+                  AND link.ChildProductId=finished.ProductId AND link.IsActive=1 AND link.SharesInventory=1)
+            ORDER BY v.[Version] DESC;
+            SELECT @RecipeVersionId,@Version,@Enabled;
+            SELECT i.IngredientProductId,i.QuantityPerUnit,p.IsActive,p.IsIngredient,p.ManageStock,
+                   CAST(CASE WHEN EXISTS (SELECT 1 FROM dbo.ProductLinks link
+                       WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId
+                         AND link.IsActive=1 AND link.SharesInventory=1) THEN 1 ELSE 0 END AS bit)
+            FROM dbo.ProductRecipeIngredients i WITH(UPDLOCK,HOLDLOCK)
+            JOIN dbo.Products p WITH(UPDLOCK,HOLDLOCK)
+              ON p.TenantId=i.TenantId AND p.ProductId=i.IngredientProductId
+            WHERE i.ProductRecipeVersionId=@RecipeVersionId
+            ORDER BY i.LineNumber;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@ProductId", production.ProductId);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct) || reader.IsDBNull(0) ||
+            reader.GetInt32(1) != production.ExpectedRecipeVersion || !reader.GetBoolean(2))
+            throw new InventoryConflictException("La receta cambió o el producto no maneja inventario propio.");
+        var versionId = reader.GetGuid(0);
+        await reader.NextResultAsync(ct);
+        var lines = new List<LineInput>();
+        while (await reader.ReadAsync(ct))
+        {
+            if (!reader.GetBoolean(2) || !reader.GetBoolean(3) || !reader.GetBoolean(4) || reader.GetBoolean(5))
+                throw new InventoryConflictException("Un ingrediente de la receta ya no es válido para producción.");
+            decimal quantity;
+            try { quantity = decimal.Round(reader.GetDecimal(1) * production.Quantity, 6, MidpointRounding.AwayFromZero); }
+            catch (OverflowException) { throw new InventoryValidationException("La cantidad producida excede el límite del inventario."); }
+            if (quantity <= 0 || quantity > 9999999999999.999999m)
+                throw new InventoryValidationException("La cantidad de un ingrediente no es válida.");
+            lines.Add(new(lines.Count + 1, "INPUT", reader.GetGuid(0), quantity, null, null, null));
+        }
+        if (lines.Count == 0) throw new InventoryConflictException("La receta no tiene ingredientes.");
+        lines.Add(new(lines.Count + 1, "OUTPUT", production.ProductId, production.Quantity, null, null, null));
+        return (versionId, lines);
+    }
+
     private async Task<InventoryOperationAcceptance> AcceptNewAsync(
         InventoryUserIdentity user, string idempotencyKey, Guid documentId, string documentType,
         Guid warehouseId, Guid? destinationWarehouseId, DateTimeOffset occurredAt, string reasonCode,
         string? conversionType, Guid? costCenterId, long? baseSequence, string? notes,
-        IReadOnlyList<LineInput> inputLines, object requestForHash, CancellationToken cancellationToken)
+        IReadOnlyList<LineInput> inputLines, object requestForHash, CancellationToken cancellationToken,
+        ProductionSpec? production = null, string? damageDisposition = null)
     {
         var requestHash = Hash(requestForHash);
         return await ExecuteWithDeadlockRetryAsync(
             () => AcceptNewAttemptAsync(
                 user, idempotencyKey, documentId, documentType, warehouseId,
                 destinationWarehouseId, occurredAt, reasonCode, conversionType,
-                costCenterId, baseSequence, notes, inputLines, requestHash,
+                costCenterId, baseSequence, notes, inputLines, requestHash, production,
+                damageDisposition,
                 cancellationToken),
             cancellationToken);
     }
@@ -430,22 +514,44 @@ public sealed class SqlInventoryOperationStore(
         InventoryUserIdentity user, string idempotencyKey, Guid documentId, string documentType,
         Guid warehouseId, Guid? destinationWarehouseId, DateTimeOffset occurredAt, string reasonCode,
         string? conversionType, Guid? costCenterId, long? baseSequence, string? notes,
-        IReadOnlyList<LineInput> inputLines, byte[] requestHash, CancellationToken cancellationToken)
+        IReadOnlyList<LineInput> inputLines, byte[] requestHash, ProductionSpec? production,
+        string? damageDisposition,
+        CancellationToken cancellationToken,
+        SqlConnection? enlistedConnection = null,
+        SqlTransaction? enlistedTransaction = null,
+        bool processNow = false)
     {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        await using var ownedConnection = enlistedConnection is null ? connections.Create() : null;
+        var connection = enlistedConnection ?? ownedConnection!;
+        if (ownedConnection is not null)
+            await connection.OpenAsync(cancellationToken);
+        await using var ownedTransaction = enlistedTransaction is null
+            ? (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
+        var transaction = enlistedTransaction ?? ownedTransaction!;
         try
         {
             var replay = await TryReplayAsync(connection, transaction, user.BusinessId, documentId, idempotencyKey, requestHash, cancellationToken);
             if (replay is not null) { await transaction.CommitAsync(cancellationToken); return replay; }
-            if (documentType == InventoryDocumentTypes.Damage)
+            Guid? recipeVersionId = null;
+            if (production is not null)
+            {
+                var recipe = await LoadProductionRecipeAsync(connection, transaction, user.TenantId,
+                    production, cancellationToken);
+                inputLines = recipe.Lines;
+                recipeVersionId = recipe.VersionId;
+            }
+            if (documentType == InventoryDocumentTypes.Damage && damageDisposition is null)
                 destinationWarehouseId = await LoadSystemWarehouseAsync(
                     connection, transaction, user.BusinessId, "AVE", cancellationToken);
             await ValidateScopeAsync(connection, transaction, user, documentType, warehouseId,
                 destinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken);
             var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId, documentType, reasonCode, cancellationToken);
             var products = (await LoadProductsAsync(connection, transaction, user.BusinessId, warehouseId, inputLines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
+            if (production is not null)
+                foreach (var input in inputLines.Where(line => line.Direction == "INPUT"))
+                    if (products[input.ProductId].Quantity < input.Quantity)
+                        throw new InventoryValidationException($"No hay existencias suficientes de '{products[input.ProductId].Name}'.");
             var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
                 line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
                 products[line.ProductId].Name, line.Quantity, null, line.SystemQuantityAtBase,
@@ -467,13 +573,13 @@ public sealed class SqlInventoryOperationStore(
             var now = timeProvider.GetUtcNow();
             const string insert = """
                 INSERT dbo.InventoryOperations
-                  (InventoryOperationId,BusinessId,DocumentType,WarehouseId,DestinationWarehouseId,
+                  (InventoryOperationId,BusinessId,DocumentType,WarehouseId,DestinationWarehouseId,DamageDisposition,
                    OccurredAt,ReasonCode,ReasonDescription,ConversionType,ConversionFamilyRootProductId,
                    ConversionInputEquivalent,ConversionOutputEquivalent,ConversionLossQuantity,
-                   ConversionLossPercent,ConversionMaximumLossPercent,CostCenterId,BaseInventorySequence,Notes,Status,CreatedAt)
-                VALUES(@Id,@BusinessId,@Type,@WarehouseId,@Destination,@OccurredAt,@Reason,@ReasonDescription,@ConversionType,
+                   ConversionLossPercent,ConversionMaximumLossPercent,RecipeVersionId,CostCenterId,BaseInventorySequence,Notes,Status,CreatedAt)
+                VALUES(@Id,@BusinessId,@Type,@WarehouseId,@Destination,@DamageDisposition,@OccurredAt,@Reason,@ReasonDescription,@ConversionType,
                    @ConversionFamilyRootProductId,@ConversionInputEquivalent,@ConversionOutputEquivalent,@ConversionLossQuantity,
-                   @ConversionLossPercent,@ConversionMaximumLossPercent,@CostCenterId,@BaseSequence,@Notes,N'Draft',@Now);
+                   @ConversionLossPercent,@ConversionMaximumLossPercent,@RecipeVersionId,@CostCenterId,@BaseSequence,@Notes,N'Draft',@Now);
                 """;
             await using (var command = new SqlCommand(insert, connection, transaction))
             {
@@ -482,11 +588,13 @@ public sealed class SqlInventoryOperationStore(
                 command.Parameters.AddWithValue("@Type", documentType);
                 command.Parameters.AddWithValue("@WarehouseId", warehouseId);
                 command.Parameters.AddWithValue("@Destination", (object?)destinationWarehouseId ?? DBNull.Value);
+                command.Parameters.AddWithValue("@DamageDisposition", (object?)damageDisposition ?? DBNull.Value);
                 command.Parameters.AddWithValue("@OccurredAt", occurredAt);
                 command.Parameters.AddWithValue("@Reason", reasonCode);
                 command.Parameters.AddWithValue("@ReasonDescription", reasonDescription);
                 command.Parameters.AddWithValue("@ConversionType", (object?)conversionType ?? DBNull.Value);
                 command.Parameters.AddWithValue("@ConversionFamilyRootProductId", (object?)conversion?.FamilyRootProductId ?? DBNull.Value);
+                command.Parameters.AddWithValue("@RecipeVersionId", (object?)recipeVersionId ?? DBNull.Value);
                 AddNullableDecimal(command, "@ConversionInputEquivalent", conversion?.Equivalence.InputEquivalent, 19, 6);
                 AddNullableDecimal(command, "@ConversionOutputEquivalent", conversion?.Equivalence.OutputEquivalent, 19, 6);
                 AddNullableDecimal(command, "@ConversionLossQuantity", conversion?.Equivalence.LossQuantity, 19, 6);
@@ -499,15 +607,26 @@ public sealed class SqlInventoryOperationStore(
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }
             await InsertLinesAsync(connection, transaction, documentId, lines, cancellationToken);
+            if (processNow)
+                await RequireCurrentProcessingSequenceAsync(connection,
+                    transaction, user.BusinessId, cancellationToken);
             var acceptance = await AcceptDraftAsync(connection, transaction, user, documentId, documentType,
                 warehouseId, destinationWarehouseId, occurredAt, reasonCode, conversionType, costCenterId,
-                baseSequence, notes, idempotencyKey, requestHash, lines, conversion, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+                baseSequence, notes, idempotencyKey, requestHash, lines, conversion, recipeVersionId,
+                cancellationToken, damageDisposition);
+            if (processNow)
+            {
+                await ProcessAcceptedInsideTransactionAsync(connection,
+                    transaction, user, acceptance, cancellationToken);
+                acceptance = acceptance with { Status = "Processed" };
+            }
+            if (ownedTransaction is not null)
+                await transaction.CommitAsync(cancellationToken);
             return acceptance;
         }
         catch (SqlException exception) when (exception.Number == 1205)
         {
-            if (transaction.Connection is not null)
+            if (ownedTransaction is not null && transaction.Connection is not null)
             {
                 await transaction.RollbackAsync(CancellationToken.None);
             }
@@ -515,10 +634,16 @@ public sealed class SqlInventoryOperationStore(
         }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (ownedTransaction is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
             throw new InventoryConflictException("The document or idempotency key is already in use.");
         }
-        catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
+        catch
+        {
+            if (ownedTransaction is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     private async Task<T> ExecuteWithDeadlockRetryAsync<T>(
@@ -544,8 +669,8 @@ public sealed class SqlInventoryOperationStore(
         Guid documentId, string documentType, Guid warehouseId, Guid? destinationWarehouseId,
         DateTimeOffset occurredAt, string reasonCode, string? conversionType, Guid? costCenterId,
         long? baseSequence, string? notes, string idempotencyKey, byte[] requestHash,
-        IReadOnlyList<InventoryOperationLineSnapshot> lines, ConversionMetadata? conversion,
-        CancellationToken cancellationToken)
+        IReadOnlyList<InventoryOperationLineSnapshot> lines, ConversionMetadata? conversion, Guid? recipeVersionId,
+        CancellationToken cancellationToken, string? damageDisposition = null)
     {
         var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, documentType, cancellationToken);
         var now = timeProvider.GetUtcNow();
@@ -554,14 +679,16 @@ public sealed class SqlInventoryOperationStore(
             connection, transaction, user.BusinessId, documentType, reasonCode,
             costCenterId, notes,
             documentType is InventoryDocumentTypes.StockCount or InventoryDocumentTypes.Adjustment or
-                InventoryDocumentTypes.Damage || conversion?.Equivalence.LossQuantity > 0,
+                InventoryDocumentTypes.Damage or InventoryDocumentTypes.Production || conversion?.Equivalence.LossQuantity > 0,
             cancellationToken);
         var payload = new InventoryOperationDocumentPayload(user.TenantId, user.BusinessId, documentId,
             documentType, warehouseId, destinationWarehouseId, user.UserId, number.FullNumber,
             number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, occurredAt,
             reasonCode, conversionType, costCenterId, baseSequence, notes, lines,
             CounterpartAccountingCategory: accountingReason?.CounterpartCategory,
-            AccountingCostCenterId: accountingReason?.CostCenterId);
+            AccountingCostCenterId: accountingReason?.CostCenterId,
+            RecipeVersionId: recipeVersionId,
+            DamageDisposition: damageDisposition);
         if (conversion is not null)
             payload = payload with
             {
@@ -1247,6 +1374,7 @@ public sealed class SqlInventoryOperationStore(
     private static void AddNullableDecimal(SqlCommand command,string name,decimal? value,byte precision,byte scale){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=precision;p.Scale=scale;p.Value=(object?)value??DBNull.Value;}
     private static SqlCommand StoredProcedure(string name,SqlConnection connection,SqlTransaction transaction)=>new(name,connection,transaction){CommandType=CommandType.StoredProcedure};
     private sealed record LineInput(int LineNumber,string Direction,Guid ProductId,decimal Quantity,decimal? SystemQuantityAtBase,decimal? ExplicitUnitCost,decimal? AllocationWeight);
+    private sealed record ProductionSpec(Guid ProductId, int ExpectedRecipeVersion, decimal Quantity);
     private sealed record ProductState(Guid Id,string Code,string Name,decimal Quantity);
     private sealed record AccountingReasonSnapshot(string CounterpartCategory, Guid? CostCenterId);
     private sealed record CountDraftState(Guid WarehouseId,DateTimeOffset OccurredAt,string ReasonCode,long BaseSequence,string? Notes,IReadOnlyList<InventoryOperationLineSnapshot> Lines);

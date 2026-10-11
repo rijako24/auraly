@@ -3,6 +3,14 @@ type WorkspaceOption = {
   warehouseId: string;
 };
 
+export function scopePosWorkspacesToBusiness<T extends WorkspaceOption>(
+  options: T[], selectedBusinessId: string | null,
+): T[] {
+  return selectedBusinessId
+    ? options.filter((option) => option.businessId === selectedBusinessId)
+    : [];
+}
+
 export type PosWorkspaceSelection = {
   businessId: string;
   warehouseId: string;

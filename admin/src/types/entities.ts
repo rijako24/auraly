@@ -52,6 +52,9 @@ export interface Business {
   website: string;
   timeZone: string;
   sharesProductPrices: boolean;
+  pointOfSaleMode: "DirectSale" | "RestaurantBar";
+  restaurantRequireWaiterCredential: boolean;
+  restaurantRestrictTableToWaiter: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string | null;

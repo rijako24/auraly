@@ -84,7 +84,7 @@ export function SalesReturnWorkspace({ embedded = false, businessId, workSession
   };
 
   return <div className={embedded ? "space-y-4" : "space-y-6"}>
-    {!embedded && <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-sm font-medium text-primary">Ventas</p><h1 className="text-3xl font-semibold tracking-tight">Devoluciones de venta</h1><p className="mt-1 max-w-3xl text-muted-foreground">Busca la factura original. Auraly conserva sus precios e impuestos y compensa inventario, efectivo o cartera sin modificar la venta.</p></div><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DVT</Badge></header>}
+    {!embedded && <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-sm font-medium text-primary">Ventas</p><h1 className="text-3xl font-semibold tracking-tight">Devoluciones de venta</h1><p className="mt-1 max-w-3xl text-muted-foreground">Busca la factura original. Auraly conserva sus precios e impuestos y compensa el cobro sin modificar la venta; el motivo determina si hay reingreso a inventario.</p></div><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DVT</Badge></header>}
     <Tabs value={activeTab} onValueChange={setTab}><TabsList>
       {canCreate && <TabsTrigger value="new">Nueva devolución</TabsTrigger>}
       {canRead && <TabsTrigger value="history">Devoluciones realizadas</TabsTrigger>}
@@ -92,7 +92,7 @@ export function SalesReturnWorkspace({ embedded = false, businessId, workSession
     {!canCreate && !canRead && <p role="alert">No tienes permiso para consultar devoluciones.</p>}
     <SalesReturnHistory key={resolvedBusinessId} active={activeTab === "history" && canRead} businessId={resolvedBusinessId} runtime={runtime} />
     {activeTab === "new" && canCreate && <>
-    {!embedded && <section className="grid gap-3 md:grid-cols-3"><Summary icon={ReceiptText} label="Facturas encontradas" value={String(list.data?.totalCount ?? 0)} /><Summary icon={PackageCheck} label="Inventario" value="Reingreso obligatorio" /><Summary icon={HandCoins} label="Cómo devolver" value="Efectivo, cartera, banco o tarjeta" /></section>}
+    {!embedded && <section className="grid gap-3 md:grid-cols-3"><Summary icon={ReceiptText} label="Facturas encontradas" value={String(list.data?.totalCount ?? 0)} /><Summary icon={PackageCheck} label="Inventario" value="Según el motivo" /><Summary icon={HandCoins} label="Cómo devolver" value="Efectivo, cartera, banco o tarjeta" /></section>}
     <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-2 xl:grid-cols-[minmax(15rem,1fr)_minmax(13rem,.8fr)_11rem_11rem_auto] md:items-end">
       <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={list.isFetching} placeholder="Factura, CUFE o producto" />
       <div className="space-y-2"><Label>Cliente</Label><PartyRoleSelect role="Customer" value={customer} leadingOptions={[{value:"",label:"Todos los clientes"}]} placeholder="Seleccionar cliente" sourceKey={`returnable-${runtime?.client.mode ?? "web"}-${resolvedBusinessId}`} loadPage={runtime ? (term, next, size) => runtime.client.searchServerReturnCustomers(runtime.context, term, next, size) : undefined} onChange={value => { setCustomer(value); setPage(1); }} /></div>
@@ -149,6 +149,9 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
     .filter(payment => ["DebitCard","CreditCard"].includes(payment.methodCode) && payment.availableAmount > 0)
     .map(payment => payment.methodCode));
   const configuredReasons = runtime ? bootstrap.data?.reasons : reasonsQuery.data;
+  const visibleReasons = (configuredReasons ?? []).filter((reason) =>
+    reason.code !== "RESTAURANT_PREPARED_CANCEL" || (!runtime && sale.isRestaurant));
+  const preparedCancellation = reasonCode === "RESTAURANT_PREPARED_CANCEL";
   const configuredResolutionMethods = runtime ? bootstrap.data?.resolutionMethods : resolutionMethods.data;
   const configuredScopes = runtime ? bootstrap.data?.scopes : returnScopes.data;
   const configuredSettlement = runtime ? bootstrap.data?.settlementConfiguration : settlementConfiguration.data;
@@ -228,7 +231,9 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
         returnedChargeIds: returnCharges
           ? availableCharges.map((charge) => charge.appliedChargeId)
           : [],
-        lines: chosen.map((line) => ({ originalLineNumber: line.originalLineNumber, quantity: quantities[line.originalLineNumber], inventoryDisposition: "Sellable" as const })),
+        lines: chosen.map((line) => ({ originalLineNumber: line.originalLineNumber,
+          quantity: quantities[line.originalLineNumber],
+          inventoryDisposition: preparedCancellation ? "NotReturned" as const : "Sellable" as const })),
       };
       const fingerprint = JSON.stringify(draft);
       const request = retry.current?.fingerprint === fingerprint
@@ -258,12 +263,13 @@ function SalesReturnEditor({ sale, open, businessId: businessIdOverride, runtime
       </DialogHeader>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
         <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
-          <Field label="Motivo"><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue placeholder="Selecciona un motivo" /></SelectTrigger><SelectContent>{(configuredReasons??[]).map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="Motivo"><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue placeholder="Selecciona un motivo" /></SelectTrigger><SelectContent>{visibleReasons.map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
           <Field label="Cómo devolver el valor"><Select value={resolutionMethod} onValueChange={changeResolutionMethod}><SelectTrigger><SelectValue placeholder={resolutionMethodsLoading ? "Cargando opciones…" : "Selecciona"} /></SelectTrigger><SelectContent>{availableMethods.map(method => <SelectItem key={method.id} value={method.code} disabled={method.code === "CustomerCredit" && sale.receivableOutstanding <= 0}>{method.label}{method.code === "CustomerCredit" && sale.receivableOutstanding <= 0 ? " · sin saldo" : ""}</SelectItem>)}</SelectContent></Select>{resolutionMethod === "CustomerCredit" && <p className="text-xs text-muted-foreground">Máximo disponible para abonar: {formatCurrency(sale.receivableOutstanding)}. Si la devolución es mayor, registra operaciones separadas.</p>}</Field>
           {cardRefund && <Field label="Pago de tarjeta por reversar"><Select value={originalPaymentNumber} onValueChange={setOriginalPaymentNumber}><SelectTrigger><SelectValue placeholder="Selecciona la transacción original" /></SelectTrigger><SelectContent>{cardPayments.map(payment => <SelectItem key={payment.paymentNumber} value={String(payment.paymentNumber)}>{payment.cardFranchiseCode ?? payment.methodCode} · {payment.approvalNumber ?? `pago ${payment.paymentNumber}`} · disponible {formatCurrency(payment.availableAmount)}</SelectItem>)}</SelectContent></Select></Field>}
           {transferRefund && <Field label="Transferencia"><Button type="button" variant="outline" className="w-full justify-start" onClick={() => setTransferDialogOpen(true)}><Landmark className="mr-2 h-4 w-4"/>{settlementReference ? `${accountingEnabled ? `${bankAccounts.find(account => account.bankAccountId === (bankAccountId || principalBankAccountId))?.displayName ?? "Cuenta"} · ` : ""}${settlementReference}` : "Registrar cuenta y soporte"}</Button></Field>}
           <Field label="Alcance"><Select value={returnScopeCode} onValueChange={changeReturnScope}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(configuredScopes ?? []).map((scope) => <SelectItem key={scope.id} value={scope.code}>{scope.label}</SelectItem>)}</SelectContent></Select></Field>
         </section>
+        {preparedCancellation && <p className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">Los productos seleccionados ya se prepararon y se descartaron. La devolución corrige el cobro y reclasifica su costo como pérdida; no devuelve ingredientes ni producto terminado al inventario.</p>}
         <Field label="Buscar producto en la factura"><div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={lineSearch} onChange={(event) => setLineSearch(event.target.value)} placeholder="Nombre, código, referencia o código de barras" /></div></Field>
         <div className="overflow-auto rounded-2xl border" style={{ maxHeight: `${PRODUCT_GRID_HEADER_HEIGHT_REM + DEFAULT_VISIBLE_PRODUCT_LINES * PRODUCT_GRID_LINE_HEIGHT_REM}rem` }}>
           <div className="min-w-[980px]">

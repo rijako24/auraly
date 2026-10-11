@@ -438,6 +438,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private readonly HttpClient http;
     private readonly PosDeviceCredentials credentials;
     private readonly PosSynchronizationSignal signal;
+    private readonly RestaurantCommandPrintSignal commandPrintSignal;
     private readonly PosServerConnectionState connectionState;
     private readonly PosPushConnectionState pushState;
     private readonly PosUiStateSignal uiState;
@@ -460,6 +461,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         HttpClient http,
         PosDeviceCredentials credentials,
         PosSynchronizationSignal signal,
+        RestaurantCommandPrintSignal commandPrintSignal,
         PosServerConnectionState connectionState,
         PosPushConnectionState pushState,
         PosUiStateSignal uiState,
@@ -471,6 +473,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         this.http = http;
         this.credentials = credentials;
         this.signal = signal;
+        this.commandPrintSignal = commandPrintSignal;
         this.connectionState = connectionState;
         this.pushState = pushState;
         this.uiState = uiState;
@@ -556,6 +559,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         if (PosSynchronizationConnectionPolicy.RequiresCatchUp(
                 Interlocked.Increment(ref successfulConnections)))
             signal.Signal(PosSynchronizationTrigger.All);
+        commandPrintSignal.Wake();
         return Task.CompletedTask;
     }
 
@@ -577,10 +581,15 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         {
             var invalidation = args.Message.Data
                 .ToObjectFromJson<PosSynchronizationInvalidation>();
-            if (invalidation is null ||
-                invalidation.TenantId != tenantId ||
-                invalidation.BusinessId != businessId)
+            if (invalidation is null || invalidation.TenantId != tenantId)
                 return;
+            if (invalidation.Stream == PosSynchronizationStreams.RestaurantCommandPrint)
+            {
+                if (invalidation.TargetDeviceId == credentials.DeviceId)
+                    commandPrintSignal.Wake();
+                return;
+            }
+            if (invalidation.BusinessId != businessId) return;
             if (invalidation.Stream == PosSynchronizationStreams.DeviceEnrollment &&
                 invalidation.TargetDeviceId is { } targetDeviceId)
             {

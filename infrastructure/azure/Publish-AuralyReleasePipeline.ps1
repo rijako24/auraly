@@ -453,6 +453,7 @@ function Publish-Database {
             $whatsAppAccessTokenArgument,
             '/p:BlockOnPossibleDataLoss=True',
             '/p:DropObjectsNotInSource=False',
+            '/p:IgnoreColumnOrder=True',
             '/p:IgnoreWithNocheckOnForeignKeys=True',
             '/p:CommandTimeout=120',
             '/TargetTimeout:60')

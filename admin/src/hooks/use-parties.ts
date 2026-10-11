@@ -3,9 +3,9 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { partiesApi, type CommercialPartyRole, type CreateThirdPartyRequest } from "@/services/api/parties";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-export function useParties(params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean }) {
+export function useParties(params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean }, enabled=true) {
   const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);
-  return useQuery({ queryKey:["parties",businessId,params],queryFn:()=>partiesApi.page(params),enabled:!!businessId,placeholderData:keepPreviousData });
+  return useQuery({ queryKey:["parties",businessId,params],queryFn:()=>partiesApi.page(params),enabled:enabled&&!!businessId,placeholderData:keepPreviousData });
 }
 export function useCustomerMap(){
   const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);
@@ -13,7 +13,7 @@ export function useCustomerMap(){
 }
 export function useCreateThirdParty(role:CommercialPartyRole) {
   const client=useQueryClient(); const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);
-  return useMutation({mutationFn:(request:CreateThirdPartyRequest)=>role==="Customer"?partiesApi.createCustomer(request):role==="Supplier"?partiesApi.createSupplier(request):role==="Seller"?partiesApi.createSeller(request):partiesApi.createCarrier(request),onSuccess:()=>client.invalidateQueries({queryKey:["parties",businessId]})});
+  return useMutation({mutationFn:(request:CreateThirdPartyRequest)=>role==="Customer"?partiesApi.createCustomer(request):role==="Supplier"?partiesApi.createSupplier(request):role==="Seller"?partiesApi.createSeller(request):role==="Waiter"?partiesApi.createWaiter(request):partiesApi.createCarrier(request),onSuccess:()=>client.invalidateQueries({queryKey:["parties",businessId]})});
 }
 export function useAddPartySite(partyId:string){const client=useQueryClient();const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);return useMutation({mutationFn:({customerId,request}:{customerId:string;request:Parameters<typeof partiesApi.addSite>[1]})=>partiesApi.addSite(customerId,request),onSuccess:async()=>{await Promise.all([client.invalidateQueries({queryKey:["parties","detail",businessId,partyId]}),client.invalidateQueries({queryKey:["parties",businessId]})])}});}
 export function useUpdatePartySite(partyId:string){const client=useQueryClient();const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);return useMutation({mutationFn:({customerId,siteId,request}:{customerId:string;siteId:string;request:Parameters<typeof partiesApi.updateSite>[2]})=>partiesApi.updateSite(customerId,siteId,request),onSuccess:async()=>{await Promise.all([client.invalidateQueries({queryKey:["parties","detail",businessId,partyId]}),client.invalidateQueries({queryKey:["parties",businessId]}),client.invalidateQueries({queryKey:["parties","customer-map",businessId]})])}});}

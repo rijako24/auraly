@@ -306,6 +306,29 @@ public sealed class WorkSessionClosureReceiptRendererTests
     }
 
     [Fact]
+    public void Restaurant_closure_has_its_own_report_and_waiter_sales()
+    {
+        var closure = Closure(8) with
+        {
+            WaiterSales =
+            [
+                new WorkSessionWaiterSale(Guid.NewGuid(), "Ana & Luis", 3m, 90_000m),
+                new WorkSessionWaiterSale(null, "Caja / sin mesero", 1m, 20_000m)
+            ]
+        };
+
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(closure);
+
+        Assert.Contains("data-auraly-report=\"restaurant-work-session-closure\"", html);
+        Assert.Contains("data-auraly-report-version=\"8\"", html);
+        Assert.Contains("Ventas por mesero", html);
+        Assert.Contains("Ana &amp; Luis", html);
+        Assert.Contains("$ 110.000", html);
+        Assert.DoesNotContain("Ana & Luis", html);
+        Assert.DoesNotContain("Ventas por mesero", WorkSessionClosureReceiptRenderer.RenderHtml(Closure(7)));
+    }
+
+    [Fact]
     public void Historical_snapshots_without_a_template_field_deserialize_as_version_one()
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);

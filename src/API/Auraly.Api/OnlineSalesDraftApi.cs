@@ -564,7 +564,7 @@ group.MapPost("/{draftId:guid}/items", async (
     private static string IdempotencyKey(HttpContext context) =>
         context.Request.Headers["Idempotency-Key"].ToString();
 
-    private static async Task<T> ExecuteSensitiveAsync<T>(
+    internal static async Task<T> ExecuteSensitiveAsync<T>(
         HttpContext context,
         PosApprovalService approvals,
         Guid draftId,
@@ -597,7 +597,7 @@ group.MapPost("/{draftId:guid}/items", async (
             cancellationToken);
     }
 
-    private static async Task<IResult> Handle<T>(
+    internal static async Task<IResult> Handle<T>(
         Func<Task<T>> action)
     {
         try { return Results.Ok(await action()); }

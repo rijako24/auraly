@@ -57,12 +57,26 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await ValidateWorkSessionAsync(session, request, cancellationToken);
         var inventoryWarehouseId = await ResolveInventoryWarehouseAsync(
             session, request, cancellationToken);
-        await _inventoryWriter.PostBatchAsync(session, request.Lines.OrderBy(line => line.LineNumber)
+        var restaurantInventory = await ReadRestaurantInventoryPlanAsync(
+            session, request, cancellationToken);
+        var postings = request.Lines.OrderBy(line => line.LineNumber)
             .Where(line => !line.IsGenericProductSnapshot).Select(line => new InventoryLedgerPosting(
                 request.BusinessId, inventoryWarehouseId, line.ProductId, request.DocumentId,
                 request.CommercialSnapshot.DocumentType, line.LineNumber, "Sale", -line.Quantity, null,
-                InventoryValuationMode.AverageCost, request.CommercialSnapshot.IssuedAt)).ToArray(), cancellationToken);
+                InventoryValuationMode.AverageCost, request.CommercialSnapshot.IssuedAt)).ToList();
+        if (restaurantInventory is not null)
+            postings.AddRange(restaurantInventory.Components.Select(component => new InventoryLedgerPosting(
+                request.BusinessId, inventoryWarehouseId, component.IngredientProductId,
+                request.DocumentId, request.CommercialSnapshot.DocumentType,
+                component.MovementLineNumber, "Sale", -component.Quantity, null,
+                InventoryValuationMode.AverageCost, request.CommercialSnapshot.IssuedAt)));
+        var inventoryResults = await _inventoryWriter.PostBatchAsync(
+            session, postings, cancellationToken);
         await InsertLinesAsync(session, request, cancellationToken);
+        if (restaurantInventory is not null)
+            await PersistRestaurantInventoryCostsAsync(session, request,
+                postings, inventoryResults, restaurantInventory,
+                cancellationToken);
 
         await SqlExpenseStore.AcceptInvoiceChargesAsync(session.Connection, session.Transaction,
             request, _taxation, _idGenerator, _timeProvider.GetUtcNow(), cancellationToken);
@@ -144,14 +158,16 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         const string sql = """
             INSERT INTO dbo.SalesDocumentLines
             (
-                DocumentId, LineNumber, ProductId, Description, TaxCode, TaxRate,
+                DocumentId, LineNumber, ProductId, AddedByUserId, AddedAt,
+                Description, TaxCode, TaxRate,
                 Quantity, UnitPrice, UnitCostSnapshot, DiscountAmount, PromotionDiscountAmount, TaxAmount,
                 UntaxedAmount, LineTotal,ProductCodeSnapshot,ProductNameSnapshot,
                 CategoryIdSnapshot,CategoryNameSnapshot,SupplierIdSnapshot,SupplierNameSnapshot,
                 AttributionSnapshotVersion,IsGenericProductSnapshot
             )
             SELECT
-                @DocumentId,input.LineNumber,input.ProductId,input.Description,input.TaxCode,input.TaxRate,
+                @DocumentId,input.LineNumber,input.ProductId,input.AddedByUserId,input.AddedAt,
+                input.Description,input.TaxCode,input.TaxRate,
                 input.Quantity,input.UnitPrice,input.DocumentUnitCost,
                 input.DiscountAmount,input.PromotionDiscountAmount,input.TaxAmount,
                 input.UntaxedAmount,input.LineTotal,
@@ -160,6 +176,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 1,input.IsGenericProductSnapshot
             FROM OPENJSON(@LinesJson) WITH(
               LineNumber int '$.LineNumber',ProductId uniqueidentifier '$.ProductId',
+              AddedByUserId uniqueidentifier '$.AddedByUserId',
+              AddedAt datetimeoffset(7) '$.AddedAt',
               Description nvarchar(300) '$.Description',TaxCode nvarchar(16) '$.TaxCode',
               TaxRate decimal(9,6) '$.TaxRate',Quantity decimal(19,6) '$.Quantity',
               UnitPrice decimal(19,4) '$.UnitPrice',DocumentUnitCost decimal(19,6) '$.DocumentUnitCost',
@@ -170,6 +188,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               IsGenericProductSnapshot bit '$.IsGenericProductSnapshot',
               ProductCodeSnapshot nvarchar(80) '$.ProductCodeSnapshot') input
             INNER JOIN dbo.Products p ON p.ProductId=input.ProductId
+            LEFT JOIN dbo.AppUsers addedBy
+              ON addedBy.UserId=input.AddedByUserId AND addedBy.TenantId=p.TenantId
             LEFT JOIN dbo.ProductCategories category
               ON category.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY
@@ -182,7 +202,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 AND sp.ProductId=input.ProductId AND sp.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId
             ) supplier
-            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
+            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              AND (input.AddedByUserId IS NULL OR addedBy.UserId IS NOT NULL);
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);

@@ -19,6 +19,7 @@ public static class WorkSessionClosureReceiptRenderer
             1 => RenderV1(value, companyName, companyLogoSource, paperWidthMillimeters),
             2 => RenderV2(value, companyName, companyLogoSource, paperWidthMillimeters),
             3 or 4 or 5 or 6 or 7 => RenderMovementClosure(value, companyName, companyLogoSource, paperWidthMillimeters),
+            8 => RenderRestaurantClosure(value, companyName, companyLogoSource, paperWidthMillimeters),
             _ => throw new InvalidOperationException(
                 $"La versión {value.ReceiptTemplateVersion} de la tirilla de cierre no está disponible.")
         };
@@ -163,6 +164,32 @@ public static class WorkSessionClosureReceiptRenderer
                 $"data-auraly-report-version=\"{PosPrintTemplateCatalog.WorkSessionClosureV2.Version}\"",
                 $"data-auraly-report-version=\"{version}\"",
                 StringComparison.Ordinal);
+    }
+
+    private static string RenderRestaurantClosure(
+        WorkSessionClosureView value, string? companyName,
+        string? companyLogoSource, int paperWidthMillimeters)
+    {
+        var waiterSales = value.WaiterSales ?? [];
+        var rows = waiterSales.Count == 0
+            ? "<tr><td>Sin ventas de mesas</td><td>$ 0</td></tr>"
+            : string.Join(string.Empty, waiterSales.Select(item =>
+                $"<tr><td>{Encode(item.UserName)}<small>{item.Quantity.ToString("N2", CultureInfo.GetCultureInfo("es-CO"))} unidades</small></td><td>{Money(item.Amount)}</td></tr>"));
+        var section = $"<h2 class=\"section-title\">Ventas por mesero</h2><table class=\"rows credit-sales\"><tbody>{rows}</tbody><tfoot><tr><th>Total mesas</th><th>{Money(waiterSales.Sum(item => item.Amount))}</th></tr></tfoot></table>";
+        return RenderMovementClosure(value with { ReceiptTemplateVersion = 7 },
+                companyName, companyLogoSource, paperWidthMillimeters)
+            .Replace("Cierre de sesión · Confirmado",
+                "Cierre de Restaurante y Bar · Confirmado", StringComparison.Ordinal)
+            .Replace("Cierre de sesión de venta",
+                "Cierre de Restaurante y Bar", StringComparison.Ordinal)
+            .Replace("<h2 class=\"section-title\">Detalle por medio de pago</h2>",
+                section + "<h2 class=\"section-title\">Detalle por medio de pago</h2>",
+                StringComparison.Ordinal)
+            .Replace($"data-auraly-report=\"{PosPrintTemplateCatalog.WorkSessionClosureV2.Code}\"",
+                "data-auraly-report=\"restaurant-work-session-closure\"",
+                StringComparison.Ordinal)
+            .Replace("data-auraly-report-version=\"7\"",
+                "data-auraly-report-version=\"8\"", StringComparison.Ordinal);
     }
 
     private static string ChargePaymentRows(IReadOnlyList<WorkSessionInvoiceCharge> charges, string method)

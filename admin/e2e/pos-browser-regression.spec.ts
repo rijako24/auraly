@@ -6,12 +6,28 @@ async function login(page: Page) {
 }
 
 async function openOnlinePos(page: Page) {
+  let businessId = process.env.AURALY_E2E_BUSINESS_ID;
+  if (!businessId) {
+    const response = page.waitForResponse((item) => item.request().method() === "GET" &&
+      item.url().includes("/pos/workspace/bootstrap"));
+    await page.goto("/pos?workspace=change");
+    const bootstrap = await response;
+    expect(bootstrap.ok()).toBe(true);
+    const options = (await bootstrap.json() as {
+      options: { businessId: string; pointOfSaleMode: string }[];
+    }).options;
+    businessId = options.find((option) => option.pointOfSaleMode === "DirectSale")?.businessId;
+    expect(businessId, "La prueba requiere una sede de venta directa").toBeTruthy();
+  }
+  await page.addInitScript((value) => {
+    localStorage.setItem("selected_business_id", value);
+  }, businessId!.toLowerCase());
   await page.goto("/pos");
   const setup = page.getByRole("heading", { name: /Prepara (?:tu espacio de venta|facturación)/ });
   if (await setup.isVisible({ timeout: 20_000 }).catch(() => false)) {
     const receipt = page.getByRole("button", { name: /Comprobante de venta/ });
     if (await receipt.count()) await receipt.click();
-    const continueButton = page.getByRole("button", { name: "Entrar a ventas online" });
+    const continueButton = page.getByRole("button", { name: /(?:Entrar|Continuar) a ventas(?: online)?/ });
     await expect(continueButton).toBeEnabled({ timeout: 20_000 });
     await continueButton.click();
   }
@@ -34,7 +50,7 @@ test("vende un comprobante online con teclado, imprime tirilla y deja una venta 
     await expect(existingQuantity).toHaveCount(0);
   }
 
-  await page.keyboard.press("F2");
+  await page.keyboard.press("F1");
   const productSearch = page.getByRole("dialog").filter({ hasText: "Buscar producto" });
   await expect(productSearch).toBeVisible();
   const firstProduct = productSearch.getByRole("option").first();
@@ -55,26 +71,26 @@ test("vende un comprobante online con teclado, imprime tirilla y deja una venta 
   await quantity.press("Enter");
   await expect(scanner).toBeFocused();
 
-  await page.keyboard.press("F3");
+  await page.keyboard.press("F2");
   const lineEditor = page.locator('form[aria-keyshortcuts="Enter Escape"]').filter({ hasText: "Editar líneas" });
   await expect(lineEditor).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(lineEditor).toBeHidden();
   await expect(scanner).toBeFocused();
 
-  await page.keyboard.press("F1");
+  await page.keyboard.press("F8");
   const payment = page.getByRole("dialog", { name: "Finalizar venta" });
   await expect(payment).toBeVisible();
   const cash = payment.getByRole("textbox", { name: "Valor recibido en Efectivo" });
   await cash.fill("999999");
   await expect(payment.getByText(/Cambio listo:/)).toBeVisible();
 
-  const previewPromise = page.waitForEvent("popup");
+  const ticketPromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    response.url().includes("/pos/drafts/sales/receipts/render"));
   await payment.getByRole("button", { name: /Emitir e imprimir/ }).click();
-  const preview = await previewPromise;
-  await preview.waitForLoadState("domcontentloaded");
-  await expect(preview.locator("body")).toContainText(/comprobante/i, { timeout: 20_000 });
-  await preview.close();
+  const ticket = await ticketPromise;
+  expect(ticket.ok(), await ticket.text()).toBe(true);
 
   await expect(page.getByText(/emitida e impresa/)).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Entregar al cliente", { exact: true })).toBeVisible();

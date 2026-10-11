@@ -25,6 +25,7 @@ export interface Product {
   unitPrice: number;
   currency: string;
   manageStock: boolean;
+  isIngredient?: boolean;
   stockQuantity?: number | null;
   isActive: boolean;
   createdAt?: string;
@@ -103,6 +104,7 @@ export interface CreateCatalogProductRequest {
   purchaseTaxProfileId: string | null;
   purchaseTaxTreatment: "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
   isGenericProduct: boolean;
+  isIngredient?: boolean;
   manageInventory: boolean;
   isWeighable: boolean;
   unitGrossWeightKg?: number | null;
@@ -154,6 +156,9 @@ export interface CreateCatalogProductRequest {
     isPrimary: boolean;
   }>;
 
+  recipeIngredients?: Array<{ ingredientProductId: string; quantityPerUnit: number }>;
+  recipeExpectedVersion?: number;
+
 
 }
 
@@ -163,7 +168,7 @@ export interface CatalogProductDetail {
   suppliers: Array<{ supplierId: string; identification: string; name: string; supplierProductCode: string | null;
     baseUnitCost: number; isPrimary: boolean; purchasePresentationName: string; unitsPerPresentation: number }> | null;
   salesTaxProfileId: string; purchaseTaxProfileId: string | null; purchaseTaxTreatment: string; description: string | null;
-  baseUnitCode: string; manageInventory: boolean; isWeighable: boolean; unitGrossWeightKg: number | null; isGenericProduct: boolean;
+  baseUnitCode: string; manageInventory: boolean; isWeighable: boolean; unitGrossWeightKg: number | null; isGenericProduct: boolean; isIngredient: boolean;
 }
 export interface ReviewProductAliasRequest { action: ProductAliasReviewAction; resolutionMode: ProductAliasResolutionMode }
 export interface PromoteProductAliasRequest { resolutionMode: ProductAliasResolutionMode }

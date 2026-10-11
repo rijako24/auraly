@@ -59,6 +59,24 @@ test("cashier inventory availability does not expose the inventory workspace", (
   );
 });
 
+test("waiter attention opens POS without revealing cashier workspaces", () => {
+  assert.deepEqual(
+    authorizedNavigationItems(["restaurant.attend"]).map((item) => item.name),
+    ["Punto de venta", "Restaurante y Bar"],
+  );
+  assert.deepEqual(
+    authorizedNavigationGroups(["restaurant.attend"]).map((group) => group.label),
+    ["Comercial", "Restaurante y Bar"],
+  );
+});
+
+test("kitchen access opens the restaurant module without opening POS", () => {
+  assert.deepEqual(
+    authorizedNavigationItems(["restaurant.commands.read"]).map((item) => item.name),
+    ["Restaurante y Bar", "Comandas"],
+  );
+});
+
 test("orders and personal routes are independent navigation capabilities", () => {
   assert.deepEqual(
     authorizedNavigationItems(["orders.read"]).map((item) => item.name),

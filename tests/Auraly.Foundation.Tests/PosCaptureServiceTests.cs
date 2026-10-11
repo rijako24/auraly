@@ -9,6 +9,56 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosCaptureServiceTests
 {
     [Fact]
+    public async Task Ingredient_stays_in_local_catalog_but_search_and_scanner_ignore_it_until_reclassified()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-ingredient-{Guid.NewGuid():N}.db");
+        var connectionString = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = path, Pooling = false
+        }.ToString();
+        try
+        {
+            var catalog = new PosCatalogStore(connectionString);
+            await catalog.InitializeAsync();
+            await using (var legacy = new Microsoft.Data.Sqlite.SqliteConnection(connectionString))
+            {
+                await legacy.OpenAsync();
+                await using var downgrade = legacy.CreateCommand();
+                downgrade.CommandText = """
+                    ALTER TABLE PosCatalogProducts DROP COLUMN IsIngredient;
+                    ALTER TABLE PosCatalogStagingProducts DROP COLUMN IsIngredient;
+                    """;
+                await downgrade.ExecuteNonQueryAsync();
+            }
+            await catalog.InitializeAsync();
+            var item = new PosCatalogItem(
+                Guid.NewGuid(), "ING-1", null, "Tomate", "KG", "01", 0m,
+                100m, "COP", true, false, true, null, ["770987"], [],
+                IsIngredient: true);
+            var sessionId = Guid.NewGuid();
+            await catalog.BeginBootstrapAsync(new CatalogSyncSessionResponse(
+                sessionId, 0, 1, DateTimeOffset.UtcNow.AddHours(1)));
+            await catalog.ApplyBootstrapPageAsync(new CatalogBootstrapPage(
+                sessionId, 0, null, false, CatalogBootstrapIntegrity.Compute([item]), [item]));
+            await catalog.PromoteBootstrapAsync();
+
+            Assert.Empty(await catalog.SearchAsync("Tomate"));
+            Assert.Null(await catalog.CaptureAsync("770987"));
+            Assert.Null(await catalog.GetByProductIdAsync(item.ProductId));
+
+            await catalog.ApplyChangesAsync(new CatalogDeltaPage(0, 1, false,
+                [new CatalogDelta(1, "Upsert", item with { IsIngredient = false })]));
+            Assert.Single(await catalog.SearchAsync("Tomate"));
+            Assert.NotNull(await catalog.CaptureAsync("770987"));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Scanner_uses_local_catalog_customer_price_and_persists_the_line()
     {
         await WithServiceAsync(async (service, drafts, scope, productId, customerId, availability) =>

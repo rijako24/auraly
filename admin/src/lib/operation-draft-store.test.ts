@@ -12,4 +12,8 @@ test("separa borradores locales por negocio y tipo de operación", () => {
     inventoryDraftKey("business-a", "adjustment"),
     inventoryDraftKey("business-b", "adjustment"),
   );
+  assert.notEqual(
+    inventoryDraftKey("business-a", "production"),
+    inventoryDraftKey("business-a", "adjustment"),
+  );
 });

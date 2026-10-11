@@ -12,10 +12,15 @@ CREATE TABLE [dbo].[Businesses] (
     [IsActive] BIT NOT NULL DEFAULT 1,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,
+    [PointOfSaleMode] NVARCHAR(32) NOT NULL CONSTRAINT [DF_Businesses_PointOfSaleMode] DEFAULT N'DirectSale',
+    [RestaurantRequireWaiterCredential] BIT NOT NULL CONSTRAINT [DF_Businesses_RestaurantRequireWaiterCredential] DEFAULT (1),
+    [RestaurantRestrictTableToWaiter] BIT NOT NULL CONSTRAINT [DF_Businesses_RestaurantRestrictTableToWaiter] DEFAULT (0),
     CONSTRAINT [FK_Businesses_Tenants] FOREIGN KEY ([TenantId])
         REFERENCES [dbo].[Tenants] ([TenantId])
         ON DELETE NO ACTION,
-    CONSTRAINT [UQ_Businesses_Business_Tenant] UNIQUE ([BusinessId],[TenantId])
+    CONSTRAINT [UQ_Businesses_Business_Tenant] UNIQUE ([BusinessId],[TenantId]),
+    CONSTRAINT [CK_Businesses_PointOfSaleMode] CHECK ([PointOfSaleMode] COLLATE Latin1_General_100_BIN2 IN (N'DirectSale',N'RestaurantBar')),
+    CONSTRAINT [CK_Businesses_RestaurantWaiterPolicy] CHECK ([RestaurantRestrictTableToWaiter]=0 OR [RestaurantRequireWaiterCredential]=1)
 );
 
 GO

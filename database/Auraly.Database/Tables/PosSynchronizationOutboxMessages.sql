@@ -22,7 +22,7 @@ CREATE TABLE [dbo].[PosSynchronizationOutboxMessages]
         UNIQUE ([BusinessId], [Stream], [AvailableThroughCursor]),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Stream]
         CHECK ([Stream] IN
-            (N'Catalog', N'Customers', N'Security', N'FiscalStatus', N'FiscalProvisioning', N'Approvals', N'Configuration', N'DeviceEnrollment')),
+            (N'Catalog', N'Customers', N'Security', N'FiscalStatus', N'FiscalProvisioning', N'Approvals', N'Configuration', N'DeviceEnrollment', N'RestaurantCommands', N'RestaurantCommandPrint')),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Cursor]
         CHECK ([AvailableThroughCursor] >= 0),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_ChangeKind]

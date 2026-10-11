@@ -587,6 +587,8 @@ export type PosWorkSessionClosure = {
   note: string | null;
   paymentTotals: PosWorkSessionPaymentTotal[];
   receiptTemplateVersion?: number;
+  waiterSales?: Array<{ userId: string | null; userName: string;
+    quantity: number; amount: number }> | null;
   invoiceCharges?: WorkSessionInvoiceCharge[] | null;
   cashMovements?: Array<{
     documentId: string;
@@ -859,6 +861,11 @@ export type PosPrinterConfiguration = {
   orderReceiptPaperWidthMillimeters?: 58 | 80;
 };
 
+export type RestaurantCommandPrinterProfile = {
+  key: string; printerName: string; paperWidthMillimeters: 58 | 80;
+  copies: number; cut: boolean;
+};
+
 export type PosSalesReturnContext = {
   businessId: string;
   workSessionId: string | null;
@@ -1030,6 +1037,23 @@ export class PosEdgeClient implements PosClient {
       "/edge/v1/configuration/printers",
       { method: "PUT", body: JSON.stringify(configuration) },
     );
+  }
+
+  restaurantCommandPrinterProfiles() {
+    return this.request<RestaurantCommandPrinterProfile[]>(
+      "/edge/v1/configuration/restaurant-command-printers");
+  }
+
+  saveRestaurantCommandPrinterProfile(profile: RestaurantCommandPrinterProfile) {
+    return this.request<RestaurantCommandPrinterProfile>(
+      `/edge/v1/configuration/restaurant-command-printers/${encodeURIComponent(profile.key)}`,
+      { method: "PUT", body: JSON.stringify(profile) });
+  }
+
+  deleteRestaurantCommandPrinterProfile(key: string) {
+    return this.requestVoid(
+      `/edge/v1/configuration/restaurant-command-printers/${encodeURIComponent(key)}`,
+      { method: "DELETE" });
   }
 
   openCashDrawer() {

@@ -8,6 +8,29 @@ public static class ProductMerchandisingApi
     public static IEndpointRouteBuilder MapProductMerchandisingApi(this IEndpointRouteBuilder endpoints)
     {
         var products = endpoints.MapGroup("/api/commerce/v1/products").RequireAuthorization("catalog.user");
+        products.MapGet("/recipe-ingredients", async (HttpContext context, ProductRecipeService service, string? search, int? page, int? pageSize, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await service.IngredientOptionsAsync(context.User.ToCatalogUserIdentity(), search, page ?? 1, pageSize ?? 30, ct)); }
+            catch (CatalogValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
+            catch (CatalogForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
+        });
+        products.MapGet("/{productId:guid}/recipe", async (HttpContext context, ProductRecipeService service, Guid productId, CancellationToken ct) =>
+        {
+            try
+            {
+                var recipe = await service.GetAsync(context.User.ToCatalogUserIdentity(), productId, ct);
+                return recipe is null ? Results.NotFound() : Results.Ok(recipe);
+            }
+            catch (CatalogValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
+            catch (CatalogForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
+        });
+        products.MapPut("/{productId:guid}/recipe", async (HttpContext context, ProductRecipeService service, Guid productId, PublishProductRecipeRequest request, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await service.PublishAsync(context.User.ToCatalogUserIdentity(), productId, request, ct)); }
+            catch (CatalogValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
+            catch (CatalogConflictException exception) { return Results.Problem(exception.Message, statusCode: 409); }
+            catch (CatalogForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
+        });
         products.MapGet("/{productId:guid}/merchandising", async (HttpContext context, ProductMerchandisingService service, Guid productId, CancellationToken ct) =>
         {
             var result = await service.GetAsync(context.User.ToCatalogUserIdentity(), productId, ct);

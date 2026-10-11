@@ -17,6 +17,131 @@ namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosConfigurationTests
 {
+    [Fact]
+    public async Task Restaurant_receiver_claims_once_and_does_not_print_again_on_duplicate_wake()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var directory = Path.Combine(Path.GetTempPath(),
+            "auraly-command-receiver-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var configuration = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "printer-settings.json"),
+                Path.Combine(directory, "receipts"),
+                installedPrinterProvider: () => ["Cocina"]);
+            configuration.SaveCommandProfile(new("COCINA", "Cocina", 80));
+            var card = new RestaurantCommandCardView(Guid.NewGuid(), Guid.NewGuid(),
+                "Cocina", "M-1", "Pending", DateTimeOffset.UtcNow, "version",
+                [new(Guid.NewGuid(), 1, "Hamburguesa", "Ana", DateTimeOffset.UtcNow)]);
+            var raw = new RecordingRawPrintJob();
+            var handler = new RestaurantPrintHandler(card);
+            using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test") };
+            var signal = new RestaurantCommandPrintSignal();
+            var receiver = new RestaurantCommandPrintReceiver(http,
+                new PosDeviceCredentials(Guid.NewGuid(), "secret"), signal,
+                configuration, new(configuration, raw),
+                new PosSynchronizationEventLog(TimeProvider.System),
+                NullLogger<RestaurantCommandPrintReceiver>.Instance);
+            await receiver.StartAsync(CancellationToken.None);
+            try
+            {
+                await handler.Acknowledged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                signal.Wake();
+                await handler.SecondClaim.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Equal(["Cocina"], raw.PrinterNames);
+                Assert.Equal(1, handler.AcknowledgementCount);
+            }
+            finally { await receiver.StopAsync(CancellationToken.None); receiver.Dispose(); }
+        }
+        finally
+        {
+            var settings = Path.Combine(directory, "printer-settings.json");
+            if (File.Exists(settings)) File.Delete(settings);
+            if (Directory.Exists(directory)) Directory.Delete(directory);
+        }
+    }
+
+    [Fact]
+    public void Restaurant_ticket_keeps_station_table_and_per_item_notes_without_prices()
+    {
+        var card = new RestaurantCommandCardView(Guid.NewGuid(), Guid.NewGuid(),
+            "Cocina", "M-4", "Pending", DateTimeOffset.UtcNow,
+            "version", [new(Guid.NewGuid(), 2, "Hamburguesa", "Ana",
+                DateTimeOffset.UtcNow, "Sin cebolla")]);
+        var bytes = RestaurantCommandTicketRenderer.Render(card, 80);
+        var text = System.Text.Encoding.ASCII.GetString(bytes);
+        Assert.Contains("Mesa M-4", text);
+        Assert.Contains("2 x Hamburguesa", text);
+        Assert.Contains("Sin cebolla", text);
+        Assert.DoesNotContain("$", text);
+        Assert.Equal(new byte[] { 0x1B, 0x64, 0x01, 0x1D, 0x56, 0x41, 0x03 },
+            bytes[^7..]);
+    }
+
+    [Fact]
+    public void Restaurant_correction_ticket_shows_removed_item_and_current_command()
+    {
+        var card = new RestaurantCommandCardView(Guid.NewGuid(), Guid.NewGuid(),
+            "Cocina", "M-4", "Preparing", DateTimeOffset.UtcNow,
+            "version", [new(Guid.NewGuid(), 1, "Pasta", "Ana",
+                DateTimeOffset.UtcNow)]);
+        var text = System.Text.Encoding.ASCII.GetString(
+            RestaurantCommandTicketRenderer.Render(card, 80, printKind: "Correction",
+                removedQuantity: 2, removedProductName: "Hamburguesa"));
+        Assert.Contains("COMANDA ACTUALIZADA", text);
+        Assert.Contains("RETIRAR 2 x Hamburguesa", text);
+        Assert.Contains("1 x Pasta", text);
+        Assert.DoesNotContain("2 x Hamburguesa\n", text.Replace("RETIRAR 2 x Hamburguesa\n", ""));
+    }
+
+    [Fact]
+    public void Restaurant_fully_cancelled_ticket_has_no_active_items()
+    {
+        var card = new RestaurantCommandCardView(Guid.NewGuid(), Guid.NewGuid(),
+            "Barra", "M-2", "Cancelled", DateTimeOffset.UtcNow,
+            "version", [new(Guid.NewGuid(), 1, "Cóctel", "Luis",
+                DateTimeOffset.UtcNow)]);
+        var text = System.Text.Encoding.ASCII.GetString(
+            RestaurantCommandTicketRenderer.Render(card, 58, printKind: "Correction",
+                removedQuantity: 1, removedProductName: "Cóctel"));
+        Assert.Contains("COMANDA ANULADA", text);
+        Assert.Contains("Sin productos activos", text);
+        Assert.DoesNotContain("1 x Coctel\n", text.Replace("RETIRAR 1 x Coctel\n", ""));
+    }
+
+    [Fact]
+    public void Restaurant_command_profiles_are_local_and_do_not_change_cashier_printers()
+    {
+        var directory = Path.Combine(Path.GetTempPath(),
+            "auraly-command-profile-" + Guid.NewGuid().ToString("N"));
+        var settings = Path.Combine(directory, "printer-settings.json");
+        try
+        {
+            var store = new PosPrinterConfigurationStore(settings,
+                Path.Combine(directory, "receipts"),
+                installedPrinterProvider: () => ["Caja", "Pedidos", "Cocina"]);
+            var profile = store.SaveCommandProfile(
+                new("cocina", "Cocina", 80, 2, true));
+            Assert.Equal("Cocina", Assert.Single(store.CommandProfiles()).PrinterName);
+            Assert.Equal(2, profile.Copies);
+            Assert.Throws<ArgumentException>(() => store.SaveCommandProfile(
+                new("barra", "Impresora inexistente", 80)));
+            store.SaveView(new PosPrinterConfiguration(PosPrinterModes.WindowsRaw,
+                "Caja", 80, null, PosPrinterName: "Caja",
+                OrderPrinterName: "Pedidos"));
+            Assert.Equal("Cocina", Assert.Single(store.CommandProfiles()).PrinterName);
+            Assert.Equal("Caja", store.Load().PosPrinterName);
+            Assert.True(store.DeleteCommandProfile("cocina"));
+            Assert.Empty(store.CommandProfiles());
+            Assert.Equal("Caja", store.Load().PosPrinterName);
+        }
+        finally
+        {
+            if (File.Exists(settings)) File.Delete(settings);
+            if (Directory.Exists(directory)) Directory.Delete(directory);
+        }
+    }
+
     [Theory]
     [InlineData(PrintTemplateFormats.Receipt)]
     [InlineData(PrintTemplateFormats.HalfLetter)]
@@ -1532,6 +1657,41 @@ public sealed class PosConfigurationTests
 
         public void Print(string printerName, string documentName, byte[] bytes) =>
             PrinterNames.Add(printerName);
+    }
+
+    private sealed class RestaurantPrintHandler(RestaurantCommandCardView card)
+        : HttpMessageHandler
+    {
+        private int claims;
+        private int acknowledgements;
+        public int AcknowledgementCount => Volatile.Read(ref acknowledgements);
+        public TaskCompletionSource Acknowledged { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SecondClaim { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Assert.Equal("secret", request.Headers.GetValues(
+                "X-Auraly-Device-Secret").Single());
+            if (request.RequestUri!.AbsolutePath.EndsWith("/claim",
+                StringComparison.Ordinal))
+            {
+                var number = Interlocked.Increment(ref claims);
+                if (number == 2) SecondClaim.TrySetResult();
+                var jobs = number == 1
+                    ? new[] { new { cardId = card.CardId, leaseToken = Guid.NewGuid(),
+                        profileKey = "COCINA", isCopy = false, card } }
+                    : [];
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = JsonContent.Create(jobs) });
+            }
+            Assert.EndsWith("/ack", request.RequestUri.AbsolutePath);
+            Interlocked.Increment(ref acknowledgements);
+            Acknowledged.TrySetResult();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        }
     }
 
     private sealed class RecordingRenderedPrintJob : IWindowsRenderedPrintJob

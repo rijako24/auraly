@@ -21,6 +21,7 @@ test("transporter-only users start in assigned dispatches", () => {
 test("the first authorized view owns the generic landing", () => {
   assert.equal(defaultStartRoute(["Vendedor", "Administrador"], ["orders.read"]), "/dashboard/orders");
   assert.equal(defaultStartRoute(["Cajero"], ["sales.create"]), "/pos");
+  assert.equal(defaultStartRoute(["Mesero"], ["restaurant.attend"]), "/pos");
   assert.equal(defaultStartRoute(["Cajero"], ["sales.create", "orders.read"]), "/pos");
   assert.equal(defaultStartRoute(["Cajero"], ["sales.create", "orders.read", "orders.invoice", "pos.receivables.payments.create", "pos.payables.payments.create"]), "/pos");
   assert.equal(defaultStartRoute(["Administrador"], ["sales.create", "payables.read"]), "/dashboard/payables");

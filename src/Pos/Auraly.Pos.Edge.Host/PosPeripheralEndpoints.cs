@@ -36,6 +36,8 @@ internal static class PosPeripheralModule
             WindowsPrinterDiscovery.GetInstalledPrinters));
         services.AddSingleton<ConfigurableOrderDocumentPrinter>();
         services.AddSingleton<ConfigurablePosReceiptPrinter>();
+        services.AddSingleton<RestaurantCommandTicketPrinter>();
+        services.AddSingleton<RestaurantCommandPrintSignal>();
         services.AddSingleton<IPosReceiptPrinter>(sp =>
             sp.GetRequiredService<ConfigurablePosReceiptPrinter>());
         services.AddSingleton<PosCashMovementTicketPrinter>();
@@ -109,6 +111,50 @@ internal static class PosPeripheralModule
                     exception.Message,
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
+        });
+
+        edge.MapGet("/configuration/restaurant-command-printers", (
+            PosPrinterConfigurationStore printers) =>
+            Results.Ok(printers.CommandProfiles()));
+        edge.MapPut("/configuration/restaurant-command-printers/{key}", (
+            string key, RestaurantCommandPrinterProfile request,
+            PosPrinterConfigurationStore printers,
+            RestaurantCommandPrintSignal signal) =>
+        {
+            if (!string.Equals(key, request.Key, StringComparison.Ordinal))
+                return Results.BadRequest();
+            try
+            {
+                var saved = printers.SaveCommandProfile(request);
+                signal.Wake();
+                return Results.Ok(saved);
+            }
+            catch (ArgumentException error)
+            { return Results.ValidationProblem(new Dictionary<string, string[]>
+                { [nameof(RestaurantCommandPrinterProfile)] = [error.Message] }); }
+            catch (IOException error)
+            { return Results.Problem(error.Message, statusCode: 503); }
+        });
+        edge.MapDelete("/configuration/restaurant-command-printers/{key}", (
+            string key, PosPrinterConfigurationStore printers) =>
+            printers.DeleteCommandProfile(key)
+                ? Results.NoContent() : Results.NotFound());
+
+        edge.MapPost("/print/restaurant-command", async (
+            PrintRestaurantCommandRequest request,
+            RestaurantCommandTicketPrinter printer, CancellationToken ct) =>
+        {
+            try
+            {
+                await printer.PrintAsync(request, ct);
+                return Results.NoContent();
+            }
+            catch (ArgumentException error)
+            { return Results.ValidationProblem(new Dictionary<string, string[]>
+                { [nameof(PrintRestaurantCommandRequest)] = [error.Message] }); }
+            catch (Exception error) when (error is IOException or
+                InvalidOperationException or PlatformNotSupportedException)
+            { return Results.Problem(error.Message, statusCode: 503); }
         });
 
         edge.MapPost("/print/receipt", async (

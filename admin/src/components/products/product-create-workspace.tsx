@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Barcode, Boxes, Check, CircleDollarSign, Images, Link2, PackagePlus, ReceiptText, Scale, Tags, Trash2, Truck } from "lucide-react";
+import { Barcode, Boxes, Check, ChefHat, CircleDollarSign, Images, Link2, PackagePlus, ReceiptText, Scale, Tags, Trash2, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -22,6 +22,8 @@ import { productsApi } from "@/services/api/products";
 import { productOffersApi } from "@/services/api/product-offers";
 import { PendingProductImagePicker, type PendingProductImage } from "@/components/products/product-image-gallery";
 import { ProductPicker } from "@/components/products/product-picker";
+import { ProductRecipeFields } from "@/components/products/product-recipe-fields";
+import type { ProductRecipeIngredient } from "@/services/api/product-recipes";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { taxProfilesApi } from "@/services/api/tax-profiles";
 import { partiesApi } from "@/services/api/parties";
@@ -36,6 +38,7 @@ const sections = [
   ["identity", "Identidad", PackagePlus],
   ["classification", "Clasificación", Tags],
   ["sale", "Venta y balanza", Scale],
+  ["recipe", "Receta", ChefHat],
   ["family", "Productos vinculados", Link2],
   ["supplier", "Proveedor y empaque", Truck],
   ["taxes", "IVA y precios", ReceiptText],
@@ -48,7 +51,7 @@ interface CreateState {
   reference: string; name: string; description: string;
   productCategoryId: string | null; productBrandId: string | null; baseUnitCode: string;
   unitGrossWeightKg: number | null;
-  isGenericProduct: boolean; manageInventory: boolean; allowsFractionalSale: boolean; isWeighable: boolean;
+  isGenericProduct: boolean; isIngredient: boolean; manageInventory: boolean; allowsFractionalSale: boolean; isWeighable: boolean;
   salesTaxProfileId: string; purchaseTaxProfileId: string;
   purchaseTaxTreatment: "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
   cost: number; margin: number; salePrice: number;
@@ -62,13 +65,14 @@ interface ProductCreateDraft {
   barcode: string;
   pendingImages: PendingProductImage[];
   linkedProducts: LinkedProduct[];
+  recipeLines: ProductRecipeIngredient[];
   conversionMaximumLossPercent: number | null;
   selectedSupplier: { name: string; identification: string } | null;
 }
 
 const initialState: CreateState = {
   reference: "", name: "", description: "", productCategoryId: null,
-  productBrandId: null, baseUnitCode: "EA", unitGrossWeightKg: null, isGenericProduct: false, manageInventory: true, allowsFractionalSale: false,
+  productBrandId: null, baseUnitCode: "EA", unitGrossWeightKg: null, isGenericProduct: false, isIngredient: false, manageInventory: true, allowsFractionalSale: false,
   isWeighable: false, salesTaxProfileId: "", purchaseTaxProfileId: "",
   purchaseTaxTreatment: "DeductibleInputVat", cost: 0, margin: 0, salePrice: 0, barcodes: [],
   scaleCode: "", scalePrefix: "", scaleDecimals: 3, supplierId: null, supplierProductCode: "",
@@ -85,6 +89,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [pendingImages, setPendingImages] = useState<PendingProductImage[]>([]);
   const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
+  const [recipeLines, setRecipeLines] = useState<ProductRecipeIngredient[]>([]);
   const [conversionMaximumLossPercent, setConversionMaximumLossPercent] = useState<number | null>(null);
   const [selectedSupplier, setSelectedSupplier] = useState<{ name: string; identification: string } | null>(null);
   const localDraftKey = businessId && userId
@@ -95,9 +100,10 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
     barcode,
     pendingImages,
     linkedProducts,
+    recipeLines,
     conversionMaximumLossPercent,
     selectedSupplier,
-  }), [barcode, conversionMaximumLossPercent, form, linkedProducts, pendingImages, selectedSupplier]);
+  }), [barcode, conversionMaximumLossPercent, form, linkedProducts, recipeLines, pendingImages, selectedSupplier]);
   const clearLocalDraft = useCatalogDraft({
     draftKey: localDraftKey,
     enabled: open,
@@ -113,6 +119,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         }));
       });
       setLinkedProducts(stored.form?.isGenericProduct ? [] : stored.linkedProducts ?? []);
+      setRecipeLines(stored.form?.isIngredient || stored.form?.isGenericProduct ? [] : stored.recipeLines ?? []);
       setConversionMaximumLossPercent(stored.form?.isGenericProduct ? null : stored.conversionMaximumLossPercent ?? null);
       setSelectedSupplier(stored.selectedSupplier ?? null);
     },
@@ -150,6 +157,8 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
       if (!form.isGenericProduct && !(form.margin >= 0 && form.margin < 100)) throw new Error("El margen debe estar entre 0 % y menos de 100 %.");
       if (!form.isGenericProduct && !(form.salePrice > 0)) throw new Error("El precio público debe ser mayor que cero.");
       if (form.isWeighable && !form.allowsFractionalSale) throw new Error("Habilita la venta fraccionada antes de usar balanza.");
+      if (recipeLines.some((line) => !Number.isFinite(line.quantityPerUnit) || line.quantityPerUnit <= 0))
+        throw new Error("Cada ingrediente necesita una cantidad mayor que cero.");
       let supplierDetails = selectedSupplier;
       if (form.supplierId && !supplierDetails) {
         const resolved = (await partiesApi.roleOptions({
@@ -167,6 +176,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         unitGrossWeightKg: form.unitGrossWeightKg,
         purchaseTaxProfileId: form.isGenericProduct ? null : form.purchaseTaxProfileId, purchaseTaxTreatment: form.isGenericProduct ? "NotApplicable" : form.purchaseTaxTreatment,
         isGenericProduct: form.isGenericProduct,
+        isIngredient: form.isIngredient,
         manageInventory: form.isGenericProduct ? false : form.manageInventory, isWeighable: form.isGenericProduct ? false : form.isWeighable,
         barcodes: form.barcodes, identifiers: [], prices: [form.isGenericProduct
           ? genericProductCatalogPrice()
@@ -180,25 +190,15 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         productCategoryId: form.productCategoryId, productBrandId: form.productBrandId,
         allowsFractionalSale: form.allowsFractionalSale,
         link: null,
+        linkedProducts: form.isGenericProduct ? [] : linkedProducts.map(({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor }) =>
+          ({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor })),
+        conversionMaximumLossPercent: linkedProducts.some((item) => item.allowsConversion) ? conversionMaximumLossPercent ?? 0 : null,
+        ...(!form.isIngredient && !form.isGenericProduct && recipeLines.length > 0 ? {
+          recipeExpectedVersion: 0,
+          recipeIngredients: recipeLines.map((line) => ({ ingredientProductId: line.ingredientProductId, quantityPerUnit: line.quantityPerUnit })),
+        } : {}),
 
       });
-      if (!form.isGenericProduct && linkedProducts.length > 0) {
-        await productMerchandisingApi.save(product.productId, {
-          productCategoryId: form.productCategoryId,
-          productBrandId: form.productBrandId,
-          baseUnitCode: form.baseUnitCode,
-          unitGrossWeightKg: form.unitGrossWeightKg,
-          isGenericProduct: form.isGenericProduct,
-          manageInventory: form.manageInventory,
-          allowsFractionalSale: form.allowsFractionalSale,
-          isWeighable: form.isWeighable,
-          scale: form.isWeighable ? { scaleCode: form.scaleCode.trim(), barcodePrefix: form.scalePrefix.trim(), embeddedValueType: "Weight", valueStart: 0, valueLength: 5, decimalPlaces: form.scaleDecimals } : null,
-          barcodes: form.barcodes,
-          link: null,
-          linkedProducts: linkedProducts.map(({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor }) => ({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor })),
-          conversionMaximumLossPercent: linkedProducts.some((item) => item.allowsConversion) ? conversionMaximumLossPercent ?? 0 : null,
-        });
-      }
       const uploads = await Promise.allSettled(pendingImages.map((image) =>
         productOffersApi.uploadImage(businessId, product.productId, image.file, null, image.isPrimary)));
       const failedUploads = uploads.filter((result) => result.status === "rejected").length;
@@ -222,6 +222,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
     setBarcode("");
     setPendingImages([]);
     setLinkedProducts([]);
+    setRecipeLines([]);
     setConversionMaximumLossPercent(null);
     setSelectedSupplier(null);
     setValidationError(undefined);
@@ -267,7 +268,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
             <p className="text-xs font-bold uppercase tracking-[.2em] text-teal-300">Nuevo producto</p>
             <h2 className="mt-2 text-2xl font-semibold">Una ficha, todo conectado</h2>
             <p className="mt-2 text-sm text-slate-300">Completa lo necesario para comprar, publicar y vender sin abrir ventanas adicionales.</p>
-            <nav className="mt-8 space-y-1">{sections.filter(([id]) => !form.isGenericProduct || id !== "family").map(([id, label, Icon], index) => <a key={id} href={`#new-${id}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10"><span className="flex h-7 w-7 items-center justify-center rounded-full border border-teal-400/40 text-xs text-teal-300">{index + 1}</span><Icon className="h-4 w-4" />{label}</a>)}</nav>
+            <nav className="mt-8 space-y-1">{sections.filter(([id]) => (!form.isGenericProduct || id !== "family") && (id !== "recipe" || !form.isIngredient && !form.isGenericProduct)).map(([id, label, Icon], index) => <a key={id} href={`#new-${id}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10"><span className="flex h-7 w-7 items-center justify-center rounded-full border border-teal-400/40 text-xs text-teal-300">{index + 1}</span><Icon className="h-4 w-4" />{label}</a>)}</nav>
           </div>
         </aside>
         <div className="flex min-h-0 flex-col bg-muted/20">
@@ -280,6 +281,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
               {validationError && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"><strong>Revisa la informacion requerida.</strong> {validationError}</div>}
               <Section id="new-identity" icon={PackagePlus} title="Identidad" description="Lo que el equipo verá al buscar y vender.">
                 <div className="grid gap-4 md:grid-cols-2"><Field label="Nombre *" className="md:col-span-2" error={fieldErrors.name}><Input aria-invalid={Boolean(fieldErrors.name)} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nombre claro para venta y búsqueda" /></Field><Field label="Referencia" className="md:col-span-2"><Input value={form.reference} maxLength={120} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="Referencia del fabricante" /></Field><Field label="Descripción" className="md:col-span-2"><Textarea className="min-h-24" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Presentación, uso y detalles relevantes" /></Field></div>
+                <div className="mt-4"><Toggle label="Es ingrediente" detail="Se administra en el catálogo del tenant y nunca aparece en ventas." checked={form.isIngredient} disabled={form.isGenericProduct} onChange={(checked) => setForm({ ...form, isIngredient: checked })} /></div>
               </Section>
               <Section id="new-classification" icon={Tags} title="Clasificación, marca y unidad" description="Auraly conserva la ruta completa y la unidad real en la que se vende.">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{["Área", "Línea", "Grupo", "Subgrupo"].map((label, depth) => { const parent = depth === 0 ? null : chain[depth - 1]?.productCategoryId ?? null; const items = (categories.data ?? []).filter((item) => item.depth === depth && item.parentProductCategoryId === parent); return <Field key={label} label={label}><Select value={chain[depth]?.productCategoryId ?? none} disabled={depth > 0 && !parent} onValueChange={(value) => setCategory(depth, value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={none}>Sin {label.toLowerCase()}</SelectItem>{items.map((item) => <SelectItem key={item.productCategoryId} value={item.productCategoryId}>{item.name}</SelectItem>)}</SelectContent></Select></Field>; })}</div>
@@ -288,9 +290,13 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
               <Section id="new-sale" icon={Barcode} title="Captura, cantidad y balanza" description="Varios códigos de barras y reglas de cantidad en un mismo lugar.">
                 <div className="flex gap-2"><Input value={barcode} onChange={(e) => setBarcode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addBarcode(); } }} placeholder="Escanea o escribe un código" /><Button type="button" variant="outline" onClick={addBarcode}>Agregar</Button></div>
                 <div className="mt-3 flex flex-wrap gap-2">{form.barcodes.map((item, index) => <span key={`${item.value}-${index}`} className="inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-sm"><Barcode className="h-3.5 w-3.5" />{item.value}{item.isPrimary && <strong className="text-xs text-primary">Principal</strong>}<button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => setForm({ ...form, barcodes: form.barcodes.filter((_, i) => i !== index).map((code, i) => ({ ...code, isPrimary: i === 0 })) })}>×</button></span>)}</div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Toggle label="Producto genérico" detail="El costo, margen y precio se definen al agregarlo a la venta." checked={form.isGenericProduct} onChange={(checked) => { if (checked) { setSelectedSupplier(null); setLinkedProducts([]); setConversionMaximumLossPercent(null); } setForm(setGenericProductMode(form, checked)); }} /><Toggle label="Control de inventario" detail="Compras, ventas, traslados y ajustes cambian sus unidades disponibles." checked={form.isGenericProduct ? false : form.manageInventory} disabled={form.isGenericProduct} onChange={(checked) => setForm({ ...form, manageInventory: checked })} /><Toggle label="Permitir venta fraccionada" detail={`Acepta cantidades decimales en ${selectedUnit?.name ?? "la unidad seleccionada"}.`} checked={form.allowsFractionalSale} onChange={(checked) => setForm({ ...form, allowsFractionalSale: checked, isWeighable: checked ? form.isWeighable : false })} /><Toggle label="Captura desde balanza" detail={form.allowsFractionalSale ? "Lee peso o cantidad automáticamente." : "Primero habilita la venta fraccionada."} checked={form.isWeighable} disabled={form.isGenericProduct || !form.allowsFractionalSale} onChange={(checked) => setForm({ ...form, isWeighable: checked })} /></div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4"><Toggle label="Producto genérico" detail="El costo, margen y precio se definen al agregarlo a la venta." checked={form.isGenericProduct} disabled={form.isIngredient} onChange={(checked) => { if (checked) { setSelectedSupplier(null); setLinkedProducts([]); setConversionMaximumLossPercent(null); } setForm(setGenericProductMode(form, checked)); }} /><Toggle label="Control de inventario" detail="Compras, ventas, traslados y ajustes cambian sus unidades disponibles." checked={form.isGenericProduct ? false : form.manageInventory} disabled={form.isGenericProduct} onChange={(checked) => setForm({ ...form, manageInventory: checked })} /><Toggle label="Permitir venta fraccionada" detail={`Acepta cantidades decimales en ${selectedUnit?.name ?? "la unidad seleccionada"}.`} checked={form.allowsFractionalSale} onChange={(checked) => setForm({ ...form, allowsFractionalSale: checked, isWeighable: checked ? form.isWeighable : false })} /><Toggle label="Captura desde balanza" detail={form.allowsFractionalSale ? "Lee peso o cantidad automáticamente." : "Primero habilita la venta fraccionada."} checked={form.isWeighable} disabled={form.isGenericProduct || !form.allowsFractionalSale} onChange={(checked) => setForm({ ...form, isWeighable: checked })} /></div>
                 {form.isWeighable && <div className="mt-4 grid items-start gap-4 rounded-xl bg-muted/30 p-4 md:grid-cols-3 [&>div>label]:flex [&>div>label]:min-h-10 [&>div>label]:items-center [&>div>p]:min-h-8"><Field label="Código del producto en la balanza"><Input value={form.scaleCode} onChange={(e) => setForm({ ...form, scaleCode: e.target.value })} placeholder="Ej. 125" /><p className="text-xs text-muted-foreground">También conocido como PLU.</p></Field><Field label="Inicio del código de balanza"><Input value={form.scalePrefix} onChange={(e) => setForm({ ...form, scalePrefix: e.target.value })} placeholder="Ej. 20" /><p className="text-xs text-muted-foreground">Identifica las etiquetas generadas por la balanza.</p></Field><Field label="Decimales del peso"><Input type="number" min={0} max={6} value={form.scaleDecimals} onChange={(e) => setForm({ ...form, scaleDecimals: Number(e.target.value) })} /><p className="text-xs text-muted-foreground">3 interpreta 1250 como 1,250 kg.</p></Field></div>}
               </Section>
+
+              {!form.isIngredient && !form.isGenericProduct && <Section id="new-recipe" icon={ChefHat} title="Ingredientes de la receta" description="Configura cuánto ingrediente consume cada unidad terminada.">
+                {businessId && <ProductRecipeFields businessId={businessId} lines={recipeLines} onChange={setRecipeLines} disabled={create.isPending} inputId="new-recipe-ingredient-search" />}
+              </Section>}
 
               {!form.isGenericProduct && <Section id="new-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. El inventario puede compartirse y el costo puede derivarse; cada producto conserva sus precios propios.">
                 {businessId && <div className="rounded-xl border bg-muted/20 p-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(linkedProducts.map((item) => item.childProductId))} excludedProductIds={new Set(linkedProducts.map((item) => item.childProductId))} disabled={create.isPending} label="Agregar producto a la lista" inputId="new-linked-product-search" onSelect={(product) => setLinkedProducts((current) => [...current, { childProductId: product.productId, childProductCode: product.productCode, childProductName: product.productName, sharesInventory: false, inventoryFactor: null, sharesPrice: false, priceFactor: null, allowsConversion: false, conversionFactor: null }])} /></div>}

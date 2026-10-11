@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Auraly.BuildingBlocks.Domain.Documents;
 
 namespace Auraly.Contracts.Inventory;
@@ -11,6 +12,7 @@ public static class InventoryPermissionCodes
     public const string ReceiveTransfer = "inventory.transfers.receive";
     public const string ResolveTransferDifference = "inventory.transfers.resolve-difference";
     public const string Convert = "inventory.conversions.confirm";
+    public const string Produce = "inventory.production.confirm";
     public const string Damage = "inventory.damages.confirm";
     public const string Read = "inventory.read";
     public const string ReadCosts = "inventory.costs.read";
@@ -28,6 +30,7 @@ public static class InventoryDocumentTypes
     public const string TransferDispatch = "WarehouseTransferDispatch";
     public const string TransferReceipt = "WarehouseTransferReceipt";
     public const string Conversion = AuralyDocumentTypes.ProductConversion;
+    public const string Production = AuralyDocumentTypes.Production;
     public const string Damage = AuralyDocumentTypes.Damage;
 }
 
@@ -120,7 +123,9 @@ public sealed record ConfirmInventoryDamageRequest(
     string ReasonCode,
     Guid? CostCenterId,
     string? Notes,
-    IReadOnlyCollection<InventoryDamageLineRequest> Lines);
+    IReadOnlyCollection<InventoryDamageLineRequest> Lines,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Disposition = null);
 
 public sealed record ProductConversionLineRequest(
     int LineNumber,
@@ -139,6 +144,16 @@ public sealed record ConfirmProductConversionRequest(
     Guid? CostCenterId,
     string? Notes,
     IReadOnlyCollection<ProductConversionLineRequest> Lines);
+
+public sealed record ConfirmProductionRequest(
+    Guid DocumentId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    DateTimeOffset OccurredAt,
+    Guid ProductId,
+    int ExpectedRecipeVersion,
+    decimal Quantity,
+    string? Notes);
 
 public sealed record InventoryOperationLineSnapshot(
     int LineNumber,
@@ -186,7 +201,10 @@ public sealed record InventoryOperationDocumentPayload(
     decimal? ConversionLossPercent = null,
     decimal? ConversionMaximumLossPercent = null,
     string? CounterpartAccountingCategory = null,
-    Guid? AccountingCostCenterId = null);
+    Guid? AccountingCostCenterId = null,
+    Guid? RecipeVersionId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? DamageDisposition = null);
 
 public sealed record WarehouseTransferPendingQuery(
     Guid BusinessId,
@@ -273,6 +291,14 @@ public sealed record ProductConversionProductItem(
     decimal ConversionFactor,
     decimal MaximumLossPercent);
 public sealed record ProductConversionProductPage(IReadOnlyList<ProductConversionProductItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
+public sealed record ProductionProductQuery(Guid BusinessId, Guid WarehouseId, string? Search, int Page = 1, int PageSize = 50);
+public sealed record ProductionProductItem(Guid ProductId, string ProductCode, string ProductName, string UnitCode, int RecipeVersion, decimal QuantityOnHand);
+public sealed record ProductionProductPage(IReadOnlyList<ProductionProductItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
+public sealed record ProductionIngredientPreview(Guid ProductId, string ProductCode, string Name, string UnitCode,
+    decimal QuantityPerUnit, decimal RequiredQuantity, decimal QuantityOnHand, decimal? EstimatedUnitCost);
+public sealed record ProductionPreview(Guid ProductId, string ProductCode, string ProductName, string UnitCode,
+    int RecipeVersion, decimal Quantity, decimal QuantityOnHand,
+    IReadOnlyList<ProductionIngredientPreview> Ingredients);
 public sealed record InventoryWarehouseOption(Guid WarehouseId, string Code, string Name);
 public sealed record WarehouseMasterItem(Guid WarehouseId, string Code, string Name, bool AllowNegativeStockSales,
     string PriceFormationCostBasis, bool IsSystem, bool UseForSales, bool UseForGoodsReceipts,
@@ -342,7 +368,9 @@ public sealed record InventoryOperationDetail(
     decimal? ConversionOutputEquivalent = null,
     decimal? ConversionLossQuantity = null,
     decimal? ConversionLossPercent = null,
-    decimal? ConversionMaximumLossPercent = null);
+    decimal? ConversionMaximumLossPercent = null,
+    Guid? RecipeVersionId = null,
+    int? RecipeVersion = null);
 
 public sealed record InventoryOperationPage(IReadOnlyList<InventoryOperationItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 

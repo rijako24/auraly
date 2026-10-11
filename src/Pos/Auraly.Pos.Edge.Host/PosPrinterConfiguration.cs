@@ -140,6 +140,10 @@ public sealed record PrintTemplateRoute(
     string Format,
     string? PrinterName);
 
+public sealed record RestaurantCommandPrinterProfile(
+    string Key, string PrinterName, int PaperWidthMillimeters,
+    int Copies = 1, bool Cut = true);
+
 public sealed record PosPrinterConfiguration(
     string ReceiptMode,
     string? ReceiptPrinterName,
@@ -152,7 +156,8 @@ public sealed record PosPrinterConfiguration(
     string? PosPrinterName = null,
     string OrderOutputFormat = PrintTemplateFormats.HalfLetter,
     string? OrderPrinterName = null,
-    int OrderReceiptPaperWidthMillimeters = 80)
+    int OrderReceiptPaperWidthMillimeters = 80,
+    IReadOnlyList<RestaurantCommandPrinterProfile>? RestaurantCommandProfiles = null)
 {
     public static PosPrinterConfiguration Default { get; } =
         new(PosPrinterModes.WindowsRaw, null, 80, null,
@@ -263,7 +268,8 @@ public sealed class PosPrinterConfigurationStore(
             PosPrinterName = RequireInstalledPrinter(
                 requested.PosPrinterName, installedPrinters, "facturas"),
             OrderPrinterName = RequireInstalledPrinter(
-                requested.OrderPrinterName, installedPrinters, "pedidos")
+                requested.OrderPrinterName, installedPrinters, "pedidos"),
+            RestaurantCommandProfiles = Load().RestaurantCommandProfiles
         };
         return View(Save(normalized), installedPrinters, [], []);
     }
@@ -375,13 +381,64 @@ public sealed class PosPrinterConfigurationStore(
         };
         lock (gate)
         {
-            var directory = Path.GetDirectoryName(Path.GetFullPath(settingsPath));
-            if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-            var temporary = settingsPath + ".new";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(value));
-            File.Move(temporary, settingsPath, overwrite: true);
+            Persist(value);
         }
         return value;
+    }
+
+    public IReadOnlyList<RestaurantCommandPrinterProfile> CommandProfiles() =>
+        Load().RestaurantCommandProfiles ?? [];
+
+    public RestaurantCommandPrinterProfile SaveCommandProfile(
+        RestaurantCommandPrinterProfile requested)
+    {
+        var key = requested.Key?.Trim() ?? string.Empty;
+        if (key.Length is < 1 or > 64 ||
+            !key.All(character => char.IsAsciiLetterOrDigit(character) ||
+                character is '-' or '_'))
+            throw new ArgumentException("La clave del perfil de comanda no es válida.");
+        if (requested.PaperWidthMillimeters is not (58 or 80) ||
+            requested.Copies is < 1 or > 3)
+            throw new ArgumentException("El papel o las copias de comanda no son válidos.");
+        var printer = RequireInstalledPrinter(
+            requested.PrinterName, InstalledPrinters(), "comandas") ??
+            throw new ArgumentException("Selecciona una impresora de comandas.");
+        var profile = requested with { Key = key, PrinterName = printer };
+        lock (gate)
+        {
+            var current = Load();
+            var profiles = (current.RestaurantCommandProfiles ?? [])
+                .Where(item => !string.Equals(item.Key, key,
+                    StringComparison.OrdinalIgnoreCase))
+                .Append(profile).OrderBy(item => item.Key,
+                    StringComparer.OrdinalIgnoreCase).ToArray();
+            Persist(current with { RestaurantCommandProfiles = profiles });
+        }
+        return profile;
+    }
+
+    public bool DeleteCommandProfile(string key)
+    {
+        lock (gate)
+        {
+            var current = Load();
+            var profiles = (current.RestaurantCommandProfiles ?? [])
+                .Where(item => !string.Equals(item.Key, key,
+                    StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (profiles.Length == (current.RestaurantCommandProfiles?.Count ?? 0))
+                return false;
+            Persist(current with { RestaurantCommandProfiles = profiles });
+            return true;
+        }
+    }
+
+    private void Persist(PosPrinterConfiguration value)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(settingsPath));
+        if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+        var temporary = settingsPath + ".new";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(value));
+        File.Move(temporary, settingsPath, overwrite: true);
     }
 
     public IReadOnlyList<string> InstalledPrinters()

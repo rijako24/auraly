@@ -201,6 +201,10 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(1, state.AccountingVoucherCursors);
         Assert.Equal("Configuring", await ReadAccountingStatusAsync(result.TenantId));
         Assert.Equal(6, state.Roles);
+        foreach (var role in new[] { "ADMINISTRATOR", "ADMINISTRATIVE", "WAITER" })
+            foreach (var permission in new[] {
+                "restaurant.attend", "restaurant.commands.read", "restaurant.commands.manage" })
+                Assert.False(await RoleHasPermissionAsync(result.TenantId, role, permission));
         Assert.Equal(3, state.OnlineSalesDocumentSeries);
         Assert.Equal(14, await CountDefaultDocumentSeriesAsync(
             result.TenantId, result.BusinessId));
@@ -714,6 +718,50 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
 
     private static WaivedTenantProvisioningRequest Waived(ProvisionTenantRequest request) =>
         new(request, new TenantQuoteRequest("business", "Annual", 0, 0, 0, 0));
+
+    [Fact]
+    public async Task Adding_first_restaurant_business_creates_waiter_role_and_grants_restaurant_access()
+    {
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var roles = new SqlCommand("""
+                INSERT dbo.AppRoles
+                    (RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+                SELECT NEWID(),@TenantId,valuesToAdd.Name,valuesToAdd.NormalizedName,
+                    N'Rol de prueba',1,1,SYSUTCDATETIME()
+                FROM (VALUES
+                    (N'Administrador',N'ADMINISTRATOR'),
+                    (N'Administrativo',N'ADMINISTRATIVE')) valuesToAdd(Name,NormalizedName)
+                WHERE NOT EXISTS(
+                    SELECT 1 FROM dbo.AppRoles existing
+                    WHERE existing.TenantId=@TenantId
+                      AND existing.NormalizedName=valuesToAdd.NormalizedName);
+                """, connection);
+            roles.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await roles.ExecuteNonQueryAsync();
+        }
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        using var admin = fixture.CreateAdminClient("businesses.create");
+        using var response = await admin.PostAsJsonAsync(
+            "/api/v1/businesses",
+            new CreateBusinessRequest(
+                $"Restaurante {suffix}", null, null, null, null, null,
+                PriceSourceBusinessId: fixture.BusinessId,
+                PointOfSaleMode: "RestaurantBar"));
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Created,
+            $"Expected Created but received {response.StatusCode}: {body}");
+        var created = (await response.Content.ReadFromJsonAsync<BusinessCreatedResponse>())!;
+        Assert.NotEqual(Guid.Empty, created.BusinessId);
+        Assert.True(await RoleHasPermissionAsync(fixture.TenantId, "WAITER", "restaurant.attend"));
+        foreach (var role in new[] { "ADMINISTRATOR", "ADMINISTRATIVE" })
+            foreach (var permission in new[] {
+                "restaurant.attend", "restaurant.commands.read", "restaurant.commands.manage" })
+                Assert.True(await RoleHasPermissionAsync(fixture.TenantId, role, permission),
+                    $"{role} is missing {permission} after restaurant business creation.");
+    }
+
     [Fact]
     public async Task Creating_any_later_business_provisions_all_warehouses_and_prices_in_both_directions()
     {
@@ -902,7 +950,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                     AND accountMapping.Category=sourceMapping.Category
                     AND accountMapping.EffectiveTo IS NULL
                    WHERE profile.IsDefault=1 AND profile.IsActive=1)),
-              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'SELLER',N'ADMINISTRATIVE',N'ACCOUNTANT',N'ADMINISTRATOR')),
+              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'SELLER',N'ADMINISTRATIVE',N'ACCOUNTANT',N'ADMINISTRATOR',N'WAITER')),
               (SELECT COUNT(*) FROM dbo.DocumentSeries ds INNER JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId WHERE b.TenantId=@TenantId AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt',N'SalesDebitNote') AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1),
               (SELECT COUNT(*) FROM dbo.UserRoles WHERE UserId=@UserId),
               (SELECT IsActive FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
@@ -1288,6 +1336,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               AND permissionValue.Resource NOT LIKE N'leads.%'
               AND permissionValue.Resource NOT LIKE N'campaigns.%'
               AND permissionValue.Resource NOT LIKE N'reservations.%'
+              AND permissionValue.Resource NOT LIKE N'restaurant.%'
               AND NOT EXISTS(
                 SELECT 1
                 FROM dbo.AppRoles roleValue
@@ -1354,6 +1403,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             SELECT COUNT(*)
             FROM dbo.Permissions
             WHERE Resource NOT LIKE N'tenants.%'
+              AND Resource NOT LIKE N'restaurant.%'
               AND Resource NOT LIKE N'platform.%'
               AND Resource NOT LIKE N'agents.%'
               AND Resource NOT LIKE N'conversations.%'

@@ -28,8 +28,14 @@ public static class SalesWorkspaceApi
                 var hasPermission = context.User.FindAll("permission").Any(claim =>
                     StringComparer.Ordinal.Equals(
                         claim.Value, CommercePermissionCodes.EnrolledDevicesEnroll));
-                var capacity = await service.EnrollmentCapacityAsync(identity, ct);
-                var canEnroll = hasPermission && capacity.HasAvailableCapacity;
+                var canUseDirectSales = identity.Permissions.Contains(
+                    CommercePermissionCodes.SalesCreate) ||
+                    identity.Permissions.Contains("orders.create");
+                var capacity = canUseDirectSales
+                    ? await service.EnrollmentCapacityAsync(identity, ct)
+                    : new PosEnrollmentCapacity(0, 0);
+                var canEnroll = canUseDirectSales && hasPermission &&
+                    capacity.HasAvailableCapacity;
                 return Results.Ok(new SalesWorkspaceBootstrap(
                     identity.TenantId,
                     await service.TenantNameAsync(identity, ct),
@@ -92,6 +98,9 @@ public static class SalesWorkspaceApi
         CancellationToken cancellationToken)
     {
         var options = await service.ListAsync(identity, cancellationToken);
+        if (!identity.Permissions.Contains(CommercePermissionCodes.SalesCreate) &&
+            !identity.Permissions.Contains("orders.create"))
+            return options;
         var fiscalUser = new FiscalConfigurationUser(
             identity.UserId, identity.TenantId, identity.Permissions);
         var configurations = await Task.WhenAll(options

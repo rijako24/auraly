@@ -123,7 +123,11 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                    d.PayableAmount-d.UntaxedAmount-d.TaxAmount,
                    d.UntaxedAmount+d.TaxAmount-COALESCE(prior.Unrounded,0),
                    d.PayableAmount-d.UntaxedAmount-d.TaxAmount-
-                     COALESCE(prior.Rounding,0)
+                     COALESCE(prior.Rounding,0),
+                   CAST(CASE WHEN d.TableId IS NOT NULL AND EXISTS(
+                     SELECT 1 FROM sales.RestaurantCheckoutLines restaurant
+                     WHERE restaurant.DocumentId=d.DocumentId)
+                     THEN 1 ELSE 0 END AS bit)
             FROM dbo.SalesDocuments d
             OUTER APPLY (
               SELECT SUM(r.TotalAmount) Total,
@@ -144,6 +148,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         decimal total; decimal returned; decimal receivable; string fiscalStatus;
         decimal originalUnrounded; decimal originalRounding;
         decimal unroundedOutstanding; decimal remainingRounding;
+        bool isRestaurant;
         await using (var command = new SqlCommand(headerSql, connection))
         {
             Scope(command, user); command.Parameters.AddWithValue("@Id", documentId);
@@ -157,6 +162,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             receivable=reader.GetDecimal(11); fiscalStatus=reader.GetString(12);
             originalUnrounded=reader.GetDecimal(13); originalRounding=reader.GetDecimal(14);
             unroundedOutstanding=reader.GetDecimal(15); remainingRounding=reader.GetDecimal(16);
+            isRestaurant=reader.GetBoolean(17);
         }
         var payments = await LoadPaymentsAsync(connection, documentId, cancellationToken);
         var lines = await LoadLinesAsync(connection, documentId, cancellationToken);
@@ -164,7 +170,8 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         return new ReturnableSale(documentId, number, fiscal, cufe, issued, customerId,
             customerName, identification, warehouseId, warehouseName, total, returned,
             receivable, fiscalStatus, payments, lines, charges,
-            originalUnrounded, originalRounding, unroundedOutstanding, remainingRounding);
+            originalUnrounded, originalRounding, unroundedOutstanding,
+            remainingRounding, isRestaurant);
     }
 
     public async Task<SalesReturnPage> ListReturnsAsync(

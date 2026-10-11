@@ -143,6 +143,7 @@ public sealed partial class SqlPartyWorkspaceStore
                UNION SELECT PartyId FROM dbo.Suppliers WHERE TenantId=@TenantId AND IsActive=1
                UNION SELECT PartyId FROM dbo.CommerceSellers WHERE TenantId=@TenantId AND IsActive=1
                UNION SELECT PartyId FROM dbo.Carriers WHERE TenantId=@TenantId AND IsActive=1
+               UNION SELECT PartyId FROM parties.Waiters WHERE TenantId=@TenantId AND IsActive=1
                UNION SELECT PartyId FROM dbo.Employees WHERE TenantId=@TenantId AND IsActive=1
                UNION SELECT PartyId FROM dbo.AppUsers WHERE TenantId=@TenantId AND IsActive=1 AND PartyId IS NOT NULL
              ) scoped)
@@ -153,6 +154,7 @@ public sealed partial class SqlPartyWorkspaceStore
         "Carrier" => new("dbo.Carriers", "CarrierId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
         "Employee" => new("dbo.Employees", "EmployeeId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
         "User" => new("dbo.AppUsers", "UserId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
+        "Waiter" => new("parties.Waiters", "WaiterId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
         _ => throw new ArgumentOutOfRangeException(nameof(role))
     };
 

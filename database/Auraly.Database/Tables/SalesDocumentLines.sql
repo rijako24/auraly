@@ -25,9 +25,13 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     [TaxAmount] DECIMAL(19, 4) NOT NULL,
     [UntaxedAmount] DECIMAL(19, 4) NOT NULL,
     [LineTotal] DECIMAL(19, 4) NOT NULL,
+    [AddedByUserId] UNIQUEIDENTIFIER NULL,
+    [AddedAt] DATETIMEOFFSET(7) NULL,
     CONSTRAINT [PK_SalesDocumentLines] PRIMARY KEY CLUSTERED ([DocumentId], [LineNumber]),
     CONSTRAINT [FK_SalesDocumentLines_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesDocumentLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
+    CONSTRAINT [FK_SalesDocumentLines_AddedByUser] FOREIGN KEY ([AddedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
+    CONSTRAINT [CK_SalesDocumentLines_AddedByPair] CHECK (([AddedByUserId] IS NULL AND [AddedAt] IS NULL) OR ([AddedByUserId] IS NOT NULL AND [AddedAt] IS NOT NULL)),
     CONSTRAINT [CK_SalesDocumentLines_Values] CHECK
         ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitPrice] >= 0 AND
          ([UnitCostSnapshot] IS NULL OR [UnitCostSnapshot] >= 0) AND [DiscountAmount] >= 0 AND

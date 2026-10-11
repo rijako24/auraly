@@ -16,6 +16,15 @@ public static class InventoryApi
             var identity = principal.ToInventoryIdentity();
             return await ExecuteAsync(() => service.GetConversionProductsAsync(identity, new(identity.BusinessId, warehouseId, familyRootProductId, search, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
         }).RequireAuthorization("inventory.user");
+        endpoints.MapGet("/api/commerce/v1/inventory/production-products", async (ClaimsPrincipal principal, Guid warehouseId, string? search, int page, int pageSize, InventoryQueryService service, CancellationToken token) =>
+        {
+            var identity = principal.ToInventoryIdentity();
+            return await ExecuteAsync(() => service.GetProductionProductsAsync(identity,
+                new(identity.BusinessId, warehouseId, search, page == 0 ? 1 : page, pageSize == 0 ? 30 : pageSize), token), Results.Ok);
+        }).RequireAuthorization("inventory.user");
+        endpoints.MapGet("/api/commerce/v1/inventory/production-products/{productId:guid}/preview", async (ClaimsPrincipal principal, Guid productId, Guid warehouseId, decimal quantity, InventoryQueryService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetProductionPreviewAsync(principal.ToInventoryIdentity(), warehouseId, productId, quantity, token),
+                value => value is null ? Results.NotFound() : Results.Ok(value))).RequireAuthorization("inventory.user");
         endpoints.MapGet("/api/commerce/v1/inventory/warehouses", async (ClaimsPrincipal principal, InventoryQueryService service, CancellationToken token) => await ExecuteAsync(() => service.GetWarehousesAsync(principal.ToInventoryIdentity(), token), Results.Ok)).RequireAuthorization("inventory.user");
         endpoints.MapGet("/api/commerce/v1/inventory/balances", async (ClaimsPrincipal principal, Guid? warehouseId, Guid? productId, string? search, bool? onlyWithStock, int page, int pageSize, InventoryQueryService service, CancellationToken token) =>
         {
@@ -94,6 +103,7 @@ public static class InventoryApi
                 value => Results.Accepted($"/api/commerce/v1/warehouse-transfers/{transferId:D}", value))).RequireAuthorization("inventory.user");
         endpoints.MapPost("/api/commerce/v1/inventory-damages/confirm", async (HttpContext context, ConfirmInventoryDamageRequest request, InventoryOperationService service, CancellationToken token) => await AcceptedAsync(() => service.ConfirmDamageAsync(context.User.ToInventoryIdentity(), Key(context), request, token))).RequireAuthorization("inventory.user");
         endpoints.MapPost("/api/commerce/v1/product-conversions/confirm", async (HttpContext context, ConfirmProductConversionRequest request, InventoryOperationService service, CancellationToken token) => await AcceptedAsync(() => service.ConfirmConversionAsync(context.User.ToInventoryIdentity(), Key(context), request, token))).RequireAuthorization("inventory.user");
+        endpoints.MapPost("/api/commerce/v1/production/confirm", async (HttpContext context, ConfirmProductionRequest request, InventoryOperationService service, CancellationToken token) => await AcceptedAsync(() => service.ConfirmProductionAsync(context.User.ToInventoryIdentity(), Key(context), request, token))).RequireAuthorization("inventory.user");
         return endpoints;
     }
     private static string Key(HttpContext context) => context.Request.Headers["Idempotency-Key"].ToString();

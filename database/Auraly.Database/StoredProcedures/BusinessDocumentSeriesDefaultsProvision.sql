@@ -19,7 +19,7 @@ BEGIN
       (N'PurchaseReturn',N'DCP'),
       (N'ReceivablePayment',N'RCC'),(N'PayablePayment',N'PGP'),
       (N'StockCount',N'CTI'),(N'InventoryAdjustment',N'AJI'),
-      (N'WarehouseTransfer',N'TRB'),(N'ProductConversion',N'CNV'),(N'Damage',N'AVE');
+      (N'WarehouseTransfer',N'TRB'),(N'ProductConversion',N'CNV'),(N'Production',N'PRD'),(N'Damage',N'AVE');
 
     INSERT dbo.DocumentSeries(
         DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,

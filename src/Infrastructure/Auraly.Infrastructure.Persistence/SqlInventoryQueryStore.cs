@@ -107,6 +107,93 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                 reader.GetDecimal(7), reader.GetDecimal(8)));
         return new(items, query.Page, query.PageSize, total, Pages(total, query.PageSize));
     }
+
+    public async Task<ProductionProductPage> GetProductionProductsAsync(InventoryUserIdentity user, ProductionProductQuery query, CancellationToken token)
+    {
+        const string sql = """
+            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND IsSystem=0)
+                THROW 51201,'Selecciona una bodega de inventario activa.',1;
+            DECLARE @TenantId uniqueidentifier=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
+            SELECT COUNT(*) FROM dbo.Products p
+            WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.IsIngredient=0 AND p.ManageStock=1
+              AND EXISTS (SELECT 1 FROM dbo.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId
+                  AND v.IsEnabled=1 AND v.[Version]=(SELECT MAX(latest.[Version]) FROM dbo.ProductRecipeVersions latest WHERE latest.TenantId=@TenantId AND latest.ProductId=p.ProductId))
+              AND NOT EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId AND link.IsActive=1 AND link.SharesInventory=1)
+              AND (@Search IS NULL OR p.Name LIKE @Pattern OR p.ProductCode LIKE @Pattern);
+            SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Name,p.BaseUnitCode,
+                   (SELECT MAX(v.[Version]) FROM dbo.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId),
+                   COALESCE(balance.QuantityOnHand,0)
+            FROM dbo.Products p
+            LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId
+            WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.IsIngredient=0 AND p.ManageStock=1
+              AND EXISTS (SELECT 1 FROM dbo.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId
+                  AND v.IsEnabled=1 AND v.[Version]=(SELECT MAX(latest.[Version]) FROM dbo.ProductRecipeVersions latest WHERE latest.TenantId=@TenantId AND latest.ProductId=p.ProductId))
+              AND NOT EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId AND link.IsActive=1 AND link.SharesInventory=1)
+              AND (@Search IS NULL OR p.Name LIKE @Pattern OR p.ProductCode LIKE @Pattern)
+            ORDER BY p.Name,p.ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand(sql, connection);
+        AddCommon(command, user.BusinessId, query.WarehouseId, query.Search, query.Page, query.PageSize);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        await reader.ReadAsync(token);
+        var total = reader.GetInt32(0);
+        await reader.NextResultAsync(token);
+        var items = new List<ProductionProductItem>();
+        while (await reader.ReadAsync(token))
+            items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt32(4), reader.GetDecimal(5)));
+        return new(items, query.Page, query.PageSize, total, Pages(total, query.PageSize));
+    }
+
+    public async Task<ProductionPreview?> GetProductionPreviewAsync(InventoryUserIdentity user,
+        Guid warehouseId, Guid productId, decimal quantity, bool includeCosts, CancellationToken token)
+    {
+        const string sql = """
+            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND IsSystem=0)
+                THROW 51201,'Selecciona una bodega de inventario activa.',1;
+            SELECT finished.ProductId,COALESCE(finished.ProductCode,N''),finished.Name,finished.BaseUnitCode,
+                   recipe.[Version],COALESCE(finishedBalance.QuantityOnHand,0),
+                   ingredient.ProductId,COALESCE(ingredient.ProductCode,N''),ingredient.Name,
+                   line.BaseUnitCodeSnapshot,line.QuantityPerUnit,COALESCE(ingredientBalance.QuantityOnHand,0),
+                   CASE WHEN @IncludeCosts=1 THEN ingredientBalance.AverageUnitCost END
+            FROM dbo.Products finished
+            CROSS APPLY (SELECT TOP(1) v.ProductRecipeVersionId,v.[Version],v.IsEnabled
+                FROM dbo.ProductRecipeVersions v WHERE v.TenantId=finished.TenantId AND v.ProductId=finished.ProductId
+                ORDER BY v.[Version] DESC) recipe
+            JOIN dbo.ProductRecipeIngredients line ON line.ProductRecipeVersionId=recipe.ProductRecipeVersionId
+            JOIN dbo.Products ingredient ON ingredient.TenantId=finished.TenantId AND ingredient.ProductId=line.IngredientProductId
+            LEFT JOIN dbo.InventoryBalances finishedBalance ON finishedBalance.BusinessId=@BusinessId AND finishedBalance.WarehouseId=@WarehouseId AND finishedBalance.ProductId=finished.ProductId
+            LEFT JOIN dbo.InventoryBalances ingredientBalance ON ingredientBalance.BusinessId=@BusinessId AND ingredientBalance.WarehouseId=@WarehouseId AND ingredientBalance.ProductId=ingredient.ProductId
+            WHERE finished.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              AND finished.ProductId=@ProductId AND finished.IsActive=1 AND finished.IsIngredient=0 AND finished.ManageStock=1
+              AND recipe.IsEnabled=1
+            ORDER BY line.LineNumber;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", warehouseId);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@IncludeCosts", includeCosts);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        ProductionPreview? preview = null;
+        var lines = new List<ProductionIngredientPreview>();
+        while (await reader.ReadAsync(token))
+        {
+            decimal required;
+            try { required = decimal.Round(reader.GetDecimal(10) * quantity, 6, MidpointRounding.AwayFromZero); }
+            catch (OverflowException) { throw new InventoryValidationException("La cantidad producida excede el límite del inventario."); }
+            if (required <= 0 || required > 9999999999999.999999m)
+                throw new InventoryValidationException("La cantidad requerida de un ingrediente no es válida.");
+            lines.Add(new(reader.GetGuid(6), reader.GetString(7), reader.GetString(8), reader.GetString(9),
+                reader.GetDecimal(10), required, reader.GetDecimal(11), reader.IsDBNull(12) ? null : reader.GetDecimal(12)));
+            preview ??= new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                reader.GetInt32(4), quantity, reader.GetDecimal(5), lines);
+        }
+        return preview;
+    }
     public async Task<IReadOnlyList<InventoryWarehouseOption>> GetWarehousesAsync(InventoryUserIdentity user, CancellationToken token)
     {
         const string sql = "SELECT WarehouseId,Code,Name FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND IsActive=1 AND IsSystem=0 ORDER BY Name;";
@@ -381,7 +468,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    CASE WHEN @IncludeCosts=1 THEN d.TotalValueChange END,
                    d.ConversionFamilyRootProductId,d.ConversionInputEquivalent,
                    d.ConversionOutputEquivalent,d.ConversionLossQuantity,
-                   d.ConversionLossPercent,d.ConversionMaximumLossPercent
+                   d.ConversionLossPercent,d.ConversionMaximumLossPercent,d.RecipeVersionId,d.RecipeVersion
             FROM (
               SELECT o.InventoryOperationId DocumentId,o.DocumentType,o.DocumentNumber,
                      o.WarehouseId,w.Name WarehouseName,o.DestinationWarehouseId,
@@ -390,10 +477,12 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                      o.CreatedAt,o.AcceptedAt,o.ProcessedAt,o.TotalValueChange,
                      o.ConversionFamilyRootProductId,o.ConversionInputEquivalent,
                      o.ConversionOutputEquivalent,o.ConversionLossQuantity,
-                     o.ConversionLossPercent,o.ConversionMaximumLossPercent
+                     o.ConversionLossPercent,o.ConversionMaximumLossPercent,o.RecipeVersionId,
+                     recipe.[Version] RecipeVersion
               FROM dbo.InventoryOperations o
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.IsSystem=0
               LEFT JOIN dbo.Warehouses dw ON dw.WarehouseId=o.DestinationWarehouseId
+              LEFT JOIN dbo.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=o.RecipeVersionId
               WHERE o.BusinessId=@BusinessId
               UNION ALL
               SELECT g.GoodsReceiptId,N'GoodsReceipt',g.DocumentNumber,g.WarehouseId,w.Name,
@@ -401,7 +490,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                      g.Status,g.ReceivedAt,g.AcceptedAt,g.AcceptedAt,g.ProcessedAt,
                      COALESCE((SELECT SUM(m.ValueChange) FROM dbo.InventoryMovements m
                                WHERE m.DocumentId=g.GoodsReceiptId),0),
-                     NULL,NULL,NULL,NULL,NULL,NULL
+                     NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
               FROM dbo.GoodsReceipts g
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.IsSystem=0
               WHERE g.BusinessId=@BusinessId
@@ -458,7 +547,9 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             reader.IsDBNull(19) ? null : reader.GetDecimal(19),
             reader.IsDBNull(20) ? null : reader.GetDecimal(20),
             reader.IsDBNull(21) ? null : reader.GetDecimal(21),
-            reader.IsDBNull(22) ? null : reader.GetDecimal(22));
+            reader.IsDBNull(22) ? null : reader.GetDecimal(22),
+            reader.IsDBNull(23) ? null : reader.GetGuid(23),
+            reader.IsDBNull(24) ? null : reader.GetInt32(24));
 
         await reader.NextResultAsync(token);
         var lines = new List<InventoryOperationDetailLine>();

@@ -143,7 +143,7 @@ Las fichas de `Products` y todos sus maestros relacionados (categorías,
 marcas, unidades, códigos de barras, identificadores, enlaces, IVA, canales,
 ofertas, imágenes, alias y relaciones con proveedores) pertenecen al tenant y
 conservan el mismo ID al cambiar de sede. `Parties` y sus roles de cliente,
-proveedor, vendedor, transportador y empleado también pertenecen al tenant.
+proveedor, vendedor, transportador, empleado y mesero también pertenecen al tenant.
 `ProductPrices` es la única tabla de producto cuyo valor publicado se identifica
 por sede. Las ventas, compras, inventario, documentos y demás operaciones
 siguen usando el `BusinessId` seleccionado y validan que los maestros
@@ -164,7 +164,7 @@ La existencia de una lista quemada actual no la convierte en patron valido. No s
 - Las reglas, relaciones y condiciones de negocio persisten y comparan exclusivamente IDs o codigos canonicos. `Name`, `Label` y otras descripciones se consultan desde el catalogo propietario para presentacion; no se copian a la regla ni participan en su elegibilidad.
 - Valores inactivos usados historicamente se pueden mostrar en registros existentes, pero no ofrecer para nuevas selecciones.
 - Catalogos grandes usan busqueda/paginacion; los pequenos pueden cachearse con una politica explicita de invalidacion y scope.
-- Cualquier selector de terceros usa `Parties` como identidad canonica y filtra el rol operativo requerido (`Customer`, `Supplier`, `Seller`, `Carrier`, `Employee` o `User`). Siempre busca y pagina en servidor; un endpoint de opciones no puede precargar en segundo plano la lista completa de terceros.
+- Cualquier selector de terceros usa `Parties` como identidad canonica y filtra el rol operativo requerido (`Customer`, `Supplier`, `Seller`, `Carrier`, `Employee`, `Waiter` o `User`). Siempre busca y pagina en servidor; un endpoint de opciones no puede precargar en segundo plano la lista completa de terceros.
 - El valor persistido por cada flujo sigue siendo el identificador que le pertenece: `PartyId` cuando el contrato consume la identidad, o el ID del rol (`CustomerId`, `SupplierId`, etc.) cuando consume esa relacion operativa. El selector no crea identidades ni codigos paralelos.
 
 Los menus de acciones de interfaz —por ejemplo editar, ver o eliminar— y opciones puramente visuales que no se persisten ni representan dominio no son catalogos de negocio.

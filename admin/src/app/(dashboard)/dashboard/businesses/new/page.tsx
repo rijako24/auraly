@@ -19,11 +19,14 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useBusinesses, useCreateBusiness } from "@/hooks/use-businesses";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
+import type { Business } from "@/types/entities";
 
 export default function NewBusinessPage() {
   const router = useRouter();
   const create = useCreateBusiness();
   const businessesQuery = useBusinesses({ page: 1, pageSize: 500 });
+  const posModes = useReferenceOptions("point-of-sale-mode");
   const sourceBusinesses = (businessesQuery.data?.items ?? []).filter((business) => business.isActive);
   const [form, setForm] = useState({
     name: "",
@@ -34,6 +37,9 @@ export default function NewBusinessPage() {
     website: "",
     timeZone: "America/Bogota",
     sharesProductPrices: false,
+    pointOfSaleMode: "DirectSale" as Business["pointOfSaleMode"],
+    restaurantRequireWaiterCredential: true,
+    restaurantRestrictTableToWaiter: false,
     priceSourceBusinessId: "",
   });
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
@@ -79,6 +85,21 @@ export default function NewBusinessPage() {
           <Field label="Descripción" className="sm:col-span-2">
             <Textarea value={form.description} onChange={(event) => set("description", event.target.value)} />
           </Field>
+          <Field label="Tipo de operación" className="sm:col-span-2">
+            <Select value={form.pointOfSaleMode} onValueChange={(value) => set("pointOfSaleMode", value as Business["pointOfSaleMode"])} disabled={posModes.isLoading || posModes.isError || !posModes.data?.length}>
+              <SelectTrigger className="h-11"><SelectValue placeholder="Selecciona el tipo" /></SelectTrigger>
+              <SelectContent>{(posModes.data ?? []).map((mode) => <SelectItem key={mode.id} value={mode.code}>{mode.label}</SelectItem>)}</SelectContent>
+            </Select>
+            {posModes.isError && <p role="alert" className="text-sm text-destructive">No fue posible cargar los tipos de punto de venta.</p>}
+          </Field>
+
+          {form.pointOfSaleMode === "RestaurantBar" && <div className="space-y-4 rounded-2xl border p-4 sm:col-span-2">
+            <h2 className="font-semibold">Atención en restaurante y bar</h2>
+            <label className="flex items-center justify-between gap-4"><span><span className="block font-medium">Pedir clave al seleccionar mesero</span><span className="text-xs text-muted-foreground">En un equipo compartido, acepta su clave principal o secundaria antes de abrir la mesa.</span></span>
+              <Switch checked={form.restaurantRequireWaiterCredential} disabled={form.restaurantRestrictTableToWaiter} onCheckedChange={(checked) => set("restaurantRequireWaiterCredential", checked)} /></label>
+            <label className="flex items-center justify-between gap-4"><span><span className="block font-medium">Restringir mesa al mesero responsable</span><span className="text-xs text-muted-foreground">Requiere pedir clave para comprobar quién atiende.</span></span>
+              <Switch checked={form.restaurantRestrictTableToWaiter} onCheckedChange={(checked) => setForm((current) => ({ ...current, restaurantRestrictTableToWaiter: checked, restaurantRequireWaiterCredential: checked || current.restaurantRequireWaiterCredential }))} /></label>
+          </div>}
 
           <div className="space-y-3 rounded-2xl border border-primary/20 bg-primary/5 p-4 sm:col-span-2">
             <div className="flex items-start gap-3">
@@ -125,7 +146,7 @@ export default function NewBusinessPage() {
 
           <div className="flex justify-end gap-2 sm:col-span-2">
             <Button variant="outline" asChild><Link href="/dashboard/businesses">Cancelar</Link></Button>
-            <Button disabled={!valid || create.isPending || businessesQuery.isLoading} onClick={save}>
+            <Button disabled={!valid || create.isPending || businessesQuery.isLoading || posModes.isLoading || posModes.isError || !posModes.data?.length} onClick={save}>
               {create.isPending ? "Creando…" : "Crear sede"}
             </Button>
           </div>

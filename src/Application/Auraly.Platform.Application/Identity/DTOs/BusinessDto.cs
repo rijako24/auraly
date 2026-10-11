@@ -12,4 +12,7 @@ public record BusinessDto(
     string TimeZone,
     bool SharesProductPrices,
     bool IsActive,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string PointOfSaleMode = Auraly.Platform.Domain.Enums.PointOfSaleModes.DirectSale,
+    bool RestaurantRequireWaiterCredential = true,
+    bool RestaurantRestrictTableToWaiter = false);

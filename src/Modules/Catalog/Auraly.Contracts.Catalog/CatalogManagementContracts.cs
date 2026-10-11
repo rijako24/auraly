@@ -73,7 +73,10 @@ public sealed record SaveProductRequest(
     IReadOnlyCollection<ProductAliasInput>? Aliases = null,
     IReadOnlyCollection<ProductImageInput>? Images = null,
     decimal? UnitGrossWeightKg = null,
-    bool IsGenericProduct = false);
+    bool IsGenericProduct = false,
+    bool? IsIngredient = null,
+    IReadOnlyCollection<ProductRecipeIngredientInput>? RecipeIngredients = null,
+    int? RecipeExpectedVersion = null);
 
 public sealed record ProductDetail(
     Guid ProductId,
@@ -93,7 +96,8 @@ public sealed record ProductDetail(
     bool ManageInventory = true,
     bool IsWeighable = false,
     decimal? UnitGrossWeightKg = null,
-    bool IsGenericProduct = false);
+    bool IsGenericProduct = false,
+    bool IsIngredient = false);
 
 public sealed record ProductPageRequest(
     int PageSize = 50,
@@ -157,7 +161,8 @@ public sealed record PosCatalogItem(
     decimal? TargetMarginPercent = null,
     Guid? InventoryProductId = null,
     decimal InventoryFactor = 1m,
-    bool IsGenericProduct = false)
+    bool IsGenericProduct = false,
+    bool IsIngredient = false)
 {
     public PosCatalogItem(
         Guid productId,

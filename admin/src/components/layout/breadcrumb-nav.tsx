@@ -38,6 +38,7 @@ const pathLabels: Record<string, string> = {
   roles: "Roles",
   "audit-logs": "Auditoría",
   settings: "Configuración",
+  restaurant: "Restaurante",
   profile: "Perfil",
 };
 

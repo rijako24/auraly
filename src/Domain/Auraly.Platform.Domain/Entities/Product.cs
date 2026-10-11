@@ -36,6 +36,7 @@ public class Product
     public bool HasPublishedPrice { get; set; }
     public string Currency { get; set; } = "COP";
     public bool ManageStock { get; set; }
+    public bool IsIngredient { get; set; }
     public bool AllowsFractionalSale { get; set; }
     public bool IsWeighable { get; set; }
     public decimal? StockQuantity { get; set; }

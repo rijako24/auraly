@@ -13,6 +13,7 @@ export interface ProvisionTenantRequest {
   address: string; phone: string; email: string; taxResponsibilities: string;
   businessName: string; businessAddress: string; businessPhone: string; businessEmail: string;
   timeZone: string; inventoryCostBasis: "LatestReceiptCost" | "WeightedAverageCost";
+  pointOfSaleMode: "DirectSale" | "RestaurantBar";
   invitationEmail: string; maximumUsers: number; maximumEnrolledDevices: number;
 }
 

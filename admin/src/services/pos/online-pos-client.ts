@@ -57,6 +57,7 @@ import {
   PosApprovalCreateInput,
   PosApprovalSummary,
   type PosPrinterConfiguration,
+  type RestaurantCommandPrinterProfile,
   type PosPrintTemplateFormat,
   type PosSettlementConfiguration,
   loadBrowserPrinterConfiguration,
@@ -115,6 +116,7 @@ export type SalesWorkspaceOption = {
   fiscalReadyForEnrollment?: boolean;
   hasDianDocumentQuota?: boolean;
   fiscalWarningMessages?: string[];
+  pointOfSaleMode?: "DirectSale" | "RestaurantBar";
 };
 
 export type SalesWorkspaceContext = Omit<
@@ -343,6 +345,7 @@ export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[
 function openOnlineWorkSession(businessId: string, warehouseId: string) {
   return request<{ workSessionId: string }>("/api/commerce/v1/work-sessions/current", {
     method: "POST",
+    headers: { "X-Business-Id": businessId },
     body: JSON.stringify({ businessId, warehouseId, deviceId: null }),
   });
 }
@@ -359,6 +362,7 @@ export async function selectSalesWorkspace(
     change ? "/api/commerce/v1/pos/workspace/change" : "/api/commerce/v1/pos/workspace/select",
     {
       method: "POST",
+      headers: { "X-Business-Id": option.businessId },
       body: JSON.stringify({
         businessId: option.businessId,
         warehouseId: option.warehouseId,
@@ -583,6 +587,16 @@ export class OnlinePosClient implements PosClient {
         if (completed) await completed;
       }
     }
+  }
+
+  printRestaurantReceipt(
+    receipt: PosPrintableReceipt,
+    format: PosPrintTemplateFormat | "none" | null,
+    browserPreview: Window | null,
+  ): Promise<void> {
+    if (format === "none") return Promise.resolve();
+    return this.printDirect([receipt], false, "pos", browserPreview,
+      format ?? undefined);
   }
 
   async health() {
@@ -1201,6 +1215,18 @@ export class OnlinePosClient implements PosClient {
 
   savePrinterConfiguration(configuration: PosPrinterConfiguration) {
     return this.localEdge().savePrinterConfiguration(configuration);
+  }
+
+  restaurantCommandPrinterProfiles() {
+    return this.localEdge().restaurantCommandPrinterProfiles();
+  }
+
+  saveRestaurantCommandPrinterProfile(profile: RestaurantCommandPrinterProfile) {
+    return this.localEdge().saveRestaurantCommandPrinterProfile(profile);
+  }
+
+  deleteRestaurantCommandPrinterProfile(key: string) {
+    return this.localEdge().deleteRestaurantCommandPrinterProfile(key);
   }
 
   async previewWorkSessionClosure(

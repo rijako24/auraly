@@ -13,6 +13,25 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlOnlineSalesDraftStore
 {
+    private sealed record CapturedCheckoutSource(
+        Guid BusinessId, Guid WarehouseId, Guid WorkSessionId,
+        Guid? CustomerId, Guid? CustomerPartySiteId,
+        IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines,
+        IReadOnlyList<AppliedInvoiceCharge>? Charges,
+        Guid? SourceOrderId, Guid? TableId)
+    {
+        public static CapturedCheckoutSource FromOrder(
+            OnlineSalesOrderCheckoutSource source) => new(
+                source.BusinessId, source.WarehouseId, source.WorkSessionId,
+                source.CustomerId, source.CustomerPartySiteId, source.Lines,
+                source.Charges, source.OrderId, null);
+
+        public static CapturedCheckoutSource FromRestaurant(
+            OnlineSalesRestaurantCheckoutSource source) => new(
+                source.BusinessId, source.WarehouseId, source.WorkSessionId,
+                null, null, source.Lines, null, null, source.TableId);
+    }
+
     public async Task<OnlineSalesFiscalKeyContext> ResolveOrderFiscalKeyContextAsync(
         OnlineSalesUserIdentity user,
         OnlineSalesOrderCheckoutSource source,
@@ -101,7 +120,9 @@ public sealed partial class SqlOnlineSalesDraftStore
         PreparedOnlineSaleSettlement settlement,
         CancellationToken ct)
     {
-        var requestHash = OrderCheckoutHash(source, request);
+        var requestHash = CapturedCheckoutHash(
+            source.OperationId, source.OrderId, source.SnapshotVersion,
+            source.Charges, request);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -115,6 +136,41 @@ public sealed partial class SqlOnlineSalesDraftStore
         }
 
         await DemandCurrentOrderSourceAsync(connection, transaction, user, source, ct);
+        var upload = await BuildCapturedSaleUploadAsync(
+            connection, transaction, user, CapturedCheckoutSource.FromOrder(source),
+            request, fiscalMaterial,
+            settlement, ct);
+        var now = settlement.Context.OccurredAt;
+
+        await ExecuteAsync(connection, transaction, """
+            INSERT dbo.OnlineSalesCheckoutReceipts(
+              OnlineSalesCheckoutReceiptId,BusinessId,SalesDraftId,NextSalesDraftId,
+              SourceOrderId,OperationId,IdempotencyKey,RequestHash,DocumentId,
+              PayloadJson,Status,CreatedAt)
+            VALUES(
+              @ReceiptId,@BusinessId,NULL,NULL,@OrderId,@OperationId,@Key,@Hash,
+              @DocumentId,@Payload,N'Prepared',@Now);
+            """, [
+                P("@ReceiptId", ids.NewId()), P("@BusinessId", source.BusinessId),
+                P("@OrderId", source.OrderId), P("@OperationId", source.OperationId),
+                P("@Key", idempotencyKey), P("@Hash", requestHash),
+                P("@DocumentId", upload.DocumentId),
+                P("@Payload", PosSaleContractSerializer.Serialize(upload)), P("@Now", now)
+            ], ct);
+        await transaction.CommitAsync(ct);
+        return new(upload, false);
+    }
+
+    private async Task<PosSaleUploadRequest> BuildCapturedSaleUploadAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        OnlineSalesUserIdentity user,
+        CapturedCheckoutSource source,
+        CompleteOnlineSalesDraftRequest request,
+        FiscalVerificationMaterial? fiscalMaterial,
+        PreparedOnlineSaleSettlement settlement,
+        CancellationToken ct)
+    {
         var lines = BuildOrderSaleLines(source.Lines);
         var untaxed = lines.Sum(line => line.UntaxedAmount) +
             (source.Charges?.Sum(charge => charge.InvoicedUntaxedAmount) ?? 0m);
@@ -240,10 +296,12 @@ public sealed partial class SqlOnlineSalesDraftStore
                     DateOnly.FromDateTime((creditValidation?.DueDate ?? now).Date),
                     payments.Select(payment => payment.Reference)
                         .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))),
-                source.CustomerId, SaleSourceModes.Online, source.OrderId,
+                source.CustomerId, SaleSourceModes.Online,
+                source.SourceOrderId,
                 BuildOrderCredit(user, source, request, creditValidation),
                 CustomerPartySiteId: source.CustomerPartySiteId,
-                Charges: source.Charges is { Count: > 0 } ? source.Charges : null);
+                Charges: source.Charges is { Count: > 0 } ? source.Charges : null,
+                TableId: source.TableId);
         }
         else
         {
@@ -271,32 +329,18 @@ public sealed partial class SqlOnlineSalesDraftStore
                     settlement.Withholding, roundingAdjustment, CustomerName: customer.Name,
                     CustomerAddress: customer.Address, CustomerPhone: customer.Phone),
                 null, lines, payments, null, source.CustomerId,
-                SaleSourceModes.Online, source.OrderId,
+                SaleSourceModes.Online,
+                source.SourceOrderId,
                 BuildOrderCredit(user, source, request, creditValidation),
                 CustomerPartySiteId: source.CustomerPartySiteId,
-                Charges: source.Charges is { Count: > 0 } ? source.Charges : null);
+                Charges: source.Charges is { Count: > 0 } ? source.Charges : null,
+                TableId: source.TableId);
         }
 
         if (upload.FiscalSnapshot is not null)
             DemandValidPreparedFiscalSnapshot(upload, fiscalMaterial!);
 
-        await ExecuteAsync(connection, transaction, """
-            INSERT dbo.OnlineSalesCheckoutReceipts(
-              OnlineSalesCheckoutReceiptId,BusinessId,SalesDraftId,NextSalesDraftId,
-              SourceOrderId,OperationId,IdempotencyKey,RequestHash,DocumentId,
-              PayloadJson,Status,CreatedAt)
-            VALUES(
-              @ReceiptId,@BusinessId,NULL,NULL,@OrderId,@OperationId,@Key,@Hash,
-              @DocumentId,@Payload,N'Prepared',@Now);
-            """, [
-                P("@ReceiptId", ids.NewId()), P("@BusinessId", source.BusinessId),
-                P("@OrderId", source.OrderId), P("@OperationId", source.OperationId),
-                P("@Key", idempotencyKey), P("@Hash", requestHash),
-                P("@DocumentId", upload.DocumentId),
-                P("@Payload", PosSaleContractSerializer.Serialize(upload)), P("@Now", now)
-            ], ct);
-        await transaction.CommitAsync(ct);
-        return new(upload, false);
+        return upload;
     }
 
     public async Task MarkOrderResultAsync(
@@ -403,12 +447,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                 line.Quantity, fiscal.UnitPrice, fiscal.Discount,
                 line.Tax, line.Net, line.Total,
                 line.TaxRate, line.DocumentUnitCost, fiscal.PromotionDiscount,
-                line.AllowsDocumentCostOverride, line.ProductCode);
+                line.AllowsDocumentCostOverride, line.ProductCode,
+                source[index].AddedByUserId, source[index].AddedAt);
         }).ToArray();
 
     private static PosSaleCreditContract? BuildOrderCredit(
         OnlineSalesUserIdentity user,
-        OnlineSalesOrderCheckoutSource source,
+        CapturedCheckoutSource source,
         CompleteOnlineSalesDraftRequest request,
         PosCreditValidationResult? validation) =>
         request.Credit is null || source.CustomerId is null
@@ -503,14 +548,17 @@ public sealed partial class SqlOnlineSalesDraftStore
             PosSaleContractSerializer.Deserialize(reader.GetString(2)), true);
     }
 
-    private static string OrderCheckoutHash(
-        OnlineSalesOrderCheckoutSource source,
+    private static string CapturedCheckoutHash(
+        Guid operationId,
+        Guid sourceId,
+        byte[] snapshotVersion,
+        IReadOnlyList<AppliedInvoiceCharge>? charges,
         CompleteOnlineSalesDraftRequest request)
     {
         var value = new StringBuilder()
-            .Append(source.OperationId.ToString("D")).Append('|')
-            .Append(source.OrderId.ToString("D")).Append('|')
-            .Append(Convert.ToHexString(source.SnapshotVersion)).Append('|')
+            .Append(operationId.ToString("D")).Append('|')
+            .Append(sourceId.ToString("D")).Append('|')
+            .Append(Convert.ToHexString(snapshotVersion)).Append('|')
             .Append(request.DocumentType);
         foreach (var payment in request.Payments)
             value.Append('|').Append(payment.MethodCode).Append(':')
@@ -522,7 +570,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (request.Credit is not null)
             value.Append("|credit:")
                 .Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture));
-        foreach (var charge in source.Charges ?? [])
+        foreach (var charge in charges ?? [])
             value.Append("|charge:").Append(charge.AppliedChargeId.ToString("D")).Append(':')
                 .Append(charge.ChargeId.ToString("D")).Append(':').Append(charge.Version).Append(':')
                 .Append(charge.Amount.ToString(CultureInfo.InvariantCulture));

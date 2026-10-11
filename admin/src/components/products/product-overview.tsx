@@ -8,6 +8,7 @@ import { ProductPublishedPriceHistory } from "@/components/pricing/product-publi
 import { ProductFormSection } from "@/components/products/product-create-workspace";
 import { ProductImageGallery } from "@/components/products/product-image-gallery";
 import { ProductInventoryByWarehouse } from "@/components/products/product-inventory-by-warehouse";
+import { ProductRecipePanel } from "@/components/products/product-recipe-panel";
 import { productModeCapabilities } from "@/components/products/product-generic-policy";
 import { useProductCategories } from "@/hooks/use-products";
 import { useProductPricingContext } from "@/hooks/use-pricing";
@@ -50,8 +51,11 @@ export function ProductOverview({ product }: { product: Product }) {
         <Summary label="Descripción" value={info?.description ?? product.description ?? "Sin descripción"} />
         <Summary label="Código interno" value={product.productCode || "Generado por Auraly"} />
         <Summary label="Estado" value={product.isActive ? "Activo" : "Inactivo"} />
+        <Summary label="Uso" value={info?.isIngredient ? "Ingrediente · no vendible" : "Producto vendible"} />
       </div>
     </ProductFormSection>
+
+    {info && !info.isIngredient && !(merch?.isGenericProduct ?? info.isGenericProduct) && <ProductRecipePanel productId={product.productId} managesInventory={info.manageInventory} />}
 
     <ProductFormSection id="product-classification" icon={Tags} title="Clasificación, marca y unidad" description="La ruta comercial y la unidad real en la que se vende.">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

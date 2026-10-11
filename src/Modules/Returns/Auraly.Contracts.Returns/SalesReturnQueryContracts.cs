@@ -105,7 +105,8 @@ public sealed record ReturnableSale(
     decimal OriginalUnrounded = 0m,
     decimal OriginalRounding = 0m,
     decimal UnroundedOutstanding = 0m,
-    decimal RemainingRounding = 0m);
+    decimal RemainingRounding = 0m,
+    bool IsRestaurant = false);
 
 public sealed record SalesReturnQuery(
     int Page,

@@ -147,15 +147,22 @@ USING (VALUES
   (N'WarehouseTransfer',N'STOCK_REDISTRIBUTION',N'Redistribución de existencias',NULL,NULL,0,20),
   (N'WarehouseTransfer',N'TRANSFER_SHORTAGE',N'Faltante definitivo en traslado',NULL,N'TransferLossExpense',1,30),
   (N'ProductConversion',N'PRESENTATION_CHANGE',N'Cambio de presentación',NULL,N'ConversionLossExpense',0,10),
+  (N'Production',N'RECIPE_PRODUCTION',N'Producción por receta',NULL,N'InventoryDifferences',0,10),
   (N'Damage',N'DAMAGE',N'Producto averiado',NULL,N'DamagedInventoryExpense',0,10),
   (N'Damage',N'EXPIRED',N'Producto vencido',NULL,N'DamagedInventoryExpense',0,20),
   (N'Damage',N'NOT_SALEABLE',N'Producto no vendible',NULL,N'DamagedInventoryExpense',0,30),
+  (N'Damage',N'RESTAURANT_LOSS',N'Pérdida de preparación en restaurante',NULL,N'DamagedInventoryExpense',1,40),
+  (N'RestaurantCancellation',N'ORDER_ERROR',N'Error al tomar el pedido',NULL,NULL,0,10),
+  (N'RestaurantCancellation',N'CUSTOMER_REQUEST',N'Solicitud del cliente',NULL,NULL,0,20),
+  (N'RestaurantCancellation',N'QUALITY_ISSUE',N'Problema de calidad',NULL,NULL,0,30),
+  (N'RestaurantCancellation',N'OTHER',N'Otro motivo',NULL,NULL,0,999),
   (N'SalesReturn',N'CustomerChangedMind',N'El cliente cambió de opinión',NULL,NULL,0,10),
   (N'SalesReturn',N'WrongProduct',N'Producto equivocado',NULL,NULL,0,20),
   (N'SalesReturn',N'QualityIssue',N'Problema de calidad',NULL,NULL,0,30),
   (N'SalesReturn',N'Damaged',N'Producto averiado',NULL,NULL,0,40),
   (N'SalesReturn',N'BillingCorrection',N'Corrección de facturación',NULL,NULL,0,50),
   (N'SalesReturn',N'Other',N'Otro motivo',NULL,NULL,0,60),
+  (N'SalesReturn',N'RESTAURANT_PREPARED_CANCEL',N'Plato preparado cancelado o descartado',NULL,NULL,0,70),
   (N'PurchaseReturn',N'WrongProduct',N'Producto equivocado',NULL,NULL,0,10),
   (N'PurchaseReturn',N'ExcessQuantity',N'Cantidad excedente',NULL,NULL,0,20),
   (N'PurchaseReturn',N'QualityIssue',N'Problema de calidad',NULL,NULL,0,30),
@@ -224,6 +231,10 @@ INNER JOIN dbo.ReasonTemplates t ON t.ProfileCode=p.ProfileCode
 LEFT JOIN dbo.CashMovementReasons c ON c.BusinessId=b.BusinessId AND c.Code=t.Code
   AND c.Direction=t.Direction AND t.ReasonType IN (N'CashIn',N'CashOut')
 WHERE b.IsActive=1 AND p.IsDefault=1 AND p.IsActive=1 AND t.IsActive=1
+  AND (b.PointOfSaleMode=N'RestaurantBar' OR
+       (t.ReasonType<>N'RestaurantCancellation' AND
+        NOT (t.ReasonType=N'Damage' AND t.Code=N'RESTAURANT_LOSS') AND
+        NOT (t.ReasonType=N'SalesReturn' AND t.Code=N'RESTAURANT_PREPARED_CANCEL')))
   AND NOT EXISTS(SELECT 1 FROM dbo.BusinessReasons r
     WHERE r.BusinessId=b.BusinessId AND r.ReasonType=t.ReasonType AND r.Code=t.Code);
 

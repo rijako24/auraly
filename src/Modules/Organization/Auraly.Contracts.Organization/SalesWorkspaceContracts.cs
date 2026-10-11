@@ -15,7 +15,8 @@ public sealed record SalesWorkspaceOption(
     bool FiscalReadyForOnlineSales = false,
     bool FiscalReadyForEnrollment = false,
     bool HasDianDocumentQuota = false,
-    IReadOnlyList<string>? FiscalWarningMessages = null);
+    IReadOnlyList<string>? FiscalWarningMessages = null,
+    string PointOfSaleMode = "DirectSale");
 
 public sealed record SalesWorkspaceBootstrap(
     Guid TenantId,
@@ -47,7 +48,8 @@ public sealed record SalesWorkspaceContext(
     Guid WarehouseId,
     string WarehouseCode,
     string WarehouseName,
-    bool WarehouseAllowsNegativeStockSales);
+    bool WarehouseAllowsNegativeStockSales,
+    string PointOfSaleMode = "DirectSale");
 
 public sealed record CreatePosEnrollmentRequest(
     Guid BusinessId,

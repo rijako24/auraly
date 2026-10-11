@@ -4,7 +4,7 @@ import type { Business, BusinessAvailabilityBlock, BusinessAvailabilityBlockPayl
 
 export type CreateBusinessRequest = Pick<
   Business,
-  "name" | "description" | "address" | "phone" | "email" | "website" | "timeZone" | "sharesProductPrices"
+  "name" | "description" | "address" | "phone" | "email" | "website" | "timeZone" | "sharesProductPrices" | "pointOfSaleMode" | "restaurantRequireWaiterCredential" | "restaurantRestrictTableToWaiter"
 > & {
   priceSourceBusinessId: string;
 };

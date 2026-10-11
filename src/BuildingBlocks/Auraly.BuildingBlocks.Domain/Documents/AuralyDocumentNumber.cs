@@ -20,6 +20,7 @@ public static class AuralyDocumentTypes
     public const string InventoryAdjustment = "InventoryAdjustment";
     public const string Damage = "Damage";
     public const string ProductConversion = "ProductConversion";
+    public const string Production = "Production";
     public const string CashCount = "CashCount";
     public const string CustomsLoad = "CustomsLoad";
     public const string CashReceipt = "CashReceipt";
@@ -48,6 +49,7 @@ public static class AuralyDocumentTypes
         InventoryAdjustment => "AJI",
         Damage => "AVE",
         ProductConversion => "CNV",
+        Production => "PRD",
         CashCount => "ARQ",
         CustomsLoad => "ADU",
         CashReceipt => "ING",

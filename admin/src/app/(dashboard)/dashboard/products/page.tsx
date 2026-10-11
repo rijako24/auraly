@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { ProductLearningSection } from "@/components/products/product-learning-section";
 import { ProductCreateWorkspace, ProductFormSection } from "@/components/products/product-create-workspace";
 import { ProductOverview } from "@/components/products/product-overview";
+import { ProductRecipePanel, type ProductRecipeEditorHandle } from "@/components/products/product-recipe-panel";
 import { ProductPricingEditor, type ProductPricingEditorDraft, type ProductPricingEditorHandle } from "@/components/products/product-price-publisher";
 import { ProductMerchandisingEditor, type ProductMerchandisingEditorDraft, type ProductMerchandisingEditorHandle } from "@/components/products/product-merchandising-editor";
 import { ProductSupplierEditor, type ProductSupplierEditorDraft, type ProductSupplierEditorHandle } from "@/components/products/product-supplier-editor";
@@ -60,6 +61,7 @@ interface ProductFormState {
   reference: string;
   description: string;
   categoryName: string;
+  isIngredient: boolean;
 }
 
 type ModalMode = "details" | "edit";
@@ -69,6 +71,7 @@ const emptyForm: ProductFormState = {
   reference: "",
   description: "",
   categoryName: "",
+  isIngredient: false,
 };
 
 function productToForm(product: Product): ProductFormState {
@@ -77,6 +80,7 @@ function productToForm(product: Product): ProductFormState {
     reference: product.reference ?? product.sku ?? "",
     description: product.description ?? "",
     categoryName: product.categoryName ?? "",
+    isIngredient: product.isIngredient ?? false,
   };
 }
 interface ProductEditDraft { form:ProductFormState;merchandising?:ProductMerchandisingEditorDraft;pricing?:ProductPricingEditorDraft;supplier?:ProductSupplierEditorDraft;taxes?:ProductTaxEditorDraft;recognition?:ProductRecognitionEditorDraft;images?:ProductImageEditorDraft }
@@ -143,6 +147,7 @@ export default function ProductsPage() {
   const taxEditorRef = useRef<ProductTaxEditorHandle>(null);
   const supplierEditorRef = useRef<ProductSupplierEditorHandle>(null);
   const recognitionEditorRef = useRef<ProductRecognitionSectionsHandle>(null);
+  const recipeEditorRef = useRef<ProductRecipeEditorHandle>(null);
   const [savingProduct, setSavingProduct] = useState(false);
   const [productValidationError, setProductValidationError] = useState<string>();
   const [editingSalesTaxRate, setEditingSalesTaxRate] = useState<number>();
@@ -263,6 +268,8 @@ export default function ProductsPage() {
       if (!businessId || !merchandisingEditorRef.current || !taxEditorRef.current)
         throw new Error("Espera a que termine de cargar la ficha del producto.");
       const merchandising = merchandisingEditorRef.current.getValue();
+      if (form.isIngredient && merchandising.isGenericProduct)
+        throw new Error("Un ingrediente no puede ser un producto genérico.");
       const capabilities = productModeCapabilities(merchandising.isGenericProduct);
       if (capabilities.supplier && !supplierEditorRef.current)
         throw new Error("Espera a que termine de cargar el proveedor del producto.");
@@ -273,6 +280,10 @@ export default function ProductsPage() {
       const supplier = capabilities.supplier ? supplierEditorRef.current!.getValue() : null;
       const images = imageEditorRef.current ? await imageEditorRef.current.stage() : [];
       const aliases = recognitionEditorRef.current?.getValue().map((alias) => ({ alias })) ?? [];
+      if (!form.isIngredient && !merchandising.isGenericProduct && !recipeEditorRef.current)
+        throw new Error("Espera a que termine de cargar la receta del producto.");
+      const recipe = !form.isIngredient && !merchandising.isGenericProduct
+        ? recipeEditorRef.current?.getValue() : null;
       const savedProduct = await productsApi.updateCatalog(selectedProduct.productId, {
         businessId,
         productCode: selectedProduct.productCode ?? selectedProduct.sku ?? "",
@@ -284,6 +295,7 @@ export default function ProductsPage() {
         purchaseTaxProfileId: taxes.purchaseTaxProfileId,
         purchaseTaxTreatment: taxes.purchaseTaxTreatment,
         isGenericProduct: merchandising.isGenericProduct,
+        isIngredient: form.isIngredient,
         manageInventory: merchandising.manageInventory,
         isWeighable: merchandising.isWeighable,
         unitGrossWeightKg: merchandising.unitGrossWeightKg,
@@ -309,11 +321,13 @@ export default function ProductsPage() {
         conversionMaximumLossPercent: merchandising.conversionMaximumLossPercent,
         aliases,
         images,
+        ...recipe,
       });
       await cancelModal();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["products"] }),
         queryClient.invalidateQueries({ queryKey: ["catalog-product"], refetchType: "none" }),
+        queryClient.invalidateQueries({ queryKey: ["product-recipe", selectedProduct.productId], refetchType: "none" }),
         queryClient.invalidateQueries({ queryKey: ["product-merchandising"], refetchType: "none" }),
         queryClient.invalidateQueries({ queryKey: ["product-pricing"], refetchType: "none" }),
       ]);
@@ -334,7 +348,7 @@ export default function ProductsPage() {
       header: "Producto",
       cell: ({ row }) => (
         <div>
-          <p className="font-medium">{row.original.name}</p>
+          <p className="flex flex-wrap items-center gap-2 font-medium">{row.original.name}{row.original.isIngredient && <Badge variant="secondary">Ingrediente · no vendible</Badge>}</p>
           <p className="text-xs text-muted-foreground">{row.original.reference || row.original.sku || "Sin referencia"}</p>
           <p className="max-w-md truncate text-xs text-muted-foreground">{row.original.description || "Sin descripción"}</p>
         </div>
@@ -410,6 +424,7 @@ export default function ProductsPage() {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="break-words font-semibold">{product.name}</h2>
+          {product.isIngredient && <Badge variant="secondary" className="mt-1">Ingrediente · no vendible</Badge>}
           <p className="text-xs text-muted-foreground">{product.reference || product.sku || "Sin referencia"}</p>
           <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{product.description || "Sin descripción"}</p>
         </div>
@@ -523,12 +538,14 @@ export default function ProductsPage() {
                       ["identity", "Identidad"],
                       ["classification", "Clasificación, marca y unidad"],
                       ["sale", "Captura, cantidad y balanza"],
+                      ["recipe", "Ingredientes de la receta"],
                       ["family", "Familia de productos"],
                       ["supplier", "Proveedor y empaque"],
                       ["taxes", "IVA, costo y precio"],
                       ["images", "Imágenes"],
                       ["recognition", "Reconocimiento avanzado"],
-                    ].map(([id, label], index) => <a key={id} href={`#product-${id}`} className="block rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10">{index + 1}. {label}</a>)}
+                    ].filter(([id]) => id !== "recipe" || (modalMode === "edit" && !form.isIngredient && Boolean(merchandisingDraft && !merchandisingDraft.isGenericProduct)))
+                      .map(([id, label], index) => <a key={id} href={`#product-${id}`} className="block rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10">{index + 1}. {label}</a>)}
                   </nav>
                 </div>
               </aside>
@@ -566,10 +583,16 @@ export default function ProductsPage() {
                     <div className="space-y-2 md:col-span-2"><Label htmlFor="product-name">Nombre <span className="text-destructive">*</span></Label><Input id="product-name" aria-invalid={Boolean(productValidationError && !form.name.trim())} className={productValidationError && !form.name.trim() ? "border-destructive ring-1 ring-destructive/20" : ""} value={form.name} maxLength={200} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />{productValidationError && !form.name.trim() && <p className="text-sm text-destructive">Este campo es requerido</p>}</div>
                     <div className="space-y-2 md:col-span-2"><Label htmlFor="product-reference">Referencia</Label><Input id="product-reference" value={form.reference} maxLength={120} onChange={(event) => setForm((current) => ({ ...current, reference: event.target.value }))} placeholder="Referencia del fabricante" /></div>
                     <div className="space-y-2 md:col-span-2"><Label htmlFor="product-description">Descripción</Label><Textarea id="product-description" className="min-h-24" value={form.description} maxLength={2000} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></div>
+                    <div className="flex items-center justify-between gap-4 rounded-xl border p-4 md:col-span-2"><div><Label htmlFor="product-ingredient">Es ingrediente</Label><p className="text-sm text-muted-foreground">Se configura para todo el tenant. No aparece en punto de venta ni se puede vender.</p></div><Switch id="product-ingredient" checked={form.isIngredient} disabled={Boolean(merchandisingDraft?.isGenericProduct)} onCheckedChange={(checked) => setForm((current) => ({ ...current, isIngredient: checked }))} /></div>
                   </div>
                 </ProductFormSection>
 
                 <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} initialDraft={restoredEditDraft?.merchandising} onDraftChange={setMerchandisingDraft} />
+
+                {merchandisingDraft && !form.isIngredient && !merchandisingDraft.isGenericProduct && <div className="space-y-2">
+                  <ProductRecipePanel ref={recipeEditorRef} editable productId={selectedProduct.productId} managesInventory={merchandisingDraft.manageInventory} />
+                  <p className="px-1 text-xs text-muted-foreground">La receta se guarda con el producto. La cantidad de cada ingrediente corresponde a una unidad terminada y se expresa en su unidad base de inventario.</p>
+                </div>}
 
                 {editCapabilities.supplier && <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
                   <ProductSupplierEditor ref={supplierEditorRef} embedded productId={selectedProduct.productId} initialDraft={restoredEditDraft?.supplier} onDraftChange={setSupplierDraft} />
@@ -593,7 +616,7 @@ export default function ProductsPage() {
               </div>}
               </div>
               <footer className="flex flex-col-reverse gap-3 border-t bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs text-muted-foreground">{modalMode === "edit" ? "Una sola acción guarda toda la ficha del producto." : "Toda la información se presenta en el mismo orden usado al crear y editar."}</p>
+                <p className="text-xs text-muted-foreground">{modalMode === "edit" ? "El producto y su receta se guardan juntos." : "Toda la información se presenta en el mismo orden usado al crear y editar."}</p>
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="outline" onClick={() => modalMode === "edit" ? void cancelModal() : dismissModal()}>{modalMode === "edit" ? "Cancelar" : "Cerrar"}</Button>
                   {modalMode === "edit" && <Button type="button" onClick={() => void saveProduct()} disabled={savingProduct}>{savingProduct ? "Guardando producto…" : "Guardar producto"}</Button>}

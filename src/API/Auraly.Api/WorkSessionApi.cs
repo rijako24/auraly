@@ -58,7 +58,7 @@ public static class WorkSessionApi
                 if (!Guid.TryParse(context.Request.Headers["X-Auraly-Draft-Id"].ToString(), out var draftId) ||
                     draftId == Guid.Empty)
                     throw new WorkSessionValidationException(
-                        "No fue posible identificar la venta activa para solicitar autorización.");
+                        "No fue posible identificar la sesión de venta para solicitar autorización.");
                 var approvalId = Guid.TryParse(
                     context.Request.Headers["X-Auraly-Approval-Id"].ToString(),
                     out var parsedApprovalId)
@@ -117,7 +117,7 @@ public static class WorkSessionApi
                             context.Request.Headers["X-Auraly-Draft-Id"].ToString(),
                             out var draftId) || draftId == Guid.Empty)
                         throw new WorkSessionValidationException(
-                            "No fue posible identificar la venta activa para solicitar autorización.");
+                            "No fue posible identificar la sesión de venta para solicitar autorización.");
                     var approvalId = Guid.TryParse(
                         context.Request.Headers["X-Auraly-Approval-Id"].ToString(),
                         out var parsedApprovalId)

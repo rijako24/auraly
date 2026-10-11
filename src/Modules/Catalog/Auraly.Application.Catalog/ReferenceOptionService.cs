@@ -2,18 +2,6 @@ using Auraly.Contracts.Catalog;
 
 namespace Auraly.Application.Catalog;
 
-public interface IReferenceOptionStore
-{
-    Task<IReadOnlyList<ReferenceOption>> ListAsync(
-        string catalogCode,
-        CancellationToken cancellationToken);
-
-    Task<ReferenceOption> CreateAsync(
-        string catalogCode,
-        CreateReferenceOptionRequest request,
-        CancellationToken cancellationToken);
-}
-
 public sealed class ReferenceOptionService(IReferenceOptionStore store)
 {
     public Task<IReadOnlyList<ReferenceOption>> ListAsync(

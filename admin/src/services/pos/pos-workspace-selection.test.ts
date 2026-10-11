@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolvePosWorkspaceSelection } from "./pos-workspace-selection";
+import { resolvePosWorkspaceSelection, scopePosWorkspacesToBusiness } from "./pos-workspace-selection";
 
 const option = (
   businessId: string,
@@ -86,4 +86,12 @@ test("uses the remembered workspace only before an explicit choice exists", () =
     ),
     { businessId: "business-1", warehouseId: "warehouse-1" },
   );
+});
+
+test("web POS only offers warehouses from the business selected above", () => {
+  const options = [option("business-1", "warehouse-1"),
+    option("business-2", "warehouse-2"), option("business-2", "warehouse-3")];
+  assert.deepEqual(scopePosWorkspacesToBusiness(options, "business-2"), options.slice(1));
+  assert.deepEqual(scopePosWorkspacesToBusiness(options, "missing"), []);
+  assert.deepEqual(scopePosWorkspacesToBusiness(options, null), []);
 });

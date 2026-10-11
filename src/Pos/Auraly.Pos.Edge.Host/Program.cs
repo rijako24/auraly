@@ -302,6 +302,7 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<HttpClient>(),
             credentials,
             sp.GetRequiredService<PosSynchronizationSignal>(),
+            sp.GetRequiredService<RestaurantCommandPrintSignal>(),
             sp.GetRequiredService<PosServerConnectionState>(),
             sp.GetRequiredService<PosPushConnectionState>(),
             sp.GetRequiredService<PosUiStateSignal>(),
@@ -310,6 +311,15 @@ public static class PosEdgeHostApplication
             tenantId,
             runtime.BusinessId.Value));
         builder.Services.AddHostedService<PosEventDrivenSynchronizationHostedService>();
+        builder.Services.AddSingleton(sp => new RestaurantCommandPrintReceiver(
+            sp.GetRequiredService<HttpClient>(), credentials,
+            sp.GetRequiredService<RestaurantCommandPrintSignal>(),
+            sp.GetRequiredService<PosPrinterConfigurationStore>(),
+            sp.GetRequiredService<RestaurantCommandTicketPrinter>(),
+            sp.GetRequiredService<PosSynchronizationEventLog>(),
+            sp.GetRequiredService<ILogger<RestaurantCommandPrintReceiver>>()));
+        builder.Services.AddHostedService(sp =>
+            sp.GetRequiredService<RestaurantCommandPrintReceiver>());
         var app = builder.Build();
         app.Use(async (context, next) =>
         {

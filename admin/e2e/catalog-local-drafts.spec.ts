@@ -44,6 +44,10 @@ async function mockApi(page: Page) {
     if (path.endsWith(`/commerce/v1/parties/${partyId}`)) return json(route, { partyId, partyType: "NaturalPerson", identificationCountryId: null, identificationTypeCode: "CC", identification: "100000001", verificationDigit: null, displayName: "Tercero base", legalName: null, firstName: "Tercero", lastName: "Base", email: "tercero@example.test", phone: "3000000000", roles: ["Seller"], primarySite: null, sites: [], customer: null, supplier: null, seller: { sellerId: "seller-1", code: "VEN-1", defaultCommissionPercent: 5, commissionBasis: "SaleAfterTax", commissionTrigger: "Sale", isActive: true }, carrier: null, employee: null, user: null, rowVersion: "AAAA" });
     if (path.endsWith(`/commerce/v1/parties/${partyId}/seller-access`)) return json(route, null);
     if (path.endsWith("/roles")) return json(route, { items: [{ roleId: "role-1", name: "Administrador", description: "Acceso", isActive: true }], page: 1, pageSize: 500, totalCount: 1, totalPages: 1 });
+    if (path.endsWith("/commerce/v1/reference-options/party-role")) return json(route,
+      [{code:"Customer",label:"Cliente"},{code:"Supplier",label:"Proveedor"},{code:"Seller",label:"Vendedor"},
+        {code:"Carrier",label:"Transportador"},{code:"Employee",label:"Empleado"},{code:"User",label:"Usuario"},
+        {code:"Waiter",label:"Mesero"}].map((option,index)=>({...option,id:`role-${index}`,description:"Configuración del rol",sortOrder:index})));
     if (path.includes("/commerce/v1/reference-options/")) return json(route, []);
     if (path.endsWith("/commerce/v1/masters/geography/countries")) return json(route, []);
     return json(route, []);

@@ -406,5 +406,6 @@ public sealed class ProductAdminService : IProductAdminService
         p.LastSyncedAt,
         p.ProductCode,
         areaName,
-        p.Reference);
+        p.Reference,
+        p.IsIngredient);
 }

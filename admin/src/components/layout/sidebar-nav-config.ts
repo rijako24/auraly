@@ -21,6 +21,7 @@ import {
   Radio,
   ReceiptText,
   Route,
+  UtensilsCrossed,
   Package,
   PackagePlus,
   Settings,
@@ -42,6 +43,8 @@ export interface NavItem {
   icon: LucideIcon;
   /** Permission required to show this item. If missing, item is always shown for authenticated users. */
   permission?: string;
+  /** Show when any listed permission is granted. */
+  anyPermissions?: readonly string[];
   /** A broader authorized view replaces this entry when this permission is granted. */
   hiddenByPermission?: string;
 }
@@ -61,12 +64,18 @@ export interface NavGroup {
 export const navigation: NavEntry[] = [
   { name: "Hoy", href: "/dashboard", icon: TrendingUp, permission: "sales.reports.read" },
   { type: "separator", label: "Comercial" },
-  { name: "Punto de venta", href: "/pos", icon: ReceiptText, permission: "sales.create" },
+  { name: "Punto de venta", href: "/pos", icon: ReceiptText,
+    anyPermissions: ["sales.create", "restaurant.attend"] },
   { name: "Pedidos", href: "/dashboard/orders", icon: ShoppingCart, permission: "orders.read" },
   { name: "Cargos de facturación", href: "/dashboard/invoice-charges", icon: ReceiptText, permission: "invoice-charges.read" },
   { name: "Mis rutas", href: "/dashboard/my-routes", icon: Route, permission: "routes.read" },
   { name: "Servicios y facturación", href: "/dashboard/service-invoices", icon: FileText, permission: "service-invoices.read" },
   { name: "Rutas comerciales", href: "/dashboard/routes", icon: Route, permission: "routes.read-all" },
+  { type: "separator", label: "Restaurante y Bar" },
+  { name: "Restaurante y Bar", href: "/dashboard/restaurant", icon: UtensilsCrossed,
+    anyPermissions: ["restaurant.attend", "restaurant.commands.read"] },
+  { name: "Comandas", href: "/restaurant/commands", icon: ClipboardList,
+    permission: "restaurant.commands.read" },
   { type: "separator", label: "Reportes" },
   { name: "Ventas", href: "/dashboard/reports/sales", icon: BarChart3, permission: "sales.reports.read" },
   { name: "Vendedores", href: "/dashboard/reports/sellers", icon: Users, permission: "sales.reports.read" },
@@ -128,6 +137,7 @@ export function authorizedNavigationItems(permissions: readonly string[]): NavIt
 
 function isNavigationItemVisible(item: NavItem, granted: ReadonlySet<string>): boolean {
   return (!item.permission || granted.has(item.permission))
+    && (!item.anyPermissions || item.anyPermissions.some((permission) => granted.has(permission)))
     && (!item.hiddenByPermission || !granted.has(item.hiddenByPermission));
 }
 

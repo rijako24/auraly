@@ -12,6 +12,8 @@ public interface ISalesWorkspaceDirectory
 {
     Task<string?> ResolveTenantNameAsync(Guid tenantId, CancellationToken cancellationToken);
     Task<IReadOnlyList<SalesWorkspaceOption>> ListAsync(Guid tenantId, CancellationToken cancellationToken);
+    Task<bool> IsActiveRestaurantBusinessAsync(
+        Guid tenantId, Guid businessId, CancellationToken cancellationToken);
     Task<SalesWorkspaceContext?> ResolveAsync(
         Guid tenantId,
         SalesWorkspaceSelection selection,
@@ -36,12 +38,30 @@ public sealed class SalesWorkspaceService(
                 "La empresa autenticada no existe o está inactiva.");
     }
 
-    public Task<IReadOnlyList<SalesWorkspaceOption>> ListAsync(
+    public async Task<IReadOnlyList<SalesWorkspaceOption>> ListAsync(
         SalesWorkspaceUserIdentity user,
         CancellationToken cancellationToken = default)
     {
-        DemandSalesPermission(user);
-        return directory.ListAsync(user.TenantId, cancellationToken);
+        DemandWorkspacePermission(user);
+        var options = await directory.ListAsync(user.TenantId, cancellationToken);
+        return HasDirectSalesPermission(user)
+            ? options
+            : options.Where(option => option.PointOfSaleMode == "RestaurantBar")
+                .ToArray();
+    }
+
+    public Task<bool> CanReadRestaurantCommandsAsync(
+        SalesWorkspaceUserIdentity user,
+        Guid businessId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        if (businessId == Guid.Empty ||
+            !user.Permissions.Contains("restaurant.commands.read"))
+            return Task.FromResult(false);
+
+        return directory.IsActiveRestaurantBusinessAsync(
+            user.TenantId, businessId, cancellationToken);
     }
 
     public Task<PosEnrollmentCapacity> EnrollmentCapacityAsync(
@@ -57,14 +77,18 @@ public sealed class SalesWorkspaceService(
         SalesWorkspaceSelection selection,
         CancellationToken cancellationToken = default)
     {
-        DemandSalesPermission(user);
+        DemandWorkspacePermission(user);
         if (selection.BusinessId == Guid.Empty || selection.WarehouseId == Guid.Empty)
             throw new SalesWorkspaceValidationException(
                 "La sede y la bodega son obligatorias.");
 
-        return await directory.ResolveAsync(user.TenantId, selection, cancellationToken)
+        var selected = await directory.ResolveAsync(user.TenantId, selection, cancellationToken)
             ?? throw new SalesWorkspaceForbiddenException(
                 "La sede o bodega no pertenece a la empresa autenticada o está inactiva.");
+        if (!HasDirectSalesPermission(user) && selected.PointOfSaleMode != "RestaurantBar")
+            throw new SalesWorkspaceForbiddenException(
+                "El permiso de atención solo permite abrir sedes de restaurante.");
+        return selected;
     }
 
     public Task<SalesWorkspaceContext> ChangeAsync(
@@ -81,9 +105,22 @@ public sealed class SalesWorkspaceService(
     private static void DemandSalesPermission(SalesWorkspaceUserIdentity user)
     {
         ArgumentNullException.ThrowIfNull(user);
-        if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate)
-            && !user.Permissions.Contains(SellerOrderCreatePermission))
+        if (!HasDirectSalesPermission(user))
             throw new SalesWorkspaceForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesCreate}' or '{SellerOrderCreatePermission}' is required.");
     }
+
+    private static void DemandWorkspacePermission(SalesWorkspaceUserIdentity user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        if (!HasDirectSalesPermission(user) &&
+            !user.Permissions.Contains("restaurant.attend") &&
+            !user.Permissions.Contains("restaurant.tables.open_without_waiter"))
+            throw new SalesWorkspaceForbiddenException(
+                "No tienes permiso para acceder al punto de venta.");
+    }
+
+    private static bool HasDirectSalesPermission(SalesWorkspaceUserIdentity user) =>
+        user.Permissions.Contains(CommercePermissionCodes.SalesCreate) ||
+        user.Permissions.Contains(SellerOrderCreatePermission);
 }

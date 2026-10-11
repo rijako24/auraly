@@ -36,6 +36,19 @@ internal sealed class TestPosSynchronizationPushGateway
             $"?tenant={tenantId:D}&business={businessId:D}&user={userId:D}");
     }
 
+    public Uri CreateRestaurantCommandsClientAccessUri(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return new Uri(
+            $"wss://push.auraly.test/client/hubs/auraly_pos" +
+            $"?tenant={tenantId:D}&business={businessId:D}&user={userId:D}" +
+            "&stream=RestaurantCommands");
+    }
+
     public Task SendAsync(
         PosSynchronizationInvalidation invalidation,
         CancellationToken cancellationToken = default)

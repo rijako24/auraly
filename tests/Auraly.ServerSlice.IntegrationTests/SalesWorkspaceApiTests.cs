@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
 using Auraly.Application.Fiscal;
+using Auraly.Api;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -135,6 +136,115 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/workspace/options");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Waiter_only_bootstrap_lists_restaurant_mode_without_cashier_setup()
+    {
+        using var waiter = fixture.CreateAdminClient("restaurant.attend");
+        var selection = new SalesWorkspaceSelection(
+            fixture.BusinessId, fixture.WarehouseId);
+        using (var direct = await waiter.GetAsync(
+            "/api/commerce/v1/pos/workspace/bootstrap"))
+        {
+            direct.EnsureSuccessStatusCode();
+            var bootstrap = await direct.Content.ReadFromJsonAsync<
+                SalesWorkspaceBootstrap>();
+            Assert.DoesNotContain(bootstrap!.Options,
+                item => item.BusinessId == fixture.BusinessId);
+            Assert.False(bootstrap.CanEnrollPosDevice);
+        }
+        using (var denied = await waiter.PostAsJsonAsync(
+            "/api/commerce/v1/pos/workspace/select", selection))
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        await SetModeAsync("RestaurantBar");
+        try
+        {
+            var bootstrap = await waiter.GetFromJsonAsync<
+                SalesWorkspaceBootstrap>(
+                "/api/commerce/v1/pos/workspace/bootstrap");
+            var option = Assert.Single(bootstrap!.Options,
+                item => item.BusinessId == fixture.BusinessId &&
+                    item.WarehouseId == fixture.WarehouseId);
+            Assert.Equal("RestaurantBar", option.PointOfSaleMode);
+            Assert.False(bootstrap.CanEnrollPosDevice);
+            using var chosen = await waiter.PostAsJsonAsync(
+                "/api/commerce/v1/pos/workspace/select", selection);
+            chosen.EnsureSuccessStatusCode();
+            var context = await chosen.Content.ReadFromJsonAsync<
+                SalesWorkspaceContext>();
+            Assert.Equal("RestaurantBar", context!.PointOfSaleMode);
+        }
+        finally
+        {
+            await SetModeAsync("DirectSale");
+        }
+    }
+
+    [Fact]
+    public async Task Command_operator_negotiates_push_only_for_a_restaurant_business()
+    {
+        using var kitchen = fixture.CreateAdminClient("restaurant.commands.read");
+        var negotiationPath =
+            "/api/commerce/v1/restaurant/command-cards/synchronization/negotiate";
+        using (var direct = await kitchen.PostAsync(negotiationPath, null))
+            Assert.Equal(HttpStatusCode.Forbidden, direct.StatusCode);
+        using (var options = await kitchen.GetAsync(
+            "/api/commerce/v1/pos/workspace/options"))
+            Assert.Equal(HttpStatusCode.Forbidden, options.StatusCode);
+
+        await SetModeAsync("RestaurantBar");
+        try
+        {
+            await SetWarehouseSalesAsync(false);
+            using var allowed = await kitchen.PostAsync(negotiationPath, null);
+            allowed.EnsureSuccessStatusCode();
+            var connection = await allowed.Content.ReadFromJsonAsync<
+                PosSynchronizationNegotiationResponse>();
+            Assert.NotNull(connection);
+            Assert.Equal("wss", connection.ClientAccessUri.Scheme);
+            Assert.Contains($"business={fixture.BusinessId:D}",
+                connection.ClientAccessUri.Query, StringComparison.Ordinal);
+            Assert.Contains("stream=RestaurantCommands",
+                connection.ClientAccessUri.Query, StringComparison.Ordinal);
+            using var generic = await kitchen.PostAsync(
+                $"/api/commerce/v1/pos/workspace/synchronization/negotiate?businessId={fixture.BusinessId:D}",
+                null);
+            Assert.Equal(HttpStatusCode.Forbidden, generic.StatusCode);
+        }
+        finally
+        {
+            await SetWarehouseSalesAsync(true);
+            await SetModeAsync("DirectSale");
+        }
+    }
+
+    private async Task SetWarehouseSalesAsync(bool enabled)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE dbo.Warehouses SET UseForSales=@Enabled
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId;
+            """, connection);
+        command.Parameters.AddWithValue("@Enabled", enabled);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task SetModeAsync(string mode)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE dbo.Businesses SET PointOfSaleMode=@Mode
+            WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
+            """, connection);
+        command.Parameters.AddWithValue("@Mode", mode);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        await command.ExecuteNonQueryAsync();
     }
 
     [Fact]

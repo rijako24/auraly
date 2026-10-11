@@ -4,6 +4,8 @@
 **Fecha:** 29 de julio de 2026
 **Ámbito:** Auraly Commerce, SaaS y On-Premise
 
+**Vigencia del alcance de maestros:** las definiciones históricas de roles por `BusinessId`, sus estructuras y criterios de migración de este documento fueron reemplazados por [maestros comerciales del tenant](implementation/tenant-owned-commerce-masters.md). Para Mesero rige el [diseño gastronómico revisado](implementation/restaurant-pos-design.md#5-meseros-autorización-y-equipos): rol compartido por tenant, sin habilitación comercial adicional por sede. La separación Party/Usuario y la prohibición de crear usuarios automáticamente siguen vigentes.
+
 ## 1. Decisión
 
 Auraly tendrá un único maestro canónico `Party` para representar una persona natural o una organización.

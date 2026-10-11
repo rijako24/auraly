@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
@@ -21,15 +22,21 @@ public sealed class SqlInventoryOperationProcessor(
             throw new InvalidOperationException("The inventory operation envelope does not match its payload.");
         if (operation.DocumentType == InventoryDocumentTypes.Conversion)
             ValidateConversionSnapshot(operation);
+        if (operation.DocumentType == InventoryDocumentTypes.Production &&
+            (operation.RecipeVersionId is null ||
+             operation.Lines.Count(line => line.Direction == "OUTPUT") != 1 ||
+             operation.Lines.All(line => line.Direction != "INPUT") ||
+             operation.Lines.Any(line => line.Direction is not ("INPUT" or "OUTPUT") || line.Quantity <= 0)))
+            throw new InvalidOperationException("The production recipe snapshot is invalid.");
         var session = sessions.Current;
         var normalizedLines = new List<InventoryOperationLineSnapshot>(operation.Lines.Count);
         foreach (var line in operation.Lines)
         {
             var target = await SqlProductLinkResolution.ResolveInventoryAsync(
                 session, operation.BusinessId, line.ProductId, cancellationToken);
-            if (operation.DocumentType == InventoryDocumentTypes.Conversion &&
+            if ((operation.DocumentType is InventoryDocumentTypes.Conversion or InventoryDocumentTypes.Production) &&
                 (target.ProductId != line.ProductId || target.Factor != 1m))
-                throw new InvalidOperationException("A conversion product must keep its own inventory.");
+                throw new InvalidOperationException("A conversion or production product must keep its own inventory.");
             normalizedLines.Add(line with
             {
                 ProductId = target.ProductId,
@@ -60,6 +67,7 @@ public sealed class SqlInventoryOperationProcessor(
             InventoryDocumentTypes.Adjustment => await ProcessAdjustmentAsync(session, operation, balances, cancellationToken),
             InventoryDocumentTypes.Transfer => await ProcessTransferAsync(session, operation, balances, cancellationToken),
             InventoryDocumentTypes.Conversion => await ProcessConversionAsync(session, operation, balances, cancellationToken),
+            InventoryDocumentTypes.Production => await ProcessProductionAsync(session, operation, balances, cancellationToken),
             InventoryDocumentTypes.Damage => await ProcessDamageAsync(session, operation, balances, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported inventory operation '{operation.DocumentType}'.")
         };
@@ -67,7 +75,7 @@ public sealed class SqlInventoryOperationProcessor(
         await MarkProcessedAsync(session, operation, totalValueChange, cancellationToken);
         if ((operation.DocumentType is InventoryDocumentTypes.StockCount or
                 InventoryDocumentTypes.Adjustment or InventoryDocumentTypes.Damage or
-                InventoryDocumentTypes.Conversion) &&
+                InventoryDocumentTypes.Conversion or InventoryDocumentTypes.Production) &&
             await HasRecognizedAccountingEffectAsync(
                 session, operation.DocumentId, operation.DocumentType, cancellationToken))
             await SqlAccountingPostingJobWriter.InsertAsync(
@@ -82,31 +90,53 @@ public sealed class SqlInventoryOperationProcessor(
         var keys = operation.Lines.Select(line => (operation.WarehouseId, line.ProductId)).ToList();
         if (operation.DestinationWarehouseId is { } destination)
             keys.AddRange(operation.Lines.Select(line => (destination, line.ProductId)));
-        var result = new Dictionary<(Guid, Guid), BalanceState>();
+        var orderedKeys = keys.Distinct().OrderBy(key => key.Item1)
+            .ThenBy(key => key.ProductId).ToArray();
+        var result = new Dictionary<(Guid, Guid), BalanceState>(orderedKeys.Length);
         const string sql = """
-            SELECT p.ManageStock,b.QuantityOnHand,b.AverageUnitCost,b.InventoryValue
-            FROM dbo.Products p WITH(UPDLOCK,HOLDLOCK)
-            INNER JOIN dbo.Warehouses w WITH(UPDLOCK,HOLDLOCK) ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
+            DECLARE @Requested TABLE(WarehouseId UNIQUEIDENTIFIER NOT NULL,
+              ProductId UNIQUEIDENTIFIER NOT NULL,
+              PRIMARY KEY CLUSTERED(WarehouseId,ProductId));
+            INSERT @Requested(WarehouseId,ProductId)
+            SELECT WarehouseId,ProductId
+            FROM OPENJSON(@Keys) WITH(WarehouseId UNIQUEIDENTIFIER,
+              ProductId UNIQUEIDENTIFIER);
+
+            SELECT requested.WarehouseId,requested.ProductId,
+                   w.WarehouseId,p.ManageStock,
+                   b.QuantityOnHand,b.AverageUnitCost,b.InventoryValue
+            FROM @Requested requested
+            LEFT JOIN dbo.Products p WITH(UPDLOCK,HOLDLOCK)
+              ON p.ProductId=requested.ProductId
+             AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+             AND p.IsActive=1
+            LEFT JOIN dbo.Warehouses w WITH(UPDLOCK,HOLDLOCK)
+              ON w.WarehouseId=requested.WarehouseId AND w.BusinessId=@BusinessId
             LEFT JOIN dbo.InventoryBalances b WITH(UPDLOCK,HOLDLOCK)
-              ON b.BusinessId=@BusinessId AND b.WarehouseId=@WarehouseId AND b.ProductId=p.ProductId
-            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-              AND p.ProductId=@ProductId AND p.IsActive=1;
+              ON b.BusinessId=@BusinessId AND b.WarehouseId=requested.WarehouseId
+             AND b.ProductId=requested.ProductId
+            ORDER BY requested.WarehouseId,requested.ProductId
+            OPTION(FORCE ORDER,LOOP JOIN,MAXDOP 1);
             """;
-        foreach (var key in keys.Distinct().OrderBy(key => key.Item1).ThenBy(key => key.ProductId))
+        await using var command = new SqlCommand(sql, session.Connection,
+            session.Transaction);
+        command.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
+        command.Parameters.Add("@Keys", SqlDbType.NVarChar, -1).Value =
+            JsonSerializer.Serialize(orderedKeys.Select(key => new {
+                WarehouseId = key.Item1, key.ProductId }));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
         {
-            await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-            command.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
-            command.Parameters.AddWithValue("@WarehouseId", key.Item1);
-            command.Parameters.AddWithValue("@ProductId", key.ProductId);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken) || !reader.GetBoolean(0))
+            if (reader.IsDBNull(2) || reader.IsDBNull(3) || !reader.GetBoolean(3))
                 throw new InvalidOperationException("An inventory product or warehouse is no longer valid.");
-            result[key] = new BalanceState(
-                reader.IsDBNull(1) ? 0m : reader.GetDecimal(1),
-                reader.IsDBNull(2) ? 0m : reader.GetDecimal(2),
-                reader.IsDBNull(3) ? 0m : reader.GetDecimal(3),
-                !reader.IsDBNull(1));
+            result[(reader.GetGuid(0), reader.GetGuid(1))] = new BalanceState(
+                reader.IsDBNull(4) ? 0m : reader.GetDecimal(4),
+                reader.IsDBNull(5) ? 0m : reader.GetDecimal(5),
+                reader.IsDBNull(6) ? 0m : reader.GetDecimal(6),
+                !reader.IsDBNull(4));
         }
+        if (result.Count != orderedKeys.Length)
+            throw new InvalidOperationException("An inventory product or warehouse is no longer valid.");
         return result;
     }
 
@@ -135,15 +165,18 @@ public sealed class SqlInventoryOperationProcessor(
     private async Task<decimal> ProcessDamageAsync(SqlDocumentProcessingSessionAccessor.Session session,
         InventoryOperationDocumentPayload operation, Dictionary<(Guid, Guid), BalanceState> balances, CancellationToken cancellationToken)
     {
-        var damagedWarehouse = operation.DestinationWarehouseId
-            ?? throw new InvalidOperationException("The damaged inventory warehouse is missing.");
+        var irreversible = operation.DamageDisposition == "Irreversible";
+        var damagedWarehouse = operation.DestinationWarehouseId;
+        if (!irreversible && damagedWarehouse is null)
+            throw new InvalidOperationException("The damaged inventory warehouse is missing.");
         var total = 0m;
         foreach (var line in operation.Lines.OrderBy(line => line.LineNumber))
         {
             total += (await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity,
                 null, "InventoryDamage", balances, cancellationToken)).ValueChange;
-            total += (await ApplyAsync(session, operation, line, damagedWarehouse, line.Quantity,
-                0m, "DamageWarehouseIn", balances, cancellationToken, false)).ValueChange;
+            if (!irreversible)
+                total += (await ApplyAsync(session, operation, line, damagedWarehouse!.Value, line.Quantity,
+                    0m, "DamageWarehouseIn", balances, cancellationToken, false)).ValueChange;
         }
         return InventoryOperationRules.Money(total);
     }
@@ -345,6 +378,25 @@ public sealed class SqlInventoryOperationProcessor(
         return InventoryOperationRules.Money(total);
     }
 
+    private async Task<decimal> ProcessProductionAsync(SqlDocumentProcessingSessionAccessor.Session session,
+        InventoryOperationDocumentPayload operation, Dictionary<(Guid, Guid), BalanceState> balances,
+        CancellationToken cancellationToken)
+    {
+        var inputs = operation.Lines.Where(line => line.Direction == "INPUT").OrderBy(line => line.LineNumber).ToArray();
+        var output = operation.Lines.Single(line => line.Direction == "OUTPUT");
+        foreach (var ingredient in inputs.GroupBy(line => line.ProductId))
+            if (balances[(operation.WarehouseId, ingredient.Key)].Quantity < ingredient.Sum(line => line.Quantity))
+                throw new InvalidOperationException("The production ingredient inventory is insufficient.");
+        var consumedValue = 0m;
+        foreach (var input in inputs)
+            consumedValue -= (await ApplyAsync(session, operation, input, operation.WarehouseId,
+                -input.Quantity, null, "ProductionInput", balances, cancellationToken)).ValueChange;
+        var unitCost = InventoryOperationRules.Quantity(consumedValue / output.Quantity);
+        var received = await ApplyAsync(session, operation, output, operation.WarehouseId,
+            output.Quantity, unitCost, "ProductionOutput", balances, cancellationToken);
+        return InventoryOperationRules.Money(received.ValueChange - consumedValue);
+    }
+
     private static void ValidateConversionSnapshot(InventoryOperationDocumentPayload operation)
     {
         if (operation.ConversionFamilyRootProductId is null ||
@@ -456,9 +508,9 @@ public sealed class SqlInventoryOperationProcessor(
               WHERE InventoryOperationId=@DocumentId
               GROUP BY InventoryOperationId
               HAVING
-                (@DocumentType=N'ProductConversion' AND SUM(ProcessedValue)<>0)
+                (@DocumentType IN (N'ProductConversion',N'Production') AND SUM(ProcessedValue)<>0)
                 OR
-                (@DocumentType<>N'ProductConversion' AND
+                (@DocumentType NOT IN (N'ProductConversion',N'Production') AND
                  SUM(CASE WHEN ProcessedValue<>0 THEN 1 ELSE 0 END)>0)
             ) THEN 1 ELSE 0 END AS bit);
             """;
@@ -517,5 +569,6 @@ public sealed class SqlWarehouseTransferDocumentHandler(SqlInventoryOperationPro
 public sealed class SqlWarehouseTransferDispatchDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.TransferDispatch; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 public sealed class SqlWarehouseTransferReceiptDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.TransferReceipt; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 public sealed class SqlProductConversionDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Conversion; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
+public sealed class SqlProductionDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Production; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 
 public sealed class SqlInventoryDamageDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Damage; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }

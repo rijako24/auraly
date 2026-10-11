@@ -31,6 +31,7 @@ export interface ReturnableSalePage {
 
 export interface ReturnableSale {
   documentId: string;
+  isRestaurant?: boolean;
   documentNumber: string;
   fiscalNumber: string;
   cufe: string;
@@ -101,7 +102,7 @@ export interface ConfirmSalesReturnRequest {
   lines: Array<{
     originalLineNumber: number;
     quantity: number;
-    inventoryDisposition: "Sellable";
+    inventoryDisposition: "Sellable" | "NotReturned";
   }>;
   workSessionId: string | null;
   originalPaymentNumber: number | null;

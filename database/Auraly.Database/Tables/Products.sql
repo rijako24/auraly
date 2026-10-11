@@ -33,6 +33,7 @@ CREATE TABLE [dbo].[Products] (
     [CreatedByUserId] UNIQUEIDENTIFIER NULL,
     [UpdatedByUserId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    [IsIngredient] BIT NOT NULL CONSTRAINT [DF_Products_IsIngredient] DEFAULT 0,
     CONSTRAINT [FK_Products_TaxProfiles] FOREIGN KEY ([TenantId], [TaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TenantId], [TaxProfileId]),
     CONSTRAINT [FK_Products_PurchaseTaxProfiles] FOREIGN KEY ([TenantId], [PurchaseTaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TenantId], [TaxProfileId]),
     CONSTRAINT [CK_Products_PurchaseTaxTreatment] CHECK ([PurchaseTaxTreatment] IN (N'DeductibleInputVat',N'CapitalizedCost',N'NotApplicable')),
@@ -50,6 +51,7 @@ CREATE TABLE [dbo].[Products] (
     CONSTRAINT [CK_Products_Source] CHECK ([Source] IN (0, 1)),
     CONSTRAINT [CK_Products_WeighableFractional] CHECK ([IsWeighable] = 0 OR [AllowsFractionalSale] = 1),
     CONSTRAINT [CK_Products_GenericNoStock] CHECK ([IsGenericProduct] = 0 OR [ManageStock] = 0),
+    CONSTRAINT [CK_Products_IngredientNotGeneric] CHECK ([IsIngredient] = 0 OR [IsGenericProduct] = 0),
     CONSTRAINT [CK_Products_UnitGrossWeightKg] CHECK ([UnitGrossWeightKg] IS NULL OR [UnitGrossWeightKg] > 0),
     CONSTRAINT [CK_Products_ConversionMaximumLossPercent] CHECK ([ConversionMaximumLossPercent] IS NULL OR [ConversionMaximumLossPercent] BETWEEN 0 AND 100),
     CONSTRAINT [CK_Products_CanonicalFields] CHECK (

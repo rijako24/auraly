@@ -84,6 +84,10 @@ public sealed class SqlSalesReturnStore(
                 if (!originalLines.TryGetValue(requested.OriginalLineNumber, out var source))
                     throw new SalesReturnValidationException(
                         $"Original sale line {requested.OriginalLineNumber} was not found.");
+                if (requested.InventoryDisposition == ReturnInventoryDispositions.NotReturned &&
+                    !source.IsRestaurantCheckout)
+                    throw new SalesReturnValidationException(
+                        "Solo una línea facturada desde una mesa admite cancelación sin retorno a inventario.");
                 SalesReturnAmounts amounts;
                 try
                 {
@@ -341,11 +345,15 @@ public sealed class SqlSalesReturnStore(
                    l.TaxCode,l.TaxRate,l.UntaxedAmount,l.TaxAmount,l.LineTotal,
                    COALESCE(returned.Quantity,0),COALESCE(returned.DiscountAmount,0),
                    COALESCE(returned.UntaxedAmount,0),COALESCE(returned.TaxAmount,0),
-                   COALESCE(returned.LineTotal,0),COALESCE(l.UnitCostSnapshot,cost.RecognizedUnitCost,0)
+                   COALESCE(returned.LineTotal,0),COALESCE(l.UnitCostSnapshot,cost.RecognizedUnitCost,0),
+                   CAST(CASE WHEN restaurant.DocumentId IS NULL THEN 0 ELSE 1 END AS bit)
             FROM dbo.SalesDocumentLines l WITH (UPDLOCK,HOLDLOCK)
             JOIN Requested requested ON requested.LineNumber=l.LineNumber
             LEFT JOIN Returned returned ON returned.OriginalLineNumber=l.LineNumber
             LEFT JOIN Costs cost ON cost.LineNumber=l.LineNumber
+            LEFT JOIN sales.RestaurantCheckoutLines restaurant
+              ON restaurant.DocumentId=l.DocumentId
+             AND restaurant.LineNumber=l.LineNumber
             WHERE l.DocumentId=@DocumentId;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
@@ -358,7 +366,8 @@ public sealed class SqlSalesReturnStore(
                 reader.GetDecimal(4), reader.GetDecimal(5), reader.GetString(6), reader.GetDecimal(7),
                 reader.GetDecimal(8), reader.GetDecimal(9), reader.GetDecimal(10),
                 reader.GetDecimal(11), reader.GetDecimal(12), reader.GetDecimal(13),
-                reader.GetDecimal(14), reader.GetDecimal(15), reader.GetDecimal(16)));
+                reader.GetDecimal(14), reader.GetDecimal(15), reader.GetDecimal(16),
+                reader.GetBoolean(17)));
         return values;
     }
 
@@ -735,5 +744,5 @@ public sealed class SqlSalesReturnStore(
         decimal UnitPrice,decimal DiscountAmount,string TaxCode,decimal TaxRate,
         decimal UntaxedAmount,decimal TaxAmount,decimal LineTotal,decimal ReturnedQuantity,
         decimal ReturnedDiscount,decimal ReturnedUntaxed,decimal ReturnedTax,decimal ReturnedTotal,
-        decimal RecognizedUnitCost);
+        decimal RecognizedUnitCost,bool IsRestaurantCheckout);
 }

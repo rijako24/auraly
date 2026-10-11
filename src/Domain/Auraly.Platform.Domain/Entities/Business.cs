@@ -1,3 +1,5 @@
+using Auraly.Platform.Domain.Enums;
+
 namespace Auraly.Platform.Domain.Entities;
 
 public class Business
@@ -15,6 +17,9 @@ public class Business
     
     public string TimeZone { get; set; } = "America/Bogota";
     public bool SharesProductPrices { get; set; }
+    public string PointOfSaleMode { get; set; } = PointOfSaleModes.DirectSale;
+    public bool RestaurantRequireWaiterCredential { get; set; } = true;
+    public bool RestaurantRestrictTableToWaiter { get; set; }
 
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }

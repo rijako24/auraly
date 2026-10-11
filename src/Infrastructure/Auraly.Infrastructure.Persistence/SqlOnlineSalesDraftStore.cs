@@ -23,7 +23,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
     IAuralyIdGenerator ids,
     TimeProvider time,
     SqlInventoryOperationStore inventoryOperations) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
-    IOnlineSalesHistoryStore, IOrderCancellationStore
+    IOnlineSalesHistoryStore, IOrderCancellationStore, IRestaurantProductCatalog
 {
     public async Task<OnlineSalesDraft> GetOrCreateActiveAsync(
         OnlineSalesUserIdentity user,
@@ -890,7 +890,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                  ORDER BY latest.ObservedAt DESC,latest.SupplierId),
                 price.CostBasisAmount,NULLIF(balance.AverageUnitCost,0),0) Amount
             ) latestCost
-            WHERE p.IsActive=1
+            WHERE p.IsActive=1 AND p.IsIngredient=0
               AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             """;
         command.Parameters.AddRange([
@@ -1027,7 +1027,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 ELSE 6
               END AS MatchRank
             FROM dbo.Products p
-            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND p.IsActive=1
+            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND p.IsActive=1 AND p.IsIngredient=0
               AND (
                 p.ProductId=TRY_CONVERT(uniqueidentifier,@Selector) OR
                 p.ProductCode=@Selector OR p.Sku=@Selector OR

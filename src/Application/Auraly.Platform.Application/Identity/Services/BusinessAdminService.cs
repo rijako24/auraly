@@ -7,6 +7,8 @@ using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Platform.Application.Time;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Repositories;
+using Auraly.Platform.Domain.Enums;
+using Auraly.Contracts.Catalog;
 
 namespace Auraly.Platform.Application.Identity.Services;
 
@@ -16,17 +18,23 @@ public class BusinessAdminService : IBusinessAdminService
     private readonly IBusinessDefaultsProvisioner _defaultsProvisioner;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<BusinessAdminService> _logger;
+    private readonly IReferenceOptionStore _referenceOptions;
+    private readonly TimeProvider _clock;
 
     public BusinessAdminService(
         IUnitOfWork unitOfWork,
         IBusinessDefaultsProvisioner defaultsProvisioner,
         ICorrelationIdProvider correlationIdProvider,
-        ILogger<BusinessAdminService> logger)
+        ILogger<BusinessAdminService> logger,
+        IReferenceOptionStore referenceOptions,
+        TimeProvider clock)
     {
         _unitOfWork = unitOfWork;
         _defaultsProvisioner = defaultsProvisioner;
         _correlationIdProvider = correlationIdProvider;
         _logger = logger;
+        _referenceOptions = referenceOptions;
+        _clock = clock;
     }
 
     public async Task<BusinessDto> GetByIdAsync(
@@ -64,6 +72,10 @@ public class BusinessAdminService : IBusinessAdminService
 
     public async Task<BusinessDto> CreateAsync(Guid tenantId, CreateBusinessRequest request, CancellationToken ct)
     {
+        var mode = request.PointOfSaleMode ?? PointOfSaleModes.DirectSale;
+        await ValidatePointOfSaleModeAsync(mode, ct);
+        ValidateRestaurantWaiterPolicy(request.RestaurantRequireWaiterCredential,
+            request.RestaurantRestrictTableToWaiter);
         var business = new Business
         {
             BusinessId = Guid.NewGuid(),
@@ -76,8 +88,11 @@ public class BusinessAdminService : IBusinessAdminService
             Website = request.Website ?? string.Empty,
             TimeZone = NormalizeTimeZone(request.TimeZone),
             SharesProductPrices = request.SharesProductPrices,
+            PointOfSaleMode = mode,
+            RestaurantRequireWaiterCredential = request.RestaurantRequireWaiterCredential,
+            RestaurantRestrictTableToWaiter = request.RestaurantRestrictTableToWaiter,
             IsActive = true,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = _clock.GetUtcNow().UtcDateTime
         };
 
         await _unitOfWork.ExecuteInTransactionAsync(async () =>
@@ -90,6 +105,8 @@ public class BusinessAdminService : IBusinessAdminService
                 request.PriceSourceBusinessId,
                 await ReadTenantCostBasisAsync(tenantId, ct),
                 ct);
+            if (mode == PointOfSaleModes.RestaurantBar)
+                await _defaultsProvisioner.ReconcileRestaurantRolePermissionsAsync(tenantId, ct);
         }, ct);
 
         _logger.LogInformation("Business '{Name}' created for tenant {TenantId} [CorrelationId: {CorrelationId}]",
@@ -106,7 +123,11 @@ public class BusinessAdminService : IBusinessAdminService
         CancellationToken ct)
     {
         var business = await GetBusinessForScopeAsync(tenantId, canAccessAllTenants, businessId);
-        var oldState = MapToDto(business);
+        if (request.PointOfSaleMode is not null && request.PointOfSaleMode != business.PointOfSaleMode)
+            await ValidatePointOfSaleModeAsync(request.PointOfSaleMode, ct);
+        ValidateRestaurantWaiterPolicy(
+            request.RestaurantRequireWaiterCredential ?? business.RestaurantRequireWaiterCredential,
+            request.RestaurantRestrictTableToWaiter ?? business.RestaurantRestrictTableToWaiter);
 
         if (request.Name is not null) business.Name = request.Name;
         if (request.Description is not null) business.Description = request.Description;
@@ -116,10 +137,20 @@ public class BusinessAdminService : IBusinessAdminService
         if (request.Website is not null) business.Website = request.Website;
         if (request.TimeZone is not null) business.TimeZone = NormalizeTimeZone(request.TimeZone);
         if (request.SharesProductPrices is not null) business.SharesProductPrices = request.SharesProductPrices.Value;
+        if (request.PointOfSaleMode is not null) business.PointOfSaleMode = request.PointOfSaleMode;
+        if (request.RestaurantRequireWaiterCredential is not null)
+            business.RestaurantRequireWaiterCredential = request.RestaurantRequireWaiterCredential.Value;
+        if (request.RestaurantRestrictTableToWaiter is not null)
+            business.RestaurantRestrictTableToWaiter = request.RestaurantRestrictTableToWaiter.Value;
 
-        business.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.Businesses.UpdateAsync(business);
-        await _unitOfWork.SaveChangesAsync(ct);
+        business.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
+        await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await _unitOfWork.Businesses.UpdateAsync(business);
+            await _unitOfWork.SaveChangesAsync(ct);
+            if (request.PointOfSaleMode is not null)
+                await _defaultsProvisioner.ReconcileRestaurantRolePermissionsAsync(business.TenantId, ct);
+        }, ct);
 
         return MapToDto(business);
     }
@@ -133,9 +164,14 @@ public class BusinessAdminService : IBusinessAdminService
         var business = await GetBusinessForScopeAsync(tenantId, canAccessAllTenants, businessId);
 
         business.IsActive = false;
-        business.UpdatedAt = DateTime.UtcNow;
-        await _unitOfWork.Businesses.UpdateAsync(business);
-        await _unitOfWork.SaveChangesAsync(ct);
+        business.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
+        await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await _unitOfWork.Businesses.UpdateAsync(business);
+            await _unitOfWork.SaveChangesAsync(ct);
+            if (business.PointOfSaleMode == PointOfSaleModes.RestaurantBar)
+                await _defaultsProvisioner.ReconcileRestaurantRolePermissionsAsync(business.TenantId, ct);
+        }, ct);
     }
 
     private async Task<Business> GetBusinessForScopeAsync(
@@ -155,6 +191,22 @@ public class BusinessAdminService : IBusinessAdminService
     private static string NormalizeTimeZone(string? timeZone) =>
         string.IsNullOrWhiteSpace(timeZone) ? BusinessClock.DefaultTimeZoneId : timeZone.Trim();
 
+    private static void ValidateRestaurantWaiterPolicy(bool requireCredential, bool restrictTable)
+    {
+        if (restrictTable && !requireCredential)
+            throw new DomainValidationException(nameof(UpdateBusinessRequest.RestaurantRequireWaiterCredential),
+                "Para restringir una mesa a su mesero responsable debes pedir la clave al seleccionar mesero.");
+    }
+
+    private async Task ValidatePointOfSaleModeAsync(string mode, CancellationToken ct)
+    {
+        if (!PointOfSaleModes.IsSupported(mode) ||
+            !(await _referenceOptions.ListAsync(PointOfSaleModes.CatalogCode, ct))
+                .Any(option => option.Code == mode))
+            throw new DomainValidationException(nameof(CreateBusinessRequest.PointOfSaleMode),
+                "Selecciona un modo de punto de venta vigente.");
+    }
+
     private async Task<string> ReadTenantCostBasisAsync(Guid tenantId, CancellationToken ct)
     {
         var tenant = await _unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
@@ -164,5 +216,7 @@ public class BusinessAdminService : IBusinessAdminService
 
     private static BusinessDto MapToDto(Business b) => new(
         b.BusinessId, b.TenantId, b.Name, b.Description, b.Address,
-        b.Phone, b.Email, b.Website, b.TimeZone, b.SharesProductPrices, b.IsActive, b.CreatedAt);
+        b.Phone, b.Email, b.Website, b.TimeZone, b.SharesProductPrices, b.IsActive, b.CreatedAt,
+        b.PointOfSaleMode, b.RestaurantRequireWaiterCredential,
+        b.RestaurantRestrictTableToWaiter);
 }

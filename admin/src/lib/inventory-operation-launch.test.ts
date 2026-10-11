@@ -18,6 +18,7 @@ test("nueva operación abre conteo y conserva todos los procesos disponibles", (
     "transfer",
     "conversion",
     "damage",
+    "production",
   ]);
 });
 
@@ -38,4 +39,5 @@ test("solo permite confirmar entrada cuando el traslado tiene cantidad pendiente
 test("al completar una operación abre el historial del mismo tipo", () => {
   assert.equal(inventoryDocumentTypeForKind("transfer"), "WarehouseTransfer");
   assert.equal(inventoryDocumentTypeForKind("damage"), "Damage");
+  assert.equal(inventoryDocumentTypeForKind("production"), "Production");
 });

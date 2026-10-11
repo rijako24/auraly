@@ -9,20 +9,41 @@ CREATE PROCEDURE [dbo].[OnlineSalesProductSearch]
     @Contains NVARCHAR(252),
     @Prefix NVARCHAR(251),
     @Skip INT,
-    @Take INT
+    @Take INT,
+    @RestaurantAccountId UNIQUEIDENTIFIER = NULL,
+    @ProductId UNIQUEIDENTIFIER = NULL,
+    @CategoryId UNIQUEIDENTIFIER = NULL,
+    @RestaurantDirectAccess BIT = 0
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    SELECT b.BusinessId,w.WarehouseId,s.WorkSessionId,w.AllowNegativeStockSales
+    SELECT b.BusinessId,w.WarehouseId,
+           COALESCE(s.WorkSessionId,account.AccountId),w.AllowNegativeStockSales
     FROM dbo.Businesses b
     JOIN dbo.Warehouses w
       ON w.WarehouseId=@WarehouseId AND w.BusinessId=b.BusinessId
      AND w.IsActive=1 AND w.UseForSales=1
-    JOIN dbo.WorkSessions s
-      ON s.WorkSessionId=@WorkSessionId AND s.BusinessId=b.BusinessId
+    LEFT JOIN dbo.WorkSessions s
+      ON @RestaurantAccountId IS NULL
+     AND s.WorkSessionId=@WorkSessionId AND s.BusinessId=b.BusinessId
      AND s.TenantId=@TenantId AND s.UserId=@UserId AND s.Status=N'Open'
-    WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId AND b.IsActive=1;
+    LEFT JOIN sales.RestaurantAccounts account
+      ON @RestaurantAccountId IS NOT NULL
+     AND account.AccountId=@RestaurantAccountId AND account.BusinessId=b.BusinessId
+     AND account.TenantId=@TenantId AND account.WarehouseId=w.WarehouseId
+     AND account.Status=N'Open'
+     AND EXISTS(
+       SELECT 1 FROM dbo.AppUsers [user]
+       WHERE [user].UserId=@UserId AND [user].TenantId=@TenantId
+         AND [user].IsActive=1
+         AND (@RestaurantDirectAccess=1 OR EXISTS(
+           SELECT 1 FROM parties.Waiters waiter
+           WHERE waiter.TenantId=[user].TenantId
+             AND waiter.PartyId=[user].PartyId AND waiter.IsActive=1)))
+    WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId AND b.IsActive=1
+      AND ((@RestaurantAccountId IS NULL AND s.WorkSessionId IS NOT NULL)
+           OR (@RestaurantAccountId IS NOT NULL AND account.AccountId IS NOT NULL));
 
     DECLARE @Candidates TABLE(
       SortOrder INT NOT NULL PRIMARY KEY,ProductId UNIQUEIDENTIFIER NOT NULL,
@@ -66,7 +87,9 @@ BEGIN
         FROM dbo.SupplierProductLatestCosts cost
         WHERE cost.BusinessId=@BusinessId AND cost.ProductId=p.ProductId
         ORDER BY cost.ObservedAt DESC,cost.SupplierId) latest
-      WHERE p.TenantId=@TenantId AND p.IsActive=1
+      WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.IsIngredient=0
+        AND (@ProductId IS NULL OR p.ProductId=@ProductId)
+        AND (@CategoryId IS NULL OR p.ProductCategoryId=@CategoryId)
         AND(@Search=N'' OR p.Name LIKE @Contains OR p.ProductCode LIKE @Prefix
           OR p.Sku LIKE @Prefix OR p.Reference LIKE @Prefix
           OR EXISTS(SELECT 1 FROM dbo.ProductBarcodes barcode
@@ -94,8 +117,18 @@ BEGIN
       WHERE parent.TenantId=@TenantId)
     SELECT candidate.*,
            COALESCE((SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),ancestor.ProductCategoryId),N',')
-             FROM Ancestors ancestor WHERE ancestor.RootProductId=candidate.ProductId),N'') AncestorIds
-    FROM @Candidates candidate ORDER BY candidate.SortOrder;
+             FROM Ancestors ancestor WHERE ancestor.RootProductId=candidate.ProductId),N'') AncestorIds,
+           image.MediaUrl
+    FROM @Candidates candidate
+    OUTER APPLY(
+      SELECT TOP(1) item.MediaUrl
+      FROM dbo.ProductImages item
+      WHERE @RestaurantAccountId IS NOT NULL
+        AND item.ProductId=candidate.ProductId AND item.TenantId=@TenantId
+        AND item.ProductOfferId IS NULL AND item.IsActive=1
+      ORDER BY item.IsPrimary DESC,item.DisplayOrder,item.ProductImageId
+    ) image
+    ORDER BY candidate.SortOrder;
 
     DECLARE @SelectedPriceChannelId UNIQUEIDENTIFIER;
     SELECT @SelectedPriceChannelId=CASE

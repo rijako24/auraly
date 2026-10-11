@@ -27,6 +27,8 @@ public static class TenantProvisioningRequestValidator
         ValidateIdentification(request.IdentificationTypeCode, request.Nit, request.VerificationDigit);
         if (request.InventoryCostBasis is not ("LatestReceiptCost" or "WeightedAverageCost"))
             throw new ArgumentException("La base de costo de inventario no es válida.");
+        if (request.PointOfSaleMode is not ("DirectSale" or "RestaurantBar"))
+            throw new ArgumentException("El tipo de punto de venta de la sede principal no es válido.");
         if (!request.Email.Contains('@') || !request.BusinessEmail.Contains('@') || !request.InvitationEmail.Contains('@'))
             throw new ArgumentException("Los correos de empresa, sede e invitación no son válidos.");
         if (request.MaximumUsers < 1)

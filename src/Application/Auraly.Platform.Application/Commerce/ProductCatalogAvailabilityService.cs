@@ -17,7 +17,8 @@ public sealed class ProductCatalogAvailabilityService : IProductCatalogAvailabil
         product.IsActive && (!product.StockQuantity.HasValue || product.StockQuantity.Value > 0);
 
     public bool IsSellable(Product product) =>
-        product.IsActive && (!product.ManageStock || (product.StockQuantity ?? 0) > 0);
+        product.IsActive && !product.IsIngredient &&
+        (!product.ManageStock || (product.StockQuantity ?? 0) > 0);
 
     public async Task<IReadOnlyList<UnavailableOrderItem>> FindUnavailableDraftItemsAsync(
         Guid businessId,

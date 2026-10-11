@@ -17,6 +17,9 @@ export function defaultStartRoute(roles: readonly string[], permissions: readonl
     return "/dashboard/deliveries";
   if (isSellerOperationalProfile(roles, permissions))
     return "/dashboard/my-routes";
+  if (normalizedRoles.length > 0 && normalizedRoles.every((role) => role === "mesero" || role === "waiter")
+    && permissions.includes("restaurant.attend"))
+    return "/pos";
   const items = authorizedNavigationItems(permissions);
   return (requiresCloudWorkspace(permissions)
     ? items.find((item) => item.href !== "/pos")

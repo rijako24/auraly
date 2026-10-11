@@ -15,12 +15,15 @@ import {
 } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
+  ChefHat,
   ClipboardCheck,
   PackageX,
   RefreshCw,
   Save,
   Scale,
   Trash2,
+  CircleCheck,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -46,10 +49,13 @@ import {
 } from "@/components/inventory/inventory-physical-count-workspace";
 import { Textarea } from "@/components/ui/textarea";
 import { ProductPicker } from "@/components/products/product-picker";
+import { PagedEntitySelect, type PagedEntityOption } from "@/components/forms/paged-entity-select";
+import { formatCurrency } from "@/lib/utils";
 import {
   inventoryApi,
   type InventoryAcceptance,
   type InventoryProductItem,
+  type ProductionProductItem,
 } from "@/services/api/inventory";
 import {
   inventoryDraftKey,
@@ -90,6 +96,7 @@ const operationDocumentTypes: Record<OperationKind, string> = {
   transfer: "WarehouseTransfer",
   conversion: "ProductConversion",
   damage: "Damage",
+  production: "Production",
 };
 const operationOptions: Array<{
   id: OperationKind;
@@ -133,6 +140,13 @@ const operationOptions: Array<{
     icon: PackageX,
     permission: "inventory.damages.confirm",
   },
+  {
+    id: "production",
+    label: "Producción",
+    description: "Consume ingredientes y recibe el producto terminado según su receta.",
+    icon: ChefHat,
+    permission: "inventory.production.confirm",
+  },
 ];
 
 export function InventoryOperationWorkspace({
@@ -167,6 +181,9 @@ export function InventoryOperationWorkspace({
   const [valuationBasis, setValuationBasis] = useState<"Cost" | "SalePrice">("Cost");
   const [conversionType, setConversionType] = useState<"SPLIT" | "MERGE">("SPLIT");
   const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
+  const [productionOccurredAt, setProductionOccurredAt] = useState(() => new Date().toISOString());
+  const [productionReview, setProductionReview] = useState<{ warehouseId: string; productId: string; quantity: number } | null>(null);
+  const [productionAttempted, setProductionAttempted] = useState(false);
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [activeKindHydrated, setActiveKindHydrated] = useState(Boolean(physicalCountDraft));
   const suppressDraftPersistence = useRef(false);
@@ -176,7 +193,7 @@ export function InventoryOperationWorkspace({
   const reasonsQuery = useQuery({
     queryKey: ["inventory-reasons", businessId, operationDocumentTypes[kind]],
     queryFn: () => inventoryApi.reasons({ operationType: operationDocumentTypes[kind] }),
-    enabled: Boolean(businessId),
+    enabled: Boolean(businessId) && kind !== "production",
   });
   const reasons = useMemo(() => reasonsQuery.data ?? [], [reasonsQuery.data]);
   const selectedProductIds = useMemo(
@@ -190,6 +207,21 @@ export function InventoryOperationWorkspace({
     .map(option => option.id)
     .join("|");
   const draftKey = inventoryDraftKey(businessId, kind);
+  const productionLine = kind === "production" ? lines[0] : undefined;
+  const productionProductOption = productionLine ? {
+    value: productionLine.productId,
+    label: `${productionLine.productCode} · ${productionLine.productName}`,
+  } satisfies PagedEntityOption : null;
+  const productionPreview = useQuery({
+    queryKey: ["production-preview", businessId, productionReview],
+    queryFn: () => inventoryApi.productionPreview(productionReview!.warehouseId, productionReview!.productId, productionReview!.quantity),
+    enabled: kind === "production" && productionReview !== null,
+    retry: false,
+  });
+  const productionInsufficient = productionPreview.data?.ingredients.some(line => line.requiredQuantity > line.quantityOnHand) ?? false;
+  const productionEstimatedCost = productionPreview.data?.ingredients.every(line => line.estimatedUnitCost !== null)
+    ? productionPreview.data.ingredients.reduce((sum, line) => sum + line.requiredQuantity * (line.estimatedUnitCost ?? 0), 0)
+    : null;
   const hasLocalCapture = Boolean(
     warehouseId || destinationId || reason || notes.trim() || lines.length,
   );
@@ -208,10 +240,11 @@ export function InventoryOperationWorkspace({
       countDocumentId: null,
       conversionType,
       valuationBasis,
+      productionOccurredAt,
       lines,
       updatedAt: new Date().toISOString(),
     };
-  }, [businessId, conversionType, destinationId, documentId, draftKey,
+  }, [businessId, conversionType, destinationId, documentId, draftKey, productionOccurredAt,
     hasLocalCapture, hydratedKey, kind, lines, notes, reason, valuationBasis, warehouseId]);
 
   useEffect(() => {
@@ -251,6 +284,7 @@ export function InventoryOperationWorkspace({
         if (!active) return;
         if (draft) {
           setDocumentId(draft.documentId);
+          setProductionOccurredAt(draft.productionOccurredAt ?? new Date().toISOString());
           setWarehouseId(draft.warehouseId);
           setDestinationId(draft.destinationId);
           setReason(draft.reason);
@@ -260,6 +294,7 @@ export function InventoryOperationWorkspace({
           setLines(draft.lines.map((line) => ({ ...line, salePrice: line.salePrice ?? "" })));
         } else {
           setDocumentId(crypto.randomUUID());
+          setProductionOccurredAt(new Date().toISOString());
           setWarehouseId(initialWarehouseId);
           setDestinationId("");
           setReason("");
@@ -269,6 +304,8 @@ export function InventoryOperationWorkspace({
           setLines([]);
         }
         setHydratedKey(draftKey);
+        setProductionReview(null);
+        setProductionAttempted(false);
       })
       .catch(() => {
         if (!active) return;
@@ -454,6 +491,19 @@ export function InventoryOperationWorkspace({
             allocationWeight: null,
           })),
         });
+      } else if (kind === "production") {
+        if (!productionReview || !productionPreview.data || !productionLine)
+          throw new Error("Revisa los ingredientes antes de confirmar.");
+        result = await inventoryApi.confirmProduction({
+          documentId,
+          businessId,
+          warehouseId: productionReview.warehouseId,
+          occurredAt: productionOccurredAt,
+          productId: productionReview.productId,
+          expectedRecipeVersion: productionPreview.data.recipeVersion,
+          quantity: productionReview.quantity,
+          notes: notes.trim() || null,
+        });
       } else {
         result = await inventoryApi.confirmDamage({
           documentId,
@@ -532,7 +582,12 @@ export function InventoryOperationWorkspace({
     lines.every((line) =>
       Number(line.quantity) <= 0 || adjustmentUnitValue(line, valuationBasis) > 0,
     );
-  const ready =
+  const ready = kind === "production" ?
+    allowed && Boolean(warehouseId) && Boolean(productionLine) &&
+    Boolean(productionPreview.data) && Boolean(productionReview) && !productionInsufficient &&
+    productionReview?.warehouseId === warehouseId &&
+    productionReview?.productId === productionLine?.productId &&
+    productionReview?.quantity === Number(productionLine?.quantity) :
     allowed &&
     Boolean(warehouseId) &&
     Boolean(reason.trim()) &&
@@ -543,7 +598,7 @@ export function InventoryOperationWorkspace({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
         {operationOptions.map((option) => {
           const Icon = option.icon;
           const enabled = permissions.has(option.permission);
@@ -598,6 +653,7 @@ export function InventoryOperationWorkspace({
                 onValueChange={(value) => {
                   setWarehouseId(value);
                   setLines([]);
+                  setProductionReview(null);
                 }}
               >
                 <SelectTrigger><SelectValue placeholder="Selecciona una bodega" /></SelectTrigger>
@@ -644,7 +700,7 @@ export function InventoryOperationWorkspace({
                 <p className="text-xs text-muted-foreground">El valor unitario se calcula desde el producto. Las salidas conservan el costo promedio.</p>
               </Field>
             )}
-            <Field label="Motivo">
+            {kind !== "production" && <Field label="Motivo">
               <Select value={reason} disabled={mutation.isPending || reasonsQuery.isLoading || reasons.length === 0} onValueChange={setReason}>
                 <SelectTrigger data-testid="inventory-reason-select"><SelectValue placeholder={reasonsQuery.isLoading ? "Cargando motivos..." : "Selecciona un motivo"} /></SelectTrigger>
                 <SelectContent>
@@ -652,10 +708,44 @@ export function InventoryOperationWorkspace({
                 </SelectContent>
               </Select>
               {reasonsQuery.isError && <p className="text-xs text-red-700">No fue posible cargar los motivos.</p>}
-            </Field>
+            </Field>}
           </div>
 
-          <ProductPicker
+          {kind === "production" ? <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">Elige un producto con receta que maneje inventario. Al confirmar se consumen ingredientes y se ingresa el producto terminado.</p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Producto terminado con receta">
+                <PagedEntitySelect<ProductionProductItem>
+                  queryKey={["production-products", businessId, warehouseId]}
+                  value={productionLine?.productId ?? ""}
+                  selectedOption={productionProductOption}
+                  onChange={(value, option) => {
+                    setLines([{ productId: value, productCode: option?.label.split(" · ")[0] ?? "", productName: option?.label.split(" · ").slice(1).join(" · ") ?? "", unitCode: "", stock: 0, quantity: "1", cost: "", salePrice: "", direction: "OUTPUT", systemQuantity: null }]);
+                    setProductionReview(null);
+                  }}
+                  onClear={() => { setLines([]); setProductionReview(null); }}
+                  loadPage={(search, page, pageSize) => inventoryApi.productionProducts({ warehouseId, search, page, pageSize })}
+                  getOption={item => ({ value: item.productId, label: `${item.productCode} · ${item.productName}`, description: `Receta v${item.recipeVersion} · saldo ${item.quantityOnHand} ${item.unitCode}` })}
+                  placeholder="Buscar producto terminado"
+                  searchPlaceholder="Nombre o código…"
+                  ariaLabel="Producto a producir"
+                  disabled={!warehouseId || mutation.isPending || productionAttempted}
+                />
+                <p className="text-xs text-muted-foreground">Si no aparece, verifica que su receta esté activa y que el producto tenga «Maneja inventario» activado.</p>
+              </Field>
+              <Field label="Cantidad a producir">
+                <Input type="number" min="0.000001" step="any" value={productionLine?.quantity ?? ""} disabled={!productionLine || productionAttempted} onChange={event => { update(0, { quantity: event.target.value }); setProductionReview(null); }} />
+              </Field>
+            </div>
+            <Button type="button" variant="outline" disabled={!productionLine || !warehouseId || !(Number(productionLine.quantity) > 0) || productionAttempted} onClick={() => setProductionReview({ warehouseId, productId: productionLine!.productId, quantity: Number(productionLine!.quantity) })}>Revisar ingredientes y existencias</Button>
+            {productionPreview.isLoading && productionReview && <p className="text-sm text-muted-foreground">Consultando receta y existencias…</p>}
+            {productionPreview.isError && productionReview && <p className="text-sm text-destructive">No fue posible revisar esta producción. Actualiza la receta o selecciona otro producto.</p>}
+            {productionPreview.data && productionReview && <div className="space-y-3 rounded-2xl border p-4">
+              <div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-semibold">{productionPreview.data.productName} · receta v{productionPreview.data.recipeVersion}</h3><p className="text-xs text-muted-foreground">Entran {productionPreview.data.quantity} {productionPreview.data.unitCode} · saldo actual {productionPreview.data.quantityOnHand}</p></div>{productionEstimatedCost !== null && <p className="text-sm font-semibold">Costo estimado {formatCurrency(productionEstimatedCost)}</p>}</div>
+              <div className="divide-y">{productionPreview.data.ingredients.map(line => <div key={line.productId} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"><span>{line.name} <span className="text-muted-foreground">· {line.productCode}</span></span><span className={line.quantityOnHand < line.requiredQuantity ? "font-semibold text-destructive" : "font-medium"}>Requiere {line.requiredQuantity} {line.unitCode} · disponible {line.quantityOnHand}</span></div>)}</div>
+              {productionInsufficient ? <p className="flex items-center gap-2 text-sm text-destructive"><TriangleAlert className="h-4 w-4" /> Faltan ingredientes; registra sus entradas antes de producir.</p> : <p className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400"><CircleCheck className="h-4 w-4" /> Existencias suficientes; se comprobarán de nuevo al confirmar.</p>}
+            </div>}
+          </div> : <><ProductPicker
               businessId={businessId}
               warehouseId={warehouseId}
               selectedProductIds={selectedProductIds}
@@ -679,7 +769,7 @@ export function InventoryOperationWorkspace({
             onKey={gridKey}
           />
           )}
-          </div>
+          </div></>}
 
           {kind === "conversion" && lines.length > 0 && <div className={`grid gap-3 rounded-xl border p-4 sm:grid-cols-4 ${conversionInventoryValid ? "border-emerald-200 bg-emerald-50/50" : "border-red-200 bg-red-50/60"}`}>
             <ConversionMetric label="Entrada equivalente" value={conversionInputEquivalent} />
@@ -699,10 +789,10 @@ export function InventoryOperationWorkspace({
             <div className="flex flex-wrap items-center justify-end gap-3">
               <Button type="button" variant="outline" disabled={mutation.isPending || !hasLocalCapture} onClick={() => void saveDraftAndClose()}><Save className="mr-2 h-4 w-4" />Guardar borrador</Button>
               {!allowed && <span className="text-sm text-amber-700">No tienes permiso para confirmar esta operación.</span>}
-              <Button disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()}>
+              <Button disabled={!ready || mutation.isPending} onClick={() => { if (kind === "production") setProductionAttempted(true); mutation.mutate(); }}>
                 {mutation.isPending
                   ? "Procesando…"
-                  : kind === "transfer" ? "Confirmar salida" : `Confirmar ${selected.label.toLowerCase()}`}
+                  : kind === "transfer" ? "Confirmar salida" : kind === "production" && productionAttempted ? "Reintentar confirmación" : `Confirmar ${selected.label.toLowerCase()}`}
               </Button>
             </div>
           </div>

@@ -20,7 +20,7 @@ compartidos o independientes.
 
 | Propietario | Datos |
 | --- | --- |
-| Tenant | Products; categorías, marcas, unidades, IVA, códigos de barras, identificadores, enlaces, ofertas, imágenes y demás metadatos del catálogo; Parties y roles Customer, Supplier, Seller, Carrier y Employee; relación producto-proveedor y perfil tributario del tercero; definición de PriceChannels. |
+| Tenant | Products; categorías, marcas, unidades, IVA, códigos de barras, identificadores, enlaces, ofertas, imágenes y demás metadatos del catálogo; Parties y roles Customer, Supplier, Seller, Carrier, Employee y Waiter; relación producto-proveedor y perfil tributario del tercero; definición de PriceChannels. |
 | Sede | ProductPrices; inventario y bodegas; documentos, ventas, compras, rutas, cajas y sesiones; proyecciones y cursores de sincronización POS. |
 
 Las imágenes de producto se guardan en el contenedor privado

@@ -38,6 +38,8 @@ CREATE TABLE [dbo].[InventoryOperations]
     [ReceivedByUserId] UNIQUEIDENTIFIER NULL,
     [TotalValueChange] DECIMAL(19,4) NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    [DamageDisposition] NVARCHAR(24) NULL,
+    [RecipeVersionId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_InventoryOperations] PRIMARY KEY CLUSTERED ([InventoryOperationId]),
     CONSTRAINT [FK_InventoryOperations_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_InventoryOperations_Warehouse] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
@@ -45,10 +47,16 @@ CREATE TABLE [dbo].[InventoryOperations]
     CONSTRAINT [FK_InventoryOperations_TransitWarehouse] FOREIGN KEY ([TransitWarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_InventoryOperations_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_InventoryOperations_ConversionFamilyRoot] FOREIGN KEY ([ConversionFamilyRootProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [CK_InventoryOperations_Type] CHECK ([DocumentType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Damage')),
+    CONSTRAINT [FK_InventoryOperations_RecipeVersion] FOREIGN KEY ([RecipeVersionId]) REFERENCES [dbo].[ProductRecipeVersions] ([ProductRecipeVersionId]),
+    CONSTRAINT [CK_InventoryOperations_Type] CHECK ([DocumentType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Production',N'Damage')),
+    CONSTRAINT [CK_InventoryOperations_RecipeVersion] CHECK (([DocumentType]=N'Production' AND [RecipeVersionId] IS NOT NULL) OR ([DocumentType]<>N'Production' AND [RecipeVersionId] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_Status] CHECK ([Status] IN (N'Draft',N'Accepted',N'Processed',N'DispatchPending',N'Dispatched',N'ReceiptPending',N'PartiallyReceived',N'Received',N'Reversed')),
     CONSTRAINT [CK_InventoryOperations_TransferMode] CHECK (([DocumentType]=N'WarehouseTransfer' AND ([TransferMode] IN (N'DispatchAndReceive',N'ImmediateSystem') OR [TransferMode] IS NULL)) OR ([DocumentType]<>N'WarehouseTransfer' AND [TransferMode] IS NULL)),
-    CONSTRAINT [CK_InventoryOperations_Destination] CHECK (([DocumentType] IN (N'WarehouseTransfer',N'Damage') AND [DestinationWarehouseId] IS NOT NULL AND [DestinationWarehouseId]<>[WarehouseId]) OR ([DocumentType] NOT IN (N'WarehouseTransfer',N'Damage') AND [DestinationWarehouseId] IS NULL)),
+    CONSTRAINT [CK_InventoryOperations_Destination] CHECK (
+        ([DocumentType]=N'WarehouseTransfer' AND [DestinationWarehouseId] IS NOT NULL AND [DestinationWarehouseId]<>[WarehouseId] AND [DamageDisposition] IS NULL)
+        OR ([DocumentType]=N'Damage' AND [DamageDisposition] IS NULL AND [DestinationWarehouseId] IS NOT NULL AND [DestinationWarehouseId]<>[WarehouseId])
+        OR ([DocumentType]=N'Damage' AND [DamageDisposition]=N'Irreversible' AND [DestinationWarehouseId] IS NULL)
+        OR ([DocumentType] NOT IN (N'WarehouseTransfer',N'Damage') AND [DestinationWarehouseId] IS NULL AND [DamageDisposition] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_CountBase] CHECK (([DocumentType]=N'StockCount' AND [BaseInventorySequence] IS NOT NULL) OR ([DocumentType]<>N'StockCount' AND [BaseInventorySequence] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_ConversionSnapshot] CHECK (
         ([ConversionFamilyRootProductId] IS NULL AND [ConversionInputEquivalent] IS NULL AND [ConversionOutputEquivalent] IS NULL AND [ConversionLossQuantity] IS NULL AND [ConversionLossPercent] IS NULL AND [ConversionMaximumLossPercent] IS NULL)

@@ -16,10 +16,46 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlOnlineSalesDraftStore
 {
-    public async Task<OnlineSalesProductPage> SearchProductsAsync(
+    public Task<OnlineSalesProductPage> SearchProductsAsync(
         OnlineSalesUserIdentity user,
         SearchOnlineSalesRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        SearchProductsCoreAsync(user, request, null, null, null,
+            cancellationToken);
+
+    public async Task<OnlineSalesProductPage> SearchAsync(
+        RestaurantAccountActor actor, Guid accountId, Guid warehouseId,
+        string? search, int skip, int take, Guid? productId,
+        Guid? categoryId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await SearchProductsCoreAsync(
+                new OnlineSalesUserIdentity(actor.UserId, actor.TenantId,
+                    actor.Permissions),
+                new SearchOnlineSalesRequest(
+                    new OnlineSalesDraftContext(actor.BusinessId, warehouseId,
+                        Guid.Empty), search, skip, take),
+                accountId, productId, categoryId, ct,
+                actor.Permissions.Contains("restaurant.tables.open_without_waiter"));
+        }
+        catch (OnlineSalesDraftForbiddenException error)
+        {
+            throw new RestaurantAccountForbiddenException(error.Message);
+        }
+        catch (OnlineSalesDraftValidationException error)
+        {
+            throw new RestaurantAccountValidationException(error.Message);
+        }
+    }
+
+    private async Task<OnlineSalesProductPage> SearchProductsCoreAsync(
+        OnlineSalesUserIdentity user, SearchOnlineSalesRequest request,
+        Guid? restaurantAccountId, Guid? exactProductId,
+        Guid? categoryId,
+        CancellationToken cancellationToken,
+        bool restaurantDirectAccess = false)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -33,12 +69,18 @@ public sealed partial class SqlOnlineSalesDraftStore
             P("@WorkSessionId", request.Context.WorkSessionId), P("@UserId", user.UserId),
             P("@CustomerId", request.CustomerId), P("@Search", search),
             P("@Contains", $"%{search}%"), P("@Prefix", $"{search}%"),
-            P("@Skip", request.Skip), P("@Take", request.Take + 1)
+            P("@Skip", request.Skip), P("@Take", request.Take + 1),
+            P("@RestaurantAccountId", restaurantAccountId),
+            P("@RestaurantDirectAccess", restaurantDirectAccess),
+            P("@ProductId", exactProductId),
+            P("@CategoryId", categoryId)
         ]);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             throw new OnlineSalesDraftForbiddenException(
-                "La sesión de trabajo no pertenece al usuario y negocio autenticados.");
+                restaurantAccountId is null
+                    ? "La sesión de trabajo no pertenece al usuario y negocio autenticados."
+                    : "La cuenta o el mesero ya no está disponible para buscar productos.");
 
         await reader.NextResultAsync(cancellationToken);
         var candidates = new List<SearchProductCandidate>();
@@ -54,7 +96,10 @@ public sealed partial class SqlOnlineSalesDraftStore
                 reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4),
                 reader.GetString(5), reader.GetString(6), reader.GetDecimal(7),
                 reader.GetDecimal(8), reader.GetString(9), reader.GetBoolean(10),
-                reader.GetBoolean(11), reader.GetBoolean(12), "Base");
+                reader.GetBoolean(11), reader.GetBoolean(12), "Base",
+                ProductCategoryId: reader.IsDBNull(14) ? null : reader.GetGuid(14),
+                CategoryName: reader.IsDBNull(13) ? null : reader.GetString(13),
+                ImageUrl: reader.IsDBNull(20) ? null : reader.GetString(20));
             candidates.Add(new(product, new(
                 product.ProductCode, product.Name, product.BaseUnitCode, product.TaxCode,
                 product.TaxRate, product.UnitPrice, product.CurrencyCode,

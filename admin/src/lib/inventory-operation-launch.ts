@@ -4,6 +4,7 @@ export const inventoryOperationKinds = [
   "transfer",
   "conversion",
   "damage",
+  "production",
 ] as const;
 
 export type InventoryOperationKind = (typeof inventoryOperationKinds)[number];
@@ -16,6 +17,7 @@ const inventoryDocumentTypeByKind: Record<InventoryOperationKind, string> = {
   transfer: "WarehouseTransfer",
   conversion: "ProductConversion",
   damage: "Damage",
+  production: "Production",
 };
 
 export const inventoryDocumentTypeForKind = (kind: InventoryOperationKind) =>
@@ -27,6 +29,7 @@ const inventoryDocumentLabels: Record<string, string> = {
   WarehouseTransfer: "Traslado",
   WarehouseTransferReceipt: "Recepción de traslado",
   ProductConversion: "Conversión",
+  Production: "Producción",
   Damage: "Avería",
   SalesInvoice: "Venta",
   GoodsReceipt: "Recepción",
@@ -45,6 +48,8 @@ const inventoryMovementLabels: Record<string, string> = {
   ProductConversion: "Conversión de producto",
   ConversionInput: "Consumo por conversión",
   ConversionOutput: "Producción por conversión",
+  ProductionInput: "Consumo de ingrediente",
+  ProductionOutput: "Entrada de producto preparado",
   Damage: "Salida por avería",
   InventoryDamage: "Salida por avería",
   SalesInvoice: "Venta",

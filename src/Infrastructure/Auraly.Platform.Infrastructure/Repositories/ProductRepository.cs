@@ -31,7 +31,7 @@ public sealed partial class ProductRepository : IProductRepository
         var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var now = DateTimeOffset.UtcNow;
         var products = _context.Products.AsNoTracking().Where(product =>
-            product.TenantId == tenantId
+            product.TenantId == tenantId && !product.IsIngredient
             && _context.PublishedProductPrices.Any(price =>
                 price.BusinessId == businessId
                 && price.ProductId == product.ProductId
@@ -78,7 +78,7 @@ public sealed partial class ProductRepository : IProductRepository
         var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var now = DateTimeOffset.UtcNow;
         var products = _context.Products.AsNoTracking().Where(product =>
-            product.TenantId == tenantId
+            product.TenantId == tenantId && !product.IsIngredient
             && _context.PublishedProductPrices.Any(price =>
                 price.BusinessId == businessId
                 && price.ProductId == product.ProductId

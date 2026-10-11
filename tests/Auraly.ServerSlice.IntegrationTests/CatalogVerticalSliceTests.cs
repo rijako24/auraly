@@ -13,6 +13,87 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Ingredient_is_tenant_wide_and_local_catalog_sync_preserves_its_flag()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var request = ProductRequest(taxProfileId, [new ProductPriceInput(10_000m)], []) with
+        {
+            Name = $"Ingrediente {Guid.NewGuid():N}",
+            IsIngredient = true
+        };
+        using var client = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create, CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update, CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts, "sales.create");
+        var fromCursor = await ScalarAsync<long>(
+            "SELECT ISNULL(MAX(CatalogChangeId),0) FROM dbo.CatalogChanges WHERE BusinessId=@BusinessId;",
+            new SqlParameter("@BusinessId", fixture.BusinessId));
+        Guid productId = Guid.Empty;
+        try
+        {
+            using (var created = await client.PostAsJsonAsync("/api/commerce/v1/products", request))
+            {
+                Assert.True(created.IsSuccessStatusCode, await created.Content.ReadAsStringAsync());
+                var product = (await created.Content.ReadFromJsonAsync<ProductDetail>())!;
+                productId = product.ProductId;
+                Assert.True(product.IsIngredient);
+            }
+            using (var legacyUpdate = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/products/{productId:D}", request with { IsIngredient = null }))
+            {
+                Assert.True(legacyUpdate.IsSuccessStatusCode,
+                    await legacyUpdate.Content.ReadAsStringAsync());
+                Assert.True((await legacyUpdate.Content.ReadFromJsonAsync<ProductDetail>())!.IsIngredient);
+            }
+            using var device = fixture.CreateClient();
+            var delta = await ReadCatalogPageAsync(device, fromCursor, 50);
+            var ingredientDelta = Assert.Single(delta.Changes,
+                change => change.Product.ProductId == productId).Product;
+            Assert.True(ingredientDelta.IsActive);
+            Assert.True(ingredientDelta.IsIngredient);
+            var context = new Auraly.Contracts.Sales.OnlineSalesDraftContext(
+                fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId);
+            using var search = await client.PostAsJsonAsync(
+                "/api/commerce/v1/pos/drafts/products/search",
+                new Auraly.Contracts.Sales.SearchOnlineSalesRequest(context, request.Name));
+            Assert.True(search.IsSuccessStatusCode, await search.Content.ReadAsStringAsync());
+            var page = (await search.Content.ReadFromJsonAsync<
+                Auraly.Contracts.Sales.OnlineSalesProductPage>())!;
+            Assert.DoesNotContain(page.Items, item => item.ProductId == productId);
+            using var open = await client.PostAsJsonAsync(
+                "/api/commerce/v1/pos/drafts/active",
+                new Auraly.Contracts.Sales.OpenOnlineSalesDraftRequest(context));
+            Assert.True(open.IsSuccessStatusCode, await open.Content.ReadAsStringAsync());
+            var draft = (await open.Content.ReadFromJsonAsync<
+                Auraly.Contracts.Sales.OnlineSalesDraft>())!;
+            using var add = new HttpRequestMessage(HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items")
+            {
+                Content = JsonContent.Create(new Auraly.Contracts.Sales.AddOnlineSalesDraftItemRequest(
+                    productId.ToString("D"), 1m, draft.Version))
+            };
+            add.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("D"));
+            using var rejected = await client.SendAsync(add);
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            using var restored = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/products/{productId:D}", request with { IsIngredient = false });
+            Assert.True(restored.IsSuccessStatusCode, await restored.Content.ReadAsStringAsync());
+            var activeDelta = await ReadCatalogPageAsync(device, delta.ToCursor, 50);
+            var sellableDelta = Assert.Single(activeDelta.Changes,
+                change => change.Product.ProductId == productId).Product;
+            Assert.True(sellableDelta.IsActive);
+            Assert.False(sellableDelta.IsIngredient);
+        }
+        finally
+        {
+            if (productId != Guid.Empty)
+                await ExecuteAsync(
+                    "UPDATE dbo.Products SET IsIngredient=0 WHERE ProductId=@Product;",
+                    new SqlParameter("@Product", productId));
+        }
+    }
+
+    [Fact]
     public async Task Product_weight_is_persisted_and_a_weight_product_can_be_saved_without_a_scale()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();

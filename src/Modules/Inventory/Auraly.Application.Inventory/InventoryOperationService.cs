@@ -11,6 +11,7 @@ public interface IInventoryOperationStore
     Task<InventoryOperationAcceptance> DispatchTransferAsync(InventoryUserIdentity user, string idempotencyKey, DispatchWarehouseTransferRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ReceiveTransferAsync(InventoryUserIdentity user, Guid transferId, string idempotencyKey, ReceiveWarehouseTransferRequest request, byte[] rowVersion, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmConversionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductConversionRequest request, CancellationToken cancellationToken);
+    Task<InventoryOperationAcceptance> ConfirmProductionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductionRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken);
 }
 
@@ -125,6 +126,8 @@ public sealed class InventoryOperationService(
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
         if (request.Lines.Any(line => line.Quantity <= 0))
             throw new InventoryValidationException("Damage quantities must be positive.");
+        if (request.Disposition is not null and not "Irreversible")
+            throw new InventoryValidationException("Damage disposition is invalid.");
         var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) };
         return await PublishAsync(await store.ConfirmDamageAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
     }
@@ -154,6 +157,20 @@ public sealed class InventoryOperationService(
         var lines = request.Lines.Select((line, index) => line with { Direction = directions[index] }).ToArray();
         var normalized = request with { ConversionType = conversionType, ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes), Lines = lines };
         return await PublishAsync(await store.ConfirmConversionAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
+    }
+
+    public async Task<InventoryOperationAcceptance> ConfirmProductionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductionRequest request, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Produce);
+        Required(request.DocumentId, nameof(request.DocumentId));
+        Required(request.WarehouseId, nameof(request.WarehouseId));
+        Required(request.ProductId, nameof(request.ProductId));
+        Required(request.OccurredAt, nameof(request.OccurredAt));
+        ValidateKey(idempotencyKey);
+        if (request.ExpectedRecipeVersion < 1 || request.Quantity <= 0 || request.Quantity > 9999999999999.999999m)
+            throw new InventoryValidationException("La cantidad y la versión de receta deben ser válidas.");
+        return await PublishAsync(await store.ConfirmProductionAsync(user, idempotencyKey.Trim(),
+            request with { Notes = Notes(request.Notes) }, cancellationToken), request.BusinessId, cancellationToken);
     }
 
     private async Task<InventoryOperationAcceptance> PublishAsync(InventoryOperationAcceptance acceptance, Guid businessId, CancellationToken cancellationToken)

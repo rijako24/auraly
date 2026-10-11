@@ -372,6 +372,8 @@ public sealed partial class SqlPosSaleServerStore(
                 return existing;
             }
 
+            await ValidateRestaurantProductModeAsync(connection, transaction,
+                request, cancellationToken);
             await SqlInvoiceChargeStore.ValidateIssuedAsync(connection, transaction, request, cancellationToken);
             await ValidateCustomerSiteAsync(
                 connection, transaction, request, cancellationToken);
@@ -560,7 +562,7 @@ public sealed partial class SqlPosSaleServerStore(
         const string sql = """
             INSERT INTO dbo.SalesDocuments
             (
-                DocumentId, BusinessId, WarehouseId,
+                DocumentId, BusinessId, WarehouseId, TableId,
                 DeviceId, WorkSessionId, SourceMode, DocumentSeriesId, DocumentNumber,
                 DocumentPrefix, DocumentSeriesCode, DocumentConsecutive,
                 FiscalSeriesId, FiscalAuthorizationId,
@@ -572,7 +574,7 @@ public sealed partial class SqlPosSaleServerStore(
             )
             VALUES
             (
-                @DocumentId, @BusinessId, @WarehouseId,
+                @DocumentId, @BusinessId, @WarehouseId, @TableId,
                 @DeviceId, @WorkSessionId, @SourceMode, @DocumentSeriesId, @DocumentNumber,
                 @DocumentPrefix, @DocumentSeriesCode, @DocumentConsecutive,
                 @FiscalSeriesId, @FiscalAuthorizationId,
@@ -590,6 +592,8 @@ public sealed partial class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        sqlCommand.Parameters.Add("@TableId", SqlDbType.UniqueIdentifier).Value =
+            request.TableId is { } tableId ? tableId : DBNull.Value;
         // Online checkout has already validated and materialized the work session,
         // so retain that historical link before publishing the processing signal.
         // An offline login creates the identifier locally, where the corresponding

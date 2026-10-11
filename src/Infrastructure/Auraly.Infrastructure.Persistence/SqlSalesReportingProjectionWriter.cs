@@ -444,7 +444,8 @@ public sealed class SqlSalesReportingProjectionWriter(
                    CASE WHEN sourceLine.AttributionSnapshotVersion>0
                         THEN sourceLine.SupplierNameSnapshot ELSE supplier.Name END,
                    batch.Quantity,batch.Gross,batch.Discount,batch.Untaxed,batch.Tax,
-                   batch.Total,batch.Cost,@Version,@ProjectedAt
+                   batch.Total,COALESCE(restaurant.RecognizedCostAmount,batch.Cost),
+                   @Version,@ProjectedAt
             FROM OPENJSON(@Lines) WITH
               (FactId uniqueidentifier,LineNumber int,ProductId uniqueidentifier,
                Quantity decimal(19,6),Gross decimal(19,4),Discount decimal(19,4),
@@ -452,6 +453,9 @@ public sealed class SqlSalesReportingProjectionWriter(
             INNER JOIN dbo.SalesDocumentLines sourceLine
               ON sourceLine.DocumentId=@DocumentId AND sourceLine.LineNumber=batch.LineNumber
               AND sourceLine.ProductId=batch.ProductId
+            LEFT JOIN sales.RestaurantCheckoutLines restaurant
+              ON restaurant.DocumentId=sourceLine.DocumentId
+             AND restaurant.LineNumber=sourceLine.LineNumber
             INNER JOIN dbo.Products p ON p.ProductId=sourceLine.ProductId
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp

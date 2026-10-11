@@ -120,6 +120,12 @@ public static class PartyWorkspaceApi
             await Handle(async()=>Results.Created("/api/commerce/v1/parties",
                 await service.CreateSellerAsync(context.User.ToPartyUserIdentity(),request,ct))));
 
+        var waiters=endpoints.MapGroup("/api/commerce/v1/waiters").RequireAuthorization("parties.user");
+        waiters.MapPost("/", async(HttpContext context,CommercialPartyRoleService service,
+            CreateWaiterRequest request,CancellationToken ct)=>
+            await Handle(async()=>Results.Created("/api/commerce/v1/parties",
+                await service.CreateWaiterAsync(context.User.ToPartyUserIdentity(),request,ct))));
+
         var carriers=endpoints.MapGroup("/api/commerce/v1/carriers").RequireAuthorization("parties.user");
         carriers.MapPost("/", async(HttpContext context,CommercialPartyRoleService service,CreateCarrierRequest request,CancellationToken ct)=>
             await Handle(async()=>Results.Created("/api/commerce/v1/parties",

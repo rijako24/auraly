@@ -9,4 +9,7 @@ public interface IBusinessDefaultsProvisioner
         string inventoryCostBasis,
         CancellationToken cancellationToken);
 
+    Task ReconcileRestaurantRolePermissionsAsync(Guid tenantId,
+        CancellationToken cancellationToken);
+
 }

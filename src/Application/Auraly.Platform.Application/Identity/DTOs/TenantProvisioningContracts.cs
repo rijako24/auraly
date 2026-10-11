@@ -25,7 +25,8 @@ public sealed record ProvisionTenantRequest(
     string InventoryCostBasis,
     string InvitationEmail,
     int MaximumUsers,
-    int MaximumEnrolledDevices);
+    int MaximumEnrolledDevices,
+    string PointOfSaleMode = "DirectSale");
 
 public sealed record ProvisionTenantResult(
     Guid ProvisioningRequestId,

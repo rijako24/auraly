@@ -191,6 +191,7 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDocume
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDispatchDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductConversionDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductionDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlDispatchCashDifferenceDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
@@ -365,6 +366,8 @@ if (builder.Configuration.GetValue(
 builder.Services.AddScoped<ICatalogStore, SqlCatalogStore>();
 builder.Services.AddScoped<IProductMerchandisingStore, SqlProductMerchandisingStore>();
 builder.Services.AddScoped<ProductMerchandisingService>();
+builder.Services.AddScoped<IProductRecipeStore, SqlProductRecipeStore>();
+builder.Services.AddScoped<ProductRecipeService>();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<PosCatalogService>();
 builder.Services.AddScoped<IPartyStore, SqlPartyStore>();
@@ -389,6 +392,18 @@ builder.Services.AddScoped<PosApprovalWebPushService>();
 builder.Services.AddScoped<IPosApprovalCreatedNotifier>(provider =>
     provider.GetRequiredService<PosApprovalWebPushService>());
 builder.Services.AddScoped<IOnlineSalesDraftStore, SqlOnlineSalesDraftStore>();
+builder.Services.AddScoped<IRestaurantMasterStore, SqlRestaurantMasterStore>();
+builder.Services.AddScoped<SqlRestaurantCommandPrintStore>();
+builder.Services.AddScoped<RestaurantMasterService>();
+builder.Services.AddScoped<IRestaurantAccountStore, SqlRestaurantAccountStore>();
+builder.Services.AddScoped<IRestaurantCollectionStore, SqlRestaurantCollectionStore>();
+builder.Services.AddScoped<RestaurantCollectionService>();
+builder.Services.AddScoped<IRestaurantDigitalMenuStore, SqlRestaurantDigitalMenuStore>();
+builder.Services.AddScoped<RestaurantDigitalMenuService>();
+builder.Services.AddScoped<IRestaurantAttentionStore, SqlRestaurantAttentionStore>();
+builder.Services.AddScoped<RestaurantAttentionService>();
+builder.Services.AddScoped<IRestaurantProductCatalog, SqlOnlineSalesDraftStore>();
+builder.Services.AddScoped<RestaurantAccountService>();
 builder.Services.AddScoped<OnlineSalesDraftService>();
 builder.Services.AddScoped<IOnlineSalesCheckoutStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<IOnlineSaleWithholdingCalculator, OnlineSaleWithholdingCalculator>();
@@ -691,6 +706,10 @@ app.MapPosEnrollmentApi();
 app.MapPosInstallerApi();
 app.MapPosApprovalApi();
 app.MapOnlineSalesDraftApi();
+app.MapRestaurantMasterApi();
+app.MapRestaurantAccountApi();
+app.MapRestaurantCommandPrintApi();
+app.MapRestaurantDigitalMenuApi();
 app.MapServiceInvoiceApi();
 
 app.MapWorkSessionApi();

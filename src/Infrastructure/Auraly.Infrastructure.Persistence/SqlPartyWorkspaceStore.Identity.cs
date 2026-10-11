@@ -73,7 +73,8 @@ public sealed partial class SqlPartyWorkspaceStore
               employee.EmployeeId,employee.IsActive,
               appUser.UserId,appUser.Username,appUser.Email,appUser.IsActive,
               COALESCE(pricing.ValidFrom,customer.CreatedAt),pricing.ValidUntil,p.RowVersion,
-              supplier.DefaultPaymentDueDays
+              supplier.DefaultPaymentDueDays,
+              waiter.WaiterId,waiter.Code,waiter.ShortName,waiter.IsActive
             FROM dbo.Parties p
             OUTER APPLY(
               SELECT TOP(1) pc.Value
@@ -110,13 +111,15 @@ public sealed partial class SqlPartyWorkspaceStore
               ON employee.PartyId=p.PartyId AND employee.TenantId=@TenantId
             LEFT JOIN dbo.AppUsers appUser
               ON appUser.PartyId=p.PartyId AND appUser.TenantId=@TenantId
+            LEFT JOIN parties.Waiters waiter
+              ON waiter.PartyId=p.PartyId AND waiter.TenantId=@TenantId
             WHERE p.TenantId=@TenantId
               AND {identityPredicate}
               AND (
                 @RequireBusinessRole=0 OR
                 customer.CustomerId IS NOT NULL OR supplier.SupplierId IS NOT NULL OR
                 seller.SellerId IS NOT NULL OR carrier.CarrierId IS NOT NULL OR
-                employee.EmployeeId IS NOT NULL OR appUser.UserId IS NOT NULL)
+                employee.EmployeeId IS NOT NULL OR appUser.UserId IS NOT NULL OR waiter.WaiterId IS NOT NULL)
             ORDER BY p.CreatedAt,p.PartyId;
             """;
         command.Parameters.AddRange([
@@ -168,13 +171,16 @@ public sealed partial class SqlPartyWorkspaceStore
                 reader.GetString(45),
                 reader.GetBoolean(46),
                 []);
-        var roles = new List<string>(6);
+        var waiter = reader.IsDBNull(51) ? null : new WaiterRoleDetail(
+            reader.GetGuid(51),reader.GetString(52),S(reader,53),reader.GetBoolean(54));
+        var roles = new List<string>(7);
         if (customer is not null) roles.Add("Customer");
         if (supplier is not null) roles.Add("Supplier");
         if (seller is not null) roles.Add("Seller");
         if (carrier is not null) roles.Add("Carrier");
         if (employee is not null) roles.Add("Employee");
         if (user is not null) roles.Add("User");
+        if (waiter is not null) roles.Add("Waiter");
 
         var site = reader.IsDBNull(12)
             ? null
@@ -213,16 +219,12 @@ public sealed partial class SqlPartyWorkspaceStore
             carrier,
             employee,
             user,
-            Convert.ToBase64String((byte[])reader[49]));
+            Convert.ToBase64String((byte[])reader[49]), Waiter: waiter);
         await reader.CloseAsync();
         if (detail.User is not null)
             detail = detail with
             {
-                User = detail.User with
-                {
-                    Roles = await LoadUserRolesAsync(
-                        connection, detail.User.UserId, ct)
-                }
+                User = await LoadUserRolesAsync(connection, detail.User, actor.BusinessId, actor.TenantId, ct)
             };
         var sites = await LoadSitesAsync(connection, detail.PartyId, ct);
         return detail with
@@ -233,9 +235,11 @@ public sealed partial class SqlPartyWorkspaceStore
         };
     }
 
-    private static async Task<IReadOnlyList<PartyUserRoleAssignment>> LoadUserRolesAsync(
+    private static async Task<UserRoleDetail> LoadUserRolesAsync(
         SqlConnection connection,
-        Guid userId,
+        UserRoleDetail user,
+        Guid businessId,
+        Guid tenantId,
         CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
@@ -243,10 +247,18 @@ public sealed partial class SqlPartyWorkspaceStore
             SELECT assignment.RoleId,role.Name,assignment.BusinessId,assignment.AssignedAt
             FROM dbo.UserRoles assignment
             JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId
-            WHERE assignment.UserId=@UserId
+            WHERE assignment.UserId=@UserId AND role.TenantId=@TenantId
             ORDER BY role.Name,assignment.AssignedAt;
+            SELECT CAST(CASE WHEN EXISTS(
+              SELECT 1 FROM dbo.UserRoles assignment
+              JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.TenantId=@TenantId AND role.IsActive=1
+              JOIN dbo.RolePermissions granted ON granted.RoleId=role.RoleId
+              JOIN dbo.Permissions permission ON permission.PermissionId=granted.PermissionId
+              WHERE assignment.UserId=@UserId AND (assignment.BusinessId IS NULL OR assignment.BusinessId=@BusinessId)
+                AND permission.Resource=N'restaurant.attend'
+            ) THEN 1 ELSE 0 END AS bit);
             """;
-        command.Parameters.Add(P("@UserId", userId));
+        command.Parameters.AddRange([P("@UserId",user.UserId),P("@TenantId",tenantId),P("@BusinessId",businessId)]);
         var roles = new List<PartyUserRoleAssignment>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
@@ -256,7 +268,9 @@ public sealed partial class SqlPartyWorkspaceStore
                 reader.IsDBNull(2) ? null : reader.GetGuid(2),
                 new DateTimeOffset(DateTime.SpecifyKind(
                     reader.GetDateTime(3), DateTimeKind.Utc))));
-        return roles;
+        await reader.NextResultAsync(ct);
+        await reader.ReadAsync(ct);
+        return user with { Roles=roles, RestaurantAttentionAllowed=user.IsActive && reader.GetBoolean(0) };
     }
 
     private static async Task<IReadOnlyCollection<PartyWorkspaceSiteDetail>> LoadSitesAsync(

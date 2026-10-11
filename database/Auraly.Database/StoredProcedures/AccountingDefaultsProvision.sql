@@ -76,7 +76,16 @@ BEGIN
       template.CounterpartAccountingCategory,NULL,template.RequiresReference,1,1,
       template.DisplayOrder,@Now,@Now
     FROM dbo.ReasonTemplates template
-    WHERE template.ProfileCode=@ProfileCode AND template.IsActive=1 AND NOT EXISTS(
+    WHERE template.ProfileCode=@ProfileCode AND template.IsActive=1
+      AND (EXISTS(SELECT 1 FROM dbo.Businesses business
+                  WHERE business.BusinessId=@BusinessId
+                    AND business.PointOfSaleMode=N'RestaurantBar') OR
+           (template.ReasonType<>N'RestaurantCancellation' AND
+            NOT (template.ReasonType=N'Damage' AND
+                 template.Code=N'RESTAURANT_LOSS') AND
+            NOT (template.ReasonType=N'SalesReturn' AND
+                 template.Code=N'RESTAURANT_PREPARED_CANCEL')))
+      AND NOT EXISTS(
       SELECT 1 FROM dbo.BusinessReasons reason
       WHERE reason.BusinessId=@BusinessId AND reason.ReasonType=template.ReasonType AND reason.Code=template.Code);
 

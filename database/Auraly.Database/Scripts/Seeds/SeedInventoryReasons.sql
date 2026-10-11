@@ -11,6 +11,7 @@ INSERT @Defaults VALUES
 (N'WarehouseTransfer',N'WAREHOUSE_TRANSFER',N'Reabastecimiento entre bodegas',10),
 (N'WarehouseTransfer',N'STOCK_REDISTRIBUTION',N'Redistribución de existencias',20),
 (N'ProductConversion',N'PRESENTATION_CHANGE',N'Cambio de presentación',10),
+(N'Production',N'RECIPE_PRODUCTION',N'Producción por receta',10),
 (N'Damage',N'DAMAGE',N'Producto averiado',10),
 (N'Damage',N'EXPIRED',N'Producto vencido',20),
 (N'Damage',N'NOT_SALEABLE',N'Producto no vendible',30);

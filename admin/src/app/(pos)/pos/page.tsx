@@ -29,6 +29,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 
 import { useRouter } from "next/navigation";
 import { tenantsApi } from "@/services/api/tenants";
+import { useBusinessContextStore } from "@/stores/business-context-store";
+import { scopePosWorkspacesToBusiness } from "@/services/pos/pos-workspace-selection";
 import {
   canOpenPosAdministrativeMenu,
   posAdministrativeMenuTarget,
@@ -75,6 +77,7 @@ import {
   OnlinePosClient,
   type SalesWorkspaceOption,
   rememberedSalesWorkspaceKey,
+  rememberSalesWorkspace,
   selectSalesWorkspace,
   salesWorkspaceKey,
   closePrintPreview,
@@ -382,11 +385,16 @@ export default function PosPage() {
       maximum: bootstrap.maximumEnrolledDevices,
       reason: bootstrap.enrollmentUnavailableReason,
     });
-    setOnlineOptions(bootstrap.options);
+    // An enrolled caja always keeps the site from its local identity.
+    const options = readEdgeTokenFromLaunch()
+      ? bootstrap.options
+      : scopePosWorkspacesToBusiness(bootstrap.options,
+          useBusinessContextStore.getState().selectedBusinessId);
+    setOnlineOptions(options);
     setOnlineTenantName(bootstrap.tenantName.trim());
     setOnlineUserName(displayName);
     setOnlineUserId(bootstrap.userId);
-    return { displayName, options: bootstrap.options };
+    return { displayName, options };
   }
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [synchronizationEventsOpen, setSynchronizationEventsOpen] = useState(false);
@@ -732,6 +740,14 @@ export default function PosPage() {
           (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
         );
         if (selected) {
+          if (selected.pointOfSaleMode === "RestaurantBar" && edgeToken) {
+            setSetupError("Restaurante y bar requiere la pantalla online. Abre Punto de venta en el navegador sin la caja local.");
+            return;
+          }
+          if (selected.pointOfSaleMode === "RestaurantBar") {
+            router.replace("/pos/restaurant");
+            return;
+          }
           window.localStorage.setItem("selected_business_id", selected.businessId);
           const context = await selectSalesWorkspace(selected);
           if (active) {
@@ -760,7 +776,7 @@ export default function PosPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (!client) return;
@@ -2789,6 +2805,14 @@ export default function PosPage() {
 
   async function activateOnline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
     setSetupError(null);
+    if (option.pointOfSaleMode === "RestaurantBar") {
+      if (edgeEnrollmentToken)
+        throw new Error("Restaurante y bar requiere la pantalla online sin caja local.");
+      rememberSalesWorkspace(option);
+      window.localStorage.setItem("selected_business_id", option.businessId);
+      router.push("/pos/restaurant");
+      return;
+    }
     const requestedWorkspace = salesWorkspaceKey(option.businessId, option.warehouseId);
     const activation = workspaceActivationMode(
       client?.mode ?? null,

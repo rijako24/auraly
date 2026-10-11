@@ -295,6 +295,25 @@ public sealed partial class SqlWorkSessionStore(
                 throw new WorkSessionConflictException(
                     "The work session is not open and has no closure receipt.");
 
+            await using (var heldCollections = new SqlCommand("""
+                SELECT TOP(1) 1
+                FROM sales.RestaurantAccountCollections collection WITH(UPDLOCK,HOLDLOCK)
+                JOIN sales.RestaurantAccounts account
+                  ON account.AccountId=collection.AccountId
+                 AND account.BusinessId=collection.BusinessId
+                WHERE collection.WorkSessionId=@WorkSessionId
+                  AND collection.TenantId=@TenantId
+                  AND collection.Status=N'Captured'
+                  AND account.ReleasedAt IS NULL;
+                """, connection, transaction))
+            {
+                heldCollections.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+                heldCollections.Parameters.AddWithValue("@TenantId", identity.TenantId);
+                if (await heldCollections.ExecuteScalarAsync(cancellationToken) is not null)
+                    throw new WorkSessionConflictException(
+                        "Hay pagos parciales de mesas pendientes de facturar o devolver.");
+            }
+
             if (await HasPausedSalesAsync(
                     connection, transaction, identity, workSessionId,
                     lockRange: true, cancellationToken) &&
@@ -305,6 +324,8 @@ public sealed partial class SqlWorkSessionStore(
             var expectedTotals = await ReadTotalsAsync(
                 connection, transaction, identity, workSessionId, cancellationToken);
             var metrics = await ReadSalesMetricsAsync(
+                connection, transaction, identity, workSessionId, cancellationToken);
+            var restaurantReport = await ReadRestaurantWaiterSalesAsync(
                 connection, transaction, identity, workSessionId, cancellationToken);
             if (metrics.CreditSales.Count != metrics.CreditSalesCount ||
                 metrics.CreditSales.Sum(value => value.Amount) != metrics.CreditSalesAmount)
@@ -354,9 +375,10 @@ public sealed partial class SqlWorkSessionStore(
                 metrics.CreditSalesAmount,
                 metrics.ReturnCount,
                 metrics.CreditSales,
-                request.ReceiptTemplateVersion,
+                restaurantReport.IsRestaurant ? 8 : request.ReceiptTemplateVersion,
                 metrics.CashMovements, metrics.InvoiceCharges,
-                metrics.ReceivablePayments,metrics.PayablePayments);
+                metrics.ReceivablePayments,metrics.PayablePayments,
+                restaurantReport.WaiterSales);
             var snapshot = JsonSerializer.Serialize(closure, Json);
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot));
 
@@ -471,6 +493,56 @@ public sealed partial class SqlWorkSessionStore(
             metrics.CreditSales,
             metrics.CashMovements, metrics.InvoiceCharges,
             metrics.ReceivablePayments,metrics.PayablePayments);
+    }
+
+    private static async Task<(bool IsRestaurant, IReadOnlyList<WorkSessionWaiterSale> WaiterSales)>
+        ReadRestaurantWaiterSalesAsync(
+            SqlConnection connection, SqlTransaction transaction,
+            WorkSessionIdentity identity, Guid workSessionId,
+            CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT CAST(CASE WHEN business.PointOfSaleMode=N'RestaurantBar'
+                        THEN 1 ELSE 0 END AS bit)
+            FROM dbo.WorkSessions session
+            JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
+              AND business.TenantId=session.TenantId
+            WHERE session.WorkSessionId=@WorkSessionId AND session.TenantId=@TenantId
+              AND session.UserId=@UserId;
+
+            SELECT line.AddedByUserId,
+                   CASE WHEN line.AddedByUserId IS NULL THEN N'Caja / sin mesero'
+                        ELSE COALESCE(NULLIF(LTRIM(RTRIM(CONCAT([user].FirstName,N' ',[user].LastName))),N''),
+                                      [user].Username,N'Usuario') END,
+                   SUM(line.Quantity),SUM(line.LineTotal)
+            FROM dbo.WorkSessions session
+            JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
+              AND business.TenantId=session.TenantId
+              AND business.PointOfSaleMode=N'RestaurantBar'
+            JOIN dbo.SalesDocuments document ON document.WorkSessionId=session.WorkSessionId
+              AND document.BusinessId=session.BusinessId AND document.TableId IS NOT NULL
+            JOIN dbo.SalesDocumentLines line ON line.DocumentId=document.DocumentId
+            LEFT JOIN dbo.AppUsers [user] ON [user].UserId=line.AddedByUserId
+              AND [user].TenantId=session.TenantId
+            WHERE session.WorkSessionId=@WorkSessionId AND session.TenantId=@TenantId
+              AND session.UserId=@UserId
+            GROUP BY line.AddedByUserId,[user].FirstName,[user].LastName,[user].Username
+            ORDER BY SUM(line.LineTotal) DESC,line.AddedByUserId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        command.Parameters.AddWithValue("@TenantId", identity.TenantId);
+        command.Parameters.AddWithValue("@UserId", identity.UserId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new WorkSessionNotFoundException(
+                "The work session does not exist in the authenticated tenant.");
+        var isRestaurant = reader.GetBoolean(0);
+        await reader.NextResultAsync(cancellationToken);
+        var sales = new List<WorkSessionWaiterSale>();
+        while (await reader.ReadAsync(cancellationToken))
+            sales.Add(new(reader.IsDBNull(0) ? null : reader.GetGuid(0),
+                reader.GetString(1), reader.GetDecimal(2), reader.GetDecimal(3)));
+        return (isRestaurant, sales);
     }
 
     public async Task<bool> HasPausedSalesAsync(

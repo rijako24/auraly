@@ -22,7 +22,8 @@ public record ProductDto(
     DateTime? LastSyncedAt,
     string? ProductCode = null,
     string? AreaName = null,
-    string? Reference = null);
+    string? Reference = null,
+    bool IsIngredient = false);
 
 public record UpdateProductStatusRequest(bool IsActive);
 public record UpdateProductRequest(

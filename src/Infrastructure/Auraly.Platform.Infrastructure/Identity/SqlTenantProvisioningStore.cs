@@ -74,8 +74,8 @@ public sealed class SqlTenantProvisioningStore(
                 VALUES(@TenantId,@TenantKey,@TradeName,@CompanyEmail,1,@MaximumUsers,@MaximumEnrolledDevices,@CostBasis,@Now);
 
                 INSERT dbo.Businesses
-                  (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone,IsActive,CreatedAt)
-                VALUES(@BusinessId,@TenantId,@BusinessName,N'Sede principal',@BusinessAddress,@BusinessPhone,@BusinessEmail,N'',@TimeZone,1,@Now);
+                  (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone,PointOfSaleMode,IsActive,CreatedAt)
+                VALUES(@BusinessId,@TenantId,@BusinessName,N'Sede principal',@BusinessAddress,@BusinessPhone,@BusinessEmail,N'',@TimeZone,@PointOfSaleMode,1,@Now);
 
                 INSERT dbo.TenantLegalProfiles
                   (TenantId,LegalName,TradeName,EntityType,IdentificationTypeCode,Nit,NormalizedNit,VerificationDigit,CountryId,AdministrativeDivisionId,CityId,Address,Phone,Email,TaxResponsibilities,PrimaryBusinessId,CreatedAt)
@@ -142,7 +142,8 @@ public sealed class SqlTenantProvisioningStore(
                   AND Resource NOT LIKE N'conversations.%'
                   AND Resource NOT LIKE N'leads.%'
                   AND Resource NOT LIKE N'campaigns.%'
-                  AND Resource NOT LIKE N'reservations.%';
+                  AND Resource NOT LIKE N'reservations.%'
+                  AND Resource NOT LIKE N'restaurant.%';
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@AdministrativeRoleId,PermissionId,@Now
                 FROM dbo.Permissions
@@ -155,7 +156,8 @@ public sealed class SqlTenantProvisioningStore(
                   AND Resource NOT LIKE N'conversations.%'
                   AND Resource NOT LIKE N'leads.%'
                   AND Resource NOT LIKE N'campaigns.%'
-                  AND Resource NOT LIKE N'reservations.%')
+                  AND Resource NOT LIKE N'reservations.%'
+                  AND Resource NOT LIKE N'restaurant.%')
                   OR Resource IN(
                     N'users.read',N'users.create',N'users.update',N'users.delete',N'users.assign_role',N'users.remove_role',
                     N'roles.read',N'roles.create',N'roles.update',N'roles.delete',N'roles.assign_permissions',
@@ -206,6 +208,20 @@ public sealed class SqlTenantProvisioningStore(
                   N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
                   N'pos.inventory.availability.read');
 
+                IF @PointOfSaleMode=N'RestaurantBar'
+                BEGIN
+                    INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+                    SELECT NEWID(),role.RoleId,permission.PermissionId,@Now
+                    FROM dbo.AppRoles role
+                    JOIN dbo.Permissions permission ON permission.Resource IN
+                        (N'restaurant.attend',N'restaurant.commands.read',N'restaurant.commands.manage',
+                         N'restaurant.cancellations.approve',N'restaurant.tables.open_without_waiter')
+                    WHERE role.RoleId IN (@AdminRoleId,@AdministrativeRoleId)
+                       OR role.RoleId IN (@CashierRoleId,@SupervisorRoleId)
+                          AND permission.Resource=N'restaurant.tables.open_without_waiter';
+                    EXEC dbo.RestaurantWaiterRoleEnsure @TenantId=@TenantId;
+                END;
+
                 INSERT dbo.TenantUserInvitations
                   (InvitationId,TenantId,UserId,DeliveryEmail,TokenHash,ExpiresAt,Status,CreatedAt)
                 VALUES(@InvitationId,@TenantId,NULL,@InvitationEmail,@ActivationHash,DATEADD(day,3,@Now),N'Pending',@Now);
@@ -239,6 +255,7 @@ public sealed class SqlTenantProvisioningStore(
             Add("@CompanyAddress", request.Address); Add("@CompanyPhone", request.Phone); Add("@CompanyEmail", request.Email.Trim()); Add("@TaxResponsibilities", request.TaxResponsibilities);
             Add("@BusinessName", request.BusinessName); Add("@BusinessAddress", request.BusinessAddress); Add("@BusinessPhone", request.BusinessPhone); Add("@BusinessEmail", request.BusinessEmail.Trim());
             Add("@TimeZone", request.TimeZone); Add("@CostBasis", request.InventoryCostBasis);
+            Add("@PointOfSaleMode", request.PointOfSaleMode);
             Add("@InvitationEmail", request.InvitationEmail.Trim()); Add("@ActivationHash", activationHash);
             Add("@MaximumUsers", request.MaximumUsers); Add("@MaximumEnrolledDevices", request.MaximumEnrolledDevices);
             Add("@InvitationPayload", JsonSerializer.Serialize(new { invitationId, tenantId, email = request.InvitationEmail.Trim(), activationToken }));

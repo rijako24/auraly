@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, FileKey2, Plug, User } from "lucide-react";
+import { Building2, FileKey2, LayoutGrid, Plug, User } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,12 @@ const SETTINGS_CARDS = [
     description: "Horarios, disponibilidad y reglas operativas del negocio seleccionado",
     href: "/dashboard/settings/business",
     icon: Building2,
+  },
+  {
+    title: "Restaurante",
+    description: "Organiza los salones y mesas de la sede seleccionada",
+    href: "/dashboard/settings/restaurant",
+    icon: LayoutGrid,
   },
   {
     title: "Integraciones",

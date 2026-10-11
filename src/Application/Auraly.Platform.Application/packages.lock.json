@@ -84,6 +84,12 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "auraly.contracts.catalog": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "auraly.contracts.parties": {
         "type": "Project"
       },

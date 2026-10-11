@@ -156,7 +156,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                 InventoryDocumentTypes.StockCount or
                 InventoryDocumentTypes.Adjustment or
                 InventoryDocumentTypes.Damage or
-                InventoryDocumentTypes.Conversion =>
+                InventoryDocumentTypes.Conversion or
+                InventoryDocumentTypes.Production =>
                     await LoadInventoryOperationFactsAsync(
                         connection, transaction, source, cancellationToken),
                 InventoryDocumentTypes.TransferReceipt =>
@@ -427,6 +428,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             InventoryDocumentTypes.StockCount => $"Diferencia de conteo {number}",
             InventoryDocumentTypes.Damage => $"Baja de inventario {number}",
             InventoryDocumentTypes.Conversion => $"Merma de conversión {number}",
+            InventoryDocumentTypes.Production => $"Diferencia de producción {number}",
             _ => $"Ajuste de inventario {number}"
         };
         return FinancialFactsResult.Ready(FinancialFacts.InventoryOperation(
@@ -520,7 +522,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         if (source.ResolvedCostCenterId is not null) return source.ResolvedCostCenterId;
         Guid? explicitCenter = source.DocumentType is InventoryDocumentTypes.StockCount or
             InventoryDocumentTypes.Adjustment or InventoryDocumentTypes.Damage or
-            InventoryDocumentTypes.Conversion or InventoryDocumentTypes.TransferReceipt
+            InventoryDocumentTypes.Conversion or InventoryDocumentTypes.Production or
+            InventoryDocumentTypes.TransferReceipt
             ? InventoryOperationContractSerializer.Deserialize(source.PayloadJson).AccountingCostCenterId
             : null;
         var operationKind = OperationKind(source.DocumentType);
@@ -621,6 +624,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         "Expense" => "Expenses",
         InventoryDocumentTypes.StockCount or InventoryDocumentTypes.Adjustment or
             InventoryDocumentTypes.Damage or InventoryDocumentTypes.Conversion or
+            InventoryDocumentTypes.Production or
             InventoryDocumentTypes.TransferReceipt => "Inventory",
         _ => "All"
     };
@@ -721,6 +725,7 @@ public sealed partial class SqlAccountingPostingProcessor(
     {
         string number; decimal untaxed; decimal tax; decimal total;
         string resolution; string? refundMethod; Guid? bankAccountId; Guid? partyId;
+        string reasonCode;
         decimal receivableApplication; decimal customerCredit;
         await using (var command = new SqlCommand("""
                 SELECT r.DocumentNumber,r.UntaxedAmount,r.TaxAmount,r.TotalAmount,
@@ -730,7 +735,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                          WHERE a.ReturnId=r.ReturnId),0),
                        COALESCE((SELECT SUM(cc.OriginalAmount)
                          FROM dbo.CustomerCredits cc
-                         WHERE cc.SourceReturnId=r.ReturnId),0)
+                         WHERE cc.SourceReturnId=r.ReturnId),0),r.ReasonCode
                 FROM dbo.SalesReturns r
                 LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
                 WHERE r.ReturnId=@DocumentId AND r.BusinessId=@BusinessId;
@@ -747,6 +752,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             bankAccountId=reader.IsDBNull(6)?null:reader.GetGuid(6);
             partyId=reader.IsDBNull(7)?null:reader.GetGuid(7);
             receivableApplication=reader.GetDecimal(8); customerCredit=reader.GetDecimal(9);
+            reasonCode=reader.GetString(10);
         }
         var settlements = new List<(string Category, decimal Amount)>();
         if (resolution == "Refund")
@@ -764,6 +770,79 @@ public sealed partial class SqlAccountingPostingProcessor(
         if (decimal.Round(settlements.Sum(item => item.Amount),4) != decimal.Round(total,4))
             throw new InvalidOperationException("The sales return settlement does not reconcile with its total.");
         var cost = await InventoryCostAsync(connection, transaction, source.DocumentId, source.DocumentType, cancellationToken);
+        decimal restaurantLossCost = 0m;
+        if (reasonCode == "RESTAURANT_PREPARED_CANCEL")
+        {
+            await using var loss = new SqlCommand("""
+                WITH Prior AS
+                (
+                  SELECT previousLine.OriginalLineNumber,
+                         SUM(previousLine.Quantity) Quantity
+                  FROM dbo.SalesReturns currentReturn
+                  JOIN dbo.DocumentProcessingJobs currentJob
+                    ON currentJob.DocumentId=currentReturn.ReturnId
+                   AND currentJob.DocumentType=N'SalesReturn'
+                  JOIN dbo.SalesReturnLines previousLine
+                    ON previousLine.OriginalDocumentId=currentReturn.OriginalDocumentId
+                  JOIN dbo.SalesReturns previousReturn
+                    ON previousReturn.ReturnId=previousLine.ReturnId
+                   AND previousReturn.BusinessId=currentReturn.BusinessId
+                  JOIN dbo.DocumentProcessingJobs previousJob
+                    ON previousJob.DocumentId=previousReturn.ReturnId
+                   AND previousJob.DocumentType=N'SalesReturn'
+                   AND previousJob.ProcessingSequence<currentJob.ProcessingSequence
+                  WHERE currentReturn.ReturnId=@DocumentId
+                    AND currentReturn.BusinessId=@BusinessId
+                  GROUP BY previousLine.OriginalLineNumber
+                )
+                SELECT line.Quantity,original.Quantity,
+                       checkout.RecognizedCostAmount,
+                       COALESCE(prior.Quantity,0),checkout.DocumentId
+                FROM dbo.SalesReturns returned
+                JOIN dbo.SalesReturnLines line ON line.ReturnId=returned.ReturnId
+                JOIN dbo.SalesDocumentLines original
+                  ON original.DocumentId=line.OriginalDocumentId
+                 AND original.LineNumber=line.OriginalLineNumber
+                LEFT JOIN sales.RestaurantCheckoutLines checkout
+                  ON checkout.DocumentId=original.DocumentId
+                 AND checkout.LineNumber=original.LineNumber
+                LEFT JOIN Prior prior
+                  ON prior.OriginalLineNumber=line.OriginalLineNumber
+                WHERE returned.ReturnId=@DocumentId
+                  AND returned.BusinessId=@BusinessId
+                  AND line.InventoryDisposition=N'NotReturned';
+                """, connection, transaction);
+            loss.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+            loss.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            await using var reader = await loss.ExecuteReaderAsync(cancellationToken);
+            var count = 0;
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                count++;
+                if (reader.IsDBNull(4))
+                    throw new InvalidOperationException(
+                        "La línea devuelta no proviene de una cuenta de restaurante.");
+                if (reader.IsDBNull(2))
+                    return FinancialFactsResult.Pending("RestaurantOriginalCostPending",
+                        "El costo original de la venta de restaurante aún no está confirmado.");
+                var returnedQuantity = reader.GetDecimal(0);
+                var originalQuantity = reader.GetDecimal(1);
+                var originalCost = reader.GetDecimal(2);
+                var priorQuantity = reader.GetDecimal(3);
+                if (originalQuantity <= 0 || priorQuantity < 0 ||
+                    priorQuantity + returnedQuantity > originalQuantity)
+                    throw new InvalidOperationException(
+                        "La cantidad devuelta del restaurante no concilia con la factura original.");
+                restaurantLossCost += decimal.Round(originalCost *
+                    (priorQuantity + returnedQuantity) / originalQuantity, 4,
+                    MidpointRounding.AwayFromZero) - decimal.Round(originalCost *
+                    priorQuantity / originalQuantity, 4,
+                    MidpointRounding.AwayFromZero);
+            }
+            if (count == 0)
+                throw new InvalidOperationException(
+                    "La devolución gastronómica no tiene productos preparados válidos.");
+        }
         var chargeReversals = new List<ManualLineSpec>();
         var supplierCreditLines = new List<(decimal Amount, Guid? PartyId, Guid? CostCenterId, string Description)>();
         await using (var chargeLines = new SqlCommand("""
@@ -851,7 +930,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                     line.PartyId, line.CostCenterId, line.Description)));
         }
         return FinancialFactsResult.Ready(FinancialFacts.Return(number, partyId, untaxed,
-            tax, total, cost, settlements, chargeReversals, total - untaxed - tax));
+            tax, total, cost, settlements, chargeReversals, total - untaxed - tax,
+            restaurantLossCost));
     }
 
     private static async Task<FinancialFactsResult> LoadGoodsReceiptFactsAsync(
@@ -1780,7 +1860,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         IReadOnlyList<ManualLineSpec>? AdditionalDirectLines = null,
         decimal PurchaseInventoryCostAdjustment = 0m,
         IReadOnlyList<Auraly.Contracts.Expenses.ExpenseLineSnapshot>? ExpenseLines = null,
-        IReadOnlyList<(Guid AccountId, decimal Amount)>? ManualWithholdingCredits = null)
+        IReadOnlyList<(Guid AccountId, decimal Amount)>? ManualWithholdingCredits = null,
+        decimal RestaurantLossCost = 0m)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -1831,6 +1912,11 @@ public sealed partial class SqlAccountingPostingProcessor(
                 if (RoundingAdjustment > 0) values.Add(AccountingCategories.RoundingGain);
                 if (RoundingAdjustment < 0) values.Add(AccountingCategories.RoundingLoss);
                 if (Cost > 0) { values.Add(AccountingCategories.Inventory); values.Add(AccountingCategories.CostOfGoodsSold); }
+                if (RestaurantLossCost > 0)
+                {
+                    values.Add(AccountingCategories.DamagedInventoryExpense);
+                    values.Add(AccountingCategories.CostOfGoodsSold);
+                }
                 return values;
             }
         }
@@ -1965,6 +2051,15 @@ public sealed partial class SqlAccountingPostingProcessor(
                 foreach (var line in AdditionalDirectLines)
                     yield return new(line.AccountId, line.Debit, line.Credit, line.PartyId,
                         line.CostCenterId ?? costCenter, line.Description);
+            if (RestaurantLossCost > 0)
+            {
+                yield return new(accounts[AccountingCategories.DamagedInventoryExpense],
+                    RestaurantLossCost, 0, PartyId, costCenter,
+                    "Pérdida por plato preparado cancelado");
+                yield return new(accounts[AccountingCategories.CostOfGoodsSold],
+                    0, RestaurantLossCost, PartyId, costCenter,
+                    "Reclasificación del costo del plato cancelado");
+            }
         }
         public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed,
             decimal tax, decimal total, decimal cost,
@@ -1973,7 +2068,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             decimal roundingAdjustment = 0m) => new($"Factura de venta {number}", party,
                 untaxed, tax, total, cost, settlements, false, false, false, false,
                 RevenueCategory: revenueCategory, RoundingAdjustment: roundingAdjustment);
-        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements, IReadOnlyList<ManualLineSpec>? chargeReversals = null, decimal roundingAdjustment = 0m) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false, RoundingAdjustment: roundingAdjustment, AdditionalDirectLines: chargeReversals);
+        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements, IReadOnlyList<ManualLineSpec>? chargeReversals = null, decimal roundingAdjustment = 0m, decimal restaurantLossCost = 0m) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false, RoundingAdjustment: roundingAdjustment, AdditionalDirectLines: chargeReversals, RestaurantLossCost: restaurantLossCost);
         public static FinancialFacts DebitNote(string number, Guid party, decimal untaxed, decimal tax, decimal total) =>
             new($"Nota débito de venta {number}", party, untaxed, tax, total, 0,
                 [(AccountingCategories.AccountsReceivable, total)], false, false, false, false);
