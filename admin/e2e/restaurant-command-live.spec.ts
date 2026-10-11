@@ -66,7 +66,16 @@ test("una comanda enviada en un navegador llega al otro sin recargar", async ({ 
       await waiter.getByPlaceholder("Principal o secundaria").fill(waiterSecret!);
       await waiter.getByRole("button", { name: "Abrir mesa" }).click();
     }
-    await expect(sender.getByRole("heading", { name: "Elige productos" })).toBeVisible();
+    try {
+      await expect(sender.getByRole("heading", { name: "Elige productos" })).toBeVisible();
+    } catch (error) {
+      console.log("Restaurant sender diagnostics", {
+        url: sender.url(),
+        text: (await sender.locator("body").innerText()).slice(0, 1800),
+      });
+      await sender.screenshot({ path: "../tmp/restaurant-command-sender-failed.png" });
+      throw error;
+    }
     await sender.getByPlaceholder("Buscar producto").fill(productName!);
     await sender.getByRole("button", { name: `Agregar ${productName}` }).click();
     const marker = `PRUEBA EN VIVO ${Date.now()}`;

@@ -78,7 +78,8 @@ test("el menú digital local abre su configuración sin menú previo", async ({ 
   await page.getByRole("button", { name: /Vista previa/ }).click();
   const preview = page.getByRole("dialog", { name: "Vista previa del menú" });
   await expect(preview).toBeVisible();
-  await expect(preview.getByText("Hamburguesas", { exact: true })).toBeVisible();
+  await preview.getByRole("button", { name: /Hamburguesas/ }).click();
+  await expect(preview.getByRole("heading", { name: "Hamburguesas" })).toBeVisible();
   await preview.screenshot({ path: "../tmp/restaurant-menu-preview.png" });
 });
 
@@ -131,7 +132,7 @@ test("cobra una mesa en dos partes y emite una sola factura", async ({ page }) =
     localStorage.setItem("selected_business_id", value);
   }, businessId!.toLowerCase());
   await page.goto("/pos/restaurant");
-  await page.getByRole("button", { name: /Mesa P-04/ }).click();
+  await page.getByText("P-04", { exact: true }).click();
   const waiter = page.getByRole("dialog", { name: "Identificar mesero" });
   if (await waiter.isVisible()) {
     await waiter.getByRole("button", { name: /Mesero 1/i }).click();
