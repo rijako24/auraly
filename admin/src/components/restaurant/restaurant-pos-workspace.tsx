@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, CakeSlice, ChefHat, CircleCheck, Clock3,
   Coffee, DoorOpen,
@@ -86,6 +86,10 @@ export function RestaurantPosWorkspace({ option }: {
   const [productSearch, setProductSearch] = useState("");
   const [productPage, setProductPage] = useState(0);
   const [mobileSection, setMobileSection] = useState<"products" | "account">("products");
+  const openAccountId = draft?.account.accountId;
+  useLayoutEffect(() => {
+    if (openAccountId) window.scrollTo(0, 0);
+  }, [openAccountId, mobileSection]);
   const [busy, setBusy] = useState(false);
   const [addingProductId, setAddingProductId] = useState<string | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
@@ -707,28 +711,28 @@ export function RestaurantPosWorkspace({ option }: {
   }
 
   return <main className="min-h-screen bg-[#f5f7f6] text-foreground dark:bg-[#0e1717]">
-    <header className="sticky top-0 z-20 flex min-h-20 flex-col gap-2 border-b bg-background/95 px-4 py-2 shadow-sm backdrop-blur sm:px-7 lg:flex-row lg:items-center lg:justify-between lg:gap-3 lg:py-0">
-      <div className="flex min-w-0 items-center gap-3">{draft ? <Button variant="outline" className="h-11 shrink-0 rounded-xl px-3 sm:px-4" onClick={() => backToTables()} aria-label="Volver a mesas"><ArrowLeft className="h-5 w-5 sm:mr-2"/><span className="hidden text-sm sm:inline">Volver a mesas</span></Button> : <Button asChild variant="outline" className="h-11 shrink-0 rounded-xl" aria-label="Volver al menú"><Link href="/dashboard/restaurant" onClick={leaveWorkspace}><LayoutGrid className="h-5 w-5 sm:mr-2"/><span className="hidden sm:inline">Menú</span></Link></Button>}<div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary"><UtensilsCrossed className="h-6 w-6"/></div>
-        <div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-[.18em] text-primary">Auraly · Restaurante</p>
-          <h1 className="truncate text-lg font-bold sm:text-xl">{option.businessName}</h1></div></div>
-      <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto lg:flex-nowrap">
+    <header className="sticky top-0 z-20 flex min-h-20 flex-col gap-2 border-b bg-background/95 px-3 py-2 shadow-sm backdrop-blur sm:px-7 lg:flex-row lg:items-center lg:justify-between lg:gap-3 lg:py-0">
+      <div className="flex w-full min-w-0 items-center gap-2 lg:w-auto lg:gap-3">{draft ? <Button variant="outline" className="h-11 w-11 shrink-0 rounded-xl p-0 sm:w-auto sm:px-4" onClick={() => backToTables()} aria-label="Volver a mesas"><ArrowLeft className="h-5 w-5 sm:mr-2"/><span className="hidden text-sm sm:inline">Volver a mesas</span></Button> : <Button asChild variant="outline" className="h-11 w-11 shrink-0 rounded-xl p-0 sm:w-auto sm:px-4" aria-label="Volver al menú"><Link href="/dashboard/restaurant" onClick={leaveWorkspace}><LayoutGrid className="h-5 w-5 sm:mr-2"/><span className="hidden sm:inline">Menú</span></Link></Button>}<div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><UtensilsCrossed className="h-6 w-6"/></div>
+        <div className="min-w-0"><p className="truncate text-[10px] font-bold uppercase tracking-[.16em] text-primary sm:text-[11px]">Auraly · Restaurante</p>
+          <h1 className="truncate text-base font-bold leading-tight sm:text-xl">{option.businessName}</h1></div></div>
+      <div className="flex w-full items-center justify-center gap-2 rounded-2xl border bg-card/70 p-1.5 shadow-sm sm:flex-wrap sm:justify-end sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none lg:w-auto lg:flex-nowrap">
         {paymentClient && option.workSessionId && permissions.includes("work-sessions.read") &&
           <RestaurantSessionClosure client={paymentClient} workSessionId={option.workSessionId}
             businessId={option.businessId} businessName={option.businessName}
             warehouseName={option.warehouseName}
             canClose={permissions.includes("work-sessions.close")} />}
         {permissions.includes("pos.workspace.change") && <Button asChild variant="outline" size="sm"
-          className="min-h-10 gap-2 rounded-xl" title="Cambiar sede, bodega o documento predeterminado">
+          className="h-11 w-11 gap-2 rounded-xl p-0 sm:w-auto sm:px-3" title="Cambiar sede, bodega o documento predeterminado">
           <Link href="/pos?workspace=change" onClick={leaveWorkspace} aria-label="Configurar punto de venta">
             <Settings2 className="h-4 w-4"/><span className="hidden md:inline">Configuración</span>
           </Link></Button>}
-        <Button variant="outline" size="sm" className="min-h-10 gap-2 rounded-xl"
+        <Button variant="outline" size="sm" className="h-11 w-11 gap-2 rounded-xl p-0 sm:w-auto sm:px-3"
           onClick={() => setPrinterOpen(true)} aria-label="Periféricos">
           <Printer className="h-4 w-4"/><span className="hidden md:inline">Periféricos</span>
         </Button>
-        {permissions.includes("restaurant.commands.read") && <Button asChild variant="outline" size="sm"><Link href="/restaurant/commands?from=pos" onClick={leaveWorkspace}><ChefHat className="mr-1 h-4 w-4"/>Comandas</Link></Button>}
-        <ThemeToggle/></div>
-      {draft && <nav aria-label="Vista de la mesa" className="grid w-full grid-cols-2 gap-2 lg:hidden"><Button variant={mobileSection === "products" ? "default" : "outline"} className="min-h-12" onClick={() => { setMobileSection("products"); window.scrollTo(0, 0); }}>Productos</Button><Button variant={mobileSection === "account" ? "default" : "outline"} className="min-h-12" onClick={() => { setMobileSection("account"); window.scrollTo(0, 0); }}>Cuenta · {groups.reduce((sum, item) => sum + item.quantity, 0)}</Button></nav>}
+        {permissions.includes("restaurant.commands.read") && <Button asChild variant="outline" size="sm" className="h-11 w-11 rounded-xl p-0 sm:w-auto sm:px-3"><Link href="/restaurant/commands?from=pos" onClick={leaveWorkspace} aria-label="Comandas" title="Comandas"><ChefHat className="h-4 w-4"/><span className="hidden sm:inline">Comandas</span></Link></Button>}
+        <ThemeToggle className="h-11 w-11 rounded-xl"/></div>
+      {draft && <nav aria-label="Vista de la mesa" className="grid w-full grid-cols-2 gap-2 lg:hidden"><Button variant={mobileSection === "products" ? "default" : "outline"} className="min-h-12" onClick={() => setMobileSection("products")}>Productos</Button><Button variant={mobileSection === "account" ? "default" : "outline"} className="min-h-12" onClick={() => setMobileSection("account")}>Cuenta · {groups.reduce((sum, item) => sum + item.quantity, 0)}</Button></nav>}
     </header>
     {!draft ? <section className="mx-auto max-w-[1500px] px-4 pb-12 pt-7 sm:px-7">
       <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-medium text-primary">Vista de mesas</p>

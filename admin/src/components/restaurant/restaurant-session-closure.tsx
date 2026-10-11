@@ -116,7 +116,7 @@ export function RestaurantSessionClosure({ client, workSessionId, businessId,
 
   return <>
     <Button variant="outline" size="sm" disabled={busy} onClick={() => void openClosure()}
-      className="min-h-10 gap-2 rounded-xl" title="Cerrar sesión de venta">
+      className="h-11 w-11 gap-2 rounded-xl p-0 sm:w-auto sm:px-3" title="Cerrar sesión de venta" aria-label="Cerrar sesión de venta">
       <Banknote className="h-4 w-4"/><span className="hidden sm:inline">Cerrar sesión de venta</span>
     </Button>
     {preview && <PosCashClosureDialog value={preview} busy={busy}

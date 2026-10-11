@@ -8,7 +8,7 @@ const tableId = "55555555-5555-5555-5555-555555555555";
 const productId = "66666666-6666-6666-6666-666666666666";
 const categoryId = "77777777-7777-7777-7777-777777777777";
 const stationId = "88888888-8888-8888-8888-888888888888";
-const permissions = ["restaurant.attend"];
+const permissions = ["restaurant.attend", "restaurant.commands.read"];
 const now = "2026-10-09T10:00:00-05:00";
 const baseUrl = process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
@@ -155,6 +155,12 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await expect(page.getByRole("button", { name: /M-01/ })).toBeVisible();
   await expect(page.getByText("Iniciando Auraly")).toBeHidden();
   await page.screenshot({ path: "../tmp/restaurant-pos-map-light.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => {
+    document.body.style.minHeight = "1600px";
+    window.scrollTo(0, 250);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
   await page.getByRole("button", { name: /M-01/ }).click();
   await expect(page.getByRole("dialog", { name: "Identificar mesero" })).toBeVisible();
   await page.getByRole("button", { name: "Mesero" }).click();
@@ -163,22 +169,36 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await expect(page.getByLabel("Teclado numérico")).toHaveCount(0);
   await page.getByRole("button", { name: "Abrir mesa", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Elige productos" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  await page.evaluate(() => document.body.style.removeProperty("min-height"));
   await page.getByRole("button", { name: "Agregar Hamburguesa clásica" }).click();
+  await page.getByRole("button", { name: /Cuenta ·/ }).click();
   await expect(page.getByText("Consumo estimado")).toBeVisible();
   await page.screenshot({ path: "../tmp/restaurant-pos-order-light.png", fullPage: true });
   await page.evaluate(() => document.documentElement.classList.add("dark"));
   await page.screenshot({ path: "../tmp/restaurant-pos-order-dark.png", fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: /Cuenta ·/ }).click();
+  await page.evaluate(() => document.documentElement.classList.remove("dark"));
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   const mobileTabs = page.getByRole("navigation", { name: "Vista de la mesa" });
   await expect(mobileTabs).toBeInViewport();
   expect((await mobileTabs.boundingBox())!.y).toBeGreaterThanOrEqual(0);
+  const commands = page.getByRole("link", { name: "Comandas" });
+  const theme = page.getByRole("button", { name: "Alternar tema" });
+  await expect(commands).toBeVisible();
+  expect((await commands.boundingBox())!.width).toBe((await theme.boundingBox())!.width);
+  expect((await commands.boundingBox())!.height).toBe((await theme.boundingBox())!.height);
   await page.screenshot({ path: "../tmp/restaurant-pos-order-mobile.png", fullPage: true });
   await expect(page.getByRole("button", { name: /Eliminar producto pendiente Hamburguesa clásica/ })).toBeEnabled();
   await page.getByRole("button", { name: /Eliminar producto pendiente Hamburguesa clásica/ }).click();
   await expect(page.getByText("Toca un producto para empezar el pedido.")).toBeVisible();
   await page.getByRole("button", { name: "Productos", exact: true }).click();
+  const headerBottom = await page.locator("main > header").evaluate((header) =>
+    header.getBoundingClientRect().bottom);
+  const menuTop = await page.getByRole("heading", { name: "Elige productos" })
+    .locator("..").getByText("Menú", { exact: true })
+    .evaluate((label) => label.getBoundingClientRect().top);
+  expect(menuTop).toBeGreaterThan(headerBottom + 8);
+  await page.screenshot({ path: "../tmp/restaurant-pos-products-mobile.png" });
   await page.getByRole("button", { name: "Agregar Hamburguesa clásica" }).click();
   await page.getByRole("button", { name: /Cuenta ·/ }).click();
   await expect(page.getByText("1 pendientes · Cocina")).toBeVisible();
