@@ -27,6 +27,7 @@ USING (VALUES
   (N'WithholdingVatPayable',N'ReteIVA por pagar',N'236701',N'Retención de IVA por pagar',N'Liability',0,16),
   (N'WithholdingIcaPayable',N'ReteICA por pagar',N'236805',N'Retención de ICA por pagar',N'Liability',0,17),
   (N'CustomerCreditsPayable',N'Saldos a favor de clientes',N'238095',N'Saldos a favor de clientes',N'Liability',1,18),
+  (N'RestaurantTipsPayable',N'Propinas por entregar al personal',N'23809507',N'Propinas recaudadas pendientes de entregar',N'Liability',0,60),
   (N'OwnerContributions',N'Aportes del propietario',N'311505',N'Aportes del propietario',N'Equity',0,19),
   (N'SalesRevenue',N'Ingresos por ventas',N'413595',N'Ingresos por venta de mercancías',N'Revenue',0,20),
   (N'ServiceRevenue',N'Ingresos por servicios',N'415530',N'Ingresos por servicios de software',N'Revenue',0,52),

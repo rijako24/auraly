@@ -58,6 +58,8 @@ public sealed class SalesReceiptHtmlRenderer
                 _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
             }
             : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForReceipt(templateVersion);
+        if (receipt.IsRestaurantSale && !isOrder && !isReturn)
+            template = PosPrintTemplateCatalog.ForRestaurantSale(template);
         var bodyFontSize = isFiscal ? 12 : 11;
         var issuedBy = isFiscal
             ? "Factura emitida por Auraly"

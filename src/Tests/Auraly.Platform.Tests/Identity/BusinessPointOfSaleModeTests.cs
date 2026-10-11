@@ -66,6 +66,33 @@ public sealed class BusinessPointOfSaleModeTests
         _options.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(7.5)]
+    [InlineData(10)]
+    public async Task Restaurant_tip_setting_is_saved_for_the_sede(decimal percent)
+    {
+        var result = await Service.UpdateAsync(_business.TenantId, false, _business.BusinessId,
+            new(null, null, null, null, null, null, null,
+                RestaurantSuggestedTipPercent: percent), default);
+
+        Assert.Equal(percent, result.RestaurantSuggestedTipPercent);
+        _work.Verify(work => work.SaveChangesAsync(default), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(10.01)]
+    [InlineData(1.234)]
+    public async Task Suggested_tip_outside_valid_range_is_rejected(decimal percent)
+    {
+        await Assert.ThrowsAsync<DomainValidationException>(() => Service.UpdateAsync(
+            _business.TenantId, false, _business.BusinessId,
+            new(null, null, null, null, null, null, null,
+                RestaurantSuggestedTipPercent: percent), default));
+        _work.Verify(work => work.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task Exclusive_waiter_policy_cannot_disable_credential()
     {

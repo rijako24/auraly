@@ -7,6 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { PageError } from "@/components/ui/page-error";
@@ -86,6 +87,25 @@ export default function BusinessDetailPage() {
                   onSuccess: () => toast.success("Atención de meseros actualizada."),
                   onError: () => toast.error("No fue posible actualizar la atención de meseros."),
                 })} /></label>
+            <div className="flex flex-wrap items-center justify-between gap-4 border-t pt-4">
+              <div><label htmlFor="restaurant-tip-percent" className="block font-medium">Propina sugerida en la precuenta</label>
+                <p className="text-xs text-muted-foreground">Opcional para el cliente. La factura registra solo el consumo. Máximo 10 %.</p></div>
+              <div className="flex items-center gap-2"><Input id="restaurant-tip-percent" key={`${business.businessId}-${business.restaurantSuggestedTipPercent}`}
+                type="number" min="0" max="10" step="0.01" defaultValue={business.restaurantSuggestedTipPercent}
+                className="w-24 text-right" disabled={updateBusiness.isPending}
+                onBlur={(event) => { const percent = Number(event.target.value);
+                  if (!Number.isFinite(percent) || percent < 0 || percent > 10 ||
+                      Math.abs(Math.round(percent * 100) - percent * 100) > 0.000001) {
+                    event.target.value = String(business.restaurantSuggestedTipPercent);
+                    toast.error("Ingresa un porcentaje entre 0 y 10 con máximo dos decimales."); return;
+                  }
+                  if (percent !== business.restaurantSuggestedTipPercent)
+                    updateBusiness.mutate({ id, values: { restaurantSuggestedTipPercent: percent } }, {
+                      onSuccess: () => toast.success("Propina sugerida actualizada."),
+                      onError: () => toast.error("No fue posible guardar la propina sugerida."),
+                    });
+                }} /><span className="font-semibold">%</span></div>
+            </div>
           </div>}
         </CardContent>
       </Card>

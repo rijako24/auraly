@@ -122,7 +122,8 @@ public sealed record OnlineSalesReceipt(
     IReadOnlyList<SalesReceiptTaxTotal>? TaxTotals = null,
     decimal PayableRoundingAmount = 0m,
     CreditNotePrintDetails? CreditNotePrintDetails = null,
-    SalesReturnPrintDetails? SalesReturnPrintDetails = null);
+    SalesReturnPrintDetails? SalesReturnPrintDetails = null,
+    bool IsRestaurantSale = false);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

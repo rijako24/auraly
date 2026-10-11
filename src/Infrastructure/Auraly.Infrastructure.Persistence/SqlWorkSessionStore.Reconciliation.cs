@@ -546,6 +546,24 @@ public sealed partial class SqlWorkSessionStore
                 INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
                 WHERE document.CreditAmount>0
                 UNION ALL
+                SELECT CONCAT(N'RestaurantTip:',CONVERT(nvarchar(36),collection.CollectionId)),
+                  COALESCE(mapping.ClosureMethodCode,tip.MethodCode),N'RestaurantTip',
+                  collection.CollectionId,NULL,0,tip.Amount,tip.Reference,
+                  tip.CardFranchiseCode,tip.ApprovalNumber,collection.CapturedAt,
+                  N'RestaurantTip',CAST(NULL AS nvarchar(300)),tip.MethodCode
+                FROM sales.RestaurantAccountCollections collection
+                INNER JOIN ClosureContext context
+                  ON context.WorkSessionId=collection.WorkSessionId
+                CROSS APPLY OPENJSON(collection.TipPaymentsJson)
+                  WITH(MethodCode nvarchar(32) '$.MethodCode',
+                       Amount decimal(19,4) '$.Amount',
+                       Reference nvarchar(160) '$.Reference',
+                       CardFranchiseCode nvarchar(32) '$.CardFranchiseCode',
+                       ApprovalNumber nvarchar(160) '$.ApprovalNumber') tip
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
+                  ON mapping.PaymentMethodCode=tip.MethodCode
+                WHERE collection.Status=N'Captured'
+                UNION ALL
                 SELECT CONCAT(N'Refund:',CONVERT(nvarchar(36),settlement.ReturnId),N':',settlement.SettlementNumber),
                   COALESCE(mapping.ClosureMethodCode,settlement.MethodCode),N'Refund',settlement.ReturnId,
                   saleReturn.DocumentNumber,settlement.SettlementNumber,-settlement.Amount,settlement.Reference,
@@ -795,6 +813,7 @@ public sealed partial class SqlWorkSessionStore
               cashReason.CounterpartAccountingCategory,
               CAST(CASE WHEN
                 (source.MovementType=N'Sale' AND sale.ProcessingStatus=N'Completed') OR
+                (source.MovementType=N'RestaurantTip' AND restaurantTip.Status=N'Captured') OR
                 (source.MovementType=N'Refund' AND saleReturn.Status=N'Processed') OR
                 (source.MovementType=N'ReceivablePayment' AND customerPayment.Status=N'Processed') OR
                 (source.MovementType=N'PayablePayment' AND supplierPayment.Status=N'Processed') OR
@@ -852,6 +871,10 @@ public sealed partial class SqlWorkSessionStore
                     THEN source.TenderMethodCode ELSE correction.PaymentMethodCode END)
             LEFT JOIN dbo.SalesDocuments sale WITH(UPDLOCK,HOLDLOCK)
               ON source.MovementType=N'Sale' AND sale.DocumentId=source.SourceId AND sale.BusinessId=@BusinessId
+            LEFT JOIN sales.RestaurantAccountCollections restaurantTip WITH(UPDLOCK,HOLDLOCK)
+              ON source.MovementType=N'RestaurantTip'
+                AND restaurantTip.CollectionId=source.SourceId
+                AND restaurantTip.BusinessId=@BusinessId
             LEFT JOIN dbo.SalesPayments saleTender ON source.MovementType=N'Sale'
               AND saleTender.DocumentId=sale.DocumentId AND saleTender.PaymentNumber=source.SourceNumber
             LEFT JOIN dbo.Customers saleCustomer ON saleCustomer.CustomerId=sale.CustomerId
@@ -1010,6 +1033,7 @@ public sealed partial class SqlWorkSessionStore
             {
                 "Sale" or "ReceivablePayment" => AccountingCategories.AccountsReceivable,
                 "PayablePayment" => AccountingCategories.AccountsPayable,
+                "RestaurantTip" => AccountingCategories.RestaurantTipsPayable,
                 "Refund" => AccountingCategories.CustomerCreditsPayable,
                 "CashIn" or "CashOut" => reader.IsDBNull(17) ? null : reader.GetString(17),
                 _ => null

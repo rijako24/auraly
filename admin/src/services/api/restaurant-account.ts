@@ -74,8 +74,11 @@ export type RestaurantCollectionSummary = {
     capturedAt: string;
     allocations: RestaurantCollectionAllocation[];
     payments: PosPaymentInput[];
+    tipPayment: PosPaymentInput | null;
   }[];
   coveredQuantities: RestaurantCollectionAllocation[];
+  tipsCollected: number;
+  suggestedTipPercent: number;
 };
 
 export type RestaurantMenuCategory = {
@@ -198,6 +201,8 @@ export type RestaurantPrebill = {
   lines: { description: string; quantity: number; unitPrice: number;
     total: number; addedByName: string }[];
   total: number;
+  suggestedTipPercent: number;
+  suggestedTipAmount: number;
 };
 
 const attentionHeaders = (token?: string) => token
@@ -321,6 +326,7 @@ export const restaurantAccountApi = {
     expectedAccountVersion: number;
     allocations: RestaurantCollectionAllocation[];
     payments: PosPaymentInput[];
+    tipPayment?: PosPaymentInput | null;
   }, idempotencyKey: string) => apiClient.post<RestaurantCollectionSummary>(
     `/commerce/v1/restaurant/accounts/${accountId}/collections`, request,
     { headers: { "Idempotency-Key": idempotencyKey } }),

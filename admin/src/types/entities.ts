@@ -55,6 +55,7 @@ export interface Business {
   pointOfSaleMode: "DirectSale" | "RestaurantBar";
   restaurantRequireWaiterCredential: boolean;
   restaurantRestrictTableToWaiter: boolean;
+  restaurantSuggestedTipPercent: number;
   isActive: boolean;
   createdAt: string;
   updatedAt: string | null;

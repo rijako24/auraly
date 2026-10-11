@@ -16,7 +16,9 @@ El endpoint de facturación admite únicamente estos metadatos adicionales opcio
 
 V1 incluye editor del restaurante, mesas/cuentas, rol Mesero y permisos, tablets y puestos compartidos, una/dos pantallas, ingredientes/recetas, producción mínima en un paso, inventario excluyente, comandas virtuales/físicas, push/sonido, precuenta, factura, cancelación con pérdida, auditoría y menú digital público por QR.
 
-Fuera de V1: huella, restaurante offline, varias cuentas simultáneas por mesa, fusionar cuentas, dividir una mesa en varias facturas, reservas de fecha/hora, lista de espera, autopedido QR, nuevos domicilios, preautorización de tarjeta, propina y reparto, subrecetas, planificación y programación de producción, órdenes con etapas, capacidad de planta y fabricación multinivel. No mostrar controles operativos de esas ampliaciones. Se conservan los medios de pago combinados y pedidos comerciales soportados por Auraly.
+Fuera de V1: huella, restaurante offline, varias cuentas simultáneas por mesa, fusionar cuentas, dividir una mesa en varias facturas, reservas de fecha/hora, lista de espera, autopedido QR, nuevos domicilios, preautorización de tarjeta, reparto de propinas, subrecetas, planificación y programación de producción, órdenes con etapas, capacidad de planta y fabricación multinivel. Se conservan los medios de pago combinados y pedidos comerciales soportados por Auraly.
+
+La sede RestaurantBar puede configurar una propina sugerida de 0 % a 10 %. La precuenta permite mostrarla u omitirla como concepto voluntario. En el cobro se registra el importe realmente aceptado y su medio de pago, separado de la distribución de productos. La emisión fiscal y el comprobante conservan únicamente el valor del consumo; el cierre de sesión incorpora la propina recibida como movimiento distinto de ventas. Los formatos de restaurante usan identidad de plantilla propia para tirilla, media carta, oficio y carta, tanto para factura como para comprobante, sin variar aún el cuerpo fiscal compartido.
 
 ### Vocabulario único
 

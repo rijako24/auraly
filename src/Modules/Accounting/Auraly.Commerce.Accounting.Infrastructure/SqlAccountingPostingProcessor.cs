@@ -12,6 +12,7 @@ using Auraly.Contracts.Dispatching;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Receivables;
+using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -136,6 +137,9 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "CashReceipt" or "CashDisbursement" =>
                     await LoadCashMovementFactsAsync(
                         connection, transaction, source, cancellationToken),
+                "RestaurantTip" or "RestaurantTipReversal" =>
+                    FinancialFactsResult.Ready(await LoadRestaurantTipFactsAsync(
+                        connection, transaction, source, cancellationToken)),
                 AccountingManualDocumentTypes.AccountAdjustment =>
                     await LoadAccountAdjustmentFactsAsync(
                         connection, transaction, source, cancellationToken),
@@ -1449,6 +1453,49 @@ public sealed partial class SqlAccountingPostingProcessor(
         return result;
     }
 
+    private static async Task<FinancialFacts> LoadRestaurantTipFactsAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        SourceEnvelope source, CancellationToken cancellationToken)
+    {
+        var value = JsonSerializer.Deserialize<RestaurantTipAccountingPayload>(source.PayloadJson)
+            ?? throw new InvalidOperationException("The restaurant-tip payload is invalid.");
+        if (value.CollectionId != source.DocumentId ||
+            value.BusinessId != source.BusinessId ||
+            value.TenantId != source.TenantId ||
+            value.IsReversal != (source.DocumentType == "RestaurantTipReversal") ||
+            value.Payment.Amount <= 0)
+            throw new InvalidOperationException("The restaurant-tip source is inconsistent.");
+        await using var command = new SqlCommand("""
+            SELECT TipAmount,TipPaymentsJson,WorkSessionId
+            FROM sales.RestaurantAccountCollections
+            WHERE CollectionId=@CollectionId AND AccountId=@AccountId
+              AND BusinessId=@BusinessId AND TenantId=@TenantId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@CollectionId", value.CollectionId);
+        command.Parameters.AddWithValue("@AccountId", value.AccountId);
+        command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", value.TenantId);
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken) ||
+                reader.GetDecimal(0) != value.Payment.Amount ||
+                reader.GetGuid(2) != value.WorkSessionId ||
+                JsonSerializer.Deserialize<OnlineSalesPayment[]>(reader.GetString(1))
+                    ?.SingleOrDefault() is not { } stored ||
+                JsonSerializer.Serialize(stored) != JsonSerializer.Serialize(value.Payment))
+                throw new InvalidOperationException("The restaurant-tip collection changed.");
+        }
+        var settlement = (await ResolvePaymentSettlementsAsync(
+            connection, transaction, source.TenantId, "PosPaymentMethod",
+            [(value.Payment.MethodCode, value.Payment.Amount,
+              value.Payment.BankAccountId)], cancellationToken)).Single();
+        var description = value.IsReversal
+            ? $"Anulación de propina de mesa {value.AccountId:D}"
+            : $"Propina de mesa {value.AccountId:D}";
+        return FinancialFacts.RestaurantTip(description, settlement.Category,
+            value.Payment.Amount, value.IsReversal);
+    }
+
     private static async Task<decimal> InventoryCostAsync(
         SqlConnection connection, SqlTransaction transaction, Guid documentId,
         string documentType, CancellationToken cancellationToken)
@@ -2124,6 +2171,16 @@ public sealed partial class SqlAccountingPostingProcessor(
             string number, bool isIn, decimal amount, string counterpart) =>
             new($"{(isIn ? "Ingreso" : "Egreso")} de caja {number}", null, 0, 0,
                 amount, 0, [(counterpart, amount)], false, false, false, false, true, isIn);
+        public static FinancialFacts RestaurantTip(
+            string description, string paymentCategory, decimal amount, bool reverse) =>
+            new(description, null, 0, 0, 0, 0, [], false, false, false, false,
+                DirectCategoryLines: reverse
+                    ? [new CategoryLineSpec(AccountingCategories.RestaurantTipsPayable,
+                        amount, 0, null, description),
+                       new CategoryLineSpec(paymentCategory, 0, amount, null, description)]
+                    : [new CategoryLineSpec(paymentCategory, amount, 0, null, description),
+                       new CategoryLineSpec(AccountingCategories.RestaurantTipsPayable,
+                        0, amount, null, description)]);
         public static FinancialFacts CashDifference(
             string description,
             bool surplus,

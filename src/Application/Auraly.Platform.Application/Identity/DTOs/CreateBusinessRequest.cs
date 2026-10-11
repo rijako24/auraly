@@ -12,4 +12,5 @@ public record CreateBusinessRequest(
     Guid PriceSourceBusinessId = default,
     string? PointOfSaleMode = null,
     bool RestaurantRequireWaiterCredential = true,
-    bool RestaurantRestrictTableToWaiter = false);
+    bool RestaurantRestrictTableToWaiter = false,
+    decimal RestaurantSuggestedTipPercent = 0);

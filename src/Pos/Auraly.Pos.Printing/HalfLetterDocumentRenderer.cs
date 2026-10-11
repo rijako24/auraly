@@ -77,8 +77,8 @@ public sealed class HalfLetterDocumentRenderer
                 .meta { display: grid; grid-template-columns: 1.2fr 1fr; gap: .8mm 4mm; margin: 1.5mm 0 1mm; }
                 .pair { display: flex; justify-content: space-between; gap: 2.5mm; }
                 .pair span { color: #475569; }
-                .document[data-auraly-report='sales-invoice'][data-auraly-report-version='4'] .meta .pair { min-width: 0; }
-                .document[data-auraly-report='sales-invoice'][data-auraly-report-version='4'] .meta .pair strong { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+                .document[data-auraly-report$='sales-invoice'][data-auraly-report-version='4'] .meta .pair { min-width: 0; }
+                .document[data-auraly-report$='sales-invoice'][data-auraly-report-version='4'] .meta .pair strong { min-width: 0; overflow-wrap: anywhere; text-align: right; }
                 .fiscal-compliance { padding: 1.2mm 0; border-top: .2mm solid #cbd5e1; border-bottom: .2mm solid #cbd5e1; font-size: 6.2pt; line-height: 1.3; }
                 .fiscal-compliance > div + div { margin-top: .45mm; }
                 table { width: 100%; border-collapse: collapse; margin-top: 1mm; }
@@ -121,7 +121,7 @@ public sealed class HalfLetterDocumentRenderer
               await document.fonts.ready;
               paginateLetters();
               for (const documentElement of document.querySelectorAll('.document')) {
-                if (documentElement.closest('.sheet.letter') && documentElement.dataset.auralyReport === 'sales-invoice' && Number(documentElement.dataset.auralyReportVersion) >= 3) continue;
+                if (documentElement.closest('.sheet.letter') && documentElement.dataset.auralyReport.endsWith('sales-invoice') && Number(documentElement.dataset.auralyReportVersion) >= 3) continue;
                 const content = documentElement.querySelector('.document-content');
                 const available = documentElement.clientHeight;
                 if (content.scrollHeight > available) {
@@ -167,6 +167,8 @@ public sealed class HalfLetterDocumentRenderer
                 _ => throw new ArgumentOutOfRangeException(nameof(templateVersion))
             }
             : isOrder ? PosPrintTemplateCatalog.ForOrder(templateVersion) : PosPrintTemplateCatalog.ForReceipt(templateVersion);
+        if (receipt.IsRestaurantSale && !isOrder && !isReturn)
+            template = PosPrintTemplateCatalog.ForRestaurantSale(template);
         var customerContact = isOrder && template.Version >= 2
             ? OrderContactPresentation.Html(receipt.CustomerName, receipt.CustomerIdentification,
                 receipt.CustomerAddress, receipt.CustomerPhone)
@@ -290,7 +292,7 @@ public sealed class HalfLetterDocumentRenderer
         function paginateLetters() {
           for (const original of document.querySelectorAll('.sheet.letter')) {
             const report = original.querySelector('.document');
-            if (report?.dataset.auralyReport !== 'sales-invoice' || Number(report.dataset.auralyReportVersion) < 3) continue;
+            if (!report?.dataset.auralyReport.endsWith('sales-invoice') || Number(report.dataset.auralyReportVersion) < 3) continue;
             const rows = Array.from(report.querySelector('tbody').children);
             const prototype = original.cloneNode(true);
             prototype.querySelector('tbody').replaceChildren();

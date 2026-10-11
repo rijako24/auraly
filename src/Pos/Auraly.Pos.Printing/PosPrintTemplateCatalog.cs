@@ -19,6 +19,13 @@ public static class PosPrintTemplateCatalog
     public static readonly PosPrintTemplateVersion SalesReceiptV3 = new("sales-receipt", 3);
     public static readonly PosPrintTemplateVersion SalesReceiptV4 = new("sales-receipt", 4);
     public static readonly PosPrintTemplateVersion SalesReceipt = new("sales-receipt", 5);
+    public static PosPrintTemplateVersion ForRestaurantSale(PosPrintTemplateVersion template) =>
+        template with { Code = template.Code switch
+        {
+            "sales-invoice" => "restaurant-sales-invoice",
+            "sales-receipt" => "restaurant-sales-receipt",
+            _ => template.Code
+        } };
     public static readonly PosPrintTemplateVersion OrderV1 = new("order", 1);
     public static readonly PosPrintTemplateVersion Order = new("order", 2);
     public static readonly PosPrintTemplateVersion WorkSessionClosureV1 = new("work-session-closure", 1);

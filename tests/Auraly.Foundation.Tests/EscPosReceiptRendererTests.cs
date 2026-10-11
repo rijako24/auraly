@@ -10,6 +10,32 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class EscPosReceiptRendererTests
 {
+    [Theory]
+    [InlineData("Receipt", "SalesInvoice", "restaurant-sales-invoice")]
+    [InlineData("Receipt", "SalesReceipt", "restaurant-sales-receipt")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter, "SalesInvoice", "restaurant-sales-invoice")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal, "SalesInvoice", "restaurant-sales-invoice")]
+    [InlineData(HalfLetterDocumentRenderer.Letter, "SalesInvoice", "restaurant-sales-invoice")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLetter, "SalesReceipt", "restaurant-sales-receipt")]
+    [InlineData(HalfLetterDocumentRenderer.HalfLegal, "SalesReceipt", "restaurant-sales-receipt")]
+    [InlineData(HalfLetterDocumentRenderer.Letter, "SalesReceipt", "restaurant-sales-receipt")]
+    public void Restaurant_and_direct_sale_templates_have_distinct_identity_without_changing_fiscal_total(
+        string format, string documentType, string restaurantCode)
+    {
+        var direct = OnlineReceipt() with { DocumentType = documentType };
+        var restaurant = direct with { IsRestaurantSale = true };
+        var directHtml = format == "Receipt"
+            ? new SalesReceiptHtmlRenderer().Render(direct)
+            : new HalfLetterDocumentRenderer().Render([direct], format);
+        var restaurantHtml = format == "Receipt"
+            ? new SalesReceiptHtmlRenderer().Render(restaurant)
+            : new HalfLetterDocumentRenderer().Render([restaurant], format);
+
+        Assert.Contains($"data-auraly-report=\"{restaurantCode}\"", restaurantHtml);
+        Assert.Contains($"data-auraly-report=\"{documentType switch { "SalesInvoice" => "sales-invoice", _ => "sales-receipt" }}\"", directHtml);
+        Assert.Equal(direct.PayableAmount, restaurant.PayableAmount);
+    }
+
     [Fact]
     public void Browser_portfolio_receipt_renders_the_cached_company_logo()
     {

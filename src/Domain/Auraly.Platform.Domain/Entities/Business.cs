@@ -20,6 +20,7 @@ public class Business
     public string PointOfSaleMode { get; set; } = PointOfSaleModes.DirectSale;
     public bool RestaurantRequireWaiterCredential { get; set; } = true;
     public bool RestaurantRestrictTableToWaiter { get; set; }
+    public decimal RestaurantSuggestedTipPercent { get; set; }
 
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }

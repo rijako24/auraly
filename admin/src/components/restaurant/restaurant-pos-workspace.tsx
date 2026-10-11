@@ -28,6 +28,7 @@ import { FloorPlanObjectAppearance, FloorPlanTableSeats } from "@/components/res
 import { restaurantAccountApi, type RestaurantAccountDraft,
   type RestaurantAttention, type RestaurantCancellation,
   type RestaurantCollectionAllocation, type RestaurantCollectionSummary,
+  type RestaurantPrebill,
   type RestaurantProduct, type RestaurantTableOccupancy } from
   "@/services/api/restaurant-account";
 import { inventoryApi } from "@/services/api/inventory";
@@ -107,6 +108,7 @@ export function RestaurantPosWorkspace({ option }: {
   const [checkoutKey, setCheckoutKey] = useState<string | null>(null);
   const [collectionSummary, setCollectionSummary] =
     useState<RestaurantCollectionSummary | null>(null);
+  const [prebillPreview, setPrebillPreview] = useState<RestaurantPrebill | null>(null);
   const captureAttempt = useRef<{ signature: string; id: string } | null>(null);
   const [checkoutDocumentType, setCheckoutDocumentType] =
     useState<PosSaleDocumentType>(option.fiscalReadyForOnlineSales === true &&
@@ -580,23 +582,33 @@ export function RestaurantPosWorkspace({ option }: {
     } finally { setBusy(false); }
   }
 
-  async function printPrebill() {
+  async function preparePrebill() {
     if (!draft || busy || pendingSend || pendingCount > 0 ||
         activeCancellations.length > 0 ||
         cancellations.isLoading || cancellations.isError ||
         draft.account.status !== "Open") return;
+    setBusy(true);
+    try {
+      const bill = await restaurantAccountApi.prebill(
+        draft.account.accountId, draft.account.version, attention?.token);
+      setPrebillPreview(bill);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message :
+        "No se pudo preparar la precuenta.");
+    } finally { setBusy(false); }
+  }
+
+  function printPrebill(bill: RestaurantPrebill, includeTip: boolean) {
     const printWindow = window.open("", "_blank", "width=440,height=720");
     if (!printWindow) {
       toast.error("Habilita la ventana de impresión para esta página.");
       return;
     }
-    setBusy(true);
     try {
-      const bill = await restaurantAccountApi.prebill(
-        draft.account.accountId, draft.account.version, attention?.token);
       const rows = bill.lines.map((line) => `<tr><td>${escapePrebillText(line.description)}
         <small>${escapePrebillText(line.addedByName)}</small></td>
         <td>${line.quantity}</td><td>${money.format(line.total)}</td></tr>`).join("");
+      const tip = includeTip && bill.suggestedTipAmount > 0;
       printWindow.document.open();
       printWindow.document.write(`<!doctype html><html lang="es"><head>
         <meta charset="utf-8"><title>Precuenta · Mesa ${escapePrebillText(bill.tableCode)}</title>
@@ -615,26 +627,31 @@ export function RestaurantPosWorkspace({ option }: {
         · Revisión ${bill.accountVersion}</div>
         <div class="notice">Precuenta · No es factura</div>
         <table><tbody>${rows}</tbody></table>
-        <div class="total"><span>Total</span><span>${money.format(bill.total)}</span></div>
+        <div class="total"><span>Consumo</span><span>${money.format(bill.total)}</span></div>
+        ${tip ? `<div class="total"><span>Propina voluntaria sugerida (${bill.suggestedTipPercent} %)</span><span>${money.format(bill.suggestedTipAmount)}</span></div>
+        <div class="total"><span>Total sugerido</span><span>${money.format(bill.total + bill.suggestedTipAmount)}</span></div>
+        <p class="meta">La propina es voluntaria. Puedes aceptarla, cambiarla o no pagarla.</p>` : ""}
         <p class="meta">Confirma el pago en caja. La factura se emite al cobrar.</p>
         <button onclick="window.print()">Imprimir precuenta</button></body></html>`);
       printWindow.document.close();
       printWindow.focus();
+      setPrebillPreview(null);
     } catch (error) {
       printWindow.close();
       toast.error(error instanceof Error ? error.message :
         "No se pudo preparar la precuenta.");
-    } finally { setBusy(false); }
+    }
   }
 
   async function captureCollection(
     allocations: RestaurantCollectionAllocation[],
     payments: PosPaymentInput[],
+    tipPayment: PosPaymentInput | null,
   ): Promise<RestaurantCollectionSummary> {
     if (!draft || !option.workSessionId || !collectionSummary)
       throw new Error("Vuelve a abrir el cobro de la mesa.");
     const signature = JSON.stringify({ accountId: draft.account.accountId,
-      version: collectionSummary.accountVersion, allocations, payments });
+      version: collectionSummary.accountVersion, allocations, payments, tipPayment });
     if (captureAttempt.current?.signature !== signature)
       captureAttempt.current = { signature, id: crypto.randomUUID() };
     const collectionId = captureAttempt.current.id;
@@ -642,7 +659,7 @@ export function RestaurantPosWorkspace({ option }: {
       draft.account.accountId, {
         collectionId, workSessionId: option.workSessionId,
         expectedAccountVersion: collectionSummary.accountVersion,
-        allocations, payments,
+        allocations, payments, tipPayment,
       }, collectionId);
     captureAttempt.current = null;
     setCollectionSummary(updated);
@@ -811,7 +828,7 @@ export function RestaurantPosWorkspace({ option }: {
               return <div key={cancellation.cancellationId} className="mt-3 rounded-xl border border-teal-300 bg-teal-50 p-3 text-sm text-teal-950 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-100"><p className="font-bold">{original.description} · {cancellation.quantity} cancelada(s)</p><p className="mt-1">El primer intento ya quedó registrado como pérdida. Puedes preparar otro sin cobrar ambos.</p><Button size="sm" variant="outline" className="mt-3 min-h-10 border-teal-500" disabled={busy || !!pendingSend} onClick={() => void reworkProduct(cancellation)}>Rehacer plato</Button></div>;
             })}
             {cancellations.isError && <p role="alert" className="mt-3 text-sm text-destructive">No se pudo verificar el estado de las cancelaciones. Vuelve a abrir la mesa.</p>}
-            {(canAdd || permissions.includes("sales.create")) && draft.account.status === "Open" && <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-muted/20 p-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-background text-primary shadow-sm"><FileText className="h-5 w-5"/></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Precuenta</p><p className="text-xs text-muted-foreground">Para mostrar al cliente · no es factura</p></div><Button size="sm" variant="outline" className="shrink-0 rounded-xl" disabled={busy || !!pendingSend || pendingCount > 0 || activeCancellations.length > 0 || cancellations.isLoading || cancellations.isError || !groups.length} onClick={() => void printPrebill()}>Imprimir</Button></div>}
+            {(canAdd || permissions.includes("sales.create")) && draft.account.status === "Open" && <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-muted/20 p-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-background text-primary shadow-sm"><FileText className="h-5 w-5"/></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Precuenta</p><p className="text-xs text-muted-foreground">Para mostrar al cliente · no es factura</p></div><Button size="sm" variant="outline" className="shrink-0 rounded-xl" disabled={busy || !!pendingSend || pendingCount > 0 || activeCancellations.length > 0 || cancellations.isLoading || cancellations.isError || !groups.length} onClick={() => void preparePrebill()}>Imprimir</Button></div>}
             {permissions.includes("sales.create") && option.workSessionId && draft.account.status === "Open" && <Button className="mt-3 min-h-14 w-full justify-between rounded-2xl bg-slate-900 px-5 text-base font-bold text-white shadow-lg shadow-slate-900/15 hover:bg-slate-800 disabled:border disabled:border-dashed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500 disabled:opacity-100 disabled:shadow-none dark:bg-emerald-100 dark:text-emerald-950 dark:hover:bg-white dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400" disabled={busy || !!pendingSend || pendingCount > 0 || activeCancellations.length > 0 || cancellations.isLoading || cancellations.isError || !groups.length} onClick={() => void openCheckout()}><span>Facturar mesa</span><ArrowRight className="h-5 w-5"/></Button>}
             {pendingCount > 0 && permissions.includes("sales.create") && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Envía o retira los pendientes antes de facturar.</p>}
             <p className="mt-2 text-xs text-muted-foreground">Solo los productos con estación se envían a comanda. Los demás se cobran directamente.</p>
@@ -841,6 +858,19 @@ export function RestaurantPosWorkspace({ option }: {
       onClose={() => { if (!busy) { setCheckoutPreview(null); setCheckoutKey(null); setCollectionSummary(null); } }}
       onCapture={captureCollection} onReverse={reverseCollection}
       onFinalize={completeCheckout}/>}
+    {prebillPreview && <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Preparar precuenta">
+      <div className="w-full max-w-md rounded-3xl bg-card p-6 shadow-2xl">
+        <p className="text-xs font-bold uppercase tracking-widest text-primary">Mesa {prebillPreview.tableCode}</p>
+        <h2 className="mt-1 text-2xl font-bold">Precuenta</h2>
+        <p className="mt-2 text-sm text-muted-foreground">El cliente decide si deja propina. La factura registra solamente el consumo.</p>
+        <div className="mt-5 rounded-2xl border p-4"><div className="flex justify-between font-semibold"><span>Consumo</span><span>{money.format(prebillPreview.total)}</span></div>
+          {prebillPreview.suggestedTipPercent > 0 && <><div className="mt-3 flex justify-between text-sm"><span>Propina sugerida · {prebillPreview.suggestedTipPercent} %</span><span>{money.format(prebillPreview.suggestedTipAmount)}</span></div><div className="mt-3 flex justify-between border-t pt-3 text-lg font-bold"><span>Total sugerido</span><span>{money.format(prebillPreview.total + prebillPreview.suggestedTipAmount)}</span></div></>}
+        </div>
+        <div className="mt-5 grid gap-2 sm:grid-cols-2"><Button variant="outline" className="min-h-12" onClick={() => printPrebill(prebillPreview, false)}>Sin propina</Button>
+          {prebillPreview.suggestedTipPercent > 0 && <Button className="min-h-12" onClick={() => printPrebill(prebillPreview, true)}>Incluir {prebillPreview.suggestedTipPercent} %</Button>}</div>
+        <Button variant="ghost" className="mt-2 w-full" onClick={() => setPrebillPreview(null)}>Cerrar</Button>
+      </div>
+    </div>}
     {printerOpen && <PosPrinterDialog client={null} browserOnly onClose={() => setPrinterOpen(false)}/>}
     {pendingTable && <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Identificar mesero">
       <div className="w-full max-w-lg rounded-[2rem] border bg-card p-5 shadow-2xl sm:p-7">

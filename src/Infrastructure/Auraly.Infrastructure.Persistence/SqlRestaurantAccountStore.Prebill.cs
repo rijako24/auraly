@@ -52,17 +52,28 @@ public sealed partial class SqlRestaurantAccountStore
             throw new RestaurantAccountValidationException(
                 "La mesa no tiene productos para imprimir.");
         await using var table = new SqlCommand("""
-            SELECT Code FROM sales.RestaurantTables
-            WHERE TableId=@TableId AND BusinessId=@BusinessId
-              AND TenantId=@TenantId;
+            SELECT restaurantTable.Code,business.RestaurantSuggestedTipPercent
+            FROM sales.RestaurantTables restaurantTable
+            JOIN dbo.Businesses business
+              ON business.BusinessId=restaurantTable.BusinessId
+             AND business.TenantId=restaurantTable.TenantId
+            WHERE restaurantTable.TableId=@TableId
+              AND restaurantTable.BusinessId=@BusinessId
+              AND restaurantTable.TenantId=@TenantId;
             """, connection, transaction);
         AddScope(table, actor);
         table.Parameters.AddWithValue("@TableId", account.TableId);
-        var tableCode = (string?)await table.ExecuteScalarAsync(ct)
-            ?? throw new RestaurantAccountConflictException(
-                "La mesa no está disponible.");
+        await using var tableReader = await table.ExecuteReaderAsync(ct);
+        if (!await tableReader.ReadAsync(ct))
+            throw new RestaurantAccountConflictException("La mesa no está disponible.");
+        var tableCode = tableReader.GetString(0);
+        var suggestedTipPercent = tableReader.GetDecimal(1);
+        await tableReader.DisposeAsync();
+        var total = lines.Sum(line => line.Total);
         var prebill = new RestaurantPrebill(accountId, tableCode,
-            expectedVersion, now, lines, lines.Sum(line => line.Total));
+            expectedVersion, now, lines, total, suggestedTipPercent,
+            decimal.Round(total * suggestedTipPercent / 100, 0,
+                MidpointRounding.AwayFromZero));
         await using var audit = new SqlCommand("""
             INSERT dbo.AuditLogs
               (AuditLogId,UserId,TenantId,BusinessId,Action,EntityType,
@@ -78,7 +89,8 @@ public sealed partial class SqlRestaurantAccountStore
             JsonSerializer.Serialize(new {
                 account.TableId, TableCode = tableCode,
                 AccountVersion = expectedVersion,
-                prebill.Total, LineCount = lines.Length,
+                prebill.Total, prebill.SuggestedTipPercent,
+                prebill.SuggestedTipAmount, LineCount = lines.Length,
                 actor.ConnectedUserId, actor.CredentialVerified
             });
         audit.Parameters.AddWithValue("@Now", now.UtcDateTime);

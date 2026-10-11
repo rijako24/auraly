@@ -94,6 +94,8 @@ public static class AccountingProcessingPolicy
         "PreexistingReceivable",
         "CashReceipt",
         "CashDisbursement",
+        "RestaurantTip",
+        "RestaurantTipReversal",
         "Expense",
         "ExpenseCancellation",
         AccountingManualDocumentTypes.AccountAdjustment,

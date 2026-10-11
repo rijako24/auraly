@@ -10,6 +10,8 @@ CREATE TABLE [sales].[RestaurantAccountCollections]
     [RequestHash] BINARY(32) NOT NULL,
     [PaymentsJson] NVARCHAR(MAX) NOT NULL,
     [Amount] DECIMAL(19,4) NOT NULL,
+    [TipAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_RestaurantAccountCollections_TipAmount] DEFAULT (0),
+    [TipPaymentsJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_RestaurantAccountCollections_TipPaymentsJson] DEFAULT N'[]',
     [Status] NVARCHAR(16) NOT NULL CONSTRAINT [DF_RestaurantAccountCollections_Status] DEFAULT N'Captured',
     [CapturedAt] DATETIMEOFFSET(7) NOT NULL,
     [ReversedAt] DATETIMEOFFSET(7) NULL,
@@ -22,7 +24,9 @@ CREATE TABLE [sales].[RestaurantAccountCollections]
     CONSTRAINT [FK_RestaurantAccountCollections_Session] FOREIGN KEY ([WorkSessionId],[BusinessId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId],[BusinessId]),
     CONSTRAINT [FK_RestaurantAccountCollections_Cashier] FOREIGN KEY ([CashierUserId],[TenantId]) REFERENCES [dbo].[AppUsers] ([UserId],[TenantId]),
     CONSTRAINT [FK_RestaurantAccountCollections_Reverser] FOREIGN KEY ([ReversedByUserId],[TenantId]) REFERENCES [dbo].[AppUsers] ([UserId],[TenantId]),
-    CONSTRAINT [CK_RestaurantAccountCollections_Amount] CHECK ([Amount]>0),
+    CONSTRAINT [CK_RestaurantAccountCollections_Amount] CHECK
+        (([Amount]>0 AND [TipAmount]>=0) OR ([Amount]=0 AND [TipAmount]>0)),
+    CONSTRAINT [CK_RestaurantAccountCollections_TipAmount] CHECK ([TipAmount]>=0),
     CONSTRAINT [CK_RestaurantAccountCollections_Status] CHECK
         (([Status]=N'Captured' AND [ReversedAt] IS NULL AND [ReversedByUserId] IS NULL)
          OR ([Status]=N'Reversed' AND [ReversedAt] IS NOT NULL AND [ReversedByUserId] IS NOT NULL))

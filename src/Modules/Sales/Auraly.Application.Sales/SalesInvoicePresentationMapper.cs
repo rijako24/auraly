@@ -51,7 +51,8 @@ public static class SalesInvoicePresentationMapper
             request.Credit is null ? null : new CreditSaleAcknowledgement(
                 request.DocumentId, request.DocumentNumber.FullNumber, snapshot.IssuedAt,
                 customerName, snapshot.CustomerIdentification, request.Credit.Amount,
-                request.Credit.RemainingCredit, request.Credit.SoldByName ?? "Usuario"));
+                request.Credit.RemainingCredit, request.Credit.SoldByName ?? "Usuario"),
+            request.TableId is not null);
     }
 
     public static OnlineSalesReceipt From(
@@ -86,7 +87,8 @@ public static class SalesInvoicePresentationMapper
         IReadOnlyList<OnlineSalesReceiptLine> lines,
         IReadOnlyList<OnlineSalesPayment> payments, PosSaleUblSnapshotContract? ubl,
         string customerName, string? fiscalStatus,
-        CreditSaleAcknowledgement? creditAcknowledgement) => new(
+        CreditSaleAcknowledgement? creditAcknowledgement,
+        bool isRestaurantSale = false) => new(
             documentId, documentType, documentNumber, fiscalNumber, commercial.IssuedAt,
             commercial.CustomerIdentification, lines, payments, commercial.UntaxedAmount,
             commercial.TaxAmount, commercial.PayableAmount, fiscal?.Cufe, fiscal?.QrPayload,
@@ -98,7 +100,8 @@ public static class SalesInvoicePresentationMapper
             InvoicePrintDetails: PrintDetails(ubl),
             CustomerPhone: ubl?.Customer.Telephone ?? commercial.CustomerPhone,
             CustomerAddress: ubl?.Customer.Address.AddressLine ?? commercial.CustomerAddress,
-            PayableRoundingAmount: commercial.PayableRoundingAmount);
+            PayableRoundingAmount: commercial.PayableRoundingAmount,
+            IsRestaurantSale: isRestaurantSale);
 
     private static OnlineSalesPayment Payment(PosSalePaymentContract payment) => new(
         payment.MethodCode, payment.Amount, payment.Reference, payment.CardFranchiseCode,

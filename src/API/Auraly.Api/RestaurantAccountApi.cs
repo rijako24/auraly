@@ -5,6 +5,7 @@ using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Sales;
 using Auraly.Application.Authorization;
 using Auraly.Contracts.Authorization;
+using Auraly.Commerce.Accounting.Application;
 
 namespace Auraly.Api;
 
@@ -203,17 +204,32 @@ public static class RestaurantAccountApi
                 Actor(context), accountId, ct))));
         group.MapPost("/accounts/{accountId:guid}/collections", async (
             HttpContext context, RestaurantCollectionService service,
+            AccountingProcessingCoordinator accounting,
             Guid accountId, CaptureRestaurantCollectionRequest request,
-            CancellationToken ct) => await Handle(async () => Results.Ok(
-                await service.CaptureAsync(Actor(context), accountId, request,
-                    context.Request.Headers["Idempotency-Key"].ToString(), ct))));
+            CancellationToken ct) => await Handle(async () =>
+            {
+                var actor = Actor(context);
+                var result = await service.CaptureAsync(actor, accountId, request,
+                    context.Request.Headers["Idempotency-Key"].ToString(), ct);
+                if (request.TipPayment is not null)
+                    await accounting.RequestPostingAsync(actor.BusinessId,
+                        request.CollectionId, "RestaurantTip", ct);
+                return Results.Ok(result);
+            }));
         group.MapPost("/accounts/{accountId:guid}/collections/{collectionId:guid}/reverse", async (
             HttpContext context, RestaurantCollectionService service,
+            AccountingProcessingCoordinator accounting,
             Guid accountId, Guid collectionId,
             ReverseRestaurantCollectionRequest request,
-            CancellationToken ct) => await Handle(async () => Results.Ok(
-                await service.ReverseAsync(Actor(context), accountId,
-                    collectionId, request.ExpectedAccountVersion, ct))));
+            CancellationToken ct) => await Handle(async () =>
+            {
+                var actor = Actor(context);
+                var result = await service.ReverseAsync(actor, accountId,
+                    collectionId, request.ExpectedAccountVersion, ct);
+                await accounting.RequestPostingAsync(actor.BusinessId,
+                    collectionId, "RestaurantTipReversal", ct);
+                return Results.Ok(result);
+            }));
         group.MapPost("/accounts/{accountId:guid}/complete", async (
             HttpContext context, OnlineSalesCheckoutService service,
             PosApprovalService approvals, Guid accountId,

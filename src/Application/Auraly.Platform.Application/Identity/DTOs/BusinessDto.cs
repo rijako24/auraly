@@ -15,4 +15,5 @@ public record BusinessDto(
     DateTime CreatedAt,
     string PointOfSaleMode = Auraly.Platform.Domain.Enums.PointOfSaleModes.DirectSale,
     bool RestaurantRequireWaiterCredential = true,
-    bool RestaurantRestrictTableToWaiter = false);
+    bool RestaurantRestrictTableToWaiter = false,
+    decimal RestaurantSuggestedTipPercent = 0);

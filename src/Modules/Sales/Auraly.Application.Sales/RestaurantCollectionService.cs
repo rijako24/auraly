@@ -36,12 +36,15 @@ public sealed class RestaurantCollectionService(
         DemandCashier(actor, accountId);
         if (request.CollectionId == Guid.Empty || request.WorkSessionId == Guid.Empty ||
             request.ExpectedAccountVersion < 1 ||
-            request.Allocations.Count is < 1 or > 500 ||
+            request.Allocations.Count > 500 ||
             request.Allocations.Any(line => line.AdditionId == Guid.Empty ||
                 line.Quantity <= 0 || line.Quantity > 100000m) ||
             request.Allocations.Select(line => line.AdditionId).Distinct().Count() !=
                 request.Allocations.Count ||
-            request.Payments.Count is < 1 or > 10 ||
+            request.Payments.Count > 10 ||
+            (request.Allocations.Count == 0 &&
+              (request.Payments.Count != 0 || request.TipPayment is null)) ||
+            (request.Allocations.Count > 0 && request.Payments.Count == 0) ||
             request.Payments.Any(payment => payment.MethodCode is not
                 ("Cash" or "DebitCard" or "CreditCard" or "Transfer") ||
                 payment.Amount <= 0 || payment.RoundingAdjustment != 0 ||
@@ -54,6 +57,18 @@ public sealed class RestaurantCollectionService(
                 payment.MethodCode == "Transfer" &&
                     string.IsNullOrWhiteSpace(payment.Reference)) ||
             request.Payments.Count(payment => payment.MethodCode == "Cash") > 1 ||
+            request.TipPayment is { } tip &&
+              (tip.MethodCode is not ("Cash" or "DebitCard" or "CreditCard" or "Transfer") ||
+               tip.Amount <= 0 || tip.Amount > 1000000000m ||
+               decimal.Truncate(tip.Amount) != tip.Amount ||
+               tip.RoundingAdjustment != 0 ||
+               tip.TenderedAmount is { } tipTendered &&
+                 (tip.MethodCode != "Cash" || tipTendered != tip.Amount) ||
+               tip.MethodCode != "Transfer" && tip.BankAccountId is not null ||
+               (tip.MethodCode is "DebitCard" or "CreditCard") !=
+                 (!string.IsNullOrWhiteSpace(tip.CardFranchiseCode) &&
+                  !string.IsNullOrWhiteSpace(tip.ApprovalNumber)) ||
+               tip.MethodCode == "Transfer" && string.IsNullOrWhiteSpace(tip.Reference)) ||
             string.IsNullOrWhiteSpace(idempotencyKey) ||
             idempotencyKey.Length > 128)
             throw new RestaurantAccountValidationException(

@@ -18,7 +18,8 @@ public sealed record RestaurantCollectionAllocationRequest(
 public sealed record CaptureRestaurantCollectionRequest(
     Guid CollectionId, Guid WorkSessionId, long ExpectedAccountVersion,
     IReadOnlyList<RestaurantCollectionAllocationRequest> Allocations,
-    IReadOnlyList<OnlineSalesPayment> Payments);
+    IReadOnlyList<OnlineSalesPayment> Payments,
+    OnlineSalesPayment? TipPayment = null);
 
 public sealed record ReverseRestaurantCollectionRequest(long ExpectedAccountVersion);
 
@@ -29,12 +30,19 @@ public sealed record RestaurantCollection(
     Guid CollectionId, Guid AccountId, Guid WorkSessionId,
     Guid CashierUserId, decimal Amount, DateTimeOffset CapturedAt,
     IReadOnlyList<RestaurantCollectionAllocation> Allocations,
-    IReadOnlyList<OnlineSalesPayment> Payments);
+    IReadOnlyList<OnlineSalesPayment> Payments,
+    OnlineSalesPayment? TipPayment = null);
 
 public sealed record RestaurantCollectionSummary(
     Guid AccountId, long AccountVersion, decimal Total, decimal Collected,
     decimal Remaining, IReadOnlyList<RestaurantCollection> Collections,
-    IReadOnlyList<RestaurantCollectionAllocation> CoveredQuantities);
+    IReadOnlyList<RestaurantCollectionAllocation> CoveredQuantities,
+    decimal TipsCollected = 0,
+    decimal SuggestedTipPercent = 0);
+
+public sealed record RestaurantTipAccountingPayload(
+    Guid CollectionId, Guid AccountId, Guid TenantId, Guid BusinessId,
+    Guid WorkSessionId, OnlineSalesPayment Payment, bool IsReversal);
 
 public sealed record PrintRestaurantPrebillRequest(long ExpectedVersion);
 
@@ -45,7 +53,8 @@ public sealed record RestaurantPrebillLine(
 public sealed record RestaurantPrebill(
     Guid AccountId, string TableCode, long AccountVersion,
     DateTimeOffset PrintedAt, IReadOnlyList<RestaurantPrebillLine> Lines,
-    decimal Total);
+    decimal Total, decimal SuggestedTipPercent = 0,
+    decimal SuggestedTipAmount = 0);
 
 public sealed record RestaurantTableOccupancy(
     Guid TableId, Guid? AccountId, string State, Guid? ResponsibleUserId,

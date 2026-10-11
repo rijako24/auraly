@@ -173,6 +173,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Website).HasMaxLength(500);
             entity.Property(e => e.TimeZone).IsRequired().HasMaxLength(100);
             entity.Property(e => e.PointOfSaleMode).IsRequired().HasMaxLength(32);
+            entity.Property(e => e.RestaurantSuggestedTipPercent).HasPrecision(5, 2);
 
                 entity.HasOne(e => e.Tenant)
                   .WithMany(t => t.Businesses)

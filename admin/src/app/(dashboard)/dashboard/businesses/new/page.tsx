@@ -40,6 +40,7 @@ export default function NewBusinessPage() {
     pointOfSaleMode: "DirectSale" as Business["pointOfSaleMode"],
     restaurantRequireWaiterCredential: true,
     restaurantRestrictTableToWaiter: false,
+    restaurantSuggestedTipPercent: 0,
     priceSourceBusinessId: "",
   });
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
@@ -99,6 +100,8 @@ export default function NewBusinessPage() {
               <Switch checked={form.restaurantRequireWaiterCredential} disabled={form.restaurantRestrictTableToWaiter} onCheckedChange={(checked) => set("restaurantRequireWaiterCredential", checked)} /></label>
             <label className="flex items-center justify-between gap-4"><span><span className="block font-medium">Restringir mesa al mesero responsable</span><span className="text-xs text-muted-foreground">Requiere pedir clave para comprobar quién atiende.</span></span>
               <Switch checked={form.restaurantRestrictTableToWaiter} onCheckedChange={(checked) => setForm((current) => ({ ...current, restaurantRestrictTableToWaiter: checked, restaurantRequireWaiterCredential: checked || current.restaurantRequireWaiterCredential }))} /></label>
+            <Field label="Propina sugerida en la precuenta (%)"><Input type="number" min="0" max="10" step="0.01" value={form.restaurantSuggestedTipPercent}
+              onChange={(event) => set("restaurantSuggestedTipPercent", Number(event.target.value))} /></Field>
           </div>}
 
           <div className="space-y-3 rounded-2xl border border-primary/20 bg-primary/5 p-4 sm:col-span-2">

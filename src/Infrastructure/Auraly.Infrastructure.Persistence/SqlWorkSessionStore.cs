@@ -785,6 +785,19 @@ public sealed partial class SqlWorkSessionStore(
                       AND payload.DocumentType=d.DocumentType
                   )
                 UNION ALL
+                SELECT COALESCE(mapping.ClosureMethodCode,tip.MethodCode),
+                       N'RestaurantTip',tip.Amount
+                FROM sales.RestaurantAccountCollections collection
+                INNER JOIN SessionScope session
+                  ON session.WorkSessionId=collection.WorkSessionId
+                 AND session.BusinessId=collection.BusinessId
+                CROSS APPLY OPENJSON(collection.TipPaymentsJson)
+                  WITH(MethodCode nvarchar(32) '$.MethodCode',
+                       Amount decimal(19,4) '$.Amount') tip
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
+                  ON mapping.PaymentMethodCode=tip.MethodCode
+                WHERE collection.Status=N'Captured'
+                UNION ALL
                 SELECT N'Credit',N'SalePayment',CreditAmount
                 FROM dbo.SalesDocuments d
                 INNER JOIN SessionScope session

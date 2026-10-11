@@ -11,4 +11,5 @@ public record UpdateBusinessRequest(
     bool? SharesProductPrices = null,
     string? PointOfSaleMode = null,
     bool? RestaurantRequireWaiterCredential = null,
-    bool? RestaurantRestrictTableToWaiter = null);
+    bool? RestaurantRestrictTableToWaiter = null,
+    decimal? RestaurantSuggestedTipPercent = null);

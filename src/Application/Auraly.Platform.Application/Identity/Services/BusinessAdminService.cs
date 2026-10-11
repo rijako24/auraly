@@ -76,6 +76,10 @@ public class BusinessAdminService : IBusinessAdminService
         await ValidatePointOfSaleModeAsync(mode, ct);
         ValidateRestaurantWaiterPolicy(request.RestaurantRequireWaiterCredential,
             request.RestaurantRestrictTableToWaiter);
+        ValidateSuggestedTip(request.RestaurantSuggestedTipPercent);
+        if (mode != PointOfSaleModes.RestaurantBar && request.RestaurantSuggestedTipPercent != 0)
+            throw new DomainValidationException(nameof(CreateBusinessRequest.RestaurantSuggestedTipPercent),
+                "La propina sugerida solo aplica a sedes de restaurante y bar.");
         var business = new Business
         {
             BusinessId = Guid.NewGuid(),
@@ -91,6 +95,8 @@ public class BusinessAdminService : IBusinessAdminService
             PointOfSaleMode = mode,
             RestaurantRequireWaiterCredential = request.RestaurantRequireWaiterCredential,
             RestaurantRestrictTableToWaiter = request.RestaurantRestrictTableToWaiter,
+            RestaurantSuggestedTipPercent = mode == PointOfSaleModes.RestaurantBar
+                ? request.RestaurantSuggestedTipPercent : 0,
             IsActive = true,
             CreatedAt = _clock.GetUtcNow().UtcDateTime
         };
@@ -128,6 +134,14 @@ public class BusinessAdminService : IBusinessAdminService
         ValidateRestaurantWaiterPolicy(
             request.RestaurantRequireWaiterCredential ?? business.RestaurantRequireWaiterCredential,
             request.RestaurantRestrictTableToWaiter ?? business.RestaurantRestrictTableToWaiter);
+        if (request.RestaurantSuggestedTipPercent is { } suggestedTip)
+        {
+            ValidateSuggestedTip(suggestedTip);
+            if ((request.PointOfSaleMode ?? business.PointOfSaleMode) != PointOfSaleModes.RestaurantBar &&
+                suggestedTip != 0)
+                throw new DomainValidationException(nameof(UpdateBusinessRequest.RestaurantSuggestedTipPercent),
+                    "La propina sugerida solo aplica a sedes de restaurante y bar.");
+        }
 
         if (request.Name is not null) business.Name = request.Name;
         if (request.Description is not null) business.Description = request.Description;
@@ -142,6 +156,10 @@ public class BusinessAdminService : IBusinessAdminService
             business.RestaurantRequireWaiterCredential = request.RestaurantRequireWaiterCredential.Value;
         if (request.RestaurantRestrictTableToWaiter is not null)
             business.RestaurantRestrictTableToWaiter = request.RestaurantRestrictTableToWaiter.Value;
+        if (request.RestaurantSuggestedTipPercent is not null)
+            business.RestaurantSuggestedTipPercent = request.RestaurantSuggestedTipPercent.Value;
+        if (business.PointOfSaleMode != PointOfSaleModes.RestaurantBar)
+            business.RestaurantSuggestedTipPercent = 0;
 
         business.UpdatedAt = _clock.GetUtcNow().UtcDateTime;
         await _unitOfWork.ExecuteInTransactionAsync(async () =>
@@ -198,6 +216,13 @@ public class BusinessAdminService : IBusinessAdminService
                 "Para restringir una mesa a su mesero responsable debes pedir la clave al seleccionar mesero.");
     }
 
+    private static void ValidateSuggestedTip(decimal percent)
+    {
+        if (percent < 0 || percent > 10 || decimal.Round(percent, 2) != percent)
+            throw new DomainValidationException(nameof(UpdateBusinessRequest.RestaurantSuggestedTipPercent),
+                "La propina sugerida debe estar entre 0 % y 10 %, con máximo dos decimales.");
+    }
+
     private async Task ValidatePointOfSaleModeAsync(string mode, CancellationToken ct)
     {
         if (!PointOfSaleModes.IsSupported(mode) ||
@@ -218,5 +243,5 @@ public class BusinessAdminService : IBusinessAdminService
         b.BusinessId, b.TenantId, b.Name, b.Description, b.Address,
         b.Phone, b.Email, b.Website, b.TimeZone, b.SharesProductPrices, b.IsActive, b.CreatedAt,
         b.PointOfSaleMode, b.RestaurantRequireWaiterCredential,
-        b.RestaurantRestrictTableToWaiter);
+        b.RestaurantRestrictTableToWaiter, b.RestaurantSuggestedTipPercent);
 }
