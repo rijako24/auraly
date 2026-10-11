@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Application.Fiscal;
 using Auraly.Api;
 using Microsoft.Data.SqlClient;
@@ -207,6 +208,10 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
                 connection.ClientAccessUri.Query, StringComparison.Ordinal);
             Assert.Contains("stream=RestaurantCommands",
                 connection.ClientAccessUri.Query, StringComparison.Ordinal);
+            Assert.Contains(
+                PosSynchronizationGroups.RestaurantCommands(
+                    fixture.TenantId, fixture.BusinessId),
+                connection.Groups!);
             using var generic = await kitchen.PostAsync(
                 $"/api/commerce/v1/pos/workspace/synchronization/negotiate?businessId={fixture.BusinessId:D}",
                 null);

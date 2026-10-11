@@ -228,9 +228,11 @@ export default function RestaurantCommandsPage() {
           document.visibilityState !== "visible") return;
       connecting = true;
       try {
-        const negotiation = await apiClient.post<{ clientAccessUri: string }>(
+        const negotiation = await apiClient.post<{ clientAccessUri: string; groups?: string[] }>(
           "/commerce/v1/restaurant/command-cards/synchronization/negotiate", {});
         if (closed || !navigator.onLine || document.visibilityState !== "visible") return;
+        const group = negotiation.groups?.[0];
+        if (!group) throw new Error("La estación no tiene un canal de comandas disponible.");
         const current = new WebSocket(negotiation.clientAccessUri, "json.webpubsub.azure.v1");
         socket = current;
         current.addEventListener("open", () => {
@@ -240,11 +242,20 @@ export default function RestaurantCommandsPage() {
             return;
           }
           openedAt = Date.now();
-          setPushConnected(true);
-          void client.invalidateQueries({ queryKey: ["restaurant", businessId, "command-cards"] });
+          current.send(JSON.stringify({ type: "joinGroup", group, ackId: 1 }));
         });
         current.addEventListener("message", (event) => {
-          if (socket === current && isRestaurantCommandNotice(event.data))
+          if (socket !== current) return;
+          try {
+            const response = JSON.parse(event.data);
+            if (response.type === "ack" && response.ackId === 1) {
+              if (!response.success) { current.close(); return; }
+              setPushConnected(true);
+              void client.invalidateQueries({ queryKey: ["restaurant", businessId, "command-cards"] });
+              return;
+            }
+          } catch { /* Other messages are checked below. */ }
+          if (isRestaurantCommandNotice(event.data))
             void client.invalidateQueries({ queryKey: ["restaurant", businessId, "command-cards"] });
         });
         current.addEventListener("close", () => {

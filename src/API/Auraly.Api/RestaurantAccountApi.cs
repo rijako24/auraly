@@ -29,7 +29,9 @@ public static class RestaurantAccountApi
                 return Results.Ok(new PosSynchronizationNegotiationResponse(
                     gateway.CreateRestaurantCommandsClientAccessUri(
                         actor.TenantId, actor.BusinessId, actor.UserId, ct),
-                    DateTimeOffset.UtcNow.AddMinutes(15)));
+                    DateTimeOffset.UtcNow.AddMinutes(15),
+                    [PosSynchronizationGroups.RestaurantCommands(
+                        actor.TenantId, actor.BusinessId)]));
             }));
         group.MapGet("/waiters", async (
             HttpContext context, RestaurantAttentionService attention,
