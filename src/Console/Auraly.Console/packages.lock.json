@@ -687,6 +687,14 @@
           "System.Drawing.Common": "6.0.0"
         }
       },
+      "auraly.application.authentication": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Authentication": "[1.0.0, )",
+          "Auraly.Contracts.Authorization": "[1.0.0, )"
+        }
+      },
       "auraly.application.catalog": {
         "type": "Project",
         "dependencies": {
@@ -733,6 +741,7 @@
       "auraly.application.sales": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.Authentication": "[1.0.0, )",
           "Auraly.Application.Catalog": "[1.0.0, )",
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Application.Expenses": "[1.0.0, )",
@@ -929,6 +938,7 @@
         "dependencies": {
           "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
+          "Auraly.Contracts.Catalog": "[1.0.0, )",
           "Auraly.Contracts.Parties": "[1.0.0, )",
           "Auraly.Platform.Domain": "[1.0.0, )",
           "Microsoft.Extensions.Caching.Memory": "[8.0.1, )",

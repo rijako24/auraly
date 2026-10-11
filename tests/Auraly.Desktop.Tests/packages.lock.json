@@ -1245,6 +1245,14 @@
           "xunit.extensibility.core": "[2.6.2]"
         }
       },
+      "auraly.application.authentication": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Authentication": "[1.0.0, )",
+          "Auraly.Contracts.Authorization": "[1.0.0, )"
+        }
+      },
       "auraly.application.catalog": {
         "type": "Project",
         "dependencies": {
@@ -1291,6 +1299,7 @@
       "auraly.application.sales": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.Authentication": "[1.0.0, )",
           "Auraly.Application.Catalog": "[1.0.0, )",
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Application.Expenses": "[1.0.0, )",
