@@ -144,12 +144,15 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
         Assert.Contains(movements.Items, item =>
             item.DocumentId == adjustmentId && item.QuantityChange == 1m);
 
-        var history = await inventory.GetFromJsonAsync<InventoryOperationPage>(
-            $"/api/commerce/v1/inventory/operations?warehouseId={fixture.WarehouseId:D}&page=1&pageSize=50");
-        Assert.NotNull(history);
-        Assert.Contains(history.Items, item => item.DocumentId == receiptId && item.Status == "Processed");
-        Assert.Contains(history.Items, item => item.DocumentId == countId && item.Status == "Processed");
-        Assert.Contains(history.Items, item => item.DocumentId == adjustmentId && item.Status == "Processed");
+        // Other integration tests share this business and can fill the first history page.
+        // Inspect each operation by its stable document ID instead of relying on pagination.
+        foreach (var documentId in new[] { receiptId, countId, adjustmentId })
+        {
+            var operation = await inventory.GetFromJsonAsync<InventoryOperationDetail>(
+                $"/api/commerce/v1/inventory/operations/{documentId:D}");
+            Assert.Equal(documentId, operation?.DocumentId);
+            Assert.Equal("Processed", operation?.Status);
+        }
 
         var online = await catalog.GetFromJsonAsync<ProductPage>(
             $"/api/commerce/v1/products?barcode={Uri.EscapeDataString(barcode)}&page=1&pageSize=50");
