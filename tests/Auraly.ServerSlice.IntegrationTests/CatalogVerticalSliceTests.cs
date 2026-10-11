@@ -13,6 +13,30 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Local_sale_captured_before_ingredient_change_still_uploads()
+    {
+        var sale = fixture.CreateValidRequest(9_884);
+        await ExecuteAsync(
+            "UPDATE dbo.Products SET IsIngredient=1 WHERE ProductId=@Product;",
+            new SqlParameter("@Product", fixture.ProductId));
+        try
+        {
+            using var client = fixture.CreateClient();
+            using var upload = fixture.CreateUploadMessage(sale);
+            using var response = await client.SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+            Assert.Equal(1, await fixture.CountAsync("SalesDocuments", sale.DocumentId));
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "UPDATE dbo.Products SET IsIngredient=0 WHERE ProductId=@Product;",
+                new SqlParameter("@Product", fixture.ProductId));
+        }
+    }
+
+    [Fact]
     public async Task Ingredient_is_tenant_wide_and_local_catalog_sync_preserves_its_flag()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();

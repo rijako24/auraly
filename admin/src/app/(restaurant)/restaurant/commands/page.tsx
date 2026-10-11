@@ -68,6 +68,9 @@ export default function RestaurantCommandsPage() {
   const [page, setPage] = useState(1);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [pushConnected, setPushConnected] = useState(false);
+  const [pushConnecting, setPushConnecting] = useState(false);
+  const [pushIssue, setPushIssue] = useState("");
+  const [pushRevision, setPushRevision] = useState(0);
   const [pendingCardIds, setPendingCardIds] = useState<Set<string>>(() => new Set());
   const [partialRequest, setPartialRequest] = useState<{
     cancellationId: string; rowVersion: string; productName: string;
@@ -212,8 +215,13 @@ export default function RestaurantCommandsPage() {
     let socket: WebSocket | null = null;
     let connecting = false;
     let reconnectTimer: number | null = null;
+    let joinTimer: number | null = null;
     let failedAttempts = 0;
     let openedAt: number | null = null;
+    const clearJoinTimer = () => {
+      if (joinTimer !== null) window.clearTimeout(joinTimer);
+      joinTimer = null;
+    };
     const scheduleReconnect = () => {
       if (closed || reconnectTimer !== null || !navigator.onLine ||
           document.visibilityState !== "visible") return;
@@ -227,6 +235,9 @@ export default function RestaurantCommandsPage() {
       if (closed || connecting || socket || !navigator.onLine ||
           document.visibilityState !== "visible") return;
       connecting = true;
+      setPushConnected(false);
+      setPushConnecting(true);
+      setPushIssue("");
       try {
         const negotiation = await apiClient.post<{ clientAccessUri: string; groups?: string[] }>(
           "/commerce/v1/restaurant/command-cards/synchronization/negotiate", {});
@@ -243,14 +254,27 @@ export default function RestaurantCommandsPage() {
           }
           openedAt = Date.now();
           current.send(JSON.stringify({ type: "joinGroup", group, ackId: 1 }));
+          clearJoinTimer();
+          joinTimer = window.setTimeout(() => {
+            if (socket !== current || closed) return;
+            setPushIssue("No se confirmó la conexión con las comandas.");
+            current.close();
+          }, 8_000);
         });
         current.addEventListener("message", (event) => {
           if (socket !== current) return;
           try {
             const response = JSON.parse(event.data);
             if (response.type === "ack" && response.ackId === 1) {
-              if (!response.success) { current.close(); return; }
+              clearJoinTimer();
+              if (!response.success) {
+                setPushIssue("La estación no pudo unirse al canal de comandas.");
+                current.close();
+                return;
+              }
               setPushConnected(true);
+              setPushConnecting(false);
+              setPushIssue("");
               void client.invalidateQueries({ queryKey: ["restaurant", businessId, "command-cards"] });
               return;
             }
@@ -260,15 +284,26 @@ export default function RestaurantCommandsPage() {
         });
         current.addEventListener("close", () => {
           if (closed || socket !== current) return;
+          clearJoinTimer();
           socket = null;
           setPushConnected(false);
+          setPushConnecting(false);
+          setPushIssue((issue) => issue || "Se interrumpió la conexión en vivo.");
           if (wasRealtimeConnectionStable(openedAt, Date.now())) failedAttempts = 0;
           openedAt = null;
           scheduleReconnect();
         });
-        current.addEventListener("error", () => current.close());
-      } catch {
-        if (!closed) setPushConnected(false);
+        current.addEventListener("error", () => {
+          setPushIssue("No fue posible abrir el canal de comandas.");
+          current.close();
+        });
+      } catch (error) {
+        if (!closed) {
+          setPushConnected(false);
+          setPushConnecting(false);
+          setPushIssue(error instanceof Error ? error.message :
+            "No se pudo conectar con las comandas.");
+        }
       }
       finally {
         connecting = false;
@@ -282,6 +317,9 @@ export default function RestaurantCommandsPage() {
         socket?.close();
         socket = null;
         setPushConnected(false);
+        setPushConnecting(false);
+        setPushIssue(navigator.onLine ? "La vista está en segundo plano." :
+          "El dispositivo está sin conexión a Internet.");
         return;
       }
       if (socket?.readyState === WebSocket.OPEN) {
@@ -303,9 +341,10 @@ export default function RestaurantCommandsPage() {
       window.removeEventListener("offline", resume);
       document.removeEventListener("visibilitychange", resume);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      clearJoinTimer();
       socket?.close();
     };
-  }, [businessId, client]);
+  }, [businessId, client, pushRevision]);
 
   const activeStations = stations.data?.items.filter((station) => station.isActive) ?? [];
   const correctionStates = new Set(cards.data?.statesWithPendingCorrections ?? []);
@@ -318,7 +357,7 @@ export default function RestaurantCommandsPage() {
         <Button asChild variant="ghost" size="sm" className="mt-2 -ml-2 text-muted-foreground hover:text-foreground"><Link href={returnHref}><ArrowLeft className="mr-1 h-4 w-4"/>Volver</Link></Button>
       </div>
       <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-        <span className={`inline-flex rounded-full px-3 py-2 text-xs font-semibold ${pushConnected ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>{pushConnected ? "En vivo" : "Sin conexión en vivo"}</span>
+        <span role="status" title={pushIssue || undefined} className={`inline-flex rounded-full px-3 py-2 text-xs font-semibold ${pushConnected ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>{pushConnected ? "En vivo" : pushConnecting ? "Conectando…" : "Sin conexión en vivo"}</span>
         <nav aria-label="Estaciones" className="flex max-w-full gap-2 overflow-x-auto py-1">
           <button type="button" aria-pressed={!stationId} onClick={() => selectStation()}
             className={`flex min-h-12 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-bold shadow-sm transition-all active:scale-[.98] ${!stationId ? "border-primary bg-primary/10 text-primary shadow-primary/10" : "bg-card hover:border-primary/50 hover:shadow-md"}`}>
@@ -334,7 +373,7 @@ export default function RestaurantCommandsPage() {
           })}
         </nav>
         <Button variant={soundEnabled ? "default" : "outline"} className="h-12 rounded-2xl" onClick={() => void toggleSound()}><Volume2 className="mr-2 h-5 w-5"/>{soundEnabled ? "Sonido activo" : "Activar sonido"}</Button>
-        <Button variant="outline" className="h-12 rounded-2xl" onClick={() => void cards.refetch()} aria-label="Actualizar comandas"><RefreshCw className="h-5 w-5"/></Button>
+        <Button variant="outline" className="h-12 rounded-2xl" onClick={() => { void cards.refetch(); setPushRevision((revision) => revision + 1); }} aria-label="Actualizar comandas y conexión en vivo" title={pushIssue || "Actualizar comandas y conexión en vivo"}><RefreshCw className="h-5 w-5"/></Button>
       </div>
     </header>
     <div className="grid items-start gap-4 lg:grid-cols-[196px_minmax(0,1fr)]">

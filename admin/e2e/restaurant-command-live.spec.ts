@@ -54,6 +54,9 @@ test("una comanda enviada en un navegador llega al otro sin recargar", async ({ 
 
     await page.goto("/restaurant/commands");
     await expect(page.getByText("En vivo", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("combobox").click();
+    await page.getByPlaceholder("Escribe el número o nombre de mesa").fill(tableCode!);
+    await page.getByRole("option", { name: new RegExp(tableCode!) }).click();
     const commandPageUrl = page.url();
     await sender.goto("/pos/restaurant");
     await expect(sender.getByRole("heading", { name: "¿A qué mesa atendemos?" }))

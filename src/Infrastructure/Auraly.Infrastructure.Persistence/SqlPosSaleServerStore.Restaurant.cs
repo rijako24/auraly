@@ -29,7 +29,10 @@ public sealed partial class SqlPosSaleServerStore
               ON addition.AccountId=restaurant.AccountId
              AND addition.AdditionId=restaurant.AdditionId
              AND addition.TenantId=restaurant.TenantId
-            WHERE (product.IsIngredient=1 AND restaurant.DocumentId IS NULL)
+            -- A local POS may upload a sale captured before this product was
+            -- marked as an ingredient. The catalog change must not block sync.
+            WHERE (product.IsIngredient=1 AND restaurant.DocumentId IS NULL
+                   AND @SourceMode=N'Online')
                OR (restaurant.DocumentId IS NOT NULL AND
                    (addition.AdditionId IS NULL OR
                     addition.ManageStockAtSend IS NULL OR
@@ -42,6 +45,8 @@ public sealed partial class SqlPosSaleServerStore
         command.Parameters.AddWithValue("@TenantId", request.TenantId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        command.Parameters.Add("@SourceMode", SqlDbType.NVarChar, 16).Value =
+            request.SourceMode;
         if ((long)(await command.ExecuteScalarAsync(ct) ?? 0L) > 0)
             throw new PosSaleInvalidException(
                 "Hay ingredientes no vendibles o productos enviados cuya modalidad de inventario cambió.");

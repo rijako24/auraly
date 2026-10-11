@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, CakeSlice, ChefHat, CircleCheck, Clock3,
   Coffee, DoorOpen,
   Fish, GlassWater, List, Map as MapIcon, MessageSquareText, FileText, LayoutGrid,
-  Plus, Printer, Salad, Sandwich, Search, Settings2, Soup, Trash2, UtensilsCrossed,
+  Loader2, Plus, Printer, Salad, Sandwich, Search, Settings2, Soup, Trash2, UtensilsCrossed,
   type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { RestaurantPaymentDialog } from "@/components/restaurant/restaurant-payment-dialog";
@@ -87,6 +87,7 @@ export function RestaurantPosWorkspace({ option }: {
   const [productPage, setProductPage] = useState(0);
   const [mobileSection, setMobileSection] = useState<"products" | "account">("products");
   const [busy, setBusy] = useState(false);
+  const [addingProductId, setAddingProductId] = useState<string | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
   const [noteAdditionId, setNoteAdditionId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -402,6 +403,7 @@ export function RestaurantPosWorkspace({ option }: {
           item.productId === productId && (item.status === "Pending" || item.status === "Direct")) : null;
     if (direction === "remove" && !target) return;
     const nextQuantity = 0;
+    if (direction === "plus") setAddingProductId(productId);
     setBusy(true);
     try {
       const updated = direction === "plus"
@@ -444,6 +446,7 @@ export function RestaurantPosWorkspace({ option }: {
         toast.error("No se pudo confirmar el cambio. Reabre la mesa para conciliarlo.");
       }
     } finally {
+      setAddingProductId(null);
       setBusy(false);
     }
   }
@@ -494,13 +497,17 @@ export function RestaurantPosWorkspace({ option }: {
     };
     setPendingSend(request);
     setBusy(true);
-    try {
-      const result = await restaurantAccountApi.sendPending(
-        draft.account.accountId, request, attention?.token);
+    const accountId = draft.account.accountId;
+    const confirmSend = async () => restaurantAccountApi.sendPending(
+      accountId, request, attention?.token);
+    const acceptSend = (result: Awaited<ReturnType<typeof confirmSend>>) => {
       setDraft(result.draft);
       setPendingSend(null);
       toast.success(`Comanda enviada: ${result.cards.map((card) =>
         `${card.stationName} · ${card.lineCount}`).join(" / ")}`);
+    };
+    try {
+      acceptSend(await confirmSend());
     } catch (error) {
       if (attention && typeof error === "object" && error !== null &&
           "statusCode" in error && error.statusCode === 403) {
@@ -508,19 +515,27 @@ export function RestaurantPosWorkspace({ option }: {
         toast.error("La atención terminó. Identifica al mesero de nuevo.");
         return;
       }
-      if (typeof error === "object" && error !== null &&
-          "statusCode" in error && error.statusCode === 409) {
-        try {
-          setDraft(await restaurantAccountApi.draft(
-            draft.account.accountId, attention?.token));
-          setPendingSend(null);
-        } catch {
-          toast.error("No se pudo conciliar la comanda. Reintenta el mismo envío.");
+      // A response can be lost after the transaction commits. Replay with the
+      // same operation id before deciding whether the account actually changed.
+      try {
+        acceptSend(await confirmSend());
+        return;
+      } catch (replayError) {
+        if (attention && typeof replayError === "object" && replayError !== null &&
+            "statusCode" in replayError && replayError.statusCode === 403) {
+          backToTables(true);
+          toast.error("La atención terminó. Identifica al mesero de nuevo.");
           return;
         }
+        try {
+          setDraft(await restaurantAccountApi.draft(accountId, attention?.token));
+          setPendingSend(null);
+          toast.error(replayError instanceof Error ? replayError.message :
+            "La cuenta cambió. Revisa sus pendientes antes de enviar.");
+        } catch {
+          toast.error("No se pudo verificar el envío. Reintenta la comanda o vuelve a mesas y abre la cuenta de nuevo.");
+        }
       }
-      toast.error(error instanceof Error ? error.message :
-        "No se pudo confirmar el envío. Reintenta con el mismo botón.");
     } finally { setBusy(false); }
   }
 
@@ -662,8 +677,7 @@ export function RestaurantPosWorkspace({ option }: {
   }
 
   function backToTables(force = false) {
-    if ((busy || pendingSend) && !force) {
-      if (pendingSend) toast.error("Confirma primero el envío pendiente.");
+    if (busy && !force) {
       return;
     }
     setDraft(null);
@@ -685,20 +699,19 @@ export function RestaurantPosWorkspace({ option }: {
   }
 
   function leaveWorkspace(event: React.MouseEvent<HTMLAnchorElement>) {
-    if (busy || pendingSend) {
+    if (busy) {
       event.preventDefault();
-      backToTables();
       return;
     }
     backToTables();
   }
 
   return <main className="min-h-screen bg-[#f5f7f6] text-foreground dark:bg-[#0e1717]">
-    <header className="sticky top-0 z-20 flex min-h-20 items-center justify-between gap-3 border-b bg-background/95 px-4 shadow-sm backdrop-blur sm:px-7">
-      <div className="flex min-w-0 items-center gap-3">{draft ? <Button variant="outline" className="h-11 shrink-0 rounded-xl px-3 sm:px-4" onClick={() => backToTables()} aria-label="Volver a mesas"><ArrowLeft className="mr-2 h-5 w-5"/><span className="text-xs sm:text-sm">Volver a mesas</span></Button> : <Button asChild variant="outline" className="h-11 shrink-0 rounded-xl" aria-label="Volver al menú"><Link href="/dashboard/restaurant" onClick={leaveWorkspace}><LayoutGrid className="h-5 w-5 sm:mr-2"/><span className="hidden sm:inline">Menú</span></Link></Button>}<div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary"><UtensilsCrossed className="h-6 w-6"/></div>
+    <header className="sticky top-0 z-20 flex min-h-20 flex-col gap-2 border-b bg-background/95 px-4 py-2 shadow-sm backdrop-blur sm:px-7 lg:flex-row lg:items-center lg:justify-between lg:gap-3 lg:py-0">
+      <div className="flex min-w-0 items-center gap-3">{draft ? <Button variant="outline" className="h-11 shrink-0 rounded-xl px-3 sm:px-4" onClick={() => backToTables()} aria-label="Volver a mesas"><ArrowLeft className="h-5 w-5 sm:mr-2"/><span className="hidden text-sm sm:inline">Volver a mesas</span></Button> : <Button asChild variant="outline" className="h-11 shrink-0 rounded-xl" aria-label="Volver al menú"><Link href="/dashboard/restaurant" onClick={leaveWorkspace}><LayoutGrid className="h-5 w-5 sm:mr-2"/><span className="hidden sm:inline">Menú</span></Link></Button>}<div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary"><UtensilsCrossed className="h-6 w-6"/></div>
         <div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-[.18em] text-primary">Auraly · Restaurante</p>
           <h1 className="truncate text-lg font-bold sm:text-xl">{option.businessName}</h1></div></div>
-      <div className="flex items-center gap-2">
+      <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto lg:flex-nowrap">
         {paymentClient && option.workSessionId && permissions.includes("work-sessions.read") &&
           <RestaurantSessionClosure client={paymentClient} workSessionId={option.workSessionId}
             businessId={option.businessId} businessName={option.businessName}
@@ -759,9 +772,9 @@ export function RestaurantPosWorkspace({ option }: {
     </section> : <section className="mx-auto max-w-[1700px] p-3 sm:p-5">
       <div className="mb-3 grid grid-cols-2 gap-2 lg:hidden"><Button variant={mobileSection === "products" ? "default" : "outline"} className="min-h-12" onClick={() => setMobileSection("products")}>Productos</Button><Button variant={mobileSection === "account" ? "default" : "outline"} className="min-h-12" onClick={() => setMobileSection("account")}>Cuenta · {groups.reduce((sum, item) => sum + item.quantity, 0)}</Button></div>
       <div className="grid gap-4 lg:grid-cols-[minmax(300px,30%)_minmax(0,70%)]">
-        <aside className={`${mobileSection !== "account" ? "hidden lg:flex" : "flex"} h-[calc(100dvh-13rem)] min-h-[28rem] flex-col self-start overflow-hidden rounded-[2rem] border bg-card shadow-sm lg:sticky lg:top-24 lg:h-[calc(100dvh-8rem)] lg:min-h-[25rem]`}>
+        <aside className={`${mobileSection !== "account" ? "hidden lg:flex" : "flex"} h-auto min-h-0 flex-col self-start overflow-visible rounded-[2rem] border bg-card shadow-sm lg:sticky lg:top-24 lg:h-[calc(100dvh-8rem)] lg:min-h-[25rem] lg:overflow-hidden`}>
           <div className="shrink-0 border-b p-5"><p className="text-xs font-bold uppercase tracking-widest text-primary">Cuenta abierta · {selectedTable?.roomId ? roomNames.get(selectedTable.roomId) : "Sin salón"}</p><h2 className="mt-1 text-2xl font-bold">Mesa {selectedTable?.code}</h2><div className="mt-3 flex items-center justify-between gap-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">Responsable: {draft.account.responsibleUserName || (draft.account.responsibleUserId === connectedUser?.userId ? [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username : "Mesero asignado")}</p><p className="mt-1 truncate text-xs text-muted-foreground">Atendiendo ahora: {attention ? activeWaiterName || draft.account.responsibleUserName || "Mesero identificado" : [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username || "Usuario conectado"}</p></div>{canOpenWithoutWaiter && selectedTable && <Button variant="outline" size="sm" className="min-h-11 shrink-0 rounded-xl" disabled={busy || !!pendingSend} onClick={() => selectTable(selectedTable, true)}>Cambiar mesero</Button>}</div></div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain p-3 sm:p-4">{!groups.length && <div className="grid min-h-52 place-items-center text-center text-muted-foreground"><div><Coffee className="mx-auto h-8 w-8"/><p className="mt-3 text-sm">Toca un producto para empezar el pedido.</p></div></div>}
+          <div className="flex-1 space-y-2 p-3 sm:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">{!groups.length && <div className="grid min-h-52 place-items-center text-center text-muted-foreground"><div><Coffee className="mx-auto h-8 w-8"/><p className="mt-3 text-sm">Toca un producto para empezar el pedido.</p></div></div>}
             {groups.map((group, index) => <div key={`${group.productId}-${index}`} className="rounded-2xl border bg-background p-4"><div className="flex items-start justify-between gap-2"><div><strong className="text-base">{group.name}</strong><p className="mt-0.5 text-xs text-muted-foreground">{group.contributors.join(", ")}</p><p className={`mt-1 text-xs font-medium ${"text-muted-foreground"}`}>{group.sentQuantity > 0 && `${group.sentQuantity} enviadas · `}{group.pendingQuantity > 0 ? `${group.pendingQuantity} pendientes · ${group.stationName ?? "Sin estación"}` : group.sentQuantity > 0 ? group.stationName ?? "Estación no disponible" : "Sin comanda · se cobra directamente"}</p></div><span className="font-semibold">{money.format(group.amount)}</span></div>
               <div className="mt-3 flex items-center justify-between"><span className="text-sm font-semibold">{group.quantity} unidades</span>{canAdd && <div className="flex items-center gap-2"><Button aria-label={`Agregar uno de ${group.name}`} size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "plus")}><Plus className="h-5 w-5"/></Button></div>}</div>
               <div className="mt-3 space-y-2 border-t pt-3">{group.items.map((item, itemIndex) => <div key={item.additionId} className="flex items-start justify-between gap-2 rounded-xl bg-muted/50 px-3 py-2 text-sm"><div className="min-w-0"><p className="font-semibold">{item.quantity} × {group.name} <span className="font-normal text-muted-foreground">· {item.status === "Sent" ? "Enviada" : item.status === "Direct" ? "Sin comanda" : "Pendiente"}</span></p>{item.preparationNote && <p className="mt-1 whitespace-pre-wrap text-primary"><MessageSquareText className="mr-1 inline h-4 w-4"/>{item.preparationNote}</p>}{cancellationsByAddition.get(item.additionId) && <p className="mt-1 text-xs font-bold text-red-700 dark:text-red-300">Cancelación en revisión</p>}</div>{(item.status === "Pending" || item.status === "Direct") && canAdd ? <div className="flex shrink-0 flex-wrap justify-end gap-2"><Button size="sm" variant="outline" className="min-h-10 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { setNoteAdditionId(item.additionId); setNoteText(item.preparationNote ?? ""); }}><MessageSquareText className="mr-1 h-4 w-4"/>{item.preparationNote ? "Editar" : "Observación"} <span className="sr-only">de la unidad {itemIndex + 1}</span></Button><Button size="icon" variant="outline" className="h-10 w-10 rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-900 dark:text-rose-300" aria-label={`Eliminar producto pendiente ${group.name}, incorporación ${itemIndex + 1}`} title="Eliminar producto pendiente" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "remove", item.additionId)}><Trash2 className="h-5 w-5"/></Button></div> : item.status === "Sent" && canAdd && !cancellationsByAddition.has(item.additionId) && <Button size="sm" variant="outline" className="min-h-10 shrink-0 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { setCancelAdditionId(item.additionId); setCancelQuantity(1); setCancelReasonCode(""); setCancelExplanation(""); setCancelRequestId(null); }}>Corregir</Button>}</div>)}</div>
@@ -782,13 +795,13 @@ export function RestaurantPosWorkspace({ option }: {
             <p className="mt-2 text-xs text-muted-foreground">Solo los productos con estación se envían a comanda. Los demás se cobran directamente.</p>
           </div>
         </aside>
-        <div className={`${mobileSection !== "products" ? "hidden lg:block" : "block"} min-w-0 rounded-[2rem] border bg-card p-4 shadow-sm sm:p-6`}>
+        <div className={`${mobileSection !== "products" ? "hidden lg:block" : "block"} min-h-[32rem] min-w-0 rounded-[2rem] border bg-card p-4 shadow-sm sm:p-6 lg:min-h-0`}>
           <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Menú</p><h2 className="mt-1 text-2xl font-bold">Elige productos</h2></div><div className="relative w-full sm:w-64"><Search className="absolute left-4 top-3.5 h-5 w-5 text-muted-foreground"/><Input className="h-12 rounded-2xl pl-11" value={productSearch} onChange={(event) => { setProductSearch(event.target.value); setCategoryId("all"); setProductPage(0); }} placeholder="Buscar producto" aria-label="Buscar producto"/></div></div>
           {canAdd ? <><div className="mt-5 flex gap-2 overflow-x-auto pb-2" role="group" aria-label="Categorías del menú"><CategoryPill active={categoryId === "all"} label="Todos" icon={LayoutGrid} onClick={() => { setCategoryId("all"); setProductPage(0); }}/>{(categories.data ?? []).map((category) => <CategoryPill key={category.categoryId} active={categoryId === category.categoryId} label={category.name} count={category.productCount} icon={categoryIcon(category.name)} onClick={() => { setCategoryId(category.categoryId); setProductPage(0); }}/>)}</div>
             {products.isLoading && <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 8 }, (_, index) => <div key={index} className="h-52 animate-pulse rounded-3xl bg-muted"/>)}</div>}
             {products.isError && <div role="alert" className="mt-6 rounded-2xl border p-5">No pudimos cargar los productos. <Button variant="link" onClick={() => void products.refetch()}>Reintentar</Button></div>}
             {!products.isLoading && !products.isError && !products.data?.items.length && <div className="mt-8 rounded-2xl border border-dashed p-8 text-center text-muted-foreground">No hay productos en esta categoría o búsqueda.</div>}
-            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3 2xl:grid-cols-4">{products.data?.items.map((product) => <ProductTile key={product.productId} product={product} disabled={busy || !!pendingSend} onClick={() => void mutateProduct(product.productId, "plus")}/>)}</div>
+            <div className="mt-5 grid grid-cols-1 gap-3 min-[430px]:grid-cols-2 md:grid-cols-3 2xl:grid-cols-4">{products.data?.items.map((product) => <ProductTile key={product.productId} product={product} disabled={busy || !!pendingSend} loading={addingProductId === product.productId} onClick={() => void mutateProduct(product.productId, "plus")}/>)}</div>
             {products.data?.hasMore && <Button variant="outline" className="mt-5 min-h-12 w-full" onClick={() => setProductPage((page) => page + 1)}>Más productos</Button>}
           </> : <div className="mt-8 rounded-2xl border bg-muted/30 p-7 text-center"><ChefHat className="mx-auto h-8 w-8 text-primary"/><p className="mt-3 font-medium">Cuenta en consulta</p><p className="mt-1 text-sm text-muted-foreground">No tienes permiso para agregar productos a esta mesa.</p></div>}
         </div>
@@ -856,18 +869,18 @@ function CategoryPill({ active, label, count, icon: Icon, onClick }: {
   </button>;
 }
 
-function ProductTile({ product, disabled, onClick }: {
-  product: RestaurantProduct; disabled: boolean; onClick: () => void;
+function ProductTile({ product, disabled, loading, onClick }: {
+  product: RestaurantProduct; disabled: boolean; loading: boolean; onClick: () => void;
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   return <button disabled={disabled} onClick={onClick} aria-label={`Agregar ${product.name}`}
-    className="group overflow-hidden rounded-3xl border bg-background text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/70 hover:shadow-md focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60">
-    <div className="relative grid aspect-[4/3] place-items-center overflow-hidden bg-gradient-to-br from-emerald-50 via-teal-50 to-slate-100 text-primary dark:from-emerald-950 dark:via-teal-950 dark:to-slate-900">
+    className="group min-h-52 overflow-hidden rounded-3xl border bg-background text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/70 hover:shadow-md focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60">
+    <div className="relative grid min-h-32 aspect-[4/3] place-items-center overflow-hidden bg-gradient-to-br from-emerald-50 via-teal-50 to-slate-100 text-primary dark:from-emerald-950 dark:via-teal-950 dark:to-slate-900">
       {product.imageUrl && !imageFailed
         // eslint-disable-next-line @next/next/no-img-element
         ? <img src={product.imageUrl} alt="" className="h-full w-full object-cover transition duration-300 group-hover:scale-105" onError={() => setImageFailed(true)}/>
         : <UtensilsCrossed className="h-14 w-14 opacity-50" aria-hidden="true"/>}
-      <span className="absolute right-3 top-3 grid h-10 w-10 place-items-center rounded-full bg-background/90 text-primary shadow"><Plus className="h-5 w-5"/></span>
+      <span className="absolute right-3 top-3 grid h-10 w-10 place-items-center rounded-full bg-background/90 text-primary shadow">{loading ? <Loader2 className="h-5 w-5 animate-spin"/> : <Plus className="h-5 w-5"/>}</span>
     </div><div className="p-4"><p className="line-clamp-2 min-h-11 text-sm font-bold sm:text-base">{product.name}</p><p className="mt-2 text-lg font-extrabold text-primary">{money.format(product.unitPrice)}</p></div>
   </button>;
 }
