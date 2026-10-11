@@ -6,6 +6,7 @@ const userId = "33333333-3333-3333-3333-333333333333";
 const warehouseId = "44444444-4444-4444-4444-444444444444";
 const tableId = "55555555-5555-5555-5555-555555555555";
 const productId = "66666666-6666-6666-6666-666666666666";
+const directProductId = "99999999-9999-9999-9999-999999999999";
 const categoryId = "77777777-7777-7777-7777-777777777777";
 const stationId = "88888888-8888-8888-8888-888888888888";
 const permissions = ["restaurant.attend", "restaurant.commands.read"];
@@ -107,19 +108,30 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
         taxRate: 0, unitPrice: 25000, currencyCode: "COP", isActive: true,
         isWeighable: false, allowsFractionalSale: false, priceSource: "Base",
         promotionDiscount: 0, productCategoryId: categoryId,
+        categoryName: "Hamburguesas", imageUrl: null },
+      { productId: directProductId, productCode: "G-01", reference: null,
+        name: "Gaseosa", baseUnitCode: "UND", taxCode: "IVA",
+        taxRate: 0, unitPrice: 5000, currencyCode: "COP", isActive: true,
+        isWeighable: false, allowsFractionalSale: false, priceSource: "Base",
+        promotionDiscount: 0, productCategoryId: categoryId,
         categoryName: "Hamburguesas", imageUrl: null }],
       hasMore: false, nextOffset: null });
     if (path.endsWith("/draft")) return json(route, { account: account(), additions });
     if (path.endsWith("/additions") && method === "POST") {
       const request = route.request().postDataJSON();
       expect(request.expectedVersion).toBe(version);
-      additions.push({ additionId: request.additionId, accountId, productId,
-        productCode: "H-01", description: "Hamburguesa clásica", unitCode: "UND",
+      const direct = request.productId === directProductId;
+      additions.push({ additionId: request.additionId, accountId,
+        productId: request.productId,
+        productCode: direct ? "G-01" : "H-01",
+        description: direct ? "Gaseosa" : "Hamburguesa clásica", unitCode: "UND",
         taxCode: "IVA", taxRate: 0, quantity: request.quantity,
-        allowsFractionalSale: false, publicUnitPrice: 25000,
+        allowsFractionalSale: false, publicUnitPrice: direct ? 5000 : 25000,
         promotionDiscountPerUnit: 0, currencyCode: "COP", priceSource: "Base",
         addedByUserId: userId, addedByName: "Mesero Prueba", addedAt: now,
-        status: "Pending", stationId, stationName: "Cocina" });
+        status: direct ? "Direct" : "Pending",
+        stationId: direct ? null : stationId,
+        stationName: direct ? null : "Cocina", preparationNote: null });
       version++;
       return json(route, { account: account(), additions });
     }
@@ -174,6 +186,7 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await page.getByRole("button", { name: "Agregar Hamburguesa clásica" }).click();
   await page.getByRole("button", { name: /Cuenta ·/ }).click();
   await expect(page.getByText("Consumo estimado")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Observación de la unidad 1" })).toBeVisible();
   await page.screenshot({ path: "../tmp/restaurant-pos-order-light.png", fullPage: true });
   await page.evaluate(() => document.documentElement.classList.add("dark"));
   await page.screenshot({ path: "../tmp/restaurant-pos-order-dark.png", fullPage: true });
@@ -204,6 +217,19 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await expect(page.getByText("1 pendientes · Cocina")).toBeVisible();
   await page.getByRole("button", { name: /Enviar pendientes/ }).click();
   await expect(page.getByText("1 enviadas · Cocina")).toBeVisible();
+  await page.getByRole("button", { name: "Productos", exact: true }).click();
+  await page.getByRole("button", { name: "Agregar Gaseosa" }).click();
+  await page.getByRole("button", { name: /Cuenta ·/ }).click();
+  await expect(page.getByText("Sin comanda · se cobra directamente")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Observación de la unidad 1" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Agregar uno de Gaseosa" }).click();
+  await expect(page.getByText("2 unidades")).toBeVisible();
+  await page.screenshot({ path: "../tmp/restaurant-direct-product-mobile.png" });
+  await page.getByRole("button", { name: "Quitar uno de Gaseosa" }).click();
+  await expect(page.getByRole("button", { name: "Quitar uno de Gaseosa" })
+    .locator("../..").getByText("1 unidad")).toBeVisible();
+  await page.getByRole("button", { name: "Quitar uno de Gaseosa" }).click();
+  await expect(page.getByText("Sin comanda · se cobra directamente")).toHaveCount(0);
   await page.getByRole("button", { name: "Mesas" }).click();
   await expect.poll(() => attentionEnded).toBe(true);
   await page.goto("/pos");
