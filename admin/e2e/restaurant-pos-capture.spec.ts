@@ -10,6 +10,7 @@ const categoryId = "77777777-7777-7777-7777-777777777777";
 const stationId = "88888888-8888-8888-8888-888888888888";
 const permissions = ["restaurant.attend"];
 const now = "2026-10-09T10:00:00-05:00";
+const baseUrl = process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
 const json = (route: Route, value: unknown, status = 200) => route.fulfill({
   status, contentType: "application/json", body: JSON.stringify(value),
@@ -22,7 +23,7 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
     email: "mesero@test.local", firstName: "Mesero", lastName: "Prueba",
     roles: ["Mesero"], permissions };
   await page.context().addCookies([{ name: "auth_token", value: "restaurant-pos-test",
-    url: "http://127.0.0.1:3000", httpOnly: true, sameSite: "Lax" }]);
+    url: baseUrl, httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ user, tenantId, businessId }) => {
     localStorage.setItem("selected_tenant_id", tenantId);
     localStorage.setItem("selected_business_id", businessId);
@@ -169,6 +170,10 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await page.screenshot({ path: "../tmp/restaurant-pos-order-dark.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: /Cuenta ·/ }).click();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const mobileTabs = page.getByRole("navigation", { name: "Vista de la mesa" });
+  await expect(mobileTabs).toBeInViewport();
+  expect((await mobileTabs.boundingBox())!.y).toBeGreaterThanOrEqual(0);
   await page.screenshot({ path: "../tmp/restaurant-pos-order-mobile.png", fullPage: true });
   await expect(page.getByRole("button", { name: /Eliminar producto pendiente Hamburguesa clásica/ })).toBeEnabled();
   await page.getByRole("button", { name: /Eliminar producto pendiente Hamburguesa clásica/ }).click();
@@ -193,7 +198,7 @@ test("el cajero conserva su sesión de trabajo al entrar a restaurante", async (
     email: "cajero@test.local", firstName: "Caja", lastName: "Prueba",
     roles: ["Cajero"], permissions: cashierPermissions };
   await page.context().addCookies([{ name: "auth_token", value: "restaurant-cashier-test",
-    url: "http://127.0.0.1:3000", httpOnly: true, sameSite: "Lax" }]);
+    url: baseUrl, httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ user, tenantId, businessId }) => {
     localStorage.setItem("selected_tenant_id", tenantId);
     localStorage.setItem("selected_business_id", businessId);

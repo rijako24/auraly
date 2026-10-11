@@ -235,16 +235,16 @@ export function RestaurantPaymentDialog({ draft, summary, client,
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-0 backdrop-blur-sm sm:p-4"
     role="dialog" aria-modal="true" aria-label="Cobrar mesa">
-    <div className="flex h-full w-full max-w-6xl flex-col overflow-hidden bg-[#f8f7f3] text-slate-950 shadow-2xl dark:bg-slate-950 dark:text-white sm:h-[min(92vh,900px)] sm:rounded-[2rem]">
+    <div className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden bg-[#f8f7f3] text-slate-950 shadow-2xl dark:bg-slate-950 dark:text-white sm:h-[min(92vh,900px)] sm:rounded-[2rem]">
       <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-900 sm:px-7">
         <div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-700 dark:text-teal-400">Caja · Restaurante y bar</p>
           <h2 className="mt-1 text-2xl font-extrabold sm:text-3xl">Cobrar mesa</h2></div>
         <Button variant="ghost" size="icon" className="h-12 w-12 rounded-2xl" aria-label="Cerrar cobro" disabled={disabled} onClick={onClose}><X className="h-6 w-6"/></Button>
       </header>
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_390px]">
-        <div className="min-h-0 overflow-y-auto p-4 sm:p-7">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Metric label="Total de la mesa" value={summary.total}/>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain lg:grid lg:overflow-hidden lg:grid-cols-[minmax(0,1fr)_390px]">
+        <div className="shrink-0 p-4 sm:p-7 lg:min-h-0 lg:overflow-y-auto">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
+            <div className="col-span-2 sm:col-span-1"><Metric label="Total de la mesa" value={summary.total}/></div>
             <Metric label="Pagado" value={summary.collected} accent="teal"/>
             <Metric label="Por cobrar" value={summary.remaining} accent="amber"/>
           </div>
@@ -265,11 +265,11 @@ export function RestaurantPaymentDialog({ draft, summary, client,
             })}</div></>}
           {summary.collections.length > 0 && <section className="mt-8"><h3 className="text-lg font-bold">Cobros recibidos</h3><div className="mt-3 space-y-2">{summary.collections.map((entry) => <div key={entry.collectionId} className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 dark:border-teal-900 dark:bg-slate-900"><CheckCircle2 className="h-6 w-6 shrink-0 text-teal-600"/><div className="min-w-0 flex-1"><p className="font-semibold">{money.format(entry.amount)} · {entry.payments.map((payment) => paymentLabels.get(payment.methodCode) ?? payment.methodCode).join(" + ")}</p><p className="text-xs text-slate-500">{new Date(entry.capturedAt).toLocaleString("es-CO")} · {entry.allocations.length} producto(s)</p></div><Button variant="ghost" size="sm" className="min-h-11 text-red-700" disabled={disabled} onClick={() => setConfirmReverse(entry.collectionId)}><RotateCcw className="mr-1 h-4 w-4"/>Anular</Button></div>)}</div></section>}
         </div>
-        <aside className="flex min-h-0 flex-col border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:border-l lg:border-t-0">
+        <aside className="flex shrink-0 flex-col border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:min-h-0 lg:border-l lg:border-t-0">
           <section className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-6" aria-label="Documento de venta">
             <div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-100">{documentType === "SalesInvoice" ? <FileText className="h-5 w-5"/> : <ReceiptText className="h-5 w-5"/>}</span><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Documento de venta</p><p className="font-bold leading-tight">{documentType === "SalesInvoice" ? "Factura electrónica" : "Comprobante de venta"}</p></div></div><Button variant="outline" className="min-h-11 shrink-0 rounded-xl" disabled={disabled} onClick={() => setDocumentTypeOpen(true)}>Cambiar documento</Button></div>
           </section>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"><p className="text-xs font-bold uppercase tracking-widest text-teal-700 dark:text-teal-400">Pago de esta persona</p><p className="mt-1 text-3xl font-extrabold">{money.format(selectedTotal)}</p>
+          <div className="p-4 sm:p-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><p className="text-xs font-bold uppercase tracking-widest text-teal-700 dark:text-teal-400">Pago de esta persona</p><p className="mt-1 text-3xl font-extrabold">{money.format(selectedTotal)}</p>
             {summary.remaining > 0 && <div className="mt-5 space-y-3">{paymentRows.map((row) => <div key={row.id} className="rounded-2xl border bg-slate-50 p-4 dark:bg-slate-950"><div className="flex items-center gap-2"><Select value={row.methodCode} onValueChange={(value) => updateRow(row.id, { methodCode: value as Method, reference: "", franchise: "", approval: "", bankAccountId: "" })}><SelectTrigger aria-label="Medio de pago" className="h-12 flex-1 rounded-xl bg-white text-base dark:bg-slate-900"><SelectValue/></SelectTrigger><SelectContent>{catalog.map((method) => <SelectItem key={method.code} value={method.code} className="min-h-12 text-base">{method.label}</SelectItem>)}</SelectContent></Select><Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 rounded-xl text-slate-500" disabled={paymentRows.length === 1} onClick={() => setPaymentRows((rows) => rows.filter((item) => item.id !== row.id))} aria-label="Quitar medio"><Trash2 className="h-5 w-5"/></Button></div>
                 <label className="mt-3 block text-sm font-semibold">Valor recibido<Input inputMode="decimal" className="mt-1 h-14 rounded-xl text-xl font-bold" value={row.amount} onChange={(event) => updateRow(row.id, { amount: event.target.value })}/></label>
                 {(row.methodCode === "DebitCard" || row.methodCode === "CreditCard") && <div className="mt-3 space-y-3"><Select value={row.franchise || undefined} onValueChange={(value) => updateRow(row.id, { franchise: value })}><SelectTrigger aria-label="Franquicia" className="h-12 rounded-xl"><SelectValue placeholder="Franquicia de tarjeta"/></SelectTrigger><SelectContent>{franchises.map((item) => <SelectItem key={item.code} value={item.code} className="min-h-11">{item.label}</SelectItem>)}</SelectContent></Select><Input aria-label="Número de aprobación" className="h-12 rounded-xl" placeholder="Número de aprobación" value={row.approval} onChange={(event) => updateRow(row.id, { approval: event.target.value })}/></div>}
@@ -295,12 +295,12 @@ export function RestaurantPaymentDialog({ draft, summary, client,
 
 function Metric({ label, value, accent }: { label: string; value: number;
   accent?: "teal" | "amber" }) {
-  return <div className={`rounded-2xl border p-4 ${accent === "teal" ?
+  return <div className={`min-w-0 rounded-2xl border p-2.5 sm:p-4 ${accent === "teal" ?
     "border-teal-200 bg-teal-50 dark:border-teal-900 dark:bg-teal-950/40" :
     accent === "amber" ? "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/40" :
       "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
     <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">{label}</p>
-    <p className="mt-1 text-xl font-extrabold">{money.format(value)}</p>
+    <p className="mt-1 break-words text-xl font-extrabold">{money.format(value)}</p>
   </div>;
 }
 
