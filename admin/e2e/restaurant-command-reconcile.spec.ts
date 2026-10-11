@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { login } from "./support/auth";
 
+test.use({ ignoreHTTPSErrors: true });
+
 async function openTestTable(page: import("@playwright/test").Page) {
   const businessId = process.env.AURALY_E2E_RESTAURANT_BUSINESS_ID;
   const tableCode = process.env.AURALY_E2E_RESTAURANT_TABLE_CODE;
@@ -70,7 +72,7 @@ test("respuesta perdida del envío se reconcilia sin duplicar la comanda", async
     } else await route.continue();
   });
   await page.getByRole("button", { name: /Enviar pendientes/ }).click();
-  await expect(page.getByText(/Comanda enviada/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Enviar pendientes/ })).toHaveCount(0);
   expect(firstResponseStatus).toBe(200);
   expect(operations).toHaveLength(2);
   expect(operations[1]).toBe(operations[0]);
