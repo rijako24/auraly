@@ -47,7 +47,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Could not set DEV startup budget.' }
           az webapp config set --resource-group RG-AURALY-DEV --name api-auraly-dev-w5usmo6w --startup-file 'if [ -f /home/site/wwwroot/start-api.sh ]; then exec bash /home/site/wwwroot/start-api.sh; else exec dotnet /home/site/wwwroot/Auraly.Api.dll; fi' --output none
           if ($LASTEXITCODE) { throw 'Could not set DEV API startup command.' }
-          az webapp deploy --resource-group RG-AURALY-DEV --name api-auraly-dev-w5usmo6w --src-path artifacts/auraly-api-dev.zip --type zip --restart true --clean true --output none
+          az webapp deploy --resource-group RG-AURALY-DEV --name api-auraly-dev-w5usmo6w --src-path artifacts/auraly-api-dev.zip --type zip --restart true --clean true --async true --track-status false --output none
           if ($LASTEXITCODE) { throw 'DEV API deployment failed.' }
 
           for ($attempt = 1; $attempt -le 36; $attempt++) {
