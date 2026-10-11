@@ -60,17 +60,17 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                   THROW 51022, 'A product cannot be linked to itself.', 1;
                 IF @IsIngredient=1 AND @IsGenericProduct=1
                   THROW 51024, 'Un ingrediente no puede ser un producto genérico.', 1;
-                IF EXISTS (SELECT 1 FROM dbo.ProductRecipeIngredients recipeLine
-                    JOIN dbo.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=recipeLine.ProductRecipeVersionId
+                IF EXISTS (SELECT 1 FROM catalog.ProductRecipeIngredients recipeLine
+                    JOIN catalog.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=recipeLine.ProductRecipeVersionId
                     WHERE recipeLine.TenantId=@TenantId AND recipeLine.IngredientProductId=@ProductId
                       AND recipe.IsEnabled=1
-                      AND recipe.[Version]=(SELECT MAX(latest.[Version]) FROM dbo.ProductRecipeVersions latest
+                      AND recipe.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductRecipeVersions latest
                           WHERE latest.TenantId=recipe.TenantId AND latest.ProductId=recipe.ProductId))
                     AND (COALESCE(@IsIngredient,1)=0 OR @ManageInventory=0 OR
                          EXISTS (SELECT 1 FROM dbo.Products currentProduct WHERE currentProduct.ProductId=@ProductId
                            AND currentProduct.TenantId=@TenantId AND currentProduct.BaseUnitCode<>@BaseUnitCode))
                   THROW 51024, 'El ingrediente pertenece a recetas publicadas; conserva su clasificación, inventario y unidad.', 1;
-                IF @IsIngredient=1 AND EXISTS (SELECT 1 FROM dbo.ProductRecipeVersions
+                IF @IsIngredient=1 AND EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions
                     WHERE TenantId=@TenantId AND ProductId=@ProductId)
                   THROW 51024, 'Un producto con receta publicada no se puede convertir en ingrediente.', 1;
                 IF EXISTS (SELECT 1 FROM dbo.InventoryOperations operation
@@ -437,7 +437,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
 
             if (request.RecipeIngredients is not null)
                 await ExecuteAsync(connection, transaction, """
-                    DECLARE @CurrentVersion int = ISNULL((SELECT MAX([Version]) FROM dbo.ProductRecipeVersions WITH (UPDLOCK,HOLDLOCK)
+                    DECLARE @CurrentVersion int = ISNULL((SELECT MAX([Version]) FROM catalog.ProductRecipeVersions WITH (UPDLOCK,HOLDLOCK)
                         WHERE TenantId=@TenantId AND ProductId=@ProductId),0);
                     IF @CurrentVersion<>@ExpectedVersion
                         THROW 51024, 'La receta cambió. Actualiza la ficha antes de guardar.', 1;
@@ -456,9 +456,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                         THROW 51024, 'Selecciona ingredientes activos que controlen inventario.', 1;
                     IF @CurrentVersion>0 OR @ExpectedCount>0
                     BEGIN
-                        INSERT dbo.ProductRecipeVersions(ProductRecipeVersionId,TenantId,ProductId,[Version],IsEnabled,PublishedAt,PublishedByUserId)
+                        INSERT catalog.ProductRecipeVersions(ProductRecipeVersionId,TenantId,ProductId,[Version],IsEnabled,PublishedAt,PublishedByUserId)
                         VALUES(@VersionId,@TenantId,@ProductId,@CurrentVersion+1,CASE WHEN @ExpectedCount>0 THEN 1 ELSE 0 END,@Now,@UserId);
-                        INSERT dbo.ProductRecipeIngredients(ProductRecipeVersionId,LineNumber,TenantId,IngredientProductId,QuantityPerUnit,BaseUnitCodeSnapshot)
+                        INSERT catalog.ProductRecipeIngredients(ProductRecipeVersionId,LineNumber,TenantId,IngredientProductId,QuantityPerUnit,BaseUnitCodeSnapshot)
                         SELECT @VersionId,i.LineNumber,@TenantId,i.IngredientProductId,i.QuantityPerUnit,p.BaseUnitCode
                         FROM @Items i JOIN dbo.Products p ON p.TenantId=@TenantId AND p.ProductId=i.IngredientProductId;
                     END;
@@ -587,11 +587,11 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             SET XACT_ABORT ON;
             DECLARE @Change TABLE (BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
             BEGIN TRANSACTION;
-            IF @IsActive=0 AND EXISTS (SELECT 1 FROM dbo.ProductRecipeIngredients recipeLine
-                JOIN dbo.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=recipeLine.ProductRecipeVersionId
+            IF @IsActive=0 AND EXISTS (SELECT 1 FROM catalog.ProductRecipeIngredients recipeLine
+                JOIN catalog.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=recipeLine.ProductRecipeVersionId
                 WHERE recipeLine.TenantId=@TenantId AND recipeLine.IngredientProductId=@ProductId
                   AND recipe.IsEnabled=1
-                  AND recipe.[Version]=(SELECT MAX(latest.[Version]) FROM dbo.ProductRecipeVersions latest
+                  AND recipe.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductRecipeVersions latest
                       WHERE latest.TenantId=recipe.TenantId AND latest.ProductId=recipe.ProductId))
               THROW 51024,'El ingrediente pertenece a recetas publicadas.',1;
             IF @IsActive=0 AND EXISTS (SELECT 1 FROM dbo.InventoryOperations operation

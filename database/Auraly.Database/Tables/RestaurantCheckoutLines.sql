@@ -15,7 +15,7 @@ CREATE TABLE [sales].[RestaurantCheckoutLines]
     CONSTRAINT [FK_RestaurantCheckoutLines_Addition] FOREIGN KEY ([AccountId],[AdditionId])
         REFERENCES [sales].[RestaurantAccountAdditions] ([AccountId],[AdditionId]),
     CONSTRAINT [FK_RestaurantCheckoutLines_RecipeVersion] FOREIGN KEY ([TenantId],[ProductRecipeVersionId])
-        REFERENCES [dbo].[ProductRecipeVersions] ([TenantId],[ProductRecipeVersionId]),
+        REFERENCES [catalog].[ProductRecipeVersions] ([TenantId],[ProductRecipeVersionId]),
     CONSTRAINT [FK_RestaurantCheckoutLines_Business] FOREIGN KEY ([BusinessId],[TenantId])
         REFERENCES [dbo].[Businesses] ([BusinessId],[TenantId])
 );

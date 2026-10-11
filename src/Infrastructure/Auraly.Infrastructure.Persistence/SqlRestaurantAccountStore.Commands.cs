@@ -183,13 +183,13 @@ public sealed partial class SqlRestaurantAccountStore
                 ManageStockAtSend=product.ManageStock,
                 ProductRecipeVersionId=CASE WHEN product.ManageStock=0 THEN (
                   SELECT TOP(1) versionRow.ProductRecipeVersionId
-                  FROM dbo.ProductRecipeVersions versionRow
+                  FROM catalog.ProductRecipeVersions versionRow
                   WHERE versionRow.TenantId=addition.TenantId
                     AND versionRow.ProductId=addition.ProductId
                     AND versionRow.IsEnabled=1
                     AND versionRow.[Version]=(
                       SELECT MAX(latest.[Version])
-                      FROM dbo.ProductRecipeVersions latest
+                      FROM catalog.ProductRecipeVersions latest
                       WHERE latest.TenantId=versionRow.TenantId
                         AND latest.ProductId=versionRow.ProductId)
                   ) ELSE NULL END

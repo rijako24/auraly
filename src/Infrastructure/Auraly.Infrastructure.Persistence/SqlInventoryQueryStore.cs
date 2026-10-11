@@ -116,18 +116,18 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             DECLARE @TenantId uniqueidentifier=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             SELECT COUNT(*) FROM dbo.Products p
             WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.IsIngredient=0 AND p.ManageStock=1
-              AND EXISTS (SELECT 1 FROM dbo.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId
-                  AND v.IsEnabled=1 AND v.[Version]=(SELECT MAX(latest.[Version]) FROM dbo.ProductRecipeVersions latest WHERE latest.TenantId=@TenantId AND latest.ProductId=p.ProductId))
+              AND EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId
+                  AND v.IsEnabled=1 AND v.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductRecipeVersions latest WHERE latest.TenantId=@TenantId AND latest.ProductId=p.ProductId))
               AND NOT EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId AND link.IsActive=1 AND link.SharesInventory=1)
               AND (@Search IS NULL OR p.Name LIKE @Pattern OR p.ProductCode LIKE @Pattern);
             SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Name,p.BaseUnitCode,
-                   (SELECT MAX(v.[Version]) FROM dbo.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId),
+                   (SELECT MAX(v.[Version]) FROM catalog.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId),
                    COALESCE(balance.QuantityOnHand,0)
             FROM dbo.Products p
             LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId
             WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.IsIngredient=0 AND p.ManageStock=1
-              AND EXISTS (SELECT 1 FROM dbo.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId
-                  AND v.IsEnabled=1 AND v.[Version]=(SELECT MAX(latest.[Version]) FROM dbo.ProductRecipeVersions latest WHERE latest.TenantId=@TenantId AND latest.ProductId=p.ProductId))
+              AND EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId
+                  AND v.IsEnabled=1 AND v.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductRecipeVersions latest WHERE latest.TenantId=@TenantId AND latest.ProductId=p.ProductId))
               AND NOT EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId AND link.IsActive=1 AND link.SharesInventory=1)
               AND (@Search IS NULL OR p.Name LIKE @Pattern OR p.ProductCode LIKE @Pattern)
             ORDER BY p.Name,p.ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
@@ -159,9 +159,9 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    CASE WHEN @IncludeCosts=1 THEN ingredientBalance.AverageUnitCost END
             FROM dbo.Products finished
             CROSS APPLY (SELECT TOP(1) v.ProductRecipeVersionId,v.[Version],v.IsEnabled
-                FROM dbo.ProductRecipeVersions v WHERE v.TenantId=finished.TenantId AND v.ProductId=finished.ProductId
+                FROM catalog.ProductRecipeVersions v WHERE v.TenantId=finished.TenantId AND v.ProductId=finished.ProductId
                 ORDER BY v.[Version] DESC) recipe
-            JOIN dbo.ProductRecipeIngredients line ON line.ProductRecipeVersionId=recipe.ProductRecipeVersionId
+            JOIN catalog.ProductRecipeIngredients line ON line.ProductRecipeVersionId=recipe.ProductRecipeVersionId
             JOIN dbo.Products ingredient ON ingredient.TenantId=finished.TenantId AND ingredient.ProductId=line.IngredientProductId
             LEFT JOIN dbo.InventoryBalances finishedBalance ON finishedBalance.BusinessId=@BusinessId AND finishedBalance.WarehouseId=@WarehouseId AND finishedBalance.ProductId=finished.ProductId
             LEFT JOIN dbo.InventoryBalances ingredientBalance ON ingredientBalance.BusinessId=@BusinessId AND ingredientBalance.WarehouseId=@WarehouseId AND ingredientBalance.ProductId=ingredient.ProductId
@@ -482,7 +482,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
               FROM dbo.InventoryOperations o
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.IsSystem=0
               LEFT JOIN dbo.Warehouses dw ON dw.WarehouseId=o.DestinationWarehouseId
-              LEFT JOIN dbo.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=o.RecipeVersionId
+              LEFT JOIN catalog.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=o.RecipeVersionId
               WHERE o.BusinessId=@BusinessId
               UNION ALL
               SELECT g.GoodsReceiptId,N'GoodsReceipt',g.DocumentNumber,g.WarehouseId,w.Name,

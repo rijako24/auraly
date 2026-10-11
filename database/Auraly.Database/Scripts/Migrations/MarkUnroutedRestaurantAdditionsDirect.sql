@@ -9,7 +9,7 @@ JOIN dbo.Products product
   ON product.TenantId=addition.TenantId AND product.ProductId=addition.ProductId
 OUTER APPLY (
     SELECT TOP(1) versionRow.ProductRecipeVersionId
-    FROM dbo.ProductRecipeVersions versionRow
+    FROM catalog.ProductRecipeVersions versionRow
     WHERE versionRow.TenantId=addition.TenantId
       AND versionRow.ProductId=addition.ProductId
       AND versionRow.IsEnabled=1

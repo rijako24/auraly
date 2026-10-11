@@ -482,7 +482,7 @@ public sealed partial class SqlRestaurantAccountStore
             FROM sales.RestaurantAccountAdditions addition
             JOIN dbo.Products product ON product.TenantId=addition.TenantId
               AND product.ProductId=addition.ProductId
-            LEFT JOIN dbo.ProductRecipeIngredients ingredient
+            LEFT JOIN catalog.ProductRecipeIngredients ingredient
               ON ingredient.TenantId=addition.TenantId
              AND ingredient.ProductRecipeVersionId=addition.ProductRecipeVersionId
             LEFT JOIN dbo.Products ingredientProduct

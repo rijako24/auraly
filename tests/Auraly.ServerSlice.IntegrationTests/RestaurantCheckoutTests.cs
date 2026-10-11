@@ -529,11 +529,11 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             VALUES(NEWID(),@BusinessId,@FinishedId,10000,10000,N'COP',
                 DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
             DECLARE @VersionId uniqueidentifier=NEWID();
-            INSERT dbo.ProductRecipeVersions(ProductRecipeVersionId,TenantId,
+            INSERT catalog.ProductRecipeVersions(ProductRecipeVersionId,TenantId,
                 ProductId,[Version],IsEnabled,PublishedAt,PublishedByUserId)
             VALUES(@VersionId,@TenantId,@FinishedId,1,1,
                 SYSDATETIMEOFFSET(),@UserId);
-            INSERT dbo.ProductRecipeIngredients(ProductRecipeVersionId,
+            INSERT catalog.ProductRecipeIngredients(ProductRecipeVersionId,
                 LineNumber,TenantId,IngredientProductId,QuantityPerUnit,
                 BaseUnitCodeSnapshot)
             SELECT @VersionId,1,@TenantId,@IngredientId,2,p.BaseUnitCode

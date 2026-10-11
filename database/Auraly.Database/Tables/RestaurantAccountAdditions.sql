@@ -37,7 +37,7 @@ CREATE TABLE [sales].[RestaurantAccountAdditions]
     CONSTRAINT [FK_RestaurantAccountAdditions_Replacement] FOREIGN KEY ([ReplacementOfCancellationId])
         REFERENCES [sales].[RestaurantCancellationRequests] ([CancellationId]),
     CONSTRAINT [FK_RestaurantAccountAdditions_RecipeVersion] FOREIGN KEY ([TenantId],[ProductRecipeVersionId])
-        REFERENCES [dbo].[ProductRecipeVersions] ([TenantId],[ProductRecipeVersionId]),
+        REFERENCES [catalog].[ProductRecipeVersions] ([TenantId],[ProductRecipeVersionId]),
     CONSTRAINT [FK_RestaurantAccountAdditions_User] FOREIGN KEY ([AddedByUserId],[TenantId])
         REFERENCES [dbo].[AppUsers] ([UserId],[TenantId]),
     CONSTRAINT [FK_RestaurantAccountAdditions_Business] FOREIGN KEY ([BusinessId],[TenantId])

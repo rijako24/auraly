@@ -447,7 +447,7 @@ public sealed class SqlInventoryOperationStore(
         const string sql = """
             DECLARE @RecipeVersionId uniqueidentifier, @Version int, @Enabled bit;
             SELECT TOP(1) @RecipeVersionId=v.ProductRecipeVersionId,@Version=v.[Version],@Enabled=v.IsEnabled
-            FROM dbo.ProductRecipeVersions v WITH(UPDLOCK,HOLDLOCK)
+            FROM catalog.ProductRecipeVersions v WITH(UPDLOCK,HOLDLOCK)
             JOIN dbo.Products finished WITH(UPDLOCK,HOLDLOCK)
               ON finished.TenantId=v.TenantId AND finished.ProductId=v.ProductId
             WHERE v.TenantId=@TenantId AND v.ProductId=@ProductId
@@ -460,7 +460,7 @@ public sealed class SqlInventoryOperationStore(
                    CAST(CASE WHEN EXISTS (SELECT 1 FROM dbo.ProductLinks link
                        WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId
                          AND link.IsActive=1 AND link.SharesInventory=1) THEN 1 ELSE 0 END AS bit)
-            FROM dbo.ProductRecipeIngredients i WITH(UPDLOCK,HOLDLOCK)
+            FROM catalog.ProductRecipeIngredients i WITH(UPDLOCK,HOLDLOCK)
             JOIN dbo.Products p WITH(UPDLOCK,HOLDLOCK)
               ON p.TenantId=i.TenantId AND p.ProductId=i.IngredientProductId
             WHERE i.ProductRecipeVersionId=@RecipeVersionId

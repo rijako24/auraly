@@ -31,13 +31,13 @@ public sealed partial class SqlPosSaleDocumentHandler
             JOIN dbo.Products soldProduct
               ON soldProduct.TenantId=addition.TenantId
              AND soldProduct.ProductId=addition.ProductId
-            LEFT JOIN dbo.ProductRecipeVersions recipe
+            LEFT JOIN catalog.ProductRecipeVersions recipe
               ON recipe.ProductRecipeVersionId=mapping.ProductRecipeVersionId
              AND recipe.TenantId=mapping.TenantId
             LEFT JOIN dbo.Products finished
               ON finished.ProductId=recipe.ProductId
              AND finished.TenantId=recipe.TenantId
-            LEFT JOIN dbo.ProductRecipeIngredients ingredient
+            LEFT JOIN catalog.ProductRecipeIngredients ingredient
               ON ingredient.ProductRecipeVersionId=recipe.ProductRecipeVersionId
              AND ingredient.TenantId=recipe.TenantId
             LEFT JOIN dbo.Products component

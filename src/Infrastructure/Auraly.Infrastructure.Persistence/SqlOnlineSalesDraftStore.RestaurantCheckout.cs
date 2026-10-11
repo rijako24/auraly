@@ -104,7 +104,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             OUTER APPLY (
               SELECT SUM(ingredient.QuantityPerUnit *
                          COALESCE(ingredientBalance.AverageUnitCost,0)) AS UnitCost
-              FROM dbo.ProductRecipeIngredients ingredient
+              FROM catalog.ProductRecipeIngredients ingredient
               LEFT JOIN dbo.InventoryBalances ingredientBalance
                 ON ingredientBalance.BusinessId=addition.BusinessId
                AND ingredientBalance.WarehouseId=account.WarehouseId

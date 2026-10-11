@@ -30,6 +30,7 @@
     <Build Include="Schemas\WorkSessions.sql" />
     <Build Include="Schemas\Billing.sql" />
     <Build Include="Schemas\Sales.sql" />
+    <Build Include="Schemas\Catalog.sql" />
     <Build Include="Schemas\Authorization.sql" />
     <Build Include="Schemas\Accounting.sql" />
     <Build Include="Schemas\Pricing.sql" />

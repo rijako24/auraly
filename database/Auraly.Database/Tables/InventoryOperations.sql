@@ -47,7 +47,7 @@ CREATE TABLE [dbo].[InventoryOperations]
     CONSTRAINT [FK_InventoryOperations_TransitWarehouse] FOREIGN KEY ([TransitWarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_InventoryOperations_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_InventoryOperations_ConversionFamilyRoot] FOREIGN KEY ([ConversionFamilyRootProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [FK_InventoryOperations_RecipeVersion] FOREIGN KEY ([RecipeVersionId]) REFERENCES [dbo].[ProductRecipeVersions] ([ProductRecipeVersionId]),
+    CONSTRAINT [FK_InventoryOperations_RecipeVersion] FOREIGN KEY ([RecipeVersionId]) REFERENCES [catalog].[ProductRecipeVersions] ([ProductRecipeVersionId]),
     CONSTRAINT [CK_InventoryOperations_Type] CHECK ([DocumentType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Production',N'Damage')),
     CONSTRAINT [CK_InventoryOperations_RecipeVersion] CHECK (([DocumentType]=N'Production' AND [RecipeVersionId] IS NOT NULL) OR ([DocumentType]<>N'Production' AND [RecipeVersionId] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_Status] CHECK ([Status] IN (N'Draft',N'Accepted',N'Processed',N'DispatchPending',N'Dispatched',N'ReceiptPending',N'PartiallyReceived',N'Received',N'Reversed')),

@@ -70,7 +70,7 @@ public sealed class SqlProductRecipeStore(
                 IF EXISTS (SELECT 1 FROM dbo.ProductLinks WHERE TenantId=@TenantId
                     AND ChildProductId=@ProductId AND IsActive=1 AND SharesInventory=1)
                     THROW 51024, 'El producto terminado debe manejar inventario propio para producirse.', 1;
-                DECLARE @CurrentVersion int = ISNULL((SELECT MAX([Version]) FROM dbo.ProductRecipeVersions WITH (UPDLOCK,HOLDLOCK)
+                DECLARE @CurrentVersion int = ISNULL((SELECT MAX([Version]) FROM catalog.ProductRecipeVersions WITH (UPDLOCK,HOLDLOCK)
                     WHERE TenantId=@TenantId AND ProductId=@ProductId), 0);
                 IF @CurrentVersion<>@ExpectedVersion
                     THROW 51024, 'La receta cambió. Actualiza antes de publicar.', 1;
@@ -87,9 +87,9 @@ public sealed class SqlProductRecipeStore(
                        OR EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId
                            AND link.ChildProductId=p.ProductId AND link.IsActive=1 AND link.SharesInventory=1))
                     THROW 51024, 'Los ingredientes deben estar activos, marcados como ingredientes y manejar inventario.', 1;
-                INSERT dbo.ProductRecipeVersions(ProductRecipeVersionId,TenantId,ProductId,[Version],IsEnabled,PublishedAt,PublishedByUserId)
+                INSERT catalog.ProductRecipeVersions(ProductRecipeVersionId,TenantId,ProductId,[Version],IsEnabled,PublishedAt,PublishedByUserId)
                 VALUES(@VersionId,@TenantId,@ProductId,@ExpectedVersion+1,CASE WHEN @ExpectedCount>0 THEN 1 ELSE 0 END,@PublishedAt,@UserId);
-                INSERT dbo.ProductRecipeIngredients(ProductRecipeVersionId,LineNumber,TenantId,IngredientProductId,QuantityPerUnit,BaseUnitCodeSnapshot)
+                INSERT catalog.ProductRecipeIngredients(ProductRecipeVersionId,LineNumber,TenantId,IngredientProductId,QuantityPerUnit,BaseUnitCodeSnapshot)
                 SELECT @VersionId,i.LineNumber,@TenantId,i.IngredientProductId,i.QuantityPerUnit,p.BaseUnitCode
                 FROM @Items i JOIN dbo.Products p ON p.TenantId=@TenantId AND p.ProductId=i.IngredientProductId;
                 """;
@@ -134,11 +134,11 @@ public sealed class SqlProductRecipeStore(
         const string sql = """
             SELECT v.[Version],v.IsEnabled,v.PublishedAt,i.IngredientProductId,p.ProductCode,p.Name,
                    i.QuantityPerUnit,i.BaseUnitCodeSnapshot
-            FROM dbo.ProductRecipeVersions v
-            LEFT JOIN dbo.ProductRecipeIngredients i ON i.ProductRecipeVersionId=v.ProductRecipeVersionId
+            FROM catalog.ProductRecipeVersions v
+            LEFT JOIN catalog.ProductRecipeIngredients i ON i.ProductRecipeVersionId=v.ProductRecipeVersionId
             LEFT JOIN dbo.Products p ON p.TenantId=v.TenantId AND p.ProductId=i.IngredientProductId
             WHERE v.TenantId=@TenantId AND v.ProductId=@ProductId
-              AND v.[Version]=(SELECT MAX([Version]) FROM dbo.ProductRecipeVersions
+              AND v.[Version]=(SELECT MAX([Version]) FROM catalog.ProductRecipeVersions
                   WHERE TenantId=@TenantId AND ProductId=@ProductId)
             ORDER BY i.LineNumber;
             """;

@@ -105,7 +105,7 @@ public sealed partial class SqlRestaurantAccountStore
                    product.ManageStock,
                    CASE WHEN product.ManageStock=0 THEN (
                      SELECT TOP(1) versionRow.ProductRecipeVersionId
-                     FROM dbo.ProductRecipeVersions versionRow
+                     FROM catalog.ProductRecipeVersions versionRow
                      WHERE versionRow.TenantId=@TenantId
                        AND versionRow.ProductId=@ProductId
                        AND versionRow.IsEnabled=1

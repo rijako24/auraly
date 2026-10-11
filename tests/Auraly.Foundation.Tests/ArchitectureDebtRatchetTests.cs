@@ -748,7 +748,8 @@ public sealed class ArchitectureDebtRatchetTests
             })
             .ToArray();
 
-        Assert.Equal(3, channelOwners.Length);
+        // The kitchen display has its own live channel alongside the three POS channels.
+        Assert.Equal(4, channelOwners.Length);
         foreach (var owner in channelOwners)
         {
             var source = File.ReadAllText(owner);
