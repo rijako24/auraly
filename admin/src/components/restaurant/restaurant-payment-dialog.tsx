@@ -64,6 +64,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([]);
   const [tipAmount, setTipAmount] = useState("");
+  const [separateTipCashReceived, setSeparateTipCashReceived] = useState("");
   const [tipRow, setTipRow] = useState<PaymentRow>(() => newRow(0));
   const [catalog, setCatalog] = useState<{ code: string; label: string }[]>([]);
   const [franchises, setFranchises] = useState<{ code: string; label: string }[]>([]);
@@ -97,19 +98,35 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   const tipBase = selectedTotal > 0 ? selectedTotal : summary.total;
   const invalidTip = !Number.isFinite(actualTip) || actualTip < 0 ||
     !Number.isInteger(actualTip) || actualTip > 1000000000;
-  const { cashTendered, cashApplied, due, change } =
-    settleRestaurantPayment(selectedTotal, paymentRows);
+  const cashTipIncluded = summary.remaining > 0 && !invalidTip && actualTip > 0 &&
+    tipRow.methodCode === "Cash" && paymentRows.some((row) =>
+      row.methodCode === "Cash") ? actualTip : 0;
+  const separateCashTip = actualTip > 0 && !invalidTip &&
+    tipRow.methodCode === "Cash" && cashTipIncluded === 0;
+  const separateTipTendered = separateTipCashReceived.trim() === ""
+    ? NaN : Number(separateTipCashReceived);
+  const invalidSeparateTipTendered = separateCashTip &&
+    (!Number.isFinite(separateTipTendered) ||
+      separateTipTendered < actualTip);
+  const separateTipChange = separateCashTip && !invalidSeparateTipTendered
+    ? round(separateTipTendered - actualTip) : 0;
+  const { cashTendered, cashSaleTendered, cashApplied, due, change } =
+    settleRestaurantPayment(selectedTotal, paymentRows, cashTipIncluded);
+  const cashTipExceedsTendered = cashTipIncluded > cashTendered;
   const otherSession = summary.collections.some((item) =>
     item.workSessionId !== workSessionId);
   const captureBlockReason = summary.remaining <= 0
     ? otherSession ? "Esta mesa tiene cobros de otra sesión de caja. Revísalos antes de continuar."
       : invalidTip ? "Ingresa un valor de propina válido o déjalo en cero."
+        : invalidSeparateTipTendered ? "El efectivo entregado no cubre la propina indicada."
         : actualTip > 0 && !referencesReady ? "Cargando medios de pago…"
           : documentTypeBlockReason
     : otherSession
     ? "Esta mesa tiene cobros de otra sesión de caja. Revísalos antes de continuar."
     : !referencesReady ? error || "Cargando medios de pago…"
       : invalidTip ? "Ingresa un valor de propina válido o déjalo en cero."
+      : invalidSeparateTipTendered ? "Escribe el efectivo entregado para cubrir la propina."
+      : cashTipExceedsTendered ? "El efectivo entregado no cubre la propina indicada."
       : selectedTotal <= 0 ? "Selecciona los productos que vas a cobrar."
         : due > 0 ? `Faltan ${money.format(due)} por asignar a los medios de pago.`
           : due < 0 ? `Los medios de pago exceden el cobro por ${money.format(-due)}.`
@@ -181,6 +198,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
 
   function paymentInputs(): PosPaymentInput[] | null {
     if (!referencesReady || selectedTotal <= 0 || due !== 0 ||
+        cashTipExceedsTendered ||
         paymentRows.some((row) => !Number.isFinite(Number(row.amount)) ||
           Number(row.amount) <= 0) ||
         paymentRows.filter((row) => row.methodCode === "Cash").length > 1 ||
@@ -198,7 +216,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
         row.methodCode === "CreditCard" ? row.approval.trim() || null : null,
       bankAccountId: row.methodCode === "Transfer" && accountingEnabled ?
         row.bankAccountId || null : null,
-      tenderedAmount: row.methodCode === "Cash" ? round(Number(row.amount)) : null,
+      tenderedAmount: row.methodCode === "Cash" ? cashSaleTendered : null,
     }));
     if (rows.some((row) => (row.methodCode === "DebitCard" ||
           row.methodCode === "CreditCard") &&
@@ -216,6 +234,10 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   function tipPaymentInput(): PosPaymentInput | null | undefined {
     if (invalidTip) { setError("Ingresa un valor de propina válido."); return undefined; }
     if (actualTip === 0) return null;
+    if (invalidSeparateTipTendered) {
+      setError("Escribe el efectivo entregado para cubrir la propina.");
+      return undefined;
+    }
     if ((tipRow.methodCode === "DebitCard" || tipRow.methodCode === "CreditCard") &&
           (!tipRow.franchise || !tipRow.approval.trim()) ||
         tipRow.methodCode === "Transfer" &&
@@ -228,7 +250,8 @@ export function RestaurantPaymentDialog({ draft, summary, client,
       cardFranchiseCode: tipRow.methodCode === "DebitCard" || tipRow.methodCode === "CreditCard" ? tipRow.franchise : null,
       approvalNumber: tipRow.methodCode === "DebitCard" || tipRow.methodCode === "CreditCard" ? tipRow.approval.trim() : null,
       bankAccountId: tipRow.methodCode === "Transfer" && accountingEnabled ? tipRow.bankAccountId : null,
-      tenderedAmount: tipRow.methodCode === "Cash" ? actualTip : null };
+      tenderedAmount: tipRow.methodCode === "Cash"
+        ? separateCashTip ? separateTipTendered : actualTip : null };
   }
 
   async function receivePayment() {
@@ -244,6 +267,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
         ({ additionId, quantity })), payments, tipPayment);
       setPaymentRows([]);
       setTipAmount("");
+      setSeparateTipCashReceived("");
       setQuantities({});
       setSelectionMode("all");
       if (updated.remaining === 0)
@@ -310,15 +334,17 @@ export function RestaurantPaymentDialog({ draft, summary, client,
                 Sugerir {summary.suggestedTipPercent} % · {money.format(Math.round(tipBase * summary.suggestedTipPercent / 100))}</Button>}
               <Input id="restaurant-actual-tip" inputMode="decimal" className="mt-3 h-12 bg-white text-lg font-bold dark:bg-slate-900" placeholder="0" value={tipAmount}
                 onChange={(event) => { setTipAmount(event.target.value); setError(""); }} disabled={disabled}/>
-              {actualTip > 0 && !invalidTip && <div className="mt-3 space-y-2"><Select value={tipRow.methodCode} onValueChange={(value) => setTipRow((row) => ({ ...row, methodCode: value as Method, reference: "", franchise: "", approval: "", bankAccountId: "" }))}>
+              {actualTip > 0 && !invalidTip && <div className="mt-3 space-y-2"><Select value={tipRow.methodCode} onValueChange={(value) => { setTipRow((row) => ({ ...row, methodCode: value as Method, reference: "", franchise: "", approval: "", bankAccountId: "" })); setSeparateTipCashReceived(""); }}>
                 <SelectTrigger aria-label="Medio de la propina" className="h-12 bg-white dark:bg-slate-900"><SelectValue/></SelectTrigger><SelectContent>{catalog.map((method) => <SelectItem key={method.code} value={method.code}>{method.label}</SelectItem>)}</SelectContent></Select>
                 {(tipRow.methodCode === "DebitCard" || tipRow.methodCode === "CreditCard") && <><Select value={tipRow.franchise || undefined} onValueChange={(value) => setTipRow((row) => ({ ...row, franchise: value }))}><SelectTrigger aria-label="Franquicia de la propina" className="h-12"><SelectValue placeholder="Franquicia"/></SelectTrigger><SelectContent>{franchises.map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select><Input aria-label="Aprobación de la propina" placeholder="Número de aprobación" value={tipRow.approval} onChange={(event) => setTipRow((row) => ({ ...row, approval: event.target.value }))}/></>}
                 {tipRow.methodCode === "Transfer" && <>{accountingEnabled && <Select value={tipRow.bankAccountId || undefined} onValueChange={(value) => setTipRow((row) => ({ ...row, bankAccountId: value }))}><SelectTrigger aria-label="Cuenta de la propina" className="h-12"><SelectValue placeholder="Cuenta bancaria"/></SelectTrigger><SelectContent>{banks.map((bank) => <SelectItem key={bank.bankAccountId} value={bank.bankAccountId}>{bank.displayName}</SelectItem>)}</SelectContent></Select>}<Input aria-label="Referencia de la propina" placeholder="Referencia de transferencia" value={tipRow.reference} onChange={(event) => setTipRow((row) => ({ ...row, reference: event.target.value }))}/></>}
+                {separateCashTip && <label className="block text-sm font-semibold">Efectivo entregado para la propina<Input inputMode="decimal" className="mt-1 h-12 bg-white text-lg font-bold dark:bg-slate-900" placeholder={String(actualTip)} value={separateTipCashReceived} onChange={(event) => { setSeparateTipCashReceived(event.target.value); setError(""); }}/></label>}
+                {separateTipChange > 0 && <p className="font-semibold text-teal-800 dark:text-teal-200">Cambio de la propina: {money.format(separateTipChange)}</p>}
               </div>}
-              <p className="mt-3 text-sm font-semibold">Total a recibir ahora: {money.format(selectedTotal + (invalidTip ? 0 : actualTip))}</p>
+              <p className="mt-3 text-sm font-semibold">Consumo y propina de esta persona: {money.format(selectedTotal + (invalidTip ? 0 : actualTip))}</p>
             </div>
             {summary.remaining > 0 && <div className="mt-5 space-y-3">{paymentRows.map((row) => <div key={row.id} className="rounded-2xl border bg-slate-50 p-4 dark:bg-slate-950"><div className="flex items-center gap-2"><Select value={row.methodCode} onValueChange={(value) => updateRow(row.id, { methodCode: value as Method, reference: "", franchise: "", approval: "", bankAccountId: "" })}><SelectTrigger aria-label="Medio de pago" className="h-12 flex-1 rounded-xl bg-white text-base dark:bg-slate-900"><SelectValue/></SelectTrigger><SelectContent>{catalog.map((method) => <SelectItem key={method.code} value={method.code} className="min-h-12 text-base">{method.label}</SelectItem>)}</SelectContent></Select><Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 rounded-xl text-slate-500" disabled={paymentRows.length === 1} onClick={() => setPaymentRows((rows) => rows.filter((item) => item.id !== row.id))} aria-label="Quitar medio"><Trash2 className="h-5 w-5"/></Button></div>
-                <label className="mt-3 block text-sm font-semibold">Valor recibido<Input inputMode="decimal" className="mt-1 h-14 rounded-xl text-xl font-bold" value={row.amount} onChange={(event) => updateRow(row.id, { amount: event.target.value })}/></label>
+                <label className="mt-3 block text-sm font-semibold">{row.methodCode === "Cash" ? cashTipIncluded > 0 ? "Efectivo entregado (incluye propina)" : "Efectivo entregado" : "Valor cobrado por consumo"}<Input inputMode="decimal" className="mt-1 h-14 rounded-xl text-xl font-bold" value={row.amount} onChange={(event) => updateRow(row.id, { amount: event.target.value })}/></label>
                 {(row.methodCode === "DebitCard" || row.methodCode === "CreditCard") && <div className="mt-3 space-y-3"><Select value={row.franchise || undefined} onValueChange={(value) => updateRow(row.id, { franchise: value })}><SelectTrigger aria-label="Franquicia" className="h-12 rounded-xl"><SelectValue placeholder="Franquicia de tarjeta"/></SelectTrigger><SelectContent>{franchises.map((item) => <SelectItem key={item.code} value={item.code} className="min-h-11">{item.label}</SelectItem>)}</SelectContent></Select><Input aria-label="Número de aprobación" className="h-12 rounded-xl" placeholder="Número de aprobación" value={row.approval} onChange={(event) => updateRow(row.id, { approval: event.target.value })}/></div>}
                 {row.methodCode === "Transfer" && <div className="mt-3 space-y-3">{accountingEnabled && <Select value={row.bankAccountId || undefined} onValueChange={(value) => updateRow(row.id, { bankAccountId: value })}><SelectTrigger aria-label="Cuenta bancaria" className="h-12 rounded-xl"><SelectValue placeholder="Cuenta bancaria"/></SelectTrigger><SelectContent>{banks.map((bank) => <SelectItem key={bank.bankAccountId} value={bank.bankAccountId} className="min-h-11">{bank.displayName}</SelectItem>)}</SelectContent></Select>}<Input aria-label="Referencia de transferencia" className="h-12 rounded-xl" placeholder="Referencia de transferencia" value={row.reference} onChange={(event) => updateRow(row.id, { reference: event.target.value })}/></div>}
               </div>)}<Button variant="outline" className="min-h-12 w-full rounded-xl" disabled={disabled || !referencesReady || !canAddPaymentMethod || paymentRows.length >= 10 || selectedTotal <= 0} onClick={addPaymentMethod}><Plus className="mr-2 h-5 w-5"/>Agregar otro medio</Button><div className="space-y-1 rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold dark:bg-slate-800"><div className="flex justify-between"><span>{due > 0 ? "Falta" : due < 0 ? "Excede" : "Pago completo"}</span><span>{money.format(Math.abs(due))}</span></div>{change > 0 && <div className="flex justify-between text-teal-700 dark:text-teal-300"><span>Cambio a entregar</span><span>{money.format(change)}</span></div>}</div></div>}

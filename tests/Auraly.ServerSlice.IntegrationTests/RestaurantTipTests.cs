@@ -112,8 +112,10 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 request.Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(
                     productCollectionId, workSessionId, initial.AccountVersion,
                     [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
-                    [new OnlineSalesPayment("Cash", half, null)],
-                    new OnlineSalesPayment("Cash", 1_000m, null)));
+                    [new OnlineSalesPayment("Cash", half, null,
+                        TenderedAmount: half + 5_000m)],
+                    new OnlineSalesPayment("Cash", 1_000m, null,
+                        TenderedAmount: 1_000m)));
                 request.Headers.Add("Idempotency-Key", productCollectionId.ToString("N"));
                 using var response = await cashier.SendAsync(request);
                 response.EnsureSuccessStatusCode();
@@ -121,6 +123,10 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 Assert.Equal(half, partial.Remaining);
                 Assert.Equal(half, partial.Collected);
                 Assert.Equal(1_000m, partial.TipsCollected);
+                Assert.Equal(half + 5_000m,
+                    partial.Collections.Single(item =>
+                        item.CollectionId == productCollectionId)
+                        .Payments.Single().TenderedAmount);
             }
             var secondCollectionId = Guid.NewGuid();
             RestaurantCollectionSummary paid;
@@ -146,7 +152,8 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             {
                 request.Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(
                     collectionId, workSessionId, paid.AccountVersion,
-                    [], [], new OnlineSalesPayment("Cash", tipAmount, null)));
+                    [], [], new OnlineSalesPayment("Cash", tipAmount, null,
+                        TenderedAmount: tipAmount + 5_000m)));
                 request.Headers.Add("Idempotency-Key", collectionId.ToString("N"));
                 using var response = await cashier.SendAsync(request);
                 response.EnsureSuccessStatusCode();
@@ -154,6 +161,9 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 Assert.Equal(0, captured.Remaining);
                 Assert.Equal(initial.Total, captured.Collected);
                 Assert.Equal(3_000m + tipAmount, captured.TipsCollected);
+                Assert.Equal(tipAmount + 5_000m,
+                    captured.Collections.Single(item => item.CollectionId == collectionId)
+                        .TipPayment?.TenderedAmount);
                 using var complete = new HttpRequestMessage(HttpMethod.Post,
                     $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/complete")
                 {
@@ -161,7 +171,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                         workSessionId, new CompleteOnlineSalesDraftRequest(
                             captured.AccountVersion,
                             [new OnlineSalesPayment("Cash", initial.Total, null,
-                                TenderedAmount: initial.Total)],
+                                TenderedAmount: initial.Total + 5_000m)],
                             DocumentType: PosSaleDocumentTypes.Receipt)))
                 };
                 complete.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));

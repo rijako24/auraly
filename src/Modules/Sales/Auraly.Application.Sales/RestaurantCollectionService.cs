@@ -63,7 +63,7 @@ public sealed class RestaurantCollectionService(
                decimal.Truncate(tip.Amount) != tip.Amount ||
                tip.RoundingAdjustment != 0 ||
                tip.TenderedAmount is { } tipTendered &&
-                 (tip.MethodCode != "Cash" || tipTendered != tip.Amount) ||
+                 (tip.MethodCode != "Cash" || tipTendered < tip.Amount) ||
                tip.MethodCode != "Transfer" && tip.BankAccountId is not null ||
                (tip.MethodCode is "DebitCard" or "CreditCard") !=
                  (!string.IsNullOrWhiteSpace(tip.CardFranchiseCode) &&
