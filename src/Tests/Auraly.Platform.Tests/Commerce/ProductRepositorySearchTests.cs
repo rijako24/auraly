@@ -184,16 +184,25 @@ public sealed class ProductRepositorySearchTests
         excluded.ManageStock = false;
         excluded.AllowsFractionalSale = false;
         excluded.IsWeighable = true;
-        context.Products.AddRange(matching, excluded);
+        var ingredient = Product(businessId, "INGREDIENTE OCULTO", "FILTER-3", active: true);
+        ingredient.ProductCategoryId = categoryId;
+        ingredient.ProductBrandId = brandId;
+        ingredient.ManageStock = true;
+        ingredient.AllowsFractionalSale = false;
+        ingredient.IsWeighable = true;
+        ingredient.IsIngredient = true;
+        context.Products.AddRange(matching, excluded, ingredient);
         Publish(context, matching, 10m);
         Publish(context, excluded, 10m);
+        Publish(context, ingredient, 10m);
         await context.SaveChangesAsync();
 
         var result = await new ProductRepository(context).GetPagedByBusinessIdAsync(
             businessId, 1, 20, includeInactive: true,
             filter: new ProductListFilter(
                 [categoryId], BrandId: brandId, ManagesInventory: true,
-                AllowsFractionalSale: false, IsWeighable: true));
+                AllowsFractionalSale: false, IsWeighable: true,
+                IsIngredient: false));
 
         result.TotalCount.Should().Be(1);
         result.Items.Should().ContainSingle(product => product.ProductId == matching.ProductId);

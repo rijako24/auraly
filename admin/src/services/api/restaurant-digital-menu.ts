@@ -6,6 +6,14 @@ export type RestaurantDigitalMenuConfiguration = {
   introduction: string | null;
   isPublished: boolean;
   rowVersion: string;
+  products: RestaurantDigitalMenuSelectedProduct[];
+};
+
+export type RestaurantDigitalMenuSelectedProduct = {
+  productId: string;
+  productName: string;
+  productCode: string;
+  publicDescription: string | null;
 };
 
 export type RestaurantDigitalMenuView = {
@@ -25,7 +33,8 @@ export const restaurantDigitalMenuApi = {
     "/commerce/v1/restaurant/digital-menu", undefined,
     { cache: "no-store" })) ?? null,
   save: (request: { title: string; introduction: string | null;
-    isPublished: boolean; rowVersion: string | null }) =>
+    isPublished: boolean; rowVersion: string | null;
+    products: { productId: string; publicDescription: string | null }[] }) =>
     apiClient.put<RestaurantDigitalMenuConfiguration>(
       "/commerce/v1/restaurant/digital-menu", request),
   preview: () => apiClient.get<RestaurantDigitalMenuView>(

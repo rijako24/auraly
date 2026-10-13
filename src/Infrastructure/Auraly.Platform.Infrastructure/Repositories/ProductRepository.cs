@@ -140,6 +140,8 @@ public sealed partial class ProductRepository : IProductRepository
             query = query.Where(product => product.AllowsFractionalSale == allowsFractionalSale);
         if (filter?.IsWeighable is { } isWeighable)
             query = query.Where(product => product.IsWeighable == isWeighable);
+        if (filter?.IsIngredient is { } isIngredient)
+            query = query.Where(product => product.IsIngredient == isIngredient);
         if (filter?.SupplierId is { } supplierId)
         {
             var supplierProductIds = _context.Database.SqlQuery<Guid>($"""

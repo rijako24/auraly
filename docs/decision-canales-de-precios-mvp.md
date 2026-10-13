@@ -189,6 +189,8 @@ Si existen dos asignaciones con la misma prioridad, la configuración es inváli
 
 La caja puede permitir selección manual del canal únicamente con permiso. El usuario no puede usar un canal al que la caja o cliente no tengan acceso.
 
+En la cuenta online de Restaurante y bar, la sede conserva el precio público de mesa. Con `restaurant.price_channels.select` se puede elegir manualmente un canal activo del tenant para esa cuenta. Si se selecciona un cliente con canal vigente en `CustomerPricingSettings`, su canal prevalece y la selección manual queda bloqueada; quitar ese cliente retira el canal que provenía de él. Las incorporaciones vigentes se recalculan por conjunto con `CommercePriceResolver` y se guardan junto con el cambio de cuenta en una sola transacción. Un cobro capturado impide el cambio hasta revertirlo. La factura única recibe el cliente y su sede desde la cuenta, sin modificar el flujo de Venta directa.
+
 ---
 
 ## 5. Pipeline de precio
@@ -246,7 +248,8 @@ Reglas:
 - ninguna estrategia resuelve un precio inferior al costo promedio vigente;
 - `MarginOverLatestCost` calcula margen real sobre el último costo de compra observado; si todavía no existe una recepción usa el costo configurado del producto;
 - `MarginOverLatestCost` y `FixedMarginOverAverageCost` no aceptan valores negativos ni márgenes iguales o superiores a 100%;
-- los descuentos sobre precio público y los precios escalonados usan el costo promedio como piso de seguridad;
+- los descuentos sobre precio público y los precios escalonados usan como piso el costo base de la sede vigente en Preparar/Cambiar precio;
+- cada escala de precio por cantidad puede conservar un margen objetivo y marcar «Actualizar precio»; al publicar un lote de costos/precios, las escalas marcadas se recalculan con el costo base de la sede y se actualizan dentro de la misma transacción del lote. Una falla revierte precios base y canales juntos;
 - `ProductMarginAdjustment` permite restar puntos, pero nunca produce un margen menor que 0%;
 - el cambio de costo genera un delta de catálogo para las cajas afectadas.
 

@@ -2,7 +2,7 @@ import { apiClient } from "./client";
 
 export type PriceChannelStrategy = "TieredProductPrice"|"PercentageOverBasePrice"|"MarginOverLatestCost"|"FixedMarginOverAverageCost"|"SellAtAverageCost"|"ProductMarginAdjustment";
 export interface PriceSegmentSummary { id:string; code:string; name:string; isActive:boolean; createdAt:string; productCount:number; customerCount:number; strategy:PriceChannelStrategy; value:number|null; }
-export interface PriceSegmentItem { productId:string; productCode:string; productName:string; amount:number; currencyCode:string; minimumQuantity:number; }
+export interface PriceSegmentItem { productId:string; productCode:string; productName:string; amount:number; currencyCode:string; minimumQuantity:number; targetMarginPercent:number|null; autoUpdatePrice:boolean; costBasisAmount:number|null; salesTaxRate:number; }
 export type PriceChannelExclusionScope = "Category"|"Brand"|"Product";
 export interface PriceChannelExclusion { exclusionId:string; scopeType:PriceChannelExclusionScope; scopeId:string; scopeName:string; categoryDepth:number|null; productCode:string|null; }
 export interface PriceChannelProductReportRow { productId:string; productCode:string; productName:string; minimumQuantity:number; publicAmount:number; channelAmount:number; currencyCode:string; priceSource:string; }
@@ -10,10 +10,11 @@ export interface PriceChannelProductReport { priceChannelId:string; code:string;
 
 export const priceSegmentsApi = {
   list: () => apiClient.get<PriceSegmentSummary[]>("/commerce/v1/pricing/segments"),
-  create: (data:{name:string;channelStrategy:PriceChannelStrategy;channelValue?:number|null;items?:Array<{productId:string;amount:number;minimumQuantity:number}>;exclusions?:Array<{scopeType:PriceChannelExclusionScope;scopeId:string}>}) => apiClient.post<PriceSegmentSummary>("/commerce/v1/pricing/segments",data),
+  create: (data:{name:string;channelStrategy:PriceChannelStrategy;channelValue?:number|null;items?:Array<{productId:string;amount:number;minimumQuantity:number;targetMarginPercent:number|null;autoUpdatePrice:boolean;inputMode:"Margin"|"SalePrice"}>;exclusions?:Array<{scopeType:PriceChannelExclusionScope;scopeId:string}>}) => apiClient.post<PriceSegmentSummary>("/commerce/v1/pricing/segments",data),
   items: (id:string) => apiClient.get<PriceSegmentItem[]>(`/commerce/v1/pricing/segments/${id}/items`),
+  productCost: (productId:string) => apiClient.get<{costBasisAmount:number;salesTaxRate:number;currentMarginPercent:number|null}>(`/commerce/v1/pricing/segments/products/${productId}/cost`),
   productPriceReport: (id:string) => apiClient.get<PriceChannelProductReport>(`/commerce/v1/pricing/segments/${id}/product-price-report`),
-  saveItem: (id:string,productId:string,data:{amount:number;minimumQuantity:number}) => apiClient.put<void>(`/commerce/v1/pricing/segments/${id}/items/${productId}`,data),
+  saveItem: (id:string,productId:string,data:{amount:number;minimumQuantity:number;targetMarginPercent:number|null;autoUpdatePrice:boolean;inputMode:"Margin"|"SalePrice"}) => apiClient.put<void>(`/commerce/v1/pricing/segments/${id}/items/${productId}`,data),
   deleteItem: (id:string,productId:string,minimumQuantity:number) => apiClient.delete<void>(`/commerce/v1/pricing/segments/${id}/items/${productId}?minimumQuantity=${encodeURIComponent(minimumQuantity)}`),
   saveChannelSettings: (id:string,name:string,channelStrategy:PriceChannelStrategy,channelValue:number|null) => apiClient.put<void>(`/commerce/v1/pricing/segments/${id}/settings`,{name,channelStrategy,channelValue}),
   exclusions: (id:string) => apiClient.get<PriceChannelExclusion[]>(`/commerce/v1/pricing/segments/${id}/exclusions`),

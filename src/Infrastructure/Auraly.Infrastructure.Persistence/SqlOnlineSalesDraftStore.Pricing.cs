@@ -13,7 +13,7 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed record CommercePriceRequest(string Key, Guid ProductId, decimal Quantity);
 public sealed record CommercePriceResolution(
     Guid ProductId, decimal UnitPrice, string CurrencyCode, string PriceSource,
-    Guid? PriceChannelId, decimal PromotionDiscount);
+    Guid? PriceChannelId, decimal PromotionDiscount, decimal ReferenceUnitPrice);
 
 public sealed partial class SqlOnlineSalesDraftStore
 {
@@ -25,18 +25,20 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid? customerId,
         IReadOnlyCollection<CommercePriceRequest> requests,
         CancellationToken ct,
-        bool independentLines = false)
+        bool independentLines = false, Guid? selectedChannelId = null)
     {
         var resolved = await ResolveProductPricesAsync(
             connection,transaction,businessId,warehouseId,customerId,
             requests.Select(value => new SalePriceRequest(
-                value.Key,value.ProductId,value.Quantity)).ToArray(),ct,independentLines);
+                value.Key,value.ProductId,value.Quantity)).ToArray(),ct,independentLines,
+            selectedChannelId);
         return resolved.ToDictionary(
             pair => pair.Key,
             pair => new CommercePriceResolution(
                 pair.Value.Input.ProductId!.Value,pair.Value.EffectiveUnitPrice,
                 pair.Value.Input.CurrencyCode,pair.Value.PriceSource,
-                pair.Value.PriceChannelId,pair.Value.DiscountAmount),
+                pair.Value.PriceChannelId,pair.Value.DiscountAmount,
+                pair.Value.ReferenceUnitPrice),
             StringComparer.OrdinalIgnoreCase);
     }
 
@@ -48,13 +50,14 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid? customerId,
         IReadOnlyCollection<SalePriceRequest> requests,
         CancellationToken ct,
-        bool independentLines = false)
+        bool independentLines = false, Guid? selectedChannelId = null)
     {
         if (requests.Count == 0)
             return new Dictionary<string, PromotionPriceLineResult>(StringComparer.OrdinalIgnoreCase);
         var channelConfiguration = await LoadChannelConfigurationAsync(
             connection,transaction,businessId,customerId,
-            requests.Select(value => value.ProductId).Distinct().ToArray(),ct);
+            requests.Select(value => value.ProductId).Distinct().ToArray(),ct,
+            selectedChannelId);
         var products = await ReadProductsAsync(
             connection,
             transaction,
@@ -237,9 +240,10 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid businessId,
         Guid? customerId,
         IReadOnlyCollection<Guid> productIds,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? selectedChannelId = null)
     {
-        if (customerId is null)
+        if (customerId is null && selectedChannelId is null)
             return new(null,[],[],[]);
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -251,8 +255,11 @@ public sealed partial class SqlOnlineSalesDraftStore
                         THEN setting.PriceChannelId END
             FROM dbo.Customers customer
             LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=customer.CustomerId
-            WHERE customer.CustomerId=@CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+            WHERE @SelectedChannelId IS NULL AND customer.CustomerId=@CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND customer.IsActive=1;
+
+            IF @SelectedChannelId IS NOT NULL
+              SET @SelectedPriceChannelId=@SelectedChannelId;
 
             SELECT @SelectedPriceChannelId;
 
@@ -278,6 +285,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             """;
         command.Parameters.AddRange([
             P("@BusinessId",businessId),P("@CustomerId",customerId),
+            P("@SelectedChannelId",selectedChannelId),
             P("@ProductIdsJson",JsonSerializer.Serialize(productIds))]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         Guid? channelId = null;

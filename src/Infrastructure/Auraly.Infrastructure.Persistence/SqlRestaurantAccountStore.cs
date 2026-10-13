@@ -156,11 +156,23 @@ public sealed partial class SqlRestaurantAccountStore(
                    account.WarehouseId,account.ResponsibleUserId,
                    account.Status,account.Version,account.OpenedAt,account.UpdatedAt,
                    COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(responsible.FirstName,N' ',responsible.LastName))),N''),
-                            responsible.Username)
+                            responsible.Username),account.PriceChannelId,
+                   account.CustomerId,account.CustomerPartySiteId,
+                   COALESCE(NULLIF(customerParty.DisplayName,N''),
+                     NULLIF(customerParty.LegalName,N''),
+                     NULLIF(LTRIM(RTRIM(CONCAT(customerParty.FirstName,N' ',customerParty.LastName))),N''),
+                     customerParty.Identification),
+                   account.IsCustomerPriceChannel,priceChannel.Name
             FROM sales.RestaurantAccounts account {(lockRow ? "WITH (UPDLOCK,HOLDLOCK)" : "")}
             LEFT JOIN dbo.AppUsers responsible
               ON responsible.UserId=account.ResponsibleUserId
              AND responsible.TenantId=account.TenantId
+            LEFT JOIN dbo.Customers customer ON customer.CustomerId=account.CustomerId
+              AND customer.TenantId=account.TenantId
+            LEFT JOIN dbo.Parties customerParty ON customerParty.PartyId=customer.PartyId
+              AND customerParty.TenantId=account.TenantId
+            LEFT JOIN dbo.PriceChannels priceChannel ON priceChannel.PriceChannelId=account.PriceChannelId
+              AND priceChannel.TenantId=account.TenantId
             WHERE account.AccountId=@AccountId AND account.TenantId=@TenantId
               AND account.BusinessId=@BusinessId
               AND (@InterventionTableId IS NULL OR account.TableId=@InterventionTableId)
@@ -186,7 +198,13 @@ public sealed partial class SqlRestaurantAccountStore(
         reader.GetGuid(3), reader.GetGuid(4), reader.GetString(5),
         reader.GetInt64(6), reader.GetDateTimeOffset(7),
         reader.GetDateTimeOffset(8), reader.FieldCount > 9 && !reader.IsDBNull(9)
-            ? reader.GetString(9) : null);
+            ? reader.GetString(9) : null,
+        reader.FieldCount > 10 && !reader.IsDBNull(10) ? reader.GetGuid(10) : null,
+        reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetGuid(11) : null,
+        reader.FieldCount > 12 && !reader.IsDBNull(12) ? reader.GetGuid(12) : null,
+        reader.FieldCount > 13 && !reader.IsDBNull(13) ? reader.GetString(13) : null,
+        reader.FieldCount > 14 && reader.GetBoolean(14),
+        reader.FieldCount > 15 && !reader.IsDBNull(15) ? reader.GetString(15) : null);
 
     private static void AddScope(SqlCommand command, RestaurantAccountActor actor)
     {

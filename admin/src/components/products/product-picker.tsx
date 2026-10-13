@@ -23,6 +23,7 @@ export function ProductPicker({
   label = "Agregar productos",
   conversionOnly = false,
   ingredientOnly = false,
+  excludeIngredients = false,
   conversionFamilyRootProductId,
   inputId = "product-picker-search",
   showAddButton = true,
@@ -36,6 +37,7 @@ export function ProductPicker({
   label?: string;
   conversionOnly?: boolean;
   ingredientOnly?: boolean;
+  excludeIngredients?: boolean;
   conversionFamilyRootProductId?: string;
   inputId?: string;
   showAddButton?: boolean;
@@ -53,7 +55,7 @@ export function ProductPicker({
   }, [search]);
 
   const query = useInfiniteQuery({
-    queryKey: ["product-picker", businessId, warehouseId ?? "catalog", conversionOnly, ingredientOnly, conversionFamilyRootProductId ?? "all-families", debouncedSearch],
+    queryKey: ["product-picker", businessId, warehouseId ?? "catalog", conversionOnly, ingredientOnly, excludeIngredients, conversionFamilyRootProductId ?? "all-families", debouncedSearch],
     queryFn: async ({ pageParam }): Promise<{ items: InventoryProductItem[]; page: number; totalPages: number; totalCount: number }> => {
       if (ingredientOnly) {
         const page = await productRecipesApi.ingredientOptions(debouncedSearch, pageParam, PRODUCT_PAGE_SIZE);
@@ -65,7 +67,7 @@ export function ProductPicker({
       }
       if (warehouseId && conversionOnly) return inventoryApi.conversionProducts({ warehouseId, familyRootProductId: conversionFamilyRootProductId, search: debouncedSearch || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
       if (warehouseId) return inventoryApi.products({ warehouseId, search: debouncedSearch || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
-      const page = await productsApi.list(businessId, { page: pageParam, pageSize: PRODUCT_PAGE_SIZE, search: debouncedSearch || undefined, includeInactive: false });
+      const page = await productsApi.list(businessId, { page: pageParam, pageSize: PRODUCT_PAGE_SIZE, search: debouncedSearch || undefined, includeInactive: false, isIngredient: excludeIngredients ? false : undefined });
       return { ...page, items: page.items.map((product) => ({ productId: product.productId, productCode: product.productCode ?? product.sku ?? "", reference: product.reference ?? null, productName: product.name, unitCode: "EA", quantityOnHand: product.stockQuantity ?? 0, averageUnitCost: null, saleUnitPrice: product.unitPrice })) };
     },
     initialPageParam: 1,
@@ -118,11 +120,12 @@ export function ProductPicker({
     const messageClass = "p-4 text-sm text-muted-foreground";
     if (search.trim() !== debouncedSearch || query.isLoading) return <p className={`${messageClass} flex items-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>;
     if (query.isError) return <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>;
-    if (products.length === 0) return <p className={messageClass}>{ingredientOnly
+    if (products.length === 0) return <div className={messageClass}><p>{ingredientOnly
       ? "No hay ingredientes activos que coincidan. El saldo disponible puede ser cero; revisa que el producto esté marcado como ingrediente y controle inventario."
       : conversionOnly
       ? "No hay productos habilitados para conversión que coincidan. Revisa la familia del producto principal y activa «Permitir conversión» en sus vínculos."
-      : "No hay productos activos que coincidan con la búsqueda."}</p>;
+      : "No hay productos activos que coincidan con la búsqueda."}</p>{query.hasNextPage &&
+        <Button variant="outline" size="sm" className="mt-2" onClick={() => void query.fetchNextPage()}>Buscar en más productos</Button>}</div>;
     return <>
       <div className="px-3 py-2 text-xs text-muted-foreground">{products.length.toLocaleString("es-CO")} de {totalCount.toLocaleString("es-CO")} productos</div>
       {products.map((product, index) => <button key={product.productId} type="button" role="option" data-product-option-index={index} aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 border-t px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}>

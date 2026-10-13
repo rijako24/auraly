@@ -27,6 +27,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         RestaurantAccountActor actor, Guid accountId, Guid warehouseId,
         string? search, int skip, int take, Guid? productId,
         Guid? categoryId,
+        decimal quantity,
         CancellationToken ct)
     {
         try
@@ -38,7 +39,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                     new OnlineSalesDraftContext(actor.BusinessId, warehouseId,
                         Guid.Empty), search, skip, take),
                 accountId, productId, categoryId, ct,
-                actor.Permissions.Contains("restaurant.tables.open_without_waiter"));
+                actor.Permissions.Contains("restaurant.tables.open_without_waiter"),
+                quantity);
         }
         catch (OnlineSalesDraftForbiddenException error)
         {
@@ -55,7 +57,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid? restaurantAccountId, Guid? exactProductId,
         Guid? categoryId,
         CancellationToken cancellationToken,
-        bool restaurantDirectAccess = false)
+        bool restaurantDirectAccess = false,
+        decimal quantity = 1m)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -166,7 +169,7 @@ public sealed partial class SqlOnlineSalesDraftStore
 
         var priceInputs = candidates.Select(candidate => new CommercePriceLineInput(
             candidate.Product.ProductId.ToString("D"), candidate.Snapshot.Name,
-            candidate.Snapshot.UnitPrice, 1m,
+            candidate.Snapshot.UnitPrice, quantity,
             new PriceChannelProductContext(
                 candidate.Product.ProductId, candidate.Snapshot.ProductCategoryId,
                 candidate.Snapshot.ProductBrandId, candidate.Snapshot.ProductCategoryAncestorIds,

@@ -566,10 +566,11 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
         var partyId = Guid.NewGuid();
         var categoryId = Guid.NewGuid();
         var productId = Guid.NewGuid();
+        var excludedProductId = Guid.NewGuid();
         await RegisterWaiterAndModeAsync(waiterId, partyId);
         try
         {
-            await SeedMenuProductAsync(categoryId, productId);
+            await SeedMenuProductAsync(categoryId, productId, excludedProductId);
             using var admin = fixture.CreateAdminClient("businesses.update");
             using var visitor = fixture.CreateClient();
             using (var denied = await visitor.GetAsync(
@@ -581,25 +582,25 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 preview.EnsureSuccessStatusCode();
                 var draft = (await preview.Content.ReadFromJsonAsync<
                     RestaurantDigitalMenuView>())!;
-                Assert.Contains(draft.Categories,
-                    category => category.CategoryId == categoryId);
+                Assert.Empty(draft.Categories);
                 using var previewProducts = await admin.GetAsync(
                     $"/api/commerce/v1/restaurant/digital-menu/preview/products?categoryId={categoryId:D}");
                 previewProducts.EnsureSuccessStatusCode();
                 var page = (await previewProducts.Content.ReadFromJsonAsync<
                     RestaurantDigitalMenuProductPage>())!;
-                Assert.Contains(page.Items,
-                    product => product.ProductId == productId &&
-                        product.Price == 20000m);
+                Assert.Empty(page.Items);
             }
             using (var hidden = await admin.PutAsJsonAsync(
                 "/api/commerce/v1/restaurant/digital-menu",
                 new SaveRestaurantDigitalMenuRequest("Carta de prueba",
-                    "Comida recién hecha", false, null)))
+                    "Comida recién hecha", false, null,
+                    [new(productId, "Descripción elegida para clientes")])))
             {
                 hidden.EnsureSuccessStatusCode();
                 var config = (await hidden.Content.ReadFromJsonAsync<
                     RestaurantDigitalMenuConfiguration>())!;
+                Assert.Single(config.Products);
+                Assert.Equal(productId, config.Products[0].ProductId);
                 using var unpublished = await visitor.GetAsync(
                     $"/api/public/v1/restaurant-menus/{config.PublicCode}");
                 Assert.Equal(HttpStatusCode.NotFound, unpublished.StatusCode);
@@ -625,9 +626,13 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 products.EnsureSuccessStatusCode();
                 var page = (await products.Content.ReadFromJsonAsync<
                     RestaurantDigitalMenuProductPage>())!;
-                Assert.Contains(page.Items,
-                    product => product.ProductId == productId &&
-                        product.Price == 20000m);
+                var publishedProduct = Assert.Single(page.Items);
+                Assert.Equal(productId, publishedProduct.ProductId);
+                Assert.Equal(20000m, publishedProduct.Price);
+                Assert.Equal("Descripción elegida para clientes",
+                    publishedProduct.Description);
+                Assert.DoesNotContain(page.Items,
+                    product => product.ProductId == excludedProductId);
                 using var qr = await visitor.GetAsync(
                     $"/api/public/v1/restaurant-menus/{config.PublicCode}/qr?url={Uri.EscapeDataString($"https://example.com/menu/{config.PublicCode}")}");
                 qr.EnsureSuccessStatusCode();
@@ -637,7 +642,8 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
         finally { await RestoreModeAsync(); }
     }
 
-    private async Task SeedMenuProductAsync(Guid categoryId, Guid productId)
+    private async Task SeedMenuProductAsync(Guid categoryId, Guid productId,
+        Guid excludedProductId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -660,13 +666,25 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 Amount,PreparedAmount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
             VALUES(NEWID(),@BusinessId,@ProductId,20000,20000,N'COP',
                 DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,BaseUnitCode,
+                TaxProfileId,ProductCategoryId,Name,Description,Currency,
+                ManageStock,IsIngredient,IsActive,CreatedAt)
+            VALUES(@ExcludedProductId,@TenantId,@ExcludedCode,N'EA',@TaxProfileId,
+                @CategoryId,N'Plato privado',N'No publicar',N'COP',
+                0,0,1,SYSUTCDATETIME());
+            INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,
+                Amount,PreparedAmount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@ExcludedProductId,22000,22000,N'COP',
+                DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
             """, connection);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@CategoryId", categoryId);
         command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@ExcludedProductId", excludedProductId);
         command.Parameters.AddWithValue("@TaxCode", $"IVA-{productId:N}"[..32]);
         command.Parameters.AddWithValue("@ProductCode", $"MENU-{productId:N}"[..32]);
+        command.Parameters.AddWithValue("@ExcludedCode", $"MENU-{excludedProductId:N}"[..32]);
         await command.ExecuteNonQueryAsync();
     }
 

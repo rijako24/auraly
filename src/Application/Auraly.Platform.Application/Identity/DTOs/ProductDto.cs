@@ -41,7 +41,8 @@ public sealed record ProductListFilters(
     Guid? BrandId = null,
     bool? ManagesInventory = null,
     bool? AllowsFractionalSale = null,
-    bool? IsWeighable = null);
+    bool? IsWeighable = null,
+    bool? IsIngredient = null);
 
 public sealed record ProductCategoryAdminDto(
     Guid ProductCategoryId,

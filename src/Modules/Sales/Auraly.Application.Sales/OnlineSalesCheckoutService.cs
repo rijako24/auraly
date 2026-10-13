@@ -56,7 +56,8 @@ public sealed record OnlineSalesRestaurantCheckoutSource(
     Guid WarehouseId,
     Guid WorkSessionId,
     long Version,
-    IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines);
+    IReadOnlyList<OnlineSalesOrderCheckoutLine> Lines,
+    Guid? CustomerId = null, Guid? CustomerPartySiteId = null);
 
 public static class OnlineSalesOrderCheckoutLineMapper
 {
@@ -549,7 +550,7 @@ public sealed class OnlineSalesCheckoutService(
     {
         var lines = OnlineSalesOrderCheckoutLineMapper.Normalize(source.Lines);
         var context = new OnlineSaleSettlementContext(
-            source.BusinessId, null,
+            source.BusinessId, source.CustomerId,
             lines.Sum(line => line.Net),
             lines.Sum(line => line.Tax),
             time.GetUtcNow(),

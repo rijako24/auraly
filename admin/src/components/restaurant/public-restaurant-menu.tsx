@@ -115,7 +115,8 @@ export function PublicRestaurantMenu({ code, preview = false, previewTitle,
     </header>
     <div className={`relative mx-auto max-w-6xl pb-20 ${previewPhone ? "px-4" : "px-4 sm:px-8"}`}>
       {error && <div role="alert" className="mt-6 rounded-2xl border border-rose-300 bg-rose-50 p-4 text-rose-900 dark:bg-rose-950 dark:text-rose-100">{error}</div>}
-      {menu && <><div className={`sticky top-0 z-10 -mx-4 border-b border-[#dfd9c9] bg-[#f7f5ef]/95 px-4 py-4 backdrop-blur dark:border-slate-800 dark:bg-[#101918]/95 ${previewPhone ? "" : "sm:-mx-8 sm:px-8"}`}>
+      {menu && !menu.categories.length && <div className="mt-8 rounded-3xl border border-[#dfd9c9] bg-white p-8 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900"><ChefHat className="mx-auto h-10 w-10 text-emerald-700 dark:text-emerald-300"/><h2 className="mt-4 font-serif text-2xl font-semibold">{preview ? "Elige los productos de tu carta" : "Pronto encontrarás nuestra carta aquí"}</h2><p className="mt-2 text-sm text-muted-foreground">{preview ? "Guarda una selección de productos para verla en esta vista previa." : "Estamos preparando el menú para ti."}</p></div>}
+      {menu && menu.categories.length > 0 && <><div className={`sticky top-0 z-10 -mx-4 border-b border-[#dfd9c9] bg-[#f7f5ef]/95 px-4 py-4 backdrop-blur dark:border-slate-800 dark:bg-[#101918]/95 ${previewPhone ? "" : "sm:-mx-8 sm:px-8"}`}>
           <div className="flex gap-2 overflow-x-auto pb-1">{menu.categories.map((category) =>
             <button key={category.categoryId} type="button" onClick={() => {
               setActiveCategoryId(category.categoryId); setPage(1);

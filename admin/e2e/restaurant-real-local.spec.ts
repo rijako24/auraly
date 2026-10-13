@@ -74,12 +74,12 @@ test("el menú digital local abre su configuración sin menú previo", async ({ 
   }, businessId!.toLowerCase());
   await page.goto("/dashboard/restaurant/menu");
   await expect(page.getByRole("heading", { name: "Presentación" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Productos de la carta" })).toBeVisible();
   await expect(page.getByText("No pudimos cargar el menú.")).toHaveCount(0);
   await page.getByRole("button", { name: /Vista previa/ }).click();
   const preview = page.getByRole("dialog", { name: "Vista previa del menú" });
   await expect(preview).toBeVisible();
-  await preview.getByRole("button", { name: /Hamburguesas/ }).click();
-  await expect(preview.getByRole("heading", { name: "Hamburguesas" })).toBeVisible();
+  await expect(preview.getByText("Mi restaurante")).toBeVisible();
   await preview.screenshot({ path: "../tmp/restaurant-menu-preview.png" });
 });
 

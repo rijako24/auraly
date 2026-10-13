@@ -5,17 +5,17 @@ BEGIN SET NOCOUNT ON;
  INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,Strategy,Value,IsActive,CreatedAt)
  VALUES(@Id,@TenantId,@Code,@Name,@Strategy,@Value,1,SYSUTCDATETIME());
 
- DECLARE @Items TABLE(ProductId UNIQUEIDENTIFIER NOT NULL,MinimumQuantity DECIMAL(19,6) NOT NULL,Amount DECIMAL(19,4) NOT NULL);
- INSERT @Items SELECT ProductId,MinimumQuantity,Amount FROM OPENJSON(@ItemsJson)
-   WITH(ProductId UNIQUEIDENTIFIER '$.ProductId',MinimumQuantity DECIMAL(19,6) '$.MinimumQuantity',Amount DECIMAL(19,4) '$.Amount');
+ DECLARE @Items TABLE(ProductId UNIQUEIDENTIFIER NOT NULL,MinimumQuantity DECIMAL(19,6) NOT NULL,Amount DECIMAL(19,4) NOT NULL,TargetMarginPercent DECIMAL(9,6) NULL,AutoUpdatePrice BIT NOT NULL);
+ INSERT @Items SELECT ProductId,MinimumQuantity,Amount,TargetMarginPercent,COALESCE(AutoUpdatePrice,0) FROM OPENJSON(@ItemsJson)
+   WITH(ProductId UNIQUEIDENTIFIER '$.ProductId',MinimumQuantity DECIMAL(19,6) '$.MinimumQuantity',Amount DECIMAL(19,4) '$.Amount',TargetMarginPercent DECIMAL(9,6) '$.TargetMarginPercent',AutoUpdatePrice BIT '$.AutoUpdatePrice');
  IF EXISTS(SELECT 1 FROM @Items WHERE MinimumQuantity<=0 OR Amount<=0)
     OR EXISTS(SELECT ProductId,MinimumQuantity FROM @Items GROUP BY ProductId,MinimumQuantity HAVING COUNT(*)>1)
     OR EXISTS(SELECT 1 FROM @Items itemValue LEFT JOIN dbo.Products product
               ON product.ProductId=itemValue.ProductId AND product.TenantId=@TenantId AND product.IsActive=1
               WHERE product.ProductId IS NULL)
     THROW 51005,'Invalid product price tier.',1;
- INSERT dbo.PriceChannelItems(PriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
- SELECT NEWID(),@Id,ProductId,MinimumQuantity,Amount,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET() FROM @Items;
+ INSERT dbo.PriceChannelItems(PriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,TargetMarginPercent,AutoUpdatePrice,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+ SELECT NEWID(),@Id,ProductId,MinimumQuantity,Amount,TargetMarginPercent,AutoUpdatePrice,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET() FROM @Items;
 
  DECLARE @Exclusions TABLE(ScopeType NVARCHAR(16) NOT NULL,ScopeId UNIQUEIDENTIFIER NOT NULL);
  INSERT @Exclusions SELECT ScopeType,ScopeId FROM OPENJSON(@ExclusionsJson)

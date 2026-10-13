@@ -29,7 +29,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         public static CapturedCheckoutSource FromRestaurant(
             OnlineSalesRestaurantCheckoutSource source) => new(
                 source.BusinessId, source.WarehouseId, source.WorkSessionId,
-                null, null, source.Lines, null, null, source.TableId);
+                source.CustomerId, source.CustomerPartySiteId, source.Lines,
+                null, null, source.TableId);
     }
 
     public async Task<OnlineSalesFiscalKeyContext> ResolveOrderFiscalKeyContextAsync(

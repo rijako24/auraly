@@ -62,6 +62,7 @@ export interface ProductListFilters {
   managesInventory?: boolean;
   allowsFractionalSale?: boolean;
   isWeighable?: boolean;
+  isIngredient?: boolean;
 }
 
 export interface ProductAlias {

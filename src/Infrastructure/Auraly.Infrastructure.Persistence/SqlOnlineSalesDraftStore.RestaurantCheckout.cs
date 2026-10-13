@@ -61,7 +61,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                        AND cancellation.TenantId=account.TenantId
                        AND cancellation.BusinessId=account.BusinessId
                        AND cancellation.Status IN(N'Requested',N'Confirmed'))
-                     THEN 1 ELSE 0 END AS bit)
+                     THEN 1 ELSE 0 END AS bit),
+                   account.CustomerId,account.CustomerPartySiteId
             FROM sales.RestaurantAccounts account
             JOIN dbo.Businesses business
               ON business.BusinessId=account.BusinessId
@@ -132,6 +133,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         var tableId = reader.GetGuid(1);
         var warehouseId = reader.GetGuid(2);
         var version = reader.GetInt64(3);
+        var customerId = reader.IsDBNull(6) ? null : (Guid?)reader.GetGuid(6);
+        var customerPartySiteId = reader.IsDBNull(7) ? null : (Guid?)reader.GetGuid(7);
         if (reader.GetBoolean(5))
             throw new OnlineSalesDraftValidationException(
                 "Resuelve la cancelación pendiente antes de facturar.");
@@ -164,7 +167,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         }
         return new OnlineSalesRestaurantCheckoutSource(
             accountId, businessId, tableId, warehouseId,
-            workSessionId, version, lines);
+            workSessionId, version, lines, customerId, customerPartySiteId);
     }
 
     public async Task<OnlineSalesFiscalKeyContext> ResolveRestaurantFiscalKeyContextAsync(

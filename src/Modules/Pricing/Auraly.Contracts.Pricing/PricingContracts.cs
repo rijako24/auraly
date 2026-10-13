@@ -11,6 +11,7 @@ public static class PricingPermissionCodes
     public const string ManageRounding = "pricing.rounding.manage";
     public const string ReadHistory = "pricing.history.read";
     public const string ReadSegments = "pricing.segments.read";
+    public const string ManageSegments = "pricing.segments.manage";
 }
 
 public static class PriceInputModes

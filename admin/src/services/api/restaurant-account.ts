@@ -9,6 +9,12 @@ export type RestaurantAccount = {
   warehouseId: string;
   responsibleUserId: string;
   responsibleUserName?: string | null;
+  priceChannelId?: string | null;
+  priceChannelName?: string | null;
+  customerId?: string | null;
+  customerPartySiteId?: string | null;
+  customerName?: string | null;
+  customerPriceChannelLocked?: boolean;
   status: "Open" | "Issuing" | "Invoiced" | "Cancelled" | "Released";
   version: number;
   openedAt: string;
@@ -53,6 +59,12 @@ export type RestaurantAccountDraft = {
   account: RestaurantAccount;
   additions: RestaurantAccountAddition[];
 };
+
+export type RestaurantPriceChannelOption = {
+  priceChannelId: string;
+  name: string;
+};
+
 
 export type RestaurantCollectionAllocation = {
   additionId: string;
@@ -261,6 +273,20 @@ export const restaurantAccountApi = {
   occupancy: () => apiClient.get<RestaurantTableOccupancy[]>(
     "/commerce/v1/restaurant/occupancy", undefined,
     { cache: "no-store" }),
+  priceChannels: () => apiClient.get<RestaurantPriceChannelOption[]>(
+    "/commerce/v1/restaurant/price-channels", undefined,
+    { cache: "no-store" }),
+  changePriceChannel: (accountId: string,
+    priceChannelId: string | null, expectedVersion: number) =>
+    apiClient.put<RestaurantAccountDraft>(
+      `/commerce/v1/restaurant/accounts/${accountId}/price-channel`,
+      { priceChannelId, expectedVersion }),
+  changeCustomer: (accountId: string, customerId: string | null,
+    customerPartySiteId: string | null, expectedVersion: number, token?: string) =>
+    apiClient.put<RestaurantAccountDraft>(
+      `/commerce/v1/restaurant/accounts/${accountId}/customer`,
+      { customerId, customerPartySiteId, expectedVersion },
+      { headers: attentionHeaders(token) }),
   open: (request: { accountId: string; tableId: string; warehouseId: string },
     token?: string) =>
     apiClient.post<RestaurantAccount>(

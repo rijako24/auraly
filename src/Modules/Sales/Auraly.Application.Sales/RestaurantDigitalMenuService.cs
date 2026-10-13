@@ -41,10 +41,24 @@ public sealed class RestaurantDigitalMenuService(IRestaurantDigitalMenuStore sto
             request.Introduction?.Trim().Length > 500)
             throw new RestaurantAccountValidationException(
                 "El nombre o la descripción del menú no son válidos.");
+        if (request.Products is { } selected &&
+            (selected.Count > 500 || selected.Any(item =>
+                item.ProductId == Guid.Empty ||
+                item.PublicDescription?.Trim().Length > 400) ||
+             selected.Select(item => item.ProductId).Distinct().Count() != selected.Count))
+            throw new RestaurantAccountValidationException(
+                "La selección de productos del menú no es válida.");
+        if (request.IsPublished && request.Products is { Count: 0 })
+            throw new RestaurantAccountValidationException(
+                "Selecciona los productos de la carta antes de publicarla.");
         return store.SaveConfigurationAsync(tenantId, businessId, userId,
             request with { Title = request.Title.Trim(),
                 Introduction = string.IsNullOrWhiteSpace(request.Introduction)
-                    ? null : request.Introduction.Trim() }, ct);
+                    ? null : request.Introduction.Trim(),
+                Products = request.Products?.Select(item => item with {
+                    PublicDescription = string.IsNullOrWhiteSpace(item.PublicDescription)
+                        ? null : item.PublicDescription.Trim()
+                }).ToArray() }, ct);
     }
 
     public Task<RestaurantDigitalMenuView?> GetPublicAsync(

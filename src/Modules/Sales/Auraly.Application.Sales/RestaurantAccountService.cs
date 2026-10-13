@@ -41,6 +41,16 @@ public interface IRestaurantAccountStore
         CancellationToken ct);
     Task<RestaurantAccount?> GetAsync(RestaurantAccountActor actor,
         Guid accountId, CancellationToken ct);
+    Task<IReadOnlyList<RestaurantPriceChannelOption>> PriceChannelsAsync(
+        RestaurantAccountActor actor, CancellationToken ct);
+    Task<RestaurantAccountDraft> ChangePriceChannelAsync(
+        RestaurantAccountActor actor, Guid accountId,
+        ChangeRestaurantPriceChannelRequest request, DateTimeOffset now,
+        CancellationToken ct);
+    Task<RestaurantAccountDraft> ChangeCustomerAsync(
+        RestaurantAccountActor actor, Guid accountId,
+        ChangeRestaurantCustomerRequest request, DateTimeOffset now,
+        CancellationToken ct);
     Task<IReadOnlyList<RestaurantTableOccupancy>> OccupancyAsync(
         RestaurantAccountActor actor, CancellationToken ct);
     Task<RestaurantAccountDraft?> GetDraftAsync(RestaurantAccountActor actor,
@@ -71,7 +81,7 @@ public interface IRestaurantProductCatalog
     Task<OnlineSalesProductPage> SearchAsync(RestaurantAccountActor actor,
         Guid accountId, Guid warehouseId, string? search,
         int skip, int take, Guid? productId, Guid? categoryId,
-        CancellationToken ct);
+        decimal quantity, CancellationToken ct);
     Task<IReadOnlyList<RestaurantMenuCategory>> CategoriesAsync(
         RestaurantAccountActor actor, Guid accountId,
         Guid warehouseId, CancellationToken ct);
@@ -86,6 +96,47 @@ public sealed class RestaurantAccountService(
     TimeProvider time)
 {
     private const string OpenWithoutWaiterPermission = "restaurant.tables.open_without_waiter";
+    private const string SelectPriceChannelPermission = "restaurant.price_channels.select";
+    public Task<IReadOnlyList<RestaurantPriceChannelOption>> PriceChannelsAsync(
+        RestaurantAccountActor actor, CancellationToken ct)
+    {
+        DemandIdentity(actor);
+        if (!actor.Permissions.Contains(SelectPriceChannelPermission))
+            throw new RestaurantAccountForbiddenException("No tienes permiso para seleccionar un canal de precios.");
+        return store.PriceChannelsAsync(actor, ct);
+    }
+
+    public Task<RestaurantAccountDraft> ChangePriceChannelAsync(
+        RestaurantAccountActor actor, Guid accountId,
+        ChangeRestaurantPriceChannelRequest request, CancellationToken ct)
+    {
+        DemandIdentity(actor);
+        if (!actor.Permissions.Contains(SelectPriceChannelPermission))
+            throw new RestaurantAccountForbiddenException("No tienes permiso para cambiar el canal de precios.");
+        if (accountId == Guid.Empty || request.PriceChannelId == Guid.Empty ||
+            request.ExpectedVersion < 1)
+            throw new RestaurantAccountValidationException("La cuenta, el canal o su versión no son válidos.");
+        return store.ChangePriceChannelAsync(actor, accountId, request,
+            time.GetUtcNow(), ct);
+    }
+    public Task<RestaurantAccountDraft> ChangeCustomerAsync(
+        RestaurantAccountActor actor, Guid accountId,
+        ChangeRestaurantCustomerRequest request, CancellationToken ct)
+    {
+        DemandIdentity(actor);
+        if (!actor.Permissions.Contains("restaurant.attend") &&
+            !actor.Permissions.Contains(OpenWithoutWaiterPermission))
+            throw new RestaurantAccountForbiddenException(
+                "No tienes permiso para cambiar el cliente de esta mesa.");
+        if (accountId == Guid.Empty || request.CustomerId == Guid.Empty ||
+            request.CustomerPartySiteId == Guid.Empty ||
+            (request.CustomerId is null && request.CustomerPartySiteId is not null) ||
+            request.ExpectedVersion < 1)
+            throw new RestaurantAccountValidationException(
+                "El cliente o la versión de la cuenta no son válidos.");
+        return store.ChangeCustomerAsync(actor, accountId, request,
+            time.GetUtcNow(), ct);
+    }
     public Task<RestaurantCancellation> RequestCancellationAsync(
         RestaurantAccountActor actor, Guid accountId, Guid additionId,
         RequestRestaurantCancellation request, CancellationToken ct)
@@ -372,7 +423,7 @@ public sealed class RestaurantAccountService(
             throw new RestaurantAccountConflictException(
                 "La cuenta no permite agregar productos.");
         return await products.SearchAsync(actor, accountId,
-            account.WarehouseId, search, skip, take, null, categoryId, ct);
+            account.WarehouseId, search, skip, take, null, categoryId, 1m, ct);
     }
 
     public async Task<IReadOnlyList<RestaurantMenuCategory>> CategoriesAsync(

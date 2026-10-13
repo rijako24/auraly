@@ -78,7 +78,9 @@ public sealed class PricingService(
 
     public PriceCalculationResult Calculate(PricingUserIdentity user, PriceCalculationRequest request)
     {
-        Require(user, PricingPermissionCodes.Read);
+        if (!user.Permissions.Contains(PricingPermissionCodes.Read) &&
+            !user.Permissions.Contains(PricingPermissionCodes.ManageSegments))
+            throw new PricingForbiddenException("No tienes permiso para calcular precios.");
         Require(user, PricingPermissionCodes.ReadCostBasis);
         return CalculateCore(request);
     }

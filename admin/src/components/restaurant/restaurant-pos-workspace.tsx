@@ -13,6 +13,8 @@ import { RestaurantPaymentDialog } from "@/components/restaurant/restaurant-paym
 import { RestaurantSessionClosure } from "@/components/restaurant/restaurant-session-closure";
 import { PosPrinterDialog } from "@/app/(pos)/pos/pos-printer-dialog";
 import { Button } from "@/components/ui/button";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
@@ -63,6 +65,7 @@ export function RestaurantPosWorkspace({ option }: {
   const canAttend = permissions.includes("restaurant.attend");
   const canOpenWithoutWaiter = permissions.includes(
     "restaurant.tables.open_without_waiter");
+  const canSelectPriceChannel = permissions.includes("restaurant.price_channels.select");
   const queryClient = useQueryClient();
   const scope = ["restaurant-pos", option.businessId] as const;
   const [roomId, setRoomId] = useState("all");
@@ -73,6 +76,8 @@ export function RestaurantPosWorkspace({ option }: {
   const [tableSearch, setTableSearch] = useState("");
   const [tablePage, setTablePage] = useState(1);
   const [draft, setDraft] = useState<RestaurantAccountDraft | null>(null);
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [channelOpen, setChannelOpen] = useState(false);
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
   const [pendingTable, setPendingTable] = useState<RestaurantTable | null>(null);
   const [waiterUserId, setWaiterUserId] = useState("");
@@ -163,6 +168,38 @@ export function RestaurantPosWorkspace({ option }: {
   const categories = useQuery({ queryKey: [...scope, "categories", draft?.account.accountId],
     queryFn: () => restaurantAccountApi.categories(draft!.account.accountId, attention?.token),
     enabled: !!draft && canAdd });
+  const priceChannels = useQuery({ queryKey: [...scope, "price-channels"],
+    queryFn: () => restaurantAccountApi.priceChannels(),
+    enabled: canSelectPriceChannel && !!draft });
+  async function changeTableCustomer(customerId: string | null) {
+    if (!draft) return;
+    setBusy(true);
+    try {
+      const updated = await restaurantAccountApi.changeCustomer(draft.account.accountId,
+        customerId, null,
+        draft.account.version, attention?.token);
+      setDraft(updated);
+      setCustomerOpen(false);
+      setProductPage(0);
+      await queryClient.invalidateQueries({ queryKey: [...scope, "products", draft.account.accountId] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo cambiar el cliente.");
+    } finally { setBusy(false); }
+  }
+  async function changeTableChannel(priceChannelId: string | null) {
+    if (!draft) return;
+    setBusy(true);
+    try {
+      const updated = await restaurantAccountApi.changePriceChannel(
+        draft.account.accountId, priceChannelId, draft.account.version);
+      setDraft(updated);
+      setChannelOpen(false);
+      setProductPage(0);
+      await queryClient.invalidateQueries({ queryKey: [...scope, "products", draft.account.accountId] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo cambiar el canal.");
+    } finally { setBusy(false); }
+  }
   const products = useQuery({ queryKey: [...scope, "products", draft?.account.accountId,
     categoryId, productSearch, productPage],
     queryFn: () => restaurantAccountApi.products(draft!.account.accountId, {
@@ -812,7 +849,19 @@ export function RestaurantPosWorkspace({ option }: {
     </section> : <section className="mx-auto max-w-[1700px] p-3 sm:p-5">
       <div className="grid gap-4 lg:grid-cols-[minmax(300px,30%)_minmax(0,70%)]">
         <aside className={`${mobileSection !== "account" ? "hidden lg:flex" : "flex"} h-auto min-h-0 flex-col self-start overflow-visible rounded-[2rem] border bg-card shadow-sm lg:sticky lg:top-24 lg:h-[calc(100dvh-8rem)] lg:min-h-[25rem] lg:overflow-hidden`}>
-          <div className="shrink-0 border-b p-5"><p className="text-xs font-bold uppercase tracking-widest text-primary">Cuenta abierta · {selectedTable?.roomId ? roomNames.get(selectedTable.roomId) : "Sin salón"}</p><h2 className="mt-1 text-2xl font-bold">Mesa {selectedTable?.code}</h2><div className="mt-3 flex items-center justify-between gap-2"><div className="min-w-0"><p className="truncate text-sm font-semibold">Responsable: {draft.account.responsibleUserName || (draft.account.responsibleUserId === connectedUser?.userId ? [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username : "Mesero asignado")}</p><p className="mt-1 truncate text-xs text-muted-foreground">Atendiendo ahora: {attention ? activeWaiterName || draft.account.responsibleUserName || "Mesero identificado" : [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username || "Usuario conectado"}</p></div>{canOpenWithoutWaiter && selectedTable && <Button variant="outline" size="sm" className="min-h-11 shrink-0 rounded-xl" disabled={busy || !!pendingSend} onClick={() => selectTable(selectedTable, true)}>Cambiar mesero</Button>}</div></div>
+          <div className="shrink-0 border-b p-5">
+            <p className="text-xs font-bold uppercase tracking-widest text-primary">Cuenta abierta · {selectedTable?.roomId ? roomNames.get(selectedTable.roomId) : "Sin salón"}</p>
+            <h2 className="mt-1 text-2xl font-bold">Mesa {selectedTable?.code}</h2>
+            <div className="mt-3 flex items-center justify-between gap-2"><div className="min-w-0">
+              <p className="truncate text-sm font-semibold">Responsable: {draft.account.responsibleUserName || (draft.account.responsibleUserId === connectedUser?.userId ? [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username : "Mesero asignado")}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">Atendiendo ahora: {attention ? activeWaiterName || draft.account.responsibleUserName || "Mesero identificado" : [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username || "Usuario conectado"}</p>
+            </div>{canOpenWithoutWaiter && selectedTable && <Button variant="outline" size="sm" className="min-h-11 shrink-0 rounded-xl" disabled={busy || !!pendingSend} onClick={() => selectTable(selectedTable, true)}>Cambiar mesero</Button>}</div>
+            <div className="mt-3 space-y-2 border-t pt-3 text-sm">
+              <div className="flex items-center justify-between gap-2"><p className="min-w-0 truncate"><span className="text-muted-foreground">Cliente:</span> <strong>{draft.account.customerName || "Consumidor final"}</strong></p><Button type="button" variant="ghost" size="sm" className="shrink-0 text-primary" disabled={busy || !!pendingSend} onClick={() => setCustomerOpen(true)}>{draft.account.customerId ? "Cambiar" : "Buscar"}</Button></div>
+              <div className="flex items-center justify-between gap-2"><p className="min-w-0 truncate"><span className="text-muted-foreground">Canal de precio:</span> <strong>{draft.account.priceChannelName ?? "Sin canal"}</strong></p>{canSelectPriceChannel && <Button type="button" variant="ghost" size="sm" className="shrink-0 text-primary" disabled={busy || !!pendingSend || draft.account.customerPriceChannelLocked || priceChannels.isLoading} onClick={() => setChannelOpen(true)}>Cambiar</Button>}</div>
+              {draft.account.customerPriceChannelLocked && <p className="text-xs text-muted-foreground">Este canal lo define el cliente seleccionado.</p>}
+            </div>
+          </div>
           <div className="flex-1 space-y-2 p-3 sm:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">{!groups.length && <div className="grid min-h-52 place-items-center text-center text-muted-foreground"><div><Coffee className="mx-auto h-8 w-8"/><p className="mt-3 text-sm">Toca un producto para empezar el pedido.</p></div></div>}
             {groups.map((group, index) => <div key={`${group.productId}-${index}`} className="rounded-2xl border bg-background p-4"><div className="flex items-start justify-between gap-2"><div><strong className="text-base">{group.name}</strong><p className="mt-0.5 text-xs text-muted-foreground">{group.contributors.join(", ")}</p><p className={`mt-1 text-xs font-medium ${"text-muted-foreground"}`}>{group.sentQuantity > 0 && `${group.sentQuantity} enviadas · `}{group.pendingQuantity > 0 ? `${group.pendingQuantity} pendientes · ${group.stationName ?? "Sin estación"}` : group.sentQuantity > 0 ? group.stationName ?? "Estación no disponible" : "Sin comanda · se cobra directamente"}</p></div><span className="font-semibold">{money.format(group.amount)}</span></div>
               <div className="mt-3 flex items-center justify-between"><span className="text-sm font-semibold">{group.quantity} {group.quantity === 1 ? "unidad" : "unidades"}</span>{canAdd && <div className="flex items-center gap-2">{group.stationId === null && <Button aria-label={`Quitar uno de ${group.name}`} variant="outline" size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { const lastDirect = group.items.filter((item) => item.status === "Direct").at(-1); if (lastDirect) void mutateProduct(group.productId, "remove", lastDirect.additionId); }}><Minus className="h-5 w-5"/></Button>}<Button aria-label={`Agregar uno de ${group.name}`} size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "plus")}><Plus className="h-5 w-5"/></Button></div>}</div>
@@ -846,6 +895,23 @@ export function RestaurantPosWorkspace({ option }: {
         </div>
       </div>
     </section>}
+    <Dialog open={customerOpen} onOpenChange={setCustomerOpen}>
+      <DialogContent className="max-h-[85dvh] max-w-lg overflow-y-auto rounded-3xl">
+        <DialogHeader><DialogTitle>Cliente de la mesa</DialogTitle><DialogDescription>Busca por nombre o identificación. Su canal se aplicará a toda la cuenta.</DialogDescription></DialogHeader>
+        <PartyRoleSelect role="Customer" value={draft?.account.customerId ?? ""}
+          selectedOption={draft?.account.customerId ? { value: draft.account.customerId, label: draft.account.customerName || "Cliente" } : null}
+          placeholder="Buscar cliente" preload={customerOpen} disabled={busy}
+          onChange={(value) => void changeTableCustomer(value || null)}/>
+        {draft?.account.customerId && <Button variant="outline" className="min-h-12 justify-start" disabled={busy} onClick={() => void changeTableCustomer(null)}>Quitar cliente · consumidor final</Button>}
+      </DialogContent>
+    </Dialog>
+    <Dialog open={channelOpen} onOpenChange={setChannelOpen}>
+      <DialogContent className="max-w-md rounded-3xl"><DialogHeader><DialogTitle>Canal de precio</DialogTitle><DialogDescription>El cambio ajusta los productos de esta mesa antes de cobrar.</DialogDescription></DialogHeader>
+        <div className="space-y-2"><Button type="button" variant={draft?.account.priceChannelId ? "outline" : "default"} className="min-h-12 w-full justify-start rounded-xl" disabled={busy} onClick={() => void changeTableChannel(null)}>Sin canal · precio de mesa</Button>
+          {priceChannels.data?.map((channel) => <Button type="button" key={channel.priceChannelId} variant={draft?.account.priceChannelId === channel.priceChannelId ? "default" : "outline"} className="min-h-12 w-full justify-start rounded-xl" disabled={busy} onClick={() => void changeTableChannel(channel.priceChannelId)}>{channel.name}</Button>)}
+        </div>
+      </DialogContent>
+    </Dialog>
     {editingAddition && <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Observación del producto"><div className="w-full max-w-lg rounded-[2rem] border bg-card p-6 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-primary">Indicación para preparación</p><h2 className="mt-1 text-xl font-bold">{editingAddition.description}</h2><p className="mt-1 text-sm text-muted-foreground">Esta observación corresponde solo a esta incorporación. Para indicaciones distintas, agrega otra unidad.</p><textarea autoFocus maxLength={500} value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="Ej. Sin cebolla, salsa aparte…" className="mt-5 min-h-32 w-full resize-y rounded-2xl border bg-background p-4 text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"/><div className="mt-2 text-right text-xs text-muted-foreground">{noteText.length}/500</div><div className="mt-5 flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setNoteAdditionId(null)}>Cancelar</Button><Button disabled={busy || !!pendingSend} onClick={() => void saveNote()}>{busy ? "Guardando…" : "Guardar observación"}</Button></div></div></div>}
         {cancellingAddition && <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Solicitar cancelación"><div className="w-full max-w-lg rounded-[2rem] border bg-card p-6 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-red-700 dark:text-red-300">Corrección de comanda</p><h2 className="mt-1 text-xl font-bold">{cancellingAddition.description}</h2><p className="mt-1 text-sm text-muted-foreground">Cocina o barra confirmará si ya se preparó. Hasta resolverlo, no se puede cobrar esta mesa.</p><label className="mt-5 block text-sm font-semibold">Cantidad a retirar<Input className="mt-2 h-12" type="number" min="1" max={cancellingAddition.quantity} step={cancellingAddition.allowsFractionalSale ? "0.0001" : "1"} value={cancelQuantity} onChange={(event) => { setCancelQuantity(Number(event.target.value)); setCancelRequestId(null); }}/></label><div className="mt-4"><p id="restaurant-cancellation-reason-label" className="text-sm font-semibold">Motivo</p><Select value={cancelReasonCode || undefined} onValueChange={(value) => { setCancelReasonCode(value); setCancelRequestId(null); }}><SelectTrigger aria-labelledby="restaurant-cancellation-reason-label" className="mt-2 h-14 rounded-2xl bg-background px-4 text-base"><SelectValue placeholder="Selecciona un motivo"/></SelectTrigger><SelectContent className="z-[60] rounded-2xl">{cancellationReasons.data?.filter((reason) => reason.isActive).map((reason) => <SelectItem className="min-h-12 text-base" key={reason.code} value={reason.code}>{reason.name}</SelectItem>)}</SelectContent></Select></div>{cancellationReasons.isError && <p role="alert" className="mt-2 text-sm text-destructive">No se pudieron cargar los motivos.</p>}<label className="mt-4 block text-sm font-semibold">¿Qué pasó?<textarea className="mt-2 min-h-24 w-full resize-y rounded-xl border bg-background p-3" maxLength={500} value={cancelExplanation} onChange={(event) => { setCancelExplanation(event.target.value); setCancelRequestId(null); }} placeholder="Explica la corrección para la estación y el supervisor"/></label><div className="mt-5 flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => { setCancelAdditionId(null); setCancelRequestId(null); }}>Volver</Button><Button disabled={busy || !cancelReasonCode || !cancelExplanation.trim() || cancelQuantity <= 0 || cancelQuantity > cancellingAddition.quantity || !cancellingAddition.allowsFractionalSale && !Number.isInteger(cancelQuantity)} onClick={() => void requestCancellation()}>{busy ? "Enviando…" : "Solicitar cancelación"}</Button></div></div></div>}
     {checkoutPreview && collectionSummary && paymentClient && draft &&

@@ -30,6 +30,14 @@ WHERE NOT EXISTS (SELECT 1 FROM dbo.Permissions
     WHERE Resource=N'restaurant.tables.open_without_waiter');
 
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
+SELECT NEWID(),N'Restaurant',N'SelectPriceChannel',
+       N'restaurant.price_channels.select',
+       N'Seleccionar el canal de precios de una mesa antes de agregar productos.',
+       SYSUTCDATETIME()
+WHERE NOT EXISTS (SELECT 1 FROM dbo.Permissions
+    WHERE Resource=N'restaurant.price_channels.select');
+
+INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
 SELECT NEWID(),N'Restaurant',N'ReadCommands',N'restaurant.commands.read',
        N'Consultar la pantalla de comandas de las estaciones.',SYSUTCDATETIME()
 WHERE NOT EXISTS (SELECT 1 FROM dbo.Permissions WHERE Resource=N'restaurant.commands.read');
@@ -94,6 +102,19 @@ FROM dbo.AppRoles role
 JOIN dbo.Tenants tenant ON tenant.TenantId=role.TenantId AND tenant.TenantKey=N'@auraly'
 JOIN dbo.Permissions permission ON permission.Resource=N'restaurant.tables.open_without_waiter'
 WHERE role.NormalizedName=N'ADMINISTRATOR'
+  AND NOT EXISTS (SELECT 1 FROM dbo.RolePermissions existing
+      WHERE existing.RoleId=role.RoleId AND existing.PermissionId=permission.PermissionId);
+
+INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+SELECT NEWID(),role.RoleId,permission.PermissionId,SYSUTCDATETIME()
+FROM dbo.AppRoles role
+JOIN dbo.Permissions permission ON permission.Resource=N'restaurant.price_channels.select'
+WHERE role.NormalizedName IN (N'ADMINISTRATOR',N'ADMINISTRATIVE',N'CASHIER',N'SUPERVISOR')
+  AND (EXISTS(SELECT 1 FROM dbo.Businesses business
+      WHERE business.TenantId=role.TenantId AND business.IsActive=1
+        AND business.PointOfSaleMode=N'RestaurantBar')
+       OR EXISTS(SELECT 1 FROM dbo.Tenants tenant
+           WHERE tenant.TenantId=role.TenantId AND tenant.TenantKey=N'@auraly'))
   AND NOT EXISTS (SELECT 1 FROM dbo.RolePermissions existing
       WHERE existing.RoleId=role.RoleId AND existing.PermissionId=permission.PermissionId);
 COMMIT TRANSACTION;

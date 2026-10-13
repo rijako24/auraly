@@ -37,7 +37,8 @@ public sealed partial class SqlRestaurantAccountStore
             throw new RestaurantAccountConflictException(
                 "La cuenta ya no acepta productos.");
         var page = await products.SearchAsync(actor, accountId,
-            account.WarehouseId, null, 0, 1, request.ProductId, null, ct);
+            account.WarehouseId, null, 0, 1, request.ProductId, null,
+            request.Quantity, ct);
         var product = page.Items.SingleOrDefault(item =>
             item.ProductId == request.ProductId)
             ?? throw new RestaurantAccountValidationException(

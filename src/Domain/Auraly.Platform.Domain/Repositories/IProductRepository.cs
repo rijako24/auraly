@@ -8,7 +8,8 @@ public sealed record ProductListFilter(
     Guid? BrandId = null,
     bool? ManagesInventory = null,
     bool? AllowsFractionalSale = null,
-    bool? IsWeighable = null);
+    bool? IsWeighable = null,
+    bool? IsIngredient = null);
 
 public sealed record ProductPricePublication(Product Product, decimal Amount, string Currency);
 

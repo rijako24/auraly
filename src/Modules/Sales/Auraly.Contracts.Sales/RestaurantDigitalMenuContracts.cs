@@ -2,11 +2,20 @@ namespace Auraly.Contracts.Sales;
 
 public sealed record RestaurantDigitalMenuConfiguration(
     string PublicCode, string Title, string? Introduction,
-    bool IsPublished, string RowVersion);
+    bool IsPublished, string RowVersion,
+    IReadOnlyList<RestaurantDigitalMenuSelectedProduct> Products);
+
+public sealed record RestaurantDigitalMenuSelectedProduct(
+    Guid ProductId, string ProductName, string ProductCode,
+    string? PublicDescription);
+
+public sealed record RestaurantDigitalMenuSelectedProductInput(
+    Guid ProductId, string? PublicDescription);
 
 public sealed record SaveRestaurantDigitalMenuRequest(
     string Title, string? Introduction, bool IsPublished,
-    string? RowVersion);
+    string? RowVersion,
+    IReadOnlyList<RestaurantDigitalMenuSelectedProductInput>? Products = null);
 
 public sealed record RestaurantDigitalMenuCategory(
     Guid CategoryId, string Name, int ProductCount);

@@ -82,6 +82,10 @@ public static class RestaurantAccountApi
             CancellationToken ct) =>
             await Handle(async () => Results.Ok(
                 await service.OccupancyAsync(Actor(context), ct))));
+        group.MapGet("/price-channels", async (
+            HttpContext context, RestaurantAccountService service,
+            CancellationToken ct) => await Handle(async () => Results.Ok(
+                await service.PriceChannelsAsync(Actor(context), ct))));
         group.MapGet("/command-cards", async (
             HttpContext context, RestaurantAccountService service,
             Guid? stationId, string? state, string? tableCode, int? page,
@@ -148,6 +152,18 @@ public static class RestaurantAccountApi
                     accountId, ct);
                 return draft is null ? Results.NotFound() : Results.Ok(draft);
             }));
+        group.MapPut("/accounts/{accountId:guid}/price-channel", async (
+            HttpContext context, RestaurantAccountService service,
+            Guid accountId, ChangeRestaurantPriceChannelRequest request,
+            CancellationToken ct) => await Handle(async () => Results.Ok(
+                await service.ChangePriceChannelAsync(Actor(context),
+                    accountId, request, ct))));
+        group.MapPut("/accounts/{accountId:guid}/customer", async (
+            HttpContext context, RestaurantAccountService service,
+            RestaurantAttentionService attention, Guid accountId,
+            ChangeRestaurantCustomerRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.ChangeCustomerAsync(
+                await ActorAsync(context, attention, ct), accountId, request, ct))));
         group.MapGet("/accounts/{accountId:guid}/cancellations", async (
             HttpContext context, RestaurantAccountService service,
             RestaurantAttentionService attention, Guid accountId,

@@ -25,11 +25,25 @@ public sealed class SqlRestaurantDigitalMenuStore(
              AND business.PointOfSaleMode=N'RestaurantBar'
             WHERE menu.TenantId=@TenantId
               AND menu.BusinessId=@BusinessId;
+
+            SELECT selected.ProductId,product.Name,
+                   COALESCE(product.ProductCode,product.Sku,N''),
+                   selected.PublicDescription
+            FROM sales.RestaurantDigitalMenuProducts selected
+            JOIN dbo.Products product
+              ON product.TenantId=selected.TenantId
+             AND product.ProductId=selected.ProductId
+            WHERE selected.TenantId=@TenantId
+              AND selected.BusinessId=@BusinessId
+            ORDER BY selected.SortOrder,selected.ProductId;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         await using var reader = await command.ExecuteReaderAsync(ct);
-        return await reader.ReadAsync(ct) ? ReadConfiguration(reader) : null;
+        if (!await reader.ReadAsync(ct)) return null;
+        var configuration = ReadConfiguration(reader, []);
+        await reader.NextResultAsync(ct);
+        return configuration with { Products = await ReadSelectedProductsAsync(reader, ct) };
     }
 
     public async Task<RestaurantDigitalMenuConfiguration> SaveConfigurationAsync(
@@ -70,6 +84,71 @@ public sealed class SqlRestaurantDigitalMenuStore(
                   IsPublished=@Published,UpdatedAt=@Now
               WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
             END;
+
+            IF @ProductsJson IS NOT NULL
+            BEGIN
+              DECLARE @Selected TABLE
+              (
+                ProductId uniqueidentifier NOT NULL PRIMARY KEY,
+                PublicDescription nvarchar(400) NULL,
+                SortOrder int NOT NULL
+              );
+              INSERT @Selected(ProductId,PublicDescription,SortOrder)
+              SELECT CONVERT(uniqueidentifier,JSON_VALUE([value],'$.ProductId')),
+                     JSON_VALUE([value],'$.PublicDescription'),
+                     CONVERT(int,[key])+1
+              FROM OPENJSON(@ProductsJson);
+
+              IF EXISTS(
+                SELECT 1 FROM @Selected selected
+                LEFT JOIN dbo.Products product
+                  ON product.TenantId=@TenantId
+                 AND product.ProductId=selected.ProductId
+                 AND product.IsActive=1 AND product.IsIngredient=0
+                LEFT JOIN dbo.ProductCategories category
+                  ON category.TenantId=@TenantId
+                 AND category.ProductCategoryId=product.ProductCategoryId
+                 AND category.IsActive=1 AND category.IsBrowsable=1
+                WHERE product.ProductId IS NULL OR category.ProductCategoryId IS NULL
+                   OR NOT EXISTS(
+                     SELECT 1 FROM dbo.ProductPrices price
+                     WHERE price.BusinessId=@BusinessId
+                       AND price.ProductId=selected.ProductId
+                       AND price.IsActive=1
+                       AND price.ValidFrom<=SYSDATETIMEOFFSET()
+                       AND (price.ValidUntil IS NULL OR
+                            price.ValidUntil>SYSDATETIMEOFFSET())))
+                THROW 51112,N'Hay productos sin precio vigente o no aptos para el menú digital.',1;
+
+              DELETE FROM sales.RestaurantDigitalMenuProducts
+              WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
+              INSERT sales.RestaurantDigitalMenuProducts
+                (BusinessId,TenantId,ProductId,PublicDescription,SortOrder,CreatedAt)
+              SELECT @BusinessId,@TenantId,ProductId,PublicDescription,SortOrder,@Now
+              FROM @Selected;
+            END;
+
+            IF @Published=1 AND NOT EXISTS(
+              SELECT 1 FROM sales.RestaurantDigitalMenuProducts selected
+              JOIN dbo.Products product
+                ON product.TenantId=selected.TenantId
+               AND product.ProductId=selected.ProductId
+               AND product.IsActive=1 AND product.IsIngredient=0
+              JOIN dbo.ProductCategories category
+                ON category.TenantId=selected.TenantId
+               AND category.ProductCategoryId=product.ProductCategoryId
+               AND category.IsActive=1 AND category.IsBrowsable=1
+              WHERE selected.BusinessId=@BusinessId
+                AND selected.TenantId=@TenantId
+                AND EXISTS(SELECT 1 FROM dbo.ProductPrices price
+                  WHERE price.BusinessId=@BusinessId
+                    AND price.ProductId=selected.ProductId
+                    AND price.IsActive=1
+                    AND price.ValidFrom<=SYSDATETIMEOFFSET()
+                    AND (price.ValidUntil IS NULL OR
+                         price.ValidUntil>SYSDATETIMEOFFSET())))
+              THROW 51113,N'Selecciona al menos un producto antes de publicar el menú.',1;
+
             INSERT dbo.AuditLogs
               (AuditLogId,UserId,TenantId,BusinessId,Action,EntityType,
                EntityId,NewValues,Timestamp)
@@ -79,6 +158,17 @@ public sealed class SqlRestaurantDigitalMenuStore(
             SELECT PublicCode,Title,Introduction,IsPublished,RowVersion
             FROM sales.RestaurantDigitalMenus
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
+
+            SELECT selected.ProductId,product.Name,
+                   COALESCE(product.ProductCode,product.Sku,N''),
+                   selected.PublicDescription
+            FROM sales.RestaurantDigitalMenuProducts selected
+            JOIN dbo.Products product
+              ON product.TenantId=selected.TenantId
+             AND product.ProductId=selected.ProductId
+            WHERE selected.BusinessId=@BusinessId
+              AND selected.TenantId=@TenantId
+            ORDER BY selected.SortOrder,selected.ProductId;
             """, connection, transaction);
         var expected = DecodeVersion(request.RowVersion);
         command.Parameters.AddWithValue("@TenantId", tenantId);
@@ -99,17 +189,22 @@ public sealed class SqlRestaurantDigitalMenuStore(
         command.Parameters.Add("@Audit", SqlDbType.NVarChar, -1).Value =
             JsonSerializer.Serialize(new { request.Title,
                 request.IsPublished });
+        command.Parameters.Add("@ProductsJson", SqlDbType.NVarChar, -1).Value =
+            request.Products is null ? DBNull.Value :
+            JsonSerializer.Serialize(request.Products);
         try
         {
             await using var reader = await command.ExecuteReaderAsync(ct);
             if (!await reader.ReadAsync(ct))
                 throw new InvalidOperationException("El menú no pudo guardarse.");
-            var result = ReadConfiguration(reader);
+            var result = ReadConfiguration(reader, []);
+            await reader.NextResultAsync(ct);
+            result = result with { Products = await ReadSelectedProductsAsync(reader, ct) };
             await reader.DisposeAsync();
             await transaction.CommitAsync(ct);
             return result;
         }
-        catch (SqlException error) when (error.Number == 51110)
+        catch (SqlException error) when (error.Number is 51110 or 51112 or 51113)
         {
             throw new RestaurantAccountValidationException(error.Message);
         }
@@ -144,6 +239,10 @@ public sealed class SqlRestaurantDigitalMenuStore(
               ON product.TenantId=category.TenantId
              AND product.ProductCategoryId=category.ProductCategoryId
              AND product.IsActive=1 AND product.IsIngredient=0
+            JOIN sales.RestaurantDigitalMenuProducts selected
+              ON selected.TenantId=menu.TenantId
+             AND selected.BusinessId=menu.BusinessId
+             AND selected.ProductId=product.ProductId
             WHERE menu.PublicCode=@Code AND menu.IsPublished=1
               AND EXISTS(SELECT 1 FROM dbo.ProductPrices price
                 WHERE price.BusinessId=menu.BusinessId
@@ -189,11 +288,15 @@ public sealed class SqlRestaurantDigitalMenuStore(
             WHERE menu.PublicCode=@Code AND menu.IsPublished=1;
 
             SELECT product.ProductId,product.Name,
-                   LEFT(product.Description,400),price.Amount,
+                   selected.PublicDescription,price.Amount,
                    price.CurrencyCode,image.MediaUrl
             FROM sales.RestaurantDigitalMenus menu
+            JOIN sales.RestaurantDigitalMenuProducts selected
+              ON selected.TenantId=menu.TenantId
+             AND selected.BusinessId=menu.BusinessId
             JOIN dbo.Products product
               ON product.TenantId=menu.TenantId
+             AND product.ProductId=selected.ProductId
              AND product.ProductCategoryId=@CategoryId
              AND product.IsActive=1 AND product.IsIngredient=0
             CROSS APPLY(
@@ -218,7 +321,7 @@ public sealed class SqlRestaurantDigitalMenuStore(
                        image.ProductImageId
             ) image
             WHERE menu.PublicCode=@Code AND menu.IsPublished=1
-            ORDER BY product.Name,product.ProductId
+            ORDER BY selected.SortOrder,product.Name,product.ProductId
             OFFSET @Skip ROWS FETCH NEXT 25 ROWS ONLY;
             """, connection);
         command.Parameters.AddWithValue("@Code", publicCode);
@@ -261,6 +364,10 @@ public sealed class SqlRestaurantDigitalMenuStore(
               ON product.TenantId=category.TenantId
              AND product.ProductCategoryId=category.ProductCategoryId
              AND product.IsActive=1 AND product.IsIngredient=0
+            JOIN sales.RestaurantDigitalMenuProducts selected
+              ON selected.TenantId=@TenantId
+             AND selected.BusinessId=@BusinessId
+             AND selected.ProductId=product.ProductId
             WHERE category.TenantId=@TenantId
               AND category.IsActive=1 AND category.IsBrowsable=1
               AND EXISTS(SELECT 1 FROM dbo.ProductPrices price
@@ -307,9 +414,12 @@ public sealed class SqlRestaurantDigitalMenuStore(
               AND business.PointOfSaleMode=N'RestaurantBar';
 
             SELECT product.ProductId,product.Name,
-                   LEFT(product.Description,400),price.Amount,
+                   selected.PublicDescription,price.Amount,
                    price.CurrencyCode,image.MediaUrl
-            FROM dbo.Products product
+            FROM sales.RestaurantDigitalMenuProducts selected
+            JOIN dbo.Products product
+              ON product.TenantId=selected.TenantId
+             AND product.ProductId=selected.ProductId
             CROSS APPLY(
               SELECT TOP(1) Amount,CurrencyCode
               FROM dbo.ProductPrices price
@@ -332,9 +442,10 @@ public sealed class SqlRestaurantDigitalMenuStore(
                        image.ProductImageId
             ) image
             WHERE product.TenantId=@TenantId
+              AND selected.BusinessId=@BusinessId
               AND product.ProductCategoryId=@CategoryId
               AND product.IsActive=1 AND product.IsIngredient=0
-            ORDER BY product.Name,product.ProductId
+            ORDER BY selected.SortOrder,product.Name,product.ProductId
             OFFSET @Skip ROWS FETCH NEXT 25 ROWS ONLY;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
@@ -355,10 +466,22 @@ public sealed class SqlRestaurantDigitalMenuStore(
         return new(items, hasMore);
     }
 
+    private static async Task<IReadOnlyList<RestaurantDigitalMenuSelectedProduct>>
+        ReadSelectedProductsAsync(SqlDataReader reader, CancellationToken ct)
+    {
+        var products = new List<RestaurantDigitalMenuSelectedProduct>();
+        while (await reader.ReadAsync(ct))
+            products.Add(new(reader.GetGuid(0), reader.GetString(1),
+                reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3)));
+        return products;
+    }
+
     private static RestaurantDigitalMenuConfiguration ReadConfiguration(
-        SqlDataReader reader) => new(reader.GetString(0),reader.GetString(1),
+        SqlDataReader reader,
+        IReadOnlyList<RestaurantDigitalMenuSelectedProduct> products) =>
+        new(reader.GetString(0),reader.GetString(1),
             reader.IsDBNull(2) ? null : reader.GetString(2),reader.GetBoolean(3),
-            Convert.ToBase64String((byte[])reader[4]));
+            Convert.ToBase64String((byte[])reader[4]), products);
 
     private static byte[]? DecodeVersion(string? value)
     {

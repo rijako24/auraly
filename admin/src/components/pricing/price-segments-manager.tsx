@@ -10,6 +10,7 @@ import { ReportViewer } from "@/components/reports/report-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +18,7 @@ import { ProductPicker } from "@/components/products/product-picker";
 import { PriceChannelExclusionDraftEditor, PriceChannelExclusions, type DraftPriceChannelExclusion } from "@/components/pricing/price-channel-exclusions";
 import { formatCurrency } from "@/lib/utils";
 import { priceSegmentsApi, type PriceChannelProductReport, type PriceChannelStrategy, type PriceSegmentItem, type PriceSegmentSummary } from "@/services/api/price-segments";
+import { pricingApi } from "@/services/api/pricing";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -27,6 +29,11 @@ type ItemDraft = {
   productName: string;
   amount: number;
   minimumQuantity: number;
+  targetMarginPercent: number | null;
+  autoUpdatePrice: boolean;
+  costBasisAmount: number | null;
+  salesTaxRate: number;
+  inputMode: "Margin" | "SalePrice";
 };
 
 type CreateProductDraft = Pick<ItemDraft, "productId" | "productCode" | "productName">;
@@ -66,7 +73,7 @@ export function PriceSegmentsManager() {
         name: name.trim(),
         channelStrategy,
         channelValue: requiresChannelValue(channelStrategy) ? channelValue : null,
-        items: channelStrategy === "TieredProductPrice" ? createItems.map((item) => ({ productId: item.productId, amount: item.amount, minimumQuantity: item.minimumQuantity })) : undefined,
+        items: channelStrategy === "TieredProductPrice" ? createItems.map((item) => ({ productId: item.productId, amount: item.amount, minimumQuantity: item.minimumQuantity, targetMarginPercent: item.targetMarginPercent, autoUpdatePrice: item.autoUpdatePrice, inputMode: item.inputMode })) : undefined,
         exclusions: createExclusions.map((item) => ({ scopeType: item.scopeType, scopeId: item.scopeId })),
       });
     },
@@ -94,6 +101,9 @@ export function PriceSegmentsManager() {
       await priceSegmentsApi.saveItem(selected.id, value.productId, {
         amount: value.amount,
         minimumQuantity: value.minimumQuantity,
+        targetMarginPercent: value.targetMarginPercent,
+        autoUpdatePrice: value.autoUpdatePrice,
+        inputMode: value.inputMode,
       });
     },
     onSuccess: async () => {
@@ -145,11 +155,38 @@ export function PriceSegmentsManager() {
       !term || segment.name.toLocaleLowerCase("es-CO").includes(term));
   }, [search, segments.data]);
 
-  function editCreateProduct(product: CreateProductDraft, defaultAmount: number) {
+  async function editCreateProduct(product: CreateProductDraft, defaultAmount: number) {
     const existing = createItems.filter((item) => item.productId === product.productId);
+    let costBasisAmount: number | null = existing[0]?.costBasisAmount ?? null;
+    let salesTaxRate = existing[0]?.salesTaxRate ?? 0;
+    let configuredMargin: number | null = null;
+    if (costBasisAmount === null && permissions.includes("pricing.cost-basis.read")) {
+      try { const cost = await priceSegmentsApi.productCost(product.productId); costBasisAmount = cost.costBasisAmount; salesTaxRate = cost.salesTaxRate; configuredMargin = cost.currentMarginPercent; }
+      catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo consultar el costo del producto."); return; }
+    }
+    let targetMarginPercent: number | null = configuredMargin;
+    if (existing.length === 0 && targetMarginPercent === null && costBasisAmount !== null && costBasisAmount > 0 && defaultAmount >= costBasisAmount * (1 + salesTaxRate / 100)) {
+      try {
+        const calculated = await pricingApi.calculate({ costBasisAmount, inputMode: "SalePrice", targetMarginPercent: null, salePrice: defaultAmount, roundingIncrement: 0.0001, roundingMode: "Nearest", salesTaxRate });
+        targetMarginPercent = calculated.effectiveMarginPercent;
+      } catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo calcular el margen."); }
+    }
     setCreateProduct(product);
-    setCreateProductPrices(existing.length > 0 ? existing : [{ ...product, originalMinimumQuantity: null, amount: defaultAmount, minimumQuantity: 1 }]);
+    setCreateProductPrices(existing.length > 0 ? existing : [{ ...product, originalMinimumQuantity: null, amount: defaultAmount, minimumQuantity: 1, targetMarginPercent, autoUpdatePrice: false, costBasisAmount, salesTaxRate, inputMode: "SalePrice" }]);
     requestAnimationFrame(() => document.getElementById("new-channel-product-minimum-0")?.focus());
+  }
+
+  function updateCreateTier(index: number, change: Partial<ItemDraft>) {
+    setCreateProductPrices((current) => current.map((item, at) =>
+      at === index ? { ...item, ...change } : item));
+  }
+
+  function calculateCreateTier(index: number, item: ItemDraft,
+    mode: "Margin" | "SalePrice") {
+    void previewTier(item, mode, (calculation) =>
+      setCreateProductPrices((current) => current.map((value, at) =>
+        at === index && value.inputMode === mode
+          ? { ...value, ...calculation } : value)));
   }
 
   function saveCreateProductPrices() {
@@ -229,7 +266,13 @@ export function PriceSegmentsManager() {
         <div className="space-y-4">
           <div className="space-y-2"><Label>Nombre *</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Mayoristas" maxLength={120} /></div>
           <div className="space-y-3"><Label>Modo de precio</Label><div className="grid gap-2 sm:grid-cols-2">{channelStrategies.map((mode) => <Button key={mode.value} type="button" variant={channelStrategy === mode.value ? "default" : "outline"} className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => { setChannelStrategy(mode.value); setChannelValue(0); }}>{mode.label}</Button>)}</div>{requiresChannelValue(channelStrategy) && <div className="space-y-2"><Label>{channelValueLabel(channelStrategy)}</Label><FormattedNumberInput kind="percent" allowNegative={allowsNegativeChannelValue(channelStrategy)} value={channelValue} invalid={!validChannelValue(channelStrategy, channelValue)} onValueChange={(value) => setChannelValue(value ?? 0)} /></div>}<p className="text-xs text-muted-foreground">{channelStrategyHelp(channelStrategy)}</p></div>
-          {channelStrategy === "TieredProductPrice" && <div className="space-y-4 rounded-2xl border bg-muted/15 p-4"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Busca un producto y pulsa Enter para configurar todas sus escalas de cantidad y precio en una sola ventana.</p></div>{businessId && <ProductPicker inputId="new-channel-product-search" businessId={businessId} selectedProductIds={new Set(createItems.map(item=>item.productId))} disabled={create.isPending} label="Producto" showAddButton={false} onSelect={(product) => editCreateProduct({ productId: product.productId, productCode: product.productCode, productName: product.productName }, product.saleUnitPrice ?? 0)} />}<div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-2 text-left">Producto</th><th className="px-3 py-2 text-right">Desde</th><th className="px-3 py-2 text-right">Precio</th><th className="w-20" /></tr></thead><tbody>{createItems.length === 0 ? <tr><td colSpan={4} className="h-24 border-t text-center text-sm text-muted-foreground">Selecciona un producto para configurar sus precios.</td></tr> : createItems.map((item, index) => <tr key={`${item.productId}-${item.minimumQuantity}`} className="border-t"><td className="px-3 py-2"><b>{item.productName}</b><small className="block text-muted-foreground">{item.productCode}</small></td><td className="px-3 py-2 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(item.amount)}</td><td><div className="flex"><Button type="button" size="icon" variant="ghost" aria-label={`Editar precios de ${item.productName}`} onClick={() => editCreateProduct(item, item.amount)}><Pencil className="h-4 w-4" /></Button><Button type="button" size="icon" variant="ghost" aria-label={`Eliminar precio de ${item.productName}`} onClick={() => setCreateItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></div></td></tr>)}</tbody></table></div></div>}
+          {channelStrategy === "TieredProductPrice" && <div className="space-y-4 rounded-2xl border bg-muted/15 p-4">
+            <div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Configura precio, margen y actualización automática para cada escala.</p></div>
+            {businessId && <ProductPicker inputId="new-channel-product-search" businessId={businessId} selectedProductIds={new Set(createItems.map(item=>item.productId))} disabled={create.isPending} label="Producto" showAddButton={false} onSelect={(product) => { void editCreateProduct({ productId: product.productId, productCode: product.productCode, productName: product.productName }, product.saleUnitPrice ?? 0); }} />}
+            <div className="overflow-x-auto rounded-xl border bg-background"><table className="w-full min-w-[650px] text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-2 text-left">Producto</th><th className="px-3 py-2 text-right">Desde</th><th className="px-3 py-2 text-right">Precio</th><th className="px-3 py-2 text-right">Margen</th><th className="px-3 py-2 text-center">Actualizar precio</th><th className="w-20" /></tr></thead><tbody>
+              {createItems.length === 0 ? <tr><td colSpan={6} className="h-24 border-t text-center text-sm text-muted-foreground">Selecciona un producto para configurar sus precios.</td></tr> : createItems.map((item, index) => <tr key={`${item.productId}-${item.minimumQuantity}`} className="border-t"><td className="px-3 py-2"><b>{item.productName}</b><small className="block text-muted-foreground">{item.productCode}</small></td><td className="px-3 py-2 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(item.amount)}</td><td className="px-3 py-2 text-right">{item.targetMarginPercent === null ? "—" : `${item.targetMarginPercent.toLocaleString("es-CO")} %`}</td><td className="px-3 py-2 text-center"><Checkbox checked={item.autoUpdatePrice} disabled={!item.costBasisAmount || item.costBasisAmount <= 0 || item.targetMarginPercent === null} aria-label={`Actualizar precio de ${item.productName} desde ${item.minimumQuantity} unidades`} onCheckedChange={(checked) => setCreateItems((current) => current.map((value, at) => at === index ? { ...value, autoUpdatePrice: checked === true } : value))}/></td><td><div className="flex"><Button type="button" size="icon" variant="ghost" aria-label={`Editar precios de ${item.productName}`} onClick={() => { void editCreateProduct(item, item.amount); }}><Pencil className="h-4 w-4" /></Button><Button type="button" size="icon" variant="ghost" aria-label={`Eliminar precio de ${item.productName}`} onClick={() => setCreateItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></div></td></tr>)}
+            </tbody></table></div>
+          </div>}
           {businessId && <PriceChannelExclusionDraftEditor businessId={businessId} value={createExclusions} onChange={setCreateExclusions} disabled={create.isPending} />}
         </div>
         <DialogFooter><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button><Button disabled={!name.trim() || create.isPending || !validChannelValue(channelStrategy, channelValue)} onClick={() => create.mutate()}>{create.isPending ? "Guardando…" : `Crear canal${channelStrategy === "TieredProductPrice" && createItems.length ? ` · ${createItems.length} precios` : ""}`}</Button></DialogFooter>
@@ -237,13 +280,22 @@ export function PriceSegmentsManager() {
     </Dialog>
 
     <Dialog open={Boolean(createProduct)} onOpenChange={(open) => { if (!open) { setCreateProduct(null); setCreateProductPrices([]); } }}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[92dvh] max-w-4xl overflow-y-auto">
         {createProduct && <>
           <DialogHeader><DialogTitle>Precios por cantidad</DialogTitle><DialogDescription>{createProduct.productName} · {createProduct.productCode || "Sin código"}</DialogDescription></DialogHeader>
           <div className="space-y-3">
-            <div className="grid grid-cols-[1fr_1fr_44px] gap-3 px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"><span>Cantidad desde</span><span>Precio</span><span /></div>
-            {createProductPrices.map((item, index) => <div key={index} className="grid grid-cols-[1fr_1fr_44px] items-center gap-3"><FormattedNumberInput id={`new-channel-product-minimum-${index}`} value={item.minimumQuantity} invalid={item.minimumQuantity <= 0 || createProductPrices.some((other, otherIndex) => otherIndex !== index && other.minimumQuantity === item.minimumQuantity)} onValueChange={(value) => setCreateProductPrices((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, minimumQuantity: value ?? 0 } : currentItem))} /><FormattedNumberInput kind="currency" value={item.amount} invalid={item.amount <= 0} onValueChange={(value) => setCreateProductPrices((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, amount: value ?? 0 } : currentItem))} /><Button type="button" size="icon" variant="ghost" disabled={createProductPrices.length === 1} aria-label={`Eliminar escala ${index + 1}`} onClick={() => setCreateProductPrices((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>)}
-            <Button type="button" variant="outline" onClick={() => setCreateProductPrices((current) => { const last = current[current.length - 1]; const nextQuantity = Math.max(1, ...current.map((item) => item.minimumQuantity)) + 1; return [...current, { ...createProduct, originalMinimumQuantity: null, amount: last?.amount ?? 0, minimumQuantity: nextQuantity }]; })}><Plus className="mr-2 h-4 w-4" />Agregar otro precio</Button>
+            <div className="overflow-x-auto">
+              <div className="grid min-w-[690px] grid-cols-[100px_150px_120px_1fr_44px] gap-3 px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"><span>Desde</span><span>Precio</span><span>Margen</span><span>Actualizar precio</span><span /></div>
+              {createProductPrices.map((item, index) => <div key={index} className="mt-2 grid min-w-[690px] grid-cols-[100px_150px_120px_1fr_44px] items-center gap-3">
+                <FormattedNumberInput id={`new-channel-product-minimum-${index}`} value={item.minimumQuantity} invalid={item.minimumQuantity <= 0 || createProductPrices.some((other, otherIndex) => otherIndex !== index && other.minimumQuantity === item.minimumQuantity)} onValueChange={(value) => updateCreateTier(index, { minimumQuantity: value ?? 0 })} />
+                <FormattedNumberInput kind="currency" value={item.amount} invalid={item.inputMode === "SalePrice" && (item.amount <= 0 || item.costBasisAmount !== null && item.amount < item.costBasisAmount * (1 + item.salesTaxRate / 100))} onValueChange={(value) => updateCreateTier(index, { amount: value ?? 0, inputMode: "SalePrice" })} onCommit={(value) => calculateCreateTier(index, { ...item, amount: value ?? 0 }, "SalePrice")} />
+                <FormattedNumberInput kind="percent" disabled={!item.costBasisAmount} value={item.targetMarginPercent ?? 0} invalid={item.inputMode === "Margin" && (item.targetMarginPercent === null || item.targetMarginPercent < 0 || item.targetMarginPercent >= 100)} onValueChange={(value) => updateCreateTier(index, { targetMarginPercent: value, inputMode: "Margin" })} onCommit={(value) => calculateCreateTier(index, { ...item, targetMarginPercent: value }, "Margin")} />
+                <label className="flex items-center gap-2 text-sm"><Checkbox checked={item.autoUpdatePrice} disabled={!item.costBasisAmount || item.costBasisAmount <= 0} onCheckedChange={(checked) => updateCreateTier(index, { autoUpdatePrice: checked === true })} aria-label={`Actualizar automáticamente el precio desde ${item.minimumQuantity} unidades`} /><span>Al publicar costo</span></label>
+                <Button type="button" size="icon" variant="ghost" disabled={createProductPrices.length === 1} aria-label={`Eliminar escala ${index + 1}`} onClick={() => setCreateProductPrices((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+              </div>)}
+            </div>
+            {createProductPrices[0]?.costBasisAmount !== null && <p className="text-xs text-muted-foreground">Costo base de la sede: {formatCurrency(createProductPrices[0]?.costBasisAmount ?? 0)}. El precio no puede quedar por debajo de este costo más IVA.</p>}
+            <Button type="button" variant="outline" onClick={() => setCreateProductPrices((current) => { const last = current[current.length - 1]; const nextQuantity = Math.max(1, ...current.map((item) => item.minimumQuantity)) + 1; return [...current, { ...createProduct, originalMinimumQuantity: null, amount: last?.amount ?? 0, minimumQuantity: nextQuantity, targetMarginPercent: last?.targetMarginPercent ?? null, autoUpdatePrice: last?.autoUpdatePrice ?? false, costBasisAmount: last?.costBasisAmount ?? null, salesTaxRate: last?.salesTaxRate ?? 0, inputMode: last?.inputMode ?? "SalePrice" }]; })}><Plus className="mr-2 h-4 w-4" />Agregar otro precio</Button>
           </div>
           <DialogFooter><Button type="button" variant="outline" onClick={() => { setCreateProduct(null); setCreateProductPrices([]); }}>Cancelar</Button><Button type="button" disabled={!validProductPrices(createProductPrices)} onClick={saveCreateProductPrices}>Agregar precios</Button></DialogFooter>
         </>}
@@ -265,9 +317,9 @@ export function PriceSegmentsManager() {
           </section>
           {channelStrategy === "TieredProductPrice" && <section className="space-y-4 rounded-2xl border bg-muted/15 p-4">
             <div className="flex items-center justify-between gap-3"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Un producto puede tener varias escalas por cantidad.</p></div>{editingChannel && canManage && <Button onClick={() => { setDetailOpen(false); setDraft(emptyDraft()); }}><Plus className="mr-2 h-4 w-4" />Agregar producto</Button>}</div>
-            <div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-right">Desde</th><th className="px-4 py-3 text-right">Precio</th>{editingChannel && <th className="w-24" />}</tr></thead><tbody>
-              {(items.data ?? []).map((item) => <tr key={item.productId + "-" + item.minimumQuantity} className="border-t align-middle"><td className="px-4 py-3"><b className="block">{item.productName}</b><small className="text-muted-foreground">{item.productCode || "Sin código"}</small></td><td className="px-4 py-3 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-4 py-3 text-right font-medium">{formatCurrency(item.amount)}</td>{editingChannel && <td className="px-2 py-3"><div className="flex justify-end"><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => { setDetailOpen(false); setDraft(fromItem(item)); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => { setDetailOpen(false); setDeleteItem(item); }}><Trash2 className="h-4 w-4" /></Button></div></td>}</tr>)}
-              {!items.isLoading && (items.data ?? []).length === 0 && <tr><td colSpan={editingChannel ? 4 : 3} className="p-10 text-center text-muted-foreground">Sin productos configurados</td></tr>}
+            <div className="overflow-x-auto rounded-xl border bg-background"><table className="w-full min-w-[690px] text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-right">Desde</th><th className="px-4 py-3 text-right">Precio</th><th className="px-4 py-3 text-right">Margen</th><th className="px-4 py-3 text-center">Actualizar precio</th>{editingChannel && <th className="w-24" />}</tr></thead><tbody>
+              {(items.data ?? []).map((item) => <tr key={item.productId + "-" + item.minimumQuantity} className="border-t align-middle"><td className="px-4 py-3"><b className="block">{item.productName}</b><small className="text-muted-foreground">{item.productCode || "Sin código"}</small></td><td className="px-4 py-3 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-4 py-3 text-right font-medium">{formatCurrency(item.amount)}</td><td className="px-4 py-3 text-right">{item.targetMarginPercent === null ? "—" : `${item.targetMarginPercent.toLocaleString("es-CO")} %`}</td><td className="px-4 py-3 text-center"><Checkbox checked={item.autoUpdatePrice} disabled={!editingChannel || saveItem.isPending || !item.costBasisAmount || item.costBasisAmount <= 0 || item.targetMarginPercent === null} aria-label={`Actualizar precio de ${item.productName} desde ${item.minimumQuantity} unidades`} onCheckedChange={(checked) => saveItem.mutate({ ...fromItem(item), autoUpdatePrice: checked === true })}/></td>{editingChannel && <td className="px-2 py-3"><div className="flex justify-end"><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => { setDetailOpen(false); setDraft(fromItem(item)); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => { setDetailOpen(false); setDeleteItem(item); }}><Trash2 className="h-4 w-4" /></Button></div></td>}</tr>)}
+              {!items.isLoading && (items.data ?? []).length === 0 && <tr><td colSpan={editingChannel ? 6 : 5} className="p-10 text-center text-muted-foreground">Sin productos configurados</td></tr>}
             </tbody></table></div>
           </section>}
           {businessId && <PriceChannelExclusions channelId={selected.id} businessId={businessId} canManage={editingChannel && canManage} />}
@@ -279,7 +331,7 @@ export function PriceSegmentsManager() {
       </DialogContent>
     </Dialog>
 
-    <PriceItemDialog segment={selected?.strategy === "TieredProductPrice" ? selected : null} draft={draft} onChange={(value) => { setDraft(value); if (!value && selected) setDetailOpen(true); }} onSave={(value) => saveItem.mutate(value)} saving={saveItem.isPending} />
+    <PriceItemDialog segment={selected?.strategy === "TieredProductPrice" ? selected : null} draft={draft} onChange={(value) => { setDraft(value); if (!value && selected) setDetailOpen(true); }} onPreview={(productId, mode, calculation) => setDraft((current) => current?.productId === productId && current.inputMode === mode ? { ...current, ...calculation } : current)} onSave={(value) => saveItem.mutate(value)} saving={saveItem.isPending} />
 
     <Dialog open={Boolean(deleteItem)} onOpenChange={(open) => { if (!open) { setDeleteItem(null); if (selected) setDetailOpen(true); } }}>
       <DialogContent>
@@ -290,8 +342,9 @@ export function PriceSegmentsManager() {
   </div>;
 }
 
-function PriceItemDialog({ segment, draft, onChange, onSave, saving }: { segment: PriceSegmentSummary | null; draft: ItemDraft | null; onChange: (value: ItemDraft | null) => void; onSave: (value: ItemDraft) => void; saving: boolean }) {
+function PriceItemDialog({ segment, draft, onChange, onPreview, onSave, saving }: { segment: PriceSegmentSummary | null; draft: ItemDraft | null; onChange: (value: ItemDraft | null) => void; onPreview: (productId: string, mode: ItemDraft["inputMode"], calculation: Pick<ItemDraft, "amount" | "targetMarginPercent">) => void; onSave: (value: ItemDraft) => void; saving: boolean }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const canReadCost = useAuthStore((state) => state.user?.permissions.includes("pricing.cost-basis.read") ?? false);
   const isNew = draft?.originalMinimumQuantity === null;
 
   return <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open) onChange(null); }}>
@@ -300,28 +353,79 @@ function PriceItemDialog({ segment, draft, onChange, onSave, saving }: { segment
         <DialogHeader><DialogTitle>{isNew ? "Agregar producto" : "Editar condición"}</DialogTitle><DialogDescription>Define el precio y la cantidad desde la cual aplica.</DialogDescription></DialogHeader>
         <div className="space-y-4">
           {isNew ? <div className="space-y-2">
-            {businessId && <ProductPicker businessId={businessId} selectedProductIds={new Set(draft.productId ? [draft.productId] : [])} disabled={saving} label="Producto *" onSelect={(product) => onChange({ ...draft, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0 })} />}
+            {businessId && <ProductPicker businessId={businessId} selectedProductIds={new Set(draft.productId ? [draft.productId] : [])} disabled={saving} label="Producto *" onSelect={(product) => {
+              const next = { ...draft, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0, targetMarginPercent: null, costBasisAmount: null, salesTaxRate: 0, autoUpdatePrice: false, inputMode: "SalePrice" as const };
+              if (!canReadCost) { onChange(next); return; }
+              void priceSegmentsApi.productCost(product.productId)
+                .then(async (cost) => {
+                  let targetMarginPercent: number | null = cost.currentMarginPercent;
+                  if (targetMarginPercent === null && cost.costBasisAmount > 0 && next.amount >= cost.costBasisAmount * (1 + cost.salesTaxRate / 100)) {
+                    const calculation = await pricingApi.calculate({
+                      costBasisAmount: cost.costBasisAmount, inputMode: "SalePrice",
+                      targetMarginPercent: null, salePrice: next.amount,
+                      roundingIncrement: 0.0001, roundingMode: "Nearest",
+                      salesTaxRate: cost.salesTaxRate,
+                    });
+                    targetMarginPercent = calculation.effectiveMarginPercent;
+                  }
+                  onChange({ ...next, costBasisAmount: cost.costBasisAmount,
+                    salesTaxRate: cost.salesTaxRate,
+                    targetMarginPercent });
+                })
+                .catch((error: Error) => {
+                  toast.error(error.message ?? "No se pudo consultar el costo del producto.");
+                  onChange(next);
+                });
+            }} />}
             {draft.productId && <p className="flex items-center gap-2 text-sm text-primary"><Check className="h-4 w-4" />{draft.productName}</p>}
           </div> : <div className="rounded-xl border bg-muted/20 p-3"><b>{draft.productName}</b><p className="text-xs text-muted-foreground">{draft.productCode}</p></div>}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2"><Label>Precio *</Label><FormattedNumberInput kind="currency" value={draft.amount} invalid={draft.amount <= 0} onValueChange={(value) => onChange({ ...draft, amount: value ?? 0 })} /></div>
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2"><Label>Cantidad mínima *</Label><FormattedNumberInput value={draft.minimumQuantity} invalid={draft.minimumQuantity <= 0} onValueChange={(value) => onChange({ ...draft, minimumQuantity: value ?? 0 })} /></div>
+            <div className="space-y-2"><Label>Precio *</Label><FormattedNumberInput kind="currency" value={draft.amount} invalid={draft.inputMode === "SalePrice" && (draft.amount <= 0 || draft.costBasisAmount !== null && draft.amount < draft.costBasisAmount * (1 + draft.salesTaxRate / 100))} onValueChange={(value) => onChange({ ...draft, amount: value ?? 0, inputMode: "SalePrice" })} onCommit={(value) => void previewTier({ ...draft, amount: value ?? 0 }, "SalePrice", (calculation) => onPreview(draft.productId, "SalePrice", calculation))} /></div>
+            <div className="space-y-2"><Label>Margen (%)</Label><FormattedNumberInput kind="percent" disabled={!draft.costBasisAmount} value={draft.targetMarginPercent ?? 0} invalid={draft.inputMode === "Margin" && (draft.targetMarginPercent === null || draft.targetMarginPercent < 0 || draft.targetMarginPercent >= 100)} onValueChange={(value) => onChange({ ...draft, targetMarginPercent: value, inputMode: "Margin" })} onCommit={(value) => void previewTier({ ...draft, targetMarginPercent: value }, "Margin", (calculation) => onPreview(draft.productId, "Margin", calculation))} /></div>
           </div>
+          <label className="flex items-center justify-between gap-3 rounded-xl border p-3"><span><b className="block text-sm">Actualizar precio al publicar un nuevo costo</b><small className="text-muted-foreground">Conserva el margen configurado.</small></span><Checkbox checked={draft.autoUpdatePrice} disabled={!draft.costBasisAmount || draft.costBasisAmount <= 0} onCheckedChange={(checked) => onChange({ ...draft, autoUpdatePrice: checked === true })} /></label>
+          {draft.costBasisAmount !== null && <p className="text-xs text-muted-foreground">Costo base de la sede: {formatCurrency(draft.costBasisAmount)}. El precio no puede quedar por debajo de este costo más IVA.</p>}
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => onChange(null)}>Cancelar</Button><Button disabled={saving || !draft.productId || draft.amount <= 0 || draft.minimumQuantity <= 0} onClick={() => onSave(draft)}>{saving ? "Guardando…" : "Guardar condición"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => onChange(null)}>Cancelar</Button><Button disabled={saving || !draft.productId || !validProductPrices([draft])} onClick={() => onSave(draft)}>{saving ? "Guardando…" : "Guardar condición"}</Button></DialogFooter>
       </>}
     </DialogContent>
   </Dialog>;
 }
 
 function emptyDraft(): ItemDraft {
-  return { originalMinimumQuantity: null, productId: "", productCode: "", productName: "", amount: 0, minimumQuantity: 1 };
+  return { originalMinimumQuantity: null, productId: "", productCode: "", productName: "", amount: 0, minimumQuantity: 1, targetMarginPercent: null, autoUpdatePrice: false, costBasisAmount: null, salesTaxRate: 0, inputMode: "SalePrice" };
 }
 function fromItem(item: PriceSegmentItem): ItemDraft {
-  return { originalMinimumQuantity: item.minimumQuantity, productId: item.productId, productCode: item.productCode, productName: item.productName, amount: item.amount, minimumQuantity: item.minimumQuantity };
+  return { originalMinimumQuantity: item.minimumQuantity, productId: item.productId, productCode: item.productCode, productName: item.productName, amount: item.amount, minimumQuantity: item.minimumQuantity, targetMarginPercent: item.targetMarginPercent, autoUpdatePrice: item.autoUpdatePrice, costBasisAmount: item.costBasisAmount, salesTaxRate: item.salesTaxRate, inputMode: "SalePrice" };
 }
 function validProductPrices(items: ItemDraft[]) {
-  return items.length > 0 && items.every((item) => item.minimumQuantity > 0 && item.amount > 0) && new Set(items.map((item) => item.minimumQuantity)).size === items.length;
+  return items.length > 0 && items.every((item) => item.minimumQuantity > 0 &&
+    (item.inputMode === "Margin" ? item.costBasisAmount !== null && item.costBasisAmount > 0 && item.targetMarginPercent !== null && item.targetMarginPercent >= 0 && item.targetMarginPercent < 100 : item.amount > 0 && (item.costBasisAmount === null || item.amount >= item.costBasisAmount * (1 + item.salesTaxRate / 100))) &&
+    (!item.autoUpdatePrice || item.costBasisAmount !== null && item.costBasisAmount > 0 && item.targetMarginPercent !== null && item.targetMarginPercent >= 0 && item.targetMarginPercent < 100)) &&
+    new Set(items.map((item) => item.minimumQuantity)).size === items.length;
+}
+
+async function previewTier(item: ItemDraft, inputMode: "Margin" | "SalePrice",
+  apply: (value: Pick<ItemDraft, "amount" | "targetMarginPercent">) => void) {
+  if (item.costBasisAmount === null || item.costBasisAmount <= 0) return;
+  if (inputMode === "Margin" && (item.targetMarginPercent === null || item.targetMarginPercent < 0 || item.targetMarginPercent >= 100)) return;
+  if (inputMode === "SalePrice" && item.amount <= 0) return;
+  try {
+    const result = await pricingApi.calculate({
+      costBasisAmount: item.costBasisAmount,
+      inputMode,
+      targetMarginPercent: inputMode === "Margin" ? item.targetMarginPercent : null,
+      salePrice: inputMode === "SalePrice" ? item.amount : null,
+      roundingIncrement: 0.0001,
+      roundingMode: "Nearest",
+      salesTaxRate: item.salesTaxRate,
+    });
+    apply({ amount: result.roundedSalePrice,
+      targetMarginPercent: inputMode === "Margin" ? item.targetMarginPercent : result.effectiveMarginPercent });
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : "No fue posible calcular el margen.");
+  }
 }
 const channelStrategies: Array<{ value: PriceChannelStrategy; label: string }> = [
   { value: "TieredProductPrice", label: "Precios por producto y cantidad" },

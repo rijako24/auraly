@@ -41,7 +41,8 @@ public sealed class ProductAdminService : IProductAdminService
                 filters?.BrandId,
                 filters?.ManagesInventory,
                 filters?.AllowsFractionalSale,
-                filters?.IsWeighable),
+                filters?.IsWeighable,
+                filters?.IsIngredient),
             ct);
         var categoryById = categories.ToDictionary(category => category.ProductCategoryId);
 

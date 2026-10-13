@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Auraly.Contracts.Pricing;
 using Auraly.Application.Pricing;
+using Auraly.Domain.Pricing;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Platform.Application.Identity.Interfaces;
@@ -18,6 +19,7 @@ public static class PriceSegmentsApi
         group.MapGet("/", ListAsync);
         group.MapPost("/", SaveAsync);
         group.MapGet("/{id:guid}/items", ItemsAsync);
+        group.MapGet("/products/{productId:guid}/cost", ProductCostAsync);
         group.MapGet("/{id:guid}/product-price-report", ProductPriceReportAsync);
         group.MapPut("/{id:guid}/items/{productId:guid}", SaveItemAsync);
         group.MapDelete("/{id:guid}/items/{productId:guid}", DeleteItemAsync);
@@ -75,8 +77,18 @@ public static class PriceSegmentsApi
             !TryValidateChannelValue(strategy, request.ChannelValue, out var channelValue))
             return InvalidChannelSettings();
         if (strategy == PriceChannelStrategies.TieredProductPrice &&
-            requestedItems.Any(item => item.ProductId == Guid.Empty || item.Amount <= 0 || item.MinimumQuantity <= 0))
+            requestedItems.Any(item => item.ProductId == Guid.Empty ||
+                item.InputMode != PriceInputModes.Margin && item.Amount <= 0 ||
+                item.MinimumQuantity <= 0))
             return Results.Problem("Cada producto necesita un precio y una cantidad mínima válidos.", statusCode: 400);
+        var normalizedItems = strategy == PriceChannelStrategies.TieredProductPrice
+            ? await NormalizeTierItemsAsync(connection, transaction, identity.BusinessId,
+                requestedItems.Select(item => new TierInput(item.ProductId, item.Amount,
+                    item.MinimumQuantity, item.TargetMarginPercent, item.AutoUpdatePrice,
+                    item.InputMode)).ToArray(), ct)
+            : [];
+        if (normalizedItems is null)
+            return Results.Problem("El precio final debe cubrir el costo más impuestos; para actualizar por margen se requiere un costo positivo y un margen entre 0 % y menos de 100 %.", statusCode: 400);
         if (requestedExclusions.Any(exclusion =>
                 !TryNormalizeExclusionScope(exclusion.ScopeType, out _) || exclusion.ScopeId == Guid.Empty)
             || requestedExclusions.GroupBy(exclusion =>
@@ -94,7 +106,7 @@ public static class PriceSegmentsApi
         command.Parameters.AddWithValue("@Strategy", (object?)strategy ?? DBNull.Value);
         command.Parameters.AddWithValue("@Value", (object?)channelValue ?? DBNull.Value);
         command.Parameters.AddWithValue("@ItemsJson", JsonSerializer.Serialize(
-            strategy == PriceChannelStrategies.TieredProductPrice ? requestedItems : []));
+            normalizedItems));
         command.Parameters.AddWithValue("@ExclusionsJson", JsonSerializer.Serialize(requestedExclusions));
         try
         {
@@ -129,12 +141,31 @@ public static class PriceSegmentsApi
         await using var command = Procedure("dbo.PriceSegmentItemsList", connection);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        var items = new List<PriceSegmentItem>();
-        while (await reader.ReadAsync(ct))
-            items.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? "" : reader.GetString(1),
-                reader.GetString(2), reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5)));
-        return Results.Ok(items);
+        var rows = new List<(Guid ProductId, string ProductCode, string ProductName,
+            decimal Amount, string CurrencyCode, decimal MinimumQuantity,
+            decimal? TargetMarginPercent, bool AutoUpdatePrice)>();
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+                rows.Add((reader.GetGuid(0), reader.IsDBNull(1) ? "" : reader.GetString(1),
+                    reader.GetString(2), reader.GetDecimal(3), reader.GetString(4),
+                    reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                    reader.GetBoolean(7)));
+        var costs = identity.Permissions.Contains(PricingPermissionCodes.ReadCostBasis)
+            ? await LoadTierCostsAsync(connection, null, identity.BusinessId,
+                rows.Select(row => row.ProductId).Distinct().ToArray(), ct)
+            : [];
+        return Results.Ok(rows.Select(row =>
+        {
+            costs.TryGetValue(row.ProductId, out var basis);
+            var margin = row.TargetMarginPercent ??
+                (basis?.Amount is > 0 &&
+                    row.Amount >= basis.Amount * (1 + basis.SalesTaxRate / 100)
+                    ? PriceMargin.CalculateMarginPercentFromGross(basis.Amount,
+                        row.Amount, basis.SalesTaxRate) : null);
+            return new PriceSegmentItem(row.ProductId, row.ProductCode, row.ProductName,
+                row.Amount, row.CurrencyCode, row.MinimumQuantity, margin,
+                row.AutoUpdatePrice, basis?.Amount, basis?.SalesTaxRate ?? 0);
+        }).ToArray());
     }
 
     private static async Task<IResult> ProductPriceReportAsync(
@@ -159,6 +190,23 @@ public static class PriceSegmentsApi
         }
     }
 
+    private static async Task<IResult> ProductCostAsync(
+        HttpContext context, Guid productId,
+        SqlServerConnectionFactory connections, CancellationToken ct)
+    {
+        var identity = context.User.ToPricingIdentity();
+        if (!identity.Permissions.Contains(PricingPermissionCodes.ReadCostBasis) ||
+            !identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        var costs = await LoadTierCostsAsync(connection, null, identity.BusinessId,
+            [productId], ct);
+        return costs.TryGetValue(productId, out var cost)
+            ? Results.Ok(new { costBasisAmount = cost.Amount,
+                salesTaxRate = cost.SalesTaxRate,
+                currentMarginPercent = cost.CurrentMarginPercent }) : Results.NotFound();
+    }
+
     private static async Task<IResult> SaveItemAsync(
         HttpContext context, Guid id, Guid productId,
         SavePriceSegmentItemRequest request, SqlServerConnectionFactory connections,
@@ -169,7 +217,8 @@ public static class PriceSegmentsApi
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
-        if (request.Amount <= 0 || request.MinimumQuantity <= 0)
+        if (request.InputMode != PriceInputModes.Margin && request.Amount <= 0 ||
+            request.MinimumQuantity <= 0)
             return Results.Problem("Precio y cantidad mínima deben ser mayores que cero.", statusCode: 400);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -178,12 +227,20 @@ public static class PriceSegmentsApi
         if (!await access.HasPermissionForBusinessesAsync(identity.UserId, identity.TenantId,
                 businessIds, "pricing.segments.manage", ct)) return Results.Forbid();
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+        var normalized = await NormalizeTierItemsAsync(connection, transaction,
+            identity.BusinessId, [new TierInput(productId, request.Amount,
+                request.MinimumQuantity, request.TargetMarginPercent,
+                request.AutoUpdatePrice, request.InputMode)], ct);
+        if (normalized is null)
+            return Results.Problem("El precio final debe cubrir el costo más impuestos; para actualizar por margen se requiere un costo positivo y un margen entre 0 % y menos de 100 %.", statusCode: 400);
         await using var command = Procedure("dbo.PriceSegmentItemSave", connection, transaction);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@MinimumQuantity", request.MinimumQuantity);
-        command.Parameters.AddWithValue("@Amount", request.Amount);
+        command.Parameters.AddWithValue("@Amount", normalized[0].Amount);
+        command.Parameters.AddWithValue("@TargetMarginPercent", (object?)normalized[0].TargetMarginPercent ?? DBNull.Value);
+        command.Parameters.AddWithValue("@AutoUpdatePrice", normalized[0].AutoUpdatePrice);
         try { await command.ExecuteNonQueryAsync(ct); await transaction.CommitAsync(ct); }
         catch (SqlException exception) when (exception.Number == 51004)
         { await transaction.RollbackAsync(ct); return Results.NotFound(); }
@@ -471,16 +528,170 @@ public static class PriceSegmentsApi
 
     private static SqlCommand Procedure(string name, SqlConnection connection, SqlTransaction? transaction = null) =>
         new(name, connection, transaction) { CommandType = System.Data.CommandType.StoredProcedure };
+
+    private sealed record TierInput(Guid ProductId, decimal Amount,
+        decimal MinimumQuantity, decimal? TargetMarginPercent,
+        bool AutoUpdatePrice, string? InputMode);
+    private sealed record NormalizedTierItem(Guid ProductId, decimal Amount,
+        decimal MinimumQuantity, decimal? TargetMarginPercent, bool AutoUpdatePrice);
+
+    private static async Task<IReadOnlyList<NormalizedTierItem>?> NormalizeTierItemsAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        IReadOnlyList<TierInput> inputs, CancellationToken ct)
+    {
+        if (inputs.Count == 0) return [];
+        var costs = await LoadTierCostsAsync(connection, transaction, businessId,
+            inputs.Select(item => item.ProductId).Distinct().ToArray(), ct);
+        if (inputs.Any(item => !costs.ContainsKey(item.ProductId))) return null;
+
+        var result = new List<NormalizedTierItem>(inputs.Count);
+        foreach (var input in inputs)
+        {
+            var costInfo = costs[input.ProductId];
+            var cost = costInfo.Amount;
+            if (input.MinimumQuantity <= 0 ||
+                input.InputMode != PriceInputModes.Margin && input.Amount <= 0 ||
+                input.InputMode is not (null or PriceInputModes.SalePrice or PriceInputModes.Margin))
+                return null;
+            decimal amount;
+            decimal? margin;
+            try
+            {
+                if (input.InputMode == PriceInputModes.Margin)
+                {
+                    if (cost <= 0 || input.TargetMarginPercent is null or < 0 or >= 100)
+                        return null;
+                    margin = input.TargetMarginPercent;
+                    amount = PriceMargin.CalculateGrossSalePrice(cost, margin.Value,
+                        costInfo.SalesTaxRate);
+                }
+                else
+                {
+                    amount = input.Amount;
+                    margin = cost > 0 ? PriceMargin.CalculateMarginPercentFromGross(
+                        cost, amount, costInfo.SalesTaxRate) : null;
+                }
+            }
+            catch (OverflowException) { return null; }
+            if (amount < cost || amount <= 0 || margin is < 0 ||
+                amount > 999999999999999.9999m ||
+                input.AutoUpdatePrice && (cost <= 0 || margin is null or < 0 or >= 100))
+                return null;
+            result.Add(new(input.ProductId, amount, input.MinimumQuantity,
+                margin, input.AutoUpdatePrice));
+        }
+        return result;
+    }
+
+    private static async Task<Dictionary<Guid, TierCost>> LoadTierCostsAsync(
+        SqlConnection connection, SqlTransaction? transaction, Guid businessId,
+        IReadOnlyCollection<Guid> productIds, CancellationToken ct)
+    {
+        await using var command = new SqlCommand("""
+            WITH Requested AS (
+              SELECT DISTINCT TRY_CONVERT(uniqueidentifier,[value]) ProductId
+              FROM OPENJSON(@ProductIdsJson)
+            )
+            SELECT product.ProductId,
+              COALESCE(CASE WHEN costLink.ProductLinkId IS NOT NULL
+                THEN ROUND(parentCost.CostBasisAmount*costLink.PriceFactor,6)
+                ELSE COALESCE(preparation.CostBasisAmount,latestCost.LatestUnitCost,
+                  price.CostBasisAmount) END,0),
+              COALESCE(tax.Rate,0),
+              COALESCE(preparation.EffectiveMarginPercent,price.EffectiveMarginPercent)
+            FROM Requested requested
+            JOIN dbo.Businesses businessValue ON businessValue.BusinessId=@BusinessId
+            JOIN dbo.Products product ON product.ProductId=requested.ProductId
+              AND product.TenantId=businessValue.TenantId AND product.IsActive=1
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=product.TaxProfileId
+              AND tax.TenantId=businessValue.TenantId AND tax.IsActive=1
+            LEFT JOIN dbo.ProductLinks costLink ON costLink.TenantId=businessValue.TenantId
+              AND costLink.ChildProductId=product.ProductId
+              AND costLink.SharesPrice=1 AND costLink.IsActive=1
+            OUTER APPLY (
+              SELECT TOP(1) value.CostBasisAmount,value.EffectiveMarginPercent
+              FROM dbo.ProductPrices value
+              WHERE value.BusinessId=@BusinessId AND value.ProductId=product.ProductId
+                AND value.IsActive=1 AND value.ValidFrom<=SYSDATETIMEOFFSET()
+                AND (value.ValidUntil IS NULL OR value.ValidUntil>SYSDATETIMEOFFSET())
+              ORDER BY value.ValidFrom DESC,value.ProductPriceId
+            ) price
+            OUTER APPLY (
+              SELECT TOP(1) value.CostBasisAmount,value.EffectiveMarginPercent
+              FROM dbo.ProductPricePreparations value
+              WHERE value.BusinessId=@BusinessId AND value.ProductId=product.ProductId
+                AND value.Status=N'Pending'
+              ORDER BY value.PreparedAt DESC,value.ProductPricePreparationId DESC
+            ) preparation
+            OUTER APPLY (
+              SELECT TOP(1) latest.LatestUnitCost
+              FROM dbo.SupplierProductLatestCosts latest
+              LEFT JOIN dbo.SupplierProducts association
+                ON association.TenantId=businessValue.TenantId
+                AND association.SupplierId=latest.SupplierId
+                AND association.ProductId=latest.ProductId
+              WHERE latest.ProductId=product.ProductId
+                AND (businessValue.SharesProductPrices=1 AND latest.BusinessId IN (
+                       SELECT shared.BusinessId FROM dbo.Businesses shared
+                       WHERE shared.TenantId=businessValue.TenantId
+                         AND shared.SharesProductPrices=1 AND shared.IsActive=1)
+                     OR businessValue.SharesProductPrices=0
+                       AND latest.BusinessId=@BusinessId)
+              ORDER BY CASE WHEN association.IsPrimary=1 AND association.IsActive=1
+                THEN 0 ELSE 1 END,latest.ObservedAt DESC,latest.SupplierId
+            ) latestCost
+            OUTER APPLY (
+              SELECT COALESCE(parentPreparation.CostBasisAmount,
+                parentLatest.LatestUnitCost,parentPrice.CostBasisAmount) CostBasisAmount
+              FROM (SELECT 1 AS Anchor) source
+              OUTER APPLY (
+                SELECT TOP(1) value.CostBasisAmount
+                FROM dbo.ProductPricePreparations value
+                WHERE value.BusinessId=@BusinessId
+                  AND value.ProductId=costLink.ParentProductId
+                  AND value.Status=N'Pending'
+                ORDER BY value.PreparedAt DESC,value.ProductPricePreparationId DESC
+              ) parentPreparation
+              OUTER APPLY (
+                SELECT TOP(1) value.LatestUnitCost
+                FROM dbo.SupplierProductLatestCosts value
+                WHERE value.BusinessId=@BusinessId
+                  AND value.ProductId=costLink.ParentProductId
+                ORDER BY value.ObservedAt DESC,value.SupplierId
+              ) parentLatest
+              OUTER APPLY (
+                SELECT TOP(1) value.CostBasisAmount
+                FROM dbo.ProductPrices value
+                WHERE value.BusinessId=@BusinessId
+                  AND value.ProductId=costLink.ParentProductId AND value.IsActive=1
+                ORDER BY value.ValidFrom DESC,value.ProductPriceId
+              ) parentPrice
+            ) parentCost;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@ProductIdsJson",
+            JsonSerializer.Serialize(productIds));
+        var costs = new Dictionary<Guid, TierCost>();
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+                costs.Add(reader.GetGuid(0), new(reader.GetDecimal(1), reader.GetDecimal(2),
+                    reader.IsDBNull(3) ? null : reader.GetDecimal(3)));
+        return costs;
+    }
+    private sealed record TierCost(decimal Amount, decimal SalesTaxRate,
+        decimal? CurrentMarginPercent);
 }
 
 public sealed record PriceSegmentSummary(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAt, int ProductCount, int CustomerCount, string Strategy, decimal? Value);
-public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity);
+public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity, decimal? TargetMarginPercent, bool AutoUpdatePrice, decimal? CostBasisAmount, decimal SalesTaxRate);
 public sealed record SavePriceSegmentRequest(string Name,
     string ChannelStrategy, decimal? ChannelValue, IReadOnlyList<CreatePriceSegmentItemRequest>? Items,
     IReadOnlyList<CreatePriceChannelExclusionRequest>? Exclusions = null);
-public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amount, decimal MinimumQuantity);
+public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amount, decimal MinimumQuantity,
+    decimal? TargetMarginPercent = null, bool AutoUpdatePrice = false, string? InputMode = null);
 public sealed record CreatePriceChannelExclusionRequest(string ScopeType, Guid ScopeId);
-public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity);
+public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity,
+    decimal? TargetMarginPercent = null, bool AutoUpdatePrice = false, string? InputMode = null);
 public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue);
 public sealed record PriceChannelExclusion(Guid ExclusionId, string ScopeType, Guid ScopeId,
     string ScopeName, int? CategoryDepth, string? ProductCode);

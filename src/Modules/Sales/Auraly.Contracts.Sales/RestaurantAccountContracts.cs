@@ -4,7 +4,16 @@ public sealed record RestaurantAccount(
     Guid AccountId, Guid BusinessId, Guid TableId, Guid WarehouseId,
     Guid ResponsibleUserId, string Status, long Version,
     DateTimeOffset OpenedAt, DateTimeOffset UpdatedAt,
-    string? ResponsibleUserName = null);
+    string? ResponsibleUserName = null, Guid? PriceChannelId = null,
+    Guid? CustomerId = null, Guid? CustomerPartySiteId = null,
+    string? CustomerName = null, bool CustomerPriceChannelLocked = false,
+    string? PriceChannelName = null);
+
+public sealed record RestaurantPriceChannelOption(Guid PriceChannelId, string Name);
+public sealed record ChangeRestaurantPriceChannelRequest(
+    Guid? PriceChannelId, long ExpectedVersion);
+public sealed record ChangeRestaurantCustomerRequest(
+    Guid? CustomerId, Guid? CustomerPartySiteId, long ExpectedVersion);
 
 public sealed record OpenRestaurantAccountRequest(
     Guid AccountId, Guid TableId, Guid WarehouseId);

@@ -804,7 +804,115 @@ public sealed class SqlPricingStore(
         await reader.NextResultAsync(ct);
         var businessIds = new List<Guid>();
         while (await reader.ReadAsync(ct)) businessIds.Add(reader.GetGuid(0));
+        await reader.DisposeAsync();
+        var channelBusinessIds = await RefreshAutomaticChannelPricesAsync(
+            connection, transaction, user, values, now, ct);
+        businessIds.AddRange(channelBusinessIds.Where(id => !businessIds.Contains(id)));
         return new(new(published, highestCursor), businessIds);
+    }
+
+    private static async Task<IReadOnlyList<Guid>> RefreshAutomaticChannelPricesAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        PricingUserIdentity user,
+        IReadOnlyList<PreparedPricePublication> values,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        await using var read = new SqlCommand("""
+            WITH Published AS (
+              SELECT ProductId,CostBasisAmount FROM OPENJSON(@PublishedJson)
+              WITH(ProductId UNIQUEIDENTIFIER '$.ProductId',
+                   CostBasisAmount DECIMAL(19,6) '$.CostBasisAmount')
+            )
+            SELECT item.PriceChannelItemId,item.TargetMarginPercent,item.Amount,
+              COALESCE(target.CostBasisAmount,0),
+              COALESCE(tax.Rate,0)
+            FROM Published target
+            JOIN dbo.PriceChannelItems item WITH(UPDLOCK,HOLDLOCK)
+              ON item.ProductId=target.ProductId AND item.IsActive=1
+              AND item.AutoUpdatePrice=1
+            JOIN dbo.PriceChannels channelValue
+              ON channelValue.PriceChannelId=item.PriceChannelId
+              AND channelValue.TenantId=@TenantId AND channelValue.IsActive=1
+              AND channelValue.Strategy=N'TieredProductPrice'
+            JOIN dbo.Products product ON product.ProductId=target.ProductId
+              AND product.TenantId=@TenantId
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=product.TaxProfileId
+              AND tax.TenantId=@TenantId AND tax.IsActive=1
+            ;
+            """, connection, transaction);
+        read.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        read.Parameters.AddWithValue("@TenantId", user.TenantId);
+        read.Parameters.Add("@PublishedJson", SqlDbType.NVarChar, -1).Value =
+            JsonSerializer.Serialize(values.Select(value => new
+            {
+                value.ProductId,
+                value.CostBasisAmount
+            }));
+        var changes = new List<object>();
+        await using (var reader = await read.ExecuteReaderAsync(ct))
+        {
+            while (await reader.ReadAsync(ct))
+            {
+                var margin = reader.GetDecimal(1);
+                var currentAmount = reader.GetDecimal(2);
+                var cost = reader.GetDecimal(3);
+                var taxRate = reader.GetDecimal(4);
+                if (cost <= 0) continue;
+                decimal amount;
+                try { amount = PriceMargin.CalculateGrossSalePrice(cost, margin, taxRate); }
+                catch (OverflowException)
+                {
+                    throw new PricingConflictException(
+                        "El nuevo costo supera el precio máximo admitido por un canal automático.");
+                }
+                if (amount > 999999999999999.9999m)
+                    throw new PricingConflictException(
+                        "El nuevo costo supera el precio máximo admitido por un canal automático.");
+                if (amount != currentAmount)
+                    changes.Add(new { ItemId = reader.GetGuid(0), Amount = amount });
+            }
+        }
+        if (changes.Count == 0) return [];
+
+        await using var write = new SqlCommand("""
+            DECLARE @Changes TABLE(ItemId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+              Amount DECIMAL(19,4) NOT NULL);
+            INSERT @Changes SELECT ItemId,Amount FROM OPENJSON(@ChangesJson)
+              WITH(ItemId UNIQUEIDENTIFIER '$.ItemId',Amount DECIMAL(19,4) '$.Amount');
+            UPDATE item SET IsActive=0,ValidUntil=@Now
+            FROM dbo.PriceChannelItems item
+            JOIN @Changes changeValue ON changeValue.ItemId=item.PriceChannelItemId
+            WHERE item.IsActive=1;
+            INSERT dbo.PriceChannelItems
+              (PriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,
+               TargetMarginPercent,AutoUpdatePrice,CurrencyCode,ValidFrom,ValidUntil,
+               IsActive,CreatedAt)
+            SELECT NEWID(),item.PriceChannelId,item.ProductId,item.MinimumQuantity,
+                   changeValue.Amount,item.TargetMarginPercent,item.AutoUpdatePrice,
+                   item.CurrencyCode,@Now,NULL,1,@Now
+            FROM dbo.PriceChannelItems item
+            JOIN @Changes changeValue ON changeValue.ItemId=item.PriceChannelItemId;
+            INSERT dbo.PosSynchronizationOutboxMessages
+              (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+            SELECT NEWID(),businessValue.BusinessId,N'Configuration',
+                   ISNULL(latest.CursorValue,0)+1,@Now
+            FROM dbo.Businesses businessValue
+            OUTER APPLY (
+              SELECT MAX(AvailableThroughCursor) CursorValue
+              FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=businessValue.BusinessId AND Stream=N'Configuration'
+            ) latest
+            WHERE businessValue.TenantId=@TenantId AND businessValue.IsActive=1;
+            SELECT BusinessId FROM dbo.Businesses
+            WHERE TenantId=@TenantId AND IsActive=1;
+            """, connection, transaction);
+        write.Parameters.AddWithValue("@ChangesJson", JsonSerializer.Serialize(changes));
+        write.Parameters.AddWithValue("@Now", now);
+        write.Parameters.AddWithValue("@TenantId", user.TenantId);
+        var businesses = new List<Guid>();
+        await using var businessReader = await write.ExecuteReaderAsync(ct);
+        while (await businessReader.ReadAsync(ct)) businesses.Add(businessReader.GetGuid(0));
+        return businesses;
     }
 
     public async Task<ProductPricingContext?> GetProductContextAsync(

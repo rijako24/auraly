@@ -63,7 +63,10 @@ public sealed class PartyWorkspaceService(
         // Expense readers need the scoped supplier picker for filters; expense
         // creators use the same picker without full third-party workspace access.
         var returnCustomer = query.Role?.Trim() == "Customer" &&
-            (actor.Permissions.Contains(SalesReturnPermissionCodes.Read) || actor.Permissions.Contains(SalesReturnPermissionCodes.Create));
+            (actor.Permissions.Contains(SalesReturnPermissionCodes.Read) ||
+             actor.Permissions.Contains(SalesReturnPermissionCodes.Create) ||
+             actor.Permissions.Contains("restaurant.attend") ||
+             actor.Permissions.Contains("restaurant.tables.open_without_waiter"));
         if (!returnCustomer && (query.Role?.Trim() != "Supplier" ||
             (!actor.Permissions.Contains(ExpensePermissionCodes.Create) &&
              !actor.Permissions.Contains(ExpensePermissionCodes.Read) &&

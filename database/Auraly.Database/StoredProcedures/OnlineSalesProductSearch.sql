@@ -131,6 +131,12 @@ BEGIN
     ORDER BY candidate.SortOrder;
 
     DECLARE @SelectedPriceChannelId UNIQUEIDENTIFIER;
+    IF @RestaurantAccountId IS NOT NULL
+        SELECT @SelectedPriceChannelId=account.PriceChannelId
+        FROM sales.RestaurantAccounts account
+        WHERE account.AccountId=@RestaurantAccountId AND account.TenantId=@TenantId
+          AND account.BusinessId=@BusinessId AND account.Status=N'Open';
+    ELSE
     SELECT @SelectedPriceChannelId=CASE
       WHEN(setting.ValidFrom IS NULL OR setting.ValidFrom<=SYSDATETIMEOFFSET())
        AND(setting.ValidUntil IS NULL OR setting.ValidUntil>SYSDATETIMEOFFSET())

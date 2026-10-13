@@ -252,6 +252,212 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Publishing_new_cost_refreshes_only_automatic_tier_price()
+    {
+        var productId = Guid.NewGuid();
+        var barcode = $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}";
+        await SeedProductAsync(productId, barcode, 4_000m);
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var tax = new SqlCommand("""
+                UPDATE profile SET Rate=19
+                FROM dbo.TaxProfiles profile
+                JOIN dbo.Products product ON product.TaxProfileId=profile.TaxProfileId
+                WHERE product.ProductId=@ProductId;
+                """, connection);
+            tax.Parameters.AddWithValue("@ProductId", productId);
+            Assert.Equal(1, await tax.ExecuteNonQueryAsync());
+        }
+        using var pricing = fixture.CreateAdminClient(
+            PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
+            PricingPermissionCodes.BulkPublish,
+            "pricing.segments.read", "pricing.segments.manage");
+
+        using (var prepared = await pricing.PutAsJsonAsync(
+            $"/api/commerce/v1/pricing/products/{productId:D}/prepared-price",
+            new PublishProductPriceRequest(PriceInputModes.Margin, 20m,
+                null, 1m, PricingRoundingModes.Nearest, 4_000m)))
+            prepared.EnsureSuccessStatusCode();
+        using (var published = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/publish",
+            new PublishPricesRequest([productId])))
+            published.EnsureSuccessStatusCode();
+
+        using var created = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/segments",
+            new Auraly.Api.SavePriceSegmentRequest(
+                $"Auto {Guid.NewGuid():N}", "TieredProductPrice", null,
+                [new Auraly.Api.CreatePriceSegmentItemRequest(
+                    productId, 0m, 1m, 50m, true, PriceInputModes.Margin),
+                 new Auraly.Api.CreatePriceSegmentItemRequest(
+                    productId, 10_000m, 3m, null, false,
+                    PriceInputModes.SalePrice)]));
+        created.EnsureSuccessStatusCode();
+        var channel = (await created.Content.ReadFromJsonAsync<
+            Auraly.Api.PriceSegmentSummary>())!;
+        Assert.Equal(9_520m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product AND MinimumQuantity=1 AND IsActive=1",
+            productId, new SqlParameter("@ChannelId", channel.Id)));
+
+        using (var prepared = await pricing.PutAsJsonAsync(
+            $"/api/commerce/v1/pricing/products/{productId:D}/prepared-price",
+            new PublishProductPriceRequest(PriceInputModes.Margin, 20m,
+                null, 1m, PricingRoundingModes.Nearest, 6_000m)))
+            prepared.EnsureSuccessStatusCode();
+        using (var published = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/publish",
+            new PublishPricesRequest([productId])))
+            published.EnsureSuccessStatusCode();
+        Assert.Equal(14_280m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product AND MinimumQuantity=1 AND IsActive=1",
+            productId, new SqlParameter("@ChannelId", channel.Id)));
+        Assert.Equal(10_000m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product AND MinimumQuantity=3 AND IsActive=1",
+            productId, new SqlParameter("@ChannelId", channel.Id)));
+    }
+
+    [Fact]
+    public async Task Publishing_twenty_products_updates_all_automatic_channel_prices_in_one_batch()
+    {
+        var products = new List<Guid>();
+        for (var index = 0; index < 20; index++)
+        {
+            var productId = Guid.NewGuid();
+            products.Add(productId);
+            await SeedProductAsync(productId,
+                $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}",
+                4_000m);
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var update = new SqlCommand("""
+                UPDATE dbo.ProductPrices SET CostBasisAmount=@Cost,
+                  EffectiveMarginPercent=20
+                WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+                """, connection);
+            update.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            update.Parameters.AddWithValue("@ProductId", productId);
+            update.Parameters.AddWithValue("@Cost", 1_000m * (index + 1));
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+
+        using var pricing = fixture.CreateAdminClient(
+            PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
+            PricingPermissionCodes.BulkPublish,
+            "pricing.segments.read", "pricing.segments.manage");
+        using var created = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/segments",
+            new Auraly.Api.SavePriceSegmentRequest(
+                $"Bulk {Guid.NewGuid():N}", "TieredProductPrice", null,
+                products.Select((productId, index) =>
+                    new Auraly.Api.CreatePriceSegmentItemRequest(productId, 0m, 1m,
+                        50m, true, PriceInputModes.Margin)).ToArray()));
+        created.EnsureSuccessStatusCode();
+        var channel = (await created.Content.ReadFromJsonAsync<
+            Auraly.Api.PriceSegmentSummary>())!;
+
+        foreach (var (productId, index) in products.Select((id, at) => (id, at)))
+        {
+            using var prepared = await pricing.PutAsJsonAsync(
+                $"/api/commerce/v1/pricing/products/{productId:D}/prepared-price",
+                new PublishProductPriceRequest(PriceInputModes.Margin, 20m,
+                    null, 1m, PricingRoundingModes.Nearest, 2_000m * (index + 1)));
+            prepared.EnsureSuccessStatusCode();
+        }
+
+        using var published = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/publish", new PublishPricesRequest(products));
+        published.EnsureSuccessStatusCode();
+        var result = (await published.Content.ReadFromJsonAsync<PublishPricesResult>())!;
+        Assert.Equal(20, result.Items.Count);
+        foreach (var (productId, index) in products.Select((id, at) => (id, at)))
+        {
+            Assert.Equal(2_500m * (index + 1), await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId=@Business AND IsActive=1",
+                productId));
+            Assert.Equal(4_000m * (index + 1), await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product AND IsActive=1",
+                productId, new SqlParameter("@ChannelId", channel.Id)));
+        }
+    }
+
+    [Fact]
+    public async Task A_channel_recalculation_failure_rolls_back_the_whole_price_batch()
+    {
+        var products = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        foreach (var productId in products)
+        {
+            await SeedProductAsync(productId,
+                $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}",
+                4_000m);
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var update = new SqlCommand("""
+                UPDATE dbo.ProductPrices SET CostBasisAmount=1000,
+                  EffectiveMarginPercent=20
+                WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+                """, connection);
+            update.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            update.Parameters.AddWithValue("@ProductId", productId);
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+        using var pricing = fixture.CreateAdminClient(
+            PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
+            PricingPermissionCodes.BulkPublish,
+            "pricing.segments.read", "pricing.segments.manage");
+        using var created = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/segments",
+            new Auraly.Api.SavePriceSegmentRequest(
+                $"Rollback {Guid.NewGuid():N}", "TieredProductPrice", null,
+                products.Select(productId =>
+                    new Auraly.Api.CreatePriceSegmentItemRequest(productId, 0m, 1m,
+                        50m, true, PriceInputModes.Margin)).ToArray()));
+        created.EnsureSuccessStatusCode();
+        var channel = (await created.Content.ReadFromJsonAsync<
+            Auraly.Api.PriceSegmentSummary>())!;
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var update = new SqlCommand("""
+                UPDATE dbo.PriceChannelItems SET TargetMarginPercent=99.999999
+                WHERE PriceChannelId=@ChannelId AND ProductId=@ProductId AND IsActive=1;
+                """, connection);
+            update.Parameters.AddWithValue("@ChannelId", channel.Id);
+            update.Parameters.AddWithValue("@ProductId", products[1]);
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+
+        foreach (var (productId, cost) in new[]
+                 { (products[0], 2_000m), (products[1], 1_000_000_000m) })
+        {
+            using var prepared = await pricing.PutAsJsonAsync(
+                $"/api/commerce/v1/pricing/products/{productId:D}/prepared-price",
+                new PublishProductPriceRequest(PriceInputModes.Margin, 20m,
+                    null, 1m, PricingRoundingModes.Nearest, cost));
+            prepared.EnsureSuccessStatusCode();
+        }
+        using var published = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/publish", new PublishPricesRequest(products));
+        Assert.Equal(HttpStatusCode.Conflict, published.StatusCode);
+        foreach (var productId in products)
+        {
+            Assert.Equal(4_000m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId=@Business AND IsActive=1",
+                productId));
+            Assert.Equal(0, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product AND BusinessId=@Business",
+                productId));
+            Assert.Equal(2_000m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product AND IsActive=1",
+                productId, new SqlParameter("@ChannelId", channel.Id)));
+        }
+    }
+
+    [Fact]
     public async Task Goods_receipt_preparation_never_changes_the_price_downloaded_by_a_box_until_publication()
     {
         fixture.DrainSynchronizationMessages();

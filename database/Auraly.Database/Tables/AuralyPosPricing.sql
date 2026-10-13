@@ -4,6 +4,8 @@ CREATE TABLE [dbo].[PriceChannelItems] (
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [MinimumQuantity] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_PriceChannelItems_MinimumQuantity] DEFAULT (1),
     [Amount] DECIMAL(19,4) NOT NULL,
+    [TargetMarginPercent] DECIMAL(9,6) NULL,
+    [AutoUpdatePrice] BIT NOT NULL CONSTRAINT [DF_PriceChannelItems_AutoUpdatePrice] DEFAULT (0),
     [CurrencyCode] CHAR(3) NOT NULL,
     [ValidFrom] DATETIMEOFFSET(7) NOT NULL,
     [ValidUntil] DATETIMEOFFSET(7) NULL,
@@ -14,6 +16,8 @@ CREATE TABLE [dbo].[PriceChannelItems] (
     CONSTRAINT [FK_PriceChannelItems_PriceChannels] FOREIGN KEY ([PriceChannelId]) REFERENCES [dbo].[PriceChannels] ([PriceChannelId]),
     CONSTRAINT [FK_PriceChannelItems_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_PriceChannelItems_Amount] CHECK ([Amount] >= 0),
+    CONSTRAINT [CK_PriceChannelItems_Margin] CHECK ([TargetMarginPercent] IS NULL OR [TargetMarginPercent] BETWEEN 0 AND 99.999999),
+    CONSTRAINT [CK_PriceChannelItems_AutoUpdate] CHECK ([AutoUpdatePrice] = 0 OR [TargetMarginPercent] IS NOT NULL),
     CONSTRAINT [CK_PriceChannelItems_MinimumQuantity] CHECK ([MinimumQuantity] > 0),
     CONSTRAINT [CK_PriceChannelItems_Validity] CHECK ([ValidUntil] IS NULL OR [ValidUntil] > [ValidFrom])
 );

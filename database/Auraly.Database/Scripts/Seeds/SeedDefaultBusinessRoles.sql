@@ -72,7 +72,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
       N'pos.receivables.payments.create',N'pos.payables.payments.create',
       N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
-      N'pos.inventory.availability.read',N'restaurant.tables.open_without_waiter')
+      N'pos.inventory.availability.read',N'restaurant.tables.open_without_waiter',N'restaurant.price_channels.select')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
       N'pos.approvals.read',N'pos.approvals.manage_credential',N'pos.workspace.change',
@@ -83,7 +83,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',
-      N'inventory.conversions.confirm',N'inventory.damages.confirm',N'restaurant.tables.open_without_waiter')
+      N'inventory.conversions.confirm',N'inventory.damages.confirm',N'restaurant.tables.open_without_waiter',N'restaurant.price_channels.select')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND (
       permissionValue.Resource NOT LIKE N'tenants.%'
       AND permissionValue.Resource NOT LIKE N'tenant.profile.%'
@@ -130,7 +130,7 @@ WHERE roleValue.IsActive=1
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'orders.read',N'orders.create',N'orders.update',N'orders.review',N'orders.recover',N'orders.invoice',
       N'pos.receivables.payments.create',N'pos.payables.payments.create',
       N'work-sessions.read',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
-      N'pos.inventory.availability.read',N'restaurant.tables.open_without_waiter')
+      N'pos.inventory.availability.read',N'restaurant.tables.open_without_waiter',N'restaurant.price_channels.select')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.below-cost',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',N'sales.drafts.paused.delete',
       N'pos.approvals.read',N'pos.approvals.manage_credential',N'pos.workspace.change',
@@ -141,7 +141,7 @@ WHERE roleValue.IsActive=1
       N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',
-      N'inventory.conversions.confirm',N'inventory.damages.confirm',N'restaurant.tables.open_without_waiter')
+      N'inventory.conversions.confirm',N'inventory.damages.confirm',N'restaurant.tables.open_without_waiter',N'restaurant.price_channels.select')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND (
       permissionValue.Resource NOT LIKE N'tenants.%'
       AND permissionValue.Resource NOT LIKE N'tenant.profile.%'
@@ -172,7 +172,7 @@ WHERE roleValue.IsActive=1
         N'sales.reports.read',N'sales.reports.read-all',N'sales.returns.read',N'sales.debit-notes.read',
         N'purchasing.goods-receipts.read',N'purchasing.purchase-returns.read'))
   )
-  AND (permissionValue.Resource<>N'restaurant.tables.open_without_waiter'
+  AND (permissionValue.Resource NOT IN(N'restaurant.tables.open_without_waiter',N'restaurant.price_channels.select')
        OR EXISTS(SELECT 1 FROM dbo.Businesses business
            WHERE business.TenantId=roleValue.TenantId AND business.IsActive=1
              AND business.PointOfSaleMode=N'RestaurantBar'))

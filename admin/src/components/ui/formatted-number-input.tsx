@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 export const FormattedNumberInput = forwardRef<HTMLInputElement, {
   value: string | number;
   onValueChange: (value: number | null) => void;
+  onCommit?: (value: number | null) => void;
   kind?: "currency" | "percent" | "number";
   commitMode?: "change" | "blur";
   className?: string;
@@ -25,6 +26,7 @@ export const FormattedNumberInput = forwardRef<HTMLInputElement, {
 }>(function FormattedNumberInput({
   value,
   onValueChange,
+  onCommit,
   kind = "number",
   commitMode = "change",
   className,
@@ -52,6 +54,7 @@ export const FormattedNumberInput = forwardRef<HTMLInputElement, {
     setEditing(false);
     setDirty(false);
     if (!sameNumber(next, parsed)) onValueChange(next);
+    if (dirty) onCommit?.(next);
   };
 
   return <div className="relative">
@@ -82,6 +85,7 @@ export const FormattedNumberInput = forwardRef<HTMLInputElement, {
         else {
           setEditing(false);
           setDirty(false);
+          if (dirty) onCommit?.(parseDecimalInput(draft, allowNegative));
         }
       }}
       onChange={(event) => {
