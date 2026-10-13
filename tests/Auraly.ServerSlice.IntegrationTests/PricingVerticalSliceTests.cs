@@ -254,6 +254,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Publishing_new_cost_refreshes_only_automatic_tier_price()
     {
+        await using var tenantAccess = await GrantTenantBusinessAccessAsync();
         var productId = Guid.NewGuid();
         var barcode = $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}";
         await SeedProductAsync(productId, barcode, 4_000m);
@@ -321,6 +322,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Publishing_twenty_products_updates_all_automatic_channel_prices_in_one_batch()
     {
+        await using var tenantAccess = await GrantTenantBusinessAccessAsync();
         var products = new List<Guid>();
         for (var index = 0; index < 20; index++)
         {
@@ -386,6 +388,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task A_channel_recalculation_failure_rolls_back_the_whole_price_batch()
     {
+        await using var tenantAccess = await GrantTenantBusinessAccessAsync();
         var products = new[] { Guid.NewGuid(), Guid.NewGuid() };
         foreach (var productId in products)
         {
@@ -859,5 +862,46 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         var value = await command.ExecuteScalarAsync()
             ?? throw new InvalidOperationException("Expected SQL scalar was not returned.");
         return (T)Convert.ChangeType(value, typeof(T));
+    }
+
+    private async Task<IAsyncDisposable> GrantTenantBusinessAccessAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            OUTPUT inserted.UserRoleId
+            SELECT NEWID(),@UserId,@RoleId,businessValue.BusinessId,SYSUTCDATETIME()
+            FROM dbo.Businesses businessValue
+            WHERE businessValue.TenantId=@TenantId AND businessValue.IsActive=1
+              AND NOT EXISTS(SELECT 1 FROM dbo.UserRoles existing
+                WHERE existing.UserId=@UserId AND existing.RoleId=@RoleId
+                  AND existing.BusinessId=businessValue.BusinessId);
+            """, connection);
+        command.Parameters.AddWithValue("@UserId", fixture.UserId);
+        command.Parameters.AddWithValue("@RoleId", fixture.RoleId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        var added = new List<Guid>();
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync()) added.Add(reader.GetGuid(0));
+        return new TenantBusinessAccessGrant(fixture.ConnectionString, added);
+    }
+
+    private sealed class TenantBusinessAccessGrant(
+        string connectionString, IReadOnlyCollection<Guid> roleIds) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            if (roleIds.Count == 0) return;
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                DELETE dbo.UserRoles WHERE UserRoleId IN (
+                  SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@RoleIdsJson));
+                """, connection);
+            command.Parameters.AddWithValue("@RoleIdsJson",
+                System.Text.Json.JsonSerializer.Serialize(roleIds));
+            await command.ExecuteNonQueryAsync();
+        }
     }
 }

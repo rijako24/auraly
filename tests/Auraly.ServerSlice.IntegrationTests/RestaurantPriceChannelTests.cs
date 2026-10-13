@@ -89,12 +89,12 @@ public sealed class RestaurantPriceChannelTests(ServerSliceFixture fixture)
                     fixture.WarehouseId)))
                 opened.EnsureSuccessStatusCode();
             var customers = await client.GetFromJsonAsync<PartyRoleOptionPage>(
-                "/api/commerce/v1/parties/role-options?role=Customer&search=Cliente&page=1&pageSize=20");
+                $"/api/commerce/v1/parties/role-options?role=Customer&roleId={customerId:D}&page=1&pageSize=20");
             Assert.Contains(customers!.Items, customer => customer.RoleId == customerId);
             using (var waiterOptions = fixture.CreateAdminClient("restaurant.attend"))
             {
                 var waiterCustomers = await waiterOptions.GetFromJsonAsync<PartyRoleOptionPage>(
-                    "/api/commerce/v1/parties/role-options?role=Customer&search=Cliente&page=1&pageSize=20");
+                    $"/api/commerce/v1/parties/role-options?role=Customer&roleId={customerId:D}&page=1&pageSize=20");
                 Assert.Contains(waiterCustomers!.Items, customer => customer.RoleId == customerId);
             }
 
