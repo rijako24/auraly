@@ -631,6 +631,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(10_000m, (await local.CaptureAsync(barcode))!.Product.UnitPrice);
             Assert.Equal(16_000m, (await local.ResolvePriceAsync(productId, customerId, 1m)).Amount);
             await sync.SynchronizeAsync();
+            await sync.SynchronizeConfigurationAsync();
             Assert.Equal(10_625m, (await local.CaptureAsync(barcode))!.Product.UnitPrice);
             Assert.Equal(17_000m, (await local.ResolvePriceAsync(productId, customerId, 1m)).Amount);
             Assert.Equal(12_000m, (await local.ResolvePriceAsync(productId, customerId, 3m)).Amount);
