@@ -521,6 +521,129 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Receipt_price_publication_updates_channel_tier_and_enrolled_box_together()
+    {
+        await using var tenantAccess = await GrantTenantBusinessAccessAsync();
+        var productId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var partyId = Guid.NewGuid();
+        var barcode = $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}";
+        await SeedProductAsync(productId, barcode, 10_000m, 20m);
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = new SqlCommand("""
+                UPDATE dbo.ProductPrices SET CostBasisAmount=8000,EffectiveMarginPercent=20
+                WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND IsActive=1;
+                INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,
+                    CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                VALUES(@PartyId,@TenantId,N'NaturalPerson',N'Cliente prueba canal',
+                    N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+                INSERT dbo.Customers(CustomerId,PartyId,TenantId,IsActive,CreatedBy,CreatedAt)
+                VALUES(@CustomerId,@PartyId,@TenantId,1,@UserId,SYSDATETIMEOFFSET());
+                """, connection);
+            seed.Parameters.AddWithValue("@ProductId", productId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@PartyId", partyId);
+            seed.Parameters.AddWithValue("@CustomerId", customerId);
+            seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            seed.Parameters.AddWithValue("@UserId", fixture.UserId);
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        using var pricing = fixture.CreateAdminClient(
+            PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.ReviewProposals, PricingPermissionCodes.PublishPrices,
+            "pricing.segments.read", "pricing.segments.manage");
+        using var created = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/segments",
+            new Auraly.Api.SavePriceSegmentRequest(
+                $"Receipt box {Guid.NewGuid():N}", "TieredProductPrice", null,
+                [new Auraly.Api.CreatePriceSegmentItemRequest(
+                    productId, 0m, 1m, 50m, true, PriceInputModes.Margin),
+                 new Auraly.Api.CreatePriceSegmentItemRequest(
+                    productId, 12_000m, 3m, null, false, PriceInputModes.SalePrice)]));
+        created.EnsureSuccessStatusCode();
+        var channel = (await created.Content.ReadFromJsonAsync<Auraly.Api.PriceSegmentSummary>())!;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var assign = new SqlCommand("""
+                INSERT dbo.CustomerPricingSettings(CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
+                VALUES(@CustomerId,@ChannelId,@UserId,SYSDATETIMEOFFSET());
+                """, connection);
+            assign.Parameters.AddWithValue("@CustomerId", customerId);
+            assign.Parameters.AddWithValue("@ChannelId", channel.Id);
+            assign.Parameters.AddWithValue("@UserId", fixture.UserId);
+            await assign.ExecuteNonQueryAsync();
+        }
+
+        var sqlitePath = Path.Combine(Path.GetTempPath(),
+            $"auraly-receipt-channel-box-{Guid.NewGuid():N}.db");
+        try
+        {
+            var local = new PosCatalogStore($"Data Source={sqlitePath}");
+            using var server = fixture.CreateClient();
+            var sync = new PosCatalogSynchronizer(server, local,
+                new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret),
+                new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId));
+            await sync.SynchronizeAsync();
+            Assert.Equal(10_000m, (await local.CaptureAsync(barcode))!.Product.UnitPrice);
+            Assert.Equal(16_000m, (await local.ResolvePriceAsync(productId, customerId, 1m)).Amount);
+            Assert.Equal(12_000m, (await local.ResolvePriceAsync(productId, customerId, 3m)).Amount);
+
+            await ConfirmReceiptAsync(productId, 8_500m);
+            await sync.SynchronizeAsync();
+            Assert.Equal(10_000m, (await local.CaptureAsync(barcode))!.Product.UnitPrice);
+            Assert.Equal(16_000m, (await local.ResolvePriceAsync(productId, customerId, 1m)).Amount);
+            Assert.Equal(16_000m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product AND MinimumQuantity=1 AND IsActive=1",
+                productId, new SqlParameter("@ChannelId", channel.Id)));
+            Assert.Equal(10_625m, await ScalarAsync<decimal>(
+                "SELECT PreparedAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Product AND Status=N'Pending' AND PreparationOrigin=N'GoodsReceipt'",
+                productId));
+
+            var pending = await pricing.GetFromJsonAsync<PriceRevisionPage>(
+                "/api/commerce/v1/pricing/proposals?page=1&pageSize=100&status=PendingReview");
+            var proposal = Assert.Single(pending!.Items.Where(item => item.ProductId == productId));
+            using (var review = await pricing.PutAsJsonAsync(
+                       $"/api/commerce/v1/pricing/proposals/{proposal.ProposalId:D}",
+                       new ReviewPriceProposalRequest(
+                           PriceInputModes.Margin, 20m, null, 1m,
+                           PricingRoundingModes.Nearest, proposal.ConcurrencyToken)))
+                review.EnsureSuccessStatusCode();
+            using (var publication = await pricing.PostAsJsonAsync(
+                       "/api/commerce/v1/pricing/publish",
+                       new PublishPricesRequest([productId])))
+                publication.EnsureSuccessStatusCode();
+
+            Assert.Equal(10_625m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND BusinessId=@Business AND IsActive=1",
+                productId));
+            Assert.Equal(17_000m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product AND MinimumQuantity=1 AND IsActive=1",
+                productId, new SqlParameter("@ChannelId", channel.Id)));
+            Assert.Equal(12_000m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.PriceChannelItems WHERE PriceChannelId=@ChannelId AND ProductId=@Product AND MinimumQuantity=3 AND IsActive=1",
+                productId, new SqlParameter("@ChannelId", channel.Id)));
+
+            // The enrolled box still has its previous snapshot until it synchronizes.
+            Assert.Equal(10_000m, (await local.CaptureAsync(barcode))!.Product.UnitPrice);
+            Assert.Equal(16_000m, (await local.ResolvePriceAsync(productId, customerId, 1m)).Amount);
+            await sync.SynchronizeAsync();
+            Assert.Equal(10_625m, (await local.CaptureAsync(barcode))!.Product.UnitPrice);
+            Assert.Equal(17_000m, (await local.ResolvePriceAsync(productId, customerId, 1m)).Amount);
+            Assert.Equal(12_000m, (await local.ResolvePriceAsync(productId, customerId, 3m)).Amount);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            foreach (var path in new[] { sqlitePath, sqlitePath + "-wal", sqlitePath + "-shm" })
+                if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task Last_preparation_wins_in_both_receipt_and_product_directions_and_kardex_preserves_the_replaced_values()
     {
         fixture.DrainSynchronizationMessages();
