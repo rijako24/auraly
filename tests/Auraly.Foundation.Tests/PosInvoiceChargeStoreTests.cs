@@ -10,9 +10,10 @@ public sealed class PosInvoiceChargeStoreTests
     public async Task Interrupted_download_keeps_previous_charges_and_cursor_until_atomic_promotion()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-charges-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path};Pooling=False";
         try
         {
-            var store = new PosCatalogStore($"Data Source={path}");
+            var store = new PosCatalogStore(connectionString);
             await store.InitializeAsync();
             var businessId = Guid.NewGuid();
             var original = Charge(businessId);
@@ -21,7 +22,7 @@ public sealed class PosInvoiceChargeStoreTests
             var changed = original with { Version = 2, Value = 9000 };
             await store.StageInvoiceChargePageAsync(businessId, 2, new([changed], 1, 100, 2, 1));
             await Assert.ThrowsAsync<InvalidDataException>(() => store.PromoteInvoiceChargesAsync(businessId, 2, 2));
-            var reopened = new PosCatalogStore($"Data Source={path}");
+            var reopened = new PosCatalogStore(connectionString);
             Assert.Equal(5000, Assert.Single((await reopened.InvoiceChargesAsync(businessId)).Items).Value);
             Assert.Equal(1, await reopened.ConfigurationCursorAsync());
             var second = Charge(businessId) with { Code = "AGOTADOS", Name = "Agotados", InclusionMode = "Never", InvoiceAmountLimit = null };
