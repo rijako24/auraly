@@ -58,7 +58,11 @@ public sealed class DatabaseUpgradeMigrationTests
             root, "database", "Auraly.Database", "Tables", "Receivables.sql"));
         Assert.Contains("CK_SalesDrafts_CustomerSitePair", drafts, StringComparison.Ordinal);
         Assert.Contains("CK_SalesDocuments_CustomerSitePair", documents, StringComparison.Ordinal);
-        Assert.Contains("[PartySiteId] UNIQUEIDENTIFIER NOT NULL", receivables,
+        Assert.Contains("[PartySiteId] UNIQUEIDENTIFIER NULL", receivables,
+            StringComparison.Ordinal);
+        Assert.Contains("CK_Receivables_Debtor", receivables,
+            StringComparison.Ordinal);
+        Assert.Contains("[CustomerId] IS NOT NULL AND [PartyId] IS NULL AND [PartySiteId] IS NOT NULL", receivables,
             StringComparison.Ordinal);
     }
 
