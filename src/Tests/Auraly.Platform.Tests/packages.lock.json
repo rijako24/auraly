@@ -2413,6 +2413,7 @@
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.BuildingBlocks.Application": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Contracts.Inventory": "[1.0.0, )",
           "Auraly.Domain.Inventory": "[1.0.0, )"
         }
@@ -2473,6 +2474,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
