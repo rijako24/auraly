@@ -13,6 +13,7 @@ export interface WarehouseTransferDetailLine { lineNumber:number;productId:strin
 export interface WarehouseTransferDetail { transferId:string;documentNumber:string;sourceWarehouseId:string;sourceWarehouseName:string;destinationWarehouseId:string;destinationWarehouseName:string;reasonCode:string;notes:string|null;status:string;dispatchedAt:string;receivedAt:string|null;rowVersion:string;lines:WarehouseTransferDetailLine[]; }
 export interface InventoryProductItem { productId:string; productCode:string; reference:string|null; productName:string; unitCode:string; quantityOnHand:number; averageUnitCost:number|null; saleUnitPrice:number|null; productCategoryId?:string|null; productCategoryName?:string|null; familyRootProductId?:string; conversionFactor?:number; maximumLossPercent?:number; }
 export interface ProductionProductItem { productId:string; productCode:string; productName:string; unitCode:string; recipeVersion:number; quantityOnHand:number; }
+export interface ProductionDemandSuggestion { productId:string; startDate:string; days:number; grossQuantity:number; suggestedProductionQuantity:number; comparableDays:number; }
 export interface ProductionPreview { productId:string; productCode:string; productName:string; unitCode:string; recipeVersion:number; quantity:number; quantityOnHand:number; ingredients:Array<{productId:string;productCode:string;name:string;unitCode:string;quantityPerUnit:number;requiredQuantity:number;quantityOnHand:number;estimatedUnitCost:number|null}>; }
 interface ProductConversionProductItem { productId:string; productCode:string; reference:string|null; productName:string; unitCode:string; quantityOnHand:number; familyRootProductId:string; conversionFactor:number; maximumLossPercent:number; }
 export interface StockCountDraft { documentId:string; status:string; baseInventorySequence:number; lines:Array<{lineNumber:number;direction:string;productId:string;productCode:string;description:string;quantity:number;preCountQuantity:number|null;systemQuantityAtBase:number|null;explicitUnitCost:number|null;allocationWeight:number|null}>; }
@@ -43,6 +44,8 @@ export const inventoryApi = {
   },
   productionProducts: (params:{warehouseId:string;search?:string;page?:number;pageSize?:number}) =>
     apiClient.get<Page<ProductionProductItem>>("/commerce/v1/inventory/production-products",withPagedDefaults(params)),
+  productionSuggestion: (warehouseId:string,productId:string,startDate:string,days:number) =>
+    apiClient.get<ProductionDemandSuggestion>(`/commerce/v1/inventory/production-products/${productId}/suggestion`,{warehouseId,startDate,days}),
   productionPreview: (warehouseId:string,productId:string,quantity:number) =>
     apiClient.get<ProductionPreview>(`/commerce/v1/inventory/production-products/${productId}/preview`,{warehouseId,quantity}),
   confirmProduction: (request:{documentId:string;businessId:string;warehouseId:string;occurredAt:string;productId:string;expectedRecipeVersion:number;quantity:number;notes:string|null}) =>

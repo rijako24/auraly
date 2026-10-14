@@ -119,7 +119,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         }));
       });
       setLinkedProducts(stored.form?.isGenericProduct ? [] : stored.linkedProducts ?? []);
-      setRecipeLines(stored.form?.isIngredient || stored.form?.isGenericProduct ? [] : stored.recipeLines ?? []);
+      setRecipeLines(stored.form?.isGenericProduct || stored.form?.isIngredient && !stored.form?.manageInventory ? [] : stored.recipeLines ?? []);
       setConversionMaximumLossPercent(stored.form?.isGenericProduct ? null : stored.conversionMaximumLossPercent ?? null);
       setSelectedSupplier(stored.selectedSupplier ?? null);
     },
@@ -193,7 +193,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         linkedProducts: form.isGenericProduct ? [] : linkedProducts.map(({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor }) =>
           ({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor })),
         conversionMaximumLossPercent: linkedProducts.some((item) => item.allowsConversion) ? conversionMaximumLossPercent ?? 0 : null,
-        ...(!form.isIngredient && !form.isGenericProduct && recipeLines.length > 0 ? {
+        ...(!form.isGenericProduct && (!form.isIngredient || form.manageInventory) && recipeLines.length > 0 ? {
           recipeExpectedVersion: 0,
           recipeIngredients: recipeLines.map((line) => ({ ingredientProductId: line.ingredientProductId, quantityPerUnit: line.quantityPerUnit })),
         } : {}),
@@ -268,7 +268,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
             <p className="text-xs font-bold uppercase tracking-[.2em] text-teal-300">Nuevo producto</p>
             <h2 className="mt-2 text-2xl font-semibold">Una ficha, todo conectado</h2>
             <p className="mt-2 text-sm text-slate-300">Completa lo necesario para comprar, publicar y vender sin abrir ventanas adicionales.</p>
-            <nav className="mt-8 space-y-1">{sections.filter(([id]) => (!form.isGenericProduct || id !== "family") && (id !== "recipe" || !form.isIngredient && !form.isGenericProduct)).map(([id, label, Icon], index) => <a key={id} href={`#new-${id}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10"><span className="flex h-7 w-7 items-center justify-center rounded-full border border-teal-400/40 text-xs text-teal-300">{index + 1}</span><Icon className="h-4 w-4" />{label}</a>)}</nav>
+            <nav className="mt-8 space-y-1">{sections.filter(([id]) => (!form.isGenericProduct || id !== "family") && (id !== "recipe" || !form.isGenericProduct && (!form.isIngredient || form.manageInventory))).map(([id, label, Icon], index) => <a key={id} href={`#new-${id}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10"><span className="flex h-7 w-7 items-center justify-center rounded-full border border-teal-400/40 text-xs text-teal-300">{index + 1}</span><Icon className="h-4 w-4" />{label}</a>)}</nav>
           </div>
         </aside>
         <div className="flex min-h-0 flex-col bg-muted/20">
@@ -294,7 +294,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
                 {form.isWeighable && <div className="mt-4 grid items-start gap-4 rounded-xl bg-muted/30 p-4 md:grid-cols-3 [&>div>label]:flex [&>div>label]:min-h-10 [&>div>label]:items-center [&>div>p]:min-h-8"><Field label="Código del producto en la balanza"><Input value={form.scaleCode} onChange={(e) => setForm({ ...form, scaleCode: e.target.value })} placeholder="Ej. 125" /><p className="text-xs text-muted-foreground">También conocido como PLU.</p></Field><Field label="Inicio del código de balanza"><Input value={form.scalePrefix} onChange={(e) => setForm({ ...form, scalePrefix: e.target.value })} placeholder="Ej. 20" /><p className="text-xs text-muted-foreground">Identifica las etiquetas generadas por la balanza.</p></Field><Field label="Decimales del peso"><Input type="number" min={0} max={6} value={form.scaleDecimals} onChange={(e) => setForm({ ...form, scaleDecimals: Number(e.target.value) })} /><p className="text-xs text-muted-foreground">3 interpreta 1250 como 1,250 kg.</p></Field></div>}
               </Section>
 
-              {!form.isIngredient && !form.isGenericProduct && <Section id="new-recipe" icon={ChefHat} title="Ingredientes de la receta" description="Configura cuánto ingrediente consume cada unidad terminada.">
+              {!form.isGenericProduct && (!form.isIngredient || form.manageInventory) && <Section id="new-recipe" icon={ChefHat} title="Ingredientes de la receta" description="Configura cuánto ingrediente consume cada unidad terminada.">
                 {businessId && <ProductRecipeFields businessId={businessId} lines={recipeLines} onChange={setRecipeLines} disabled={create.isPending} inputId="new-recipe-ingredient-search" />}
               </Section>}
 

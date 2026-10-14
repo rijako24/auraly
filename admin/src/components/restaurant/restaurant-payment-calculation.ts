@@ -1,4 +1,19 @@
+import type { PosPaymentInput } from "@/services/pos/pos-edge-client";
+
 const round = (value: number) => Math.round(value * 10000) / 10000;
+
+export function finalRestaurantPayments(collections: ReadonlyArray<{
+  payments: PosPaymentInput[];
+}>): PosPaymentInput[] {
+  const captured = collections.flatMap((entry) => entry.payments);
+  const cash = captured.filter((payment) => payment.methodCode === "Cash");
+  const other = captured.filter((payment) => payment.methodCode !== "Cash");
+  if (!cash.length) return other;
+  return [{ methodCode: "Cash", amount: round(cash.reduce((sum, item) =>
+    sum + item.amount, 0)), reference: null,
+    tenderedAmount: round(cash.reduce((sum, item) =>
+      sum + (item.tenderedAmount ?? item.amount), 0)) }, ...other];
+}
 
 export function settleRestaurantPayment(total: number, rows: ReadonlyArray<{
   methodCode: string; amount: string;

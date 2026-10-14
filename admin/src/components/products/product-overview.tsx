@@ -55,7 +55,7 @@ export function ProductOverview({ product }: { product: Product }) {
       </div>
     </ProductFormSection>
 
-    {info && !info.isIngredient && !(merch?.isGenericProduct ?? info.isGenericProduct) && <ProductRecipePanel productId={product.productId} managesInventory={info.manageInventory} />}
+    {info && (!info.isIngredient || info.manageInventory) && !(merch?.isGenericProduct ?? info.isGenericProduct) && <ProductRecipePanel productId={product.productId} managesInventory={info.manageInventory} />}
 
     <ProductFormSection id="product-classification" icon={Tags} title="Clasificación, marca y unidad" description="La ruta comercial y la unidad real en la que se vende.">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

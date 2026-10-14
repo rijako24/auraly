@@ -40,6 +40,11 @@ CREATE INDEX [IX_RestaurantAccountCollections_Session_Open]
     ON [sales].[RestaurantAccountCollections] ([WorkSessionId],[AccountId])
     WHERE [Status]=N'Captured';
 GO
+CREATE INDEX [IX_RestaurantAccountCollections_TipsPending]
+    ON [sales].[RestaurantAccountCollections] ([BusinessId],[CapturedAt],[CollectionId])
+    INCLUDE ([TenantId],[AccountId],[TipAmount])
+    WHERE [Status]=N'Captured' AND [TipAmount]>0;
+GO
 CREATE TABLE [sales].[RestaurantCollectionAllocations]
 (
     [CollectionId] UNIQUEIDENTIFIER NOT NULL,

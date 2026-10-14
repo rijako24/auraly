@@ -96,6 +96,7 @@ public static class AccountingProcessingPolicy
         "CashDisbursement",
         "RestaurantTip",
         "RestaurantTipReversal",
+        "RestaurantTipSettlement",
         "Expense",
         "ExpenseCancellation",
         AccountingManualDocumentTypes.AccountAdjustment,

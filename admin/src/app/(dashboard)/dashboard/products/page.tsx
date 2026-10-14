@@ -280,9 +280,9 @@ export default function ProductsPage() {
       const supplier = capabilities.supplier ? supplierEditorRef.current!.getValue() : null;
       const images = imageEditorRef.current ? await imageEditorRef.current.stage() : [];
       const aliases = recognitionEditorRef.current?.getValue().map((alias) => ({ alias })) ?? [];
-      if (!form.isIngredient && !merchandising.isGenericProduct && !recipeEditorRef.current)
+      if (!merchandising.isGenericProduct && (!form.isIngredient || merchandising.manageInventory) && !recipeEditorRef.current)
         throw new Error("Espera a que termine de cargar la receta del producto.");
-      const recipe = !form.isIngredient && !merchandising.isGenericProduct
+      const recipe = !merchandising.isGenericProduct && (!form.isIngredient || merchandising.manageInventory)
         ? recipeEditorRef.current?.getValue() : null;
       const savedProduct = await productsApi.updateCatalog(selectedProduct.productId, {
         businessId,
@@ -544,7 +544,7 @@ export default function ProductsPage() {
                       ["taxes", "IVA, costo y precio"],
                       ["images", "Imágenes"],
                       ["recognition", "Reconocimiento avanzado"],
-                    ].filter(([id]) => id !== "recipe" || (modalMode === "edit" && !form.isIngredient && Boolean(merchandisingDraft && !merchandisingDraft.isGenericProduct)))
+                    ].filter(([id]) => id !== "recipe" || (modalMode === "edit" && Boolean(merchandisingDraft && !merchandisingDraft.isGenericProduct && (!form.isIngredient || merchandisingDraft.manageInventory))))
                       .map(([id, label], index) => <a key={id} href={`#product-${id}`} className="block rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10">{index + 1}. {label}</a>)}
                   </nav>
                 </div>
@@ -589,7 +589,7 @@ export default function ProductsPage() {
 
                 <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} initialDraft={restoredEditDraft?.merchandising} onDraftChange={setMerchandisingDraft} />
 
-                {merchandisingDraft && !form.isIngredient && !merchandisingDraft.isGenericProduct && <div className="space-y-2">
+                {merchandisingDraft && !merchandisingDraft.isGenericProduct && (!form.isIngredient || merchandisingDraft.manageInventory) && <div className="space-y-2">
                   <ProductRecipePanel ref={recipeEditorRef} editable productId={selectedProduct.productId} managesInventory={merchandisingDraft.manageInventory} />
                   <p className="px-1 text-xs text-muted-foreground">La receta se guarda con el producto. La cantidad de cada ingrediente corresponde a una unidad terminada y se expresa en su unidad base de inventario.</p>
                 </div>}

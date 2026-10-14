@@ -140,6 +140,9 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "RestaurantTip" or "RestaurantTipReversal" =>
                     FinancialFactsResult.Ready(await LoadRestaurantTipFactsAsync(
                         connection, transaction, source, cancellationToken)),
+                "RestaurantTipSettlement" =>
+                    FinancialFactsResult.Ready(await LoadRestaurantTipSettlementFactsAsync(
+                        connection, transaction, source, cancellationToken)),
                 AccountingManualDocumentTypes.AccountAdjustment =>
                     await LoadAccountAdjustmentFactsAsync(
                         connection, transaction, source, cancellationToken),
@@ -1494,6 +1497,54 @@ public sealed partial class SqlAccountingPostingProcessor(
             : $"Propina de mesa {value.AccountId:D}";
         return FinancialFacts.RestaurantTip(description, settlement.Category,
             value.Payment.Amount, value.IsReversal);
+    }
+
+    private static async Task<FinancialFacts> LoadRestaurantTipSettlementFactsAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        SourceEnvelope source, CancellationToken cancellationToken)
+    {
+        var value = JsonSerializer.Deserialize<RestaurantTipSettlementAccountingPayload>(
+            source.PayloadJson) ?? throw new InvalidOperationException(
+                "The restaurant-tip settlement payload is invalid.");
+        if (value.SettlementId != source.DocumentId ||
+            value.BusinessId != source.BusinessId ||
+            value.TenantId != source.TenantId || value.Amount <= 0)
+            throw new InvalidOperationException(
+                "The restaurant-tip settlement source is inconsistent.");
+        await using var command = new SqlCommand("""
+            SELECT TotalAmount,PaymentMethodCode,BankAccountId,
+              (SELECT COALESCE(SUM(recipient.Amount),0)
+               FROM sales.RestaurantTipSettlementRecipients recipient
+               WHERE recipient.SettlementId=settlement.SettlementId),
+              (SELECT COALESCE(SUM(collection.TipAmount),0)
+               FROM sales.RestaurantTipSettlementCollections collection
+               WHERE collection.SettlementId=settlement.SettlementId)
+            FROM sales.RestaurantTipSettlements settlement
+            WHERE SettlementId=@SettlementId AND BusinessId=@BusinessId
+              AND TenantId=@TenantId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@SettlementId", value.SettlementId);
+        command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", value.TenantId);
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken) ||
+                reader.GetDecimal(0) != value.Amount ||
+                reader.GetString(1) != value.PaymentMethodCode ||
+                (reader.IsDBNull(2) ? (Guid?)null : reader.GetGuid(2)) !=
+                    value.BankAccountId ||
+                reader.GetDecimal(3) != value.Amount ||
+                reader.GetDecimal(4) != value.Amount)
+                throw new InvalidOperationException(
+                    "The restaurant-tip settlement changed.");
+        }
+        var payment = (await ResolvePaymentSettlementsAsync(
+            connection, transaction, source.TenantId, "PosPaymentMethod",
+            [(value.PaymentMethodCode, value.Amount, value.BankAccountId)],
+            cancellationToken)).Single();
+        return FinancialFacts.RestaurantTip(
+            $"Entrega de propinas {value.SettlementId:D}",
+            payment.Category, value.Amount, reverse: true);
     }
 
     private static async Task<decimal> InventoryCostAsync(

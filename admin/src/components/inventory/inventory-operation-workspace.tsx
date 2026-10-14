@@ -18,6 +18,7 @@ import {
   ChefHat,
   ClipboardCheck,
   PackageX,
+  Printer,
   RefreshCw,
   Save,
   Scale,
@@ -56,6 +57,8 @@ import {
   type InventoryAcceptance,
   type InventoryProductItem,
   type ProductionProductItem,
+  type ProductionDemandSuggestion,
+  type ProductionPreview,
 } from "@/services/api/inventory";
 import {
   inventoryDraftKey,
@@ -89,6 +92,38 @@ export type InventoryOperationLine = {
   maximumLossPercent?: number;
 };
 type Line = InventoryOperationLine;
+
+function printProductionWorksheet(preview: ProductionPreview) {
+  const page = window.open("", "_blank", "width=900,height=700");
+  if (!page) { toast.error("Permite abrir la hoja de producción para imprimirla."); return; }
+  page.document.write("<!doctype html><html lang='es'><head><title>Hoja de producción</title><style>body{font:16px Arial,sans-serif;margin:32px;color:#102124}h1{font-size:26px}table{border-collapse:collapse;width:100%;margin-top:20px}th,td{border-bottom:1px solid #ccc;padding:12px;text-align:left}th{background:#eef7f5}.warning{color:#a33518;font-weight:bold}</style></head><body></body></html>");
+  page.document.close();
+  const body = page.document.body;
+  const title = page.document.createElement("h1");
+  title.textContent = "Hoja de producción · pendiente";
+  body.append(title);
+  const description = page.document.createElement("p");
+  description.textContent = `${preview.productName} · ${preview.quantity} ${preview.unitCode} · receta v${preview.recipeVersion}`;
+  body.append(description);
+  const table = page.document.createElement("table");
+  const heading = page.document.createElement("tr");
+  for (const label of ["Ingrediente", "Necesario", "Disponible", "Faltante"]) {
+    const cell = page.document.createElement("th"); cell.textContent = label; heading.append(cell);
+  }
+  table.append(heading);
+  for (const ingredient of preview.ingredients) {
+    const row = page.document.createElement("tr");
+    for (const value of [ingredient.name,
+      `${ingredient.requiredQuantity} ${ingredient.unitCode}`,
+      `${ingredient.quantityOnHand} ${ingredient.unitCode}`,
+      `${Math.max(0, ingredient.requiredQuantity - ingredient.quantityOnHand)} ${ingredient.unitCode}`]) {
+      const cell = page.document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    table.append(row);
+  }
+  body.append(table);
+  page.focus(); page.print();
+}
 
 const operationDocumentTypes: Record<OperationKind, string> = {
   count: "StockCount",
@@ -183,6 +218,10 @@ export function InventoryOperationWorkspace({
   const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
   const [productionOccurredAt, setProductionOccurredAt] = useState(() => new Date().toISOString());
   const [productionReview, setProductionReview] = useState<{ warehouseId: string; productId: string; quantity: number } | null>(null);
+  const [suggestionDays, setSuggestionDays] = useState("3");
+  const [suggestionStartDate, setSuggestionStartDate] = useState(() => { const now = new Date(); return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10); });
+  const [productionSuggestion, setProductionSuggestion] = useState<ProductionDemandSuggestion | null>(null);
+  const [suggestionBusy, setSuggestionBusy] = useState(false);
   const [productionAttempted, setProductionAttempted] = useState(false);
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [activeKindHydrated, setActiveKindHydrated] = useState(Boolean(physicalCountDraft));
@@ -219,6 +258,9 @@ export function InventoryOperationWorkspace({
     retry: false,
   });
   const productionInsufficient = productionPreview.data?.ingredients.some(line => line.requiredQuantity > line.quantityOnHand) ?? false;
+  const productionMaximum = productionPreview.data?.ingredients.length
+    ? Math.max(0, Math.floor(Math.min(...productionPreview.data.ingredients.map(line =>
+        line.quantityOnHand / line.quantityPerUnit)) * 1000000) / 1000000) : 0;
   const productionEstimatedCost = productionPreview.data?.ingredients.every(line => line.estimatedUnitCost !== null)
     ? productionPreview.data.ingredients.reduce((sum, line) => sum + line.requiredQuantity * (line.estimatedUnitCost ?? 0), 0)
     : null;
@@ -712,7 +754,7 @@ export function InventoryOperationWorkspace({
           </div>
 
           {kind === "production" ? <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">Elige un producto con receta que maneje inventario. Al confirmar se consumen ingredientes y se ingresa el producto terminado.</p>
+            <p className="text-sm text-muted-foreground">Elige un producto o ingrediente elaborado con receta que maneje inventario. Al confirmar se consumen sus componentes y se ingresa el elaborado.</p>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Producto terminado con receta">
                 <PagedEntitySelect<ProductionProductItem>
@@ -722,8 +764,9 @@ export function InventoryOperationWorkspace({
                   onChange={(value, option) => {
                     setLines([{ productId: value, productCode: option?.label.split(" · ")[0] ?? "", productName: option?.label.split(" · ").slice(1).join(" · ") ?? "", unitCode: "", stock: 0, quantity: "1", cost: "", salePrice: "", direction: "OUTPUT", systemQuantity: null }]);
                     setProductionReview(null);
+                    setProductionSuggestion(null);
                   }}
-                  onClear={() => { setLines([]); setProductionReview(null); }}
+                  onClear={() => { setLines([]); setProductionReview(null); setProductionSuggestion(null); }}
                   loadPage={(search, page, pageSize) => inventoryApi.productionProducts({ warehouseId, search, page, pageSize })}
                   getOption={item => ({ value: item.productId, label: `${item.productCode} · ${item.productName}`, description: `Receta v${item.recipeVersion} · saldo ${item.quantityOnHand} ${item.unitCode}` })}
                   placeholder="Buscar producto terminado"
@@ -737,12 +780,27 @@ export function InventoryOperationWorkspace({
                 <Input type="number" min="0.000001" step="any" value={productionLine?.quantity ?? ""} disabled={!productionLine || productionAttempted} onChange={event => { update(0, { quantity: event.target.value }); setProductionReview(null); }} />
               </Field>
             </div>
+            <div className="rounded-2xl border bg-muted/20 p-4">
+              <p className="font-semibold">Sugerido de producción · restaurante</p>
+              <p className="mt-1 text-xs text-muted-foreground">Proyecta la demanda de los platos que usan esta preparación, comparando cada día con el mismo día de la semana y descontando lo disponible.</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_8rem_auto] sm:items-end">
+                <Field label="Desde"><Input type="date" value={suggestionStartDate} onChange={event => { setSuggestionStartDate(event.target.value); setProductionSuggestion(null); }}/></Field>
+                <Field label="Días"><Input inputMode="numeric" value={suggestionDays} onChange={event => { if (/^\d{0,2}$/.test(event.target.value)) { setSuggestionDays(event.target.value); setProductionSuggestion(null); } }}/></Field>
+                <Button type="button" variant="outline" disabled={!productionLine || !warehouseId || !suggestionStartDate || !(Number(suggestionDays) >= 1 && Number(suggestionDays) <= 90) || suggestionBusy} onClick={async () => {
+                  setSuggestionBusy(true);
+                  try { setProductionSuggestion(await inventoryApi.productionSuggestion(warehouseId, productionLine!.productId, suggestionStartDate, Number(suggestionDays))); }
+                  catch (error) { toast.error(error instanceof Error ? error.message : "No se pudo calcular el sugerido de producción."); }
+                  finally { setSuggestionBusy(false); }
+                }}>{suggestionBusy ? "Calculando…" : "Calcular sugerido"}</Button>
+              </div>
+              {productionSuggestion && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background p-3 text-sm"><span>{productionSuggestion.comparableDays ? <>Producir <b>{productionSuggestion.suggestedProductionQuantity.toLocaleString("es-CO")}</b> · demanda bruta {productionSuggestion.grossQuantity.toLocaleString("es-CO")} · {productionSuggestion.comparableDays} días comparables por fecha</> : "No hay historial comparable suficiente para calcular una cantidad. Ingresa la producción manualmente."}</span><Button type="button" size="sm" disabled={!productionSuggestion.comparableDays || productionSuggestion.suggestedProductionQuantity <= 0} onClick={() => { update(0, { quantity: String(productionSuggestion.suggestedProductionQuantity) }); setProductionReview(null); }}>Usar cantidad</Button></div>}
+            </div>
             <Button type="button" variant="outline" disabled={!productionLine || !warehouseId || !(Number(productionLine.quantity) > 0) || productionAttempted} onClick={() => setProductionReview({ warehouseId, productId: productionLine!.productId, quantity: Number(productionLine!.quantity) })}>Revisar ingredientes y existencias</Button>
             {productionPreview.isLoading && productionReview && <p className="text-sm text-muted-foreground">Consultando receta y existencias…</p>}
             {productionPreview.isError && productionReview && <p className="text-sm text-destructive">No fue posible revisar esta producción. Actualiza la receta o selecciona otro producto.</p>}
             {productionPreview.data && productionReview && <div className="space-y-3 rounded-2xl border p-4">
-              <div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-semibold">{productionPreview.data.productName} · receta v{productionPreview.data.recipeVersion}</h3><p className="text-xs text-muted-foreground">Entran {productionPreview.data.quantity} {productionPreview.data.unitCode} · saldo actual {productionPreview.data.quantityOnHand}</p></div>{productionEstimatedCost !== null && <p className="text-sm font-semibold">Costo estimado {formatCurrency(productionEstimatedCost)}</p>}</div>
-              <div className="divide-y">{productionPreview.data.ingredients.map(line => <div key={line.productId} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"><span>{line.name} <span className="text-muted-foreground">· {line.productCode}</span></span><span className={line.quantityOnHand < line.requiredQuantity ? "font-semibold text-destructive" : "font-medium"}>Requiere {line.requiredQuantity} {line.unitCode} · disponible {line.quantityOnHand}</span></div>)}</div>
+              <div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-semibold">{productionPreview.data.productName} · receta v{productionPreview.data.recipeVersion}</h3><p className="text-xs text-muted-foreground">Entran {productionPreview.data.quantity} {productionPreview.data.unitCode} · saldo actual {productionPreview.data.quantityOnHand}</p><p className="text-xs text-muted-foreground">Máximo con existencias actuales: {productionMaximum} {productionPreview.data.unitCode}</p></div><div className="flex items-start gap-2">{productionEstimatedCost !== null && <p className="text-sm font-semibold">Costo estimado {formatCurrency(productionEstimatedCost)}</p>}<Button type="button" variant="outline" onClick={() => printProductionWorksheet(productionPreview.data!)}><Printer className="mr-2 h-4 w-4"/>Imprimir hoja</Button></div></div>
+              <div className="overflow-x-auto"><table className="w-full min-w-[580px] text-sm"><thead><tr className="text-left"><th className="py-2">Ingrediente</th><th>Necesario</th><th>Disponible</th><th>Faltante</th></tr></thead><tbody>{productionPreview.data.ingredients.map(line => <tr key={line.productId} className="border-t"><td className="py-3">{line.name} <span className="text-muted-foreground">· {line.productCode}</span></td><td>{line.requiredQuantity} {line.unitCode}</td><td>{line.quantityOnHand} {line.unitCode}</td><td className={line.quantityOnHand < line.requiredQuantity ? "font-semibold text-destructive" : ""}>{Math.max(0, line.requiredQuantity - line.quantityOnHand)} {line.unitCode}</td></tr>)}</tbody></table></div>
               {productionInsufficient ? <p className="flex items-center gap-2 text-sm text-destructive"><TriangleAlert className="h-4 w-4" /> Faltan ingredientes; registra sus entradas antes de producir.</p> : <p className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400"><CircleCheck className="h-4 w-4" /> Existencias suficientes; se comprobarán de nuevo al confirmar.</p>}
             </div>}
           </div> : <><ProductPicker

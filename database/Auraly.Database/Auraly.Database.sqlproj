@@ -96,6 +96,8 @@
     <Build Include="StoredProcedures\PurchasingPurchaseOrdersList.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderGet.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderSuggestionsGet.sql" />
+    <Build Include="StoredProcedures\PurchasingRestaurantDemandInputsGet.sql" />
+    <Build Include="StoredProcedures\CatalogProductRecipeGraphValidate.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderDraftSave.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderDraftDelete.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderConfirm.sql" />

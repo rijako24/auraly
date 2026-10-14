@@ -8,11 +8,14 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class RestaurantTipTests(ServerSliceFixture fixture)
 {
-    [Fact]
-    public async Task Suggested_prebill_and_received_tip_leave_the_sales_document_at_consumption_value()
+    [Theory]
+    [InlineData(PosSaleDocumentTypes.Receipt)]
+    [InlineData(PosSaleDocumentTypes.Invoice)]
+    public async Task Suggested_prebill_and_received_tip_leave_the_sales_document_at_consumption_value(string documentType)
     {
         var waiterId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
+        var secondPartyId = Guid.NewGuid();
         var tableId = Guid.NewGuid();
         using var waiter = fixture.CreateUserClient(waiterId, "restaurant.attend");
         using var cashier = fixture.CreateAdminClient("sales.create", "businesses.update");
@@ -30,6 +33,12 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                    N'Mesero',N'Propina',N'Incomplete',1,SYSDATETIMEOFFSET());
             INSERT parties.Waiters(WaiterId,TenantId,PartyId,Code,IsActive,CreatedAt)
             VALUES(NEWID(),@TenantId,@PartyId,@Code,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,
+                FirstName,LastName,CompletionStatus,IsActive,CreatedAt)
+            VALUES(@SecondPartyId,@TenantId,N'NaturalPerson',N'Compañero propina',
+                   N'Compañero',N'Propina',N'Incomplete',1,SYSDATETIMEOFFSET());
+            INSERT parties.Waiters(WaiterId,TenantId,PartyId,Code,IsActive,CreatedAt)
+            VALUES(NEWID(),@TenantId,@SecondPartyId,@SecondCode,1,SYSDATETIMEOFFSET());
             UPDATE dbo.AppUsers SET PartyId=@PartyId
             WHERE UserId=@WaiterId AND TenantId=@TenantId;
             DELETE FROM sales.RestaurantProductRoutes
@@ -39,8 +48,10 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             setup.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             setup.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             setup.Parameters.AddWithValue("@PartyId", partyId);
+            setup.Parameters.AddWithValue("@SecondPartyId", secondPartyId);
             setup.Parameters.AddWithValue("@WaiterId", waiterId);
             setup.Parameters.AddWithValue("@Code", $"T-{partyId:N}"[..12]);
+            setup.Parameters.AddWithValue("@SecondCode", $"T-{secondPartyId:N}"[..12]);
             setup.Parameters.AddWithValue("@ProductId", fixture.ProductId);
             setup.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
             await setup.ExecuteNonQueryAsync();
@@ -172,7 +183,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                             captured.AccountVersion,
                             [new OnlineSalesPayment("Cash", initial.Total, null,
                                 TenderedAmount: initial.Total + 5_000m)],
-                            DocumentType: PosSaleDocumentTypes.Receipt)))
+                            DocumentType: documentType)))
                 };
                 complete.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
                 using var issued = await cashier.SendAsync(complete);
@@ -216,6 +227,102 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 Assert.Equal(tipAmount, reader.GetDecimal(0));
                 Assert.Equal(1, reader.GetInt32(1));
             }
+            using var supervisor = fixture.CreateAdminClient("cash.close");
+            using (var forbidden = await cashier.GetAsync(
+                "/api/commerce/v1/restaurant/tips/pending"))
+                Assert.Equal(System.Net.HttpStatusCode.Forbidden, forbidden.StatusCode);
+            using (var pendingResponse = await supervisor.GetAsync(
+                "/api/commerce/v1/restaurant/tips/pending"))
+            {
+                pendingResponse.EnsureSuccessStatusCode();
+                var pending = (await pendingResponse.Content.ReadFromJsonAsync<RestaurantTipPendingPage>())!;
+                Assert.Contains(pending.Items, item => item.CollectionId == collectionId);
+            }
+            var settlementId = Guid.NewGuid();
+            var settlementRequest = new SettleRestaurantTipsRequest(settlementId,
+                [productCollectionId, secondCollectionId],
+                [new RestaurantTipRecipientRequest(partyId, 0),
+                 new RestaurantTipRecipientRequest(secondPartyId, 0)],
+                "EqualByLaw", null, "Cash", null, null);
+            using (var settled = await supervisor.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/tips/settlements", settlementRequest))
+            {
+                settled.EnsureSuccessStatusCode();
+                var result = (await settled.Content.ReadFromJsonAsync<RestaurantTipSettlement>())!;
+                Assert.Equal(3_000m, result.TotalAmount);
+                Assert.Equal(2, result.Recipients.Count);
+                Assert.All(result.Recipients, recipient => Assert.Equal(1_500m, recipient.Amount));
+            }
+            using (var replay = await supervisor.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/tips/settlements", settlementRequest))
+                replay.EnsureSuccessStatusCode();
+            using (var changedReplay = await supervisor.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/tips/settlements",
+                settlementRequest with { PaymentReference = "otro" }))
+                Assert.Equal(System.Net.HttpStatusCode.Conflict, changedReplay.StatusCode);
+            var agreedSettlementId = Guid.NewGuid();
+            using (var agreed = await supervisor.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/tips/settlements",
+                new SettleRestaurantTipsRequest(agreedSettlementId,
+                    [collectionId], [new RestaurantTipRecipientRequest(partyId, tipAmount)],
+                    "WorkerAgreement", "Acta de trabajadores 2026-10-14",
+                    "Cash", null, null)))
+            {
+                agreed.EnsureSuccessStatusCode();
+                var result = (await agreed.Content.ReadFromJsonAsync<RestaurantTipSettlement>())!;
+                Assert.Equal(tipAmount, result.TotalAmount);
+                Assert.Equal("WorkerAgreement", result.DistributionBasis);
+            }
+            using (var duplicate = await supervisor.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/tips/settlements",
+                new SettleRestaurantTipsRequest(Guid.NewGuid(), [collectionId],
+                    [new RestaurantTipRecipientRequest(partyId, 0)],
+                    "EqualByLaw", null, "Cash", null, null)))
+                Assert.Equal(System.Net.HttpStatusCode.Conflict, duplicate.StatusCode);
+            using (var historyResponse = await supervisor.GetAsync(
+                "/api/commerce/v1/restaurant/tips/settlements"))
+            {
+                historyResponse.EnsureSuccessStatusCode();
+                var history = (await historyResponse.Content.ReadFromJsonAsync<RestaurantTipSettlement[]>())!;
+                Assert.Contains(history, item => item.SettlementId == settlementId);
+            }
+            using (var afterResponse = await supervisor.GetAsync(
+                "/api/commerce/v1/restaurant/tips/pending"))
+            {
+                afterResponse.EnsureSuccessStatusCode();
+                var after = (await afterResponse.Content.ReadFromJsonAsync<RestaurantTipPendingPage>())!;
+                Assert.DoesNotContain(after.Items, item =>
+                    item.CollectionId == productCollectionId ||
+                    item.CollectionId == secondCollectionId ||
+                    item.CollectionId == collectionId);
+            }
+            await using (var verifySettlement = new SqlCommand("""
+                SELECT (SELECT COUNT(*) FROM sales.RestaurantTipSettlementCollections
+                        WHERE SettlementId=@SettlementId),
+                       (SELECT COUNT(*) FROM dbo.AccountingSourceDocuments
+                        WHERE SourceDocumentId=@SettlementId
+                          AND SourceDocumentType=N'RestaurantTipSettlement');
+                """, connection))
+            {
+                verifySettlement.Parameters.AddWithValue("@SettlementId", settlementId);
+                await using var reader = await verifySettlement.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(2, reader.GetInt32(0));
+                Assert.Equal(1, reader.GetInt32(1));
+            }
+            decimal? posted = null;
+            for (var attempt = 0; attempt < 100 && posted is null; attempt++)
+            {
+                await using var entry = new SqlCommand("""
+                    SELECT DebitTotal FROM dbo.AccountingEntries
+                    WHERE SourceDocumentId=@SettlementId
+                      AND SourceDocumentType=N'RestaurantTipSettlement';
+                    """, connection);
+                entry.Parameters.AddWithValue("@SettlementId", settlementId);
+                posted = await entry.ExecuteScalarAsync() is decimal amount ? amount : null;
+                if (posted is null) await Task.Delay(100);
+            }
+            Assert.Equal(3_000m, posted);
         }
         finally
         {

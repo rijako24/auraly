@@ -53,6 +53,28 @@ public sealed record RestaurantTipAccountingPayload(
     Guid CollectionId, Guid AccountId, Guid TenantId, Guid BusinessId,
     Guid WorkSessionId, OnlineSalesPayment Payment, bool IsReversal);
 
+public sealed record RestaurantTipPendingCollection(
+    Guid CollectionId, Guid AccountId, decimal Amount, DateTimeOffset CapturedAt);
+public sealed record RestaurantTipPendingPage(
+    IReadOnlyList<RestaurantTipPendingCollection> Items, int TotalCount,
+    decimal TotalAmount);
+public sealed record RestaurantTipRecipientRequest(Guid PartyId, decimal Amount);
+public sealed record SettleRestaurantTipsRequest(
+    Guid SettlementId, IReadOnlyList<Guid> CollectionIds,
+    IReadOnlyList<RestaurantTipRecipientRequest> Recipients,
+    string DistributionBasis, string? AgreementReference,
+    string PaymentMethodCode, Guid? BankAccountId,
+    string? PaymentReference);
+public sealed record RestaurantTipSettlement(
+    Guid SettlementId, Guid BusinessId, decimal TotalAmount,
+    string DistributionBasis, string? AgreementReference,
+    string PaymentMethodCode, string? PaymentReference,
+    DateTimeOffset CreatedAt,
+    IReadOnlyList<RestaurantTipRecipientRequest> Recipients);
+public sealed record RestaurantTipSettlementAccountingPayload(
+    Guid SettlementId, Guid TenantId, Guid BusinessId,
+    string PaymentMethodCode, Guid? BankAccountId, decimal Amount);
+
 public sealed record PrintRestaurantPrebillRequest(long ExpectedVersion);
 
 public sealed record RestaurantPrebillLine(

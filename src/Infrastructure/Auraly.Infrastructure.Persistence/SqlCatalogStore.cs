@@ -28,6 +28,11 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            if (request.RecipeIngredients is not null)
+                await ExecuteAsync(connection, transaction,
+                    "EXEC catalog.ProductRecipeGraphValidate @TenantId, @ProductId, @Ingredients;",
+                    [P("@TenantId", user.TenantId), P("@ProductId", productId),
+                        P("@Ingredients", JsonSerializer.Serialize(request.RecipeIngredients))], ct);
             var wasGenericProduct = !create && await ReadIsGenericProductAsync(
                 connection, transaction, user.TenantId, productId, ct);
             await EnsureBarcodesAvailableAsync(connection, transaction, user.TenantId, productId, request.Barcodes.Select(value => value.Value), ct);
@@ -70,9 +75,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                          EXISTS (SELECT 1 FROM dbo.Products currentProduct WHERE currentProduct.ProductId=@ProductId
                            AND currentProduct.TenantId=@TenantId AND currentProduct.BaseUnitCode<>@BaseUnitCode))
                   THROW 51024, 'El ingrediente pertenece a recetas publicadas; conserva su clasificación, inventario y unidad.', 1;
-                IF @IsIngredient=1 AND EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions
-                    WHERE TenantId=@TenantId AND ProductId=@ProductId)
-                  THROW 51024, 'Un producto con receta publicada no se puede convertir en ingrediente.', 1;
+                IF @IsIngredient=1 AND @ManageInventory=0 AND EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions
+                    WHERE TenantId=@TenantId AND ProductId=@ProductId AND IsEnabled=1)
+                  THROW 51024, 'Un ingrediente elaborado con receta debe manejar inventario.', 1;
                 IF EXISTS (SELECT 1 FROM dbo.InventoryOperations operation
                     JOIN dbo.InventoryOperationLines line ON line.InventoryOperationId=operation.InventoryOperationId
                     JOIN dbo.Businesses businessValue ON businessValue.BusinessId=operation.BusinessId
@@ -439,6 +444,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 await ExecuteAsync(connection, transaction, """
                     DECLARE @CurrentVersion int = ISNULL((SELECT MAX([Version]) FROM catalog.ProductRecipeVersions WITH (UPDLOCK,HOLDLOCK)
                         WHERE TenantId=@TenantId AND ProductId=@ProductId),0);
+                    IF @ExpectedCount>0 AND EXISTS (SELECT 1 FROM dbo.Products
+                        WHERE TenantId=@TenantId AND ProductId=@ProductId AND IsIngredient=1 AND ManageStock=0)
+                        THROW 51024, 'Un ingrediente elaborado debe manejar inventario.', 1;
                     IF @CurrentVersion<>@ExpectedVersion
                         THROW 51024, 'La receta cambió. Actualiza la ficha antes de guardar.', 1;
                     DECLARE @Items TABLE(LineNumber int PRIMARY KEY, IngredientProductId uniqueidentifier, QuantityPerUnit decimal(19,6));

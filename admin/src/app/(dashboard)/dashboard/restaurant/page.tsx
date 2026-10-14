@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, ClipboardList, LayoutGrid, QrCode, Settings2, Store } from "lucide-react";
+import { ArrowUpRight, ClipboardList, HandCoins, LayoutGrid, QrCode, Settings2, Store } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -13,6 +13,7 @@ export default function RestaurantWorkspacePage() {
   const cards = [
     ...(canAttend ? [{ title: "Mesas y pedidos", description: "Abre mesas y toma pedidos desde la pantalla táctil.", href: "/pos", icon: Store }] : []),
     ...(permissions.includes("restaurant.commands.read") ? [{ title: "Comandas", description: "Abre la pantalla completa de cocina o barra.", href: "/restaurant/commands", icon: ClipboardList }] : []),
+    ...(permissions.includes("cash.close") ? [{ title: "Liquidar propinas", description: "Reparte y registra las propinas pendientes de entregar al personal.", href: "/dashboard/restaurant/tips", icon: HandCoins }] : []),
     ...(canConfigure ? [
       { title: "Configurar restaurante", description: "Administra salones, mesas, estaciones y destinos de productos.", href: "/dashboard/restaurant/setup", icon: Settings2 },
       { title: "Plano del restaurante", description: "Ubica mesas, paredes y espacios con un editor táctil.", href: "/dashboard/restaurant/floorplan", icon: LayoutGrid },

@@ -2,7 +2,9 @@ CREATE PROCEDURE [purchasing].[PurchaseOrderSuggestionsGet]
     @BusinessId UNIQUEIDENTIFIER,
     @WarehouseId UNIQUEIDENTIFIER,
     @SupplierId UNIQUEIDENTIFIER,
-    @ProductIdsJson NVARCHAR(MAX)
+    @ProductIdsJson NVARCHAR(MAX),
+    @RestaurantWeekdayPlan BIT = 0,
+    @StartDate DATE = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -10,6 +12,9 @@ BEGIN
     IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1)
        OR NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE TenantId=@TenantId AND SupplierId=@SupplierId AND IsActive=1)
         THROW 51220,'The warehouse or supplier is outside the authenticated business.',1;
+    IF @RestaurantWeekdayPlan=1 AND (@StartDate IS NULL OR NOT EXISTS(
+        SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND PointOfSaleMode=N'RestaurantBar'))
+        THROW 51220,'El sugerido por día requiere una sede de restaurante y fecha de inicio.',1;
 
     DECLARE @ProductIds TABLE(ProductId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY);
     INSERT @ProductIds(ProductId)
@@ -46,4 +51,9 @@ BEGIN
     ) incoming
     WHERE p.IsActive=1
     ORDER BY p.ProductId;
+
+    IF @RestaurantWeekdayPlan=1
+        EXEC purchasing.RestaurantDemandInputsGet
+            @BusinessId=@BusinessId,@WarehouseId=@WarehouseId,
+            @ProductIdsJson=@ProductIdsJson,@StartDate=@StartDate;
 END;

@@ -1,5 +1,6 @@
 using Auraly.Contracts.Inventory;
 using Auraly.BuildingBlocks.Application.Synchronization;
+using Auraly.BuildingBlocks.Domain.RestaurantDemand;
 
 namespace Auraly.Application.Inventory;
 
@@ -8,6 +9,8 @@ public interface IInventoryQueryStore
     Task<InventoryProductPage> GetProductsAsync(InventoryUserIdentity user, InventoryProductQuery query, bool includeCosts, CancellationToken token);
     Task<ProductConversionProductPage> GetConversionProductsAsync(InventoryUserIdentity user, ProductConversionProductQuery query, CancellationToken token);
     Task<ProductionProductPage> GetProductionProductsAsync(InventoryUserIdentity user, ProductionProductQuery query, CancellationToken token);
+    Task<ProductionDemandSnapshot> GetProductionDemandInputsAsync(InventoryUserIdentity user,
+        Guid warehouseId, Guid productId, DateOnly startDate, CancellationToken token);
     Task<ProductionPreview?> GetProductionPreviewAsync(InventoryUserIdentity user, Guid warehouseId, Guid productId, decimal quantity, bool includeCosts, CancellationToken token);
     Task<IReadOnlyList<InventoryWarehouseOption>> GetWarehousesAsync(InventoryUserIdentity user, CancellationToken token);
     Task<IReadOnlyList<WarehouseMasterItem>> GetWarehouseMastersAsync(InventoryUserIdentity user, CancellationToken token);
@@ -22,6 +25,12 @@ public interface IInventoryQueryStore
     Task<WarehouseTransferPendingPage> GetPendingTransfersAsync(InventoryUserIdentity user, WarehouseTransferPendingQuery query, CancellationToken token);
     Task<WarehouseTransferDetail?> GetTransferAsync(InventoryUserIdentity user, Guid transferId, CancellationToken token);
 }
+
+public sealed record ProductionDemandSnapshot(
+    IReadOnlyList<RestaurantRecipeComponent> Recipes,
+    IReadOnlyList<RestaurantDemandSale> Sales,
+    IReadOnlyList<DateOnly> OpenDates,
+    IReadOnlyList<RestaurantDemandStock> Stocks);
 
 public sealed class InventoryQueryService(
     IInventoryQueryStore store,
@@ -47,6 +56,29 @@ public sealed class InventoryQueryService(
         Validate(user, query.BusinessId, query.Page, query.PageSize);
         if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("WarehouseId is required.");
         return store.GetProductionProductsAsync(user, query with { Search = Normalize(query.Search) }, token);
+    }
+
+    public async Task<ProductionDemandSuggestion> GetProductionDemandSuggestionAsync(
+        InventoryUserIdentity user, Guid warehouseId, Guid productId,
+        DateOnly startDate, int days, CancellationToken token = default)
+    {
+        Validate(user, user.BusinessId, 1, 1);
+        if (warehouseId == Guid.Empty || productId == Guid.Empty || days is < 1 or > 90 ||
+            startDate < DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1) ||
+            startDate > DateOnly.FromDateTime(DateTime.UtcNow).AddDays(365))
+            throw new InventoryValidationException("Selecciona producto, bodega y entre 1 y 90 días.");
+        var snapshot = await store.GetProductionDemandInputsAsync(user,
+            warehouseId, productId, startDate, token);
+        var forecast = RestaurantDemandPlanner.Forecast(startDate, days,
+            snapshot.OpenDates, snapshot.Sales, snapshot.Recipes, snapshot.Stocks,
+            DateOnly.FromDateTime(DateTime.UtcNow) < startDate
+                ? DateOnly.FromDateTime(DateTime.UtcNow) : startDate);
+        var target = forecast.GetValueOrDefault(productId);
+        var comparable = Enumerable.Range(0, days).Select(offset =>
+            snapshot.OpenDates.Count(day => day.DayOfWeek ==
+                startDate.AddDays(offset).DayOfWeek)).DefaultIfEmpty().Min();
+        return new(productId, startDate, days,
+            target?.GrossQuantity ?? 0, target?.UncoveredQuantity ?? 0, comparable);
     }
 
     public Task<ProductionPreview?> GetProductionPreviewAsync(InventoryUserIdentity user, Guid warehouseId, Guid productId, decimal quantity, CancellationToken token = default)

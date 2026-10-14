@@ -218,6 +218,26 @@ public static class RestaurantAccountApi
             Guid accountId, CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.GetAsync(
                 Actor(context), accountId, ct))));
+        group.MapGet("/tips/pending", async (
+            HttpContext context, RestaurantCollectionService service,
+            CancellationToken ct) => await Handle(async () =>
+                Results.Ok(await service.PendingTipsAsync(Actor(context), ct))));
+        group.MapGet("/tips/settlements", async (
+            HttpContext context, RestaurantCollectionService service,
+            CancellationToken ct) => await Handle(async () =>
+                Results.Ok(await service.RecentTipSettlementsAsync(Actor(context), ct))));
+        group.MapPost("/tips/settlements", async (
+            HttpContext context, RestaurantCollectionService service,
+            AccountingProcessingCoordinator accounting,
+            SettleRestaurantTipsRequest request, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var actor = Actor(context);
+                var settled = await service.SettleTipsAsync(actor, request, ct);
+                await accounting.RequestPostingAsync(actor.BusinessId,
+                    settled.SettlementId, "RestaurantTipSettlement", ct);
+                return Results.Ok(settled);
+            }));
         group.MapPost("/accounts/{accountId:guid}/collections", async (
             HttpContext context, RestaurantCollectionService service,
             AccountingProcessingCoordinator accounting,

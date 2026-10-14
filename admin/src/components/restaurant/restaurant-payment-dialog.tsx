@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useBodyScrollLock } from "@/hooks/use-body-scroll-lock";
-import { settleRestaurantPayment } from "@/components/restaurant/restaurant-payment-calculation";
+import { finalRestaurantPayments, settleRestaurantPayment } from "@/components/restaurant/restaurant-payment-calculation";
 import { Select, SelectContent, SelectItem, SelectTrigger,
   SelectValue } from "@/components/ui/select";
 import type { RestaurantAccountDraft, RestaurantCollectionAllocation,
@@ -29,17 +29,6 @@ type PaymentRow = { id: string; methodCode: Method; amount: string;
 const newRow = (amount: number): PaymentRow => ({ id: crypto.randomUUID(),
   methodCode: "Cash", amount: String(amount), reference: "", franchise: "",
   approval: "", bankAccountId: "" });
-
-function finalPayments(summary: RestaurantCollectionSummary): PosPaymentInput[] {
-  const captured = summary.collections.flatMap((entry) => entry.payments);
-  const cash = captured.filter((payment) => payment.methodCode === "Cash");
-  const other = captured.filter((payment) => payment.methodCode !== "Cash");
-  if (!cash.length) return other;
-  return [{ methodCode: "Cash", amount: round(cash.reduce((sum, item) =>
-    sum + item.amount, 0)), reference: null,
-    tenderedAmount: round(cash.reduce((sum, item) =>
-      sum + (item.tenderedAmount ?? item.amount), 0)) }, ...other];
-}
 
 export function RestaurantPaymentDialog({ draft, summary, client,
   workSessionId, documentType, documentTypeBlockReason, busy,
@@ -77,7 +66,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   const [confirmReverse, setConfirmReverse] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
-  const previousSelectedTotal = useRef(0);
+  const previousSuggestedCash = useRef(0);
   const disabled = busy || working;
   const covered = useMemo(() => new Map(summary.coveredQuantities.map(
     (line) => [line.additionId, line.quantity])), [summary.coveredQuantities]);
@@ -159,12 +148,13 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   }, [paymentRows.length, selectedTotal]);
 
   useEffect(() => {
-    const previous = previousSelectedTotal.current;
-    previousSelectedTotal.current = selectedTotal;
+    const previous = previousSuggestedCash.current;
+    const suggested = selectedTotal + cashTipIncluded;
+    previousSuggestedCash.current = suggested;
     setPaymentRows((rows) => rows.length === 1 &&
       rows[0].methodCode === "Cash" && Number(rows[0].amount) === previous
-      ? [{ ...rows[0], amount: String(selectedTotal) }] : rows);
-  }, [selectedTotal]);
+      ? [{ ...rows[0], amount: String(suggested) }] : rows);
+  }, [selectedTotal, cashTipIncluded]);
 
   function updateRow(id: string, patch: Partial<PaymentRow>) {
     setPaymentRows((rows) => rows.map((row) => row.id === id ?
@@ -271,7 +261,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
       setQuantities({});
       setSelectionMode("all");
       if (updated.remaining === 0)
-        await onFinalize(finalPayments(updated), updated.accountVersion,
+        await onFinalize(finalRestaurantPayments(updated.collections), updated.accountVersion,
           printChoice);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message :
@@ -286,6 +276,18 @@ export function RestaurantPaymentDialog({ draft, summary, client,
     catch (cause) { setError(cause instanceof Error ? cause.message :
       "No se pudo anular el cobro."); }
     finally { setWorking(false); }
+  }
+
+  async function retryDocument() {
+    if (disabled) return;
+    setWorking(true);
+    setError("");
+    try {
+      await onFinalize(finalRestaurantPayments(summary.collections), summary.accountVersion, printChoice);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message :
+        "El cobro está guardado, pero no se pudo emitir el documento. Reintenta sin cobrar de nuevo.");
+    } finally { setWorking(false); }
   }
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-0 backdrop-blur-sm sm:p-4"
@@ -350,7 +352,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
               </div>)}<Button variant="outline" className="min-h-12 w-full rounded-xl" disabled={disabled || !referencesReady || !canAddPaymentMethod || paymentRows.length >= 10 || selectedTotal <= 0} onClick={addPaymentMethod}><Plus className="mr-2 h-5 w-5"/>Agregar otro medio</Button><div className="space-y-1 rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold dark:bg-slate-800"><div className="flex justify-between"><span>{due > 0 ? "Falta" : due < 0 ? "Excede" : "Pago completo"}</span><span>{money.format(Math.abs(due))}</span></div>{change > 0 && <div className="flex justify-between text-teal-700 dark:text-teal-300"><span>Cambio a entregar</span><span>{money.format(change)}</span></div>}</div></div>}
           </div>
           <footer className="shrink-0 border-t bg-white p-4 dark:bg-slate-900 sm:p-6">{error && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">{error}</p>}{captureBlockReason && captureBlockReason !== error && <p role="status" className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">{captureBlockReason}</p>}
-            {summary.remaining > 0 || actualTip > 0 ? <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!captureBlockReason} onClick={() => void receivePayment()}><Banknote className="mr-2 h-6 w-6"/>{summary.remaining === 0 ? "Guardar propina y emitir documento" : selectedTotal === summary.remaining ? `Cobrar y emitir ${documentType === "SalesInvoice" ? "factura" : "documento"}` : "Guardar este pago"}</Button> : <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!documentTypeBlockReason || otherSession} onClick={() => void onFinalize(finalPayments(summary), summary.accountVersion, printChoice)}><CreditCard className="mr-2 h-6 w-6"/>Reintentar {documentType === "SalesInvoice" ? "factura" : "documento"} único</Button>}
+            {summary.remaining > 0 || actualTip > 0 ? <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!captureBlockReason} onClick={() => void receivePayment()}><Banknote className="mr-2 h-6 w-6"/>{summary.remaining === 0 ? "Guardar propina y emitir documento" : selectedTotal === summary.remaining ? `Cobrar y emitir ${documentType === "SalesInvoice" ? "factura" : "documento"}` : "Guardar este pago"}</Button> : <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!documentTypeBlockReason || otherSession} onClick={() => void retryDocument()}><CreditCard className="mr-2 h-6 w-6"/>Reintentar {documentType === "SalesInvoice" ? "factura" : "documento"} único</Button>}
             <div className="mt-3" role="group" aria-label="Imprimir al finalizar"><p className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">Imprimir al finalizar</p><div className="flex flex-wrap gap-1.5">{PAYMENT_PRINT_SHORTCUTS.map(({ key, label, choice }) => <button key={key} type="button" aria-label={label} aria-pressed={printChoice === choice} disabled={disabled} onClick={() => setPrintChoice(choice)} className={`min-h-10 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/30 disabled:opacity-50 ${printChoice === choice ? "border-teal-600 bg-teal-50 text-teal-900 dark:bg-teal-950 dark:text-teal-200" : "border-slate-200 bg-slate-50 text-slate-600 hover:border-teal-300 hover:bg-teal-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}><span className="font-bold text-teal-700 underline decoration-teal-500/60 decoration-2 underline-offset-4 dark:text-teal-300">{key}</span>{label.slice(1)}</button>)}</div></div>
           </footer>
         </aside>

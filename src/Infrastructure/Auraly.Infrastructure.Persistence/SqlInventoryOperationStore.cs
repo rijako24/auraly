@@ -451,7 +451,7 @@ public sealed class SqlInventoryOperationStore(
             JOIN dbo.Products finished WITH(UPDLOCK,HOLDLOCK)
               ON finished.TenantId=v.TenantId AND finished.ProductId=v.ProductId
             WHERE v.TenantId=@TenantId AND v.ProductId=@ProductId
-              AND finished.IsActive=1 AND finished.IsIngredient=0 AND finished.ManageStock=1
+              AND finished.IsActive=1 AND finished.ManageStock=1
               AND NOT EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId
                   AND link.ChildProductId=finished.ProductId AND link.IsActive=1 AND link.SharesInventory=1)
             ORDER BY v.[Version] DESC;

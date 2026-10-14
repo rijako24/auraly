@@ -29,6 +29,7 @@ export interface PurchaseOrderSuggestion {
   dailyDemand90Days: number; forecastDailyDemand: number; currentStock: number; incomingQuantity: number;
   presentationName: string; unitsPerPresentation: number; suggestedQuantity: number;
   suggestedPresentationQuantity: number; rotationCalculatedAt: string | null;
+  restaurantWeekdayPlan?: boolean; comparableDays?: number; suggestedProductionQuantity?: number; isProduced?: boolean;
 }
 export type PurchaseOrderLineRequest = Pick<PurchaseOrderLine,"lineId"|"lineNumber"|"productId"|"description"|"orderedQuantity"|"unitCost"|"discountAmount"|"taxCode"|"taxRate"|"taxTreatment"|"presentationName"|"presentationQuantity"|"unitsPerPresentation">;
 export interface SavePurchaseOrderRequest {
@@ -44,7 +45,7 @@ export const purchaseOrdersApi = {
     apiClient.get<PurchaseOrderPage>("/commerce/v1/purchase-orders", withPagedDefaults(params)),
   get: (id: string) => apiClient.get<PurchaseOrderDetail>(`/commerce/v1/purchase-orders/${id}`),
   receiptSource: (id: string) => apiClient.get<PurchaseOrderReceiptSource>(`/commerce/v1/purchase-orders/${id}/receipt-source`),
-  suggestions: (request: { businessId: string; warehouseId: string; supplierId: string; productIds: string[]; targetCoverageDays?: number }) =>
+  suggestions: (request: { businessId: string; warehouseId: string; supplierId: string; productIds: string[]; targetCoverageDays?: number; restaurantWeekdayPlan?: boolean; startDate?: string }) =>
     apiClient.post<PurchaseOrderSuggestion[]>("/commerce/v1/purchase-orders/suggestions", request),
   saveDraft: (request: SavePurchaseOrderRequest) => apiClient.put<PurchaseOrderDetail>(`/commerce/v1/purchase-orders/${request.purchaseOrderId}/draft`, request),
   deleteDraft: (id: string, concurrencyToken: string) => apiClient.delete<{ deleted: boolean }>(

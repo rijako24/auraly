@@ -8,7 +8,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlRestaurantCollectionStore(SqlServerConnectionFactory connections)
+public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFactory connections)
     : IRestaurantCollectionStore
 {
     public async Task<RestaurantCollectionSummary> GetAsync(
@@ -279,6 +279,9 @@ public sealed class SqlRestaurantCollectionStore(SqlServerConnectionFactory conn
             }
         }
         await using var command = new SqlCommand("""
+            IF EXISTS(SELECT 1 FROM sales.RestaurantTipSettlementCollections settled
+                      WHERE settled.CollectionId=@CollectionId)
+                THROW 51131,N'La propina ya se entregó al personal; no se puede anular este cobro.',1;
             UPDATE account SET Version=Version+1,UpdatedAt=@Now
             FROM sales.RestaurantAccounts account WITH(UPDLOCK,HOLDLOCK)
             JOIN sales.RestaurantAccountCollections collection

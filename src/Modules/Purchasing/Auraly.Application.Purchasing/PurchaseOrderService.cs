@@ -1,5 +1,6 @@
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
+using Auraly.BuildingBlocks.Domain.RestaurantDemand;
 
 namespace Auraly.Application.Purchasing;
 
@@ -16,10 +17,17 @@ public interface IPurchaseOrderStore
     Task<PurchaseOrderConfirmation> ConfirmAsync(PurchasingUserIdentity user, string idempotencyKey,
         ConfirmPurchaseOrderRequest request, PurchaseOrderCalculation calculation, CancellationToken cancellationToken);
     Task CloseAsync(PurchasingUserIdentity user, Guid id, ClosePurchaseOrderRequest request, CancellationToken cancellationToken);
-    Task<IReadOnlyList<PurchaseOrderSuggestionInput>> SuggestionInputsAsync(
-        PurchasingUserIdentity user, Guid warehouseId, Guid supplierId,
-        IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken);
+    Task<PurchaseOrderSuggestionSnapshot> SuggestionInputsAsync(
+        PurchasingUserIdentity user, PurchaseOrderSuggestionRequest request,
+        CancellationToken cancellationToken);
 }
+
+public sealed record PurchaseOrderSuggestionSnapshot(
+    IReadOnlyList<PurchaseOrderSuggestionInput> Inputs,
+    IReadOnlyList<RestaurantDemandSale> Sales,
+    IReadOnlyList<DateOnly> OpenDates,
+    IReadOnlyList<RestaurantRecipeComponent> Recipes,
+    IReadOnlyList<RestaurantDemandStock> Stocks);
 
 public sealed record PurchaseOrderSuggestionInput(
     Guid ProductId, decimal Rotation30Days, decimal Rotation90Days,
@@ -120,12 +128,39 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store)
         if (request.WarehouseId == Guid.Empty || request.SupplierId == Guid.Empty ||
             request.ProductIds.Count is < 1 or > 100 || request.ProductIds.Any(x => x == Guid.Empty) ||
             request.ProductIds.Distinct().Count() != request.ProductIds.Count ||
-            request.TargetCoverageDays is < 1 or > 90)
+            request.TargetCoverageDays is < 1 or > 90 ||
+            request.RestaurantWeekdayPlan && (request.StartDate is null ||
+                request.StartDate < DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1) ||
+                request.StartDate > DateOnly.FromDateTime(DateTime.UtcNow).AddDays(365)))
             throw new PurchasingValidationException("The purchase-order suggestion request is invalid.");
-        var inputs = await store.SuggestionInputsAsync(user, request.WarehouseId,
-            request.SupplierId, request.ProductIds, cancellationToken);
-        return inputs.Select(input =>
+        var snapshot = await store.SuggestionInputsAsync(user, request, cancellationToken);
+        var planned = request.RestaurantWeekdayPlan
+            ? RestaurantDemandPlanner.Forecast(request.StartDate!.Value,
+                request.TargetCoverageDays, snapshot.OpenDates, snapshot.Sales,
+                snapshot.Recipes, snapshot.Stocks,
+                DateOnly.FromDateTime(DateTime.UtcNow) < request.StartDate.Value
+                    ? DateOnly.FromDateTime(DateTime.UtcNow) : request.StartDate.Value) : null;
+        var comparable = request.RestaurantWeekdayPlan
+            ? Enumerable.Range(0, request.TargetCoverageDays).Select(offset =>
+                snapshot.OpenDates.Count(day => day.DayOfWeek ==
+                    request.StartDate!.Value.AddDays(offset).DayOfWeek)).DefaultIfEmpty().Min() : 0;
+        return snapshot.Inputs.Select(input =>
         {
+            if (planned is not null)
+            {
+                var demand = planned.GetValueOrDefault(input.ProductId);
+                var uncovered = demand?.UncoveredQuantity ?? 0;
+                var isProduced = snapshot.Recipes.Any(recipe => recipe.ProductId == input.ProductId);
+                var packs = !isProduced && uncovered > 0
+                    ? decimal.Ceiling(uncovered / input.UnitsPerPresentation) : 0;
+                return new PurchaseOrderSuggestion(input.ProductId, request.TargetCoverageDays,
+                    input.Rotation30Days, input.Rotation90Days, input.DailyDemand90Days,
+                    demand?.GrossQuantity / request.TargetCoverageDays ?? 0,
+                    input.CurrentStock, input.IncomingQuantity, input.PresentationName,
+                    input.UnitsPerPresentation, packs * input.UnitsPerPresentation,
+                    packs, input.RotationCalculatedAt, true, comparable,
+                    isProduced ? uncovered : 0, isProduced);
+            }
             var forecast = PurchaseOrderCalculator.ForecastDailyDemand(
                 input.Rotation30Days, input.Rotation90Days);
             var suggested = PurchaseOrderCalculator.Suggest(forecast,

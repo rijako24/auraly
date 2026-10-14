@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Data;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Inventory;
 using Microsoft.Data.SqlClient;
@@ -10,6 +11,105 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Operational")]
 public sealed class ProductionVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Ingredient_with_recipe_can_be_produced_then_consumed_as_stocked_component()
+    {
+        var raw = Guid.NewGuid();
+        var sauce = Guid.NewGuid();
+        var meal = Guid.NewGuid();
+        await SeedAsync(raw, sauce, meal);
+        using var client = fixture.CreateAdminClient(CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update, InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.ReadCosts, InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.Produce);
+        using (var recipe = await client.PutAsJsonAsync($"/api/commerce/v1/products/{sauce:D}/recipe",
+            new PublishProductRecipeRequest(0, [new(raw, 2m)])))
+            Assert.True(recipe.IsSuccessStatusCode, await recipe.Content.ReadAsStringAsync());
+        var options = await client.GetFromJsonAsync<ProductionProductPage>(
+            $"/api/commerce/v1/inventory/production-products?warehouseId={fixture.WarehouseId:D}&search=Carne&page=1&pageSize=20");
+        Assert.Contains(options!.Items, item => item.ProductId == sauce);
+        var preview = await client.GetFromJsonAsync<ProductionPreview>(
+            $"/api/commerce/v1/inventory/production-products/{sauce:D}/preview?warehouseId={fixture.WarehouseId:D}&quantity=4");
+        Assert.Equal(8m, Assert.Single(preview!.Ingredients).RequiredQuantity);
+        using (var missing = await SendRawAsync(client, "/api/commerce/v1/production/confirm",
+            new ConfirmProductionRequest(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+                DateTimeOffset.UtcNow, sauce, 1, 4m, null), $"missing-{Guid.NewGuid():N}"))
+            Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+        // Production rejects insufficient input before enqueueing a document.
+        Assert.Equal(0m, await BalanceAsync(sauce));
+        await SendAsync(client, "/api/commerce/v1/inventory-adjustments/confirm",
+            new ConfirmInventoryAdjustmentRequest(Guid.NewGuid(), fixture.BusinessId,
+                fixture.WarehouseId, DateTimeOffset.UtcNow, "INITIAL_BALANCE", null, null,
+                [new(1, raw, 20m, 5m)]), $"raw-{Guid.NewGuid():N}");
+        var production = new ConfirmProductionRequest(Guid.NewGuid(), fixture.BusinessId,
+            fixture.WarehouseId, DateTimeOffset.UtcNow, sauce, 1, 4m, null);
+        await SendAsync(client, "/api/commerce/v1/production/confirm", production,
+            $"sauce-{production.DocumentId:N}");
+        Assert.Equal(12m, await BalanceAsync(raw));
+        Assert.Equal(4m, await BalanceAsync(sauce));
+        using (var recipe = await client.PutAsJsonAsync($"/api/commerce/v1/products/{meal:D}/recipe",
+            new PublishProductRecipeRequest(0, [new(sauce, 2m)])))
+            Assert.True(recipe.IsSuccessStatusCode, await recipe.Content.ReadAsStringAsync());
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var currentMode = new SqlCommand("SELECT PointOfSaleMode FROM dbo.Businesses WHERE BusinessId=@BusinessId", connection);
+            currentMode.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            var previousMode = (string?)await currentMode.ExecuteScalarAsync();
+            await using var mode = new SqlCommand("UPDATE dbo.Businesses SET PointOfSaleMode=N'RestaurantBar' WHERE BusinessId=@BusinessId", connection);
+            mode.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await mode.ExecuteNonQueryAsync();
+            try
+            {
+                await using var demand = new SqlCommand("purchasing.RestaurantDemandInputsGet", connection)
+                { CommandType = CommandType.StoredProcedure };
+                demand.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                demand.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+                demand.Parameters.AddWithValue("@ProductIdsJson", System.Text.Json.JsonSerializer.Serialize(new[] { meal }));
+                demand.Parameters.AddWithValue("@StartDate", DateTime.UtcNow.Date);
+                var edges = new HashSet<(Guid Parent, Guid Component)>();
+                await using var reader = await demand.ExecuteReaderAsync();
+                while (await reader.ReadAsync()) edges.Add((reader.GetGuid(0), reader.GetGuid(1)));
+                Assert.Contains((meal, sauce), edges);
+                Assert.Contains((sauce, raw), edges);
+            }
+            finally
+            {
+                await using var restore = new SqlCommand("UPDATE dbo.Businesses SET PointOfSaleMode=@Mode WHERE BusinessId=@BusinessId", connection);
+                restore.Parameters.AddWithValue("@Mode", previousMode ?? "DirectSale");
+                restore.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                await restore.ExecuteNonQueryAsync();
+            }
+        }
+        var mealProduction = new ConfirmProductionRequest(Guid.NewGuid(), fixture.BusinessId,
+            fixture.WarehouseId, DateTimeOffset.UtcNow, meal, 1, 2m, null);
+        await SendAsync(client, "/api/commerce/v1/production/confirm", mealProduction,
+            $"meal-{mealProduction.DocumentId:N}");
+        Assert.Equal(12m, await BalanceAsync(raw));
+        Assert.Equal(0m, await BalanceAsync(sauce));
+        Assert.Equal(2m, await BalanceAsync(meal));
+    }
+
+    [Fact]
+    public async Task Publishing_an_ingredient_recipe_rejects_an_indirect_cycle()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        var meal = Guid.NewGuid();
+        await SeedAsync(first, second, meal);
+        using var client = fixture.CreateAdminClient(CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update);
+        using (var recipe = await client.PutAsJsonAsync($"/api/commerce/v1/products/{first:D}/recipe",
+            new PublishProductRecipeRequest(0, [new(second, 1m)])))
+            Assert.True(recipe.IsSuccessStatusCode, await recipe.Content.ReadAsStringAsync());
+        using var cycle = await client.PutAsJsonAsync($"/api/commerce/v1/products/{second:D}/recipe",
+            new PublishProductRecipeRequest(0, [new(first, 1m)]));
+        Assert.Equal(HttpStatusCode.Conflict, cycle.StatusCode);
+        using var unchanged = await client.GetAsync(
+            $"/api/commerce/v1/products/{second:D}/recipe");
+        Assert.Equal(HttpStatusCode.NotFound, unchanged.StatusCode);
+    }
+
     [Fact]
     public async Task Product_and_zero_balance_recipe_are_saved_atomically()
     {

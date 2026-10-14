@@ -4,6 +4,7 @@ using System.Text.Json;
 using Auraly.Application.Purchasing;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
+using Auraly.BuildingBlocks.Domain.RestaurantDemand;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -92,16 +93,17 @@ public sealed class SqlPurchaseOrderStore(SqlServerConnectionFactory connections
         catch{await transaction.RollbackAsync(CancellationToken.None);throw;}
     }
 
-    public async Task<IReadOnlyList<PurchaseOrderSuggestionInput>> SuggestionInputsAsync(
-        PurchasingUserIdentity user, Guid warehouseId, Guid supplierId,
-        IReadOnlyCollection<Guid> productIds, CancellationToken ct)
+    public async Task<PurchaseOrderSuggestionSnapshot> SuggestionInputsAsync(
+        PurchasingUserIdentity user, PurchaseOrderSuggestionRequest request, CancellationToken ct)
     {
         await using var connection=connections.Create();await connection.OpenAsync(ct);
         await using var command=Procedure("purchasing.PurchaseOrderSuggestionsGet",connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
-        command.Parameters.AddWithValue("@WarehouseId",warehouseId);
-        command.Parameters.AddWithValue("@SupplierId",supplierId);
-        command.Parameters.AddWithValue("@ProductIdsJson",JsonSerializer.Serialize(productIds));
+        command.Parameters.AddWithValue("@WarehouseId",request.WarehouseId);
+        command.Parameters.AddWithValue("@SupplierId",request.SupplierId);
+        command.Parameters.AddWithValue("@ProductIdsJson",JsonSerializer.Serialize(request.ProductIds));
+        command.Parameters.AddWithValue("@RestaurantWeekdayPlan",request.RestaurantWeekdayPlan);
+        command.Parameters.AddWithValue("@StartDate",(object?)request.StartDate?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
         try
         {
             await using var reader=await command.ExecuteReaderAsync(ct);
@@ -109,7 +111,22 @@ public sealed class SqlPurchaseOrderStore(SqlServerConnectionFactory connections
             while(await reader.ReadAsync(ct))values.Add(new(reader.GetGuid(0),reader.GetDecimal(1),
                 reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4),reader.GetDecimal(5),
                 reader.GetString(6),reader.GetDecimal(7),reader.IsDBNull(8)?null:reader.GetFieldValue<DateTimeOffset>(8)));
-            return values;
+            var sales=new List<RestaurantDemandSale>();
+            var openDates=new List<DateOnly>();
+            var recipes=new List<RestaurantRecipeComponent>();
+            var stocks=new List<RestaurantDemandStock>();
+            if(request.RestaurantWeekdayPlan)
+            {
+                await reader.NextResultAsync(ct);
+                while(await reader.ReadAsync(ct))recipes.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetDecimal(2)));
+                await reader.NextResultAsync(ct);
+                while(await reader.ReadAsync(ct))sales.Add(new(reader.GetGuid(0),DateOnly.FromDateTime(reader.GetDateTime(1)),reader.GetDecimal(2)));
+                await reader.NextResultAsync(ct);
+                while(await reader.ReadAsync(ct))openDates.Add(DateOnly.FromDateTime(reader.GetDateTime(0)));
+                await reader.NextResultAsync(ct);
+                while(await reader.ReadAsync(ct))stocks.Add(new(reader.GetGuid(0),reader.GetBoolean(1),reader.GetDecimal(2),reader.GetDecimal(3)));
+            }
+            return new(values,sales,openDates,recipes,stocks);
         }
         catch(SqlException exception) when(exception.Number==51220)
         {throw new PurchasingValidationException(exception.Message);}

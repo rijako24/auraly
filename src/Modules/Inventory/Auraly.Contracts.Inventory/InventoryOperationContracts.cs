@@ -294,6 +294,8 @@ public sealed record ProductConversionProductPage(IReadOnlyList<ProductConversio
 public sealed record ProductionProductQuery(Guid BusinessId, Guid WarehouseId, string? Search, int Page = 1, int PageSize = 50);
 public sealed record ProductionProductItem(Guid ProductId, string ProductCode, string ProductName, string UnitCode, int RecipeVersion, decimal QuantityOnHand);
 public sealed record ProductionProductPage(IReadOnlyList<ProductionProductItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
+public sealed record ProductionDemandSuggestion(Guid ProductId, DateOnly StartDate, int Days,
+    decimal GrossQuantity, decimal SuggestedProductionQuantity, int ComparableDays);
 public sealed record ProductionIngredientPreview(Guid ProductId, string ProductCode, string Name, string UnitCode,
     decimal QuantityPerUnit, decimal RequiredQuantity, decimal QuantityOnHand, decimal? EstimatedUnitCost);
 public sealed record ProductionPreview(Guid ProductId, string ProductCode, string ProductName, string UnitCode,

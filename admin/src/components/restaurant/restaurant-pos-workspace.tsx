@@ -700,8 +700,6 @@ export function RestaurantPosWorkspace({ option }: {
       }, collectionId);
     captureAttempt.current = null;
     setCollectionSummary(updated);
-    try { setDraft(await restaurantAccountApi.draft(draft.account.accountId)); }
-    catch { toast.error("El pago quedó guardado, pero no se actualizó el detalle. Vuelve a abrir la mesa para verlo."); }
     return updated;
   }
 
@@ -711,8 +709,6 @@ export function RestaurantPosWorkspace({ option }: {
     const updated = await restaurantAccountApi.reverseCollection(
       draft.account.accountId, collectionId, collectionSummary.accountVersion);
     setCollectionSummary(updated);
-    try { setDraft(await restaurantAccountApi.draft(draft.account.accountId)); }
-    catch { toast.error("La anulación quedó guardada, pero no se actualizó el detalle. Vuelve a abrir la mesa para verlo."); }
   }
 
   async function completeCheckout(
@@ -721,7 +717,7 @@ export function RestaurantPosWorkspace({ option }: {
     printChoice: PosPrintTemplateFormat | "none",
   ) {
     if (!draft || !option.workSessionId || !checkoutKey || !paymentClient || busy)
-      return;
+      throw new Error("Vuelve a abrir el cobro para emitir el documento guardado.");
     const preview = printChoice === "none"
       ? null : openHalfLetterPrintPreview();
     setBusy(true);
@@ -745,8 +741,7 @@ export function RestaurantPosWorkspace({ option }: {
       backToTables(true);
     } catch (error) {
       closePrintPreview(preview);
-      toast.error(error instanceof Error ? error.message :
-        "No se pudo confirmar la factura. Reintenta sin cambiar el cobro.");
+      throw error;
     } finally { setBusy(false); }
   }
 

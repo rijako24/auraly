@@ -93,6 +93,32 @@ export type RestaurantCollectionSummary = {
   suggestedTipPercent: number;
 };
 
+export type RestaurantTipPendingPage = {
+  items: { collectionId: string; accountId: string; amount: number;
+    capturedAt: string }[];
+  totalCount: number;
+  totalAmount: number;
+};
+export type RestaurantTipSettlementRequest = {
+  settlementId: string;
+  collectionIds: string[];
+  recipients: { partyId: string; amount: number }[];
+  distributionBasis: "EqualByLaw" | "WorkerAgreement";
+  agreementReference: string | null;
+  paymentMethodCode: "Cash" | "Transfer";
+  bankAccountId: string | null;
+  paymentReference: string | null;
+};
+export type RestaurantTipSettlement = {
+  settlementId: string; businessId: string; totalAmount: number;
+  distributionBasis: "EqualByLaw" | "WorkerAgreement";
+  agreementReference: string | null;
+  paymentMethodCode: "Cash" | "Transfer";
+  paymentReference: string | null;
+  createdAt: string;
+  recipients: { partyId: string; amount: number }[];
+};
+
 export type RestaurantMenuCategory = {
   categoryId: string;
   name: string;
@@ -347,6 +373,15 @@ export const restaurantAccountApi = {
     apiClient.get<RestaurantCollectionSummary>(
       `/commerce/v1/restaurant/accounts/${accountId}/collections`,
       undefined, { cache: "no-store" }),
+  pendingTips: () => apiClient.get<RestaurantTipPendingPage>(
+    "/commerce/v1/restaurant/tips/pending", undefined,
+    { cache: "no-store" }),
+  recentTipSettlements: () => apiClient.get<RestaurantTipSettlement[]>(
+    "/commerce/v1/restaurant/tips/settlements", undefined,
+    { cache: "no-store" }),
+  settleTips: (request: RestaurantTipSettlementRequest) =>
+    apiClient.post<RestaurantTipSettlement>(
+      "/commerce/v1/restaurant/tips/settlements", request),
   captureCollection: (accountId: string, request: {
     collectionId: string; workSessionId: string;
     expectedAccountVersion: number;

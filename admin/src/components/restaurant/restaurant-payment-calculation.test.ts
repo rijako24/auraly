@@ -1,6 +1,15 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { settleRestaurantPayment } from "./restaurant-payment-calculation";
+import { finalRestaurantPayments, settleRestaurantPayment } from "./restaurant-payment-calculation";
+
+test("al emitir la factura tras pagos parciales la propina no entra en los medios de venta", () => {
+  const salePayments = finalRestaurantPayments([
+    { payments: [{ methodCode: "Cash", amount: 80_000, reference: null, tenderedAmount: 90_000 }] },
+    { payments: [{ methodCode: "Cash", amount: 110_000, reference: null, tenderedAmount: 110_000 }] },
+  ]);
+  assert.deepEqual(salePayments, [{ methodCode: "Cash", amount: 190_000,
+    reference: null, tenderedAmount: 200_000 }]);
+});
 
 test("un efectivo mayor al consumo se aplica solo por el total y produce cambio", () => {
   assert.deepEqual(settleRestaurantPayment(76_000, [{ methodCode: "Cash", amount: "100000" }]), {

@@ -22,6 +22,10 @@ public static class InventoryApi
             return await ExecuteAsync(() => service.GetProductionProductsAsync(identity,
                 new(identity.BusinessId, warehouseId, search, page == 0 ? 1 : page, pageSize == 0 ? 30 : pageSize), token), Results.Ok);
         }).RequireAuthorization("inventory.user");
+        endpoints.MapGet("/api/commerce/v1/inventory/production-products/{productId:guid}/suggestion", async (ClaimsPrincipal principal, Guid productId, Guid warehouseId, DateOnly startDate, int days, InventoryQueryService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetProductionDemandSuggestionAsync(
+                principal.ToInventoryIdentity(), warehouseId, productId, startDate, days, token), Results.Ok))
+            .RequireAuthorization("inventory.user");
         endpoints.MapGet("/api/commerce/v1/inventory/production-products/{productId:guid}/preview", async (ClaimsPrincipal principal, Guid productId, Guid warehouseId, decimal quantity, InventoryQueryService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetProductionPreviewAsync(principal.ToInventoryIdentity(), warehouseId, productId, quantity, token),
                 value => value is null ? Results.NotFound() : Results.Ok(value))).RequireAuthorization("inventory.user");

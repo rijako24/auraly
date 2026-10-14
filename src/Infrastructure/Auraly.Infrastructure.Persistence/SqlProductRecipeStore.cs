@@ -61,11 +61,20 @@ public sealed class SqlProductRecipeStore(
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            await using (var graph = new SqlCommand("catalog.ProductRecipeGraphValidate", connection, transaction)
+                   { CommandType = CommandType.StoredProcedure })
+            {
+                graph.Parameters.AddWithValue("@TenantId", user.TenantId);
+                graph.Parameters.AddWithValue("@ProductId", productId);
+                graph.Parameters.AddWithValue("@Ingredients", JsonSerializer.Serialize(request.Ingredients));
+                await graph.ExecuteNonQueryAsync(ct);
+            }
             const string sql = """
                 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                     THROW 51021, 'La sede no pertenece a este negocio.', 1;
                 IF NOT EXISTS (SELECT 1 FROM dbo.Products WITH (UPDLOCK,HOLDLOCK)
-                    WHERE TenantId=@TenantId AND ProductId=@ProductId AND IsActive=1 AND IsIngredient=0 AND IsGenericProduct=0)
+                    WHERE TenantId=@TenantId AND ProductId=@ProductId AND IsActive=1 AND IsGenericProduct=0
+                      AND (IsIngredient=0 OR ManageStock=1))
                     THROW 51021, 'El producto terminado no está activo o no admite receta.', 1;
                 IF EXISTS (SELECT 1 FROM dbo.ProductLinks WHERE TenantId=@TenantId
                     AND ChildProductId=@ProductId AND IsActive=1 AND SharesInventory=1)

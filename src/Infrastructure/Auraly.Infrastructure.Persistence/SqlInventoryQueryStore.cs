@@ -1,5 +1,6 @@
 using Auraly.Application.Inventory;
 using Auraly.Contracts.Inventory;
+using Auraly.BuildingBlocks.Domain.RestaurantDemand;
 using System.Data;
 using Microsoft.Data.SqlClient;
 
@@ -114,20 +115,26 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND IsSystem=0)
                 THROW 51201,'Selecciona una bodega de inventario activa.',1;
             DECLARE @TenantId uniqueidentifier=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
+            SELECT version.ProductId,version.[Version]
+            INTO #ActiveRecipes
+            FROM catalog.ProductRecipeVersions version
+            WHERE version.TenantId=@TenantId AND version.IsEnabled=1
+              AND NOT EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions newer
+                  WHERE newer.TenantId=version.TenantId AND newer.ProductId=version.ProductId
+                    AND newer.[Version]>version.[Version]);
+            CREATE UNIQUE CLUSTERED INDEX IX_ActiveRecipes_Product ON #ActiveRecipes(ProductId);
             SELECT COUNT(*) FROM dbo.Products p
-            WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.IsIngredient=0 AND p.ManageStock=1
-              AND EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId
-                  AND v.IsEnabled=1 AND v.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductRecipeVersions latest WHERE latest.TenantId=@TenantId AND latest.ProductId=p.ProductId))
+            JOIN #ActiveRecipes recipe ON recipe.ProductId=p.ProductId
+            WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.ManageStock=1
               AND NOT EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId AND link.IsActive=1 AND link.SharesInventory=1)
               AND (@Search IS NULL OR p.Name LIKE @Pattern OR p.ProductCode LIKE @Pattern);
             SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Name,p.BaseUnitCode,
-                   (SELECT MAX(v.[Version]) FROM catalog.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId),
+                   recipe.[Version],
                    COALESCE(balance.QuantityOnHand,0)
-            FROM dbo.Products p
+            FROM #ActiveRecipes recipe
+            JOIN dbo.Products p ON p.TenantId=@TenantId AND p.ProductId=recipe.ProductId
             LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId
-            WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.IsIngredient=0 AND p.ManageStock=1
-              AND EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions v WHERE v.TenantId=@TenantId AND v.ProductId=p.ProductId
-                  AND v.IsEnabled=1 AND v.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductRecipeVersions latest WHERE latest.TenantId=@TenantId AND latest.ProductId=p.ProductId))
+            WHERE p.IsActive=1 AND p.ManageStock=1
               AND NOT EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId AND link.ChildProductId=p.ProductId AND link.IsActive=1 AND link.SharesInventory=1)
               AND (@Search IS NULL OR p.Name LIKE @Pattern OR p.ProductCode LIKE @Pattern)
             ORDER BY p.Name,p.ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
@@ -144,6 +151,46 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         while (await reader.ReadAsync(token))
             items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetInt32(4), reader.GetDecimal(5)));
         return new(items, query.Page, query.PageSize, total, Pages(total, query.PageSize));
+    }
+
+    public async Task<ProductionDemandSnapshot> GetProductionDemandInputsAsync(
+        InventoryUserIdentity user, Guid warehouseId, Guid productId,
+        DateOnly startDate, CancellationToken token)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand("purchasing.RestaurantDemandInputsGet", connection)
+        { CommandType = CommandType.StoredProcedure };
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", warehouseId);
+        command.Parameters.Add("@ProductIdsJson", SqlDbType.NVarChar, -1).Value =
+            System.Text.Json.JsonSerializer.Serialize(new[] { productId });
+        command.Parameters.Add("@StartDate", SqlDbType.Date).Value =
+            startDate.ToDateTime(TimeOnly.MinValue);
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(token);
+            var recipes = new List<RestaurantRecipeComponent>();
+            while (await reader.ReadAsync(token))
+                recipes.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2)));
+            await reader.NextResultAsync(token);
+            var sales = new List<RestaurantDemandSale>();
+            while (await reader.ReadAsync(token))
+                sales.Add(new(reader.GetGuid(0), DateOnly.FromDateTime(reader.GetDateTime(1)), reader.GetDecimal(2)));
+            await reader.NextResultAsync(token);
+            var openDates = new List<DateOnly>();
+            while (await reader.ReadAsync(token))
+                openDates.Add(DateOnly.FromDateTime(reader.GetDateTime(0)));
+            await reader.NextResultAsync(token);
+            var stocks = new List<RestaurantDemandStock>();
+            while (await reader.ReadAsync(token))
+                stocks.Add(new(reader.GetGuid(0), reader.GetBoolean(1), reader.GetDecimal(2), reader.GetDecimal(3)));
+            return new(recipes, sales, openDates, stocks);
+        }
+        catch (SqlException exception) when (exception.Number == 51220)
+        {
+            throw new InventoryValidationException(exception.Message);
+        }
     }
 
     public async Task<ProductionPreview?> GetProductionPreviewAsync(InventoryUserIdentity user,
@@ -166,7 +213,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             LEFT JOIN dbo.InventoryBalances finishedBalance ON finishedBalance.BusinessId=@BusinessId AND finishedBalance.WarehouseId=@WarehouseId AND finishedBalance.ProductId=finished.ProductId
             LEFT JOIN dbo.InventoryBalances ingredientBalance ON ingredientBalance.BusinessId=@BusinessId AND ingredientBalance.WarehouseId=@WarehouseId AND ingredientBalance.ProductId=ingredient.ProductId
             WHERE finished.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-              AND finished.ProductId=@ProductId AND finished.IsActive=1 AND finished.IsIngredient=0 AND finished.ManageStock=1
+              AND finished.ProductId=@ProductId AND finished.IsActive=1 AND finished.ManageStock=1
               AND recipe.IsEnabled=1
             ORDER BY line.LineNumber;
             """;

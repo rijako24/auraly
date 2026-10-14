@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Purchasing;
+using Auraly.Contracts.Inventory;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -28,6 +29,55 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
             "/api/commerce/v1/purchase-orders/suggestions",
             request with { BusinessId = Guid.NewGuid() });
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
+
+    [Fact]
+    public async Task Restaurant_weekday_suggestion_reads_recipes_and_stock_without_changing_receiving()
+    {
+        using var client = CreateClient(InventoryPermissionCodes.Read);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        string? previousMode;
+        await using (var current = new SqlCommand(
+            "SELECT PointOfSaleMode FROM dbo.Businesses WHERE BusinessId=@BusinessId", connection))
+        {
+            current.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            previousMode = (string?)await current.ExecuteScalarAsync();
+        }
+        try
+        {
+            await using (var change = new SqlCommand(
+                "UPDATE dbo.Businesses SET PointOfSaleMode=N'RestaurantBar' WHERE BusinessId=@BusinessId", connection))
+            {
+                change.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                await change.ExecuteNonQueryAsync();
+            }
+            var request = new PurchaseOrderSuggestionRequest(
+                fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+                [fixture.ProductId], 7, true, new DateOnly(2026, 10, 16));
+            using var response = await client.PostAsJsonAsync(
+                "/api/commerce/v1/purchase-orders/suggestions", request);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(response.IsSuccessStatusCode, body);
+            var suggestion = Assert.Single(await response.Content
+                .ReadFromJsonAsync<PurchaseOrderSuggestion[]>() ?? []);
+            Assert.True(suggestion.RestaurantWeekdayPlan);
+            Assert.Equal(7, suggestion.TargetCoverageDays);
+            Assert.True(suggestion.ComparableDays >= 0);
+            using var production = await client.GetAsync(
+                $"/api/commerce/v1/inventory/production-products/{fixture.ProductId:D}/suggestion" +
+                $"?warehouseId={fixture.WarehouseId:D}&startDate=2026-10-16&days=7");
+            Assert.True(production.IsSuccessStatusCode,
+                await production.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await using var restore = new SqlCommand(
+                "UPDATE dbo.Businesses SET PointOfSaleMode=@Mode WHERE BusinessId=@BusinessId", connection);
+            restore.Parameters.AddWithValue("@Mode", previousMode ?? "DirectSale");
+            restore.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await restore.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]

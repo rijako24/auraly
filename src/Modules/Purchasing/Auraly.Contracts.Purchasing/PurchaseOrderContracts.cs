@@ -63,7 +63,8 @@ public sealed record PurchaseOrderConfirmation(
 
 public sealed record PurchaseOrderSuggestionRequest(
     Guid BusinessId, Guid WarehouseId, Guid SupplierId,
-    IReadOnlyCollection<Guid> ProductIds, int TargetCoverageDays = 7);
+    IReadOnlyCollection<Guid> ProductIds, int TargetCoverageDays = 7,
+    bool RestaurantWeekdayPlan = false, DateOnly? StartDate = null);
 
 public sealed record PurchaseOrderSuggestion(
     Guid ProductId, int TargetCoverageDays, decimal Rotation30Days,
@@ -71,7 +72,9 @@ public sealed record PurchaseOrderSuggestion(
     decimal CurrentStock,
     decimal IncomingQuantity, string PresentationName, decimal UnitsPerPresentation,
     decimal SuggestedQuantity, decimal SuggestedPresentationQuantity,
-    DateTimeOffset? RotationCalculatedAt);
+    DateTimeOffset? RotationCalculatedAt,
+    bool RestaurantWeekdayPlan = false, int ComparableDays = 0,
+    decimal SuggestedProductionQuantity = 0, bool IsProduced = false);
 
 public sealed record ClosePurchaseOrderRequest(string Reason, string ConcurrencyToken);
 
