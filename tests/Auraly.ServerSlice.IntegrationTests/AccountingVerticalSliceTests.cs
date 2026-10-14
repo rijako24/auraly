@@ -1370,7 +1370,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                     "The accounting defaults response is empty.");
             Assert.True(defaults.IsReady);
             Assert.True(defaults.AccountCount >= 43);
-            Assert.Equal(60, defaults.MappingCount);
+            Assert.Equal(61, defaults.MappingCount);
             Assert.True(defaults.HasDefaultCostCenter);
             Assert.True(defaults.HasOpenPeriod);
         }
