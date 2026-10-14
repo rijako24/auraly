@@ -159,6 +159,15 @@ public sealed partial class SqlWorkSessionStore
               CorrectedApprovalNumber,CorrectedReference,CounterpartyName
             FROM #PaymentVerifications
             ORDER BY SortOrder,OccurredAt,VerificationKey;
+            SELECT JSON_QUERY(reconciliation.SnapshotJson,N'$.manualMovements')
+            FROM dbo.WorkSessionClosureReconciliations reconciliation
+            WHERE reconciliation.WorkSessionClosureId=@ClosureId;
+            SELECT JSON_QUERY(reconciliation.SnapshotJson,N'$.cashShortageClaim')
+            FROM dbo.WorkSessionClosureReconciliations reconciliation
+            WHERE reconciliation.WorkSessionClosureId=@ClosureId;
+            SELECT reconciliation.Note
+            FROM dbo.WorkSessionClosureReconciliations reconciliation
+            WHERE reconciliation.WorkSessionClosureId=@ClosureId;
             """, connection);
         command.Parameters.AddWithValue("@ClosureId", closureId);
         command.Parameters.AddWithValue("@Method", (object?)paymentMethodCode ?? DBNull.Value);
@@ -179,7 +188,20 @@ public sealed partial class SqlWorkSessionStore
         await reader.NextResultAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             items.Add(ReadPaymentVerificationItem(reader));
-        return new(items, groups, page, pageSize, total);
+        await reader.NextResultAsync(cancellationToken);
+        IReadOnlyList<WorkSessionManualReconciliationMovement> manualMovements = [];
+        if (await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0))
+            manualMovements = JsonSerializer.Deserialize<WorkSessionManualReconciliationMovement[]>(
+                reader.GetString(0), Json) ?? [];
+        await reader.NextResultAsync(cancellationToken);
+        WorkSessionCashShortageClaim? cashShortageClaim = null;
+        if (await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0))
+            cashShortageClaim = JsonSerializer.Deserialize<WorkSessionCashShortageClaim>(reader.GetString(0), Json);
+        await reader.NextResultAsync(cancellationToken);
+        string? reconciliationNote = null;
+        if (await reader.ReadAsync(cancellationToken) && !reader.IsDBNull(0))
+            reconciliationNote = reader.GetString(0);
+        return new(items, groups, page, pageSize, total, manualMovements, cashShortageClaim, reconciliationNote);
     }
 
     public async Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
@@ -221,6 +243,19 @@ public sealed partial class SqlWorkSessionStore
             }
             var expected = await ReadClosurePaymentTotalsAsync(connection, closureId, cancellationToken, transaction);
             var countable = expected.Where(value => value.RequiresCount).ToArray();
+            var manualMovements = (request.ManualMovements ?? []).Select(item => item with
+            {
+                PaymentMethodCode = item.PaymentMethodCode.Trim(),
+                Observation = item.Observation.Trim()
+            }).ToArray();
+            if (manualMovements.Any(item => countable.All(method =>
+                    !method.PaymentMethodCode.Equals(item.PaymentMethodCode, StringComparison.OrdinalIgnoreCase))))
+                throw new WorkSessionValidationException("El medio del movimiento manual no pertenece al cierre.");
+            manualMovements = manualMovements.Select(item => item with
+            {
+                PaymentMethodCode = countable.Single(method => method.PaymentMethodCode.Equals(
+                    item.PaymentMethodCode, StringComparison.OrdinalIgnoreCase)).PaymentMethodCode
+            }).ToArray();
             var lines = request.Lines.ToDictionary(value => value.PaymentMethodCode.Trim(), StringComparer.OrdinalIgnoreCase);
             if (lines.Count != request.Lines.Count || countable.Any(value => !lines.ContainsKey(value.PaymentMethodCode)) ||
                 lines.Keys.Any(code => countable.All(value => !value.PaymentMethodCode.Equals(code, StringComparison.OrdinalIgnoreCase))))
@@ -261,6 +296,27 @@ public sealed partial class SqlWorkSessionStore
                     throw new WorkSessionValidationException("La reclasificación debe mover un faltante real hacia un sobrante real sin excederlos.");
                 differences[correction.FromPaymentMethodCode] += correction.Amount;
                 differences[correction.ToPaymentMethodCode] -= correction.Amount;
+            }
+            WorkSessionCashShortageClaim? cashShortageClaim = null;
+            if (request.ChargeCashShortageToEmployee)
+            {
+                if (!differences.TryGetValue("Cash", out var cashDifference) || cashDifference >= 0)
+                    throw new WorkSessionValidationException("Solo puedes registrar una cuenta por cobrar por un faltante de efectivo confirmado.");
+                await using var debtor = new SqlCommand("""
+                    SELECT employee.PartyId
+                    FROM dbo.WorkSessionClosures closure
+                    JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+                    JOIN dbo.AppUsers cashier ON cashier.UserId=session.UserId
+                    JOIN dbo.Employees employee ON employee.TenantId=cashier.TenantId
+                      AND employee.PartyId=cashier.PartyId AND employee.IsActive=1
+                    WHERE closure.WorkSessionClosureId=@ClosureId AND session.BusinessId=@BusinessId;
+                    """, connection, transaction);
+                debtor.Parameters.AddWithValue("@ClosureId", closureId);
+                debtor.Parameters.AddWithValue("@BusinessId", businessId);
+                var partyId = await debtor.ExecuteScalarAsync(cancellationToken);
+                if (partyId is not Guid employeePartyId)
+                    throw new WorkSessionValidationException("El usuario del cierre debe estar vinculado a un empleado activo para registrar la cuenta por cobrar.");
+                cashShortageClaim = new(ids.NewId(), employeePartyId, -cashDifference);
             }
             var status = differences.Values.All(value => value == 0) && !verification.HasMissingCreditSale
                 ? "Reconciled" : "ReconciledWithDifferences";
@@ -310,6 +366,8 @@ public sealed partial class SqlWorkSessionStore
                 reconciliationId, closureId, status, reconciledAt, lines=normalizedLines,
                 paymentVerifications=requestedVerifications,
                 paymentCorrections=verification.Corrections,
+                manualMovements,
+                cashShortageClaim,
                 reclassifications=request.Reclassifications, note=request.Note, requestHash
             };
             var snapshot = JsonSerializer.Serialize(snapshotObject, Json);
@@ -386,13 +444,22 @@ public sealed partial class SqlWorkSessionStore
                         ? expectedCash : total.NetAmount),line.ReasonCode);
             }).ToArray();
             var payload = new WorkSessionClosureReconciliationPayload(reconciliationId,closureId,identity.TenantId,businessId,
-                identity.UserId,reconciledAt,accountingLines,request.Reclassifications,verification.Corrections);
+                identity.UserId,reconciledAt,accountingLines,request.Reclassifications,verification.Corrections,
+                cashShortageClaim);
             var accountingRequired = accountingLines.Any(line => line.VerifiedAmount != line.CountedAmount)
                 || differences.Values.Any(value => value != 0) ||
+                   cashShortageClaim is not null ||
                    verification.Corrections.Any(item => item.Amount != item.OriginalAmount ||
                        item.OriginalTenderCategory != item.TenderCategory);
             var accountingQueued = accountingRequired && await InsertReconciliationAccountingJobAsync(
                 connection, transaction, payload, cancellationToken);
+            if (cashShortageClaim is not null)
+            {
+                if (!accountingQueued)
+                    throw new WorkSessionValidationException("No se pudo registrar el documento contable del faltante.");
+                await InsertCashShortageReceivableAsync(connection, transaction, businessId,
+                    reconciliationId, closureId, cashShortageClaim, reconciledAt, cancellationToken);
+            }
             await transaction.CommitAsync(cancellationToken);
             return new(reconciliationId,closureId,businessId,status,reconciledAt,identity.UserId,normalizedLines,
                 request.Reclassifications,request.Note,accountingQueued ? "Pending" : "NotRequired");
@@ -403,6 +470,32 @@ public sealed partial class SqlWorkSessionStore
             throw new WorkSessionConflictException("El cierre ya fue conciliado o la operación ya fue recibida.");
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
+    }
+
+    private async Task InsertCashShortageReceivableAsync(SqlConnection connection, SqlTransaction transaction,
+        Guid businessId, Guid reconciliationId, Guid closureId, WorkSessionCashShortageClaim claim,
+        DateTimeOffset reconciledAt, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            INSERT dbo.Receivables
+              (ReceivableId,BusinessId,PartyId,SourceDocumentId,SourceDocumentType,
+               DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
+            VALUES(@ReceivableId,@BusinessId,@PartyId,@ReconciliationId,
+              N'WorkSessionClosureReconciliation',@DocumentNumber,N'COP',@Amount,@Amount,
+              @At,N'Open',@At);
+            INSERT dbo.ReceivableTransactions
+              (ReceivableTransactionId,ReceivableId,TransactionType,Amount,SourceDocumentId,OccurredAt,CreatedAt)
+            VALUES(@TransactionId,@ReceivableId,N'Opening',@Amount,@ReconciliationId,@At,@At);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@ReceivableId", claim.ReceivableId);
+        command.Parameters.AddWithValue("@TransactionId", ids.NewId());
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@PartyId", claim.EmployeePartyId);
+        command.Parameters.AddWithValue("@ReconciliationId", reconciliationId);
+        command.Parameters.AddWithValue("@DocumentNumber", $"FALT-{closureId:N}");
+        command.Parameters.AddWithValue("@Amount", claim.Amount);
+        command.Parameters.AddWithValue("@At", reconciledAt);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task<bool> InsertReconciliationAccountingJobAsync(SqlConnection connection, SqlTransaction transaction,
@@ -429,7 +522,7 @@ public sealed partial class SqlWorkSessionStore
         command.Parameters.AddWithValue("@TenantId",payload.TenantId); command.Parameters.AddWithValue("@BusinessId",payload.BusinessId);
         command.Parameters.AddWithValue("@Payload",json); command.Parameters.Add("@Hash",SqlDbType.Binary,32).Value=hash;
         command.Parameters.AddWithValue("@At",payload.ReconciledAt);
-        command.Parameters.AddWithValue("@HasFinancialEffects",payload.PaymentCorrections?.Any(item =>
+        command.Parameters.AddWithValue("@HasFinancialEffects",payload.CashShortageClaim is not null || payload.PaymentCorrections?.Any(item =>
             item.Amount != item.OriginalAmount || item.OriginalTenderCategory != item.TenderCategory) == true);
         return (bool)(await command.ExecuteScalarAsync(cancellationToken)
             ?? throw new DBConcurrencyException("The reconciliation accounting state is unavailable."));
@@ -449,14 +542,58 @@ public sealed partial class SqlWorkSessionStore
         if (closureIds.Count == 0)
             return new Dictionary<Guid, IReadOnlyList<WorkSessionPaymentTotal>>();
         await using var command = new SqlCommand("""
+            WITH CorrectionDeltas AS
+            (
+              SELECT reconciliation.WorkSessionClosureId,shift.PaymentMethodCode,
+                SUM(shift.Delta) Delta
+              FROM OPENJSON(@ClosureIds) WITH(ClosureId uniqueidentifier '$') ids
+              JOIN dbo.WorkSessionClosureReconciliations reconciliation
+                ON reconciliation.WorkSessionClosureId=ids.ClosureId
+              CROSS APPLY OPENJSON(reconciliation.SnapshotJson,N'$.paymentCorrections') WITH(
+                OriginalPaymentMethodCode nvarchar(32) '$.originalPaymentMethodCode',
+                OriginalAmount decimal(19,4) '$.originalAmount',
+                PaymentMethodCode nvarchar(32) '$.paymentMethodCode',
+                Amount decimal(19,4) '$.amount') correction
+              CROSS APPLY (VALUES
+                (correction.OriginalPaymentMethodCode,correction.OriginalAmount),
+                (correction.PaymentMethodCode,-correction.Amount)) shift(PaymentMethodCode,Delta)
+              GROUP BY reconciliation.WorkSessionClosureId,shift.PaymentMethodCode
+            ), ReclassificationDeltas AS
+            (
+              SELECT reconciliation.WorkSessionClosureId,shift.PaymentMethodCode,
+                SUM(shift.Delta) Delta
+              FROM OPENJSON(@ClosureIds) WITH(ClosureId uniqueidentifier '$') ids
+              JOIN dbo.WorkSessionClosureReconciliations reconciliation
+                ON reconciliation.WorkSessionClosureId=ids.ClosureId
+              JOIN dbo.WorkSessionClosureReclassifications movement
+                ON movement.ReconciliationId=reconciliation.ReconciliationId
+              CROSS APPLY (VALUES
+                (movement.FromPaymentMethodCode,movement.Amount),
+                (movement.ToPaymentMethodCode,-movement.Amount)) shift(PaymentMethodCode,Delta)
+              GROUP BY reconciliation.WorkSessionClosureId,shift.PaymentMethodCode
+            )
             SELECT total.WorkSessionClosureId,total.PaymentMethodCode,
               total.SalesAmount,total.RefundAmount,total.OtherAmount,total.NetAmount,
               total.CountedAmount,total.Difference,
+              CASE WHEN reconciliationLine.ReconciliationId IS NULL THEN total.Difference
+                ELSE reconciliationLine.Difference+COALESCE(correction.Delta,0)
+                  +COALESCE(reclassification.Delta,0) END,
               CAST(CASE WHEN closureOption.OptionId IS NULL THEN 0 ELSE 1 END AS bit),
               COALESCE(closureOption.SortOrder,1000)
             FROM OPENJSON(@ClosureIds) WITH(ClosureId uniqueidentifier '$') ids
             JOIN dbo.WorkSessionClosurePaymentTotals total
               ON total.WorkSessionClosureId=ids.ClosureId
+            LEFT JOIN dbo.WorkSessionClosureReconciliations reconciliation
+              ON reconciliation.WorkSessionClosureId=total.WorkSessionClosureId
+            LEFT JOIN dbo.WorkSessionClosureReconciliationLines reconciliationLine
+              ON reconciliationLine.ReconciliationId=reconciliation.ReconciliationId
+                AND reconciliationLine.PaymentMethodCode=total.PaymentMethodCode
+            LEFT JOIN CorrectionDeltas correction
+              ON correction.WorkSessionClosureId=total.WorkSessionClosureId
+                AND correction.PaymentMethodCode=total.PaymentMethodCode
+            LEFT JOIN ReclassificationDeltas reclassification
+              ON reclassification.WorkSessionClosureId=total.WorkSessionClosureId
+                AND reclassification.PaymentMethodCode=total.PaymentMethodCode
             LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=total.PaymentMethodCode AND closureOption.IsActive=1
             ORDER BY total.WorkSessionClosureId,COALESCE(closureOption.SortOrder,1000),
@@ -473,7 +610,8 @@ public sealed partial class SqlWorkSessionStore
             totals.Add(new WorkSessionPaymentTotal(
                 reader.GetString(1), reader.GetDecimal(2), reader.GetDecimal(3), reader.GetDecimal(4),
                 reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetDecimal(6),
-                reader.IsDBNull(7) ? null : reader.GetDecimal(7), reader.GetBoolean(8)));
+                reader.IsDBNull(7) ? null : reader.GetDecimal(7), reader.GetBoolean(9),
+                ReconciledDifference: reader.IsDBNull(8) ? null : reader.GetDecimal(8)));
         }
         return grouped.ToDictionary(pair => pair.Key,
             pair => (IReadOnlyList<WorkSessionPaymentTotal>)pair.Value);

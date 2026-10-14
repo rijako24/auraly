@@ -26,7 +26,8 @@ internal static class PortfolioReportPrint
                     Overdue31To60 = result.TotalOverdue31To60, Overdue61To90 = result.TotalOverdue61To90,
                     OverdueOver90 = result.TotalOverdueOver90
                 }],
-                result.Items.Select(item => new PrintRow(item.CustomerId, item.PartySiteId,
+                result.Items.Select(item => new PrintRow(item.CustomerId ?? item.PartyId ??
+                    throw new InvalidOperationException("La cuenta por cobrar no tiene deudor."), item.PartySiteId,
                     item.CustomerName, item.Identification, item.PartySiteName,
                     item.CurrencyCode, item.InvoiceCount, item.DocumentNumber,
                     item.IssuedAt, item.DueDate, item.OriginalAmount, item.PaidAmount,

@@ -359,6 +359,25 @@ public sealed partial class SqlAccountingPostingProcessor(
                 (correction.Amount != correction.OriginalAmount &&
                   string.IsNullOrWhiteSpace(correction.CounterpartCategory))) == true))
             throw new InvalidOperationException("The work-session reconciliation payload is inconsistent.");
+        if (payload.CashShortageClaim is { } claim)
+        {
+            var cashLine = payload.Lines.SingleOrDefault(line =>
+                line.PaymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase));
+            var cashResidual = cashLine?.Difference ?? 0;
+            cashResidual += payload.Reclassifications.Where(item => item.FromPaymentMethodCode.Equals(
+                "Cash", StringComparison.OrdinalIgnoreCase)).Sum(item => item.Amount);
+            cashResidual -= payload.Reclassifications.Where(item => item.ToPaymentMethodCode.Equals(
+                "Cash", StringComparison.OrdinalIgnoreCase)).Sum(item => item.Amount);
+            cashResidual += (payload.PaymentCorrections ?? []).Where(item =>
+                item.OriginalPaymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase))
+                .Sum(item => item.OriginalAmount);
+            cashResidual -= (payload.PaymentCorrections ?? []).Where(item =>
+                item.PaymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase))
+                .Sum(item => item.Amount);
+            if (claim.ReceivableId == Guid.Empty || claim.EmployeePartyId == Guid.Empty ||
+                cashResidual >= 0 || claim.Amount != -cashResidual)
+                throw new InvalidOperationException("The cashier shortage receivable does not match the cash reconciliation.");
+        }
         return FinancialFacts.ClosureReconciliation(
             $"Conciliación del cierre {payload.WorkSessionClosureId:D}",payload);
     }
@@ -2362,8 +2381,9 @@ public sealed partial class SqlAccountingPostingProcessor(
                     lines.Add(new(AccountingCategories.CashClosureDifferencesPending,0,-delta,null,description));
                 }
             }
-            foreach(var difference in residual.Values)
+            foreach(var item in residual)
             {
+                var difference = item.Value;
                 if(difference>0)
                 {
                     lines.Add(new(AccountingCategories.CashClosureDifferencesPending,difference,0,null,description));
@@ -2371,7 +2391,11 @@ public sealed partial class SqlAccountingPostingProcessor(
                 }
                 else if(difference<0)
                 {
-                    lines.Add(new(AccountingCategories.CashShortageExpense,-difference,0,null,description));
+                    var cashClaim = item.Key.Equals("Cash",StringComparison.OrdinalIgnoreCase) &&
+                        payload.CashShortageClaim?.Amount == -difference;
+                    lines.Add(new(cashClaim ? AccountingCategories.EmployeeShortagesReceivable :
+                        AccountingCategories.CashShortageExpense,-difference,0,
+                        cashClaim ? payload.CashShortageClaim!.EmployeePartyId : null,description));
                     lines.Add(new(AccountingCategories.CashClosureDifferencesPending,0,-difference,null,description));
                 }
             }

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Contracts.Receivables;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -1023,7 +1024,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         }
         var closure = await CloseAsync(client, opened.WorkSessionId,
             $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null,
-                PaymentCounts: [new("Cash", 0m), new("Card", 0m), new("Transfer", 9000m)]));
+                PaymentCounts: [new("Cash", 0m), new("Card", 0m), new("Transfer", 0m)]));
         var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
         var page = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
             $"{path}/payment-verifications/page?paymentMethodCode=Transfer&page=1&pageSize=100");
@@ -1051,8 +1052,25 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                     .Select(item => new ReconcileWorkSessionClosureLine(
                         item.PaymentMethodCode, item.NetAmount, true, null)).ToArray(),
                 [], null,
-                [new WorkSessionPaymentVerificationDecision(sale.VerificationKey, "Verified")]))
+                [new WorkSessionPaymentVerificationDecision(sale.VerificationKey, "Verified")],
+                ManualMovements: [new(Guid.NewGuid(), "Transfer", "Sale", 9_000m,
+                    "La cajera omitió reportar una transferencia comprobada")]))
         };
+        using (var invalid = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+               {
+                   Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                       closure.PaymentTotals.Where(item => item.RequiresCount)
+                           .Select(item => new ReconcileWorkSessionClosureLine(item.PaymentMethodCode,
+                               item.PaymentMethodCode == "Transfer" ? 9_000m : 0m, true, null)).ToArray(),
+                       [], null,
+                       [new WorkSessionPaymentVerificationDecision(sale.VerificationKey, "Verified")],
+                       ManualMovements: [new(Guid.NewGuid(), "Transfer", "CashOut", 9_000m, "Omitido")]))
+               })
+        {
+            invalid.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+            using var invalidResponse = await client.SendAsync(invalid);
+            Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
+        }
         verifiedRequest.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
         using var verifiedResponse = await client.SendAsync(verifiedRequest);
         verifiedResponse.EnsureSuccessStatusCode();
@@ -1061,6 +1079,200 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal("Reconciled", reconciliation.Status);
         Assert.Equal(9000m, reconciliation.Lines.Single(line =>
             line.PaymentMethodCode == "Transfer").VerifiedAmount);
+        var reconciledPage = await client.GetFromJsonAsync<WorkSessionClosurePage>(
+            $"/api/commerce/v1/work-sessions/closures?from={DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1)):yyyy-MM-dd}&to={DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1)):yyyy-MM-dd}&status=Reconciled");
+        var reconciledClosure = Assert.Single(reconciledPage!.Items,
+            item => item.WorkSessionClosureId == closure.WorkSessionClosureId);
+        var transferTotal = Assert.Single(reconciledClosure.PaymentTotals,
+            item => item.PaymentMethodCode == "Transfer");
+        Assert.Equal(-9_000m, transferTotal.Difference);
+        Assert.Equal(0m, transferTotal.ReconciledDifference);
+        var persisted = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?page=1&pageSize=1");
+        Assert.Equal(9_000m, Assert.Single(persisted!.ManualMovements!).Amount);
+    }
+
+    [Fact]
+    public async Task Cash_shortage_checkbox_opens_one_employee_receivable_without_a_customer()
+    {
+        var userId = await CreateUserAsync("work-session-shortage-claim");
+        var partyId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                VALUES(@PartyId,@TenantId,N'NaturalPerson',N'Empleado de prueba',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+                INSERT dbo.Employees(EmployeeId,TenantId,PartyId,Name,IsActive)
+                VALUES(NEWID(),@TenantId,@PartyId,N'Empleado de prueba',1);
+                UPDATE dbo.AppUsers SET PartyId=@PartyId WHERE UserId=@UserId;
+                """;
+            command.Parameters.AddWithValue("@PartyId", partyId);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@UserId", userId);
+            await command.ExecuteNonQueryAsync();
+        }
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ManageCash, WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures, ReceivablesPermissionCodes.Read);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        var reasons = await client.GetFromJsonAsync<CashMovementReasonView[]>(
+            $"/api/commerce/v1/work-sessions/cash-reasons?businessId={fixture.BusinessId:D}&direction=In");
+        var reason = Assert.Single(reasons!, value => value.Code == "OTHER_INCOME");
+        var documentId = Guid.NewGuid();
+        using (var message = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/cash-movements")
+               {
+                   Content = JsonContent.Create(new ConfirmCashMovementRequest(
+                       documentId, fixture.BusinessId, opened.WorkSessionId,
+                       reason.ReasonId, 5_000m, DateTimeOffset.UtcNow,
+                       "Ingreso para probar faltante", null, null))
+               })
+        {
+            message.Headers.Add("Idempotency-Key", $"cash-{documentId:N}");
+            using var response = await client.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var cashMovements = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"{path}/payment-verifications");
+        var cashIn = Assert.Single(cashMovements!, item => item.MovementType == "CashIn");
+        var request = new ReconcileWorkSessionClosureRequest(
+            closure.PaymentTotals.Where(item => item.RequiresCount)
+                .Select(item => new ReconcileWorkSessionClosureLine(item.PaymentMethodCode,
+                    0m, true, item.PaymentMethodCode == "Cash" ? "COUNT_DIFFERENCE" : null)).ToArray(),
+            [], "Faltante confirmado en el arqueo",
+            [new WorkSessionPaymentVerificationDecision(cashIn.VerificationKey, "Verified")],
+            ChargeCashShortageToEmployee: true);
+        using var message2 = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        { Content = JsonContent.Create(request) };
+        message2.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var response2 = await client.SendAsync(message2);
+        response2.EnsureSuccessStatusCode();
+        var accepted = await response2.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(accepted);
+        var persisted = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?page=1&pageSize=1");
+        Assert.NotNull(persisted?.CashShortageClaim);
+        Assert.Equal(5_000m, persisted.CashShortageClaim.Amount);
+        Assert.Equal(partyId, persisted.CashShortageClaim.EmployeePartyId);
+        Assert.Equal("Faltante confirmado en el arqueo", persisted.ReconciliationNote);
+        await using var read = new SqlConnection(fixture.ConnectionString);
+        await read.OpenAsync();
+        await using var check = read.CreateCommand();
+        check.CommandText = """
+            SELECT receivable.CustomerId,receivable.PartyId,receivable.OriginalAmount,
+              receivable.OutstandingAmount,COUNT(ledger.ReceivableTransactionId)
+            FROM dbo.Receivables receivable
+            JOIN dbo.ReceivableTransactions ledger
+              ON ledger.ReceivableId=receivable.ReceivableId
+            WHERE receivable.SourceDocumentId=@ReconciliationId
+              AND receivable.SourceDocumentType=N'WorkSessionClosureReconciliation'
+            GROUP BY receivable.CustomerId,receivable.PartyId,
+              receivable.OriginalAmount,receivable.OutstandingAmount;
+            """;
+        check.Parameters.AddWithValue("@ReconciliationId", accepted.ReconciliationId);
+        await using var row = await check.ExecuteReaderAsync();
+        Assert.True(await row.ReadAsync());
+        Assert.True(row.IsDBNull(0));
+        Assert.Equal(partyId, row.GetGuid(1));
+        Assert.Equal(5_000m, row.GetDecimal(2));
+        Assert.Equal(5_000m, row.GetDecimal(3));
+        Assert.Equal(1, row.GetInt32(4));
+        var portfolio = await client.GetFromJsonAsync<ReceivablePage>(
+            "/api/commerce/v1/receivables?page=1&pageSize=100");
+        var claim = Assert.Single(portfolio!.Items,
+            item => item.ReceivableId == persisted.CashShortageClaim.ReceivableId);
+        Assert.Null(claim.CustomerId);
+        Assert.Equal(partyId, claim.PartyId);
+        var detail = await client.GetFromJsonAsync<ReceivableDetail>(
+            $"/api/commerce/v1/receivables/{claim.ReceivableId:D}");
+        Assert.Equal("Faltante confirmado en el arqueo", detail!.SourceNote);
+        var report = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=100&consolidated=false&cutoff={DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1)):yyyy-MM-dd}");
+        var reportItem = Assert.Single(report!.Items, item => item.ReceivableId == claim.ReceivableId);
+        Assert.Null(reportItem.CustomerId);
+        Assert.Equal(partyId, reportItem.PartyId);
+    }
+
+    [Fact]
+    public async Task Cash_sale_corrected_to_card_reduces_cash_and_increases_card_in_the_reconciled_list()
+    {
+        var userId = await CreateUserAsync("work-session-cash-to-card");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        var documentId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT dbo.SalesDocuments
+                  (DocumentId,BusinessId,WarehouseId,SourceMode,DocumentSeriesId,
+                   DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
+                   DocumentType,IdempotencyKey,PayloadHash,IssuedAt,
+                   CustomerIdentification,UntaxedAmount,TaxAmount,PayableAmount,
+                   CreditAmount,ProcessingStatus,ReceivedAt,SoldByUserId,WorkSessionId)
+                VALUES(@DocumentId,@BusinessId,@WarehouseId,N'Online',@SeriesId,
+                  @Number,N'CVI',N'00',@Consecutive,N'SalesReceipt',@Key,@Hash,
+                  SYSDATETIMEOFFSET(),N'222222222222',9000,0,9000,0,
+                  N'Completed',SYSDATETIMEOFFSET(),@UserId,@SessionId);
+                INSERT dbo.SalesPayments
+                  (DocumentId,PaymentNumber,MethodCode,Amount,RegisteredAt)
+                VALUES(@DocumentId,1,N'Cash',9000,SYSDATETIMEOFFSET());
+                """;
+            command.Parameters.AddWithValue("@DocumentId", documentId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            command.Parameters.AddWithValue("@SeriesId", fixture.OnlineSalesReceiptSeriesId);
+            command.Parameters.AddWithValue("@Number", $"CVI-{documentId:N}");
+            command.Parameters.AddWithValue("@Consecutive", (long)BitConverter.ToUInt32(documentId.ToByteArray(), 0) + 1L);
+            command.Parameters.AddWithValue("@Key", $"sale-{documentId:N}");
+            command.Parameters.Add("@Hash", System.Data.SqlDbType.Binary, 32).Value = new byte[32];
+            command.Parameters.AddWithValue("@UserId", userId);
+            command.Parameters.AddWithValue("@SessionId", opened.WorkSessionId);
+            Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        }
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null,
+                PaymentCounts: [new("Cash", 0m), new("Card", 9_000m), new("Transfer", 0m)]));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        var page = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"{path}/payment-verifications/page?paymentMethodCode=Cash&page=1&pageSize=100");
+        var sale = Assert.Single(page!.Items, item => item.MovementType == "Sale");
+        var request = new ReconcileWorkSessionClosureRequest(
+            closure.PaymentTotals.Where(item => item.RequiresCount)
+                .Select(item => new ReconcileWorkSessionClosureLine(item.PaymentMethodCode,
+                    item.PaymentMethodCode == "Card" ? 9_000m : 0m,
+                    true, null)).ToArray(), [], null, [],
+            [new WorkSessionPaymentCorrection(sale.VerificationKey, "Card", 9_000m,
+                "El cliente pagó con débito", "DebitCard", "Visa", "APP-9000")]);
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        { Content = JsonContent.Create(request) };
+        message.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(message);
+        response.EnsureSuccessStatusCode();
+        var accepted = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.Equal("Reconciled", accepted!.Status);
+
+        var from = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+        var to = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
+        var history = await client.GetFromJsonAsync<WorkSessionClosurePage>(
+            $"/api/commerce/v1/work-sessions/closures?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}&status=Reconciled");
+        var listed = Assert.Single(history!.Items, item => item.WorkSessionClosureId == closure.WorkSessionClosureId);
+        Assert.Equal(-9_000m, listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Cash").Difference);
+        Assert.Equal(9_000m, listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Card").Difference);
+        Assert.Equal(0m, listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Cash").ReconciledDifference);
+        Assert.Equal(0m, listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Card").ReconciledDifference);
     }
 
     [Fact]

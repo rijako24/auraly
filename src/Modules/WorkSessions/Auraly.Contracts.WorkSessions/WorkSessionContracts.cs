@@ -88,7 +88,8 @@ public sealed record WorkSessionPaymentTotal(
     decimal CashEntryAmount = 0,
     decimal CashExitAmount = 0,
     decimal ReceivableAmount = 0,
-    decimal PayableAmount = 0);
+    decimal PayableAmount = 0,
+    decimal? ReconciledDifference = null);
 
 public sealed record WorkSessionCreditSale(
     string CustomerName,
@@ -309,7 +310,20 @@ public sealed record WorkSessionPaymentVerificationPage(
     IReadOnlyList<WorkSessionPaymentVerificationGroup> Groups,
     int Page,
     int PageSize,
-    int TotalItems);
+    int TotalItems,
+    IReadOnlyList<WorkSessionManualReconciliationMovement>? ManualMovements = null,
+    WorkSessionCashShortageClaim? CashShortageClaim = null,
+    string? ReconciliationNote = null);
+
+public sealed record WorkSessionCashShortageClaim(Guid ReceivableId, Guid EmployeePartyId, decimal Amount);
+
+// An omitted item in the cashier's count is evidence for reconciliation, not a new sale or payment.
+public sealed record WorkSessionManualReconciliationMovement(
+    Guid MovementId,
+    string PaymentMethodCode,
+    string MovementType,
+    decimal Amount,
+    string Observation);
 
 public sealed record WorkSessionPaymentVerificationDecision(
     string VerificationKey,
@@ -363,7 +377,9 @@ public sealed record ReconcileWorkSessionClosureRequest(
     IReadOnlyList<WorkSessionPaymentReclassification> Reclassifications,
     string? Note,
     IReadOnlyList<WorkSessionPaymentVerificationDecision>? PaymentVerifications = null,
-    IReadOnlyList<WorkSessionPaymentCorrection>? PaymentCorrections = null);
+    IReadOnlyList<WorkSessionPaymentCorrection>? PaymentCorrections = null,
+    IReadOnlyList<WorkSessionManualReconciliationMovement>? ManualMovements = null,
+    bool ChargeCashShortageToEmployee = false);
 
 public sealed record WorkSessionClosureReconciliationView(
     Guid ReconciliationId,
@@ -396,7 +412,8 @@ public sealed record WorkSessionClosureReconciliationPayload(
     DateTimeOffset ReconciledAt,
     IReadOnlyList<WorkSessionClosureReconciliationAccountingLine> Lines,
     IReadOnlyList<WorkSessionPaymentReclassification> Reclassifications,
-    IReadOnlyList<WorkSessionAppliedPaymentCorrection>? PaymentCorrections = null);
+    IReadOnlyList<WorkSessionAppliedPaymentCorrection>? PaymentCorrections = null,
+    WorkSessionCashShortageClaim? CashShortageClaim = null);
 public static class CashMovementDirections
 {
     public const string In = "In";

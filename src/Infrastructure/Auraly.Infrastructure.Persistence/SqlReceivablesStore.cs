@@ -126,8 +126,8 @@ public sealed partial class SqlReceivablesStore(
             WITH Filtered AS (
               SELECT r.ReceivableId,r.OutstandingAmount,r.DueDate,r.OriginalAmount
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
-            INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
-            INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
+            INNER JOIN dbo.Parties p ON p.PartyId=COALESCE(c.PartyId,r.PartyId)
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId
               WHERE {where}),
             Paid AS (SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
@@ -152,18 +152,18 @@ public sealed partial class SqlReceivablesStore(
             SELECT r.ReceivableId,r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                    r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,r.OutstandingAmount,r.DueDate,
                    r.Status,r.CreatedAt,CAST(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 1 ELSE 0 END AS bit) IsOverdue,
-                   r.PartySiteId,site.Name PartySiteName
+                   r.PartySiteId,site.Name PartySiteName,r.PartyId
             INTO #Page
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
-            INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
-            INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
+            INNER JOIN dbo.Parties p ON p.PartyId=COALESCE(c.PartyId,r.PartyId)
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId WHERE {where}
             ORDER BY {order}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             SELECT page.ReceivableId,page.CustomerId,page.CustomerName,page.DocumentNumber,
               page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
               page.Status,page.CreatedAt,page.IsOverdue,page.PartySiteId,page.PartySiteName,
-              COALESCE(paid.PaidAmount,0)
+              COALESCE(paid.PaidAmount,0),page.PartyId
             FROM #Page page
             LEFT JOIN (SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
               FROM dbo.CustomerPaymentApplications application
@@ -177,10 +177,11 @@ public sealed partial class SqlReceivablesStore(
             command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);
             command.Parameters.AddWithValue("@PageSize",query.PageSize);
             await using var reader=await command.ExecuteReaderAsync(token);
-            while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),
+            while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.IsDBNull(1)?null:reader.GetGuid(1),reader.GetString(2),
                 reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDateTimeOffset(7),
                 reader.GetString(8),reader.GetBoolean(10),reader.GetDateTimeOffset(9),
-                reader.IsDBNull(11)?null:reader.GetGuid(11),reader.IsDBNull(12)?null:reader.GetString(12),reader.GetDecimal(13)));
+                reader.IsDBNull(11)?null:reader.GetGuid(11),reader.IsDBNull(12)?null:reader.GetString(12),reader.GetDecimal(13),
+                reader.IsDBNull(14)?null:reader.GetGuid(14)));
         }
         return new(items,query.Page,query.PageSize,count,outstanding,overdue,original,paidTotal);
     }
@@ -333,27 +334,33 @@ public sealed partial class SqlReceivablesStore(
         await using var header=new SqlCommand("""
             SELECT r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification),COALESCE(p.Identification,N''),
                    r.SourceDocumentId,r.SourceDocumentType,r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,
-                   r.OutstandingAmount,r.DueDate,r.Status,r.PartySiteId,site.Name
+                   r.OutstandingAmount,r.DueDate,r.Status,r.PartySiteId,site.Name,r.PartyId,
+                   reconciliation.Note
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
-            INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId
+            LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId INNER JOIN dbo.Parties p ON p.PartyId=COALESCE(c.PartyId,r.PartyId)
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId
+            LEFT JOIN dbo.WorkSessionClosureReconciliations reconciliation
+              ON r.SourceDocumentType=N'WorkSessionClosureReconciliation'
+                AND reconciliation.ReconciliationId=r.SourceDocumentId
             WHERE r.ReceivableId=@Id AND r.BusinessId=@BusinessId AND b.TenantId=@TenantId;
             """,connection);
         header.Parameters.AddWithValue("@Id",id); header.Parameters.AddWithValue("@BusinessId",user.BusinessId); header.Parameters.AddWithValue("@TenantId",user.TenantId);
-        Guid customerId, sourceId; Guid? partySiteId; string name, identification, sourceType, number, currency, status; string? partySiteName; decimal original,balance; DateTimeOffset due;
+        Guid? customerId, partyId, partySiteId; Guid sourceId; string name, identification, sourceType, number, currency, status; string? partySiteName, sourceNote; decimal original,balance; DateTimeOffset due;
         await using(var reader=await header.ExecuteReaderAsync(token))
         {
             if(!await reader.ReadAsync(token)) return null;
-            customerId=reader.GetGuid(0); name=reader.GetString(1); identification=reader.GetString(2); sourceId=reader.GetGuid(3);
+            customerId=reader.IsDBNull(0)?null:reader.GetGuid(0); name=reader.GetString(1); identification=reader.GetString(2); sourceId=reader.GetGuid(3);
             sourceType=reader.GetString(4); number=reader.GetString(5); currency=reader.GetString(6); original=reader.GetDecimal(7);
             balance=reader.GetDecimal(8); due=reader.GetDateTimeOffset(9); status=reader.GetString(10);
             partySiteId=reader.IsDBNull(11)?null:reader.GetGuid(11); partySiteName=reader.IsDBNull(12)?null:reader.GetString(12);
+            partyId=reader.IsDBNull(13)?null:reader.GetGuid(13);
+            sourceNote=reader.IsDBNull(14)?null:reader.GetString(14);
         }
         var movements=new List<ReceivableTransactionView>();
         await using var detail=new SqlCommand("SELECT ReceivableTransactionId,TransactionType,Amount,SourceDocumentId,OccurredAt FROM dbo.ReceivableTransactions WHERE ReceivableId=@Id ORDER BY OccurredAt,ReceivableTransactionId",connection);
         detail.Parameters.AddWithValue("@Id",id); await using(var reader=await detail.ExecuteReaderAsync(token))
             while(await reader.ReadAsync(token)) movements.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetDecimal(2),reader.GetGuid(3),reader.GetDateTimeOffset(4)));
-        return new(id,customerId,name,identification,sourceId,sourceType,number,currency,original,balance,due,status,movements,partySiteId,partySiteName);
+        return new(id,customerId,name,identification,sourceId,sourceType,number,currency,original,balance,due,status,movements,partySiteId,partySiteName,partyId,sourceNote);
     }
 
     public async Task<CustomerCreditProfile?> GetCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId, CancellationToken token)

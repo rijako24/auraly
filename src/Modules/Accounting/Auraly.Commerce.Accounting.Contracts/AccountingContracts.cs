@@ -55,6 +55,7 @@ public static class AccountingCategories
     public const string OtherExpense = "OtherExpense";
     public const string CashOverageIncome = "CashOverageIncome";
     public const string CashShortageExpense = "CashShortageExpense";
+    public const string EmployeeShortagesReceivable = "EmployeeShortagesReceivable";
     public const string DispatchCashOverageIncome = "DispatchCashOverageIncome";
     public const string DispatchCashShortageExpense = "DispatchCashShortageExpense";
     public const string InventoryDifferences = "InventoryDifferences";

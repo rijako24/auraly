@@ -376,9 +376,23 @@ public sealed class WorkSessionService(
                 (line.PaymentMethodCode.Equals("Cash",StringComparison.OrdinalIgnoreCase) && line.VerifiedAmount<0)) ||
             request.Reclassifications.Any(line=>line.Amount<=0) || request.Note?.Trim().Length>500)
             throw new WorkSessionValidationException("Los valores de conciliación no son válidos.");
+        if (request.ChargeCashShortageToEmployee && string.IsNullOrWhiteSpace(request.Note))
+            throw new WorkSessionValidationException("Describe el faltante antes de registrarlo a cargo del empleado.");
         if (request.PaymentVerifications?.Any(item => string.IsNullOrWhiteSpace(item.VerificationKey) ||
                 item.Status is not ("Verified" or "Missing")) == true)
             throw new WorkSessionValidationException("La verificación individual de pagos no es válida.");
+        var manual = request.ManualMovements ?? [];
+        if (manual.Count > 100 || manual.Select(item => item.MovementId).Distinct().Count() != manual.Count ||
+            manual.Any(item => item.MovementId == Guid.Empty ||
+                string.IsNullOrWhiteSpace(item.PaymentMethodCode) || item.PaymentMethodCode.Length > 32 ||
+                item.PaymentMethodCode.Any(character => !char.IsLetterOrDigit(character)) ||
+                item.MovementType is not ("Sale" or "Refund" or "ReceivablePayment" or
+                    "PayablePayment" or "CashIn" or "CashOut") ||
+                (item.MovementType is "CashIn" or "CashOut" && item.PaymentMethodCode != "Cash") ||
+                item.Amount <= 0 || item.Amount >= 1_000_000_000_000_000m ||
+                decimal.Round(item.Amount, 4) != item.Amount ||
+                string.IsNullOrWhiteSpace(item.Observation) || item.Observation.Trim().Length > 500))
+            throw new WorkSessionValidationException("Los movimientos manuales de conciliación no son válidos.");
         ValidatePaymentCorrections(request.PaymentCorrections ?? []);
         var result=await store.ReconcileClosureAsync(identity,closureId,idempotencyKey.Trim(),request with { Note=NullIfWhiteSpace(request.Note) },cancellationToken);
         if (!result.IdempotentReplay && result.AccountingStatus == "Pending")

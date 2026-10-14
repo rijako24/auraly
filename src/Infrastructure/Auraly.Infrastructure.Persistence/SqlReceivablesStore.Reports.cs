@@ -39,15 +39,15 @@ public sealed partial class SqlReceivablesStore
         await using var command = new SqlCommand($"""
             SET NOCOUNT ON;
             WITH Scoped AS (
-              SELECT r.ReceivableId,r.CustomerId,r.PartySiteId,r.DocumentNumber,
+              SELECT r.ReceivableId,r.CustomerId,r.PartyId,r.PartySiteId,r.DocumentNumber,
                 r.CurrencyCode,r.OriginalAmount,r.DueDate,r.Status,source.OccurredAt IssuedAt,
                 COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                 COALESCE(p.Identification,N'') Identification,site.Name PartySiteName
               FROM dbo.Receivables r
               JOIN dbo.Businesses business ON business.BusinessId=r.BusinessId
-              JOIN dbo.Customers customer ON customer.CustomerId=r.CustomerId
-              JOIN dbo.Parties p ON p.PartyId=customer.PartyId
-              JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId AND site.PartyId=p.PartyId
+              LEFT JOIN dbo.Customers customer ON customer.CustomerId=r.CustomerId
+              JOIN dbo.Parties p ON p.PartyId=COALESCE(customer.PartyId,r.PartyId)
+              LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId AND site.PartyId=p.PartyId
               JOIN dbo.AccountingSourceDocuments source
                 ON source.SourceDocumentId=r.SourceDocumentId
                 AND source.SourceDocumentType=r.SourceDocumentType
@@ -110,14 +110,15 @@ public sealed partial class SqlReceivablesStore
               SUM(Overdue31To60Amount) Overdue31To60Amount,SUM(Overdue61To90Amount) Overdue61To90Amount,
               SUM(OverdueOver90Amount) OverdueOver90Amount,
               CAST(NULL AS uniqueidentifier) ReceivableId,CAST(NULL AS nvarchar(64)) DocumentNumber,
-              CAST(NULL AS datetimeoffset(7)) IssuedAt,CAST(NULL AS datetimeoffset(7)) DueDate
+              CAST(NULL AS datetimeoffset(7)) IssuedAt,CAST(NULL AS datetimeoffset(7)) DueDate,
+              PartyId
             INTO #Report FROM #Filtered WHERE @Consolidated=1
-            GROUP BY CustomerId,CustomerName,Identification,PartySiteId,PartySiteName,CurrencyCode
+            GROUP BY CustomerId,PartyId,CustomerName,Identification,PartySiteId,PartySiteName,CurrencyCode
             UNION ALL
             SELECT CustomerId,CustomerName,Identification,PartySiteId,PartySiteName,
               CurrencyCode,1,OriginalAmount,PaidAmount,OutstandingAmount,OverdueAmount,
               NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount,
-              ReceivableId,DocumentNumber,IssuedAt,DueDate
+              ReceivableId,DocumentNumber,IssuedAt,DueDate,PartyId
             FROM #Filtered WHERE @Consolidated=0;
 
             SELECT COUNT(*),COALESCE(SUM(InvoiceCount),0),COALESCE(SUM(OriginalAmount),0),
@@ -130,7 +131,7 @@ public sealed partial class SqlReceivablesStore
             SELECT CustomerId,CustomerName,Identification,PartySiteId,PartySiteName,
               CurrencyCode,InvoiceCount,OriginalAmount,PaidAmount,OutstandingAmount,
               OverdueAmount,ReceivableId,DocumentNumber,IssuedAt,DueDate,
-              NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount
+              NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount,PartyId
             FROM #Page ORDER BY {order};
             SELECT application.ReceivableId,payment.DocumentNumber,application.AppliedAt,
               application.Amount
@@ -183,14 +184,15 @@ public sealed partial class SqlReceivablesStore
         await reader.NextResultAsync(token);
         var rows = new List<ReceivablesReportItem>();
         while (await reader.ReadAsync(token))
-            rows.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
-                reader.GetGuid(3), reader.GetString(4), reader.GetString(5),
+            rows.Add(new(reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetGuid(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetString(5),
                 reader.GetInt32(6), reader.GetDecimal(7), reader.GetDecimal(8),
                 reader.GetDecimal(9), reader.GetDecimal(10),
                 reader.IsDBNull(11) ? null : reader.GetGuid(11),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetDateTimeOffset(13),
-                reader.IsDBNull(14) ? null : reader.GetDateTimeOffset(14))
+                reader.IsDBNull(14) ? null : reader.GetDateTimeOffset(14),
+                PartyId: reader.IsDBNull(20) ? null : reader.GetGuid(20))
             {
                 NotDueAmount = reader.GetDecimal(15), Overdue1To30Amount = reader.GetDecimal(16),
                 Overdue31To60Amount = reader.GetDecimal(17), Overdue61To90Amount = reader.GetDecimal(18),

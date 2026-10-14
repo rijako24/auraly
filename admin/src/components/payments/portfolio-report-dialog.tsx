@@ -138,7 +138,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
 
   const grouped = new Map<string, Row[]>();
   if (mode === "detail") for (const item of items) {
-    const partyId = "customerId" in item ? item.customerId : item.supplierId;
+    const partyId = "customerId" in item ? item.customerId ?? item.partyId : item.supplierId;
     const key = `${partyId}:${item.partySiteId}:${item.currencyCode}`;
     const group = grouped.get(key) ?? [];
     group.push(item);
@@ -199,14 +199,15 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
             {Array.from(grouped.entries()).map(([key, group]) => {
               const first = group[0];
               const name = "customerName" in first ? first.customerName : first.supplierName;
+              const employee = "customerId" in first && !first.customerId && !!first.partyId;
               return <section key={key} className="overflow-hidden rounded-xl border">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-teal-50 px-4 py-3">
-                  <div><p className="text-[11px] font-semibold uppercase tracking-wide text-teal-700">{direction === "receivable" ? "Cliente" : "Proveedor"} · {first.partySiteName ?? "Sede principal"}</p><h3 className="text-base font-semibold text-teal-950">{name}</h3><p className="text-xs text-slate-600">Identificación {first.identification}</p></div>
+                  <div><p className="text-[11px] font-semibold uppercase tracking-wide text-teal-700">{employee ? "Empleado" : direction === "receivable" ? "Cliente" : "Proveedor"}{!employee && ` · ${first.partySiteName ?? "Sede principal"}`}</p><h3 className="text-base font-semibold text-teal-950">{name}</h3><p className="text-xs text-slate-600">Identificación {first.identification}</p></div>
                   <span className="text-xs font-medium text-teal-800">{group.length} {group.length === 1 ? "documento" : "documentos"} en esta página · {first.currencyCode}</span>
                 </div>
                 <div className="divide-y">{group.map(item => <article key={("receivableId" in item ? item.receivableId : item.payableId) ?? item.documentNumber} className="p-4">
                   <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
-                    <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{direction === "receivable" ? "Factura" : "Factura o gasto"}</p><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-950">{item.documentNumber ?? "Sin número"}</p>
+                    <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{employee ? "Faltante conciliado" : direction === "receivable" ? "Factura" : "Factura o gasto"}</p><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-950">{item.documentNumber ?? "Sin número"}</p>
                       <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-800">{ageLabel(item)}</span></div>
                       <p className="mt-1 text-xs text-slate-600">Emisión: {item.issuedAt ? formatDate(item.issuedAt) : "—"} <span className="mx-1">·</span> Vence: {item.dueDate ? formatDate(item.dueDate) : "—"}</p></div>
                     <div className="grid w-full grid-cols-2 gap-x-4 gap-y-2 text-sm sm:w-auto sm:grid-cols-3 sm:gap-x-8">
@@ -217,7 +218,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
                   </div>
                   {item.otherImpact !== 0 && <p className="mt-2 text-xs text-slate-600">Notas y ajustes: <strong>{formatCurrency(item.otherImpact,item.currencyCode)}</strong></p>}
                   <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-                    <p className="font-semibold text-slate-700">{direction === "receivable" ? "Abonos de esta factura" : "Pagos de esta obligación"}</p>
+                    <p className="font-semibold text-slate-700">{employee ? "Recuperaciones de esta obligación" : direction === "receivable" ? "Abonos de esta factura" : "Pagos de esta obligación"}</p>
                     {item.applications?.length ? <ul className="mt-2 divide-y divide-slate-200">{item.applications.map((application, line) => <li key={`${application.documentNumber}-${line}`} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2 first:pt-0 last:pb-0"><span><strong>{application.documentNumber}</strong><span className="ml-2 text-xs text-slate-500">{formatDate(application.appliedAt)}</span></span><strong className="tabular-nums">{formatCurrency(application.amount,item.currencyCode)}</strong></li>)}</ul>
                       : <p className="mt-1 text-xs text-slate-500">Sin {direction === "receivable" ? "abonos" : "pagos"} aplicados al corte.</p>}
                   </div>
@@ -225,10 +226,10 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
               </section>;
             })}
           </div> : <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-slate-100 text-left"><tr>
-            <th className="p-3">{sortButton("name", direction === "receivable" ? "Cliente / sede" : "Proveedor / sede")}</th><th className="p-3">{sortButton("invoiceCount", "Documentos")}</th><th className="p-3">Moneda</th>
+            <th className="p-3">{sortButton("name", direction === "receivable" ? "Tercero / sede" : "Proveedor / sede")}</th><th className="p-3">{sortButton("invoiceCount", "Documentos")}</th><th className="p-3">Moneda</th>
             <th className="p-3 text-right">{sortButton("originalAmount", "Original")}</th><th className="p-3 text-right">{sortButton("paidAmount", "Pagado")}</th>
             {hasOtherImpact && <th className="p-3 text-right">Notas y ajustes</th>}<th className="p-3 text-right">{sortButton("outstandingAmount", "Saldo")}</th>
-          </tr></thead><tbody>{items.map((item, index) => <tr key={`${"customerId" in item ? item.customerId : item.supplierId}-${item.partySiteId}-${item.currencyCode}-${index}`} className="border-t">
+          </tr></thead><tbody>{items.map((item, index) => <tr key={`${"customerId" in item ? item.customerId ?? item.partyId : item.supplierId}-${item.partySiteId}-${item.currencyCode}-${index}`} className="border-t">
             <td className="p-3"><strong>{"customerName" in item ? item.customerName : item.supplierName}</strong><span className="block text-xs text-slate-500">{item.identification} · {item.partySiteName ?? "Sede principal"}</span>
               <div className="mt-2 space-y-0.5 text-xs text-slate-600">{ageBands.filter(band => item[band.key] !== 0).map(band => <div key={band.key}>{band.label}: <strong>{formatCurrency(item[band.key],item.currencyCode)}</strong></div>)}</div></td>
             <td className="p-3">{item.invoiceCount}</td><td className="p-3">{item.currencyCode}</td><td className="p-3 text-right tabular-nums">{formatCurrency(item.originalAmount,item.currencyCode)}</td>

@@ -5,7 +5,8 @@ export type CustomerPaymentMethod = "Cash" | "Transfer" | "DebitCard" | "CreditC
 
 export interface ReceivableListItem {
   receivableId: string;
-  customerId: string;
+  customerId: string | null;
+  partyId?: string | null;
   customerName: string;
   partySiteId: string | null;
   partySiteName: string | null;
@@ -35,7 +36,8 @@ export interface ReceivablePage {
 export interface ReceivableDetail {
   receivableId: string;
   documentNumber: string;
-  customerId: string;
+  customerId: string | null;
+  partyId?: string | null;
   customerName: string;
   partySiteId: string | null;
   partySiteName: string | null;
@@ -47,6 +49,7 @@ export interface ReceivableDetail {
   customerIdentification: string;
   sourceDocumentId: string;
   sourceDocumentType: string;
+  sourceNote?: string | null;
   transactions: Array<{
     transactionId: string;
     type: string;
@@ -82,8 +85,8 @@ export interface CustomerPaymentHistoryPage {
 }
 export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;partySiteId:string|null;partySiteName:string|null}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalOriginal:number;totalPaid:number}
 export interface ReceivablesReportItem {
-  customerId: string; customerName: string; identification: string;
-  partySiteId: string; partySiteName: string | null; currencyCode: string;
+  customerId: string | null; partyId?: string | null; customerName: string; identification: string;
+  partySiteId: string | null; partySiteName: string | null; currencyCode: string;
   invoiceCount: number; originalAmount: number; paidAmount: number;
   outstandingAmount: number; overdueAmount: number; otherImpact: number; receivableId: string | null;
   documentNumber: string | null; issuedAt: string | null; dueDate: string | null;

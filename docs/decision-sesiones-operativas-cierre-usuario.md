@@ -92,7 +92,8 @@ La conciliación posterior reutiliza el mismo `WorkSessionClosure` y su snapshot
 inmutable. El efectivo se verifica como un total contado. Tarjeta y transferencia se
 verifican comprobante por comprobante desde los pagos y movimientos que
 ya pertenecen a la sesión; cada uno queda marcado como verificado o no encontrado. El
-detalle de ventas y devoluciones es informativo en todos los medios: no exige esos dos estados.
+detalle de ventas y devoluciones en efectivo es informativo; en tarjeta y transferencia
+cada factura, comprobante y devolución exige verificación individual.
 Los abonos, pagos a proveedores, entradas y salidas en efectivo sí conservan la
 verificación individual. El esperado de efectivo usado al conciliar es el mismo
 `ExpectedCash` persistido al cerrar la sesión, incluida su base inicial; no se
@@ -135,14 +136,21 @@ filtrar. Las ventas con estado operativo `Completed` se reconocen como procesada
 para esta validación. La aplicación final conserva sus bloqueos y comprobaciones
 transaccionales sobre el conjunto completo de la sesión.
 
+Los movimientos omitidos en el reporte de la cajera se agregan dentro de su grupo
+con importe y observación obligatoria. Son evidencia de conciliación del conteo,
+guardada en la instantánea inmutable; no crean otra venta, devolución, abono,
+pago ni movimiento contable. Se muestra por separado el descuadre declarado al
+cerrar, el importe agregado durante conciliación y la diferencia resultante. El
+historial presenta la diferencia final por medio, incluidos ambos lados de una
+corrección entre medios, y conserva el dato declarado original para auditoría.
+
 Tarjeta y transferencia muestran los mismos cuatro grupos de comprobantes,
 devoluciones, abonos y pagos a proveedores; entradas y salidas son exclusivos
 de efectivo. Cada grupo verificable indica total registrado, total revisado,
 cantidad revisada y si la revisión está completa, con su sobrante o faltante.
 Los totales confirmados comparten la misma presentación en móvil. Cuando lo
-verificado difiere del valor reportado al cerrar, la vista señala la diferencia
-frente a ese valor, incluso si coincide con el esperado contable; así no muestra
-un «Cuadra» aislado para una transferencia reportada sin comprobantes.
+verificado difiere del valor reportado al cerrar, la vista señala esa diferencia
+histórica como información independiente del resultado de la conciliación.
 
 La corrección de medio distingue efectivo, tarjeta débito, tarjeta crédito y
 transferencia. Las tarjetas requieren franquicia y aprobación; la transferencia
@@ -192,7 +200,10 @@ canónico en la misma transacción. Un fallo de aceptación no modifica parcialm
 cartera, caja ni comprobantes; un fallo posterior del procesamiento contable queda
 visible y reintentable por el motor existente. Tras confirmar, el cierre y sus correcciones quedan
 inmutables. Las diferencias genuinas que subsistan se muestran como sobrante o
-faltante con observación y motivo. No se crea todavía cuenta por cobrar al empleado.
+faltante con observación y motivo. Si se marca la opción del faltante en efectivo,
+se abre una única cuenta por cobrar al empleado activo vinculado con el usuario
+de la sesión, en el ledger de cartera y en la misma transacción. El sobrante no
+genera cuenta por cobrar ni se descuenta automáticamente de nómina.
 
 ## Pruebas obligatorias
 

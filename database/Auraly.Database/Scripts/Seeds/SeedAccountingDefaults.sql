@@ -57,6 +57,7 @@ USING (VALUES
   (N'NetPayrollPayable',N'Nómina por pagar',N'250505',N'Salarios por pagar',N'Liability',1,37),
   (N'BenefitsProvisionPayable',N'Provisiones laborales por pagar',N'261095',N'Otras provisiones laborales',N'Liability',1,38),
   (N'EmployeeLoansReceivable',N'Préstamos a empleados',N'136595',N'Préstamos a trabajadores',N'Asset',1,39),
+  (N'EmployeeShortagesReceivable',N'Faltantes de caja a cargo de trabajadores',N'13659501',N'Faltantes de caja a cargo de trabajadores',N'Asset',1,61),
   (N'EmployerHealthPayable',N'Salud del empleador por pagar',N'237005',N'Salud del empleador por pagar',N'Liability',1,40),
   (N'EmployerPensionPayable',N'Pensión del empleador por pagar',N'238030',N'Pensión del empleador por pagar',N'Liability',1,41),
   (N'OccupationalRiskPayable',N'Riesgos laborales por pagar',N'237006',N'Riesgos laborales por pagar',N'Liability',1,42),

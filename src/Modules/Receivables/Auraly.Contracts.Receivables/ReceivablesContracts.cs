@@ -31,10 +31,11 @@ public sealed record ReceivablesUserIdentity(Guid UserId, Guid TenantId, Guid Bu
 public sealed record ReceivableQuery(int Page, int PageSize, string? Search, Guid? CustomerId,
     string? Status, bool? Overdue, Guid? PartySiteId = null, bool OutstandingOnly = false,
     DateOnly? From = null, DateOnly? To = null, string? SortBy = null, string? SortDirection = null);
-public sealed record ReceivableListItem(Guid ReceivableId, Guid CustomerId, string CustomerName,
+public sealed record ReceivableListItem(Guid ReceivableId, Guid? CustomerId, string CustomerName,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
     DateTimeOffset DueDate, string Status, bool IsOverdue, DateTimeOffset CreatedAt,
-    Guid? PartySiteId = null, string? PartySiteName = null, decimal PaidAmount = 0);
+    Guid? PartySiteId = null, string? PartySiteName = null, decimal PaidAmount = 0,
+    Guid? PartyId = null);
 public sealed record ReceivablePage(IReadOnlyList<ReceivableListItem> Items, int Page, int PageSize,
     int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
     decimal TotalOriginal = 0, decimal TotalPaid = 0)
@@ -43,11 +44,12 @@ public sealed record ReceivablePage(IReadOnlyList<ReceivableListItem> Items, int
 }
 public sealed record ReceivableTransactionView(Guid TransactionId, string Type, decimal Amount,
     Guid SourceDocumentId, DateTimeOffset OccurredAt);
-public sealed record ReceivableDetail(Guid ReceivableId, Guid CustomerId, string CustomerName,
+public sealed record ReceivableDetail(Guid ReceivableId, Guid? CustomerId, string CustomerName,
     string CustomerIdentification, Guid SourceDocumentId, string SourceDocumentType,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
     DateTimeOffset DueDate, string Status, IReadOnlyList<ReceivableTransactionView> Transactions,
-    Guid? PartySiteId = null, string? PartySiteName = null);
+    Guid? PartySiteId = null, string? PartySiteName = null, Guid? PartyId = null,
+    string? SourceNote = null);
 public sealed record CustomerCreditProfile(Guid CustomerId, decimal? CreditLimit,
     int DefaultDueDays, bool IsCreditEnabled, decimal OutstandingAmount, decimal? AvailableCredit);
 public sealed record UpdateCustomerCreditProfileRequest(Guid BusinessId, decimal? CreditLimit,
@@ -106,12 +108,13 @@ public sealed record ReceivablesReportQuery(int Page, int PageSize, bool Consoli
     string? SortBy = null, string? SortDirection = null, string? Search = null);
 public sealed record ReceivablesReportApplication(string DocumentNumber, DateTimeOffset AppliedAt,
     decimal Amount);
-public sealed record ReceivablesReportItem(Guid CustomerId, string CustomerName,
-    string Identification, Guid PartySiteId, string? PartySiteName, string CurrencyCode,
+public sealed record ReceivablesReportItem(Guid? CustomerId, string CustomerName,
+    string Identification, Guid? PartySiteId, string? PartySiteName, string CurrencyCode,
     int InvoiceCount, decimal OriginalAmount, decimal PaidAmount, decimal OutstandingAmount,
     decimal OverdueAmount, Guid? ReceivableId = null, string? DocumentNumber = null,
     DateTimeOffset? IssuedAt = null, DateTimeOffset? DueDate = null,
-    IReadOnlyList<ReceivablesReportApplication>? Applications = null)
+    IReadOnlyList<ReceivablesReportApplication>? Applications = null,
+    Guid? PartyId = null)
 {
     public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
     public decimal NotDueAmount { get; init; }
