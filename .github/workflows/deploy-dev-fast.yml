@@ -93,7 +93,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Restore failed.' }
           dotnet build database/Auraly.Database/Auraly.Database.sqlproj --configuration Release --no-restore
           if ($LASTEXITCODE) { throw 'Database build failed.' }
-          dotnet publish src/API/Auraly.Api/Auraly.Api.csproj --configuration Release --no-restore --output artifacts/api
+          dotnet publish src/API/Auraly.Api/Auraly.Api.csproj --configuration Release --no-restore --output artifacts/api -p:InformationalVersion=$env:GITHUB_SHA -p:IncludeSourceRevisionInInformationalVersion=false
           if ($LASTEXITCODE) { throw 'API publish failed.' }
           Compress-Archive -Path artifacts/api/* -DestinationPath artifacts/auraly-api-dev.zip -Force
 
@@ -196,7 +196,7 @@ jobs:
           for ($attempt = 1; $attempt -le 18; $attempt++) {
             try {
               $response = Invoke-WebRequest -Uri $health -TimeoutSec 15
-              if ($response.StatusCode -eq 200) {
+              if ($response.StatusCode -eq 200 -and ($response.Content | ConvertFrom-Json).build -eq $env:GITHUB_SHA) {
                 $functional = Invoke-WebRequest `
                   -Uri 'https://api-auraly-dev-w5usmo6w.azurewebsites.net/api/v1/auth/me' `
                   -SkipHttpErrorCheck -TimeoutSec 15

@@ -6,6 +6,13 @@ public sealed class RestaurantDemandPlannerTests
 {
     private static readonly DateOnly Friday = new(2026, 10, 9);
 
+    [Fact]
+    public void Comparable_days_exclude_closed_days_and_history_outside_eight_weeks()
+    {
+        Assert.Equal(1, RestaurantDemandPlanner.ComparableDayCount(Friday, 1,
+            [Friday.AddDays(-7), Friday.AddDays(-63), Friday], Friday));
+    }
+
     [Theory]
     [InlineData(1, 10, 30, 10)]
     [InlineData(2, 10, 30, 40)]

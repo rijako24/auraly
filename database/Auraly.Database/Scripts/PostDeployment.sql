@@ -170,6 +170,7 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Seeds\SeedProductMerchandisingMasters.sql
 :r .\Seeds\SeedRestaurantConfiguration.sql
 :r .\Migrations\ReleaseInvoicedRestaurantAccounts.sql
+:r .\Migrations\BackfillRestaurantDailyRotation.sql
 :r .\Migrations\MarkUnroutedRestaurantAdditionsDirect.sql
 :r .\Seeds\SeedDefaultBusinessRoles.sql
 :r .\Migrations\MigrateEmployeesAndUsersToParties.sql

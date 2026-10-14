@@ -34,7 +34,8 @@ public sealed record ProductionDemandSnapshot(
 
 public sealed class InventoryQueryService(
     IInventoryQueryStore store,
-    IPosSynchronizationOutboxDispatcher synchronization)
+    IPosSynchronizationOutboxDispatcher synchronization,
+    TimeProvider time)
 {
     public Task<InventoryProductPage> GetProductsAsync(InventoryUserIdentity user, InventoryProductQuery query, CancellationToken token = default)
     {
@@ -63,20 +64,18 @@ public sealed class InventoryQueryService(
         DateOnly startDate, int days, CancellationToken token = default)
     {
         Validate(user, user.BusinessId, 1, 1);
+        var today = DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime);
         if (warehouseId == Guid.Empty || productId == Guid.Empty || days is < 1 or > 90 ||
-            startDate < DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1) ||
-            startDate > DateOnly.FromDateTime(DateTime.UtcNow).AddDays(365))
+            startDate < today.AddDays(-1) || startDate > today.AddDays(365))
             throw new InventoryValidationException("Selecciona producto, bodega y entre 1 y 90 días.");
         var snapshot = await store.GetProductionDemandInputsAsync(user,
             warehouseId, productId, startDate, token);
         var forecast = RestaurantDemandPlanner.Forecast(startDate, days,
             snapshot.OpenDates, snapshot.Sales, snapshot.Recipes, snapshot.Stocks,
-            DateOnly.FromDateTime(DateTime.UtcNow) < startDate
-                ? DateOnly.FromDateTime(DateTime.UtcNow) : startDate);
+            today < startDate ? today : startDate);
         var target = forecast.GetValueOrDefault(productId);
-        var comparable = Enumerable.Range(0, days).Select(offset =>
-            snapshot.OpenDates.Count(day => day.DayOfWeek ==
-                startDate.AddDays(offset).DayOfWeek)).DefaultIfEmpty().Min();
+        var comparable = RestaurantDemandPlanner.ComparableDayCount(startDate,
+            days, snapshot.OpenDates, today < startDate ? today : startDate);
         return new(productId, startDate, days,
             target?.GrossQuantity ?? 0, target?.UncoveredQuantity ?? 0, comparable);
     }

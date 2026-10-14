@@ -34,7 +34,7 @@ public sealed record PurchaseOrderSuggestionInput(
     decimal DailyDemand90Days, decimal CurrentStock, decimal IncomingQuantity,
     string PresentationName, decimal UnitsPerPresentation, DateTimeOffset? RotationCalculatedAt);
 
-public sealed class PurchaseOrderService(IPurchaseOrderStore store)
+public sealed class PurchaseOrderService(IPurchaseOrderStore store, TimeProvider time)
 {
     public Task<PurchaseOrderPage> ListAsync(PurchasingUserIdentity user, string? search,
         string? status, int page, int pageSize, CancellationToken cancellationToken = default)
@@ -125,25 +125,25 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store)
     {
         Require(user, PurchasingPermissionCodes.CreatePurchaseOrders);
         Scope(user, request.BusinessId);
+        var today = DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime);
         if (request.WarehouseId == Guid.Empty || request.SupplierId == Guid.Empty ||
             request.ProductIds.Count is < 1 or > 100 || request.ProductIds.Any(x => x == Guid.Empty) ||
             request.ProductIds.Distinct().Count() != request.ProductIds.Count ||
             request.TargetCoverageDays is < 1 or > 90 ||
             request.RestaurantWeekdayPlan && (request.StartDate is null ||
-                request.StartDate < DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1) ||
-                request.StartDate > DateOnly.FromDateTime(DateTime.UtcNow).AddDays(365)))
+                request.StartDate < today.AddDays(-1) ||
+                request.StartDate > today.AddDays(365)))
             throw new PurchasingValidationException("The purchase-order suggestion request is invalid.");
         var snapshot = await store.SuggestionInputsAsync(user, request, cancellationToken);
         var planned = request.RestaurantWeekdayPlan
             ? RestaurantDemandPlanner.Forecast(request.StartDate!.Value,
                 request.TargetCoverageDays, snapshot.OpenDates, snapshot.Sales,
                 snapshot.Recipes, snapshot.Stocks,
-                DateOnly.FromDateTime(DateTime.UtcNow) < request.StartDate.Value
-                    ? DateOnly.FromDateTime(DateTime.UtcNow) : request.StartDate.Value) : null;
+                today < request.StartDate.Value ? today : request.StartDate.Value) : null;
         var comparable = request.RestaurantWeekdayPlan
-            ? Enumerable.Range(0, request.TargetCoverageDays).Select(offset =>
-                snapshot.OpenDates.Count(day => day.DayOfWeek ==
-                    request.StartDate!.Value.AddDays(offset).DayOfWeek)).DefaultIfEmpty().Min() : 0;
+            ? RestaurantDemandPlanner.ComparableDayCount(request.StartDate!.Value,
+                request.TargetCoverageDays, snapshot.OpenDates,
+                today < request.StartDate.Value ? today : request.StartDate.Value) : 0;
         return snapshot.Inputs.Select(input =>
         {
             if (planned is not null)

@@ -108,6 +108,14 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
             }
 
             command.CommandText = """
+                SELECT NetQuantity FROM reporting.ProductDailyRotationSnapshots
+                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+                  AND ProductId=@ProductId AND BusinessLocalDate='2026-07-27';
+                """;
+            Assert.Equal(sale.Lines.Sum(line => line.Quantity),
+                (decimal)(await command.ExecuteScalarAsync())!);
+
+            command.CommandText = """
                 SELECT line.AttributionSnapshotVersion,line.SupplierIdSnapshot,line.UnitCostSnapshot,
                        fact.RecognizedCostAmount,fact.TotalAmount
                 FROM dbo.SalesDocumentLines line

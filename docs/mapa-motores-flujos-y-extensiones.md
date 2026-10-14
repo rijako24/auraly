@@ -145,6 +145,16 @@ Documento comercial completado → `SalesReportingProcessingCoordinator` → col
   `reporting.ProductRotationSnapshots`, con clave negocio + bodega + producto.
   `SqlSalesReportingProjectionWriter` es su único writer; Purchasing, Catalog y
   las pantallas sólo leen el snapshot.
+- La rotación diaria para sugeridos de restaurante se persiste en
+  `reporting.ProductDailyRotationSnapshots` por negocio, bodega, producto y
+  fecha local. Su `NetQuantity` suma las unidades vendidas y resta las devueltas
+  (hechos con signo); conserva `ProjectionVersion` y `CalculatedAt`. La actualiza
+  idempotentemente el mismo `ProductRotationRefresh` del motor de Reporting en
+  la transacción de la proyección documental. El despliegue rellena los 56 días
+  históricos de sedes restaurante sin crear otro worker. Compras y producción
+  sólo leen ese snapshot y los días con actividad del consolidado diario por
+  bodega; no recorren ventas ni devoluciones crudas. Un sugerido nunca confirma
+  inventario: la operación valida las existencias actuales al confirmar.
 - Reportes pequeños consultan tablas propietarias indexadas.
 - Una nueva proyección exige métrica versionada, benchmark, idempotencia,
   reconciliación y rebuild; no crea automáticamente otra tabla de jobs.

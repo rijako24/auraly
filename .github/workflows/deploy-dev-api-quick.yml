@@ -26,7 +26,7 @@ jobs:
       - name: Publish API
         shell: pwsh
         run: |
-          dotnet publish src/API/Auraly.Api/Auraly.Api.csproj --configuration Release --output artifacts/api -p:PlaywrightPlatform=linux-x64
+          dotnet publish src/API/Auraly.Api/Auraly.Api.csproj --configuration Release --output artifacts/api -p:PlaywrightPlatform=linux-x64 -p:InformationalVersion=$env:GITHUB_SHA -p:IncludeSourceRevisionInInformationalVersion=false
           if ($LASTEXITCODE) { throw 'API publish failed.' }
           if (-not (Test-Path 'artifacts/api/.playwright/node/linux-x64/node')) {
             throw 'The Linux PDF driver is missing from the API package.'
@@ -53,7 +53,7 @@ jobs:
           for ($attempt = 1; $attempt -le 36; $attempt++) {
             try {
               $health = Invoke-WebRequest -Uri 'https://api-auraly-dev-w5usmo6w.azurewebsites.net/health' -TimeoutSec 15
-              if ($health.StatusCode -eq 200) {
+              if ($health.StatusCode -eq 200 -and ($health.Content | ConvertFrom-Json).build -eq $env:GITHUB_SHA) {
                 $auth = Invoke-WebRequest -Uri 'https://api-auraly-dev-w5usmo6w.azurewebsites.net/api/v1/auth/me' -SkipHttpErrorCheck -TimeoutSec 15
                 if ($auth.StatusCode -eq 401) {
                   Write-Host 'DEV API is healthy and authentication middleware responds.'

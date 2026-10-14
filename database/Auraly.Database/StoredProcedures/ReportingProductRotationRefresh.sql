@@ -47,4 +47,32 @@ BEGIN
     VALUES(source.BusinessId,source.WarehouseId,source.ProductId,source.WindowEndDate,source.Gross30,source.Returned30,
       source.Net30,source.Gross90,source.Returned90,source.Net90,CASE WHEN source.Net90>0 THEN source.Net90/90 ELSE 0 END,
       @ProjectionVersion,@Now);
+
+    ;WITH affectedDays AS
+    (
+        SELECT DISTINCT ProductId,WarehouseId,BusinessLocalDate
+        FROM reporting.SalesReportLineFacts
+        WHERE BusinessId=@BusinessId AND SourceDocumentId=@SourceDocumentId
+          AND SourceDocumentType=@SourceDocumentType
+    ), daily AS
+    (
+        SELECT @BusinessId BusinessId,a.WarehouseId,a.ProductId,a.BusinessLocalDate,
+               SUM(f.Quantity) NetQuantity
+        FROM affectedDays a
+        JOIN reporting.SalesReportLineFacts f ON f.BusinessId=@BusinessId
+          AND f.WarehouseId=a.WarehouseId AND f.ProductId=a.ProductId
+          AND f.BusinessLocalDate=a.BusinessLocalDate
+        GROUP BY a.WarehouseId,a.ProductId,a.BusinessLocalDate
+    )
+    MERGE reporting.ProductDailyRotationSnapshots WITH(HOLDLOCK) AS target
+    USING daily source ON target.BusinessId=source.BusinessId
+      AND target.WarehouseId=source.WarehouseId AND target.ProductId=source.ProductId
+      AND target.BusinessLocalDate=source.BusinessLocalDate
+    WHEN MATCHED THEN UPDATE SET NetQuantity=source.NetQuantity,
+      ProjectionVersion=@ProjectionVersion,CalculatedAt=@Now
+    WHEN NOT MATCHED THEN INSERT
+      (BusinessId,WarehouseId,ProductId,BusinessLocalDate,NetQuantity,
+       ProjectionVersion,CalculatedAt)
+    VALUES(source.BusinessId,source.WarehouseId,source.ProductId,
+      source.BusinessLocalDate,source.NetQuantity,@ProjectionVersion,@Now);
 END;

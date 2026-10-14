@@ -8,6 +8,16 @@ public sealed record RestaurantDemandQuantity(Guid ProductId, decimal GrossQuant
 
 public static class RestaurantDemandPlanner
 {
+    public static int ComparableDayCount(DateOnly firstDay, int days,
+        IReadOnlyCollection<DateOnly> openDates, DateOnly historyEnd)
+    {
+        var open = openDates.Where(date => date < historyEnd &&
+            date >= historyEnd.AddDays(-56)).Distinct().ToArray();
+        return Enumerable.Range(0, days).Select(offset => open.Count(date =>
+            date.DayOfWeek == firstDay.AddDays(offset).DayOfWeek))
+            .DefaultIfEmpty().Min();
+    }
+
     public static IReadOnlyDictionary<Guid, RestaurantDemandQuantity> Forecast(
         DateOnly firstDay, int days, IReadOnlyCollection<DateOnly> openDates,
         IReadOnlyCollection<RestaurantDemandSale> sales,

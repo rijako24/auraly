@@ -679,7 +679,11 @@ app.MapGet("/health", async (
     try
     {
         await database.CheckAsync(cancellationToken);
-        return Results.Ok(new { status = "Healthy", database = "Reachable" });
+        return Results.Ok(new { status = "Healthy", database = "Reachable",
+            build = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+                .FirstOrDefault()?.InformationalVersion });
     }
     catch (Exception exception)
     {

@@ -34,6 +34,11 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Restaurant_weekday_suggestion_reads_recipes_and_stock_without_changing_receiving()
     {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var daysUntilFriday = ((int)DayOfWeek.Friday - (int)today.DayOfWeek + 7) % 7;
+        var plannedFriday = today.AddDays(daysUntilFriday == 0 ? 7 : daysUntilFriday);
+        var firstFriday = plannedFriday.AddDays(-14);
+        var secondFriday = plannedFriday.AddDays(-7);
         using var client = CreateClient(InventoryPermissionCodes.Read);
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -52,9 +57,33 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
                 change.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
                 await change.ExecuteNonQueryAsync();
             }
+            await using (var projected = new SqlCommand("""
+                INSERT reporting.ProductDailyRotationSnapshots
+                  (BusinessId,WarehouseId,ProductId,BusinessLocalDate,NetQuantity,
+                   ProjectionVersion,CalculatedAt)
+                VALUES(@BusinessId,@WarehouseId,@ProductId,@FirstFriday,10,3,SYSDATETIMEOFFSET()),
+                      (@BusinessId,@WarehouseId,@ProductId,@SecondFriday,30,3,SYSDATETIMEOFFSET());
+                INSERT reporting.SalesReportDailyDimensionTotals
+                  (BusinessId,BusinessLocalDate,DimensionType,DimensionKey,
+                   DimensionLabel,CurrencyCode,DocumentCount,Quantity,GrossSales,
+                   Discounts,Returns,NetUntaxedSales,NetTax,NetTotalSales,
+                   NetRecognizedCost,GrossProfit,ProjectionVersion,UpdatedAt)
+                VALUES(@BusinessId,@FirstFriday,N'Warehouse',CONVERT(nvarchar(80),@WarehouseId),
+                       N'Bodega',N'COP',1,10,0,0,0,0,0,0,0,0,3,SYSDATETIMEOFFSET()),
+                      (@BusinessId,@SecondFriday,N'Warehouse',CONVERT(nvarchar(80),@WarehouseId),
+                       N'Bodega',N'COP',1,30,0,0,0,0,0,0,0,0,3,SYSDATETIMEOFFSET());
+                """, connection))
+            {
+                projected.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                projected.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+                projected.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+                projected.Parameters.AddWithValue("@FirstFriday", firstFriday.ToDateTime(TimeOnly.MinValue));
+                projected.Parameters.AddWithValue("@SecondFriday", secondFriday.ToDateTime(TimeOnly.MinValue));
+                await projected.ExecuteNonQueryAsync();
+            }
             var request = new PurchaseOrderSuggestionRequest(
                 fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
-                [fixture.ProductId], 7, true, new DateOnly(2026, 10, 16));
+                [fixture.ProductId], 7, true, plannedFriday);
             using var response = await client.PostAsJsonAsync(
                 "/api/commerce/v1/purchase-orders/suggestions", request);
             var body = await response.Content.ReadAsStringAsync();
@@ -64,14 +93,39 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
             Assert.True(suggestion.RestaurantWeekdayPlan);
             Assert.Equal(7, suggestion.TargetCoverageDays);
             Assert.True(suggestion.ComparableDays >= 0);
+            using var oneDay = await client.PostAsJsonAsync(
+                "/api/commerce/v1/purchase-orders/suggestions",
+                request with { TargetCoverageDays = 1 });
+            oneDay.EnsureSuccessStatusCode();
+            var friday = Assert.Single(await oneDay.Content
+                .ReadFromJsonAsync<PurchaseOrderSuggestion[]>() ?? []);
+            Assert.Equal(20m, friday.ForecastDailyDemand);
+            Assert.Equal(2, friday.ComparableDays);
             using var production = await client.GetAsync(
                 $"/api/commerce/v1/inventory/production-products/{fixture.ProductId:D}/suggestion" +
-                $"?warehouseId={fixture.WarehouseId:D}&startDate=2026-10-16&days=7");
+                $"?warehouseId={fixture.WarehouseId:D}&startDate={plannedFriday:yyyy-MM-dd}&days=7");
             Assert.True(production.IsSuccessStatusCode,
                 await production.Content.ReadAsStringAsync());
         }
         finally
         {
+            await using (var cleanup = new SqlCommand("""
+                DELETE FROM reporting.ProductDailyRotationSnapshots
+                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+                  AND ProductId=@ProductId AND BusinessLocalDate IN (@FirstFriday,@SecondFriday);
+                DELETE FROM reporting.SalesReportDailyDimensionTotals
+                WHERE BusinessId=@BusinessId AND DimensionType=N'Warehouse'
+                  AND DimensionKey=CONVERT(nvarchar(80),@WarehouseId)
+                  AND BusinessLocalDate IN (@FirstFriday,@SecondFriday);
+                """, connection))
+            {
+                cleanup.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                cleanup.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+                cleanup.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+                cleanup.Parameters.AddWithValue("@FirstFriday", firstFriday.ToDateTime(TimeOnly.MinValue));
+                cleanup.Parameters.AddWithValue("@SecondFriday", secondFriday.ToDateTime(TimeOnly.MinValue));
+                await cleanup.ExecuteNonQueryAsync();
+            }
             await using var restore = new SqlCommand(
                 "UPDATE dbo.Businesses SET PointOfSaleMode=@Mode WHERE BusinessId=@BusinessId", connection);
             restore.Parameters.AddWithValue("@Mode", previousMode ?? "DirectSale");

@@ -144,8 +144,12 @@ inventario, submayores, contabilidad ni reporting.
 ## 6. Motor de reporting
 
 Reporting consume la señal del documento operacional ya confirmado. No forma
-parte del commit operacional y jamás es fuente para decisiones de inventario,
-cartera, fiscal o contabilidad.
+parte del commit operacional y jamás es fuente para escrituras ni decisiones
+definitivas de inventario, cartera, fiscal o contabilidad. Como excepción de
+lectura, los sugeridos no vinculantes de compra y producción consumen la
+rotación diaria ya proyectada por Reporting. La confirmación de una operación
+vuelve a validar existencias en el motor de operaciones; una proyección atrasada
+no autoriza movimientos físicos ni asientos.
 
 Para ventas mantiene una proyección física versionada con:
 

@@ -260,6 +260,7 @@
     <Build Include="Tables\GoodsReceiptDrafts.sql" />
     <Build Include="Tables\PurchaseOrders.sql" />
     <Build Include="Tables\ProductRotationSnapshots.sql" />
+    <Build Include="Tables\ProductDailyRotationSnapshots.sql" />
     <Build Include="Tables\PurchaseSupportFiscalSnapshots.sql" />
     <Build Include="Tables\PurchaseReturns.sql" />
     <Build Include="Tables\Pricing.sql" />

@@ -89,18 +89,19 @@ BEGIN
     DECLARE @HistoryEnd DATE=CASE WHEN @StartDate>CONVERT(date,SYSUTCDATETIME())
         THEN CONVERT(date,SYSUTCDATETIME()) ELSE @StartDate END;
     DECLARE @FromDate DATE=DATEADD(DAY,-56,@HistoryEnd);
-    SELECT fact.ProductId,fact.BusinessLocalDate,SUM(fact.Quantity)
-    FROM reporting.SalesReportLineFacts fact
-    JOIN #RelatedProducts related ON related.ProductId=fact.ProductId
-    WHERE fact.BusinessId=@BusinessId AND fact.WarehouseId=@WarehouseId
-      AND fact.BusinessLocalDate>=@FromDate AND fact.BusinessLocalDate<@HistoryEnd
-      AND fact.MovementType IN(N'Sale',N'Return')
-    GROUP BY fact.ProductId,fact.BusinessLocalDate;
+    SELECT rotation.ProductId,rotation.BusinessLocalDate,rotation.NetQuantity
+    FROM reporting.ProductDailyRotationSnapshots rotation
+    JOIN #RelatedProducts related ON related.ProductId=rotation.ProductId
+    WHERE rotation.BusinessId=@BusinessId AND rotation.WarehouseId=@WarehouseId
+      AND rotation.BusinessLocalDate>=@FromDate
+      AND rotation.BusinessLocalDate<@HistoryEnd;
 
-    SELECT DISTINCT fact.BusinessLocalDate
-    FROM reporting.SalesReportLineFacts fact
-    WHERE fact.BusinessId=@BusinessId AND fact.WarehouseId=@WarehouseId
-      AND fact.BusinessLocalDate>=@FromDate AND fact.BusinessLocalDate<@HistoryEnd;
+    SELECT DISTINCT daily.BusinessLocalDate
+    FROM reporting.SalesReportDailyDimensionTotals daily
+    WHERE daily.BusinessId=@BusinessId AND daily.DimensionType=N'Warehouse'
+      AND daily.DimensionKey=CONVERT(nvarchar(80),@WarehouseId)
+      AND daily.BusinessLocalDate>=@FromDate
+      AND daily.BusinessLocalDate<@HistoryEnd;
 
     SELECT product.ProductId,product.ManageStock,COALESCE(balance.QuantityOnHand,0),
            COALESCE(incoming.Quantity,0)
@@ -111,14 +112,16 @@ BEGIN
       ON nodes.ProductId=product.ProductId
     LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId
       AND balance.WarehouseId=@WarehouseId AND balance.ProductId=product.ProductId
-    OUTER APPLY
+    LEFT JOIN
     (
-        SELECT SUM(CASE WHEN line.OrderedQuantity-line.ReceivedQuantity-line.CancelledQuantity>0
-          THEN line.OrderedQuantity-line.ReceivedQuantity-line.CancelledQuantity ELSE 0 END) Quantity
+        SELECT line.ProductId,
+          SUM(CASE WHEN line.OrderedQuantity-line.ReceivedQuantity-line.CancelledQuantity>0
+            THEN line.OrderedQuantity-line.ReceivedQuantity-line.CancelledQuantity ELSE 0 END) Quantity
         FROM purchasing.PurchaseOrderLines line
         JOIN purchasing.PurchaseOrders purchaseOrder ON purchaseOrder.PurchaseOrderId=line.PurchaseOrderId
         WHERE purchaseOrder.BusinessId=@BusinessId AND purchaseOrder.WarehouseId=@WarehouseId
-          AND purchaseOrder.Status IN(N'Open',N'PartiallyReceived') AND line.ProductId=product.ProductId
-    ) incoming
+          AND purchaseOrder.Status IN(N'Open',N'PartiallyReceived')
+        GROUP BY line.ProductId
+    ) incoming ON incoming.ProductId=product.ProductId
     WHERE product.TenantId=@TenantId;
 END;
