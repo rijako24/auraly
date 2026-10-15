@@ -461,8 +461,17 @@ public sealed class OnlineSalesCheckoutService(
                     storedPayments.Insert(0, new OnlineSalesPayment("Cash",
                         cash.Sum(item => item.Amount), null,
                         TenderedAmount: cash.Sum(item =>
-                            item.TenderedAmount ?? item.Amount)));
+                            item.TenderedAmount ?? item.CollectedAmount),
+                        RoundingAdjustment: cash.Sum(item =>
+                            item.RoundingAdjustment)));
                 }
+                var expectedRounding = PosPaymentRoundingPolicy.Adjustment(
+                    settlement.Withholding.NetAmount);
+                if (storedPayments.Sum(item => item.RoundingAdjustment) !=
+                    expectedRounding)
+                    throw new OnlineSalesDraftValidationException(
+                        "Los cobros de esta mesa no incluyen el ajuste al peso. " +
+                        "Anula el último cobro y vuelve a recibirlo con el total redondeado.");
                 if (storedPayments.Count > 10 ||
                     !string.Equals(System.Text.Json.JsonSerializer.Serialize(
                         request.Payments),

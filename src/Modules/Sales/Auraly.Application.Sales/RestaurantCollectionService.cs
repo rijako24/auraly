@@ -109,9 +109,11 @@ public sealed class RestaurantCollectionService(
             (request.Allocations.Count > 0 && request.Payments.Count == 0) ||
             request.Payments.Any(payment => payment.MethodCode is not
                 ("Cash" or "DebitCard" or "CreditCard" or "Transfer") ||
-                payment.Amount <= 0 || payment.RoundingAdjustment != 0 ||
+                payment.Amount <= 0 ||
+                payment.RoundingAdjustment is <= -50m or > 50m ||
+                payment.CollectedAmount <= 0 ||
                 payment.TenderedAmount is { } tendered &&
-                    (payment.MethodCode != "Cash" || tendered < payment.Amount) ||
+                    (payment.MethodCode != "Cash" || tendered < payment.CollectedAmount) ||
                 payment.Reference?.Length > 160 || payment.Notes?.Length > 500 ||
                 (payment.MethodCode is "DebitCard" or "CreditCard") !=
                     (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) &&
@@ -119,6 +121,7 @@ public sealed class RestaurantCollectionService(
                 payment.MethodCode == "Transfer" &&
                     string.IsNullOrWhiteSpace(payment.Reference)) ||
             request.Payments.Count(payment => payment.MethodCode == "Cash") > 1 ||
+            request.Payments.Count(payment => payment.RoundingAdjustment != 0m) > 1 ||
             request.TipPayment is { } tip &&
               (tip.MethodCode is not ("Cash" or "DebitCard" or "CreditCard" or "Transfer") ||
                tip.Amount <= 0 || tip.Amount > 1000000000m ||

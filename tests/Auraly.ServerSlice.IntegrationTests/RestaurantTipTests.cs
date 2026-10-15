@@ -17,6 +17,8 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
         var partyId = Guid.NewGuid();
         var secondPartyId = Guid.NewGuid();
         var tableId = Guid.NewGuid();
+        var restaurantProductId = Guid.NewGuid();
+        var taxProfileId = Guid.NewGuid();
         using var waiter = fixture.CreateUserClient(waiterId, "restaurant.attend");
         using var cashier = fixture.CreateAdminClient("sales.create", "businesses.update");
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -43,6 +45,20 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             WHERE UserId=@WaiterId AND TenantId=@TenantId;
             DELETE FROM sales.RestaurantProductRoutes
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND ProductId=@ProductId;
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,Name,Rate,
+                IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@TenantId,@TaxCode,N'IVA plato de prueba',19,
+                1,SYSUTCDATETIME());
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,BaseUnitCode,
+                TaxProfileId,Name,Currency,ManageStock,IsIngredient,IsActive,CreatedAt)
+            SELECT @RestaurantProductId,TenantId,@RestaurantProductCode,
+                   N'EA',@TaxProfileId,N'Plato con ajuste al peso',Currency,
+                   0,0,1,SYSUTCDATETIME()
+            FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=@TenantId;
+            INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,
+                PreparedAmount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@RestaurantProductId,373284,373284,
+                N'COP',DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
             """, connection))
         {
             setup.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
@@ -53,6 +69,11 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             setup.Parameters.AddWithValue("@Code", $"T-{partyId:N}"[..12]);
             setup.Parameters.AddWithValue("@SecondCode", $"T-{secondPartyId:N}"[..12]);
             setup.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+            setup.Parameters.AddWithValue("@RestaurantProductId", restaurantProductId);
+            setup.Parameters.AddWithValue("@TaxProfileId", taxProfileId);
+            setup.Parameters.AddWithValue("@TaxCode", $"RND-{taxProfileId:N}"[..32]);
+            setup.Parameters.AddWithValue("@RestaurantProductCode",
+                $"RND-{restaurantProductId:N}"[..32]);
             setup.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
             await setup.ExecuteNonQueryAsync();
         }
@@ -75,7 +96,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             RestaurantAccountDraft draft;
             using (var response = await waiter.PostAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions",
-                new AddRestaurantAccountItemRequest(Guid.NewGuid(), fixture.ProductId,
+                new AddRestaurantAccountItemRequest(Guid.NewGuid(), restaurantProductId,
                     2, account.Version)))
             {
                 response.EnsureSuccessStatusCode();
@@ -115,6 +136,9 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             var tipAmount = decimal.Round(initial.Total / 10, 0,
                 MidpointRounding.AwayFromZero);
             var half = initial.Total / 2;
+            Assert.Equal(746568m, initial.Total);
+            var adjustment = PosPaymentRoundingPolicy.Adjustment(initial.Total);
+            Assert.Equal(32m, adjustment);
             var productCollectionId = Guid.NewGuid();
             RestaurantCollectionSummary partial;
             using (var request = new HttpRequestMessage(HttpMethod.Post,
@@ -140,6 +164,18 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                         .Payments.Single().TenderedAmount);
             }
             var secondCollectionId = Guid.NewGuid();
+            using (var missingAdjustment = new HttpRequestMessage(HttpMethod.Post,
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/collections"))
+            {
+                missingAdjustment.Content = JsonContent.Create(
+                    new CaptureRestaurantCollectionRequest(Guid.NewGuid(),
+                        workSessionId, partial.AccountVersion,
+                        [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
+                        [new OnlineSalesPayment("Cash", half, null)]));
+                missingAdjustment.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+                using var rejected = await cashier.SendAsync(missingAdjustment);
+                Assert.Equal(System.Net.HttpStatusCode.BadRequest, rejected.StatusCode);
+            }
             RestaurantCollectionSummary paid;
             using (var request = new HttpRequestMessage(HttpMethod.Post,
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/collections"))
@@ -147,7 +183,9 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 request.Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(
                     secondCollectionId, workSessionId, partial.AccountVersion,
                     [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
-                    [new OnlineSalesPayment("Cash", half, null)],
+                    [new OnlineSalesPayment("Cash", half, null,
+                        TenderedAmount: half + adjustment,
+                        RoundingAdjustment: adjustment)],
                     new OnlineSalesPayment("Cash", 2_000m, null)));
                 request.Headers.Add("Idempotency-Key", secondCollectionId.ToString("N"));
                 using var response = await cashier.SendAsync(request);
@@ -182,14 +220,16 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                         workSessionId, new CompleteOnlineSalesDraftRequest(
                             captured.AccountVersion,
                             [new OnlineSalesPayment("Cash", initial.Total, null,
-                                TenderedAmount: initial.Total + 5_000m)],
+                                TenderedAmount: initial.Total + 5_000m + adjustment,
+                                RoundingAdjustment: adjustment)],
                             DocumentType: documentType)))
                 };
                 complete.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
                 using var issued = await cashier.SendAsync(complete);
                 issued.EnsureSuccessStatusCode();
                 var result = (await issued.Content.ReadFromJsonAsync<CompleteOnlineOrderSaleResponse>())!;
-                Assert.Equal(initial.Total, result.Receipt.PayableAmount);
+                Assert.Equal(initial.Total + adjustment, result.Receipt.PayableAmount);
+                Assert.Equal(adjustment, result.Receipt.PayableRoundingAmount);
                 Assert.True(result.Receipt.IsRestaurantSale);
                 Assert.Equal(3_000m + tipAmount, result.Receipt.RestaurantTipAmount);
                 using var reprintUser = fixture.CreateAdminClient("sales.reprint");
@@ -198,7 +238,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                     new OnlineSalesHistoryContext(fixture.BusinessId));
                 reprint.EnsureSuccessStatusCode();
                 var copy = (await reprint.Content.ReadFromJsonAsync<OnlineSalesReceipt>())!;
-                Assert.Equal(initial.Total, copy.PayableAmount);
+                Assert.Equal(initial.Total + adjustment, copy.PayableAmount);
                 Assert.Equal(3_000m + tipAmount, copy.RestaurantTipAmount);
                 await using var projected = new SqlCommand("""
                     SELECT TotalAmount,RestaurantTipAmount
@@ -209,7 +249,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 projected.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
                 await using var projectionReader = await projected.ExecuteReaderAsync();
                 Assert.True(await projectionReader.ReadAsync());
-                Assert.Equal(initial.Total, projectionReader.GetDecimal(0));
+                Assert.Equal(initial.Total + adjustment, projectionReader.GetDecimal(0));
                 Assert.Equal(3_000m + tipAmount, projectionReader.GetDecimal(1));
             }
             await using (var verify = new SqlCommand("""

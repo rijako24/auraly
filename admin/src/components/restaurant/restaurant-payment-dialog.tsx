@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { useBodyScrollLock } from "@/hooks/use-body-scroll-lock";
 import { finalRestaurantPayments, settleRestaurantPayment } from "@/components/restaurant/restaurant-payment-calculation";
+import { roundToNearestHundred } from "@/app/(pos)/pos/pos-payment-settlement";
 import { Select, SelectContent, SelectItem, SelectTrigger,
   SelectValue } from "@/components/ui/select";
 import type { RestaurantAccountDraft, RestaurantCollectionAllocation,
@@ -83,6 +84,15 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   })).filter((line) => line.quantity > 0), [available, quantities, selectionMode]);
   const selectedTotal = round(selection.reduce((sum, line) =>
     sum + line.quantity * line.unitPrice, 0));
+  const roundingAdjustment = round(roundToNearestHundred(summary.total) - summary.total);
+  const finalSelection = summary.remaining > 0 &&
+    round(selectedTotal - summary.remaining) === 0;
+  const currentAdjustment = finalSelection ? roundingAdjustment : 0;
+  const capturedAdjustment = round(summary.collections.reduce((sum, entry) =>
+    sum + entry.payments.reduce((paymentSum, payment) =>
+      paymentSum + (payment.roundingAdjustment ?? 0), 0), 0));
+  const missingRecordedAdjustment = summary.remaining === 0 &&
+    capturedAdjustment !== roundingAdjustment;
   const actualTip = tipAmount.trim() === "" ? 0 : Number(tipAmount);
   const tipBase = selectedTotal > 0 ? selectedTotal : summary.total;
   const invalidTip = !Number.isFinite(actualTip) || actualTip < 0 ||
@@ -100,7 +110,8 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   const separateTipChange = separateCashTip && !invalidSeparateTipTendered
     ? round(separateTipTendered - actualTip) : 0;
   const { cashTendered, cashSaleTendered, cashApplied, due, change } =
-    settleRestaurantPayment(selectedTotal, paymentRows, cashTipIncluded);
+    settleRestaurantPayment(selectedTotal, paymentRows, cashTipIncluded,
+      currentAdjustment);
   const cashTipExceedsTendered = cashTipIncluded > cashTendered;
   const otherSession = summary.collections.some((item) =>
     item.workSessionId !== workSessionId);
@@ -117,6 +128,9 @@ export function RestaurantPaymentDialog({ draft, summary, client,
       : invalidSeparateTipTendered ? "Escribe el efectivo entregado para cubrir la propina."
       : cashTipExceedsTendered ? "El efectivo entregado no cubre la propina indicada."
       : selectedTotal <= 0 ? "Selecciona los productos que vas a cobrar."
+        : !finalSelection && round(summary.remaining - selectedTotal +
+            roundingAdjustment) <= 0
+          ? "Selecciona más productos: el último pago debe superar el ajuste al peso."
         : due > 0 ? `Faltan ${money.format(due)} por asignar a los medios de pago.`
           : due < 0 ? `Los medios de pago exceden el cobro por ${money.format(-due)}.`
             : documentTypeBlockReason;
@@ -144,17 +158,17 @@ export function RestaurantPaymentDialog({ draft, summary, client,
 
   useEffect(() => {
     if (paymentRows.length || selectedTotal <= 0) return;
-    setPaymentRows([newRow(selectedTotal)]);
-  }, [paymentRows.length, selectedTotal]);
+    setPaymentRows([newRow(selectedTotal + currentAdjustment)]);
+  }, [paymentRows.length, selectedTotal, currentAdjustment]);
 
   useEffect(() => {
     const previous = previousSuggestedCash.current;
-    const suggested = selectedTotal + cashTipIncluded;
+    const suggested = selectedTotal + currentAdjustment + cashTipIncluded;
     previousSuggestedCash.current = suggested;
     setPaymentRows((rows) => rows.length === 1 &&
       rows[0].methodCode === "Cash" && Number(rows[0].amount) === previous
       ? [{ ...rows[0], amount: String(suggested) }] : rows);
-  }, [selectedTotal, cashTipIncluded]);
+  }, [selectedTotal, currentAdjustment, cashTipIncluded]);
 
   function updateRow(id: string, patch: Partial<PaymentRow>) {
     setPaymentRows((rows) => rows.map((row) => row.id === id ?
@@ -218,6 +232,17 @@ export function RestaurantPaymentDialog({ draft, summary, client,
       setError("Completa los datos de tarjeta, transferencia o efectivo.");
       return null;
     }
+    if (currentAdjustment !== 0) {
+      const index = rows.findLastIndex((row) =>
+        row.amount > currentAdjustment);
+      if (index < 0) {
+        setError("Distribuye el pago para cubrir el ajuste al peso en un medio.");
+        return null;
+      }
+      rows[index] = { ...rows[index],
+        amount: round(rows[index].amount - currentAdjustment),
+        roundingAdjustment: currentAdjustment };
+    }
     return rows;
   }
 
@@ -279,7 +304,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   }
 
   async function retryDocument() {
-    if (disabled) return;
+    if (disabled || missingRecordedAdjustment) return;
     setWorking(true);
     setError("");
     try {
@@ -302,9 +327,12 @@ export function RestaurantPaymentDialog({ draft, summary, client,
         <div className="shrink-0 p-4 sm:p-7 lg:min-h-0 lg:overflow-y-auto">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
             <div className="col-span-2 sm:col-span-1"><Metric label="Total de la mesa" value={summary.total}/></div>
-            <Metric label="Pagado" value={summary.collected} accent="teal"/>
-            <Metric label="Por cobrar" value={summary.remaining} accent="amber"/>
+            <Metric label="Pagado" value={summary.collected + capturedAdjustment} accent="teal"/>
+            <Metric label="Por cobrar" value={summary.remaining +
+              (summary.remaining > 0 ? roundingAdjustment : 0)} accent="amber"/>
           </div>
+          {roundingAdjustment !== 0 && <p className="mt-3 text-sm font-semibold text-slate-600 dark:text-slate-300">Ajuste al peso {roundingAdjustment > 0 ? "+" : ""}{money.format(roundingAdjustment)} · Total a pagar {money.format(summary.total + roundingAdjustment)}</p>}
+          {missingRecordedAdjustment && <p role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Este cobro anterior se guardó sin el ajuste al peso. Anúlalo y vuelve a recibir el total redondeado antes de emitir el documento.</p>}
           {summary.tipsCollected > 0 && <p className="mt-3 text-sm font-semibold text-teal-800">Propinas recibidas aparte: {money.format(summary.tipsCollected)}</p>}
           {summary.remaining > 0 && <><div className="mt-7 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xl font-bold">¿Qué productos paga ahora?</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Puedes cobrar todo o seleccionar cantidades por persona.</p></div></div>
             <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-slate-200/70 p-1.5 dark:bg-slate-800" role="group" aria-label="Modo de cobro">
@@ -321,13 +349,13 @@ export function RestaurantPaymentDialog({ draft, summary, client,
                 {selectionMode === "choose" && line.remainingQuantity > 1 && !line.allowsFractionalSale ? <div className="flex items-center gap-1"><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen - 1, line.remainingQuantity)} disabled={disabled} aria-label={`Quitar ${line.description}`}>−</Button><span className="min-w-7 text-center font-bold">{chosen}</span><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen + 1, line.remainingQuantity)} disabled={disabled} aria-label={`Agregar ${line.description}`}>+</Button></div> : <strong className="whitespace-nowrap">{money.format(chosen * unit)}</strong>}
               </div>;
             })}</div></>}
-          {summary.collections.length > 0 && <section className="mt-8"><h3 className="text-lg font-bold">Cobros recibidos</h3><div className="mt-3 space-y-2">{summary.collections.map((entry) => <div key={entry.collectionId} className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 dark:border-teal-900 dark:bg-slate-900"><CheckCircle2 className="h-6 w-6 shrink-0 text-teal-600"/><div className="min-w-0 flex-1"><p className="font-semibold">{money.format(entry.amount)} · {entry.payments.map((payment) => paymentLabels.get(payment.methodCode) ?? payment.methodCode).join(" + ")}</p>{entry.tipPayment && <p className="text-sm font-medium text-teal-700">Propina: {money.format(entry.tipPayment.amount)} · {paymentLabels.get(entry.tipPayment.methodCode) ?? entry.tipPayment.methodCode}</p>}<p className="text-xs text-slate-500">{new Date(entry.capturedAt).toLocaleString("es-CO")} · {entry.allocations.length} producto(s)</p></div><Button variant="ghost" size="sm" className="min-h-11 text-red-700" disabled={disabled} onClick={() => setConfirmReverse(entry.collectionId)}><RotateCcw className="mr-1 h-4 w-4"/>Anular</Button></div>)}</div></section>}
+          {summary.collections.length > 0 && <section className="mt-8"><h3 className="text-lg font-bold">Cobros recibidos</h3><div className="mt-3 space-y-2">{summary.collections.map((entry) => <div key={entry.collectionId} className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 dark:border-teal-900 dark:bg-slate-900"><CheckCircle2 className="h-6 w-6 shrink-0 text-teal-600"/><div className="min-w-0 flex-1"><p className="font-semibold">{money.format(entry.amount + entry.payments.reduce((sum, payment) => sum + (payment.roundingAdjustment ?? 0), 0))} · {entry.payments.map((payment) => paymentLabels.get(payment.methodCode) ?? payment.methodCode).join(" + ")}</p>{entry.tipPayment && <p className="text-sm font-medium text-teal-700">Propina: {money.format(entry.tipPayment.amount)} · {paymentLabels.get(entry.tipPayment.methodCode) ?? entry.tipPayment.methodCode}</p>}<p className="text-xs text-slate-500">{new Date(entry.capturedAt).toLocaleString("es-CO")} · {entry.allocations.length} producto(s)</p></div><Button variant="ghost" size="sm" className="min-h-11 text-red-700" disabled={disabled} onClick={() => setConfirmReverse(entry.collectionId)}><RotateCcw className="mr-1 h-4 w-4"/>Anular</Button></div>)}</div></section>}
         </div>
         <aside className="flex shrink-0 flex-col border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:min-h-0 lg:border-l lg:border-t-0">
           <section className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-6" aria-label="Documento de venta">
             <div className="flex items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-100">{documentType === "SalesInvoice" ? <FileText className="h-5 w-5"/> : <ReceiptText className="h-5 w-5"/>}</span><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Documento de venta</p><p className="font-bold leading-tight">{documentType === "SalesInvoice" ? "Factura electrónica" : "Comprobante de venta"}</p></div></div><Button variant="outline" className="min-h-11 shrink-0 rounded-xl" disabled={disabled} onClick={() => setDocumentTypeOpen(true)}>Cambiar documento</Button></div>
           </section>
-          <div className="p-4 sm:p-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><p className="text-xs font-bold uppercase tracking-widest text-teal-700 dark:text-teal-400">Pago de esta persona · consumo</p><p className="mt-1 text-3xl font-extrabold">{money.format(selectedTotal)}</p>
+          <div className="p-4 sm:p-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"><p className="text-xs font-bold uppercase tracking-widest text-teal-700 dark:text-teal-400">Pago de esta persona · consumo</p><p className="mt-1 text-3xl font-extrabold">{money.format(selectedTotal + currentAdjustment)}</p>{currentAdjustment !== 0 && <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Consumo {money.format(selectedTotal)} · ajuste al peso {currentAdjustment > 0 ? "+" : ""}{money.format(currentAdjustment)}</p>}
             <div className="mt-4 rounded-2xl border border-teal-200 bg-teal-50/70 p-4 dark:border-teal-900 dark:bg-teal-950/30">
               <label htmlFor="restaurant-actual-tip" className="block text-sm font-bold">Propina recibida (opcional)</label>
               <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Se registra por separado. No aumenta la factura de consumo.</p>
@@ -343,7 +371,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
                 {separateCashTip && <label className="block text-sm font-semibold">Efectivo entregado para la propina<Input inputMode="decimal" className="mt-1 h-12 bg-white text-lg font-bold dark:bg-slate-900" placeholder={String(actualTip)} value={separateTipCashReceived} onChange={(event) => { setSeparateTipCashReceived(event.target.value); setError(""); }}/></label>}
                 {separateTipChange > 0 && <p className="font-semibold text-teal-800 dark:text-teal-200">Cambio de la propina: {money.format(separateTipChange)}</p>}
               </div>}
-              <p className="mt-3 text-sm font-semibold">Consumo y propina de esta persona: {money.format(selectedTotal + (invalidTip ? 0 : actualTip))}</p>
+              <p className="mt-3 text-sm font-semibold">Consumo y propina de esta persona: {money.format(selectedTotal + currentAdjustment + (invalidTip ? 0 : actualTip))}</p>
             </div>
             {summary.remaining > 0 && <div className="mt-5 space-y-3">{paymentRows.map((row) => <div key={row.id} className="rounded-2xl border bg-slate-50 p-4 dark:bg-slate-950"><div className="flex items-center gap-2"><Select value={row.methodCode} onValueChange={(value) => updateRow(row.id, { methodCode: value as Method, reference: "", franchise: "", approval: "", bankAccountId: "" })}><SelectTrigger aria-label="Medio de pago" className="h-12 flex-1 rounded-xl bg-white text-base dark:bg-slate-900"><SelectValue/></SelectTrigger><SelectContent>{catalog.map((method) => <SelectItem key={method.code} value={method.code} className="min-h-12 text-base">{method.label}</SelectItem>)}</SelectContent></Select><Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 rounded-xl text-slate-500" disabled={paymentRows.length === 1} onClick={() => setPaymentRows((rows) => rows.filter((item) => item.id !== row.id))} aria-label="Quitar medio"><Trash2 className="h-5 w-5"/></Button></div>
                 <label className="mt-3 block text-sm font-semibold">{row.methodCode === "Cash" ? cashTipIncluded > 0 ? "Efectivo entregado (incluye propina)" : "Efectivo entregado" : "Valor cobrado por consumo"}<Input inputMode="decimal" className="mt-1 h-14 rounded-xl text-xl font-bold" value={row.amount} onChange={(event) => updateRow(row.id, { amount: event.target.value })}/></label>
@@ -352,7 +380,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
               </div>)}<Button variant="outline" className="min-h-12 w-full rounded-xl" disabled={disabled || !referencesReady || !canAddPaymentMethod || paymentRows.length >= 10 || selectedTotal <= 0} onClick={addPaymentMethod}><Plus className="mr-2 h-5 w-5"/>Agregar otro medio</Button><div className="space-y-1 rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold dark:bg-slate-800"><div className="flex justify-between"><span>{due > 0 ? "Falta" : due < 0 ? "Excede" : "Pago completo"}</span><span>{money.format(Math.abs(due))}</span></div>{change > 0 && <div className="flex justify-between text-teal-700 dark:text-teal-300"><span>Cambio a entregar</span><span>{money.format(change)}</span></div>}</div></div>}
           </div>
           <footer className="shrink-0 border-t bg-white p-4 dark:bg-slate-900 sm:p-6">{error && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">{error}</p>}{captureBlockReason && captureBlockReason !== error && <p role="status" className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">{captureBlockReason}</p>}
-            {summary.remaining > 0 || actualTip > 0 ? <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!captureBlockReason} onClick={() => void receivePayment()}><Banknote className="mr-2 h-6 w-6"/>{summary.remaining === 0 ? "Guardar propina y emitir documento" : selectedTotal === summary.remaining ? `Cobrar y emitir ${documentType === "SalesInvoice" ? "factura" : "documento"}` : "Guardar este pago"}</Button> : <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!documentTypeBlockReason || otherSession} onClick={() => void retryDocument()}><CreditCard className="mr-2 h-6 w-6"/>Reintentar {documentType === "SalesInvoice" ? "factura" : "documento"} único</Button>}
+            {summary.remaining > 0 || actualTip > 0 ? <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!captureBlockReason || missingRecordedAdjustment} onClick={() => void receivePayment()}><Banknote className="mr-2 h-6 w-6"/>{summary.remaining === 0 ? "Guardar propina y emitir documento" : selectedTotal === summary.remaining ? `Cobrar y emitir ${documentType === "SalesInvoice" ? "factura" : "documento"}` : "Guardar este pago"}</Button> : <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!documentTypeBlockReason || otherSession || missingRecordedAdjustment} onClick={() => void retryDocument()}><CreditCard className="mr-2 h-6 w-6"/>Reintentar {documentType === "SalesInvoice" ? "factura" : "documento"} único</Button>}
             <div className="mt-3" role="group" aria-label="Imprimir al finalizar"><p className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">Imprimir al finalizar</p><div className="flex flex-wrap gap-1.5">{PAYMENT_PRINT_SHORTCUTS.map(({ key, label, choice }) => <button key={key} type="button" aria-label={label} aria-pressed={printChoice === choice} disabled={disabled} onClick={() => setPrintChoice(choice)} className={`min-h-10 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/30 disabled:opacity-50 ${printChoice === choice ? "border-teal-600 bg-teal-50 text-teal-900 dark:bg-teal-950 dark:text-teal-200" : "border-slate-200 bg-slate-50 text-slate-600 hover:border-teal-300 hover:bg-teal-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}><span className="font-bold text-teal-700 underline decoration-teal-500/60 decoration-2 underline-offset-4 dark:text-teal-300">{key}</span>{label.slice(1)}</button>)}</div></div>
           </footer>
         </aside>

@@ -39,6 +39,8 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
             .BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            decimal accountTotal;
+            decimal previouslyCollected;
             await using (var replay = new SqlCommand("""
                 SELECT AccountId,RequestHash
                 FROM sales.RestaurantAccountCollections WITH(UPDLOCK,HOLDLOCK)
@@ -66,7 +68,16 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
                         FROM sales.RestaurantAccountCollections prior
                         WHERE prior.AccountId=account.AccountId
                           AND prior.Status=N'Captured'
-                        ORDER BY prior.CapturedAt,prior.CollectionId)
+                        ORDER BY prior.CapturedAt,prior.CollectionId),
+                       (SELECT COALESCE(SUM(addition.Quantity*
+                           (addition.PublicUnitPrice-addition.PromotionDiscountPerUnit)),0)
+                        FROM sales.RestaurantAccountAdditions addition
+                        WHERE addition.AccountId=account.AccountId
+                          AND addition.Status<>N'Cancelled'),
+                       (SELECT COALESCE(SUM(prior.Amount),0)
+                        FROM sales.RestaurantAccountCollections prior
+                        WHERE prior.AccountId=account.AccountId
+                          AND prior.Status=N'Captured')
                 FROM sales.RestaurantAccounts account WITH(UPDLOCK,HOLDLOCK)
                 JOIN dbo.Businesses business
                   ON business.BusinessId=account.BusinessId
@@ -107,6 +118,8 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
                 if (!reader.IsDBNull(1) && reader.GetGuid(1) != request.WorkSessionId)
                     throw new RestaurantAccountConflictException(
                         "Los cobros de esta mesa pertenecen a otra sesión de caja.");
+                accountTotal = reader.GetDecimal(2);
+                previouslyCollected = reader.GetDecimal(3);
             }
 
             await using (var methodLimit = new SqlCommand("""
@@ -175,11 +188,23 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
                         "Los productos elegidos cambiaron o ya no están enviados.");
             }
             amount = decimal.Round(amount, 4);
+            var roundingAdjustment = amount > 0m &&
+                amount == accountTotal - previouslyCollected
+                ? PosPaymentRoundingPolicy.Adjustment(accountTotal) : 0m;
             if ((amount <= 0 && request.TipPayment is null) ||
                 (amount == 0 && allocations.Length != 0) ||
-                request.Payments.Sum(payment => payment.CollectedAmount) != amount)
+                request.Payments.Sum(payment => payment.Amount) != amount)
                 throw new RestaurantAccountValidationException(
                     "El valor recibido debe coincidir con los productos seleccionados.");
+            if (request.Payments.Sum(payment => payment.RoundingAdjustment) !=
+                roundingAdjustment)
+                throw new RestaurantAccountValidationException(
+                    "El último cobro debe incluir el ajuste al peso del total de la mesa.");
+            if (amount > 0m && amount < accountTotal - previouslyCollected &&
+                accountTotal - previouslyCollected - amount +
+                    PosPaymentRoundingPolicy.Adjustment(accountTotal) <= 0m)
+                throw new RestaurantAccountValidationException(
+                    "Selecciona más productos: el último pago debe superar el ajuste al peso.");
 
             await using (var insert = new SqlCommand("""
                 INSERT sales.RestaurantAccountCollections
@@ -225,6 +250,7 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
                 insert.Parameters.AddWithValue("@Version", request.ExpectedAccountVersion);
                 insert.Parameters.Add("@Audit", SqlDbType.NVarChar, -1).Value =
                     JsonSerializer.Serialize(new { request.CollectionId, amount,
+                        roundingAdjustment,
                         TipAmount = request.TipPayment?.Amount ?? 0m,
                         request.WorkSessionId, allocations });
                 insert.Parameters.AddWithValue("@AuditTime", now.UtcDateTime);
