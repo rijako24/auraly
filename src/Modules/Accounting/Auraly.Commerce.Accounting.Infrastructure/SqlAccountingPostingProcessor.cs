@@ -2383,7 +2383,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             }
             foreach(var item in residual)
             {
-                var difference = item.Value;
+                var difference = decimal.Round(item.Value,4,MidpointRounding.AwayFromZero);
                 if(difference>0)
                 {
                     lines.Add(new(AccountingCategories.CashClosureDifferencesPending,difference,0,null,description));

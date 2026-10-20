@@ -256,7 +256,10 @@ public sealed partial class SqlWorkSessionStore
                 PaymentMethodCode = countable.Single(method => method.PaymentMethodCode.Equals(
                     item.PaymentMethodCode, StringComparison.OrdinalIgnoreCase)).PaymentMethodCode
             }).ToArray();
-            var lines = request.Lines.ToDictionary(value => value.PaymentMethodCode.Trim(), StringComparer.OrdinalIgnoreCase);
+            var lines = request.Lines.Select(value => value with
+            {
+                VerifiedAmount = decimal.Round(value.VerifiedAmount, 4, MidpointRounding.AwayFromZero)
+            }).ToDictionary(value => value.PaymentMethodCode.Trim(), StringComparer.OrdinalIgnoreCase);
             if (lines.Count != request.Lines.Count || countable.Any(value => !lines.ContainsKey(value.PaymentMethodCode)) ||
                 lines.Keys.Any(code => countable.All(value => !value.PaymentMethodCode.Equals(code, StringComparison.OrdinalIgnoreCase))))
                 throw new WorkSessionValidationException("La conciliación debe incluir cada medio contado exactamente una vez.");

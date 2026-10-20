@@ -935,6 +935,124 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Closure_reconciliation_ignores_amounts_below_accounting_precision()
+    {
+        var userId = await CreateUserAsync("work-session-rounding");
+        using var client = fixture.CreateUserClient(userId,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client,
+            new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
+        var closure = await CloseAsync(client, opened.WorkSessionId,
+            $"close-{Guid.NewGuid():N}", new CloseWorkSessionRequest(0m, null));
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}";
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                closure.PaymentTotals.Where(item => item.RequiresCount)
+                    .Select(item => new ReconcileWorkSessionClosureLine(item.PaymentMethodCode,
+                        item.PaymentMethodCode == "Cash" ? 0.00000000001m : item.NetAmount,
+                        true, null)).ToArray(), [], null))
+        };
+        message.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(message);
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        var reconciliation = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("Reconciled", reconciliation.Status);
+        Assert.Equal(0m, reconciliation.Lines.Single(line => line.PaymentMethodCode == "Cash").VerifiedAmount);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM dbo.AccountingPostingJobs
+            WHERE SourceDocumentId=@ReconciliationId
+              AND SourceDocumentType=N'WorkSessionClosureReconciliation';
+            """;
+        command.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
+        Assert.Equal(0, Convert.ToInt32(await command.ExecuteScalarAsync()));
+    }
+
+    [Fact]
+    public async Task Historical_closure_rounding_residue_posts_once_on_retry()
+    {
+        var userId = await CreateUserAsync("work-session-historical-rounding");
+        using var client = fixture.CreateUserClient(userId, Auraly.Commerce.Accounting.Contracts.AccountingPermissionCodes.Retry);
+        var reconciliationId = Guid.NewGuid();
+        var payload = new WorkSessionClosureReconciliationPayload(
+            reconciliationId, Guid.NewGuid(), fixture.TenantId, fixture.BusinessId,
+            userId, DateTimeOffset.UtcNow,
+            [
+                new("Cash", "Cash", 1_000m, 900m, 1_000m, 0m, null),
+                new("Transfer", "TransferClearing", 200m, 200m,
+                    200.00000000001m, 0.00000000001m, null)
+            ], []);
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(payload,
+            new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        var payloadHash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(payloadJson));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT dbo.AccountingSourceDocuments
+                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
+                   PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+                VALUES(@Id,N'WorkSessionClosureReconciliation',@TenantId,@BusinessId,
+                  @Payload,@Hash,@At,@At,1);
+                INSERT dbo.AccountingPostingJobs
+                  (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
+                   SourceDocumentType,SourcePayloadHash,OccurredAt,
+                   AccountingEntryRequired,Status,AttemptCount,CreatedAt)
+                VALUES(NEWID(),@TenantId,@BusinessId,@Id,
+                  N'WorkSessionClosureReconciliation',@Hash,@At,1,N'Pending',1,@At);
+                """;
+            command.Parameters.AddWithValue("@Id", reconciliationId);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@Payload", payloadJson);
+            command.Parameters.Add("@Hash", System.Data.SqlDbType.Binary, 32).Value = payloadHash;
+            command.Parameters.AddWithValue("@At", payload.ReconciledAt);
+            Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        }
+
+        var path = $"/api/commerce/v1/accounting/postings/{reconciliationId:D}/retry";
+        using (var first = await client.PostAsync(path, null))
+            Assert.True(first.IsSuccessStatusCode, await first.Content.ReadAsStringAsync());
+        using (var replay = await client.PostAsync(path, null))
+            Assert.True(replay.IsSuccessStatusCode, await replay.Content.ReadAsStringAsync());
+
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT job.Status,COUNT(DISTINCT entry.EntryId),COUNT(line.EntryId),
+                   MIN(line.Debit),MIN(line.Credit),MAX(entry.DebitTotal),MAX(entry.CreditTotal)
+            FROM dbo.AccountingPostingJobs job
+            LEFT JOIN dbo.AccountingEntries entry
+              ON entry.SourceDocumentId=job.SourceDocumentId
+             AND entry.SourceDocumentType=job.SourceDocumentType
+            LEFT JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+            WHERE job.SourceDocumentId=@Id
+              AND job.SourceDocumentType=N'WorkSessionClosureReconciliation'
+            GROUP BY job.Status;
+            """;
+        verify.Parameters.AddWithValue("@Id", reconciliationId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("Posted", reader.GetString(0));
+        Assert.Equal(1, reader.GetInt32(1));
+        Assert.Equal(2, reader.GetInt32(2));
+        Assert.Equal(0m, reader.GetDecimal(3));
+        Assert.Equal(0m, reader.GetDecimal(4));
+        Assert.Equal(100m, reader.GetDecimal(5));
+        Assert.Equal(100m, reader.GetDecimal(6));
+    }
+
+    [Fact]
     public async Task Closure_reconciliation_accepts_a_corrected_physical_cash_count()
     {
         var userId = await CreateUserAsync("work-session-cash-correction");
