@@ -2277,7 +2277,13 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
 
         // An immediately due acquisition still opens the supplier obligation.
         // Paying it belongs to the existing payable-payment flow.
-        var immediatelyDueReceipt = receiptWithoutSettlement with { CreatesPayable = true, DueDate = receipt.SupplierInvoiceDate };
+        var immediatelyDueReceipt = receiptWithoutSettlement with
+        {
+            DocumentId = Guid.NewGuid(),
+            SupplierInvoiceNumber = $"CONTADO-{Guid.NewGuid():N}",
+            CreatesPayable = true,
+            DueDate = receipt.SupplierInvoiceDate
+        };
         for (var attempt = 0; attempt < 2; attempt++)
         {
             using var message = CreateGoodsReceiptMessage(immediatelyDueReceipt,
