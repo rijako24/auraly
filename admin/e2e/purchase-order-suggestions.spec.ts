@@ -59,6 +59,7 @@ test("la orden precarga y explica el sugerido semanal y permite recalcularlo", a
   await page.route("**/api/auth/me", route => json(route, { userId, tenantId, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions }));
   await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
   await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly" }]));
+  await page.route(`**/api/businesses/${businessId}`, route => json(route, { tenantId, businessId, name: "Auraly", pointOfSaleMode: "Retail" }));
   await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions }));
   await page.route("**/api/commerce/v1/purchase-orders?**", route => json(route, { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 }));
   await page.route("**/api/commerce/v1/goods-receipts/options", route => json(route, {
