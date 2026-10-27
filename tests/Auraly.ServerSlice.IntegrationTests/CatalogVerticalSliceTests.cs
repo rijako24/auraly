@@ -734,7 +734,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             WHERE BusinessId=@Business AND Stream=N'Catalog';
             """, new SqlParameter("@Business", fixture.BusinessId));
 
-        fixture.FailNextSynchronizationPublication();
+        fixture.FailNextSynchronizationPublication(fixture.BusinessId, "Catalog", previousCursor);
         using var admin = fixture.CreateAdminClient(
             CatalogPermissionCodes.Create,
             CatalogPermissionCodes.ManagePrices,
@@ -743,26 +743,26 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/products",
             request);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = (await response.Content.ReadFromJsonAsync<ProductDetail>())!;
 
         var recovered = await ReadCatalogSynchronizationMessageAsync(previousCursor);
         Assert.Equal("Catalog", recovered.Stream);
         var durableReceiptObserved = false;
-        for (var attempt = 0; attempt < 50; attempt++)
+        for (var attempt = 0; attempt < 100; attempt++)
         {
             durableReceiptObserved = await ScalarAsync<int>(
                 """
                 SELECT COUNT(*)
-                FROM dbo.PosSynchronizationOutboxMessages
-                WHERE BusinessId=@Business AND Stream=@Stream
-                  AND AvailableThroughCursor=@Cursor
-                  AND AttemptCount=2 AND PublishedAt IS NOT NULL
-                  AND LastError IS NULL;
+                FROM dbo.PosSynchronizationOutboxMessages o
+                JOIN dbo.CatalogChanges c ON c.BusinessId=o.BusinessId
+                  AND c.CatalogChangeId=o.AvailableThroughCursor
+                WHERE c.ProductId=@Product AND o.Stream=N'Catalog'
+                  AND o.AttemptCount=2 AND o.PublishedAt IS NOT NULL
+                  AND o.LastError IS NULL;
                 """,
-                new SqlParameter("@Business", recovered.BusinessId),
-                new SqlParameter("@Stream", recovered.Stream),
-                new SqlParameter("@Cursor", recovered.AvailableThroughCursor)) == 1;
+                new SqlParameter("@Product", created.ProductId)) == 1;
             if (durableReceiptObserved) break;
-            await Task.Delay(20);
+            await Task.Delay(50);
         }
 
         Assert.True(

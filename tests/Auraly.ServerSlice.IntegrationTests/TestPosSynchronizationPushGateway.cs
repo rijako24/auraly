@@ -8,9 +8,10 @@ internal sealed class TestPosSynchronizationPushGateway
 {
     private readonly ConcurrentQueue<PosSynchronizationInvalidation> messages = new();
     private readonly SemaphoreSlim available = new(0);
-    private int failNext;
+    private FailureTarget? failNext;
 
-    public void FailNext() => Interlocked.Exchange(ref failNext, 1);
+    public void FailNext(Guid businessId, string stream, long afterCursor) =>
+        Interlocked.Exchange(ref failNext, new FailureTarget(businessId, stream, afterCursor));
 
     public Uri CreateClientAccessUri(
         Guid tenantId,
@@ -54,7 +55,11 @@ internal sealed class TestPosSynchronizationPushGateway
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (Interlocked.Exchange(ref failNext, 0) == 1)
+        var target = Volatile.Read(ref failNext);
+        if (target is not null && invalidation.BusinessId == target.BusinessId
+            && invalidation.Stream == target.Stream
+            && invalidation.AvailableThroughCursor > target.AfterCursor
+            && Interlocked.CompareExchange(ref failNext, null, target) == target)
             throw new HttpRequestException("Simulated transient push failure.");
 
         messages.Enqueue(invalidation);
@@ -82,4 +87,6 @@ internal sealed class TestPosSynchronizationPushGateway
         }
         return values;
     }
+
+    private sealed record FailureTarget(Guid BusinessId, string Stream, long AfterCursor);
 }

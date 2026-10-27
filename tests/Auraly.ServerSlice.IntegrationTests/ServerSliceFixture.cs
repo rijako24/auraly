@@ -409,12 +409,12 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             .ReadAsync(timeout.Token);
     }
 
-    public void FailNextSynchronizationPublication() =>
+    public void FailNextSynchronizationPublication(Guid businessId, string stream, long afterCursor) =>
         (_factory ?? throw new InvalidOperationException(
             "The API fixture is not initialized."))
         .Services
         .GetRequiredService<TestPosSynchronizationPushGateway>()
-        .FailNext();
+        .FailNext(businessId, stream, afterCursor);
 
     internal async Task GrantReconciliationRolePermissionsAsync()
     {
