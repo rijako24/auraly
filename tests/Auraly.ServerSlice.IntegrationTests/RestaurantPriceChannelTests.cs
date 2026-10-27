@@ -115,7 +115,7 @@ public sealed class RestaurantPriceChannelTests(ServerSliceFixture fixture)
             Assert.Equal(2, selected.Account.Version);
 
             var menu = await client.GetFromJsonAsync<OnlineSalesProductPage>(
-                $"/api/commerce/v1/restaurant/accounts/{accountId}/products?take=40");
+                $"/api/commerce/v1/restaurant/accounts/{accountId}/products?search=P-E2E&take=40");
             Assert.NotNull(menu);
             var product = Assert.Single(menu.Items, item =>
                 item.ProductId == fixture.ProductId);

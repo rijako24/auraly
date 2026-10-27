@@ -2266,16 +2266,14 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             $"accounting-unsettled-{receiptWithoutSettlement.DocumentId:N}"))
         using (var response = await accounting.SendAsync(message))
         {
-            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-            Assert.Contains("egreso", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         }
-        Assert.Equal(0, await CountAsync("GoodsReceipts", "GoodsReceiptId", receiptWithoutSettlement.DocumentId));
-        Assert.Equal(0, await CountAsync("AccountingSourceDocuments", "SourceDocumentId", receiptWithoutSettlement.DocumentId));
-        Assert.Equal(0, await CountAsync("AccountingPostingJobs", "SourceDocumentId", receiptWithoutSettlement.DocumentId));
-        Assert.Equal(0, await CountAsync("InventoryMovements", "DocumentId", receiptWithoutSettlement.DocumentId));
-        Assert.Equal(0, await CountAsync(
-            "AccountingEntries", "SourceDocumentId",
+        Assert.Equal(1, await CountAsync("GoodsReceipts", "GoodsReceiptId", receiptWithoutSettlement.DocumentId));
+        Assert.Equal(1, await CountAsync("Payables", "SourceDocumentId", receiptWithoutSettlement.DocumentId));
+        Assert.Equal(AccountingPostingStatuses.Posted, await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
             receiptWithoutSettlement.DocumentId));
+        await AssertBalancedAsync(receiptWithoutSettlement.DocumentId);
 
         // An immediately due acquisition still opens the supplier obligation.
         // Paying it belongs to the existing payable-payment flow.
@@ -3305,45 +3303,68 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                        suffix, $"Cuenta conciliable {suffix}", false, true, null)))
             bank.EnsureSuccessStatusCode();
 
-        var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
-        var mappings = (await client.GetFromJsonAsync<AccountingMappingView[]>("/api/commerce/v1/accounting/account-mappings"))!;
-        Guid Mapped(string category) => mappings.Last(value => value.Category == category &&
-            (value.BusinessId is null || value.BusinessId == fixture.BusinessId)).AccountId;
-        var expense = accounts.First(value => value.AccountType == "Expense" && value.AllowsPosting && !value.RequiresParty).AccountId;
-
-        const decimal grossCardPayment = 11_900m;
-        var sale = WithUblSnapshot(fixture.CreateValidRequest(9_983)) with
+        var expense = (await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(
+            fixture, client, "5194", "Expense", "General", "Debit")).AccountId;
+        Guid creditCardMethodId;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
-            Payments = [new(1, "CreditCard", grossCardPayment, "CARD-11900", "Visa", "APP-CARD")]
-        };
-        await SetWarehouseNegativeSalesPolicyAsync(false);
+            await connection.OpenAsync();
+            await using var method = new SqlCommand("SELECT OptionId FROM reference.Options WHERE CatalogCode=N'payment-method' AND Code=N'CreditCard' AND IsActive=1", connection);
+            creditCardMethodId = (Guid)(await method.ExecuteScalarAsync())!;
+        }
+        var cardAccount = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(
+            fixture, client, "1394", "Asset", "CardClearing", "Debit",
+            paymentMethodOptionId: creditCardMethodId, sharedAcrossBusinesses: true);
+        using (var mappedCard = await client.PutAsJsonAsync("/api/commerce/v1/accounting/account-mappings",
+                   new SetAccountMappingRequest(fixture.TenantId, fixture.BusinessId,
+                       AccountingCategories.CreditCardClearing, cardAccount.AccountId,
+                       new DateOnly(2026, 1, 1), null)))
+            Assert.True(mappedCard.IsSuccessStatusCode, await mappedCard.Content.ReadAsStringAsync());
+
         try
         {
-            using var upload = fixture.CreateUploadMessage(sale);
-            using var saleResponse = await fixture.CreateClient().SendAsync(upload);
-            Assert.True(saleResponse.IsSuccessStatusCode, await saleResponse.Content.ReadAsStringAsync());
+            const decimal grossCardPayment = 11_900m;
+            var sale = WithUblSnapshot(fixture.CreateValidRequest(9_983)) with
+            {
+                Payments = [new(1, "CreditCard", grossCardPayment, "CARD-11900", "Visa", "APP-CARD")]
+            };
+            await SetWarehouseNegativeSalesPolicyAsync(false);
+            try
+            {
+                using var upload = fixture.CreateUploadMessage(sale);
+                using var saleResponse = await fixture.CreateClient().SendAsync(upload);
+                Assert.True(saleResponse.IsSuccessStatusCode, await saleResponse.Content.ReadAsStringAsync());
         }
         finally
         {
             await SetWarehouseNegativeSalesPolicyAsync(true);
         }
         await AssertBalancedAsync(sale.DocumentId);
-        Assert.Equal(grossCardPayment, await AccountAmountAsync(sale.DocumentId, "13809502", true));
+        Assert.Equal(grossCardPayment, await AccountAmountAsync(sale.DocumentId, cardAccount.Code, true));
 
         var voucherId = Guid.NewGuid();
-        using (var voucher = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers",
-                   new ConfirmManualAccountingVoucherRequest(voucherId, fixture.BusinessId,
-                       new DateTimeOffset(2026, 9, 5, 12, 0, 0, TimeSpan.FromHours(-5)),
-                       "CARD_SETTLEMENT", "Liquidación operador de tarjetas",
-                       [
-                           new(bankLedgerId, null, null, "Abono neto al banco", 11_543m, 0m),
-                           new(expense, null, null, "Comisión soportada", 357m, 0m),
-                           new(Mapped(AccountingCategories.CreditCardClearing), null, null,
-                               "Cancelación del cobro bruto", 0m, grossCardPayment)
-                       ])))
-            Assert.Equal(HttpStatusCode.Accepted, voucher.StatusCode);
+        var path = $"/api/commerce/v1/accounting/manual/drafts/{voucherId:D}";
+        var capture = new SaveVoucherDraftRequest(voucherId, AccountingManualDocumentTypes.ManualVoucher,
+            new DateTimeOffset(2026, 9, 5, 12, 0, 0, TimeSpan.FromHours(-5)),
+            "MANUAL_VOUCHER", "Liquidación operador de tarjetas", "OP-1",
+            [
+                new(bankLedgerId, null, null, "Abono neto al banco", 11_543m, 0m,
+                    Reference: "OP-1", LineId: Guid.NewGuid()),
+                new(expense, null, null, "Comisión soportada", 357m, 0m,
+                    LineId: Guid.NewGuid()),
+                new(cardAccount.AccountId, null, null,
+                    "Cancelación del cobro bruto", 0m, grossCardPayment,
+                    Reference: "CARD-11900", LineId: Guid.NewGuid(),
+                    PaymentEvidence: new("Visa", "APP-CARD"))
+            ], null, null, MainPartyId: fixture.SupplierPartyId,
+            PayloadVersion: 4, VoucherTypeCode: "Disbursement");
+        using var savedResponse = await client.PutAsJsonAsync(path, capture);
+        Assert.True(savedResponse.IsSuccessStatusCode, await savedResponse.Content.ReadAsStringAsync());
+        var saved = (await savedResponse.Content.ReadFromJsonAsync<VoucherDraftView>())!;
+        using var voucher = await client.PostAsJsonAsync(path + "/send", new SendVoucherDraftRequest(saved.RowVersion));
+        Assert.True(voucher.IsSuccessStatusCode, await voucher.Content.ReadAsStringAsync());
         await AssertBalancedAsync(voucherId);
-        Assert.Equal(grossCardPayment, await AccountAmountAsync(voucherId, "13809502", false));
+        Assert.Equal(grossCardPayment, await AccountAmountAsync(voucherId, cardAccount.Code, false));
         Assert.Equal(0, await ScalarAsync<int>("""
             SELECT COUNT(*) FROM dbo.AccountingEntries e
             JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
@@ -3415,6 +3436,23 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                 Assert.Equal(BankReconciliationStatuses.Reopened, second.Status);
                 Assert.Equal("Corrección documentada", second.Reason);
             });
+        }
+        finally
+        {
+            await using var cleanup = new SqlConnection(fixture.ConnectionString);
+            await cleanup.OpenAsync();
+            await using var command = new SqlCommand("""
+                DELETE dbo.AccountingAccountMappings
+                WHERE TenantId=@TenantId AND BusinessId=@BusinessId
+                  AND Category=@Category AND AccountId=@AccountId
+                  AND EffectiveFrom='2026-01-01';
+                """, cleanup);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@Category", AccountingCategories.CreditCardClearing);
+            command.Parameters.AddWithValue("@AccountId", cardAccount.AccountId);
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]

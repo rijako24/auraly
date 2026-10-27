@@ -114,7 +114,8 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         {
             signal = await fixture.ReadSynchronizationMessageAsync();
         }
-        while (signal.Stream != "Catalog" || signal.BusinessId != fixture.BusinessId);
+        while (signal.Stream != "Catalog" || signal.BusinessId != fixture.BusinessId ||
+               signal.AvailableThroughCursor < publication.CatalogCursor);
         Assert.Equal(fixture.BusinessId, signal.BusinessId);
         Assert.True(signal.AvailableThroughCursor >= publication.CatalogCursor);
 

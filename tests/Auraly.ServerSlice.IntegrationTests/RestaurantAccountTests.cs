@@ -78,7 +78,7 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
             Assert.Contains(states!, state => state.TableId == tableId &&
                 state.AccountId == account.AccountId && state.State == "Free");
             var products = await waiter.GetFromJsonAsync<OnlineSalesProductPage>(
-                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/products?take=50");
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/products?search=P-E2E&take=50");
             Assert.Contains(products!.Items,
                 product => product.ProductId == fixture.ProductId);
             var categories = await waiter.GetFromJsonAsync<
@@ -93,7 +93,7 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                     category.CategoryId == categoryId);
                 var filtered = await waiter.GetFromJsonAsync<
                     OnlineSalesProductPage>(
-                    $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/products?categoryId={categoryId:D}&take=50");
+                    $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/products?search=P-E2E&categoryId={categoryId:D}&take=50");
                 Assert.Contains(filtered!.Items,
                     product => product.ProductId == fixture.ProductId);
             }
@@ -251,7 +251,7 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
             Assert.Contains(states!, state => state.TableId == cashierTableId &&
                 state.AccountId == cashierAccount.AccountId && state.State == "Free");
             var cashierProducts = await directCashier.GetFromJsonAsync<OnlineSalesProductPage>(
-                $"/api/commerce/v1/restaurant/accounts/{cashierAccount.AccountId}/products?take=50");
+                $"/api/commerce/v1/restaurant/accounts/{cashierAccount.AccountId}/products?search=P-E2E&take=50");
             Assert.Contains(cashierProducts!.Items,
                 product => product.ProductId == fixture.ProductId);
             var cashierCategories = await directCashier.GetFromJsonAsync<
