@@ -270,6 +270,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             tax.Parameters.AddWithValue("@ProductId", productId);
             Assert.Equal(1, await tax.ExecuteNonQueryAsync());
         }
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
         using var pricing = fixture.CreateAdminClient(
             PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
             PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
@@ -344,6 +345,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(1, await update.ExecuteNonQueryAsync());
         }
 
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
         using var pricing = fixture.CreateAdminClient(
             PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
             PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
@@ -406,6 +408,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             update.Parameters.AddWithValue("@ProductId", productId);
             Assert.Equal(1, await update.ExecuteNonQueryAsync());
         }
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
         using var pricing = fixture.CreateAdminClient(
             PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
             PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices,
@@ -551,6 +554,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             await seed.ExecuteNonQueryAsync();
         }
 
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
         using var pricing = fixture.CreateAdminClient(
             PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
             PricingPermissionCodes.ReviewProposals, PricingPermissionCodes.PublishPrices,

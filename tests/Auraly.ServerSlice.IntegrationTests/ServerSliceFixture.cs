@@ -438,6 +438,24 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public HttpClient CreateAdminClient(params string[] permissions)
         => CreateAdminClient(TenantId, permissions);
 
+    public async Task EnsureAdminAccessToTenantBusinessesAsync()
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            SELECT NEWID(),@UserId,@RoleId,b.BusinessId,SYSUTCDATETIME()
+            FROM dbo.Businesses b
+            WHERE b.TenantId=@TenantId AND NOT EXISTS(
+                SELECT 1 FROM dbo.UserRoles role
+                WHERE role.UserId=@UserId AND role.BusinessId=b.BusinessId);
+            """, connection);
+        command.Parameters.AddWithValue("@UserId", UserId);
+        command.Parameters.AddWithValue("@RoleId", RoleId);
+        command.Parameters.AddWithValue("@TenantId", TenantId);
+        await command.ExecuteNonQueryAsync();
+    }
+
     public HttpClient CreateAdminClient(
         Guid identityTenantId, params string[] permissions)
     {

@@ -15,7 +15,7 @@ public sealed partial class GoodsReceiptWorkspaceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Legacy_cash_cost_document_replays_without_reacceptance_and_new_cash_omissions_are_rejected(bool mainCreatesPayable)
+    public async Task Legacy_cash_cost_document_replays_and_new_cash_receipts_record_payables(bool mainCreatesPayable)
     {
         using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.ReadGoodsReceipts,
             PurchasingPermissionCodes.CreateGoodsReceipts,PurchasingPermissionCodes.ConfirmGoodsReceipts);
@@ -30,6 +30,7 @@ public sealed partial class GoodsReceiptWorkspaceTests
             fixture.SupplierId,draft.SupplierInvoiceNumber,draft.SupplierInvoiceDate,draft.ReceivedAt,
             true,draft.DueDate,"COP",draft.Notes,draft.Lines,AdditionalCostDocuments:[cost]);
         var key = $"legacy-cash-cost-{request.DocumentId:N}";
+        var newId = Guid.Empty;
         fixture.PauseDocumentProcessing();
         try
         {
@@ -74,22 +75,24 @@ public sealed partial class GoodsReceiptWorkspaceTests
             }
             using (var conflict = await ConfirmAsync(legacyRequest with { Notes="Cambio posterior" },key))
                 Assert.Equal(HttpStatusCode.Conflict,conflict.StatusCode);
-            var newId = Guid.NewGuid();
+            newId = Guid.NewGuid();
             var newCost = legacyCost with { CostDocumentId=Guid.NewGuid(),DocumentNumber=$"NEW-{Guid.NewGuid():N}" };
-            using (var rejected = await ConfirmAsync(legacyRequest with { DocumentId=newId,
+            using (var acceptedCash = await ConfirmAsync(legacyRequest with { DocumentId=newId,
                 SupplierInvoiceNumber=$"NEW-{newId:N}",AdditionalCostDocuments=[newCost] },$"new-cash-cost-{newId:N}"))
-                Assert.Equal(HttpStatusCode.BadRequest,rejected.StatusCode);
+                Assert.Equal(HttpStatusCode.Accepted,acceptedCash.StatusCode);
             await using var count = new SqlCommand("""
                 SELECT (SELECT COUNT(*) FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id)
                   +(SELECT COUNT(*) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id)
                   +(SELECT COUNT(*) FROM dbo.DocumentProcessingPayloads WHERE DocumentId=@Id);
                 """,connection);
             count.Parameters.AddWithValue("@Id",newId);
-            Assert.Equal(0,(int)(await count.ExecuteScalarAsync())!);
+            Assert.Equal(3,(int)(await count.ExecuteScalarAsync())!);
         }
         finally
         {
-            var pending = fixture.DrainDocumentSignals().Where(signal=>signal.DocumentId==request.DocumentId).DistinctBy(signal=>signal.MovementId).ToArray();
+            var pending = fixture.DrainDocumentSignals()
+                .Where(signal=>signal.DocumentId==request.DocumentId || signal.DocumentId==newId)
+                .DistinctBy(signal=>signal.MovementId).ToArray();
             fixture.ResumeDocumentProcessing();
             foreach (var signal in pending) await fixture.DocumentSignals.PublishAsync(signal);
         }

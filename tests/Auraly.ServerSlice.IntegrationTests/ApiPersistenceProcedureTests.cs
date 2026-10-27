@@ -172,6 +172,7 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Price_channel_settings_endpoint_uses_the_versioned_procedure_and_restores_state()
     {
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
         using var client = fixture.CreateAdminClient(
             "pricing.segments.read", "pricing.segments.manage");
         var channelId = Guid.NewGuid();
@@ -260,6 +261,7 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Price_channel_creation_persists_product_and_line_exclusions_in_the_same_request()
     {
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
         using var client = fixture.CreateAdminClient("pricing.segments.read", "pricing.segments.manage");
         var name = $"Canal con excluidos {Guid.NewGuid():N}";
         var areaId = Guid.NewGuid();
@@ -326,6 +328,7 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Price_channel_applies_to_all_current_and_future_tenant_businesses()
     {
+        await fixture.EnsureAdminAccessToTenantBusinessesAsync();
         var sharedOne = Guid.NewGuid();
         var sharedTwo = Guid.NewGuid();
         var independent = Guid.NewGuid();

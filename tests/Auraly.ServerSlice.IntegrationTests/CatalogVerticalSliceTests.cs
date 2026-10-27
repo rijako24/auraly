@@ -728,6 +728,12 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 $"78{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}",
                 true)]);
 
+        var previousCursor = await ScalarAsync<long>("""
+            SELECT COALESCE(MAX(AvailableThroughCursor),0)
+            FROM dbo.PosSynchronizationOutboxMessages
+            WHERE BusinessId=@Business AND Stream=N'Catalog';
+            """, new SqlParameter("@Business", fixture.BusinessId));
+
         fixture.FailNextSynchronizationPublication();
         using var admin = fixture.CreateAdminClient(
             CatalogPermissionCodes.Create,
@@ -738,7 +744,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             request);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
-        var recovered = await fixture.ReadSynchronizationMessageAsync();
+        var recovered = await ReadCatalogSynchronizationMessageAsync(previousCursor);
         Assert.Equal("Catalog", recovered.Stream);
         var durableReceiptObserved = false;
         for (var attempt = 0; attempt < 50; attempt++)
@@ -875,9 +881,10 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             var captured = await local.CaptureAsync("7701234500012");
             Assert.NotNull(captured);
             Assert.Equal(12_500m, captured.Product.UnitPrice);
-            Assert.Equal(fixture.BusinessId, await ScalarAsync<Guid>(
-                "SELECT BusinessId FROM dbo.ProductPrices WHERE ProductId=@Id AND IsActive=1;",
-                new SqlParameter("@Id", created.ProductId)));
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.ProductPrices WHERE ProductId=@Id AND BusinessId=@BusinessId AND IsActive=1;",
+                new SqlParameter("@Id", created.ProductId),
+                new SqlParameter("@BusinessId", fixture.BusinessId)));
             Assert.Equal(0, await LocalScalarAsync(
                 sqlitePath,
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE '%Supplier%';"));

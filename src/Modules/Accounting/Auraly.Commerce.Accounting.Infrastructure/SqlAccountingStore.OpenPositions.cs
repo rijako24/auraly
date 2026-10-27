@@ -88,7 +88,8 @@ public sealed partial class SqlAccountingStore
             DECLARE @EarnedMappingId uniqueidentifier,@LostMappingId uniqueidentifier,
               @EarnedAccountId uniqueidentifier,@LostAccountId uniqueidentifier,
               @EarnedCode nvarchar(32),@LostCode nvarchar(32),
-              @EarnedName nvarchar(200),@LostName nvarchar(200);
+              @EarnedName nvarchar(200),@LostName nvarchar(200),
+              @TotalCount int,@TotalOutstanding decimal(38,4);
             IF @Kind=N'Payable' AND @EffectiveOn IS NOT NULL
             BEGIN
               SELECT TOP(1) @EarnedMappingId=AccountId FROM dbo.AccountingAccountMappings
@@ -115,15 +116,22 @@ public sealed partial class SqlAccountingStore
                   N'SupplierFinancialDiscountLost',@LostMappingId));
             END;
             WITH Positions AS ({positions})
-            SELECT COUNT(*),COALESCE(SUM(p.OutstandingAmount),0)
+            SELECT @TotalCount=COUNT(*),@TotalOutstanding=COALESCE(SUM(p.OutstandingAmount),0)
             FROM Positions p JOIN dbo.Parties party ON party.PartyId=p.PartyId AND party.TenantId=@TenantId
             WHERE {filters} OPTION(RECOMPILE);
+            SELECT @TotalCount,@TotalOutstanding;
             WITH Positions AS ({positions})
-            SELECT p.* INTO #OpenPositionPage
-            FROM Positions p JOIN dbo.Parties party ON party.PartyId=p.PartyId AND party.TenantId=@TenantId
-            WHERE {filters}
-            ORDER BY p.DueDate,p.SubledgerId
-            OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY OPTION(RECOMPILE);
+            SELECT TOP(0) p.* INTO #OpenPositionPage FROM Positions p;
+            IF @Offset<@TotalCount
+            BEGIN
+              WITH Positions AS ({positions})
+              INSERT #OpenPositionPage
+              SELECT p.*
+              FROM Positions p JOIN dbo.Parties party ON party.PartyId=p.PartyId AND party.TenantId=@TenantId
+              WHERE {filters}
+              ORDER BY p.DueDate,p.SubledgerId
+              OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY OPTION(RECOMPILE);
+            END;
             SELECT p.SubledgerKind,p.SubledgerId,p.PartyId,party.DisplayName,party.Identification,
                 p.SourceDocumentId,p.SourceDocumentType,p.DocumentNumber,p.OccurredAt,p.DueDate,
                 p.CurrencyCode,p.OriginalAmount,p.OutstandingAmount,
