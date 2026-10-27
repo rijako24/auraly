@@ -1,8 +1,20 @@
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
 
-IF EXISTS (SELECT 1 FROM dbo.CustomerPayments WHERE Status=N'Accepted')
-    OR EXISTS (SELECT 1 FROM dbo.SupplierPayments WHERE Status=N'Accepted')
+-- A re-run on the current contract must allow payments accepted after the
+-- original migration. Guard only while legacy columns or tender tables remain.
+IF (COL_LENGTH(N'dbo.CustomerPayments',N'PaymentMethod') IS NOT NULL
+    OR COL_LENGTH(N'dbo.CustomerPayments',N'BankAccountId') IS NOT NULL
+    OR COL_LENGTH(N'dbo.CustomerPayments',N'Reference') IS NOT NULL
+    OR COL_LENGTH(N'dbo.CustomerPayments',N'PaymentBreakdownJson') IS NOT NULL
+    OR COL_LENGTH(N'dbo.SupplierPayments',N'PaymentMethod') IS NOT NULL
+    OR COL_LENGTH(N'dbo.SupplierPayments',N'BankAccountId') IS NOT NULL
+    OR COL_LENGTH(N'dbo.SupplierPayments',N'Reference') IS NOT NULL
+    OR COL_LENGTH(N'dbo.SupplierPayments',N'PaymentBreakdownJson') IS NOT NULL
+    OR OBJECT_ID(N'dbo.CustomerPaymentTenders',N'U') IS NULL
+    OR OBJECT_ID(N'dbo.SupplierPaymentTenders',N'U') IS NULL)
+    AND (EXISTS (SELECT 1 FROM dbo.CustomerPayments WHERE Status=N'Accepted')
+      OR EXISTS (SELECT 1 FROM dbo.SupplierPayments WHERE Status=N'Accepted'))
     THROW 51620, N'Process accepted portfolio payments before changing the payment contract.', 1;
 
 IF OBJECT_ID(N'dbo.CustomerPaymentTenders',N'U') IS NULL
