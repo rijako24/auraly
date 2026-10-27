@@ -374,8 +374,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(state.InventoryReasons >= 12);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
-        Assert.Equal(61, state.AccountingAccounts);
-        Assert.Equal(61, state.AccountingMappings);
+        Assert.Equal(63, state.AccountingAccounts);
+        Assert.Equal(63, state.AccountingMappings);
         Assert.Equal(1, await CountGeneralCashAccountsAsync(result.TenantId));
         Assert.Equal(0, state.UnmappedPosPaymentMethods);
         Assert.Equal(1, state.OpenAccountingPeriods);

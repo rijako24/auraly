@@ -91,6 +91,17 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
         await SendAcceptedAsync(inventory, "/api/commerce/v1/goods-receipts/confirm",
             receipt, $"receipt-{receiptId:N}");
         Assert.Equal(10m, await QuantityAsync(product.ProductId));
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var payable = new SqlCommand("""
+                SELECT COUNT(*) FROM dbo.Payables
+                WHERE SourceDocumentId=@ReceiptId AND BusinessId=@BusinessId;
+                """, connection);
+            payable.Parameters.AddWithValue("@ReceiptId", receiptId);
+            payable.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            Assert.Equal(1, Convert.ToInt32(await payable.ExecuteScalarAsync()));
+        }
 
         var countId = Guid.NewGuid();
         using (var start = await inventory.PostAsJsonAsync(

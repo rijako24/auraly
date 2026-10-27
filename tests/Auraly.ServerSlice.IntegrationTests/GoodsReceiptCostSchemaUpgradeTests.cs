@@ -174,7 +174,7 @@ public sealed class GoodsReceiptCostSchemaUpgradeTests(ServerSliceFixture fixtur
         Assert.Equal(before, await SnapshotAsync());
         var detail = await client.GetFromJsonAsync<GoodsReceiptDetail>($"/api/commerce/v1/goods-receipts/{request.DocumentId}");
         Assert.NotNull(detail);
-        Assert.Null(detail.ReferencedCostDocuments);
+        Assert.Empty(detail.ReferencedCostDocuments ?? []);
         Assert.Equal(cost.CostDocumentId, Assert.Single(detail.AdditionalCostDocuments!).CostDocumentId);
 
         async Task<HttpResponseMessage> ConfirmAsync(ConfirmGoodsReceiptRequest value)

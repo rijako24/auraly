@@ -87,12 +87,31 @@ public sealed partial class SqlGoodsReceiptStore(
                 return replay;
             }
 
-            if (!request.CreatesPayable)
-                throw new PurchasingValidationException(
-                    "La compra debe registrar su cuenta por pagar. Confirma la compra con vencimiento y registra el pago mediante un egreso, aunque sea de contado.");
-            if (costCalculation.AdditionalDocuments.Any(document => !document.Request.CreatesPayable))
-                throw new PurchasingValidationException(
-                    "El documento adicional debe generar una cuenta por pagar; el pago de contado se registra por separado.");
+            // A legacy cash flag describes when the supplier expects payment; it
+            // cannot bypass the obligation. Keep the original command hash above
+            // so retries of receipts accepted before this rule remain replayable.
+            request = request with
+            {
+                CreatesPayable = true,
+                DueDate = request.DueDate ?? (request.ReceivedAt < request.SupplierInvoiceDate!.Value
+                    ? request.SupplierInvoiceDate.Value : request.ReceivedAt),
+                AdditionalCostDocuments = request.AdditionalCostDocuments?.Select(document => document with
+                {
+                    CreatesPayable = true,
+                    DueDate = document.DueDate ?? document.IssuedAt
+                }).ToArray()
+            };
+            costCalculation = costCalculation with
+            {
+                AdditionalDocuments = costCalculation.AdditionalDocuments.Select(document => document with
+                {
+                    Request = document.Request with
+                    {
+                        CreatesPayable = true,
+                        DueDate = document.Request.DueDate ?? document.Request.IssuedAt
+                    }
+                }).ToArray()
+            };
             if (costCalculation.FinancialDiscount is { AnticipatedInCost: true } discount &&
                 discount.FunctionalAmount > withholding.NetAmount)
                 throw new PurchasingValidationException(

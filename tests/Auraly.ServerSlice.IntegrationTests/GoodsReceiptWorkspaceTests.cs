@@ -775,7 +775,7 @@ public sealed partial class GoodsReceiptWorkspaceTests(
         Assert.Contains(options.Suppliers, item => item.SupplierId == fixture.SupplierId);
 
         var products = await client.GetFromJsonAsync<GoodsReceiptProductPage>(
-            $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}&page=1&pageSize=50");
+            $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}&search=P-E2E&page=1&pageSize=50");
         Assert.NotNull(products);
         Assert.Contains(products.Items, item => item.ProductId == fixture.ProductId);
 

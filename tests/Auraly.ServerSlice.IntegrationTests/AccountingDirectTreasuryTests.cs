@@ -31,7 +31,7 @@ public sealed class AccountingDirectTreasuryTests(ServerSliceFixture fixture)
                 new DateTimeOffset(2026, 10, 25, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Asiento puro sin tesorería", null,
                 [new(expense.AccountId, null, null, "Gasto", 100m, 0, LineId: Guid.NewGuid()),
                  new(counterpart.AccountId, null, null, "Contrapartida general", 0, 100m, LineId: Guid.NewGuid())],
-                null, null, PayloadVersion: 4, VoucherTypeCode: type);
+                null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: 4, VoucherTypeCode: type);
             var path = $"/api/commerce/v1/accounting/manual/drafts/{document.DocumentId}";
             using var save = await client.PutAsJsonAsync(path, document);
             Assert.True(save.IsSuccessStatusCode, await save.Content.ReadAsStringAsync());

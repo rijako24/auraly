@@ -504,21 +504,26 @@ public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixtur
             await EnsureAccountAsync(connection, transaction, "220505", "Proveedores", "Liability", true);
             await EnsureAccountAsync(connection, transaction, "111020", "Bancos", "Asset", false);
             await using (var bank = new SqlCommand("""
-                IF NOT EXISTS(SELECT 1 FROM accounting.BankAccounts WHERE TenantId=@TenantId AND IsActive=1)
+                IF NOT EXISTS(SELECT 1 FROM accounting.BankAccounts bank
+                  JOIN dbo.AccountingAccounts account ON account.AccountId=bank.AccountingAccountId
+                  WHERE bank.TenantId=@TenantId AND bank.IsActive=1 AND account.Code=N'111020')
                 BEGIN
                   DECLARE @OptionId uniqueidentifier=(SELECT TOP(1) OptionId FROM reference.Options
                     WHERE CatalogCode=N'bank-account-type' AND Code=N'Checking' AND IsActive=1);
                   INSERT accounting.BankAccounts(BankAccountId,TenantId,AccountingAccountId,AccountTypeOptionId,
                     BankName,AccountNumber,DisplayName,CurrencyCode,IsPrimary,IsActive,
                     CreatedByUserId,CreatedAt,UpdatedByUserId,UpdatedAt)
-                  SELECT NEWID(),@TenantId,AccountId,@OptionId,N'Banco pruebas',N'0001',N'Cuenta principal',N'COP',1,1,
+                  SELECT NEWID(),@TenantId,AccountId,@OptionId,N'Banco pruebas',
+                    CONCAT(N'0001-',RIGHT(CONVERT(nvarchar(36),AccountId),8)),N'Cuenta pruebas',N'COP',
+                    CASE WHEN EXISTS(SELECT 1 FROM accounting.BankAccounts
+                      WHERE TenantId=@TenantId AND IsPrimary=1 AND IsActive=1) THEN 0 ELSE 1 END,1,
                     @UserId,SYSDATETIMEOFFSET(),@UserId,SYSDATETIMEOFFSET()
                   FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'111020';
-                  UPDATE account SET BankAccountId=bank.BankAccountId,FinancialFunction=N'Bank',BalanceSide=N'Debit'
-                  FROM dbo.AccountingAccounts account JOIN accounting.BankAccounts bank
-                    ON bank.AccountingAccountId=account.AccountId AND bank.TenantId=account.TenantId
-                  WHERE account.TenantId=@TenantId AND account.Code=N'111020';
                 END
+                UPDATE account SET BankAccountId=bank.BankAccountId,FinancialFunction=N'Bank',BalanceSide=N'Debit'
+                FROM dbo.AccountingAccounts account JOIN accounting.BankAccounts bank
+                  ON bank.AccountingAccountId=account.AccountId AND bank.TenantId=account.TenantId
+                WHERE account.TenantId=@TenantId AND account.Code=N'111020' AND bank.IsActive=1;
                 """, connection, transaction))
             {
                 bank.Parameters.AddWithValue("@TenantId", fixture.TenantId);

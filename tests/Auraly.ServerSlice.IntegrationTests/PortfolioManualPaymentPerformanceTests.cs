@@ -275,7 +275,8 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
                         LineId: Guid.NewGuid())).ToArray();
                 var capture = new SaveVoucherDraftRequest(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
                     new(2026, 8, 3, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Tesorería directa por lote",
-                    "TESORERIA-VOLUMEN", lines, null, null, PayloadVersion: 4, VoucherTypeCode: "Disbursement", WorkSessionId: session);
+                    "TESORERIA-VOLUMEN", lines, null, null, MainPartyId: fixture.SupplierPartyId,
+                    PayloadVersion: 4, VoucherTypeCode: "Disbursement", WorkSessionId: session);
                 var saved = await service.SaveVoucherDraftAsync(user, capture);
                 lastId = saved.DocumentId;
                 using (var activity = StageActivity("direct-acceptance"))

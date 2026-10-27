@@ -227,7 +227,8 @@ VALUES
 ('73000000-0000-0000-0000-00000000001D',N'accounting-document-type',N'ExpenseCancellation',N'Anulación de gasto',NULL,135),
 ('73000000-0000-0000-0000-00000000001E',N'accounting-document-type',N'RestaurantTip',N'Propina de restaurante',NULL,45),
 ('73000000-0000-0000-0000-00000000001F',N'accounting-document-type',N'RestaurantTipReversal',N'Anulación de propina de restaurante',NULL,46),
-('73000000-0000-0000-0000-000000000020',N'accounting-document-type',N'RestaurantTipSettlement',N'Entrega de propinas al personal',NULL,47);
+('73000000-0000-0000-0000-000000000020',N'accounting-document-type',N'RestaurantTipSettlement',N'Entrega de propinas al personal',NULL,47),
+('73000000-0000-0000-0000-000000000021',N'accounting-document-type',N'GoodsReceiptCostRevision',N'Ajuste de costo de compra',NULL,75);
 
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
 VALUES
