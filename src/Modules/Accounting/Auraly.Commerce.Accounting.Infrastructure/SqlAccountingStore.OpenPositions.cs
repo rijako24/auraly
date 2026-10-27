@@ -60,17 +60,29 @@ public sealed partial class SqlAccountingStore
             WHERE @Kind IN(N'CustomerCredit',N'All') AND credit.BusinessId=@BusinessId
                 AND (@Id IS NOT NULL OR credit.AvailableAmount>0)
             """;
-        const string filters = """
-            (@PartyId IS NULL OR p.PartyId=@PartyId)
+        // A selected party is resolved once in this command. Count and page then
+        // use its identity directly instead of joining the same Party for every
+        // candidate position; the final page still joins to read its details.
+        var scopedParty = query.PartyId is not null;
+        var selectionPartyJoin = scopedParty ? "" :
+            "JOIN dbo.Parties party ON party.PartyId=p.PartyId AND party.TenantId=@TenantId";
+        var selectionPartyFilter = scopedParty ? "@PartyExists=1 AND p.PartyId=@PartyId" : "1=1";
+        var selectionSearchFilter = scopedParty
+            ? "(@Search IS NULL OR p.DocumentNumber LIKE @Search OR @PartyMatchesSearch=1)"
+            : """
+                (@Search IS NULL OR p.DocumentNumber LIKE @Search
+                    OR party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE @Search
+                    OR party.Identification LIKE @Search)
+                """;
+        var filters = $"""
+            {selectionPartyFilter}
             AND (@Id IS NULL OR p.SubledgerId=@Id)
             AND (@RoleId IS NULL OR p.CounterpartyRoleId=@RoleId)
             AND (@ManualSupportOnly=0 OR p.SourceDocumentType=N'ManualAccountingVoucher' AND EXISTS(
                 SELECT 1 FROM dbo.FiscalDocuments fiscal WHERE fiscal.DocumentId=p.SourceDocumentId
                   AND fiscal.SourceDocumentType=p.SourceDocumentType AND fiscal.BusinessId=@BusinessId
                   AND fiscal.FiscalDocumentType=N'SupportDocument'))
-            AND (@Search IS NULL OR p.DocumentNumber LIKE @Search
-                OR party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE @Search
-                OR party.Identification LIKE @Search)
+            AND {selectionSearchFilter}
             AND (@DueFrom IS NULL OR CONVERT(date,p.DueDate)>=@DueFrom)
             AND (@DueTo IS NULL OR CONVERT(date,p.DueDate)<=@DueTo)
             AND (@AccountId IS NULL OR EXISTS(
@@ -89,7 +101,13 @@ public sealed partial class SqlAccountingStore
               @EarnedAccountId uniqueidentifier,@LostAccountId uniqueidentifier,
               @EarnedCode nvarchar(32),@LostCode nvarchar(32),
               @EarnedName nvarchar(200),@LostName nvarchar(200),
-              @TotalCount int,@TotalOutstanding decimal(38,4);
+              @TotalCount int,@TotalOutstanding decimal(38,4),
+              @PartyExists bit=0,@PartyMatchesSearch bit=0;
+            IF @PartyId IS NOT NULL
+              SELECT @PartyExists=1,@PartyMatchesSearch=CONVERT(bit,CASE WHEN
+                party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE @Search
+                OR party.Identification LIKE @Search THEN 1 ELSE 0 END)
+              FROM dbo.Parties party WHERE party.PartyId=@PartyId AND party.TenantId=@TenantId;
             IF @Kind IN(N'Payable',N'All') AND @EffectiveOn IS NOT NULL
             BEGIN
               SELECT TOP(1) @EarnedMappingId=AccountId FROM dbo.AccountingAccountMappings
@@ -117,7 +135,7 @@ public sealed partial class SqlAccountingStore
             END;
             WITH Positions AS ({positions})
             SELECT @TotalCount=COUNT(*),@TotalOutstanding=COALESCE(SUM(p.OutstandingAmount),0)
-            FROM Positions p JOIN dbo.Parties party ON party.PartyId=p.PartyId AND party.TenantId=@TenantId
+            FROM Positions p {selectionPartyJoin}
             WHERE {filters} OPTION(RECOMPILE);
             SELECT @TotalCount,@TotalOutstanding;
             WITH Positions AS ({positions})
@@ -127,7 +145,7 @@ public sealed partial class SqlAccountingStore
               WITH Positions AS ({positions})
               INSERT #OpenPositionPage
               SELECT p.*
-              FROM Positions p JOIN dbo.Parties party ON party.PartyId=p.PartyId AND party.TenantId=@TenantId
+              FROM Positions p {selectionPartyJoin}
               WHERE {filters}
               ORDER BY p.DueDate,p.SubledgerId
               OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY OPTION(RECOMPILE);

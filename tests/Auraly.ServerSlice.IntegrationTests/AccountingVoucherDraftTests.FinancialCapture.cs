@@ -173,6 +173,9 @@ public sealed partial class AccountingVoucherDraftTests
             Assert.NotNull(allKinds);
             Assert.Contains(allKinds.Items, position => position.SubledgerKind == "Payable" &&
                 position.SubledgerId == positionId && position.OpeningLinkIssue is not null);
+            var partyNameSearch = await client.GetFromJsonAsync<AccountingOpenPositionPage>(
+                $"/api/commerce/v1/accounting/open-positions?subledgerKind=All&partyId={fixture.SupplierPartyId:D}&search=Proveedor%20E2E&page=1&pageSize=50");
+            Assert.Contains(partyNameSearch!.Items, position => position.SubledgerId == positionId);
             var groupId=Guid.NewGuid();
             var evidence=new VoucherPaymentEvidence("VISA","APROBACION-1",100m,"Evidencia de la captura");
             var input=new SaveVoucherDraftRequest(id,AccountingManualDocumentTypes.ManualVoucher,
