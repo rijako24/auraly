@@ -148,6 +148,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
         var databasePath = Path.Combine(
             Path.GetTempPath(),
             $"auraly-pos-server-e2e-{Guid.NewGuid():N}.db");
+        bool? originalFiscalSeriesActive = null;
         try
         {
             var userId = new UserId(fixture.UserId);
@@ -207,10 +208,12 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
                 await using var exhaust = new SqlCommand("""
                     UPDATE dbo.FiscalSeries
                     SET IsActive=0
+                    OUTPUT DELETED.IsActive
                     WHERE SeriesId=@SeriesId;
                     """, server);
                 exhaust.Parameters.AddWithValue("@SeriesId", fixture.SeriesId);
-                Assert.Equal(1, await exhaust.ExecuteNonQueryAsync());
+                originalFiscalSeriesActive = (bool?)await exhaust.ExecuteScalarAsync();
+                Assert.NotNull(originalFiscalSeriesActive);
             }
 
             using var httpClient = fixture.CreateClient();
@@ -237,7 +240,21 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             Assert.Equal(duplicateRequest.FiscalSnapshot!.Cufe, duplicate.Response.CufeReceived);
             Assert.Equal(duplicateRequest.FiscalSnapshot.Cufe, duplicate.Response.CufeCalculated);
             Assert.Equal(1, await fixture.CountAsync("SalesDocuments", firstDocument.Value));
-            Assert.Equal(1, await fixture.CountAsync("InventoryMovements", firstDocument.Value));
+            var inventoryMovementCount = await fixture.CountAsync("InventoryMovements", firstDocument.Value);
+            if (inventoryMovementCount != 1)
+            {
+                await using var server = new SqlConnection(fixture.ConnectionString);
+                await server.OpenAsync();
+                await using var job = new SqlCommand("""
+                    SELECT Status,LastError FROM dbo.DocumentProcessingJobs WHERE DocumentId=@DocumentId;
+                    """, server);
+                job.Parameters.AddWithValue("@DocumentId", firstDocument.Value);
+                await using var reader = await job.ExecuteReaderAsync();
+                var details = await reader.ReadAsync()
+                    ? $"{reader.GetString(0)}: {(reader.IsDBNull(1) ? "(no error)" : reader.GetString(1))}"
+                    : "job missing";
+                Assert.Fail($"Expected one inventory movement, got {inventoryMovementCount}; processing {details}.");
+            }
             Assert.Equal(1, await fixture.CountAsync("SalesPayments", firstDocument.Value));
             Assert.Equal(1, await fixture.CountAsync("ServerOutboxMessages", firstDocument.Value));
 
@@ -263,6 +280,17 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
         }
         finally
         {
+            if (originalFiscalSeriesActive is not null)
+            {
+                await using var server = new SqlConnection(fixture.ConnectionString);
+                await server.OpenAsync();
+                await using var restore = new SqlCommand("""
+                    UPDATE dbo.FiscalSeries SET IsActive=@IsActive WHERE SeriesId=@SeriesId;
+                    """, server);
+                restore.Parameters.AddWithValue("@IsActive", originalFiscalSeriesActive.Value);
+                restore.Parameters.AddWithValue("@SeriesId", fixture.SeriesId);
+                Assert.Equal(1, await restore.ExecuteNonQueryAsync());
+            }
             SqliteConnection.ClearAllPools();
             DeleteIfPresent(databasePath);
             DeleteIfPresent($"{databasePath}-wal");
