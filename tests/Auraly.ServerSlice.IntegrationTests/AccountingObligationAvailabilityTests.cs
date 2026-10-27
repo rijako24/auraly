@@ -138,26 +138,32 @@ public sealed class AccountingObligationAvailabilityTests(ServerSliceFixture fix
                 ("página vacía", first with { Page = 500 }, 0) };
             foreach (var (name, query, expectedItems) in scenarios)
             {
-                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
-                var watch = Stopwatch.StartNew();
-                var page = await service.OpenPositionsAsync(user, query);
-                watch.Stop();
-                output.WriteLine($"{kind} {name}: {page.Items.Count} filas, {counter.Count} SQL, {watch.Elapsed.TotalMilliseconds:F1} ms");
-                Assert.Equal(1, counter.Count);
-                Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(750), $"{kind} {name}: {watch.Elapsed.TotalMilliseconds:F1} ms");
-                Assert.Equal(expectedItems, page.Items.Count);
-                var expectedCount = name == "sin tercero" ? 0 : positions.Length;
-                Assert.Equal(expectedCount, page.TotalCount);
-                Assert.Equal(expectedCount * 5m, page.TotalOutstandingAmount);
-                Assert.All(page.Items, item =>
+                var samples = new double[20];
+                for (var attempt = 0; attempt < samples.Length; attempt++)
                 {
-                    Assert.Equal(fixture.SupplierPartyId, item.PartyId);
-                    Assert.Equal(5m, item.OutstandingAmount);
-                    Assert.Equal(2m, item.PendingAdjustmentAmount);
-                    Assert.Equal(3m, item.AvailableAmount);
-                    Assert.Null(item.AccountId);
-                    Assert.NotNull(item.OpeningLinkIssue);
-                });
+                    using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+                    var watch = Stopwatch.StartNew();
+                    var page = await service.OpenPositionsAsync(user, query);
+                    watch.Stop();
+                    samples[attempt] = watch.Elapsed.TotalMilliseconds;
+                    Assert.Equal(1, counter.Count);
+                    Assert.Equal(expectedItems, page.Items.Count);
+                    var expectedCount = name == "sin tercero" ? 0 : positions.Length;
+                    Assert.Equal(expectedCount, page.TotalCount);
+                    Assert.Equal(expectedCount * 5m, page.TotalOutstandingAmount);
+                    Assert.All(page.Items, item =>
+                    {
+                        Assert.Equal(fixture.SupplierPartyId, item.PartyId);
+                        Assert.Equal(5m, item.OutstandingAmount);
+                        Assert.Equal(2m, item.PendingAdjustmentAmount);
+                        Assert.Equal(3m, item.AvailableAmount);
+                        Assert.Null(item.AccountId);
+                        Assert.NotNull(item.OpeningLinkIssue);
+                    });
+                }
+                var p95 = samples.Order().ElementAt(18);
+                output.WriteLine($"{kind} {name}: {expectedItems} filas, 1 SQL, primera {samples[0]:F1} ms, p95 {p95:F1} ms");
+                Assert.True(p95 < 750, $"{kind} {name}: p95 {p95:F1} ms supera 750 ms");
             }
             Assert.Empty((await service.OpenPositionsAsync(user with { TenantId = Guid.NewGuid() }, first)).Items);
             Assert.Empty((await service.OpenPositionsAsync(user with { BusinessId = Guid.NewGuid() }, first)).Items);
@@ -167,17 +173,23 @@ public sealed class AccountingObligationAvailabilityTests(ServerSliceFixture fix
         await service.OpenPositionsAsync(user, mixed);
         foreach (var pageNumber in new[] { 1, 2 })
         {
-            using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
-            var watch = Stopwatch.StartNew();
-            var page = await service.OpenPositionsAsync(user, mixed with { Page = pageNumber });
-            watch.Stop();
-            output.WriteLine($"All página {pageNumber}: {page.Items.Count} filas, {counter.Count} SQL, {watch.Elapsed.TotalMilliseconds:F1} ms");
-            Assert.Equal(1, counter.Count);
-            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"All página {pageNumber}: {watch.Elapsed.TotalMilliseconds:F1} ms");
-            Assert.Equal(50, page.Items.Count);
-            Assert.Equal(positions.Length * 2, page.TotalCount);
-            Assert.Equal(positions.Length * 10m, page.TotalOutstandingAmount);
-            Assert.All(page.Items, item => Assert.Equal(fixture.SupplierPartyId, item.PartyId));
+            var samples = new double[20];
+            for (var attempt = 0; attempt < samples.Length; attempt++)
+            {
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+                var watch = Stopwatch.StartNew();
+                var page = await service.OpenPositionsAsync(user, mixed with { Page = pageNumber });
+                watch.Stop();
+                samples[attempt] = watch.Elapsed.TotalMilliseconds;
+                Assert.Equal(1, counter.Count);
+                Assert.Equal(50, page.Items.Count);
+                Assert.Equal(positions.Length * 2, page.TotalCount);
+                Assert.Equal(positions.Length * 10m, page.TotalOutstandingAmount);
+                Assert.All(page.Items, item => Assert.Equal(fixture.SupplierPartyId, item.PartyId));
+            }
+            var p95 = samples.Order().ElementAt(18);
+            output.WriteLine($"All página {pageNumber}: 50 filas, 1 SQL, primera {samples[0]:F1} ms, p95 {p95:F1} ms");
+            Assert.True(p95 < 2_000, $"All página {pageNumber}: p95 {p95:F1} ms supera 2 segundos");
         }
 
         await VerifyNativePaymentAcceptanceAsync(connection, selected.Take(100).ToArray(), now);

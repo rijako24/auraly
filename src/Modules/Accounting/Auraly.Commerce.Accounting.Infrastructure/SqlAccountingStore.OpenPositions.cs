@@ -94,8 +94,8 @@ public sealed partial class SqlAccountingStore
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        // Count and page use the same filters. Only page keys reach account,
-        // opening-line and reservation enrichment; no source payload is loaded.
+        // Filter once into narrow candidate keys. Count and page share that set;
+        // only page keys reach source detail, opening-line and reservation enrichment.
         await using var command = new SqlCommand($"""
             DECLARE @EarnedMappingId uniqueidentifier,@LostMappingId uniqueidentifier,
               @EarnedAccountId uniqueidentifier,@LostAccountId uniqueidentifier,
@@ -134,22 +134,22 @@ public sealed partial class SqlAccountingStore
                   N'SupplierFinancialDiscountLost',@LostMappingId));
             END;
             WITH Positions AS ({positions})
-            SELECT @TotalCount=COUNT(*),@TotalOutstanding=COALESCE(SUM(p.OutstandingAmount),0)
+            SELECT p.SubledgerKind,p.SubledgerId,p.DueDate,p.OutstandingAmount
+              INTO #OpenPositionCandidates
             FROM Positions p {selectionPartyJoin}
             WHERE {filters} OPTION(RECOMPILE);
+            SELECT @TotalCount=COUNT(*),@TotalOutstanding=COALESCE(SUM(OutstandingAmount),0)
+              FROM #OpenPositionCandidates;
             SELECT @TotalCount,@TotalOutstanding;
+            SELECT SubledgerKind,SubledgerId INTO #OpenPositionPageKeys
+              FROM #OpenPositionCandidates
+              ORDER BY DueDate,SubledgerId
+              OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY;
             WITH Positions AS ({positions})
-            SELECT TOP(0) p.* INTO #OpenPositionPage FROM Positions p;
-            IF @Offset<@TotalCount
-            BEGIN
-              WITH Positions AS ({positions})
-              INSERT #OpenPositionPage
-              SELECT p.*
-              FROM Positions p {selectionPartyJoin}
-              WHERE {filters}
-              ORDER BY p.DueDate,p.SubledgerId
-              OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY OPTION(RECOMPILE);
-            END;
+            SELECT p.* INTO #OpenPositionPage
+              FROM #OpenPositionPageKeys selected
+              JOIN Positions p ON p.SubledgerKind=selected.SubledgerKind AND p.SubledgerId=selected.SubledgerId
+              OPTION(RECOMPILE);
             SELECT p.SubledgerKind,p.SubledgerId,p.PartyId,party.DisplayName,party.Identification,
                 p.SourceDocumentId,p.SourceDocumentType,p.DocumentNumber,p.OccurredAt,p.DueDate,
                 p.CurrencyCode,p.OriginalAmount,p.OutstandingAmount,

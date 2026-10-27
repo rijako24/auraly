@@ -572,8 +572,10 @@ sin rol de cliente. En el alcance inicial del editor solo ofrece COP. Expone
 el auxiliar de la partida de apertura, sus débitos/créditos y el disponible de
 `accounting.ObligationAvailability`; un vínculo ausente o inconsistente tiene
 diagnóstico explícito, nunca una cuenta tomada de la parametrización actual.
-Los filtros se aplican antes del conteo y del límite; se materializan como máximo
-50 posiciones antes de enriquecer cuentas y reservas. El resumen conserva su
+Los filtros se aplican antes del conteo y del límite; una sola selección conserva
+claves, vencimientos e importes estrechos para compartir el conteo y la página.
+Se materializan como máximo 50 posiciones completas antes de enriquecer cuentas
+y reservas. El resumen conserva su
 conteo/suma incluso al pedir una página vacía. Presupuesto: un viaje SQL por
 página, menos de 750 ms por página caliente con historial representativo,
 incluidas primera, siguiente, tercero y ausencia de resultados. La fecha de
