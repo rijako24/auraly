@@ -340,6 +340,7 @@ public sealed class OrderCreditInvoiceTests(
 
             UPDATE dbo.InventoryBalances
             SET QuantityOnHand=100,AverageUnitCost=5000,InventoryValue=500000,
+                OriginContextId=NULL,OriginSnapshotSequence=NULL,
                 UpdatedAt=SYSDATETIMEOFFSET()
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
 

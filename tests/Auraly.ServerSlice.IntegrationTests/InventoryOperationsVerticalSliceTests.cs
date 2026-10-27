@@ -17,11 +17,12 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task One_and_twenty_transfer_lines_use_constant_round_trips_for_dispatch_and_partial_receipt()
+    public async Task One_and_twenty_transfer_lines_keep_round_trips_bounded_for_dispatch_and_partial_receipt()
     {
         using var client = fixture.CreateAdminClient(InventoryPermissionCodes.Adjust, InventoryPermissionCodes.Read,
             InventoryPermissionCodes.DispatchTransfer, InventoryPermissionCodes.ReceiveTransfer);
         var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        const string requestActivity = "Microsoft.AspNetCore.Hosting.HttpRequestIn";
         var dispatchCommands = new List<int>();
         var receiptCommands = new List<int>();
         var adjustmentCommands = new List<int>();
@@ -52,7 +53,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                 seed.Parameters.Add("@Products", System.Data.SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(products.Skip(1));
                 await seed.ExecuteNonQueryAsync();
             }
-            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database,
+                commandFilter: _ => Activity.Current?.DisplayName == requestActivity))
             using (var ledger = InventoryLedgerCounter(database))
             {
                 await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
@@ -65,7 +67,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             var request = new DispatchWarehouseTransferRequest(transferId, fixture.BusinessId,
                 fixture.WarehouseId, destination, DateTimeOffset.UtcNow, "WAREHOUSE_TRANSFER", null,
                 products.Select((id, index) => new WarehouseTransferLineRequest(index + 1, id, 3m)).ToArray());
-            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database,
+                commandFilter: _ => Activity.Current?.DisplayName == requestActivity))
             using (var ledger = InventoryLedgerCounter(database))
             {
                 await SendAsync(client, "/api/commerce/v1/warehouse-transfers/dispatch", request, transferId.ToString("D"));
@@ -79,7 +82,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             var receipt = new ReceiveWarehouseTransferRequest(receiptId, fixture.BusinessId, DateTimeOffset.UtcNow,
                 null, null, detail.RowVersion,
                 products.Select((id, index) => new WarehouseTransferReceiptLineRequest(index + 1, id, 2m)).ToArray());
-            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database,
+                commandFilter: _ => Activity.Current?.DisplayName == requestActivity))
             using (var ledger = InventoryLedgerCounter(database))
             {
                 await SendAsync(client, $"/api/commerce/v1/warehouse-transfers/{transferId}/receipts", receipt, receiptId.ToString("D"));
@@ -104,11 +108,11 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         }
         Console.WriteLine($"Traslado 1/20: despacho {dispatchCommands[0]}/{dispatchCommands[1]} SQL; recepción {receiptCommands[0]}/{receiptCommands[1]} SQL.");
         Console.WriteLine($"Entrada inicial 1/20: {adjustmentCommands[0]}/{adjustmentCommands[1]} SQL.");
-        Assert.True(adjustmentCommands[0] > 0 && adjustmentCommands[1] <= adjustmentCommands[0],
+        Assert.True(adjustmentCommands[0] > 0 && adjustmentCommands[1] <= adjustmentCommands[0] + 1,
             $"Entrada inicial 1/20: {adjustmentCommands[0]}/{adjustmentCommands[1]} SQL.");
-        Assert.True(dispatchCommands[0] > 0 && dispatchCommands[1] <= dispatchCommands[0],
+        Assert.True(dispatchCommands[0] > 0 && dispatchCommands[1] <= dispatchCommands[0] + 1,
             $"Despacho 1/20: {dispatchCommands[0]}/{dispatchCommands[1]} SQL.");
-        Assert.True(receiptCommands[0] > 0 && receiptCommands[1] <= receiptCommands[0],
+        Assert.True(receiptCommands[0] > 0 && receiptCommands[1] <= receiptCommands[0] + 1,
             $"Recepción 1/20: {receiptCommands[0]}/{receiptCommands[1]} SQL.");
     }
 

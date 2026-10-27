@@ -1207,7 +1207,8 @@ public sealed class OrderRecoveryTests(
               ON target.BusinessId=source.BusinessId AND target.WarehouseId=source.WarehouseId
              AND target.ProductId=source.ProductId
             WHEN MATCHED THEN UPDATE SET QuantityOnHand=2,AverageUnitCost=5000,
-              InventoryValue=10000,LastProcessingSequence=1,UpdatedAt=SYSDATETIMEOFFSET()
+              InventoryValue=10000,LastProcessingSequence=1,OriginContextId=NULL,
+              OriginSnapshotSequence=NULL,UpdatedAt=SYSDATETIMEOFFSET()
             WHEN NOT MATCHED THEN INSERT(
               BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
               InventoryValue,LastProcessingSequence,UpdatedAt)
@@ -1215,6 +1216,7 @@ public sealed class OrderRecoveryTests(
 
             UPDATE dbo.InventoryBalances
             SET QuantityOnHand=100,AverageUnitCost=5000,InventoryValue=500000,
+                OriginContextId=NULL,OriginSnapshotSequence=NULL,
                 UpdatedAt=SYSDATETIMEOFFSET()
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
 

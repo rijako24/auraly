@@ -853,6 +853,7 @@ public sealed class OrderBatchInvoiceTests(
             exactReservation.CommandText = """
                 UPDATE balance
                 SET QuantityOnHand=1,InventoryValue=AverageUnitCost,
+                    OriginContextId=NULL,OriginSnapshotSequence=NULL,
                     UpdatedAt=SYSDATETIMEOFFSET()
                 FROM dbo.InventoryBalances balance
                 JOIN dbo.Orders orders
@@ -863,6 +864,7 @@ public sealed class OrderBatchInvoiceTests(
 
                 UPDATE dbo.InventoryBalances
                 SET QuantityOnHand=0,InventoryValue=0,
+                    OriginContextId=NULL,OriginSnapshotSequence=NULL,
                     UpdatedAt=SYSDATETIMEOFFSET()
                 WHERE BusinessId=@BusinessId
                   AND WarehouseId=@WarehouseId
@@ -964,6 +966,7 @@ public sealed class OrderBatchInvoiceTests(
             restore.CommandText = """
                 UPDATE dbo.InventoryBalances
                 SET QuantityOnHand=100,AverageUnitCost=5000,InventoryValue=500000,
+                    OriginContextId=NULL,OriginSnapshotSequence=NULL,
                     UpdatedAt=SYSDATETIMEOFFSET()
                 WHERE BusinessId=@BusinessId
                   AND WarehouseId=@WarehouseId
@@ -1472,6 +1475,7 @@ public sealed class OrderBatchInvoiceTests(
 
             UPDATE dbo.InventoryBalances
             SET QuantityOnHand=100,AverageUnitCost=5000,InventoryValue=500000,
+                OriginContextId=NULL,OriginSnapshotSequence=NULL,
                 UpdatedAt=SYSDATETIMEOFFSET()
             WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
 

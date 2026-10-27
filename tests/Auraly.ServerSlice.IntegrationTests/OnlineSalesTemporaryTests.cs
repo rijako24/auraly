@@ -353,7 +353,8 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
                 UPDATE dbo.Warehouses SET AllowNegativeStockSales=0
                 WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId;
                 IF EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId)
-                  UPDATE dbo.InventoryBalances SET QuantityOnHand=0,InventoryValue=0,UpdatedAt=SYSDATETIMEOFFSET()
+                  UPDATE dbo.InventoryBalances SET QuantityOnHand=0,InventoryValue=0,
+                    OriginContextId=NULL,OriginSnapshotSequence=NULL,UpdatedAt=SYSDATETIMEOFFSET()
                   WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
                 ELSE
                   INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
@@ -379,7 +380,7 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
                 new("@WarehouseId", fixture.WarehouseId));
             if (balanceExisted)
                 await ExecuteAsync(
-                    "UPDATE dbo.InventoryBalances SET QuantityOnHand=@Quantity,UpdatedAt=SYSDATETIMEOFFSET() WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",
+                    "UPDATE dbo.InventoryBalances SET QuantityOnHand=@Quantity,OriginContextId=NULL,OriginSnapshotSequence=NULL,UpdatedAt=SYSDATETIMEOFFSET() WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",
                     new("@Quantity", previousStock), new("@BusinessId", fixture.BusinessId),
                     new("@WarehouseId", fixture.WarehouseId), new("@ProductId", fixture.ProductId));
             else
