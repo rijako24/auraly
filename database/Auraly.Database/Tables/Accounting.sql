@@ -457,6 +457,13 @@ GO
 CREATE INDEX [IX_AccountingEntries_Tenant_Date]
     ON [dbo].[AccountingEntries]([TenantId],[OccurredAt],[EntryId]) INCLUDE([BusinessId],[EntryNumber],[DebitTotal],[CreditTotal]);
 GO
+-- Bank reconciliation resolves entry identity after selecting the scoped bank
+-- lines. Cover its cutoff and ordering metadata without reading the wide
+-- clustered entry once per bank movement.
+CREATE INDEX [IX_AccountingEntries_Tenant_Entry_BankBook]
+    ON [dbo].[AccountingEntries]([TenantId],[EntryId])
+    INCLUDE([OccurredAt],[EntryNumber],[BusinessId],[SourceDocumentType],[SourceDocumentId]);
+GO
 
 CREATE TABLE [dbo].[AccountingEntryLines]
 (

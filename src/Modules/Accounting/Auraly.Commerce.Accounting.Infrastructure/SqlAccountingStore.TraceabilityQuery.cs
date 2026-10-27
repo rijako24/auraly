@@ -57,7 +57,8 @@ public sealed partial class SqlAccountingStore
                 CONVERT(bit,CASE WHEN source.AccountingPostingJobId IS NOT NULL THEN 1 ELSE 0 END) FROM accounting.SourcePartyIndex indexedParty
                 JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=indexedParty.SourceDocumentId
                   AND source.SourceDocumentType=indexedParty.SourceDocumentType
-                WHERE indexedParty.PartyId=@PartyId AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId
+                WHERE indexedParty.PartyId=@PartyId AND source.SourceDocumentType=N'ManualAccountingVoucher'
+                  AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId
                   AND CAST(source.OccurredAt AS date) BETWEEN @From AND @To
                   AND (@DocumentType IS NULL OR source.SourceDocumentType=@DocumentType)
               OPTION(RECOMPILE);

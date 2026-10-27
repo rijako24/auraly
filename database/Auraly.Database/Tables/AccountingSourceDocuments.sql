@@ -49,6 +49,15 @@ CREATE INDEX [IX_AccountingSourceDocuments_Business_Date]
        ([BusinessId],[OccurredAt],[SourceDocumentId]) INCLUDE([TenantId],[AccountingPostingJobId]);
 GO
 
+-- Party-filtered traceability joins manual sources by immutable identity. A
+-- narrow covering projection avoids fetching the wide JSON source for every
+-- candidate of a frequently used third party.
+CREATE INDEX [IX_AccountingSourceDocuments_Manual_PartyProjection]
+    ON [dbo].[AccountingSourceDocuments]([SourceDocumentId],[SourceDocumentType])
+    INCLUDE([TenantId],[BusinessId],[OccurredAt],[AccountingPostingJobId])
+    WHERE [SourceDocumentType]=N'ManualAccountingVoucher';
+GO
+
 CREATE INDEX [IX_AccountingSourceDocuments_UnlinkedJob_Scope_Date]
     ON [dbo].[AccountingSourceDocuments]([TenantId],[BusinessId],[OccurredAt])
     -- Include the IS NULL column so SQL Server can use the filtered index
