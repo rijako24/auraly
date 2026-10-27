@@ -1079,7 +1079,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
                 ? """
                   UPDATE dbo.InventoryBalances
                   SET QuantityOnHand=@Quantity,AverageUnitCost=@AverageCost,
-                      InventoryValue=@InventoryValue,UpdatedAt=SYSUTCDATETIME()
+                       InventoryValue=@InventoryValue,OriginContextId=NULL,
+                       OriginSnapshotSequence=NULL,UpdatedAt=SYSUTCDATETIME()
                   WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
                     AND ProductId=@ProductId;
                   """
