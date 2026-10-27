@@ -132,7 +132,7 @@ export interface SetComplianceConceptMapping { businessId:string|null;authorityC
 export interface GenerateComplianceReport { authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;periodFrom:string;periodTo:string; }
 
 export const accountingApi = {
-  openPositions: (params: { subledgerKind: AccountingOpenPosition["subledgerKind"]; page: number; pageSize: number;
+  openPositions: (params: { subledgerKind: AccountingOpenPosition["subledgerKind"] | "All"; page: number; pageSize: number;
     partyId?: string; accountId?: string; search?: string; dueFrom?: string; dueTo?: string;
     subledgerId?: string; counterpartyRoleId?: string; manualSupportOnly?: boolean; effectiveOn?: string }) => apiClient.get<AccountingOpenPositionPage>("/commerce/v1/accounting/open-positions", params),
   voucherDraft: (id: string) => apiClient.get<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${id}`),

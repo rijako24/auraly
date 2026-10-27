@@ -92,11 +92,12 @@ public sealed partial class AccountingService(
         if (!user.Permissions.Contains(AccountingPermissionCodes.Read)
             && (sourceReadPermission is null || !user.Permissions.Contains(sourceReadPermission)))
             throw new AccountingForbiddenException("No tienes permiso para consultar estas obligaciones.");
-        if (query.SubledgerKind is not (AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable or
+        if (query.SubledgerKind is not ("All" or AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable or
             AccountingSubledgerKinds.SupplierCredit or AccountingSubledgerKinds.CustomerCredit)
             || query.Page < 1 || query.PageSize is < 1 or > 50 || query.PartyId == Guid.Empty
             || query.AccountId == Guid.Empty || query.SubledgerId == Guid.Empty || query.CounterpartyRoleId == Guid.Empty || query.Search?.Length > 120
-            || query.DueFrom > query.DueTo || query.ManualSupportOnly && query.SubledgerKind != AccountingSubledgerKinds.Payable)
+            || query.DueFrom > query.DueTo || query.ManualSupportOnly && query.SubledgerKind != AccountingSubledgerKinds.Payable
+            || query.SubledgerKind == "All" && query.PartyId is null)
             throw new AccountingValidationException("Los filtros de documentos pendientes no son válidos.");
         return store.OpenPositionsAsync(user, query with { Search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim() }, cancellationToken);
     }

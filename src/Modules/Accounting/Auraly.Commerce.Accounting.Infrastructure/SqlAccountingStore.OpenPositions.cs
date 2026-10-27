@@ -19,7 +19,7 @@ public sealed partial class SqlAccountingStore
             JOIN dbo.AccountingPostingJobs source ON source.SourceDocumentId=p.SourceDocumentId
                 AND source.SourceDocumentType=p.SourceDocumentType AND source.BusinessId=p.BusinessId
                 AND source.TenantId=@TenantId
-            WHERE @Kind=N'Payable' AND p.BusinessId=@BusinessId AND p.CurrencyCode=N'COP'
+            WHERE @Kind IN(N'Payable',N'All') AND p.BusinessId=@BusinessId AND p.CurrencyCode=N'COP'
                 AND (@Id IS NOT NULL OR (p.OutstandingAmount>0 AND p.Status IN(N'Open',N'PartiallyPaid')))
             UNION ALL
             SELECT N'Receivable',p.ReceivableId,COALESCE(p.PartyId,customer.PartyId),
@@ -31,7 +31,7 @@ public sealed partial class SqlAccountingStore
             JOIN dbo.AccountingPostingJobs source ON source.SourceDocumentId=p.SourceDocumentId
                 AND source.SourceDocumentType=p.SourceDocumentType AND source.BusinessId=p.BusinessId
                 AND source.TenantId=@TenantId
-            WHERE @Kind=N'Receivable' AND p.BusinessId=@BusinessId AND p.CurrencyCode=N'COP'
+            WHERE @Kind IN(N'Receivable',N'All') AND p.BusinessId=@BusinessId AND p.CurrencyCode=N'COP'
                 AND (@Id IS NOT NULL OR (p.OutstandingAmount>0 AND p.Status IN(N'Open',N'PartiallyPaid')))
             UNION ALL
             SELECT N'SupplierCredit',credit.SupplierCreditId,supplier.PartyId,
@@ -44,7 +44,7 @@ public sealed partial class SqlAccountingStore
             FROM dbo.SupplierCredits credit JOIN dbo.Suppliers supplier ON supplier.SupplierId=credit.SupplierId AND supplier.TenantId=@TenantId
             LEFT JOIN dbo.SupplierCreditTransactions history ON history.SupplierCreditId=credit.SupplierCreditId AND history.TransactionType=N'Opening'
             LEFT JOIN dbo.AccountingEntries entry ON entry.EntryId=credit.OpeningEntryId AND entry.BusinessId=@BusinessId AND entry.TenantId=@TenantId
-            WHERE @Kind=N'SupplierCredit' AND credit.BusinessId=@BusinessId
+            WHERE @Kind IN(N'SupplierCredit',N'All') AND credit.BusinessId=@BusinessId
                 AND (@Id IS NOT NULL OR credit.AvailableAmount>0 AND credit.Status<>N'Cancelled')
             UNION ALL
             SELECT N'CustomerCredit',credit.CustomerCreditId,COALESCE(credit.PartyId,customer.PartyId),
@@ -57,7 +57,7 @@ public sealed partial class SqlAccountingStore
             FROM dbo.CustomerCredits credit LEFT JOIN dbo.Customers customer ON customer.CustomerId=credit.CustomerId AND customer.TenantId=@TenantId
             LEFT JOIN dbo.CustomerCreditTransactions history ON history.CustomerCreditId=credit.CustomerCreditId AND history.TransactionType=N'Opening'
             LEFT JOIN dbo.AccountingEntries entry ON entry.EntryId=credit.OpeningEntryId AND entry.BusinessId=@BusinessId AND entry.TenantId=@TenantId
-            WHERE @Kind=N'CustomerCredit' AND credit.BusinessId=@BusinessId
+            WHERE @Kind IN(N'CustomerCredit',N'All') AND credit.BusinessId=@BusinessId
                 AND (@Id IS NOT NULL OR credit.AvailableAmount>0)
             """;
         const string filters = """
@@ -90,7 +90,7 @@ public sealed partial class SqlAccountingStore
               @EarnedCode nvarchar(32),@LostCode nvarchar(32),
               @EarnedName nvarchar(200),@LostName nvarchar(200),
               @TotalCount int,@TotalOutstanding decimal(38,4);
-            IF @Kind=N'Payable' AND @EffectiveOn IS NOT NULL
+            IF @Kind IN(N'Payable',N'All') AND @EffectiveOn IS NOT NULL
             BEGIN
               SELECT TOP(1) @EarnedMappingId=AccountId FROM dbo.AccountingAccountMappings
               WHERE TenantId=@TenantId AND Category=N'SupplierFinancialDiscountEarned'
@@ -152,7 +152,7 @@ public sealed partial class SqlAccountingStore
                 @EarnedAccountId,@EarnedCode,@EarnedName,@LostAccountId,@LostCode,@LostName
             FROM #OpenPositionPage p
             JOIN dbo.Parties party ON party.PartyId=p.PartyId AND party.TenantId=@TenantId
-            CROSS APPLY accounting.ObligationOpeningAccount(@TenantId,@BusinessId,@Kind,
+            CROSS APPLY accounting.ObligationOpeningAccount(@TenantId,@BusinessId,p.SubledgerKind,
                 p.OpeningEntryId,p.OpeningEntryLineNumber,p.PartyId) opening
             CROSS APPLY accounting.ObligationAvailability(@BusinessId,p.SubledgerKind,p.SubledgerId,p.OutstandingAmount,NULL) reserved
             OUTER APPLY (SELECT value.EligibleAmount,value.Anticipated

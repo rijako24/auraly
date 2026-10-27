@@ -69,7 +69,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const [detailLineId, setDetailLineId] = useState<string | null>(null);
   const [chosenPartyId, setChosenPartyId] = useState("");
   const [mainParty, setMainParty] = useState({ name: initial?.mainPartyName ?? preparation?.mainPartyName ?? null, identification: initial?.mainPartyIdentification ?? preparation?.mainPartyIdentification ?? null });
-  const [mainPartyRole, setMainPartyRole] = useState<"Customer" | "Supplier" | null>(null);
   const voucherTypes = useReferenceOptions("accounting-voucher-type", form.payloadVersion === 4);
   const franchises = useReferenceOptions("card-franchise", detailLineId !== null);
   const directions = useReferenceOptions("accounting-adjustment-direction", !!form.adjustment);
@@ -293,7 +292,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
             change({ mainPartyId: id || null });
             setShowPendingDocuments(false);
             setMainParty({ name: party?.displayName ?? null, identification: party?.identification ?? null });
-            setMainPartyRole(party?.role === "Customer" || party?.role === "Supplier" ? party.role : null);
             setLines(current => current.map(line => !line.value.accountId && !line.value.partyId && !line.value.description && !line.value.debit && !line.value.credit
               ? { ...line, value: { ...line.value, partyId: id || null }, partyName: party?.displayName ?? null, partyIdentification: party?.identification ?? null } : line));
           }}/></div>{form.payloadVersion === 4 && !fiscalDocument && <Button type="button" variant="outline" disabled={!form.mainPartyId}
@@ -303,7 +301,6 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
           <div id="voucher-pending-documents" className="sm:col-span-3"><VoucherPendingDocuments key={form.mainPartyId}
             businessId={businessId} documentId={form.documentId} occurredAt={form.occurredAt}
             voucherTypeCode={form.voucherTypeCode} partyId={form.mainPartyId}
-            initialKind={mainPartyRole === "Customer" ? "Receivable" : "Payable"}
             remainingLineCapacity={500 - lines.length} linkedPositions={linkedPositions} onAdd={addPositionLines} /></div>}
         <div className="space-y-2"><Label>Fecha contable</Label><DatePicker value={form.occurredAt.slice(0, 10)} onChange={date => change({ occurredAt: date ? `${date}T12:00:00-05:00` : "" })} /></div>
         <div className="space-y-2 sm:col-span-2"><Label htmlFor="voucher-description">Descripción</Label><Input id="voucher-description" maxLength={500} value={form.description} onChange={event => change({ description: event.target.value })} placeholder="Motivo del comprobante" /></div>

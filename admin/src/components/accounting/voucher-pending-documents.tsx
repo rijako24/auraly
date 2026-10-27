@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { accountingApi, type AccountingOpenPosition, type VoucherDraftLineView } from "@/services/api/accounting";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
@@ -105,14 +106,14 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, linked, remaining
 }
 
 export function VoucherPendingDocuments({ businessId, documentId, occurredAt, voucherTypeCode, partyId,
-  initialKind = "Payable", remainingLineCapacity, linkedPositions, onAdd }: {
+  remainingLineCapacity, linkedPositions, onAdd }: {
   businessId: string; documentId: string; occurredAt: string; voucherTypeCode?: string | null; partyId: string;
-  initialKind?: Kind; remainingLineCapacity: number; linkedPositions: ReadonlyArray<LinkedPosition>;
+  remainingLineCapacity: number; linkedPositions: ReadonlyArray<LinkedPosition>;
   onAdd: (lines: VoucherDraftLineView[]) => void;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const kinds = useReferenceOptions("accounting-subledger-kind", filtersOpen);
-  const [kind, setKind] = useState<Kind>(initialKind);
+  const [kind, setKind] = useState<Kind | "All">("All");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -132,11 +133,11 @@ export function VoucherPendingDocuments({ businessId, documentId, occurredAt, vo
       <p className="text-xs text-muted-foreground">Escribe el abono y agrega la partida. Guardar no paga; contabilizar valida el saldo y aplica el cruce.</p></div>
     <details className="text-sm" onToggle={event => setFiltersOpen(event.currentTarget.open)}><summary className="cursor-pointer font-medium">Filtros</summary>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1"><Label>Tipo de saldo</Label><Select value={kind} onValueChange={value => { if (supportedKind(value)) { setKind(value); setPage(1); } }}>
-          <SelectTrigger aria-label="Tipo de saldo pendiente"><SelectValue /></SelectTrigger>
+        <div className="space-y-1"><Label>Tipo de saldo</Label><div className="flex gap-1"><Select value={kind === "All" ? "" : kind} onValueChange={value => { if (supportedKind(value)) { setKind(value); setPage(1); } }}>
+          <SelectTrigger aria-label="Tipo de saldo pendiente"><SelectValue placeholder="Todos los saldos" /></SelectTrigger>
           <SelectContent>{kinds.data?.filter(item => supportedKind(item.code)).map(item =>
             <SelectItem key={item.id} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
-        </Select></div>
+        </Select>{kind !== "All" && <Button type="button" variant="ghost" size="icon" aria-label="Limpiar tipo de saldo" onClick={() => { setKind("All"); setPage(1); }}><X className="h-4 w-4" /></Button>}</div></div>
         <div className="space-y-1"><Label htmlFor="pending-document-search">Buscar documento</Label>
           <Input id="pending-document-search" value={searchInput} onChange={event => setSearchInput(event.target.value)} placeholder="Número o referencia" /></div>
         <div className="space-y-1"><Label>Cuenta (opcional)</Label><AccountSelect value={accountId} onChange={value => { setAccountId(value); setPage(1); }} /></div>
@@ -151,9 +152,9 @@ export function VoucherPendingDocuments({ businessId, documentId, occurredAt, vo
       <thead className="bg-muted/50 text-xs"><tr><th className="p-2">Documento</th><th className="p-2">Cuenta</th><th className="p-2">Tercero</th>
         <th className="p-2 text-right">Débito origen</th><th className="p-2 text-right">Crédito origen</th><th className="p-2 text-right">Saldo</th>
         <th className="p-2">Abono</th><th className="p-2">Acción</th></tr></thead><tbody>
-        {positions.data.items.map(position => <PendingDocumentRow key={`${kind}:${position.subledgerId}`} position={position} kind={kind}
+        {positions.data.items.map(position => <PendingDocumentRow key={`${position.subledgerKind}:${position.subledgerId}`} position={position} kind={position.subledgerKind}
           voucherTypeCode={voucherTypeCode} remainingLineCapacity={remainingLineCapacity}
-          linked={linkedPositions.filter(item => item.subledgerKind === kind && item.subledgerId === position.subledgerId)}
+          linked={linkedPositions.filter(item => item.subledgerKind === position.subledgerKind && item.subledgerId === position.subledgerId)}
           onAdd={onAdd} onOpenOrigin={setOriginId} />)}
       </tbody></table></div>
       {positions.data.items.length === 0 && <p className="text-sm text-muted-foreground">No hay documentos pendientes para este tercero y filtro.</p>}

@@ -50,7 +50,11 @@ public sealed partial class SqlAccountingStore
                 }
                 if (request.RowVersion != Convert.ToBase64String((byte[])reader[3]))
                     throw new AccountingConflictException("Otra persona modificó el comprobante. Ábrelo nuevamente.");
-                if (!reader.IsDBNull(7) && request.PayloadVersion != reader.GetByte(7))
+                var storedPayloadVersion = reader.IsDBNull(7) ? (int?)null : reader.GetByte(7);
+                var upgradingUnsentManualVoucher = request.DocumentType == AccountingManualDocumentTypes.ManualVoucher &&
+                    (storedPayloadVersion is null && request.PayloadVersion is 2 or 4 ||
+                     storedPayloadVersion == 2 && request.PayloadVersion == 4);
+                if (request.PayloadVersion != storedPayloadVersion && !upgradingUnsentManualVoucher)
                     throw new AccountingConflictException("El comprobante requiere conservar la versión e identidades de sus partidas.");
             }
             else if (request.RowVersion is not null)

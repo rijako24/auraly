@@ -3044,13 +3044,20 @@ de CJ y la verificación en DEV se registrarán tras su ejecución.
 consulta sus documentos pendientes. «Ver documentos» muestra debajo una grilla
 y consulta la primera página mediante el servicio canónico, con cuenta, tercero,
 débito, crédito, saldo y abono editable. Solo se muestran saldos abiertos; las
-compras, gastos y comprobantes por pagar comparten la vista predeterminada. Un
-bloque «Filtros» cerrado por defecto reúne tipo de saldo, documento, cuenta y
+compras, gastos y comprobantes por pagar aparecen junto con cartera y anticipos
+del tercero en la vista inicial, sin tipo preseleccionado. El tipo se puede
+filtrar y limpiar; la consulta conjunta exige tercero y pagina el conjunto
+antes de enriquecer sus partidas. Un bloque «Filtros» cerrado por defecto reúne
+tipo de saldo, documento, cuenta y
 vencimiento desde/hasta. El tipo distingue obligaciones, cartera y anticipos,
 no el origen del comprobante. El encabezado muestra fecha y descripción en la
 misma fila, sin campo de referencia; se conserva la referencia por partida y la
 referencia histórica del contrato. El concepto interno requerido por el contrato
 se fija desde la captura, sin selector visible.
+Un borrador manual no enviado puede avanzar de la captura antigua sin versión
+o versión 2 a la financiera versión 4 al elegir «Usar captura financiera»;
+conserva la comprobación de versión de fila e identidades estables. No se
+permite retroceder de versión ni cambiar una captura ya enviada.
 La captura manual nueva guarda `WorkSessionId = null` y no participa en el cierre
 operativo; pagos asistidos e históricos conservan su tratamiento de sesión.
 Esta decisión sustituye únicamente las indicaciones anteriores que vinculaban

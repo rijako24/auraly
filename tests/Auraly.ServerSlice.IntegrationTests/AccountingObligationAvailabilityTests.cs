@@ -163,6 +163,23 @@ public sealed class AccountingObligationAvailabilityTests(ServerSliceFixture fix
             Assert.Empty((await service.OpenPositionsAsync(user with { BusinessId = Guid.NewGuid() }, first)).Items);
         }
 
+        var mixed = new AccountingOpenPositionQuery("All", 1, 50, PartyId: fixture.SupplierPartyId, Search: "OPEN-PERF-");
+        await service.OpenPositionsAsync(user, mixed);
+        foreach (var pageNumber in new[] { 1, 2 })
+        {
+            using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+            var watch = Stopwatch.StartNew();
+            var page = await service.OpenPositionsAsync(user, mixed with { Page = pageNumber });
+            watch.Stop();
+            output.WriteLine($"All página {pageNumber}: {page.Items.Count} filas, {counter.Count} SQL, {watch.Elapsed.TotalMilliseconds:F1} ms");
+            Assert.Equal(1, counter.Count);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"All página {pageNumber}: {watch.Elapsed.TotalMilliseconds:F1} ms");
+            Assert.Equal(50, page.Items.Count);
+            Assert.Equal(positions.Length * 2, page.TotalCount);
+            Assert.Equal(positions.Length * 10m, page.TotalOutstandingAmount);
+            Assert.All(page.Items, item => Assert.Equal(fixture.SupplierPartyId, item.PartyId));
+        }
+
         await VerifyNativePaymentAcceptanceAsync(connection, selected.Take(100).ToArray(), now);
 
         SqlCommand Command(string text, IEnumerable<Guid> positions, string kind, Guid businessId, Guid? excludedId = null)

@@ -7,6 +7,44 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed partial class AccountingVoucherDraftTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData(2)]
+    public async Task Unsent_legacy_manual_draft_can_be_upgraded_to_identified_financial_capture(int? legacyVersion)
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.ManualCreate);
+        var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
+        var expense = accounts.Single(account => account.Code == "519595");
+        var cash = accounts.Single(account => account.Code == "110505");
+        var id = Guid.NewGuid();
+        var path = $"/api/commerce/v1/accounting/manual/drafts/{id:D}";
+        var legacy = new SaveVoucherDraftRequest(id, AccountingManualDocumentTypes.ManualVoucher,
+            new(2026, 10, 26, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Captura anterior", null,
+            [new(expense.AccountId, fixture.SupplierPartyId, null, "Gasto", 100, 0,
+                LineId: legacyVersion == 2 ? Guid.NewGuid() : null),
+             new(cash.AccountId, fixture.SupplierPartyId, null, "Caja", 0, 100,
+                LineId: legacyVersion == 2 ? Guid.NewGuid() : null)],
+            null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: legacyVersion);
+        using var firstSave = await client.PutAsJsonAsync(path, legacy);
+        Assert.True(firstSave.IsSuccessStatusCode, await firstSave.Content.ReadAsStringAsync());
+        var first = (await firstSave.Content.ReadFromJsonAsync<VoucherDraftView>())!;
+        var upgraded = legacy with
+        {
+            Description = "Captura financiera",
+            RowVersion = first.RowVersion,
+            PayloadVersion = 4,
+            VoucherTypeCode = "Accounting",
+            Lines = first.Lines.Select(line => line.Value with { LineId = line.Value.LineId ?? Guid.NewGuid() }).ToArray()
+        };
+        using var upgradeSave = await client.PutAsJsonAsync(path, upgraded);
+        Assert.True(upgradeSave.IsSuccessStatusCode, await upgradeSave.Content.ReadAsStringAsync());
+        var saved = (await upgradeSave.Content.ReadFromJsonAsync<VoucherDraftView>())!;
+        Assert.Equal(4, saved.PayloadVersion);
+        Assert.All(saved.Lines, line => Assert.NotNull(line.Value.LineId));
+        using var downgrade = await client.PutAsJsonAsync(path, legacy with { RowVersion = saved.RowVersion });
+        Assert.Equal(HttpStatusCode.Conflict, downgrade.StatusCode);
+    }
+
     [Fact]
     public async Task Financial_voucher_requires_a_main_party_to_post_but_can_be_saved_incomplete()
     {
@@ -128,6 +166,13 @@ public sealed partial class AccountingVoucherDraftTests
                 seed.Parameters.AddWithValue("@SupplierId",fixture.SupplierId);seed.Parameters.AddWithValue("@Site",siteId);
                 await seed.ExecuteNonQueryAsync();
             }
+            using (var unscoped = await client.GetAsync("/api/commerce/v1/accounting/open-positions?subledgerKind=All&page=1&pageSize=10"))
+                Assert.Equal(HttpStatusCode.BadRequest, unscoped.StatusCode);
+            var allKinds = await client.GetFromJsonAsync<AccountingOpenPositionPage>(
+                $"/api/commerce/v1/accounting/open-positions?subledgerKind=All&partyId={fixture.SupplierPartyId:D}&search=CAP-2025&page=1&pageSize=10");
+            Assert.NotNull(allKinds);
+            Assert.Contains(allKinds.Items, position => position.SubledgerKind == "Payable" &&
+                position.SubledgerId == positionId && position.OpeningLinkIssue is not null);
             var groupId=Guid.NewGuid();
             var evidence=new VoucherPaymentEvidence("VISA","APROBACION-1",100m,"Evidencia de la captura");
             var input=new SaveVoucherDraftRequest(id,AccountingManualDocumentTypes.ManualVoucher,

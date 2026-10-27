@@ -1450,6 +1450,35 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
             [new WorkSessionPaymentVerificationDecision(cashIn.VerificationKey, "Verified")],
             ChargeCashShortageToEmployee: true);
         var reconciliationKey = $"reconcile-{Guid.NewGuid():N}";
+        await using (var inactiveConnection = new SqlConnection(fixture.ConnectionString))
+        {
+            await inactiveConnection.OpenAsync();
+            await using var inactive = new SqlCommand(
+                "UPDATE dbo.Employees SET IsActive=0 WHERE TenantId=@TenantId AND PartyId=@PartyId;",
+                inactiveConnection);
+            inactive.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            inactive.Parameters.AddWithValue("@PartyId", partyId);
+            await inactive.ExecuteNonQueryAsync();
+        }
+        using (var scope = fixture.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<IWorkSessionStore>();
+            var rejected = await Assert.ThrowsAsync<WorkSessionValidationException>(() =>
+                store.ReconcileClosureAsync(new(userId, fixture.TenantId,
+                    permissions.ToHashSet(StringComparer.Ordinal), fixture.BusinessId),
+                    closure.WorkSessionClosureId, reconciliationKey, request, default));
+            Assert.Contains("empleado activo", rejected.Message);
+        }
+        await using (var activeConnection = new SqlConnection(fixture.ConnectionString))
+        {
+            await activeConnection.OpenAsync();
+            await using var active = new SqlCommand(
+                "UPDATE dbo.Employees SET IsActive=1 WHERE TenantId=@TenantId AND PartyId=@PartyId;",
+                activeConnection);
+            active.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            active.Parameters.AddWithValue("@PartyId", partyId);
+            await active.ExecuteNonQueryAsync();
+        }
         using (var scope = fixture.CreateScope())
         {
             var store = scope.ServiceProvider.GetRequiredService<IWorkSessionStore>();

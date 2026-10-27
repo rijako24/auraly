@@ -113,6 +113,42 @@ test("el egreso prepara la partida del descuento financiero con la cuenta config
   expect(positionReads).toBe(1);
 });
 
+test("el filtro de documentos inicia vacío y puede volver a todos los saldos", async ({ page, baseURL }) => {
+  const scenario = financialVoucherScenario();
+  const kinds: string[] = [];
+  await installFinancialVoucherContext(page, baseURL!, scenario);
+  await page.route("**/api/**", async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/reference-options/accounting-subledger-kind")) {
+      await route.fulfill({ json: [{ id: "payable", code: "Payable", label: "Cuenta por pagar" }] });
+      return;
+    }
+    if (url.pathname.endsWith(`/accounting/manual/drafts/${scenario.documentId}`)) {
+      await route.fulfill({ json: scenario.draft });
+      return;
+    }
+    if (url.pathname.endsWith("/accounting/open-positions")) {
+      kinds.push(url.searchParams.get("subledgerKind") ?? "");
+      await route.fulfill({ json: { items: [], page: 1, pageSize: 10, totalCount: 0, totalOutstandingAmount: 0 } });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.goto(`/dashboard/financial-traceability?document=${scenario.documentId}`);
+  await page.getByRole("button", { name: "Ver documentos", exact: true }).click();
+  const grid = page.getByRole("region", { name: "Documentos pendientes del tercero" });
+  await grid.getByText("Filtros", { exact: true }).click();
+  const selector = grid.getByRole("combobox", { name: "Tipo de saldo pendiente" });
+  await expect(selector).toContainText("Todos los saldos");
+  await expect.poll(() => kinds).toContain("All");
+  await selector.click();
+  await page.getByRole("option", { name: "Cuenta por pagar", exact: true }).click();
+  await expect.poll(() => kinds).toContain("Payable");
+  await grid.getByRole("button", { name: "Limpiar tipo de saldo" }).click();
+  await expect(selector).toContainText("Todos los saldos");
+  expect(kinds.filter(kind => kind === "All").length).toBe(1);
+});
+
 for (const sample of [
   { kind: "Payable", label: "Cuenta por pagar", debit: 0, credit: 500 },
   { kind: "Receivable", label: "Cuenta por cobrar", debit: 500, credit: 0 },
@@ -146,7 +182,7 @@ for (const sample of [
       if (path.endsWith("/accounting/open-positions")) {
         expect(url.searchParams.get("partyId")).toBe(draft.mainPartyId);
         expect(url.searchParams.get("page")).toBe("1");
-        if (url.searchParams.get("subledgerKind") !== sample.kind)
+        if (url.searchParams.get("subledgerKind") !== sample.kind && url.searchParams.get("subledgerKind") !== "All")
           { await route.fulfill({ json: { items: [], page: 1, pageSize: 10, totalCount: 0, totalOutstandingAmount: 0 } }); return; }
         positionReads++;
         await route.fulfill({ json: { items: [position], page: 1, pageSize: 10, totalCount: 1, totalOutstandingAmount: 500 } }); return;
@@ -177,11 +213,7 @@ for (const sample of [
       await expect(grid.getByRole("button", { name: "Reintentar tipos de saldo", exact: true })).toBeVisible();
       failKinds = false;
       await grid.getByRole("button", { name: "Reintentar tipos de saldo", exact: true }).click();
-      await expect(grid.getByRole("combobox", { name: "Tipo de saldo pendiente" })).toContainText("Cuenta por pagar");
-    }
-    if (sample.kind !== "Payable") {
-      await grid.getByRole("combobox", { name: "Tipo de saldo pendiente" }).click();
-      await page.getByRole("option", { name: sample.label, exact: true }).click();
+      await expect(grid.getByRole("combobox", { name: "Tipo de saldo pendiente" })).toContainText("Todos los saldos");
     }
     const row = grid.getByRole("row", { name: "Documento DOC-PENDIENTE-250" });
     await expect(row).toContainText("22050599 · Auxiliar original");

@@ -391,15 +391,18 @@ public sealed partial class SqlWorkSessionStore
                     FROM dbo.WorkSessionClosures closure
                     JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
                     JOIN dbo.AppUsers cashier ON cashier.UserId=session.UserId
-                    JOIN dbo.Employees employee ON employee.TenantId=cashier.TenantId
+                      AND cashier.TenantId=session.TenantId
+                    JOIN dbo.Employees employee ON employee.TenantId=session.TenantId
                       AND employee.PartyId=cashier.PartyId AND employee.IsActive=1
-                    WHERE closure.WorkSessionClosureId=@ClosureId AND session.BusinessId=@BusinessId;
+                    WHERE closure.WorkSessionClosureId=@ClosureId AND session.BusinessId=@BusinessId
+                      AND session.TenantId=@TenantId;
                     """, connection, transaction);
                 debtor.Parameters.AddWithValue("@ClosureId", closureId);
                 debtor.Parameters.AddWithValue("@BusinessId", businessId);
+                debtor.Parameters.AddWithValue("@TenantId", identity.TenantId);
                 var partyId = await debtor.ExecuteScalarAsync(cancellationToken);
                 if (partyId is not Guid employeePartyId)
-                    throw new WorkSessionValidationException("El usuario del cierre debe estar vinculado a un empleado activo para registrar la cuenta por cobrar.");
+                    throw new WorkSessionValidationException("El usuario del cierre no tiene un empleado activo en esta empresa. Vincúlalo y vuelve a conciliar; no se registró la cuenta por cobrar.");
                 cashShortageClaim = new(ids.NewId(), employeePartyId, -cashDifference);
             }
             var status = differences.Values.All(value => value == 0) && !verification.HasMissingCreditSale

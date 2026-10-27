@@ -40,6 +40,11 @@ Al cerrar la sesión operativa se genera un cierre por usuario con:
 - fecha, sede, usuario y dispositivo opcional; las bodegas quedan en el detalle de
   los documentos, no como propietarias del cierre.
 
+Si una diferencia de efectivo se carga como cuenta por cobrar al empleado, el
+usuario dueño de la sesión debe tener un tercero y un empleado activo en el
+**mismo tenant** del cierre. Una ficha de empleado de otro tenant no habilita el
+cargo, aunque el identificador del usuario coincida.
+
 El cierre puede imprimir una tirilla denominada **Cierre de sesión**. Nunca se muestra “cierre de caja”.
 
 El rango de fechas del listado central se interpreta en el calendario de cada
