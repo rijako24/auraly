@@ -3071,3 +3071,24 @@ del PDF, 48 ya existen y ninguno contradice su tipo contable; la carga añadirá
 los 1.424 códigos restantes cuando el esquema nuevo esté publicado. El PDF no
 vincula cuentas con maestros bancarios inexistentes y no se inventan esas
 relaciones durante la importación.
+
+**Estado de CJ en DEV al 27 de octubre:** tras publicar el esquema compatible,
+se cargaron los 1.472 códigos del PDF según la regla aprobada de Código/Cuenta
+NIC. La revisión posterior detectó colisiones entre códigos del PUC real y
+cuentas genéricas sugeridas por el perfil: la categoría podía conservar el
+tipo correcto mientras el nombre de la cuenta expresaba otro uso. Se
+reasignaron, mediante la API de configuración contable, salud patronal a
+`237005`, pensión patronal a `238030`, parafiscales a `237010`, fletes a
+`52355002`, seguros de compra a `51306001`, manejo logístico a `51357002`,
+sobrantes de transportadores a `429597`, diferencias de inventario a `539595`,
+gastos operativos y otros costos directos a `519595`, y otras salidas a
+`52951004`. Se añadió el auxiliar `51059503` bajo la agrupación `510595` para
+aportes patronales y se le asignó esa categoría. Los 63 propósitos requeridos
+tienen un auxiliar activo de la naturaleza correcta; `SupplierDebitCard` y
+`SupplierCreditCard` siguen opcionales y sin asignación porque CJ no tiene
+maestros bancarios configurados. No se inventó banco ni cupo de tarjeta.
+La contabilidad de CJ en DEV permanece desactivada y su balance de prueba está
+vacío. La comprobación de apertura en cero rechaza saldos comerciales y
+operaciones pendientes; la modalidad de apertura importada requiere saldos
+iniciales aprobados. No se deduce que la situación de PROD sea idéntica a DEV
+ni se activa contabilidad por la ausencia de asientos previos.
