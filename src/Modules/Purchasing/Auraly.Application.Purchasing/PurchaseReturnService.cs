@@ -76,9 +76,10 @@ public sealed class PurchaseReturnService(
         var normalized = request with { Notes = Normalize(request.Notes, 1000) };
         var acceptance = await store.AcceptAsync(
             user, idempotencyKey.Trim(), normalized, cancellationToken);
-        await signalPublisher.PublishAsync(new DocumentProcessingSignal(
-            acceptance.MovementId, request.BusinessId, request.ReturnId,
-            PurchasingDocumentTypes.PurchaseReturn), cancellationToken);
+        if (acceptance.Status != "Processed")
+            await signalPublisher.PublishAsync(new DocumentProcessingSignal(
+                acceptance.MovementId, request.BusinessId, request.ReturnId,
+                PurchasingDocumentTypes.PurchaseReturn), cancellationToken);
         return acceptance;
     }
 

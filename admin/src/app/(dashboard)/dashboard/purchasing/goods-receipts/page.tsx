@@ -14,10 +14,14 @@ import { ServerSearchInput } from "@/components/tables/server-search-input";
 import { type PartyRoleSelection } from "@/components/parties/party-role-select";
 import { SupplierSiteSelect, type SupplierSiteSelection } from "@/components/parties/supplier-site-select";
 import { allowedPurchaseEvidenceTypes } from "@/lib/purchase-evidence-policy";
+import { GoodsReceiptVoucherDialog } from "@/components/purchasing/goods-receipt-voucher-dialog";
 import { SupplierChangeConfirmationDialog } from "@/components/purchasing/supplier-change-confirmation-dialog";
+import { DianQuotaNotice } from "@/components/fiscal/dian-quota-notice";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
+import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -42,20 +46,24 @@ import {
   goodsReceiptsApi, type GoodsReceiptDetail, type GoodsReceiptDraft, type GoodsReceiptLine,
   type GoodsReceiptListItem, type GoodsReceiptProduct, type GoodsReceiptStatus,
   type SaveGoodsReceiptDraftRequest, type PurchaseEvidenceType, type GoodsReceiptCostDocument,
-  type PurchaseCostAllocationMethod, type PurchaseCostKind,
+  type PurchaseCostAllocationMethod, type PurchaseCostKind, type GoodsReceiptVoucherCost,
+  type GoodsReceiptFinancialDiscount,
 } from "@/services/api/goods-receipts";
 import { useAuthStore } from "@/stores/auth-store";
 import { taxationApi, type WithholdingAdjustment } from "@/services/api/taxation";
 import { WithholdingAdjustmentEditor } from "@/components/taxation/withholding-adjustment-editor";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { accountingStatusLabel, businessStatusLabel } from "@/lib/accounting-labels";
 import { partiesApi } from "@/services/api/parties";
-import { tenantCommercialApi } from "@/services/api/tenants";
+import { useTenantCommercialSubscription } from "@/hooks/use-tenants";
 import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
 import { useActiveProductOptionScroll } from "@/components/products/use-active-product-option-scroll";
 import {
-  calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
+  calculateBaseQuantity, calculateGoodsReceiptDiscount, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
   nextGoodsReceiptEditorTarget, previewGoodsReceiptPurchaseCosts, shouldShowLandedUnitCost, summarizeGoodsReceipt,
   type GoodsReceiptEditorField,
 } from "@/lib/goods-receipt-calculator";
@@ -75,13 +83,15 @@ type EditorDraft = {
   draftId: string; warehouseId: string; supplierId: string; partySiteId: string;
   supplierInvoiceNumber: string; supplierInvoiceDate: string; receivedAt: string;
   purchaseEvidenceType: PurchaseEvidenceType | "";
-  createsPayable: boolean; dueDate: string; notes: string;
+  dueDate: string; notes: string;
   withholdingConceptCode: string; withholdingJurisdictionCode: string;
   withholdingAdjustments?: WithholdingAdjustment[];
   lines: GoodsReceiptLine[]; concurrencyToken: string | null;
   purchaseOrderId: string;
   currencyCode: string; exchangeRate: number; exchangeRateDate: string; exchangeRateSource: string;
   additionalCostDocuments: GoodsReceiptCostDocument[];
+  referencedCostDocuments: GoodsReceiptVoucherCost[];
+  financialDiscount: GoodsReceiptFinancialDiscount | null;
   pendingCostDocument?: GoodsReceiptCostDocument | null;
 };
 
@@ -105,8 +115,13 @@ const withDerivedWeight = (line: GoodsReceiptLine): GoodsReceiptLine =>
     ? { ...line, totalGrossWeightKg: Math.round(line.quantity * line.unitGrossWeightKg * 1_000_000) / 1_000_000 }
     : line;
 export default function GoodsReceiptsPage() {
+  const tenantId = useTenantContextStore(state => state.selectedTenantId);
+  const businessId = useBusinessContextStore(state => state.selectedBusinessId);
+  return <GoodsReceiptsWorkspace key={`${tenantId}:${businessId}`} businessId={businessId} />;
+}
+
+function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
   const router = useRouter();
-  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const userId = useAuthStore((state) => state.user?.userId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canCreate = permissions.has("purchasing.goods-receipts.create");
@@ -119,6 +134,7 @@ export default function GoodsReceiptsPage() {
   const [status, setStatus] = useState<GoodsReceiptStatus | "all">("all");
   const [editor, setEditor] = useState<EditorDraft>();
   const [detail, setDetail] = useState<GoodsReceiptDetail>();
+  const [paymentTarget, setPaymentTarget] = useState<GoodsReceiptDetail>();
   useEffect(() => {
     if (!businessId) return;
     const receiptId = new URLSearchParams(window.location.search).get("receiptId");
@@ -219,7 +235,9 @@ export default function GoodsReceiptsPage() {
       }
       if (stored) {
         setEditor({ ...emptyDraft(), ...stored,
-          additionalCostDocuments: stored.additionalCostDocuments ?? [] });
+          referencedCostDocuments: stored.referencedCostDocuments ?? [],
+          additionalCostDocuments: (stored.additionalCostDocuments ?? []).map(openDraftCostDocument),
+          pendingCostDocument: stored.pendingCostDocument ? openDraftCostDocument(stored.pendingCostDocument) : null });
         return;
       }
     } catch {
@@ -285,25 +303,52 @@ export default function GoodsReceiptsPage() {
 
     <ReceiptEditor key={editor?.draftId ?? "closed"} open={!!editor} draft={editor} businessId={businessId}
       canConfirm={canConfirm} canAssociateProducts={canAssociateProducts}
-      canAdjustWithholdings={canAdjustWithholdings} onChange={rememberLocalDraft}
+      canUseCostVouchers={permissions.has("accounting.read")} canAdjustWithholdings={canAdjustWithholdings} onChange={rememberLocalDraft}
       onClose={() => {
         if (localDraftKey) void localDrafts.flush(localDraftKey).catch(() =>
           toast.error("No fue posible guardar la recuperación local de esta recepción."));
         setEditor(undefined);
       }} onClear={clearLocalDraft} />
-    <ReceiptDetailDialog detail={detail} onClose={() => {setDetail(undefined);if(new URLSearchParams(window.location.search).has("receiptId"))router.replace("/dashboard/purchasing/goods-receipts")}} />
+    <ReceiptDetailDialog detail={detail} businessId={businessId}
+      canUseCostVouchers={canConfirm && permissions.has("accounting.read")}
+      onUpdated={setDetail} canPay={permissions.has("payables.payments.create")}
+      onPay={() => { setPaymentTarget(detail); setDetail(undefined); }}
+      onClose={() => {setDetail(undefined);if(new URLSearchParams(window.location.search).has("receiptId"))router.replace("/dashboard/purchasing/goods-receipts")}} />
+    <PortfolioPaymentWizard direction="payable" open={!!paymentTarget} onOpenChange={open => { if (!open) setPaymentTarget(undefined); }}
+      initialInvoice={paymentTarget?.payable ? { id: paymentTarget.payable.payableId, number: paymentTarget.documentNumber,
+        dueDate: paymentTarget.payable.dueDate, outstanding: paymentTarget.payable.outstandingAmount,
+        currency: paymentTarget.payable.currencyCode, overdue: false } : null}
+      initialPartySiteId={paymentTarget?.payable?.partySiteId ?? undefined}
+      initialPartySiteName={paymentTarget?.payable?.partySiteName ?? undefined}
+      initialParty={paymentTarget ? { partyId: "", roleId: paymentTarget.supplierId, role: "Supplier",
+        displayName: paymentTarget.supplierName, identification: "", supplierPurchaseEvidencePolicy: null,
+        supplierDefaultPaymentDueDays: null, customerId: null, supplierId: paymentTarget.supplierId,
+        sellerId: null, carrierId: null, employeeId: null, userId: null } : null} />
 
   </div>;
 }
 
 function ReceiptDetailDialog({
-  detail, onClose,
+  detail, businessId, canUseCostVouchers, onUpdated, onClose, canPay, onPay,
 }: {
   detail?: GoodsReceiptDetail;
+  businessId: string | null;
+  canUseCostVouchers: boolean;
+  onUpdated: (value: GoodsReceiptDetail) => void;
   onClose: () => void;
+  canPay: boolean;
+  onPay: () => void;
 }) {
   const [accountingDocumentId,setAccountingDocumentId]=useState<string>();
   const [reportOpen,setReportOpen]=useState(false);
+  const [voucherOpen,setVoucherOpen]=useState(false);
+  const [revisionId,setRevisionId]=useState("");
+  const [savingRevision,setSavingRevision]=useState(false);
+  const revisionRequest = useRef<{ revisionId: string; businessId: string;
+    goodsReceiptId: string; referencedCostDocuments: GoodsReceiptVoucherCost[] } | null>(null);
+  const revisionAccepted = useRef(false);
+  const voucherOptions = useGoodsReceiptOptions(voucherOpen);
+  const associationModes = useReferenceOptions("purchase-cost-association-mode", Boolean(detail?.referencedCostDocuments?.length));
   const fiscal=useQuery({
     queryKey:["goods-receipt-fiscal-document",detail?.documentId],
     queryFn:()=>fiscalDocumentsApi.get(detail!.documentId),
@@ -311,9 +356,29 @@ function ReceiptDetailDialog({
     retry:false,
   });
   if (!detail) return null;
+  const addLaterCost = async (value: GoodsReceiptVoucherCost) => {
+    if (!businessId || !revisionId) return;
+    setSavingRevision(true);
+    try {
+      revisionRequest.current ??= { revisionId, businessId,
+        goodsReceiptId: detail.documentId, referencedCostDocuments: [value] };
+      if (!revisionAccepted.current) {
+        await goodsReceiptsApi.reviseCosts(revisionRequest.current);
+        revisionAccepted.current = true;
+      }
+      const updated = await goodsReceiptsApi.getDetail(detail.documentId);
+      onUpdated(updated);
+      setVoucherOpen(false);
+      toast.success("El comprobante se asoció. El ajuste de costo se procesa en el mismo motor contable.");
+    } catch (error) {
+      toast.error(apiErrorMessage(error, "No fue posible agregar el comprobante a esta recepción."));
+    } finally {
+      setSavingRevision(false);
+    }
+  };
   const totals = summarizeGoodsReceipt(detail);
   const hasAdditionalCosts = Boolean(detail.additionalCostDocuments?.length);
-  const hasExtendedSummary = detail.currencyCode !== "COP" || hasAdditionalCosts;
+  const hasExtendedSummary = detail.currencyCode !== "COP" || hasAdditionalCosts || Boolean(detail.referencedCostDocuments?.length);
   const expensedCosts = (detail.additionalCostDocuments ?? []).reduce((total, document) =>
     total + document.lines.filter(line => line.costTreatment === "Expense").reduce((sum, line) =>
       sum + (line.functionalAmount ?? line.amount * document.exchangeRate) +
@@ -330,10 +395,17 @@ function ReceiptDetailDialog({
   }));
   const additionalWithheld = (detail.additionalCostDocuments ?? []).reduce((total, document) =>
     total + (document.withholding?.withholdingTotal ?? 0), 0);
+  const financialDiscountRow = detail.financialDiscount ? {
+    label: detail.financialDiscount.anticipatedInCost
+      ? "Descuento financiero anticipado"
+      : `Descuento financiero pactado (${formatCurrency(detail.financialDiscount.functionalAmount)} sin aplicar)`,
+    value: detail.financialDiscount.anticipatedInCost
+      ? -detail.financialDiscount.functionalAmount : 0,
+  } : null;
   const summaryRows = hasExtendedSummary ? [
     { label: "Mercancía antes de IVA", value: detail.functionalNetAmount },
     { label: "Costos capitalizados", value: totals.landedCost },
-    { label: "Valor que entra al inventario", value: totals.inventory },
+    { label: "Costo total de los productos", value: totals.inventory },
     ...(expensedCosts > 0 ? [{ label: "Costos llevados al gasto", value: expensedCosts }] : []),
     { label: "IVA descontable separado", value: deductibleVat },
     { label: "Total bruto de documentos", value: totals.gross },
@@ -342,6 +414,7 @@ function ReceiptDetailDialog({
       ? [{ label: "Retenciones otras facturas", value: -additionalWithheld }]
       : []),
     { label: "Total retenciones", value: totals.withholding === null ? null : totals.withholding === 0 ? 0 : -totals.withholding },
+    ...(financialDiscountRow ? [financialDiscountRow] : []),
     { label: "Cuentas por pagar netas", value: totals.net },
   ] : [
     { label: "Subtotal antes de IVA", value: totals.principal === null ? null : detail.functionalNetAmount },
@@ -349,7 +422,8 @@ function ReceiptDetailDialog({
     { label: "Total factura", value: totals.principal },
     ...mainWithholdingRows,
     { label: "Total retenciones", value: totals.withholding === null ? null : -totals.withholding },
-    { label: detail.createsPayable ? "Neto por pagar" : "Total pagado", value: totals.net },
+    ...(financialDiscountRow ? [financialDiscountRow] : []),
+    { label: "Neto de proveedor", value: totals.net },
   ];
   if(reportOpen)return <Dialog open onOpenChange={value=>!value&&setReportOpen(false)}><DialogContent showClose={false} className="h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] overflow-hidden p-2 sm:p-4"><ReportViewer
     onClose={()=>setReportOpen(false)}
@@ -386,7 +460,9 @@ function ReceiptDetailDialog({
           <DetailValue label="Tipo de soporte" value={purchaseEvidenceLabels[detail.purchaseEvidenceType]} />
           <DetailValue label="Factura del proveedor" value={detail.supplierInvoiceNumber ?? "No aplica"} />
           <DetailValue label="Fecha de emisión" value={detail.supplierInvoiceDate ? formatDateTime(detail.supplierInvoiceDate) : "Sin fecha"} />
-          <DetailValue label="Forma de pago" value={detail.createsPayable ? "Crédito" : "Contado"} />
+          <DetailValue label="Cuenta por pagar" value={detail.payable
+            ? `${businessStatusLabel(detail.payable.status)} · Saldo ${formatCurrency(detail.payable.outstandingAmount, detail.payable.currencyCode, 4)}`
+            : detail.createsPayable ? "Sin obligación disponible" : "Sin reconocimiento · revisar comprobante histórico"} />
           <DetailValue label="Vencimiento" value={detail.dueDate ? formatDateTime(detail.dueDate) : "No aplica"} />
         </div>
         <div className="overflow-hidden rounded-2xl border">
@@ -427,7 +503,12 @@ function ReceiptDetailDialog({
                       <p className="text-xs font-semibold">Costo total {formatCurrency(line.recognizedInventoryCostAmount / line.quantity)} COP</p>
                     </>}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">{formatCurrency(line.discountAmount)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatCurrency(line.discountAmount)}
+                    {line.commercialDiscountPercent != null && <p className="text-xs text-muted-foreground">
+                      {line.commercialDiscountPercent} % comercial
+                    </p>}
+                  </td>
                   <td className="px-4 py-3 text-right">
                     <p className="tabular-nums">{line.taxRate}%</p>
                     <p className="text-xs text-muted-foreground">
@@ -452,9 +533,10 @@ function ReceiptDetailDialog({
             ? <p className="mt-1 text-sm text-muted-foreground">La contabilidad no está activa o el movimiento aún está entrando al motor.</p>
             : <div className="mt-3 grid gap-2 md:grid-cols-2">{detail.accountingStatuses!.map((posting) => {
               const cost = detail.additionalCostDocuments?.find((document) => document.costDocumentId === posting.sourceDocumentId);
-              return <button type="button" onClick={()=>setAccountingDocumentId(posting.sourceDocumentId)} key={posting.sourceDocumentId} className="flex items-start justify-between gap-3 rounded-xl bg-muted/30 p-3 text-left transition hover:bg-muted">
-                <div><p className="text-sm font-medium">{cost?.documentNumber ?? detail.documentNumber}</p>{posting.errorMessage && <p className="text-xs text-amber-700">{posting.errorMessage}</p>}</div>
-                <Badge variant={posting.status === "Posted" ? "secondary" : "outline"}>{posting.status === "Posted" ? "Contabilizado" : posting.status === "AccountingPendingConfiguration" ? "Requiere configuración" : "Pendiente"}</Badge>
+              return <button type="button" disabled={posting.errorCode === "DocumentProcessing"}
+                onClick={()=>setAccountingDocumentId(posting.sourceDocumentId)} key={posting.sourceDocumentId} className="flex items-start justify-between gap-3 rounded-xl bg-muted/30 p-3 text-left transition hover:bg-muted">
+                <div><p className="text-sm font-medium">{cost?.documentNumber ?? (posting.sourceDocumentType === "GoodsReceiptCostRevision" ? `Ajuste de costo · ${detail.documentNumber}` : detail.documentNumber)}</p>{posting.errorMessage && <p className="text-xs text-amber-700">{posting.errorMessage}</p>}</div>
+                <Badge variant={posting.status === "Posted" ? "secondary" : "outline"}>{accountingStatusLabel(posting.status)}</Badge>
               </button>;
             })}</div>}
         </section>
@@ -472,17 +554,42 @@ function ReceiptDetailDialog({
             </div>)}
           </div>
         </section>}
+        {(detail.referencedCostDocuments ?? []).length > 0 && <section className="space-y-3">
+          <h3 className="font-semibold">Comprobantes asociados</h3>
+          <p className="text-sm text-muted-foreground">El valor aplicado al costo no crea otra cuenta por pagar.</p>
+          {detail.referencedCostDocuments!.map(document => <div key={document.associationId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-sm">
+            <div><strong>{document.entryNumber}</strong>{document.costRevisionNumber != null && <span className="ml-2 text-xs text-muted-foreground">Ajuste posterior {document.costRevisionNumber}{document.costRevisionStatus === "Accepted" ? " · procesando" : ""}</span>}<p>{associationModes.data?.find(item => item.code === document.mode)?.label ?? document.mode}
+              {document.mode === "Distribute" && ` · ${formatCurrency(document.lines.reduce((sum, line) => sum + line.functionalAmount, 0))}`}</p></div>
+            <Button variant="outline" onClick={() => setAccountingDocumentId(document.sourceDocumentId)}>Ver comprobante original</Button>
+          </div>)}
+        </section>}
         {detail.notes && <div className="rounded-2xl border bg-muted/30 p-4">
           <p className="text-xs font-medium uppercase text-muted-foreground">Notas</p>
           <p className="mt-1 text-sm">{detail.notes}</p>
         </div>}
       </div>
       <DialogFooter className="border-t px-6 py-4">
+        {canUseCostVouchers && businessId && detail.status === "Processed" &&
+          <Button type="button" variant="outline" disabled={savingRevision} onClick={() => {
+            revisionRequest.current = null; revisionAccepted.current = false;
+            setRevisionId(crypto.randomUUID()); setVoucherOpen(true);
+          }}><Plus className="mr-2 h-4 w-4" />Agregar comprobante</Button>}
+        {canPay && detail.status === "Processed" && detail.payable && detail.payable.status !== "Cancelled" && detail.payable.outstandingAmount > 0 &&
+          <><Button type="button" disabled={detail.payable.currencyCode !== "COP"} onClick={onPay}>Registrar egreso</Button>
+            {detail.payable.currencyCode !== "COP" && <p className="text-sm text-muted-foreground">Los egresos en moneda extranjera aún no están disponibles.</p>}</>}
         <Button type="button" variant="outline" onClick={()=>setReportOpen(true)}><FileText className="mr-2 h-4 w-4"/>Abrir reporte</Button>
         <Button type="button" onClick={onClose}>Cerrar</Button>
       </DialogFooter>
     </DialogContent>
-  </Dialog><AccountingDocumentDialog documentId={accountingDocumentId} sourceLabel={`Recepción ${detail.documentNumber}`} onClose={()=>setAccountingDocumentId(undefined)}/></>;
+  </Dialog>{voucherOpen && businessId && voucherOptions.data &&
+    <GoodsReceiptVoucherDialog businessId={businessId}
+      receiptLines={detail.lines} options={voucherOptions.data}
+      associations={[]} phase="Processed" submitting={savingRevision}
+      onClose={() => { if (!savingRevision) setVoucherOpen(false); }}
+      onAdd={value => { if (!savingRevision) void addLaterCost(value); }} />}
+    <AccountingDocumentDialog documentId={accountingDocumentId}
+    sourceLabel={detail.referencedCostDocuments?.find(item => item.sourceDocumentId === accountingDocumentId)?.entryNumber ?? `Recepción ${detail.documentNumber}`}
+    onClose={()=>setAccountingDocumentId(undefined)}/></>;
 }
 
 function DetailValue({ label, value }: { label: string; value: string }) {
@@ -493,13 +600,14 @@ function DetailValue({ label, value }: { label: string; value: string }) {
 }
 
 function ReceiptEditor({
-  open, draft, businessId, canConfirm, canAssociateProducts, canAdjustWithholdings, onChange, onClose, onClear,
+  open, draft, businessId, canConfirm, canAssociateProducts, canAdjustWithholdings, canUseCostVouchers, onChange, onClose, onClear,
 }: {
   open: boolean; draft?: EditorDraft; businessId: string | null; canConfirm: boolean;
-  canAssociateProducts: boolean; canAdjustWithholdings: boolean;
+  canAssociateProducts: boolean; canAdjustWithholdings: boolean; canUseCostVouchers: boolean;
   onChange: (draft: EditorDraft) => void; onClose: () => void; onClear: () => Promise<void>;
 }) {
-  const options = useGoodsReceiptOptions();
+  const options = useGoodsReceiptOptions(open);
+  const [voucherEditor, setVoucherEditor] = useState<GoodsReceiptVoucherCost | "new">();
   const availableOrders = useQuery({
     queryKey: ["purchase-orders-receivable", businessId],
     queryFn: async () => {
@@ -511,7 +619,15 @@ function ReceiptEditor({
     },
     enabled: open && !!businessId,
   });
-  const subscription = useQuery({ queryKey: ["tenant-commercial", "subscription"], queryFn: tenantCommercialApi.subscription });
+  const subscription = useTenantCommercialSubscription(open);
+  const [quotaNoticeOpen, setQuotaNoticeOpen] = useState(false);
+  const quotaUnavailable = !!subscription.data && (subscription.data.hasDianDocumentQuota === false
+    || subscription.data.dianDocumentsUsed >= subscription.data.dianDocumentMonthlyLimit);
+  const allowEvidence = (value: PurchaseEvidenceType) => {
+    if (value !== "BuyerElectronicSupportDocument" || !quotaUnavailable) return true;
+    setQuotaNoticeOpen(true);
+    return false;
+  };
   const withholdingRules = useQuery({queryKey:["withholding-rules",businessId,"purchase-adjustments"],
     queryFn:() => taxationApi.listRules(false), enabled:open && canAdjustWithholdings && !!businessId});
   const [productSearch, setProductSearch] = useState("");
@@ -522,6 +638,7 @@ function ReceiptEditor({
   const [purchasePresentationName, setPurchasePresentationName] = useState("Unidad");
   const [unitsPerPresentation, setUnitsPerPresentation] = useState(1);
   const [costsExpanded, setCostsExpanded] = useState(false);
+  const [financialDiscountExpanded, setFinancialDiscountExpanded] = useState(Boolean(draft?.financialDiscount));
   const [editingCostDocument, setEditingCostDocument] = useState<GoodsReceiptCostDocument | undefined>(
     () => draft?.pendingCostDocument ?? undefined,
   );
@@ -563,6 +680,7 @@ function ReceiptEditor({
     draft.purchaseEvidenceType && draft.exchangeRate > 0 && draft.lines.length > 0 &&
     draft.lines.every((line) => line.quantity > 0 && line.presentationQuantity > 0 &&
       line.unitsPerPresentation > 0 && line.unitCost >= 0 && line.discountAmount >= 0 &&
+      (line.commercialDiscountPercent == null || (line.commercialDiscountPercent >= 0 && line.commercialDiscountPercent <= 100)) &&
       Math.abs(line.presentationQuantity * line.unitsPerPresentation - line.quantity) < 0.000001),
   );
   const withholdingPreview = useQuery({
@@ -627,13 +745,10 @@ function ReceiptEditor({
       : [...draft.additionalCostDocuments, editingCostDocument]
     : draft.additionalCostDocuments;
   const purchaseCostPreview = previewGoodsReceiptPurchaseCosts(
-    draft.lines, draft.currencyCode, draft.exchangeRate, previewCostDocuments,
+    draft.lines, draft.currencyCode, draft.exchangeRate, previewCostDocuments, draft.referencedCostDocuments,
+    draft.financialDiscount,
   );
   const purchaseCostByLine = new Map(purchaseCostPreview.map(line => [line.lineNumber, line]));
-  const mainInventoryCost = draft.lines.reduce((sum, line) => {
-    const calculated = calculateGoodsReceiptLine(line);
-    return sum + (calculated.net + (line.taxTreatment === "CapitalizedCost" ? calculated.tax : 0)) * mainRate;
-  }, 0);
   const additionalSummary = draft.additionalCostDocuments.reduce((summary, document, index) => {
     const rate = document.currencyCode === "COP" ? 1 : document.exchangeRate;
     const preview = costWithholdingPreviews[index]?.data;
@@ -655,9 +770,18 @@ function ReceiptEditor({
     return sum + (line.taxTreatment === "DeductibleInputVat" ? calculated.tax * mainRate : 0);
   }, 0);
   const totalWithheld = (withholdingPreview.data?.withholdingTotal ?? 0) + additionalSummary.withheld;
-  const totalPayable = (draft.createsPayable
-    ? (withholdingPreview.data?.netAmount ?? totals.total * mainRate) : 0) + additionalSummary.payable;
-  const hasExtendedSummary = draft.currencyCode !== "COP" || draft.additionalCostDocuments.length > 0;
+  const agreedFinancialDiscount = draft.financialDiscount
+    ? Math.round(totals.net * draft.financialDiscount.percent * 100) / 10000 * mainRate : 0;
+  const anticipatedFinancialDiscount = draft.financialDiscount?.anticipateInCost
+    ? agreedFinancialDiscount : 0;
+  const totalPayable = (withholdingPreview.data?.netAmount ?? totals.total * mainRate) +
+    additionalSummary.payable - anticipatedFinancialDiscount;
+  const referencedCostTotal = draft.referencedCostDocuments.reduce((total, document) => total +
+    document.lines.reduce((sum, line) => sum + line.functionalAmount, 0), 0);
+  const missingReferencedCostWeight = draft.referencedCostDocuments.some(document => document.mode === "Distribute" &&
+    document.lines.some(line => line.allocationMethod === "Weight")) &&
+    draft.lines.some(line => (line.totalGrossWeightKg ?? 0) <= 0);
+  const hasExtendedSummary = draft.currencyCode !== "COP" || draft.additionalCostDocuments.length > 0 || referencedCostTotal > 0;
   const resolvedCostSupplierNames = Object.fromEntries(costSupplierIds.map((supplierId, index) => [
     supplierId,
     costSupplierNames[supplierId] ?? costSupplierQueries[index]?.data?.displayName ?? "Proveedor seleccionado",
@@ -750,8 +874,9 @@ function ReceiptEditor({
     const evidenceType = supplier?.supplierPurchaseEvidencePolicy ?? "";
     const issueDate = draft.supplierInvoiceDate || todayInput();
     change({ supplierId, partySiteId: supplier?.partySiteId ?? "", lines: [], purchaseOrderId: "", purchaseEvidenceType: evidenceType,
+      financialDiscount: null,
       supplierInvoiceNumber: "", supplierInvoiceDate: issueDate,
-      dueDate: draft.createsPayable && supplier
+      dueDate: supplier
         ? plusDaysFrom(issueDate, supplier.supplierDefaultPaymentDueDays ?? 30) : "" });
     setPendingSupplierChange(undefined);
     setIncludeUnassociated(false);
@@ -779,8 +904,8 @@ function ReceiptEditor({
     supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
       ? draft.supplierInvoiceNumber.trim() || null : null,
     supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
-    receivedAt: goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: draft.createsPayable,
-    dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
+    receivedAt: goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: true,
+    dueDate: toIsoOrNull(draft.dueDate),
     currencyCode: draft.currencyCode, notes: draft.notes.trim() || null,
     lines: draft.lines.map(withDerivedWeight), concurrencyToken: draft.concurrencyToken,
     purchaseEvidenceType: draft.purchaseEvidenceType || null,
@@ -790,22 +915,13 @@ function ReceiptEditor({
     withholdingConceptCode: draft.withholdingConceptCode || null,
     withholdingAdjustments: draft.withholdingAdjustments ?? null,
     additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments),
+    referencedCostDocuments: draft.referencedCostDocuments.length ? draft.referencedCostDocuments : null,
+    financialDiscount: draft.financialDiscount,
   });
 
   const persistOnce = async (notify: boolean) => {
     try {
-      const desired = request();
-      let saved: GoodsReceiptDraft;
-      try {
-        saved = await save.mutateAsync(desired);
-      } catch (error) {
-        if (apiStatusCode(error) !== 409) throw error;
-        const latest = await goodsReceiptsApi.getDraft(desired.draftId);
-        saved = await save.mutateAsync({
-          ...desired,
-          concurrencyToken: latest.concurrencyToken,
-        });
-      }
+      const saved = await save.mutateAsync(request());
       change({ concurrencyToken: saved.concurrencyToken });
       if (notify) {
         await onClear();
@@ -814,7 +930,7 @@ function ReceiptEditor({
       return saved;
     } catch (error) {
       toast.error(apiStatusCode(error) === 409
-        ? "El borrador volvió a cambiar mientras se guardaba. Ábrelo desde la lista y vuelve a intentar."
+        ? "El borrador cambió en otra sesión. Ábrelo desde la lista para revisar la versión actual antes de guardar."
         : apiErrorMessage(error, "No fue posible guardar el borrador."));
       return null;
     }
@@ -952,6 +1068,9 @@ function ReceiptEditor({
   const updateLine = (productId: string, values: Partial<GoodsReceiptLine>) =>
     change({ lines: draft.lines.map((line) =>
       line.productId === productId ? withDerivedWeight({ ...line, ...values }) : line) });
+  const updateReceiptWeight = (lineNumber: number, values: Partial<GoodsReceiptLine>) =>
+    change({ lines: draft.lines.map((line) =>
+      line.lineNumber === lineNumber ? withDerivedWeight({ ...line, ...values }) : line) });
 
   const deleteDraft = async () => {
     try {
@@ -965,12 +1084,18 @@ function ReceiptEditor({
   };
 
   const confirmEntry = async () => {
+    if (!allowEvidence(draft.purchaseEvidenceType as PurchaseEvidenceType)
+      || draft.additionalCostDocuments.some(document => !allowEvidence(document.purchaseEvidenceType))) return;
     if (!draft.warehouseId || !draft.supplierId || !draft.partySiteId || !draft.purchaseEvidenceType || draft.lines.length === 0) {
       toast.error("Selecciona proveedor, sede, bodega, tipo de soporte y agrega al menos un producto.");
       return;
     }
     if (!draft.supplierInvoiceDate) {
       toast.error("Indica la fecha de emisión del documento de compra.");
+      return;
+    }
+    if (!draft.dueDate || draft.dueDate < draft.supplierInvoiceDate) {
+      toast.error("Indica un vencimiento igual o posterior a la fecha de emisión.");
       return;
     }
     if (["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType) && !draft.supplierInvoiceNumber.trim()) {
@@ -994,8 +1119,8 @@ function ReceiptEditor({
         supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
           ? draft.supplierInvoiceNumber.trim() || null : null,
         supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
-        receivedAt: goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: draft.createsPayable,
-        dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
+        receivedAt: goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: true,
+        dueDate: toIsoOrNull(draft.dueDate),
         currencyCode: draft.currencyCode, notes: draft.notes.trim() || null, lines: draft.lines.map(withDerivedWeight),
         draftConcurrencyToken: null,
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
@@ -1006,6 +1131,8 @@ function ReceiptEditor({
         purchaseOrderId: draft.purchaseOrderId || null,
         exchangeRate: draft.exchangeRate, exchangeRateDate: draft.exchangeRateDate || null,
         exchangeRateSource: draft.exchangeRateSource,
+        referencedCostDocuments: draft.referencedCostDocuments.length ? draft.referencedCostDocuments : null,
+        financialDiscount: draft.financialDiscount,
         additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments).map((document,index) => ({
           ...document, withholdingReviewHash: costWithholdingPreviews[index]?.data?.reviewHash ?? null,
         })),
@@ -1133,9 +1260,7 @@ function ReceiptEditor({
                 setSelectedSupplier(supplier);
                 if(supplier?.supplierId===draft.supplierId){
                   const issueDate=draft.supplierInvoiceDate||todayInput();
-                  const dueDate=draft.createsPayable
-                    ? draft.dueDate||plusDaysFrom(issueDate,supplier.supplierDefaultPaymentDueDays??30)
-                    : "";
+                  const dueDate=draft.dueDate||plusDaysFrom(issueDate,supplier.supplierDefaultPaymentDueDays??30);
                   if(issueDate!==draft.supplierInvoiceDate||dueDate!==draft.dueDate)change({supplierInvoiceDate:issueDate,dueDate});
                 }
               }}
@@ -1168,11 +1293,7 @@ function ReceiptEditor({
           </span>}>
             <Select value={draft.purchaseEvidenceType} disabled={!draft.supplierId}
               onValueChange={(value: PurchaseEvidenceType) => {
-                if (value === "BuyerElectronicSupportDocument" && subscription.data
-                    && subscription.data.dianDocumentsUsed >= subscription.data.dianDocumentMonthlyLimit) {
-                  toast.error("No hay cupo de documentos DIAN", { description: "Compra un paquete antes de seleccionar documento soporte electrónico." });
-                  return;
-                }
+                if (!allowEvidence(value)) return;
                 change({ purchaseEvidenceType: value,
                 supplierInvoiceNumber: value === "SupplierElectronicInvoice" ? draft.supplierInvoiceNumber : "",
                 lines: value === "ForeignCommercialInvoice"
@@ -1199,7 +1320,7 @@ function ReceiptEditor({
           <Field label="Fecha de emisión">
             <DatePicker value={draft.supplierInvoiceDate} onChange={(value) => change({
               supplierInvoiceDate:value,
-              dueDate:draft.createsPayable?plusDaysFrom(value,selectedSupplier?.supplierDefaultPaymentDueDays??30):"",
+              dueDate:plusDaysFrom(value,selectedSupplier?.supplierDefaultPaymentDueDays??30),
             })} />
           </Field>
           <Field label="Moneda">
@@ -1226,28 +1347,51 @@ function ReceiptEditor({
             <p className="self-end rounded-lg bg-primary/5 p-3 text-sm text-muted-foreground md:col-span-2">
               Auraly asignará numeración, generará el CUDS y enviará el documento soporte a la DIAN.
             </p>}
-          <Field label="Condición">
-            <Select value={draft.createsPayable ? "Credit" : "Cash"}
-              onValueChange={(value) => change({
-                createsPayable: value === "Credit",
-                dueDate: value === "Credit"
-                  ? plusDaysFrom(draft.supplierInvoiceDate||todayInput(),selectedSupplier?.supplierDefaultPaymentDueDays??30) : "",
-              })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Credit">Crédito · genera cuenta por pagar</SelectItem>
-                <SelectItem value="Cash">Contado</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
+          <p className="self-end rounded-lg bg-primary/5 p-3 text-sm text-muted-foreground">
+            La compra genera su cuenta por pagar. El pago se registra mediante un egreso,
+            también cuando se paga de contado. Para vencimiento inmediato, selecciona la fecha de emisión.
+          </p>
           <Field label="Fecha de vencimiento">
-            <DatePicker disabled={!draft.createsPayable} min={draft.supplierInvoiceDate||undefined}
+            <DatePicker min={draft.supplierInvoiceDate||undefined}
               value={draft.dueDate} onChange={(dueDate)=>change({dueDate})} />
             <p className="text-xs text-muted-foreground">Se propone con los {selectedSupplier?.supplierDefaultPaymentDueDays??30} días configurados en el proveedor, pero puede ajustarse para este documento.</p>
           </Field>
         </section>
+        <section className="space-y-3 rounded-2xl border p-4">
+          <button type="button" className="flex w-full items-center justify-between text-left text-sm font-medium"
+            aria-expanded={financialDiscountExpanded} onClick={() => setFinancialDiscountExpanded(value => !value)}>
+            Descuento financiero acordado con el proveedor
+            <ChevronDown className={`h-4 w-4 transition-transform ${financialDiscountExpanded ? "rotate-180" : ""}`} />
+          </button>
+          {financialDiscountExpanded && <div className="grid gap-3 md:grid-cols-3">
+            <Field label="Descuento financiero (%)">
+              <FormattedNumberInput kind="percent" ariaLabel="Descuento financiero (%)"
+                value={draft.financialDiscount?.percent ?? ""}
+                onValueChange={(percent) => change({ financialDiscount: percent && percent > 0
+                  ? { percent, expectedOn: draft.financialDiscount?.expectedOn ?? null,
+                    anticipateInCost: draft.financialDiscount?.anticipateInCost ?? false }
+                  : null })} />
+            </Field>
+            {draft.financialDiscount && <><Field label="Fecha pactada (informativa)">
+              <DatePicker value={draft.financialDiscount.expectedOn ?? ""}
+                onChange={(expectedOn) => change({ financialDiscount: {
+                  ...draft.financialDiscount!, expectedOn: expectedOn || null,
+                } })} />
+            </Field>
+            <label className="flex items-center gap-2 self-end pb-2 text-sm">
+              <Checkbox checked={draft.financialDiscount.anticipateInCost}
+                onCheckedChange={(checked) => change({ financialDiscount: {
+                  ...draft.financialDiscount!, anticipateInCost: checked === true,
+                } })} />
+              Aplicarlo al costo al confirmar la compra
+            </label></>}
+            <p className="text-xs text-muted-foreground md:col-span-3">
+              Escribe el porcentaje para registrar el acuerdo; déjalo vacío si no hay descuento. Al pagar se confirma cuánto se obtuvo realmente. La fecha no lo aplica ni lo rechaza automáticamente.
+            </p>
+          </div>}
+        </section>
         <section className="rounded-2xl border">
-          <div ref={productPickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
+          <div ref={productPickerRef} className="relative" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
           <div className="grid gap-3 border-b p-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
             <div className="relative">
               <Barcode className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-primary" />
@@ -1278,7 +1422,7 @@ function ReceiptEditor({
             </Button>
           </div>
           {productMenuOpen && productItems.length > 0 &&
-            <div ref={productListRef} role="listbox" className="max-h-56 overflow-y-auto border-b bg-background p-2 [&_strong]:font-normal"
+            <div ref={productListRef} role="listbox" className="absolute inset-x-0 top-full z-20 max-h-56 overflow-y-auto rounded-b-xl border bg-background p-2 shadow-lg [&_strong]:font-normal"
               onScroll={(event) => {
                 const target = event.currentTarget;
                 if (target.scrollHeight - target.scrollTop - target.clientHeight < 80 && products.hasNextPage && !products.isFetchingNextPage) {
@@ -1308,8 +1452,8 @@ function ReceiptEditor({
                 </button>)}
               {products.isFetchingNextPage && <p className="px-3 py-2 text-center text-xs text-muted-foreground">Cargando 10 más…</p>}
             </div>}
-          {productMenuOpen && draft.supplierId && productSearch.trim().length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Escribe al menos una letra, código o referencia para buscar.</div>}
-          {productMenuOpen && draft.supplierId && productSearch.trim().length > 0 && !products.isLoading && productItems.length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Sin resultados para esta búsqueda.</div>}
+          {productMenuOpen && draft.supplierId && productSearch.trim().length === 0 && <div role="listbox" className="absolute inset-x-0 top-full z-20 rounded-b-xl border bg-background px-4 py-3 text-sm text-muted-foreground shadow-lg">Escribe al menos una letra, código o referencia para buscar.</div>}
+          {productMenuOpen && draft.supplierId && productSearch.trim().length > 0 && !products.isLoading && productItems.length === 0 && <div role="listbox" className="absolute inset-x-0 top-full z-20 rounded-b-xl border bg-background px-4 py-3 text-sm text-muted-foreground shadow-lg">Sin resultados para esta búsqueda.</div>}
           </div>
           <div className="overflow-hidden">
             <table className="w-full table-fixed text-sm">
@@ -1360,7 +1504,8 @@ function ReceiptEditor({
                       onChange={(event) => updateLine(line.productId, { overReceiptReason: event.target.value })}
                       placeholder="Motivo obligatorio del excedente" maxLength={500} />}
                   </td>
-                  <td className="px-3 py-2"><FormattedNumberInput kind="currency"
+                  <td className="space-y-1 px-3 py-2">
+                    <FormattedNumberInput kind="currency"
                     ref={(element) => {
                       const key = editorCellKey(line.productId, "unitCost");
                       if (element) editorCellRefs.current.set(key, element);
@@ -1374,18 +1519,26 @@ function ReceiptEditor({
                       draft.currencyCode, draft.exchangeRate, costPreview?.purchaseUnitCost) &&
                       <div className="mt-1 text-right text-xs tabular-nums">
                       {(costPreview?.allocatedAdditionalCost ?? 0) > 0 && <p className="text-muted-foreground">Incluye +{formatCurrency(costPreview!.allocatedAdditionalCost / line.quantity)} COP prorrateado</p>}
+                      {(costPreview?.anticipatedFinancialDiscountAmount ?? 0) > 0 && <p className="text-muted-foreground">Descuento financiero -{formatCurrency((costPreview?.anticipatedFinancialDiscountAmount ?? 0) / line.quantity)} COP</p>}
                       <p className="font-semibold">Costo total {costPreview?.purchaseUnitCost == null ? "—" : formatCurrency(costPreview.purchaseUnitCost)} COP</p>
                     </div>}
                   </td>
-                  <td className="px-3 py-2"><FormattedNumberInput kind="currency"
+                  <td className="space-y-1 px-3 py-2">
+                    <FormattedNumberInput kind="percent"
+                      ariaLabel={`Descuento comercial (%) de ${line.description}`}
+                      placeholder="Porcentaje"
+                      value={line.commercialDiscountPercent ?? ""}
+                      onValueChange={(value) => updateLine(line.productId,
+                        { commercialDiscountPercent: value, discountAmount: 0 })} />
+                    <FormattedNumberInput kind="currency"
                     ref={(element) => {
                       const key = editorCellKey(line.productId, "discount");
                       if (element) editorCellRefs.current.set(key, element);
                       else editorCellRefs.current.delete(key);
                     }}
                     ariaLabel={`Descuento de ${line.description}`}
-                    value={line.discountAmount} onValueChange={(value) =>
-                      updateLine(line.productId, { discountAmount: value ?? 0 })}
+                    value={calculateGoodsReceiptDiscount(line)} onValueChange={(value) =>
+                      updateLine(line.productId, { discountAmount: value ?? 0, commercialDiscountPercent: null })}
                     onKeyDown={(event) => moveEditorFocus(event, line.productId, "discount")} /></td>
                   <td className="px-3 py-4 text-center">{line.taxRate} %</td>
                   <td className="px-3 py-4 text-right font-semibold tabular-nums">
@@ -1420,8 +1573,16 @@ function ReceiptEditor({
           {costsExpanded && <div className="space-y-5 border-t pt-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <p className="max-w-3xl text-sm text-muted-foreground">Cada documento conserva su proveedor, vencimiento, IVA, retención y cuenta por pagar. Solo el valor marcado como capitalizable se distribuye al inventario.</p>
-              <Button type="button" variant="outline" onClick={addCostDocument}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
+              <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={addCostDocument}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
+                {canUseCostVouchers && <Button type="button" variant="outline" disabled={!options.data} onClick={() => setVoucherEditor("new")}><Plus className="mr-2 h-4 w-4" />Agregar comprobante</Button>}</div>
             </div>
+            {draft.referencedCostDocuments.map(document => <div key={document.associationId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-sm">
+              <div><strong>{document.entryNumber ?? "Comprobante contabilizado"}</strong><p>{options.data?.purchaseCostAssociationModes?.find(item => item.code === document.mode)?.label}
+                {document.mode === "Distribute" && ` · ${formatCurrency(document.lines.reduce((sum, line) => sum + line.functionalAmount, 0))}`}</p></div>
+              <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => setVoucherEditor(document)}>Revisar comprobante</Button>
+                <Button type="button" variant="ghost" aria-label={`Quitar comprobante ${document.entryNumber ?? "asociado"}`} onClick={() => change({ referencedCostDocuments: draft.referencedCostDocuments.filter(item => item.associationId !== document.associationId) })}><Trash2 className="h-4 w-4" /></Button></div>
+            </div>)}
+            {missingReferencedCostWeight && <p role="alert" className="text-sm text-destructive">Hay un comprobante repartido por peso sin peso positivo en todos los productos. Revisa el comprobante y completa los pesos; ese importe todavía no se refleja en el costo por producto.</p>}
             <CostDocumentGrid title="Facturas agregadas"
               documents={draft.additionalCostDocuments}
               supplierNames={resolvedCostSupplierNames}
@@ -1465,7 +1626,7 @@ function ReceiptEditor({
                     updateCostDocument({ supplierId: supplier?.supplierId ?? "", partySiteId: partySiteId || null,
                       purchaseEvidenceType: nextEvidence, documentNumber: nextEvidence === "BuyerElectronicSupportDocument" ? "" : document.documentNumber });
                   }} /></Field>
-                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).filter((item) => item.code === "ImportDeclaration" || allowedCostEvidenceTypes.includes(item.code)).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => { if (allowEvidence(purchaseEvidenceType)) updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber }); }}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).filter((item) => item.code === "ImportDeclaration" || allowedCostEvidenceTypes.includes(item.code)).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                 <Field label="Número">{document.purchaseEvidenceType === "BuyerElectronicSupportDocument" ? <Input readOnly value="Se asignará al confirmar" /> : <Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} />}</Field>
                 <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
                 <Field label="Moneda"><Select value={document.currencyCode} onValueChange={(currencyCode) => updateCostDocument({ currencyCode, exchangeRate: currencyCode === "COP" ? 1 : document.exchangeRate, exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" : (document.exchangeRateSource === "FunctionalCurrency" ? options.data?.exchangeRateSources[0]?.code ?? "" : document.exchangeRateSource) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
@@ -1559,20 +1720,28 @@ function ReceiptEditor({
               <Amount label="Total factura" value={totals.total} />
               {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} (${line.rate}%)`} value={-line.amount} />)}
               <Amount label="Total retenciones" value={withholdingPreview.data?.withholdingTotal ? -withholdingPreview.data.withholdingTotal : 0} />
-              <Amount label={draft.createsPayable ? "Neto por pagar" : "Total pagado"}
-                value={draft.createsPayable ? (withholdingPreview.data?.netAmount ?? totals.total) : totals.total} strong />
+              {draft.financialDiscount?.anticipateInCost && <Amount label="Descuento financiero anticipado"
+                value={-anticipatedFinancialDiscount} />}
+              <Amount label="Neto por pagar"
+                value={(withholdingPreview.data?.netAmount ?? totals.total) - anticipatedFinancialDiscount} strong />
             </> : <>
               <Amount label="Mercancía antes de IVA" value={totals.net * mainRate} />
               <Amount label="Costos capitalizados" value={additionalSummary.capitalized} />
-              <Amount label="Valor que entra al inventario" value={mainInventoryCost + additionalSummary.capitalized} />
+              {!draft.lines.length && additionalSummary.capitalized > 0 && <p className="text-xs text-amber-300">Los cargos se conservan en el borrador. Agrega productos para repartirlos antes de confirmar.</p>}
+              {referencedCostTotal > 0 && <Amount label="Costos de comprobantes existentes" value={referencedCostTotal} />}
+              <Amount label="Costo total de los productos" value={purchaseCostPreview.reduce((sum, line) => sum + line.recognizedInventoryCost, 0)} />
               {additionalSummary.expensed > 0 && <Amount label="Costos llevados al gasto" value={additionalSummary.expensed} />}
               <Amount label="IVA descontable separado" value={mainDeductibleVat + additionalSummary.deductibleVat} />
               <Amount label="Total bruto de documentos" value={totals.total * mainRate + additionalSummary.gross} />
               {(withholdingPreview.data?.lines ?? []).map(line => <Amount key={`${line.ruleId}-${line.ruleVersion}`} label={`${line.name} mercancía (${line.rate}%)`} value={-line.amount} />)}
               {additionalSummary.withheld > 0 && <Amount label="Retenciones otras facturas" value={-additionalSummary.withheld} />}
               <Amount label="Total retenciones" value={totalWithheld ? -totalWithheld : 0} />
+              {draft.financialDiscount?.anticipateInCost && <Amount label="Descuento financiero anticipado"
+                value={-anticipatedFinancialDiscount} />}
               <Amount label="Cuentas por pagar netas" value={totalPayable} strong />
             </>}
+            {draft.financialDiscount && !draft.financialDiscount.anticipateInCost &&
+              <p className="text-xs text-slate-300">Descuento financiero pactado: {formatCurrency(agreedFinancialDiscount)}. Se confirmará al pagar; aún no reduce la obligación.</p>}
             <p className="pt-2 text-xs text-slate-300">Las retenciones reducen lo adeudado; no reducen el costo ni el IVA reconocido.</p>
             {withholdingPreview.isFetching && <p className="text-right text-xs text-slate-300">Calculando retenciones…</p>}
             {withholdingPreview.isError && <p className="text-right text-xs text-amber-300">
@@ -1607,6 +1776,7 @@ function ReceiptEditor({
         onCancel={() => setPendingSupplierChange(undefined)}
         onConfirm={() => pendingSupplierChange && applySupplierChange(pendingSupplierChange.supplier)}
       />
+      <DianQuotaNotice open={quotaNoticeOpen} onClose={() => setQuotaNoticeOpen(false)}/>
 
       {pendingAssociation && <section className="mx-6 mb-4 space-y-4 rounded-2xl border border-teal-200 bg-teal-50/30 p-5">
           <div>
@@ -1643,6 +1813,17 @@ function ReceiptEditor({
             </Button>
           </div>
       </section>}
+      {open && voucherEditor && businessId && options.data && <GoodsReceiptVoucherDialog businessId={businessId}
+        initialPartyId={selectedSupplier?.partyId}
+        existing={voucherEditor === "new" ? undefined : voucherEditor} receiptLines={draft.lines} options={options.data}
+        associations={draft.referencedCostDocuments}
+        onUpdateReceiptLine={updateReceiptWeight}
+        onClose={() => setVoucherEditor(undefined)} onAdd={value => {
+          const previous = draft.referencedCostDocuments.find(item => item.entryId === value.entryId);
+          change({ referencedCostDocuments: [...draft.referencedCostDocuments.filter(item => item.associationId !== value.associationId && item.entryId !== value.entryId),
+            { ...value, associationId: previous?.associationId ?? value.associationId }] });
+          setVoucherEditor(undefined);
+        }} />}
       <DialogFooter className="border-t bg-background px-6 py-4 sm:justify-between">
         {draft.concurrencyToken
           ? <Button type="button" variant="ghost" className="text-destructive" disabled={remove.isPending} onClick={deleteDraft}>
@@ -1668,11 +1849,12 @@ function emptyDraft(): EditorDraft {
   return {
     draftId: crypto.randomUUID(), warehouseId: "", supplierId: "", partySiteId: "",
     supplierInvoiceNumber: "", supplierInvoiceDate: todayInput(), purchaseEvidenceType: "",
-    receivedAt: localDateTime(), createsPayable: true, dueDate: plusDaysFrom(todayInput(),30),
+    receivedAt: localDateTime(), dueDate: plusDaysFrom(todayInput(),30),
     notes: "", lines: [], concurrencyToken: null,
     withholdingConceptCode: "", withholdingJurisdictionCode: "", withholdingAdjustments: [], purchaseOrderId: "",
     currencyCode: "COP", exchangeRate: 1, exchangeRateDate: todayInput(),
-    exchangeRateSource: "FunctionalCurrency", additionalCostDocuments: [],
+    exchangeRateSource: "FunctionalCurrency", additionalCostDocuments: [], referencedCostDocuments: [],
+    financialDiscount: null,
   };
 }
 
@@ -1682,11 +1864,13 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
     supplierId: draft.supplierId ?? "", partySiteId: draft.partySiteId ?? "", supplierInvoiceNumber: draft.supplierInvoiceNumber ?? "",
     supplierInvoiceDate: draft.supplierInvoiceDate?.slice(0, 10) ?? "",
     purchaseEvidenceType: draft.purchaseEvidenceType ?? "",
-    receivedAt: localDateTime(draft.receivedAt), createsPayable: draft.createsPayable,
+    receivedAt: localDateTime(draft.receivedAt),
     dueDate: draft.dueDate?.slice(0, 10) ?? "", notes: draft.notes ?? "",
     lines: draft.lines.map((line) => ({
       lineNumber: line.lineNumber, productId: line.productId, description: line.description,
-      quantity: line.quantity, unitCost: line.unitCost, discountAmount: line.discountAmount,
+      quantity: line.quantity, unitCost: line.unitCost,
+      discountAmount: line.commercialDiscountPercent == null ? line.discountAmount : 0,
+      commercialDiscountPercent: line.commercialDiscountPercent,
       taxCode: line.taxCode, taxRate: line.taxRate, taxTreatment: line.taxTreatment,
       presentationName: line.presentationName, baseUnitCode: line.baseUnitCode,
       preferredPresentationName: line.preferredPresentationName,
@@ -1702,7 +1886,17 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
     currencyCode: draft.currencyCode, exchangeRate: draft.exchangeRate ?? 1,
     exchangeRateDate: draft.exchangeRateDate ?? draft.supplierInvoiceDate?.slice(0, 10) ?? todayInput(),
     exchangeRateSource: draft.exchangeRateSource ?? "FunctionalCurrency",
-    additionalCostDocuments: draft.additionalCostDocuments ?? [],
+    referencedCostDocuments: draft.referencedCostDocuments ?? [],
+    financialDiscount: draft.financialDiscount ?? null,
+    additionalCostDocuments: (draft.additionalCostDocuments ?? []).map(openDraftCostDocument),
+  };
+}
+
+function openDraftCostDocument(document: GoodsReceiptCostDocument): GoodsReceiptCostDocument {
+  // A historical cash draft becomes a new obligation due on its issue date.
+  // Only editable capture changes here; accepted receipt details stay immutable.
+  return document.createsPayable ? document : {
+    ...document, createsPayable: true, dueDate: document.dueDate || document.issuedAt,
   };
 }
 

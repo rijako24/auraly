@@ -4,6 +4,18 @@ namespace Auraly.Infrastructure.Persistence;
 
 internal static class SqlBusinessLocalDates
 {
+    public static async Task<IReadOnlyDictionary<Guid,TimeZoneInfo>> ReadTenantTimeZonesAsync(
+        SqlConnection connection,Guid tenantId,CancellationToken cancellationToken)
+    {
+        await using var command=new SqlCommand("SELECT BusinessId,TimeZone FROM dbo.Businesses WHERE TenantId=@TenantId;",connection);
+        command.Parameters.AddWithValue("@TenantId",tenantId);
+        var zones=new Dictionary<Guid,TimeZoneInfo>();
+        await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken))
+            zones.Add(reader.GetGuid(0),TimeZoneInfo.FindSystemTimeZoneById(reader.GetString(1)));
+        return zones;
+    }
+
     public static async Task<TimeZoneInfo?> ReadTimeZoneAsync(SqlConnection connection,
         Guid tenantId, Guid businessId, CancellationToken cancellationToken)
     {

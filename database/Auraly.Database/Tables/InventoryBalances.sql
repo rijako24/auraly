@@ -9,6 +9,10 @@ CREATE TABLE [dbo].[InventoryBalances]
     [LastProcessingSequence] BIGINT NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    -- Coverage of derived receipt-origin detail. Older physical writers do
+    -- not advance this observation when they change LastProcessingSequence.
+    [OriginContextId] UNIQUEIDENTIFIER NULL,
+    [OriginSnapshotSequence] BIGINT NULL,
     CONSTRAINT [PK_InventoryBalances]
         PRIMARY KEY CLUSTERED ([BusinessId], [WarehouseId], [ProductId]),
     CONSTRAINT [FK_InventoryBalances_Businesses]
@@ -20,7 +24,11 @@ CREATE TABLE [dbo].[InventoryBalances]
     CONSTRAINT [CK_InventoryBalances_AverageCost]
         CHECK ([AverageUnitCost] >= 0),
     CONSTRAINT [CK_InventoryBalances_Sequence]
-        CHECK ([LastProcessingSequence] >= 0)
+        CHECK ([LastProcessingSequence] >= 0),
+    CONSTRAINT [CK_InventoryBalances_OriginCoverage] CHECK (
+        ([OriginContextId] IS NULL AND [OriginSnapshotSequence] IS NULL)
+        OR ([OriginContextId] IS NOT NULL AND [OriginSnapshotSequence] IS NOT NULL
+            AND [OriginSnapshotSequence]>=0))
 );
 
 GO

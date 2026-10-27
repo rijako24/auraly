@@ -2,11 +2,13 @@ CREATE TABLE [accounting].[BankAccounts]
 (
     [BankAccountId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
-    [AccountingAccountId] UNIQUEIDENTIFIER NOT NULL,
+    -- Compatibility column, cleared after migration. Runtime relationships belong to AccountingAccounts.BankAccountId.
+    [AccountingAccountId] UNIQUEIDENTIFIER NULL,
     [AccountTypeOptionId] UNIQUEIDENTIFIER NOT NULL,
     [BankName] NVARCHAR(120) NOT NULL,
     [AccountNumber] NVARCHAR(64) NOT NULL,
     [DisplayName] NVARCHAR(160) NOT NULL,
+    CONSTRAINT [UQ_BankAccounts_Tenant_Bank] UNIQUE ([TenantId],[BankAccountId]),
     [CurrencyCode] CHAR(3) NOT NULL CONSTRAINT [DF_BankAccounts_Currency] DEFAULT(N'COP'),
     [IsPrimary] BIT NOT NULL CONSTRAINT [DF_BankAccounts_IsPrimary] DEFAULT(0),
     [IsActive] BIT NOT NULL CONSTRAINT [DF_BankAccounts_IsActive] DEFAULT(1),

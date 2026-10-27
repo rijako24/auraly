@@ -138,6 +138,7 @@ for (const scenario of [
     expect(installed ? localPrint : renderBody!.receipt).toMatchObject({
       direction: scenario.direction === "receivable" ? "Receivable" : "Payable",
       documentNumber: scenario.documentNumber,
+      status: "Accepted",
     });
     if (!installed) {
       expect(renderBody!.format).toBe(printOption.format);

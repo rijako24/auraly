@@ -5,7 +5,9 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connections) : IFiscalDocumentStore
+public sealed partial class SqlFiscalDocumentStore(SqlServerConnectionFactory connections,
+    Auraly.Commerce.Taxation.Application.WithholdingService withholding, TimeProvider timeProvider)
+    : IFiscalDocumentStore, Auraly.Commerce.Accounting.Infrastructure.IManualVoucherFiscalParticipant
 {
     public async Task<FiscalDocumentView?> GetAsync(
         Guid businessId,

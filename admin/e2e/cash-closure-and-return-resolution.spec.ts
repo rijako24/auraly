@@ -42,13 +42,20 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
       body: JSON.stringify({ detail: "Falta la configuración contable del medio de pago corregido." }) });
     return json(route, { valid: true });
   });
-  let snapshotReads = 0;
-  await page.route("**/api/commerce/v1/work-sessions/*/closure", route => {
-    snapshotReads++;
-    return json(route, { invoiceCharges: [
+  let chargeReads = 0;
+  let fullSnapshotReads = 0;
+  page.on("request", request => { if (/\/work-sessions\/[^/]+\/closure$/.test(request.url())) fullSnapshotReads++; });
+  await page.route("**/api/commerce/v1/work-sessions/closures/*/invoice-charges/page?**", route => {
+    chargeReads++;
+    const method = new URL(route.request().url()).searchParams.get("paymentMethodCode");
+    const charges = [
       { documentId: saleId, documentNumber: "FV-101", appliedChargeId: "charge-1", chargeId: "delivery", code: "DOMICILIO", name: "Domicilio", supplierName: "Domiciliario prueba", amount: 5000, invoicedAmount: 5000, expenseAmount: 0, withholdingAmount: 0, payments: [{ paymentNumber: 1, paymentMethodCode: "Cash", amount: 5000 }] },
       { documentId: saleId, documentNumber: "FV-101", appliedChargeId: "charge-2", chargeId: "exhausted", code: "AGOTADOS", name: "Agotados", supplierName: "Domiciliario prueba", amount: 6500, invoicedAmount: 0, expenseAmount: 6500, withholdingAmount: 0, payments: [] },
-    ] });
+    ];
+    return json(route, { items: method ? charges.filter(charge => charge.payments.some(payment => payment.paymentMethodCode === method)) : charges,
+      page: 1, pageSize: 50, totalItems: method ? 1 : 2, totalAmount: method ? 5000 : 11500,
+      closureSummary: { count: 2, invoicedAmount: 5000, expenseAmount: 6500,
+        paymentMethods: [{ paymentMethodCode: "Cash", count: 1, amount: 5000 }] } });
   });
   await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, { items: [{
     workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId, businessName: "Auraly", warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero", openedAt: "2026-08-31T08:00:00-05:00", closedAt: "2026-08-31T18:00:00-05:00", salesCount: 3, creditSalesCount: 0, returnCount: 1, totalSales: 159000, totalRefunds: 20000, netAmount: 139000, expectedCash: 135000, reconciliationStatus: "Pending", accountingStatus: "AccountingDisabled", paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 150000, refundAmount: 20000, otherAmount: 0, netAmount: 130000, countedAmount: 130000, difference: 0, requiresCount: true }, { paymentMethodCode: "Card", salesAmount: 0, refundAmount: 0, otherAmount: 0, netAmount: 0, countedAmount: 0, difference: 0, requiresCount: true }, { paymentMethodCode: "Transfer", salesAmount: 9000, refundAmount: 0, otherAmount: 0, netAmount: 8000, countedAmount: 8000, difference: 0, requiresCount: true }],
@@ -62,6 +69,8 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
     { ...movement("out-1", "CashOut", "CashMovement", "EGR-888", -10000), reasonName: "Consignación", notes: "Entrega en banco" },
     { ...movement("collection-1", "CashIn", "CashMovement", "RCC-102", 5000), movementType: "ReceivablePayment" as const, counterpartyName: "Cliente de prueba" },
     { ...movement("supplier-payment-1", "CashOut", "CashMovement", "PGC-103", -5000), movementType: "PayablePayment" as const, counterpartyName: "Proveedor de prueba" },
+    { ...movement("bank-in", "CashIn", "ManualAccountingVoucher", "ASI-BANCO-IN", 500), paymentMethodCode: "Transfer", reference: "BANCO-ENTRADA", reasonName: "Entrada bancaria del comprobante", counterpartyName: "Tercero banco" },
+    { ...movement("bank-out", "CashOut", "ManualAccountingVoucher", "ASI-BANCO-OUT", -500), paymentMethodCode: "Transfer", reference: "BANCO-SALIDA", reasonName: "Salida bancaria del comprobante", counterpartyName: "Tercero banco" },
   ];
   await page.route(`**/api/commerce/v1/work-sessions/closures/${closureId}/payment-verifications/page?**`, route => {
     const url = new URL(route.request().url());
@@ -89,9 +98,10 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await expect(cash.getByText(/Faltante.*5.000/)).toBeVisible();
   await expect(dialog.getByText(/Faltante.*8.000/).first()).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Cruzar diferencias" })).toHaveCount(0);
+  await expect(dialog.getByText("Agotados", { exact: true })).toBeVisible();
+  await cash.getByRole("button", { name: "Ver cargos de Efectivo", exact: true }).click();
   await expect(cash.getByText("Domicilio", { exact: true })).toBeVisible();
   await expect(cash.getByText("Agotados", { exact: true })).toHaveCount(0);
-  await expect(dialog.getByText("Agotados", { exact: true })).toBeVisible();
   await cash.getByRole("button", { name: /Facturas/ }).click();
   await cash.getByRole("button", { name: /Devoluciones/ }).click();
   await expect(cash.getByText("FV-101", { exact: true })).toBeVisible();
@@ -150,13 +160,84 @@ test("el cierre muestra motivos y observaciones sin números de egreso", async (
   await expect(cash.getByText("Proveedor de prueba")).toBeVisible();
   await expect(cash.getByText("Comprobante: RCC-102", { exact: false })).toBeVisible();
   await expect(cash.getByText("Comprobante: PGC-103", { exact: false })).toBeVisible();
-  expect(snapshotReads).toBe(1);
+  await transfer.getByRole("button", { name: /Entradas de dinero/ }).click();
+  await transfer.getByRole("button", { name: /Salidas de dinero/ }).click();
+  await expect(transfer.getByText(/Comprobante: ASI-BANCO-IN/)).toBeVisible();
+  await expect(transfer.getByText(/Comprobante: ASI-BANCO-OUT/)).toBeVisible();
+  const bankOut = transfer.locator(".grid").filter({ hasText: "Comprobante: ASI-BANCO-OUT" }).last();
+  await bankOut.getByRole("button", { name: "Corregir", exact: true }).click();
+  await expect(correction.getByLabel("Valor real")).toBeDisabled();
+  await expect(correction.getByText(/El valor y las contrapartidas se corrigen desde contabilidad/)).toBeVisible();
+  await correction.getByRole("combobox").first().click();
+  await expect(page.getByRole("option", { name: "Transferencia", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Efectivo", exact: true })).toBeVisible();
+  await page.getByRole("option", { name: "Transferencia", exact: true }).click();
+  await correction.getByRole("button", { name: "Cerrar", exact: true }).click();
+  const bankIn = transfer.locator(".grid").filter({ hasText: "Comprobante: ASI-BANCO-IN" }).last();
+  await bankIn.getByRole("button", { name: "Verificado", exact: true }).click();
+  await expect(transfer.getByText(/Total confirmado:/)).toContainText("9.500");
+  await bankOut.getByRole("button", { name: "Verificado", exact: true }).click();
+  await expect(transfer.getByText(/Total confirmado:/)).toContainText("9.000");
+  expect(chargeReads).toBe(2);
+  expect(fullSnapshotReads).toBe(0);
+});
+
+test("cargos del cierre pagina, conserva totales y vuelve desde caché sin descargar el cierre", async ({ page }) => {
+  await authenticate(page);
+  const charges = Array.from({ length: 51 }, (_, index) => ({ documentId: saleId,
+    documentNumber: `FV-${index + 1}`, appliedChargeId: `charge-${index + 1}`, chargeId: "delivery",
+    code: "DELIVERY", name: `Cargo ${index + 1}`, supplierName: "Proveedor de prueba", amount: 1000,
+    invoicedAmount: 0, expenseAmount: 1000, withholdingAmount: 0, payments: [] }));
+  let chargeReads = 0;
+  let fullSnapshotReads = 0;
+  page.on("request", request => { if (/\/work-sessions\/[^/]+\/closure$/.test(request.url())) fullSnapshotReads++; });
+  await page.route("**/api/commerce/v1/work-sessions/closures/*/invoice-charges/page?**", route => {
+    chargeReads++;
+    if (chargeReads === 1) return route.fulfill({ status: 500, contentType: "application/problem+json",
+      body: JSON.stringify({ detail: "Lectura no disponible" }) });
+    const query = new URL(route.request().url()).searchParams;
+    expect(query.get("pageSize")).toBe("50");
+    const requestedPage = Number(query.get("page"));
+    return json(route, { items: charges.slice((requestedPage - 1) * 50, requestedPage * 50),
+      page: requestedPage, pageSize: 50, totalItems: 51, totalAmount: 51000,
+      closureSummary: { count: 51, invoicedAmount: 0, expenseAmount: 51000, paymentMethods: [] } });
+  });
+  await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, {
+    items: [{ workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId,
+      businessName: "Auraly", warehouseId: null, warehouseName: null, userId, userName: "Cajero",
+      openedAt: "2026-10-08T08:00:00-05:00", closedAt: "2026-10-08T18:00:00-05:00",
+      salesCount: 0, creditSalesCount: 0, returnCount: 0, totalSales: 0, totalRefunds: 0, netAmount: 0,
+      expectedCash: 0, reconciliationStatus: "Pending", accountingStatus: "AccountingDisabled", paymentTotals: [] }],
+    page: 1, pageSize: 50, totalItems: 1,
+  }));
+  await page.route(`**/api/commerce/v1/work-sessions/closures/${closureId}/payment-verifications/page?**`, route =>
+    json(route, { items: [], groups: [], page: 1, pageSize: 1, totalItems: 0 }));
+  await page.route("**/api/commerce/v1/reference-options/cash-reconciliation-reason", route => json(route, []));
+  await page.goto("/dashboard/cash-differences");
+  await page.getByRole("button", { name: "Conciliar", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Conciliar cierre" });
+  await expect(dialog.getByText("No fue posible cargar los cargos.")).toBeVisible();
+  expect(chargeReads).toBe(1);
+  await dialog.getByRole("button", { name: "Reintentar", exact: true }).click();
+  const summary = dialog.locator("section").filter({ has: page.getByRole("heading", { name: "Cargos de facturación", exact: true }) });
+  await expect(summary.getByText("Cargo 50", { exact: true })).toBeVisible();
+  await expect(summary.getByText("Cargo 51", { exact: true })).toHaveCount(0);
+  await expect(summary.getByText(/51 cargos · Total/)).toContainText("51.000");
+  await summary.getByRole("button", { name: "Siguiente", exact: true }).click();
+  await expect(summary.getByText("Cargo 51", { exact: true })).toBeVisible();
+  await expect(summary.getByText("Cargo 50", { exact: true })).toHaveCount(0);
+  await expect(summary.getByText(/51 cargos · Total/)).toContainText("51.000");
+  await summary.getByRole("button", { name: "Anterior", exact: true }).click();
+  await expect(summary.getByText("Cargo 50", { exact: true })).toBeVisible();
+  expect(chargeReads).toBe(3);
+  expect(fullSnapshotReads).toBe(0);
 });
 
 test("transferencia sin comprobantes muestra el faltante frente al valor reportado", async ({ page }) => {
   await authenticate(page);
-  await page.route("**/api/commerce/v1/work-sessions/*/closure", route =>
-    json(route, { invoiceCharges: [] }));
+  await page.route("**/api/commerce/v1/work-sessions/closures/*/invoice-charges/page?**", route =>
+    json(route, { items: [], page: 1, pageSize: 50, totalItems: 0, totalAmount: 0,
+      closureSummary: { count: 0, invoicedAmount: 0, expenseAmount: 0, paymentMethods: [] } }));
   await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, {
     items: [{ workSessionClosureId: closureId, workSessionId: crypto.randomUUID(), businessId,
       businessName: "Auraly", warehouseId: null, warehouseName: "Principal", userId,
@@ -177,7 +258,7 @@ test("transferencia sin comprobantes muestra el faltante frente al valor reporta
   await page.getByRole("button", { name: "Conciliar" }).click();
   const dialog = page.getByRole("dialog", { name: "Conciliar cierre" });
   const transfer = dialog.locator("section").filter({ hasText: "Transferencia" }).first();
-  await expect(transfer.getByText("Frente a lo reportado")).toBeVisible();
+  await expect(transfer.getByText(/Por explicar frente al conteo:/)).toBeVisible();
   await expect(transfer.getByText(/Faltante.*5.000/)).toBeVisible();
   await expect(transfer.getByText(/Total confirmado:/)).toContainText("0");
   await transfer.getByRole("checkbox").check();
@@ -190,7 +271,9 @@ test("el detalle de efectivo carga 100 facturas por página sin descargarlas al 
   const invoices = Array.from({ length: 101 }, (_, index) =>
     movement(`sale-${index + 1}`, "Sale", "SalesInvoice", `FV-${String(index + 1).padStart(3, "0")}`, 1000));
   const requests: string[] = [];
-  await page.route("**/api/commerce/v1/work-sessions/*/closure", route => json(route, { invoiceCharges: [] }));
+  await page.route("**/api/commerce/v1/work-sessions/closures/*/invoice-charges/page?**", route => json(route,
+    { items: [], page: 1, pageSize: 50, totalItems: 0, totalAmount: 0,
+      closureSummary: { count: 0, invoicedAmount: 0, expenseAmount: 0, paymentMethods: [] } }));
   await page.route("**/api/commerce/v1/work-sessions/closures?**", route => json(route, {
     items: [{ workSessionClosureId: closureId, workSessionId, businessId, businessName: "Auraly",
       warehouseId: crypto.randomUUID(), warehouseName: "Principal", userId, userName: "Cajero",
@@ -333,7 +416,7 @@ test("el modal de periféricos cubre el viewport completo desde el body", async 
   expect(formats).toEqual(["HalfLegal", "Letter"]);
 });
 
-function movement(key: string, movementType: "Sale" | "Refund" | "CashIn" | "CashOut", sourceDocumentType: "SalesInvoice" | "SalesReceipt" | "SalesReturn" | "CashMovement", documentNumber: string, amount: number) {
+function movement(key: string, movementType: "Sale" | "Refund" | "CashIn" | "CashOut", sourceDocumentType: "SalesInvoice" | "SalesReceipt" | "SalesReturn" | "CashMovement" | "ManualAccountingVoucher", documentNumber: string, amount: number) {
   return { verificationKey: key, paymentMethodCode: "Cash", movementType, sourceDocumentType, sourceId: crypto.randomUUID(), documentNumber, sourceNumber: 1, amount, reference: null, cardFranchiseCode: null, approvalNumber: null, occurredAt: "2026-08-31T12:00:00-05:00" };
 }
 

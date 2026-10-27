@@ -5,6 +5,7 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   const businessId = "22222222-2222-2222-2222-222222222222";
   const conceptId = "33333333-3333-3333-3333-333333333333";
   const payableId = "44444444-4444-4444-4444-444444444444";
+  const partySiteId = "77777777-7777-7777-7777-777777777777";
   const user = { userId: "55555555-5555-5555-5555-555555555555", tenantId,
     tenantKey: "@portfolio-test", username: "portfolio-test", firstName: "Prueba", lastName: "Cartera",
     roles: [], permissions: ["payables.read", "receivables.read", "purchasing.goods-receipts.read", "accounting.manual.create"] };
@@ -53,6 +54,14 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
         additionalCostDocuments: [], accountingStatuses: [] };
     else if (path.endsWith("/goods-receipts"))
       body = { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 };
+    else if (path.endsWith("/accounting/open-positions")) body = { items: [{ subledgerKind: "Payable", subledgerId: payableId,
+      partyId: conceptId, counterpartyRoleId: conceptId, partyName: "Proveedor de prueba", partyIdentification: "1001",
+      sourceDocumentId: payableId, sourceDocumentType: "Expense", documentNumber: "GTO00-20",
+      occurredAt: "2026-09-24T12:00:00-05:00", dueDate: "2026-09-25T12:00:00-05:00", currencyCode: "COP",
+      originalAmount: 5000, outstandingAmount: 5000, pendingPaymentAmount: 0, pendingAdjustmentAmount: 0, availableAmount: 5000,
+      openingEntryId: null, openingEntryLineNumber: null, accountId: null, accountCode: null, accountName: null,
+      accountIsActive: null, openingDebit: null, openingCredit: null, openingLinkIssue: "Falta enlazar la cuenta de apertura de esta obligación.", status: "Open" }],
+      page: 1, pageSize: Number(url.searchParams.get("pageSize")), totalCount: 1, totalOutstandingAmount: 5000 };
     else if (path.endsWith(`/payables/${payableId}`)) body = { payableId, supplierId: conceptId,
       supplierName: "Proveedor de prueba", supplierIdentification: "1001", sourceDocumentId: payableId,
       sourceDocumentType: receiptMode ? "GoodsReceiptCostDocument" : "Expense",
@@ -72,6 +81,11 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
     }
     else if (path.endsWith("/payable-payments") || path.endsWith("/receivable-payments"))
       body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 };
+    else if (path.endsWith("/portfolio/parties/site-options")) body = {
+      items: [{ partyId: conceptId, roleId: conceptId, partySiteId, displayName: "Tercero de prueba",
+        identification: "1001", siteName: "Principal", isPrimary: true,
+        supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: null }],
+      page: 1, pageSize: Number(url.searchParams.get("pageSize")), totalCount: 1, totalPages: 1 };
     else if (path.endsWith("/parties/role-options")) {
       const role = url.searchParams.get("role") ?? "Supplier";
       body = { items: [{ partyId: conceptId, roleId: conceptId, role,
@@ -87,18 +101,18 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   expect(await page.getByLabel("Resumen de cartera").evaluate(node =>
     !!(node.compareDocumentPosition(document.querySelector("details")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await page.getByText("Filtros", { exact: true }).click();
-  await page.getByRole("combobox", { name: "Seleccionar supplier" }).click();
+  await page.getByRole("combobox", { name: "Filtrar proveedor y sede" }).click();
   await page.getByRole("option", { name: /Tercero de prueba/ }).click();
   await expect.poll(() => portfolioRequests.at(-1)).toBe(conceptId);
-  const supplierClear = page.getByRole("button", { name: "Quitar selección de Seleccionar supplier" });
+  const supplierClear = page.getByRole("button", { name: "Quitar selección de Filtrar proveedor y sede" });
   const supplierClearBox = await supplierClear.boundingBox();
-  const supplierChevronBox = await page.getByRole("combobox", { name: "Seleccionar supplier" }).locator("svg").boundingBox();
+  const supplierChevronBox = await page.getByRole("combobox", { name: "Filtrar proveedor y sede" }).locator("svg").boundingBox();
   expect(supplierClearBox).not.toBeNull();
   expect(supplierChevronBox).not.toBeNull();
   expect(supplierChevronBox!.x - supplierClearBox!.x - supplierClearBox!.width).toBeGreaterThanOrEqual(4);
   const payableRequestsBeforeClear = portfolioRequests.length;
   await supplierClear.click();
-  await expect(page.getByRole("combobox", { name: "Seleccionar supplier" })).toContainText("Filtrar por proveedor");
+  await expect(page.getByRole("combobox", { name: "Filtrar proveedor y sede" })).toContainText("Filtrar por proveedor y sede");
   expect(portfolioRequests.length).toBe(payableRequestsBeforeClear);
   await expect(page.getByText("No fue posible cargar la información.")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Desde" })).toBeVisible();
@@ -116,6 +130,7 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   await expect(page.getByRole("option", { name: /GTO00-20/ })).toBeVisible();
   await page.getByRole("option", { name: /GTO00-20/ }).click();
   await expect(adjustment.getByText("Proveedor de prueba · 1001")).toBeVisible();
+  await expect(adjustment.getByText("Falta enlazar la cuenta de apertura de esta obligación.", { exact: true })).toBeVisible();
   await expect(adjustment.getByText("$ 5.000").first()).toBeVisible();
   await expect(adjustment.getByLabel("Valor del ajuste")).toBeEnabled();
   await adjustment.getByRole("button", { name: "Cerrar" }).click();
@@ -146,18 +161,18 @@ test("cartera muestra origen del gasto, filtra concepto y ubica filtros bajo el 
   expect(await page.getByLabel("Resumen de cartera").evaluate(node =>
     !!(node.compareDocumentPosition(document.querySelector("details")!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await page.getByText("Filtros", { exact: true }).click();
-  await page.getByRole("combobox", { name: "Seleccionar customer" }).click();
+  await page.getByRole("combobox", { name: "Filtrar cliente y sede" }).click();
   await page.getByRole("option", { name: /Tercero de prueba/ }).click();
   await expect.poll(() => portfolioRequests.at(-1)).toBe(conceptId);
-  const customerClear = page.getByRole("button", { name: "Quitar selección de Seleccionar customer" });
+  const customerClear = page.getByRole("button", { name: "Quitar selección de Filtrar cliente y sede" });
   const customerClearBox = await customerClear.boundingBox();
-  const customerChevronBox = await page.getByRole("combobox", { name: "Seleccionar customer" }).locator("svg").boundingBox();
+  const customerChevronBox = await page.getByRole("combobox", { name: "Filtrar cliente y sede" }).locator("svg").boundingBox();
   expect(customerClearBox).not.toBeNull();
   expect(customerChevronBox).not.toBeNull();
   expect(customerChevronBox!.x - customerClearBox!.x - customerClearBox!.width).toBeGreaterThanOrEqual(4);
   const receivableRequestsBeforeClear = portfolioRequests.length;
   await customerClear.click();
-  await expect(page.getByRole("combobox", { name: "Seleccionar customer" })).toContainText("Filtrar por cliente");
+  await expect(page.getByRole("combobox", { name: "Filtrar cliente y sede" })).toContainText("Filtrar por cliente y sede");
   expect(portfolioRequests.length).toBe(receivableRequestsBeforeClear);
   await expect(page.getByText("No fue posible cargar la información.")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Desde" })).toBeVisible();

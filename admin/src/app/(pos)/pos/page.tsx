@@ -99,9 +99,11 @@ import {
 } from "@/services/pos/pos-enrollment-transition";
 import {
   canIssuePosDocument,
+  dianQuotaExhaustedMessage,
   posDocumentReadinessError,
 } from "@/services/pos/pos-fiscal-guard";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
+import { DianQuotaNotice } from "@/components/fiscal/dian-quota-notice";
 import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
 import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
 import { PosCashDenominationDialog } from "./pos-cash-denomination-dialog";
@@ -4157,6 +4159,7 @@ export default function PosPage() {
       )}
       {synchronizationEventsOpen && client && <PosSynchronizationEventsDialog open client={client} serverConnected={serverConnected} pushConnected={pushConnected} canSynchronize inProgress={synchronization.inProgress} pendingCount={synchronization.pendingCount} failed={synchronization.failed} error={synchronization.error} onSynchronize={synchronizeNow} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
 
+      <DianQuotaNotice open={error === dianQuotaExhaustedMessage} onClose={() => { setError(null); focusScanner(); }}/>
       {quantityShortage && <PosQuantityAvailabilityDialog
         value={quantityShortage}
         busy={busy}

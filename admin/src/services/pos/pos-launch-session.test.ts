@@ -169,3 +169,11 @@ test("order printing selects the installed transport without changing issuance o
   assert.equal(resolvePosOrderPrintRoute("edge-session"), "installed-app");
   assert.equal(resolvePosOrderPrintRoute(null), "browser");
 });
+
+
+test("exhausted DIAN quota blocks invoices but preserves ordinary receipts in both modes", () => {
+  for (const mode of ["online", "edge"] as const) {
+    assert.equal(posDocumentReadinessError("SalesReceipt", true, false, mode), null);
+    assert.equal(posDocumentReadinessError("SalesInvoice", true, false, mode), dianQuotaExhaustedMessage);
+  }
+});

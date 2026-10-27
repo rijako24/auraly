@@ -29,6 +29,7 @@ type PartyRoleSelectProps = {
   selectedOption?: PagedEntityOption | null;
   leadingOptions?: PagedEntityOption[];
   placeholder?: string;
+  ariaLabel?: string;
   emptyMessage?: string;
   disabled?: boolean;
   includePartyId?: boolean;
@@ -37,7 +38,7 @@ type PartyRoleSelectProps = {
   sourceKey?: string;
 };
 
-export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, emptyMessage, disabled, includePartyId = false, preload = false,loadPage,sourceKey }: PartyRoleSelectProps) {
+export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, ariaLabel, emptyMessage, disabled, includePartyId = false, preload = false,loadPage,sourceKey }: PartyRoleSelectProps) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [picked, setPicked] = useState<PagedEntityOption | null>(null);
   const getOption = useCallback((item: PartyRoleSelection) => ({
@@ -80,7 +81,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
     leadingOptions={leadingOptions}
     placeholder={placeholder}
     emptyMessage={emptyMessage}
-    ariaLabel={role ? `Seleccionar ${role.toLocaleLowerCase("es-CO")}` : "Seleccionar tercero"}
+    ariaLabel={ariaLabel ?? (role ? `Seleccionar ${role.toLocaleLowerCase("es-CO")}` : "Seleccionar tercero")}
     disabled={disabled || (!businessId&&!loadPage)}
     preload={preload}
   />;

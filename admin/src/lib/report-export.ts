@@ -44,7 +44,7 @@ export async function exportReportExcel(report: ReportExport) {
     ...report.rows.map(row => row.__group ? [String(row.__group)] : report.columns.map(column => {
       const value = row[column.key];
       // Strings stay strings, including identifiers and formula-looking user input.
-      return typeof value === "number" ? { value, format: "#,##0.00" } : reportCellText(column, row);
+      return typeof value === "number" ? { value, format: column.numberFormat ?? "#,##0.00" } : reportCellText(column, row);
     })),
   ];
   await writeExcelFile(rows, { sheet: "Reporte", stickyRowsCount: 4,

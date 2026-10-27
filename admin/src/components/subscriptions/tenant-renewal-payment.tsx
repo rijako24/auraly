@@ -17,7 +17,9 @@ type WompiWindow = Window & { WidgetCheckout?: new (options: WidgetOptions) =>
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 const date = new Intl.DateTimeFormat("es-CO", { dateStyle: "medium" });
 
-export function TenantRenewalPayment({ orderId, status }: { orderId: string; status: string }) {
+export function TenantRenewalPayment({ orderId, status, onPaid }: {
+  orderId: string; status: string; onPaid: () => Promise<void>;
+}) {
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<TenantSubscriptionReceipt | null>(null);
@@ -39,6 +41,7 @@ export function TenantRenewalPayment({ orderId, status }: { orderId: string; sta
         try {
           const paid = await tenantCommercialApi.confirmRenewalCheckout(checkout.renewalOrderId, transactionId);
           setReceipt(paid);
+          await onPaid();
           toast.success("Renovación pagada y facturada");
         } catch (error) {
           toast.error("Estamos validando el pago", { description: error instanceof Error ? error.message : "Consulta de nuevo en unos segundos." });

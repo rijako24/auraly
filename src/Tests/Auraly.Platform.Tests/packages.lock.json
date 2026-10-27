@@ -2018,8 +2018,8 @@
       },
       "System.Security.Cryptography.Pkcs": {
         "type": "Transitive",
-        "resolved": "8.0.1",
-        "contentHash": "CoCRHFym33aUSf/NtWSVSZa99dkd0Hm7OCZUxORBjRB16LNhIEOf8THPqzIYlvKM0nNDAPTRBa1FxEECrgaxxA=="
+        "resolved": "8.0.2",
+        "contentHash": "VWACYq0JGxi9sw3TonSSV4B2MfhYk5nhgOtp9wbrt5NFOtUetFqHkMZylcCwPX+117cBJH5EnIzIy6X4OKn/kA=="
       },
       "System.Security.Cryptography.Primitives": {
         "type": "Transitive",
@@ -2074,10 +2074,10 @@
       },
       "System.Security.Cryptography.Xml": {
         "type": "Transitive",
-        "resolved": "8.0.4",
-        "contentHash": "1y+ROEEmEOACrQWqRi37GkGHOThPc31m7vezOySpPE9xXN2nTN6ndLYjylvy42aCtQq4owlYhcqaKpQKMDFKFg==",
+        "resolved": "8.0.5",
+        "contentHash": "vu85aidUbxTh39CXdo/4mgtDlBNQ0h6k7oq5RIBwV2V2QYbRvtY6XlV3ikwYIyLX/LyaOraVvoCVVYnjFbV4/w==",
         "dependencies": {
-          "System.Security.Cryptography.Pkcs": "8.0.1"
+          "System.Security.Cryptography.Pkcs": "8.0.2"
         }
       },
       "System.Security.Principal.Windows": {
@@ -2475,6 +2475,7 @@
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
@@ -2554,6 +2555,7 @@
       "auraly.commerce.accounting.application": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.Fiscal": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
@@ -2561,12 +2563,18 @@
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
+          "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Auraly.Contracts.Inventory": "[1.0.0, )",
+          "Auraly.Contracts.Payables": "[1.0.0, )",
+          "Auraly.Contracts.Receivables": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )"
         }
       },
       "auraly.commerce.accounting.contracts": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+        }
       },
       "auraly.commerce.accounting.domain": {
         "type": "Project"
@@ -2670,6 +2678,7 @@
       "auraly.contracts.fiscal": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
           "Auraly.Contracts.Returns": "[1.0.0, )",
@@ -2850,7 +2859,7 @@
           "Azure.Identity": "[1.17.2, )",
           "Azure.Security.KeyVault.Certificates": "[4.8.0, )",
           "Azure.Security.KeyVault.Secrets": "[4.8.0, )",
-          "System.Security.Cryptography.Xml": "[8.0.4, )",
+          "System.Security.Cryptography.Xml": "[8.0.5, )",
           "System.ServiceModel.Http": "[8.1.2, )"
         }
       },
@@ -2875,6 +2884,7 @@
           "Auraly.Application.WorkSessions": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.BuildingBlocks.Infrastructure": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Infrastructure": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",

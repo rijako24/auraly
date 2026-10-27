@@ -120,6 +120,15 @@ public sealed record WorkSessionInvoiceCharge(Guid DocumentId, string DocumentNu
     Guid ChargeId, string Code, string Name, string SupplierName, decimal Amount, decimal InvoicedAmount,
     decimal ExpenseAmount, decimal WithholdingAmount, IReadOnlyList<WorkSessionInvoiceChargePayment> Payments);
 
+public sealed record WorkSessionInvoiceChargeMethodSummary(string PaymentMethodCode, int Count, decimal Amount);
+
+// Closure-wide summary is distinct from the filtered page's count and amount.
+public sealed record WorkSessionInvoiceChargeSummary(int Count, decimal InvoicedAmount, decimal ExpenseAmount,
+    IReadOnlyList<WorkSessionInvoiceChargeMethodSummary> PaymentMethods);
+
+public sealed record WorkSessionInvoiceChargePage(IReadOnlyList<WorkSessionInvoiceCharge> Items,
+    int Page, int PageSize, int TotalItems, decimal TotalAmount, WorkSessionInvoiceChargeSummary ClosureSummary);
+
 public sealed record WorkSessionWaiterSale(
     Guid? UserId, string UserName, decimal Quantity, decimal Amount);
 

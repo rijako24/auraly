@@ -48,8 +48,8 @@ CREATE TABLE [dbo].[AccountingConfigurationProfileAccounts]
     [ProfileCode] NVARCHAR(32) NOT NULL,
     [Category] NVARCHAR(64) NOT NULL,
     [DisplayName] NVARCHAR(160) NOT NULL,
-    [AccountCode] NVARCHAR(32) NOT NULL,
-    [AccountName] NVARCHAR(200) NOT NULL,
+    [AccountCode] NVARCHAR(32) NULL,
+    [AccountName] NVARCHAR(200) NULL,
     [AccountType] NVARCHAR(24) NOT NULL,
     [AllowsPosting] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfileAccounts_AllowsPosting] DEFAULT (1),
     [RequiresParty] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfileAccounts_RequiresParty] DEFAULT (0),
@@ -57,8 +57,11 @@ CREATE TABLE [dbo].[AccountingConfigurationProfileAccounts]
     [DisplayOrder] INT NOT NULL,
     CONSTRAINT [PK_AccountingConfigurationProfileAccounts] PRIMARY KEY CLUSTERED ([ProfileCode],[Category]),
     CONSTRAINT [FK_AccountingConfigurationProfileAccounts_Profile] FOREIGN KEY ([ProfileCode]) REFERENCES [dbo].[AccountingConfigurationProfiles]([ProfileCode]),
-    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'ContraRevenue')),
-    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Order] CHECK ([DisplayOrder]>0)
+    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'ContraRevenue',N'OrderDebit',N'OrderCredit')),
+    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Order] CHECK ([DisplayOrder]>0),
+    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_DefaultAccount] CHECK (
+      ([AccountCode] IS NULL AND [AccountName] IS NULL)
+      OR ([AccountCode] IS NOT NULL AND [AccountName] IS NOT NULL))
 );
 GO
 
@@ -119,12 +122,46 @@ CREATE TABLE [dbo].[AccountingAccounts]
     [IsActive] BIT NOT NULL CONSTRAINT [DF_AccountingAccounts_IsActive] DEFAULT (1),
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    [ParentAccountId] UNIQUEIDENTIFIER NULL,
+    [FinancialFunction] NVARCHAR(64) NULL,
+    [FunctionCatalog] NVARCHAR(64) NOT NULL CONSTRAINT [DF_AccountingAccounts_FunctionCatalog] DEFAULT N'accounting-financial-function',
+    [BalanceSide] NVARCHAR(6) NULL,
+    [BusinessId] UNIQUEIDENTIFIER NULL,
+    [BankAccountId] UNIQUEIDENTIFIER NULL,
+    [PaymentMethodOptionId] UNIQUEIDENTIFIER NULL REFERENCES [reference].[Options]([OptionId]),
+    [ConfigurationLockedAt] DATETIMEOFFSET(7) NULL,
+    CONSTRAINT [FK_AccountingAccounts_Parent] FOREIGN KEY ([TenantId],[ParentAccountId]) REFERENCES [dbo].[AccountingAccounts]([TenantId],[AccountId]),
+    CONSTRAINT [FK_AccountingAccounts_Business] FOREIGN KEY ([BusinessId],[TenantId]) REFERENCES [dbo].[Businesses]([BusinessId],[TenantId]),
+    CONSTRAINT [FK_AccountingAccounts_Bank] FOREIGN KEY ([TenantId],[BankAccountId]) REFERENCES [accounting].[BankAccounts]([TenantId],[BankAccountId]),
+    CONSTRAINT [CK_AccountingAccounts_BalanceSide] CHECK ([BalanceSide] IN(N'Debit',N'Credit')),
+    CONSTRAINT [FK_AccountingAccounts_Function] FOREIGN KEY ([FunctionCatalog],[FinancialFunction]) REFERENCES [reference].[Options]([CatalogCode],[Code]),
+    CONSTRAINT [CK_AccountingAccounts_FunctionCatalog] CHECK ([FunctionCatalog]=N'accounting-financial-function'),
+    CONSTRAINT [CK_AccountingAccounts_Configuration] CHECK (
+      ([FinancialFunction] IS NULL AND [BalanceSide] IS NULL AND [ParentAccountId] IS NULL
+        AND [BusinessId] IS NULL AND [BankAccountId] IS NULL AND [PaymentMethodOptionId] IS NULL)
+      OR ([FinancialFunction] IS NOT NULL AND [BalanceSide] IS NOT NULL)),
+    CONSTRAINT [CK_AccountingAccounts_ControlParty] CHECK (
+      [FinancialFunction] NOT IN(N'Receivable',N'Payable',N'SupplierAdvance',N'CustomerAdvance') OR [RequiresParty]=1),
+    CONSTRAINT [CK_AccountingAccounts_UnallocatedPurchaseCost] CHECK (
+      [FinancialFunction]<>N'UnallocatedPurchaseCost' OR
+      ([AccountType]=N'Asset' AND [BalanceSide]=N'Debit' AND [AllowsPosting]=1
+        AND [BankAccountId] IS NULL AND [PaymentMethodOptionId] IS NULL)),
+    CONSTRAINT [CK_AccountingAccounts_Parent] CHECK ([ParentAccountId]<>[AccountId]),
     CONSTRAINT [PK_AccountingAccounts] PRIMARY KEY CLUSTERED ([AccountId]),
     CONSTRAINT [UQ_AccountingAccounts_Tenant_Account] UNIQUE ([TenantId],[AccountId]),
     CONSTRAINT [UQ_AccountingAccounts_Tenant_Code] UNIQUE ([TenantId],[Code]),
     CONSTRAINT [FK_AccountingAccounts_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
-    CONSTRAINT [CK_AccountingAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'ContraRevenue'))
+    CONSTRAINT [CK_AccountingAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'ContraRevenue',N'OrderDebit',N'OrderCredit'))
 );
+GO
+
+CREATE INDEX [IX_AccountingAccounts_Parent] ON [dbo].[AccountingAccounts]([TenantId],[ParentAccountId]) WHERE [ParentAccountId] IS NOT NULL;
+GO
+CREATE INDEX [IX_AccountingAccounts_BankDimensions] ON [dbo].[AccountingAccounts]([TenantId],[BankAccountId],[BusinessId],[PaymentMethodOptionId]) INCLUDE([Code],[FinancialFunction],[IsActive]);
+GO
+CREATE INDEX [IX_AccountingAccounts_Business] ON [dbo].[AccountingAccounts]([TenantId],[BusinessId]) WHERE [BusinessId] IS NOT NULL;
+GO
+CREATE INDEX [IX_AccountingAccounts_PaymentMethod] ON [dbo].[AccountingAccounts]([TenantId],[PaymentMethodOptionId]) WHERE [PaymentMethodOptionId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[AccountingCostCenters]
@@ -273,17 +310,35 @@ CREATE TABLE [dbo].[AccountingOpeningBalanceLines]
     [Description] NVARCHAR(300) NOT NULL,
     [Debit] DECIMAL(19,4) NOT NULL,
     [Credit] DECIMAL(19,4) NOT NULL,
+    [LineId] UNIQUEIDENTIFIER NULL,
+    [ExistingPayableId] UNIQUEIDENTIFIER NULL,
+    [ExistingReceivableId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_AccountingOpeningBalanceLines] PRIMARY KEY CLUSTERED ([BatchId],[LineNumber]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_Batch] FOREIGN KEY ([BatchId]) REFERENCES [dbo].[AccountingOpeningBalanceBatches]([BatchId]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_Account] FOREIGN KEY ([AccountId]) REFERENCES [dbo].[AccountingAccounts]([AccountId]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_Party] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties]([PartyId]),
     CONSTRAINT [FK_AccountingOpeningBalanceLines_CostCenter] FOREIGN KEY ([CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([CostCenterId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_ExistingPayable] FOREIGN KEY ([ExistingPayableId]) REFERENCES [dbo].[Payables]([PayableId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_ExistingReceivable] FOREIGN KEY ([ExistingReceivableId]) REFERENCES [dbo].[Receivables]([ReceivableId]),
+    CONSTRAINT [CK_AccountingOpeningBalanceLines_ExistingPosition] CHECK (
+      ([ExistingPayableId] IS NULL OR [ExistingReceivableId] IS NULL)
+      AND (([ExistingPayableId] IS NULL AND [ExistingReceivableId] IS NULL) OR [LineId] IS NOT NULL)),
+    CONSTRAINT [CK_AccountingOpeningBalanceLines_LineId] CHECK ([LineId] IS NULL OR [LineId]<>'00000000-0000-0000-0000-000000000000'),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_Number] CHECK ([LineNumber]>0),
     CONSTRAINT [CK_AccountingOpeningBalanceLines_Side] CHECK (([Debit]>0 AND [Credit]=0) OR ([Credit]>0 AND [Debit]=0))
 );
 GO
 CREATE INDEX [IX_AccountingOpeningBalanceLines_Account]
     ON [dbo].[AccountingOpeningBalanceLines]([AccountId],[BatchId]) INCLUDE([Debit],[Credit],[PartyId],[CostCenterId]);
+GO
+CREATE UNIQUE INDEX [UX_AccountingOpeningBalanceLines_LineId]
+    ON [dbo].[AccountingOpeningBalanceLines]([BatchId],[LineId]) WHERE [LineId] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_AccountingOpeningBalanceLines_Payable]
+    ON [dbo].[AccountingOpeningBalanceLines]([BatchId],[ExistingPayableId]) WHERE [ExistingPayableId] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_AccountingOpeningBalanceLines_Receivable]
+    ON [dbo].[AccountingOpeningBalanceLines]([BatchId],[ExistingReceivableId]) WHERE [ExistingReceivableId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[AccountingAccountMappings]
@@ -342,17 +397,33 @@ CREATE TABLE [dbo].[AccountingPostingJobs]
     [CompletedAt] DATETIMEOFFSET(7) NULL,
     [ResolvedCostCenterId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    -- Accepted treasury configuration, with unresolved references retained as NULL.
+    -- Retrying may resolve missing accounts but never replaces an accepted account.
+    [ResolvedBankAccountsJson] NVARCHAR(MAX) NULL,
+    -- Immutable mapping identities from the accepted configuration. This is a
+    -- configuration snapshot, not a second ledger or editable account balance.
+    [ResolvedAccountMappingsJson] NVARCHAR(MAX) NULL,
     CONSTRAINT [PK_AccountingPostingJobs] PRIMARY KEY CLUSTERED ([AccountingPostingJobId]),
     CONSTRAINT [UQ_AccountingPostingJobs_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType]),
+    CONSTRAINT [UQ_AccountingPostingJobs_Scope_Source_Job] UNIQUE
+      ([TenantId],[BusinessId],[SourceDocumentId],[SourceDocumentType],[AccountingPostingJobId]),
     CONSTRAINT [FK_AccountingPostingJobs_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_AccountingPostingJobs_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_AccountingPostingJobs_ResolvedCostCenter] FOREIGN KEY ([BusinessId],[ResolvedCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([BusinessId],[CostCenterId]),
+    CONSTRAINT [CK_AccountingPostingJobs_BankAccounts] CHECK ([ResolvedBankAccountsJson] IS NULL OR
+      (ISJSON([ResolvedBankAccountsJson])=1 AND LEFT(LTRIM([ResolvedBankAccountsJson]),1)=N'[')),
+    CONSTRAINT [CK_AccountingPostingJobs_AccountMappings] CHECK ([ResolvedAccountMappingsJson] IS NULL OR
+      (ISJSON([ResolvedAccountMappingsJson])=1 AND LEFT(LTRIM([ResolvedAccountMappingsJson]),1)=N'[')),
     CONSTRAINT [CK_AccountingPostingJobs_Status] CHECK ([Status] IN (N'Pending',N'AccountingPendingConfiguration',N'CommercialEffectsApplied',N'Posted')),
     CONSTRAINT [CK_AccountingPostingJobs_Attempts] CHECK ([AttemptCount]>=0)
 );
 GO
 CREATE INDEX [IX_AccountingPostingJobs_Tenant_Status_Date]
     ON [dbo].[AccountingPostingJobs]([TenantId],[Status],[OccurredAt]) INCLUDE([BusinessId],[SourceDocumentId],[SourceDocumentType]);
+GO
+CREATE INDEX [IX_AccountingPostingJobs_Scope_Date]
+    ON [dbo].[AccountingPostingJobs]([TenantId],[BusinessId],[OccurredAt] DESC,[SourceDocumentId],[SourceDocumentType])
+    INCLUDE([Status]);
 GO
 
 CREATE TABLE [dbo].[AccountingEntries]
@@ -366,7 +437,7 @@ CREATE TABLE [dbo].[AccountingEntries]
     [EntryNumber] NVARCHAR(24) NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     [PostedAt] DATETIMEOFFSET(7) NOT NULL,
-    [Description] NVARCHAR(300) NOT NULL,
+    [Description] NVARCHAR(500) NOT NULL,
     [DebitTotal] DECIMAL(19,4) NOT NULL,
     [CreditTotal] DECIMAL(19,4) NOT NULL,
     [SourcePayloadHash] BINARY(32) NOT NULL,
@@ -398,9 +469,13 @@ CREATE TABLE [dbo].[AccountingEntryLines]
     [CostCenterId] UNIQUEIDENTIFIER NULL,
     [CostCenterCodeSnapshot] NVARCHAR(32) NULL,
     [CostCenterNameSnapshot] NVARCHAR(160) NULL,
-    [Description] NVARCHAR(300) NOT NULL,
+    [Description] NVARCHAR(500) NOT NULL,
     [Debit] DECIMAL(19,4) NOT NULL,
     [Credit] DECIMAL(19,4) NOT NULL,
+    -- Frozen with the journal line. Historical lines remain unknown, not zero.
+    [BaseAmount] DECIMAL(19,4) NULL,
+    [SourceLineId] UNIQUEIDENTIFIER NULL,
+    CONSTRAINT [CK_AccountingEntryLines_SourceIdentity] CHECK ([SourceLineId] IS NULL OR [SourceLineId]<>'00000000-0000-0000-0000-000000000000'),
     CONSTRAINT [PK_AccountingEntryLines] PRIMARY KEY CLUSTERED ([EntryId],[LineNumber]),
     CONSTRAINT [FK_AccountingEntryLines_Entry] FOREIGN KEY ([EntryId]) REFERENCES [dbo].[AccountingEntries]([EntryId]),
     CONSTRAINT [FK_AccountingEntryLines_Account] FOREIGN KEY ([AccountId]) REFERENCES [dbo].[AccountingAccounts]([AccountId]),
@@ -411,5 +486,11 @@ CREATE TABLE [dbo].[AccountingEntryLines]
 );
 GO
 CREATE INDEX [IX_AccountingEntryLines_Account_Entry]
-    ON [dbo].[AccountingEntryLines]([AccountId],[EntryId]) INCLUDE([Debit],[Credit],[PartyId],[CostCenterId]);
+    ON [dbo].[AccountingEntryLines]([AccountId],[EntryId]) INCLUDE([Debit],[Credit],[PartyId],[CostCenterId],[BaseAmount]);
+GO
+CREATE INDEX [IX_AccountingEntryLines_Party_Entry]
+    ON [dbo].[AccountingEntryLines]([PartyId],[EntryId]) WHERE [PartyId] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_AccountingEntryLines_SourceLine]
+    ON [dbo].[AccountingEntryLines]([EntryId],[SourceLineId]) WHERE [SourceLineId] IS NOT NULL;
 GO

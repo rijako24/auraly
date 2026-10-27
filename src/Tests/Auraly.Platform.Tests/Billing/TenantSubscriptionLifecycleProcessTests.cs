@@ -35,8 +35,10 @@ public sealed class TenantSubscriptionLifecycleProcessTests
     [InlineData(3, "PastDue", "Overdue:3")]
     [InlineData(6, "PastDue", "Overdue:6")]
     [InlineData(9, "PastDue", "Overdue:9")]
-    [InlineData(10, "Suspended", "Suspended:10")]
-    public void Evaluate_ImplementsConfiguredGraceCalendar(
+    [InlineData(10, "PastDue", "Overdue:9")]
+    [InlineData(40, "PastDue", "Overdue:39")]
+    [InlineData(370, "PastDue", "Overdue:369")]
+    public void Evaluate_RemindsWithoutSuspendingOrEndingTheCalendar(
         int daysOverdue, string? expectedStatus, string? expectedEvent)
     {
         var dueAt = new DateTimeOffset(2026, 9, 10, 0, 0, 0, TimeSpan.Zero);
@@ -48,12 +50,25 @@ public sealed class TenantSubscriptionLifecycleProcessTests
         result.SubscriptionStatus.Should().Be(expectedStatus);
         result.EventKey.Should().Be(expectedEvent);
         result.SendEmail.Should().Be(expectedEvent is not null);
-        result.NextEvaluationAt.Should().Be(daysOverdue >= 10 ? null
-            : daysOverdue >= 9 ? dueAt.AddDays(10)
-            : daysOverdue >= 6 ? dueAt.AddDays(9)
-            : daysOverdue >= 3 ? dueAt.AddDays(6)
-            : daysOverdue >= 0 ? dueAt.AddDays(3)
+        result.NextEvaluationAt.Should().Be(daysOverdue >= 0
+            ? dueAt.AddDays((daysOverdue / 3 + 1) * 3)
             : dueAt);
+        result.Message.Should().NotContain("suspender");
+    }
+
+    [Fact]
+    public void Evaluate_UsesTheRenewalBeingBilledAndWakesForTheNextCharge()
+    {
+        var candidate = Candidate();
+        var next = candidate.CurrentPeriodEnd.AddMonths(2);
+        var result = TenantSubscriptionLifecycleProcess.Evaluate(candidate with
+        {
+            RenewalPeriodStart = next,
+            NextRenewalEvaluationAt = next.AddDays(2)
+        }, next);
+        result.SubscriptionStatus.Should().Be("PastDue");
+        result.NextEvaluationAt.Should().Be(next.AddDays(2));
+        result.EventKey.Should().BeNull();
     }
 
     [Fact]

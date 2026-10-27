@@ -165,10 +165,10 @@ public sealed class SqlSalesReturnStore(
                     BankAccountId = settlement.BankAccountId
                 };
             }
-            var number = await AllocateNumberAsync(
-                connection, transaction, user.BusinessId, cancellationToken);
             var now = timeProvider.GetUtcNow();
-            var sequence = await AllocateSequenceAsync(
+            var number = await AllocateNumberAsync(
+                connection, transaction, user.TenantId, user.BusinessId, now, cancellationToken);
+            var sequence = await SqlOperationalDocumentAllocator.AllocateSequenceAsync(
                 connection, transaction, user.BusinessId, now, cancellationToken);
             var payload = new SalesReturnDocumentPayload(
                 user.TenantId, user.BusinessId, request.ReturnId, request.WarehouseId,
@@ -393,16 +393,15 @@ public sealed class SqlSalesReturnStore(
                   WHEN @AccountingEnabled=1 AND EXISTS(
                     SELECT 1 FROM accounting.BankAccounts b WITH(UPDLOCK,HOLDLOCK)
                     INNER JOIN dbo.Businesses business ON business.TenantId=b.TenantId
-                    INNER JOIN dbo.AccountingAccounts account
-                      ON account.AccountId=b.AccountingAccountId AND account.TenantId=b.TenantId
+                    CROSS APPLY accounting.BankPostingAccount(b.TenantId,@BusinessId,b.BankAccountId) account
                     WHERE b.BankAccountId=@BankAccountId AND business.BusinessId=@BusinessId
-                      AND b.IsActive=1 AND account.IsActive=1 AND account.AllowsPosting=1) THEN 1
+                      AND b.IsActive=1 AND account.AccountId IS NOT NULL) THEN 1
                   ELSE 0 END;
                 """, connection, transaction);
             bank.Parameters.AddWithValue("@BankAccountId", (object?)request.BankAccountId ?? DBNull.Value);
             bank.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             if (Convert.ToInt64(await bank.ExecuteScalarAsync(cancellationToken)) != 1)
-                throw new SalesReturnValidationException("La contabilidad activa requiere una cuenta bancaria de salida válida.");
+                throw new SalesReturnValidationException("La contabilidad activa requiere una cuenta bancaria de salida activa y un auxiliar único para esta sede.");
             return new(null, request.BankAccountId, null, null);
         }
 
@@ -435,61 +434,23 @@ public sealed class SqlSalesReturnStore(
     }
 
     private static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT TOP(1) ds.DocumentSeriesId,ds.Prefix,ds.SeriesCode,ds.Padding,
-                   ds.RangeEnd,COALESCE(c.NextConsecutive,ds.RangeStart)
-            FROM dbo.DocumentSeries ds WITH (UPDLOCK,HOLDLOCK)
-            LEFT JOIN dbo.DocumentSeriesCursors c WITH (UPDLOCK,HOLDLOCK)
-              ON c.DocumentSeriesId=ds.DocumentSeriesId
-            WHERE ds.BusinessId=@BusinessId AND ds.DocumentType=N'SalesReturn'
-              AND ds.DeviceId IS NULL AND ds.IsActive=1
-            ORDER BY ds.DocumentSeriesId;
-            """;
-        Guid id; string prefix; string code; byte padding; long end; long consecutive;
-        await using (var command = new SqlCommand(sql, connection, transaction))
-        {
-            command.Parameters.AddWithValue("@BusinessId", businessId);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken))
-                throw new SalesReturnValidationException(
-                    "No active SalesReturn document series is configured for the business.");
-            id=reader.GetGuid(0); prefix=reader.GetString(1); code=reader.GetString(2);
-            padding=reader.GetByte(3); end=reader.GetInt64(4); consecutive=reader.GetInt64(5);
-        }
-        if (consecutive > end) throw new SalesReturnValidationException(
-            "The SalesReturn document series is exhausted.");
-        await using var update = new SqlCommand("""
-            IF EXISTS (SELECT 1 FROM dbo.DocumentSeriesCursors WHERE DocumentSeriesId=@Id)
-              UPDATE dbo.DocumentSeriesCursors SET NextConsecutive=@Next,UpdatedAt=@Now WHERE DocumentSeriesId=@Id;
-            ELSE INSERT dbo.DocumentSeriesCursors(DocumentSeriesId,NextConsecutive,UpdatedAt)
-              VALUES(@Id,@Next,@Now);
-            """, connection, transaction);
-        update.Parameters.AddWithValue("@Id", id);
-        update.Parameters.AddWithValue("@Next", consecutive + 1);
-        update.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
-        await update.ExecuteNonQueryAsync(cancellationToken);
-        return AuralyDocumentNumberAssignment.Create(id, AuralyDocumentTypes.SalesReturn,
-            prefix, code, consecutive, padding);
-    }
-
-    private static async Task<long> AllocateSequenceAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId, Guid businessId,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
-        await using var command = new SqlCommand("""
-            IF NOT EXISTS (SELECT 1 FROM dbo.BusinessProcessingCursors WITH (UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId)
-              INSERT dbo.BusinessProcessingCursors(BusinessId,LastAssignedSequence,LastCompletedSequence,UpdatedAt)
-                VALUES(@BusinessId,0,0,@Now);
-            UPDATE dbo.BusinessProcessingCursors WITH (UPDLOCK,HOLDLOCK)
-            SET LastAssignedSequence=LastAssignedSequence+1,UpdatedAt=@Now
-            OUTPUT inserted.LastAssignedSequence WHERE BusinessId=@BusinessId;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@Now", now);
-        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        try
+        {
+            return await SqlOperationalDocumentAllocator.AllocateExistingNumberAsync(
+                connection, transaction, tenantId, businessId, AuralyDocumentTypes.SalesReturn, now, cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number == 51730)
+        {
+            throw new SalesReturnValidationException(
+                "No active SalesReturn document series is configured for the business.", exception);
+        }
+        catch (SqlException exception) when (exception.Number == 51731)
+        {
+            throw new SalesReturnValidationException("The SalesReturn document series is exhausted.", exception);
+        }
     }
 
     private static async Task InsertReturnAsync(
@@ -607,6 +568,14 @@ public sealed class SqlSalesReturnStore(
             SELECT @LockedExpenseCount=COUNT(*) FROM dbo.Expenses WITH(UPDLOCK,HOLDLOCK)
             WHERE SourceInvoiceId=@DocumentId AND ExpenseId IN (
               SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@Ids));
+            DECLARE @LockedSource uniqueidentifier;
+            SELECT @LockedSource=source.SourceDocumentId FROM dbo.Expenses expense
+            JOIN dbo.AccountingSourceDocuments source WITH(UPDLOCK,HOLDLOCK)
+              ON source.SourceDocumentId=expense.ExpenseId AND source.SourceDocumentType=N'Expense'
+              AND source.BusinessId=expense.BusinessId
+            WHERE expense.SourceInvoiceId=@DocumentId AND expense.ExpenseId IN(
+              SELECT TRY_CONVERT(uniqueidentifier,[value]) FROM OPENJSON(@Ids))
+            ORDER BY source.SourceDocumentId;
             WITH Requested AS (
               SELECT DISTINCT TRY_CONVERT(uniqueidentifier,[value]) AppliedChargeId
               FROM OPENJSON(@Ids)
@@ -635,6 +604,10 @@ public sealed class SqlSalesReturnStore(
             WHERE payload.DocumentId=@DocumentId
               AND payload.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
               AND returned.AppliedChargeId IS NULL
+              AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntries entry
+                CROSS APPLY purchasing.ReceiptCostVoucherLines(entry.EntryId) cost
+                WHERE entry.SourceDocumentId=charge.AppliedChargeId AND entry.SourceDocumentType=N'Expense'
+                  AND cost.AssignedFunctionalAmount>0)
               AND (expense.Status=N'Processed' OR (expense.Status=N'Cancelled' AND charge.InvoicedAmount>0));
             """, connection, transaction);
         command.Parameters.AddWithValue("@Ids", JsonSerializer.Serialize(requestedIds));
@@ -648,7 +621,7 @@ public sealed class SqlSalesReturnStore(
                 reader.GetDecimal(12), reader.GetGuid(13), reader.GetGuid(14),
                 reader.IsDBNull(15) ? null : reader.GetGuid(15)));
         if (values.Count != requestedIds.Count)
-            throw new SalesReturnConflictException("Uno o más cargos ya fueron devueltos, tienen una anulación en proceso o no pertenecen a la factura.");
+            throw new SalesReturnConflictException("Uno o más cargos ya fueron devueltos, tienen una anulación en proceso, costos distribuidos en compras o no pertenecen a la factura.");
         return values;
     }
 

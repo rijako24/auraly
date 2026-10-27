@@ -1390,7 +1390,7 @@ public sealed class PosConfigurationTests
                     Guid.NewGuid(), "Payable", "PGP-1", now,
                     "Nombre del navegador", null, null, null, null,
                     "Sede", null, null, "Proveedor", "NIT 800", "Cajero", 10m,
-                    [new("FC-1", 10m)], [new("Efectivo", 10m, null)]),
+                    [new("FC-1", 10m)], [new("Efectivo", 10m, null)], "Processed"),
                 null,
                 CancellationToken.None);
             await new PosWorkSessionClosurePrinter(
@@ -1409,6 +1409,7 @@ public sealed class PosConfigurationTests
             Assert.Contains("@page{size:215.9mm 139.7mm", rendered.Documents[1]);
             Assert.Contains("NIT 900123456-7", rendered.Documents[1]);
             Assert.Contains("Firma de recibido", rendered.Documents[1]);
+            Assert.Contains("Abono aplicado", rendered.Documents[1]);
             Assert.DoesNotContain("Nombre del navegador", rendered.Documents[1]);
             Assert.Empty(raw.PrinterNames);
         }
@@ -1451,6 +1452,7 @@ public sealed class PosConfigurationTests
             Assert.Contains("@page{size:215.9mm 139.7mm", rendered.Documents[1]);
             Assert.Contains("@page{size:215.9mm 165.1mm", rendered.Documents[2]);
             Assert.Contains("@page{size:Letter portrait", rendered.Documents[3]);
+            Assert.All(rendered.Documents, html => Assert.Contains("Aplicaci&#243;n sin confirmar", html));
         }
         finally
         {

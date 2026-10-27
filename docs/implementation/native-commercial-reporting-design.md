@@ -100,6 +100,23 @@ guardan con signo negativo. Se conservan proveedor, bodega, producto, moneda,
 cantidades y valores históricos. Los agregados se calculan desde estos hechos;
 no se crea una tabla por pantalla.
 
+La proyección de líneas de recepción y devolución de compra se persiste por
+conjunto en `SqlSalesReportingProjectionWriter.ProjectPurchaseAsync`: un comando
+por documento, sin escrituras por partida. Conserva las identidades de origen,
+los signos y escalas existentes y valida que se escriba el lote completo dentro
+de la misma transacción de Reporting. Esta agrupación no cambia la semántica ni
+la versión de los hechos; tampoco crea otro writer o trabajo. El gate del
+recorrido de compra compara una y veinte partidas, además de verificar que los
+hechos proyectados coincidan con las líneas operativas y no se dupliquen en replay.
+
+La devolución de venta también proyecta sus partidas por conjunto mediante
+`InsertReturnLineFactsAsync` del mismo writer. Conserva los importes con signo,
+el redondeo individual de costo, la atribución y la versión existentes; la suma
+del costo procede de ese mismo lote. Un lote incompleto falla dentro de la
+transacción de Reporting. No cambia los snapshots comerciales, los agregados ni
+la política de reconstrucción. La evidencia del incremento y sus límites están
+en [devoluciones de venta](sales-returns-slice-design.md).
+
 ## Aislamiento por identidad
 
 El alcance se resuelve en servidor mediante `AppUsers.PartyId` y la relación

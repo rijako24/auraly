@@ -1,5 +1,9 @@
+using System.Data;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Fiscal;
@@ -12,8 +16,385 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 [Trait("EngineCertification", "Operational")]
-public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
+public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixture, Xunit.Abstractions.ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Twenty_receipt_lines_keep_the_same_SQL_trip_budget_and_preserve_line_history(bool distinctProducts)
+    {
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        var measured = new List<System.Collections.Concurrent.ConcurrentDictionary<string, int>>();
+        async Task<int> ConfirmAsync(ConfirmGoodsReceiptRequest request)
+        {
+            var commands = new System.Collections.Concurrent.ConcurrentDictionary<string, int>();
+            var elapsedByCommand = new System.Collections.Concurrent.ConcurrentDictionary<string, double>();
+            using var activity = new System.Diagnostics.Activity("receipt-batch-measurement")
+                .SetIdFormat(System.Diagnostics.ActivityIdFormat.W3C).Start();
+            static bool IsAuthorization(SqlCommand command) => command.CommandType == CommandType.StoredProcedure
+                && command.CommandText == "dbo.ExecutionAccessResolve";
+            using var authorization = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
+                commandFilter: IsAuthorization);
+            using var counter = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
+                commandFilter: command => !IsAuthorization(command),
+                beforeExecute: command => commands.AddOrUpdate(command.CommandText, 1, (_, count) => count + 1),
+                afterExecute: (command, milliseconds) => elapsedByCommand.AddOrUpdate(command.CommandText,
+                    milliseconds, (_, elapsed) => elapsed + milliseconds));
+            using var message = CreateMessage(request, $"receipt-batch-{request.DocumentId:N}");
+            message.Headers.Add("traceparent", activity.Id);
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            using var response = await client.SendAsync(message);
+            started.Stop();
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+            Assert.InRange(authorization.Count, 0, 1);
+            if (started.Elapsed >= TimeSpan.FromSeconds(2))
+                foreach (var sample in elapsedByCommand.OrderByDescending(item => item.Value).Take(5))
+                    output.WriteLine($"SQL {sample.Value:F1} ms: {new string(sample.Key.ReplaceLineEndings(" ").Take(220).ToArray())}");
+            if (request.Lines.Count > 1)
+                Assert.True(started.Elapsed < TimeSpan.FromSeconds(2), $"La recepción demoró {started.Elapsed}.");
+            output.WriteLine($"{request.Lines.Count} partidas: {counter.Count} comandos del recorrido + {authorization.Count} autorización, {started.Elapsed.TotalMilliseconds:F1} ms.");
+            measured.Add(commands);
+            return counter.Count;
+        }
+        await ConfirmAsync(CreateRequest());
+        var single = await ConfirmAsync(CreateRequest());
+        var request = CreateRequest();
+        var productIds = Enumerable.Range(1, 20).Select(_ => distinctProducts ? Guid.NewGuid() : fixture.ProductId).ToArray();
+        if (distinctProducts)
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var seed = new SqlCommand("""
+                DECLARE @Products TABLE(ProductId uniqueidentifier PRIMARY KEY);
+                DECLARE @TaxId uniqueidentifier=NEWID();
+                INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+                VALUES(@TaxId,@TenantId,LEFT(CONVERT(nvarchar(36),@TaxId),32),N'01',N'IVA prueba lote',19,1,SYSDATETIMEOFFSET());
+                INSERT @Products SELECT ProductId FROM OPENJSON(@Json) WITH(ProductId uniqueidentifier '$');
+                INSERT dbo.Products(ProductId,TenantId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,
+                  TaxProfileId,PurchaseTaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+                SELECT input.ProductId,source.TenantId,CONVERT(nvarchar(36),input.ProductId),
+                  CONVERT(nvarchar(36),input.ProductId),CONVERT(nvarchar(36),input.ProductId),
+                  N'Lote recepción',source.Description,COALESCE(source.BaseUnitCode,N'EA'),COALESCE(source.TaxProfileId,@TaxId),source.PurchaseTaxProfileId,
+                  1,source.IsWeighable,1,source.Source,source.Currency,SYSDATETIMEOFFSET()
+                FROM @Products input CROSS JOIN dbo.Products source WHERE source.ProductId=@Parent;
+                INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
+                  CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,
+                  RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt)
+                SELECT NEWID(),source.BusinessId,input.ProductId,source.Amount,source.PreparedAmount,source.CurrencyCode,
+                  source.CostBasisType,source.CostBasisAmount,source.TargetMarginPercent,source.EffectiveMarginPercent,
+                  source.InputMode,source.RoundingIncrement,source.RoundingMode,SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET()
+                FROM @Products input CROSS JOIN dbo.ProductPrices source
+                WHERE source.ProductId=@Parent AND source.BusinessId=@BusinessId AND source.IsActive=1;
+                INSERT dbo.SupplierProducts(SupplierProductId,ProductId,SupplierId,TenantId,IsPrimary,IsActive,CreatedAt)
+                SELECT NEWID(),ProductId,@SupplierId,@TenantId,1,1,SYSDATETIMEOFFSET() FROM @Products;
+                """, connection);
+            seed.Parameters.AddWithValue("@Json", JsonSerializer.Serialize(productIds));
+            seed.Parameters.AddWithValue("@Parent", fixture.ProductId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            seed.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
+            await seed.ExecuteNonQueryAsync();
+        }
+        request = request with { Lines = Enumerable.Range(1, 20).Select(number => request.Lines.Single() with
+            { LineNumber = number, ProductId = productIds[number - 1], UnitCost = 6_000m + number, DiscountAmount = 0m }).ToArray() };
+        var many = await ConfirmAsync(request);
+        foreach (var command in measured[2].Where(item => item.Value > measured[1].GetValueOrDefault(item.Key)))
+            output.WriteLine($"Comando creció {measured[1].GetValueOrDefault(command.Key)} → {command.Value}: {command.Key[..Math.Min(command.Key.Length, 220)]}");
+        Assert.Equal("Completed", (await ReadJobAsync(request.DocumentId)).Status);
+        Assert.Equal(20, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id", request.DocumentId));
+        Assert.Equal(20, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.SupplierCostObservations WHERE SourceDocumentId=@Id", request.DocumentId));
+        Assert.Equal(20, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id", request.DocumentId));
+        Assert.Equal(distinctProducts ? 20 : 1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id AND Status=N'PendingReview'", request.DocumentId));
+        if (!distinctProducts)
+        {
+            Assert.Equal(6_019m, await ScalarAsync<decimal>("SELECT PreviousUnitCost FROM dbo.SupplierProductLatestCosts WHERE SourceDocumentId=@Id", request.DocumentId));
+            Assert.Equal(6_020m, await ScalarAsync<decimal>("SELECT LatestUnitCost FROM dbo.SupplierProductLatestCosts WHERE SourceDocumentId=@Id", request.DocumentId));
+        }
+        await ConfirmAsync(request);
+        Assert.Equal(20, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.SupplierCostObservations WHERE SourceDocumentId=@Id", request.DocumentId));
+        Assert.Equal(20, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.ProductPricePreparations WHERE SourceDocumentId=@Id", request.DocumentId));
+        Assert.Equal(20, await ScalarAsync<int>("SELECT COUNT(*) FROM reporting.PurchaseReportLineFacts WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'", request.DocumentId));
+        Assert.Equal(0, await ScalarAsync<int>("""
+            SELECT COUNT(*) FROM dbo.GoodsReceiptLines source
+            LEFT JOIN reporting.PurchaseReportLineFacts fact ON fact.SourceDocumentId=source.GoodsReceiptId
+              AND fact.SourceDocumentType=N'GoodsReceipt' AND fact.SourceLineNumber=source.LineNumber
+            WHERE source.GoodsReceiptId=@Id AND (fact.PurchaseFactId IS NULL OR fact.ProductId<>source.ProductId
+              OR fact.Quantity<>source.Quantity OR fact.UnitCost<>source.UnitCost
+              OR fact.DiscountAmount<>source.DiscountAmount OR fact.NetAmount<>source.NetAmount
+              OR fact.TaxAmount<>source.TaxAmount OR fact.TotalAmount<>source.LineTotal);
+            """, request.DocumentId));
+        Assert.True(single > 0 && many <= single, $"Una partida: {single} comandos; veinte: {many}.");
+    }
+
+    [Fact]
+    public async Task Receipt_batch_keeps_linked_presentations_and_all_preparation_history_in_line_order()
+    {
+        var childId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using (var seed = new SqlCommand("""
+            DECLARE @TaxId uniqueidentifier=NEWID();
+            INSERT dbo.TaxProfiles(TaxProfileId,TenantId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxId,@TenantId,LEFT(@Code,32),N'01',N'IVA prueba presentación',19,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,TenantId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,
+              TaxProfileId,PurchaseTaxProfileId,ManageStock,IsWeighable,IsActive,Source,Currency,CreatedAt)
+            SELECT @Child,TenantId,@Code,@Code,@Code,N'Presentación de recepción',Description,COALESCE(BaseUnitCode,N'EA'),
+              COALESCE(TaxProfileId,@TaxId),PurchaseTaxProfileId,0,IsWeighable,1,Source,Currency,SYSDATETIMEOFFSET()
+            FROM dbo.Products WHERE ProductId=@Parent;
+            INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
+              CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,
+              RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt)
+            SELECT NEWID(),BusinessId,@Child,Amount,PreparedAmount,CurrencyCode,CostBasisType,CostBasisAmount,
+              TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,
+              SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET()
+            FROM dbo.ProductPrices WHERE ProductId=@Parent AND BusinessId=@BusinessId AND IsActive=1;
+            INSERT dbo.SupplierProducts(SupplierProductId,ProductId,SupplierId,TenantId,IsPrimary,IsActive,CreatedAt)
+            VALUES(NEWID(),@Child,@SupplierId,@TenantId,1,1,SYSDATETIMEOFFSET());
+            INSERT dbo.ProductLinks(ProductLinkId,TenantId,ChildProductId,ParentProductId,InventoryFactor,
+              PriceFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+            VALUES(NEWID(),@TenantId,@Child,@Parent,2,2,1,1,0,1,SYSDATETIMEOFFSET());
+            """, connection))
+        {
+            seed.Parameters.AddWithValue("@Child", childId);
+            seed.Parameters.AddWithValue("@Parent", fixture.ProductId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            seed.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
+            seed.Parameters.AddWithValue("@Code", $"RB-{childId:N}");
+            await seed.ExecuteNonQueryAsync();
+        }
+        try
+        {
+            var before = await ReadNullableDecimalAsync("QuantityOnHand") ?? 0m;
+            var request = CreateRequest();
+            var original = request.Lines.Single() with { Quantity = 1, DiscountAmount = 0 };
+            request = request with { Lines = [original with { ProductId = childId, LineNumber = 1, UnitCost = 5_000 },
+                original with { LineNumber = 2, UnitCost = 6_000 },
+                original with { ProductId = childId, LineNumber = 3, UnitCost = 4_000 },
+                original with { LineNumber = 4, UnitCost = 7_000 }] };
+            using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
+                PurchasingPermissionCodes.ConfirmGoodsReceipts);
+            using var message = CreateMessage(request, $"receipt-family-{request.DocumentId:N}");
+            using var response = await client.SendAsync(message);
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+            var job = await ReadJobAsync(request.DocumentId);
+            Assert.True(job.Status == "Completed", job.LastError);
+            Assert.Equal(before + 6, await ReadNullableDecimalAsync("QuantityOnHand"));
+            await using var verify = new SqlCommand("""
+                SELECT (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND ProductId=@Parent),
+                  (SELECT COUNT(*) FROM dbo.ProductPricePreparations WHERE ProductId=@Child),
+                  (SELECT COUNT(*) FROM dbo.ProductPricePreparations WHERE ProductId=@Child AND Status=N'Pending'),
+                  (SELECT COUNT(*) FROM dbo.ProductPricePreparations WHERE ProductId=@Child AND Status=N'Superseded'),
+                  (SELECT CostBasisAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Child AND BusinessId=@BusinessId AND Status=N'Pending'),
+                  (SELECT CostBasisAmount FROM dbo.ProductPricePreparations WHERE ProductId=@Parent AND BusinessId=@BusinessId AND Status=N'Pending'),
+                  (SELECT PreviousUnitCost FROM dbo.SupplierProductLatestCosts WHERE SourceDocumentId=@Id AND ProductId=@Child),
+                  (SELECT LatestUnitCost FROM dbo.SupplierProductLatestCosts WHERE SourceDocumentId=@Id AND ProductId=@Child),
+                  (SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id AND ProductId=@Parent);
+                SELECT child.SourceLineNumber,child.CostBasisAmount,root.ObservedUnitCost,child.SourceProductId
+                FROM dbo.ProductPricePreparations child
+                LEFT JOIN dbo.PriceRevisionProposals root ON root.BusinessId=child.BusinessId
+                  AND root.SourceDocumentId=child.SourceDocumentId AND root.ProductId=@Parent
+                  AND root.SourceLineNumber=CASE WHEN child.SourceLineNumber=3 THEN 2 ELSE child.SourceLineNumber END
+                WHERE child.SourceDocumentId=@Id AND child.ProductId=@Child AND child.BusinessId=@BusinessId
+                ORDER BY child.SourceLineNumber;
+                """, connection);
+            verify.Parameters.AddWithValue("@Id", request.DocumentId);
+            verify.Parameters.AddWithValue("@Parent", fixture.ProductId);
+            verify.Parameters.AddWithValue("@Child", childId);
+            verify.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal((4, 4, 1, 3), (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3)));
+            Assert.Equal(reader.GetDecimal(5) * 2, reader.GetDecimal(4));
+            Assert.Equal((5_000m, 4_000m, 2), (reader.GetDecimal(6), reader.GetDecimal(7), reader.GetInt32(8)));
+            Assert.True(await reader.NextResultAsync());
+            for (var line = 1; line <= 4; line++)
+            {
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(line, reader.GetInt32(0));
+                Assert.Equal(fixture.ProductId, reader.GetGuid(3));
+                if (line > 1) Assert.Equal(reader.GetDecimal(2) * 2, reader.GetDecimal(1));
+            }
+            Assert.False(await reader.ReadAsync());
+        }
+        finally
+        {
+            await using var unlink = new SqlCommand("UPDATE dbo.ProductLinks SET IsActive=0 WHERE ChildProductId=@Child;", connection);
+            unlink.Parameters.AddWithValue("@Child", childId);
+            await unlink.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failure_after_supplier_cost_writes_rolls_back_receipt_effects_and_retries_once(bool afterTaxHeader)
+    {
+        var request = CreateRequest();
+        const string snapshotSql = """
+            SELECT (SELECT
+              (SELECT QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt
+               FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId
+               FOR JSON PATH) Balance,
+              (SELECT PreviousUnitCost,LatestUnitCost,SourceDocumentId,SourceLineNumber,ObservedAt
+               FROM dbo.SupplierProductLatestCosts WHERE BusinessId=@BusinessId AND SupplierId=@SupplierId AND ProductId=@ProductId
+               FOR JSON PATH) Supplier,
+              (SELECT ProductPricePreparationId,Status,SupersededAt FROM dbo.ProductPricePreparations
+               WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND Status=N'Pending'
+               ORDER BY ProductPricePreparationId FOR JSON PATH) Price
+            FOR JSON PATH,WITHOUT_ARRAY_WRAPPER);
+            """;
+        var before = await ScalarAsync<string>(snapshotSql, request.DocumentId);
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
+                PurchasingPermissionCodes.ConfirmGoodsReceipts);
+            using var message = CreateMessage(request, $"receipt-rollback-{request.DocumentId:N}");
+            using var response = await client.SendAsync(message);
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            Assert.Equal(request.DocumentId, signal.DocumentId);
+            using var scope = fixture.CreateScope();
+            var worker = scope.ServiceProvider.GetRequiredService<DocumentProcessingWorker>();
+            var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+            Assert.StartsWith("AuralyServerSlice_", database);
+            using (var fault = new InventoryBalanceProcessingTests.CommandCounter(database,
+                commandFilter: command => afterTaxHeader
+                    ? command.CommandText.Contains("INSERT dbo.DocumentWithholdingLines", StringComparison.Ordinal)
+                    : command.CommandText.Contains("INSERT dbo.SupplierCostObservations(", StringComparison.Ordinal)
+                        && command.Parameters["@DocumentId"].Value is Guid id && id == request.DocumentId,
+                beforeExecute: command =>
+                {
+                    if (afterTaxHeader)
+                    {
+                        command.CommandText = command.CommandText.Replace("INSERT dbo.DocumentWithholdingLines",
+                            "THROW 51999,'Injected failure after the persisted tax header.',1; INSERT dbo.DocumentWithholdingLines",
+                            StringComparison.Ordinal);
+                        return;
+                    }
+                    var rows = JsonNode.Parse((string)command.Parameters["@LinesJson"].Value)!.AsArray();
+                    rows[0]!["RawPrice"] = -1m;
+                    command.Parameters["@LinesJson"].Value = rows.ToJsonString();
+                }))
+            {
+                var error = await Assert.ThrowsAsync<SqlException>(() => worker.ProcessOneAsync(signal));
+                Assert.Contains(error.Errors.Cast<SqlError>(), item => item.Number == (afterTaxHeader ? 51999 : 547));
+                Assert.Equal(1, fault.Count);
+            }
+            Assert.Equal(before, await ScalarAsync<string>(snapshotSql, request.DocumentId));
+            Assert.Equal(0, await ScalarAsync<int>("""
+                SELECT (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.SupplierCostObservations WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.Payables WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.DocumentWithholdingSnapshots WHERE DocumentId=@Id);
+                """, request.DocumentId));
+            Assert.Equal("Accepted", await ScalarAsync<string>("SELECT Status FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id", request.DocumentId));
+            Assert.Equal("RetryScheduled", (await ReadJobAsync(request.DocumentId)).Status);
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var due = new SqlCommand("SELECT AvailableAt FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id;", connection);
+            due.Parameters.AddWithValue("@Id", request.DocumentId);
+            await ServerSliceFixture.WaitUntilAvailableAsync(Assert.IsType<DateTimeOffset>(await due.ExecuteScalarAsync()));
+            Assert.Equal(DocumentProcessingResult.Processed, await worker.ProcessOneAsync(signal));
+            Assert.Equal(DocumentProcessingResult.AlreadyProcessed, await worker.ProcessOneAsync(signal));
+            Assert.Equal(1, await CountAsync("InventoryMovements", request.DocumentId));
+            Assert.Equal(1, await CountAsync("SupplierCostObservations", request.DocumentId));
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id", request.DocumentId));
+            Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.DocumentWithholdingSnapshots WHERE DocumentId=@Id", request.DocumentId));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            fixture.DrainDocumentSignals();
+        }
+    }
+
+    [Fact]
+    public async Task Immediately_due_purchase_opens_one_commercial_payable_when_accounting_is_disabled()
+    {
+        var request = CreateRequest();
+        request = request with { DueDate = request.SupplierInvoiceDate };
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        // Create the connection-scoped temp table outside the parameterized
+        // command; a table created inside sp_executesql ends with that scope.
+        await using (var snapshot = new SqlCommand("""
+            CREATE TABLE #SettingsBefore(Status nvarchar(16),EffectiveFrom date,
+              ActivatedAt datetimeoffset(7),ActivatedByUserId uniqueidentifier);
+            """, connection))
+            await snapshot.ExecuteNonQueryAsync();
+        await using (var disable = new SqlCommand("""
+            INSERT #SettingsBefore SELECT Status,EffectiveFrom,ActivatedAt,ActivatedByUserId
+            FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId;
+            UPDATE dbo.AccountingTenantSettings SET Status=N'Disabled',EffectiveFrom=NULL,
+              ActivatedAt=NULL,ActivatedByUserId=NULL WHERE TenantId=@TenantId;
+            """, connection))
+        {
+            disable.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await disable.ExecuteNonQueryAsync();
+        }
+        try
+        {
+            using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
+                PurchasingPermissionCodes.ConfirmGoodsReceipts);
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                using var message = CreateMessage(request, $"immediate-commercial-{request.DocumentId:N}");
+                using var response = await client.SendAsync(message);
+                Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+            }
+            await using var verify = new SqlCommand("""
+                SELECT payable.OutstandingAmount,payable.DueDate,
+                  CONVERT(decimal(19,4),JSON_VALUE(source.PayloadJson,'$.withholding.netAmount')),
+                  source.AccountingEntryRequired,job.AccountingEntryRequired,job.Status,
+                  (SELECT COUNT(*) FROM dbo.Payables WHERE SourceDocumentId=@Id),
+                  (SELECT COUNT(*) FROM dbo.PayableTransactions WHERE SourceDocumentId=@Id),
+                  (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id),
+                  (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id),
+                  payable.OpeningEntryId,payable.OpeningEntryLineNumber
+                FROM dbo.Payables payable
+                JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=payable.SourceDocumentId
+                  AND source.SourceDocumentType=payable.SourceDocumentType AND source.BusinessId=payable.BusinessId
+                JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=source.SourceDocumentId
+                  AND job.SourceDocumentType=source.SourceDocumentType AND job.BusinessId=source.BusinessId
+                WHERE payable.SourceDocumentId=@Id AND payable.BusinessId=@BusinessId;
+                """, connection);
+            verify.Parameters.AddWithValue("@Id", request.DocumentId);
+            verify.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(reader.GetDecimal(2), reader.GetDecimal(0));
+            Assert.True(reader.GetDecimal(0) > 0);
+            Assert.Equal(request.SupplierInvoiceDate!.Value.Date, reader.GetDateTimeOffset(1).Date);
+            Assert.False(reader.GetBoolean(3));
+            Assert.False(reader.GetBoolean(4));
+            Assert.Equal("CommercialEffectsApplied", reader.GetString(5));
+            Assert.Equal(1, reader.GetInt32(6));
+            Assert.Equal(1, reader.GetInt32(7));
+            Assert.Equal(0, reader.GetInt32(8));
+            Assert.Equal(1, reader.GetInt32(9));
+            Assert.True(reader.IsDBNull(10));
+            Assert.True(reader.IsDBNull(11));
+            Assert.False(await reader.ReadAsync());
+        }
+        finally
+        {
+            await using var restore = new SqlCommand("""
+                UPDATE settings SET Status=previous.Status,EffectiveFrom=previous.EffectiveFrom,
+                  ActivatedAt=previous.ActivatedAt,ActivatedByUserId=previous.ActivatedByUserId
+                FROM dbo.AccountingTenantSettings settings CROSS JOIN #SettingsBefore previous
+                WHERE settings.TenantId=@TenantId;
+                """, connection);
+            restore.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await restore.ExecuteNonQueryAsync();
+        }
+    }
+
     [Fact]
     public async Task Workspace_options_expose_persisted_catalogs_required_by_cost_document_selectors()
     {
@@ -93,6 +474,16 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(2, await ScalarAsync<int>(
                 "SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id", receipt.DocumentId));
 
+            var firstEvidence = await ReadValuationEvidenceAsync(receipt.DocumentId);
+            Assert.Equal("WeightedAverageReceipt", firstEvidence.GetProperty("ValuationMode").GetString());
+            Assert.Equal("SharedTenant", firstEvidence.GetProperty("CostPoolScope").GetString());
+            Assert.Equal(quantityBefore + otherQuantity, firstEvidence.GetProperty("PoolQuantityBefore").GetDecimal());
+            Assert.Equal(quantityBefore + otherQuantity + 10m, firstEvidence.GetProperty("PoolQuantityAfter").GetDecimal());
+            Assert.Equal(valueBefore + otherQuantity * otherAverage, firstEvidence.GetProperty("PoolInventoryValueBefore").GetDecimal());
+            Assert.Equal((await ReadNullableDecimalAsync("InventoryValue") ?? 0m) +
+                await ReadBalanceAsync(sharedBusinessId, sharedWarehouseId, "InventoryValue"),
+                firstEvidence.GetProperty("PoolInventoryValueAfter").GetDecimal());
+
             var reverseReceipt = CreateRequest() with
             {
                 DocumentId = Guid.NewGuid(),
@@ -136,6 +527,43 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(2, await ScalarAsync<int>(
                 "SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id",
                 reverseReceipt.DocumentId));
+            Assert.Equal(firstEvidence.GetRawText(), (await ReadValuationEvidenceAsync(receipt.DocumentId)).GetRawText());
+            var originalEpoch = await ScalarAsync<Guid>(
+                "SELECT CostPoolEpochId FROM dbo.InventoryMovements WHERE DocumentId=@Id", receipt.DocumentId);
+            var initialSharedEpoch = originalEpoch;
+            Assert.Equal(originalEpoch, await ScalarAsync<Guid>(
+                "SELECT CostPoolEpochId FROM dbo.InventoryMovements WHERE DocumentId=@Id", reverseReceipt.DocumentId));
+            foreach (var shares in new[] { false, true })
+            {
+                await ExecuteAsync("UPDATE dbo.Businesses SET SharesProductPrices=@PreviousShares WHERE BusinessId=@BusinessId;",
+                    sharedBusinessId, sharedWarehouseId, otherQuantity, otherAverage, shares);
+                var changed = CreateRequest();
+                using var changedMessage = CreateMessage(changed, $"changed-pool-{changed.DocumentId:N}");
+                using var changedResponse = await client.SendAsync(changedMessage);
+                Assert.True(changedResponse.StatusCode == HttpStatusCode.Accepted, await changedResponse.Content.ReadAsStringAsync());
+                Assert.Equal("Completed", (await ReadJobAsync(changed.DocumentId)).Status);
+                var changedEpoch = await ScalarAsync<Guid>(
+                    "SELECT CostPoolEpochId FROM dbo.InventoryMovements WHERE DocumentId=@Id", changed.DocumentId);
+                // Rejoining the same members after separate movements must not
+                // recover the old context just because membership looks equal.
+                Assert.NotEqual(originalEpoch, changedEpoch);
+                if (shares) Assert.NotEqual(initialSharedEpoch, changedEpoch);
+                var membership = JsonSerializer.Deserialize<Guid[]>(await ScalarAsync<string>("""
+                    SELECT epoch.MemberBusinessIdsJson FROM dbo.InventoryMovements movement
+                    JOIN inventory.CostPoolEpochs epoch ON epoch.EpochId=movement.CostPoolEpochId
+                    WHERE movement.DocumentId=@Id;
+                    """, changed.DocumentId))!;
+                Assert.Contains(fixture.BusinessId, membership);
+                if (shares) Assert.Contains(sharedBusinessId, membership);
+                else Assert.Single(membership);
+                Assert.Equal(1, await ScalarAsync<int>("""
+                    SELECT COUNT(*) FROM dbo.InventoryMovements movement
+                    JOIN inventory.CostPoolEpochs epoch ON epoch.EpochId=movement.CostPoolEpochId
+                    WHERE movement.DocumentId=@Id AND epoch.InitialQuantity=movement.PoolQuantityBefore;
+                    """, changed.DocumentId));
+                originalEpoch = changedEpoch;
+            }
+            Assert.Equal(firstEvidence.GetRawText(), (await ReadValuationEvidenceAsync(receipt.DocumentId)).GetRawText());
         }
         finally
         {
@@ -191,6 +619,12 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(-6m, await ReadNullableDecimalAsync("QuantityOnHand"));
             Assert.Equal(5_000m, await ReadNullableDecimalAsync("AverageUnitCost"));
             Assert.Equal(-30_000m, await ReadNullableDecimalAsync("InventoryValue"));
+            var evidence = await ReadValuationEvidenceAsync(request.DocumentId);
+            Assert.Equal("WeightedAverageReceipt", evidence.GetProperty("ValuationMode").GetString());
+            Assert.Equal(-10m, evidence.GetProperty("PoolQuantityBefore").GetDecimal());
+            Assert.Equal(-6m, evidence.GetProperty("PoolQuantityAfter").GetDecimal());
+            Assert.Equal(-50_000m, evidence.GetProperty("PoolInventoryValueBefore").GetDecimal());
+            Assert.Equal(-30_000m, evidence.GetProperty("PoolInventoryValueAfter").GetDecimal());
         }
         finally
         {
@@ -198,6 +632,59 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                 previousQuantity, previousAverage, previousValue,
                 previousShares, previousCostBasis);
         }
+    }
+
+    [Fact]
+    public async Task Deferred_financial_discount_keeps_original_payable_and_cost_even_after_the_informative_date()
+    {
+        var request = CreateRequest() with
+        {
+            FinancialDiscount = new(10m, new DateOnly(2020, 1, 1), false)
+        };
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        using var message = CreateMessage(request, $"receipt-deferred-financial-{request.DocumentId:N}");
+        using var response = await client.SendAsync(message);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var job = await ReadJobAsync(request.DocumentId);
+        Assert.True(job.Status == "Completed", job.LastError ?? job.Status);
+        Assert.Equal(50_000m, await ScalarAsync<decimal>(
+            "SELECT RecognizedInventoryCostAmount FROM dbo.GoodsReceiptLines WHERE GoodsReceiptId=@Id AND LineNumber=1", request.DocumentId));
+        Assert.Equal(59_500m, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'", request.DocumentId));
+        Assert.Equal("Posted", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'", request.DocumentId));
+    }
+
+    [Fact]
+    public async Task Anticipated_financial_discount_reduces_current_cost_and_payable_without_rewriting_the_invoice()
+    {
+        var request = CreateRequest() with
+        {
+            FinancialDiscount = new(10m, new DateOnly(2026, 8, 15), true)
+        };
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        using var message = CreateMessage(request, $"receipt-financial-{request.DocumentId:N}");
+        using var response = await client.SendAsync(message);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var job = await ReadJobAsync(request.DocumentId);
+        Assert.True(job.Status == "Completed", job.LastError ?? job.Status);
+        Assert.Equal(59_500m, await ScalarAsync<decimal>(
+            "SELECT FunctionalGrandTotal FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id", request.DocumentId));
+        Assert.Equal(45_000m, await ScalarAsync<decimal>(
+            "SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND DocumentType=N'GoodsReceipt'", request.DocumentId));
+        Assert.Equal(54_500m, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'", request.DocumentId));
+        Assert.Equal("Posted", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'", request.DocumentId));
+        Assert.Equal(0m, await ScalarAsync<decimal>("""
+            SELECT SUM(line.Debit-line.Credit) FROM dbo.AccountingEntryLines line
+            JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId
+            WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'GoodsReceipt'
+            """, request.DocumentId));
     }
 
     [Fact]
@@ -349,6 +836,17 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(11_900m, await ScalarAsync<decimal>(
                 "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
                 freightDocumentId));
+            Assert.Equal(11_900m, await ScalarAsync<decimal>("""
+                SELECT line.Credit FROM dbo.Payables payable
+                JOIN dbo.AccountingEntryLines line ON line.EntryId=payable.OpeningEntryId
+                  AND line.LineNumber=payable.OpeningEntryLineNumber
+                JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId
+                  AND entry.SourceDocumentId=payable.SourceDocumentId
+                  AND entry.SourceDocumentType=payable.SourceDocumentType AND entry.BusinessId=payable.BusinessId
+                JOIN dbo.Suppliers supplier ON supplier.SupplierId=payable.SupplierId AND supplier.PartyId=line.PartyId
+                JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=entry.TenantId
+                WHERE payable.SourceDocumentId=@Id AND account.Code=N'220505';
+                """, freightDocumentId));
             Assert.Equal(freightDocumentNumber, await ScalarAsync<string>(
                 "SELECT DocumentNumber FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceiptCostDocument'",
                 freightDocumentId));
@@ -384,8 +882,10 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         }
     }
 
-    [Fact]
-    public async Task Two_freight_suppliers_and_repeated_freight_concepts_create_independent_payables()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(100)]
+    public async Task Two_freight_suppliers_and_repeated_freight_concepts_create_independent_payables(int documentCount)
     {
         var secondPartyId = Guid.NewGuid();
         var secondSupplierId = Guid.NewGuid();
@@ -429,24 +929,127 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         var second = FreightDocument(secondSupplierId, PurchaseEvidenceTypes.InternalReceiptVoucher,
             $"FLETE-B-{Guid.NewGuid():N}",
             FreightLine(1, 4_000m));
-        request = request with { AdditionalCostDocuments = [first, second] };
+        var documents = new[] { first, second }.Concat(Enumerable.Range(2, documentCount - 2)
+            .Select(_ => second with { CostDocumentId = Guid.NewGuid(), DocumentNumber = $"FLETE-{Guid.NewGuid():N}" }))
+            .ToArray();
+        request = request with { AdditionalCostDocuments = documents };
 
         using var client = fixture.CreateAdminClient(
             PurchasingPermissionCodes.CreateGoodsReceipts,
             PurchasingPermissionCodes.ConfirmGoodsReceipts,
             PayablesPermissionCodes.Read);
         using var message = CreateMessage(request, $"two-freight-{request.DocumentId:N}");
+        using var acceptance = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter: command => command.CommandType == CommandType.StoredProcedure &&
+                command.CommandText == "dbo.AccountingSourcesAccept");
+        using var withholding = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter: command => command.CommandText.Contains(
+                "INSERT dbo.DocumentWithholdingSnapshots", StringComparison.Ordinal));
+        using var costPersistence = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter: command => command.CommandText == "purchasing.GoodsReceiptCostDocumentsInsert" ||
+                command.CommandText.Contains("INSERT purchasing.GoodsReceiptCostDocuments", StringComparison.Ordinal));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
         using var response = await client.SendAsync(message);
+        timer.Stop();
         Assert.True(response.StatusCode == HttpStatusCode.Accepted,
             await response.Content.ReadAsStringAsync());
+        output.WriteLine("Additional documents: {0}; persistence commands: {1}; confirm/engines: {2:F1} ms",
+            documentCount, costPersistence.Count, timer.Elapsed.TotalMilliseconds);
+        Assert.Equal(1, costPersistence.Count);
         Assert.Equal("Completed", (await ReadJobAsync(request.DocumentId)).Status);
-        Assert.Equal(3, await ScalarAsync<int>(
+        var expectedBatches = (documentCount + 100) / 100;
+        Assert.Equal((expectedBatches, expectedBatches), (acceptance.Count, withholding.Count));
+        Assert.Equal(documentCount + 1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.Payables WHERE ParentGoodsReceiptId=@Id", request.DocumentId));
-        Assert.Equal(2, await ScalarAsync<int>(
+        Assert.Equal(documentCount, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM purchasing.GoodsReceiptCostDocuments WHERE GoodsReceiptId=@Id", request.DocumentId));
-        Assert.Equal(9_000m, await ScalarAsync<decimal>(
+        Assert.Equal(5_000m + (documentCount - 1) * 4_000m, await ScalarAsync<decimal>(
             "SELECT SUM(FunctionalAmount) FROM purchasing.GoodsReceiptCostAllocations WHERE GoodsReceiptId=@Id",
             request.DocumentId));
+        Assert.Equal(documentCount + 1, await ScalarAsync<int>("""
+            SELECT COUNT(*) FROM purchasing.GoodsReceiptCostLines line
+            JOIN purchasing.GoodsReceiptCostDocuments document ON document.CostDocumentId=line.CostDocumentId
+            WHERE document.GoodsReceiptId=@Id;
+            """, request.DocumentId));
+        Assert.Equal(documentCount + 1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM purchasing.GoodsReceiptCostAllocations WHERE GoodsReceiptId=@Id", request.DocumentId));
+        const string persistedSql = """
+            SELECT (SELECT document.*,
+              (SELECT line.* FROM purchasing.GoodsReceiptCostLines line
+               WHERE line.CostDocumentId=document.CostDocumentId ORDER BY line.LineNumber FOR JSON PATH) Lines,
+              (SELECT allocation.* FROM purchasing.GoodsReceiptCostAllocations allocation
+               WHERE allocation.CostDocumentId=document.CostDocumentId
+               ORDER BY allocation.CostLineNumber,allocation.ReceiptLineNumber FOR JSON PATH) Allocations
+            FROM purchasing.GoodsReceiptCostDocuments document WHERE document.GoodsReceiptId=@Id
+            ORDER BY document.CostDocumentId FOR JSON PATH);
+            """;
+        var persisted = await ScalarAsync<string>(persistedSql, request.DocumentId);
+        using var persistedEvidence = JsonDocument.Parse(persisted);
+        Assert.Equal(documentCount, persistedEvidence.RootElement.GetArrayLength());
+        using var replay = CreateMessage(request, $"two-freight-{request.DocumentId:N}");
+        var commandsBeforeReplay = costPersistence.Count;
+        using var repeated = await client.SendAsync(replay);
+        Assert.True(repeated.StatusCode == HttpStatusCode.Accepted, await repeated.Content.ReadAsStringAsync());
+        Assert.Equal(commandsBeforeReplay, costPersistence.Count);
+        Assert.Equal(persisted, await ScalarAsync<string>(persistedSql, request.DocumentId));
+    }
+
+    [Fact]
+    public async Task Invalid_cost_allocation_rolls_back_acceptance_and_the_same_request_can_be_confirmed_once()
+    {
+        var request = CreateRequest();
+        var costId = Guid.NewGuid();
+        request = request with { AdditionalCostDocuments = [new GoodsReceiptCostDocumentRequest(
+            costId, fixture.SupplierId, PurchaseEvidenceTypes.SupplierElectronicInvoice,
+            $"FLETE-ROLLBACK-{costId:N}", request.ReceivedAt, true, request.ReceivedAt.AddDays(30),
+            "COP", 1m, DateOnly.FromDateTime(request.ReceivedAt.Date), "FunctionalCurrency",
+            [new GoodsReceiptCostLineRequest(1, PurchaseCostKinds.Freight, "Cargo con reparto",
+                5_000m, 0m, "IVA-0", 0m, 0m, PurchasingTaxTreatments.NotApplicable,
+                PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)])] };
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        Assert.StartsWith("AuralyServerSlice_", database);
+        using (var fault = new InventoryBalanceProcessingTests.CommandCounter(database,
+            commandFilter: command => command.CommandText == "purchasing.GoodsReceiptCostDocumentsInsert" &&
+                command.Parameters["@GoodsReceiptId"].Value is Guid id && id == request.DocumentId,
+            beforeExecute: command =>
+            {
+                var documents = JsonNode.Parse((string)command.Parameters["@DocumentsJson"].Value)!.AsArray();
+                documents[0]!["Lines"]![0]!["Allocations"]![0]!["FunctionalAmount"] = -1m;
+                command.Parameters["@DocumentsJson"].Value = documents.ToJsonString();
+            }))
+        {
+            using var message = CreateMessage(request, $"cost-rollback-{request.DocumentId:N}");
+            using var response = await client.SendAsync(message);
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+            Assert.Equal(1, fault.Count);
+        }
+        Assert.Equal(0, await ScalarAsync<int>("""
+            SELECT (SELECT COUNT(*) FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id)
+              +(SELECT COUNT(*) FROM dbo.GoodsReceiptLines WHERE GoodsReceiptId=@Id)
+              +(SELECT COUNT(*) FROM purchasing.GoodsReceiptCostDocuments WHERE GoodsReceiptId=@Id)
+              +(SELECT COUNT(*) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id)
+              +(SELECT COUNT(*) FROM dbo.DocumentProcessingPayloads WHERE DocumentId=@Id)
+              +(SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id)
+              +(SELECT COUNT(*) FROM dbo.Payables WHERE ParentGoodsReceiptId=@Id);
+            """, request.DocumentId));
+        Assert.Equal(0, await ScalarAsync<int>("""
+            SELECT (SELECT COUNT(*) FROM purchasing.GoodsReceiptCostLines WHERE CostDocumentId=@Id)
+              +(SELECT COUNT(*) FROM purchasing.GoodsReceiptCostAllocations WHERE CostDocumentId=@Id)
+              +(SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id);
+            """, costId));
+        using var retry = CreateMessage(request, $"cost-rollback-{request.DocumentId:N}");
+        using var accepted = await client.SendAsync(retry);
+        Assert.True(accepted.StatusCode == HttpStatusCode.Accepted, await accepted.Content.ReadAsStringAsync());
+        Assert.Equal("Completed", (await ReadJobAsync(request.DocumentId)).Status);
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM purchasing.GoodsReceiptCostDocuments WHERE GoodsReceiptId=@Id", request.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM purchasing.GoodsReceiptCostAllocations WHERE GoodsReceiptId=@Id", request.DocumentId));
     }
 
     [Fact]
@@ -588,7 +1191,22 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             $"Expected import receipt to be accepted, got {response.StatusCode}: {body}");
 
         Assert.Equal(quantityBefore + 10m, await ReadNullableDecimalAsync("QuantityOnHand"));
-        Assert.Equal(valueBefore + 90_000m, await ReadNullableDecimalAsync("InventoryValue"));
+        // The shared fixture can already have a fractional average. Reconcile
+        // its actual book-value delta and the existing rounding counterpart;
+        // the acquisition and supplier invoice amounts remain exact.
+        var inventoryChange = (await ReadNullableDecimalAsync("InventoryValue"))!.Value - valueBefore;
+        Assert.Equal(90_000m, await ScalarAsync<decimal>(
+            "SELECT SUM(RecognizedInventoryCostAmount) FROM dbo.GoodsReceiptLines WHERE GoodsReceiptId=@Id",
+            request.DocumentId));
+        Assert.Equal(inventoryChange, await ScalarAsync<decimal>(
+            "SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND DocumentType=N'GoodsReceipt'",
+            request.DocumentId));
+        Assert.Equal(inventoryChange,
+            await CombinedAccountAmountAsync(request.DocumentId, "143505", debit: true) -
+            await CombinedAccountAmountAsync(request.DocumentId, "143505", debit: false));
+        Assert.Equal(90_000m - inventoryChange,
+            await CombinedAccountAmountAsync(request.DocumentId, "613595", debit: true) -
+            await CombinedAccountAmountAsync(request.DocumentId, "613595", debit: false));
         Assert.Equal(20m, await ScalarAsync<decimal>(
             "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
             request.DocumentId));
@@ -667,6 +1285,26 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         Assert.Equal("Completed", job.Status);
         Assert.Equal(1, await CountAsync("InventoryMovements", request.DocumentId));
         Assert.Equal(0, await CountAsync("Payables", request.DocumentId));
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var accounting = new SqlCommand("""
+            SELECT Status,LastErrorCode,AttemptCount,
+              (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id)
+            FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt';
+            """, connection);
+        accounting.Parameters.AddWithValue("@Id", request.DocumentId);
+        await using (var reader = await accounting.ExecuteReaderAsync())
+        {
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("CommercialEffectsApplied", reader.GetString(0));
+            Assert.True(reader.IsDBNull(1));
+            Assert.Equal(1, reader.GetInt32(2));
+            Assert.Equal(0, reader.GetInt32(3));
+        }
+        using var replay = CreateMessage(request, $"zero-value-{request.DocumentId:N}");
+        using var replayResponse = await client.SendAsync(replay);
+        Assert.Equal(HttpStatusCode.Accepted, replayResponse.StatusCode);
+        Assert.Equal(1, await CountAsync("InventoryMovements", request.DocumentId));
     }
 
     [Fact]
@@ -785,12 +1423,15 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id", second.DocumentId));
     }
 
-    [Fact]
-    public async Task Additional_support_documents_use_the_series_valid_on_each_issue_date()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(10)]
+    public async Task Additional_support_documents_use_the_series_valid_on_each_issue_date(int newSeriesDocuments)
     {
         await ConfigureSupportDocumentAsync();
         var newAuthorizationId = Guid.NewGuid();
         var newSeriesId = Guid.NewGuid();
+        var newPrefix = $"NX{newSeriesDocuments}";
         Guid previousAuthorizationId;
         DateTime previousValidUntil;
         await using (var connection = new SqlConnection(fixture.ConnectionString))
@@ -828,11 +1469,12 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                     INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
                       DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
                     VALUES(@SeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,
-                      N'SupportDocument',N'DSN',1,999,1,SYSDATETIMEOFFSET());
+                      N'SupportDocument',@NewPrefix,1,999,1,SYSDATETIMEOFFSET());
                     """, connection);
                 configure.Parameters.AddWithValue("@PreviousAuthorizationId", previousAuthorizationId);
                 configure.Parameters.AddWithValue("@AuthorizationId", newAuthorizationId);
                 configure.Parameters.AddWithValue("@SeriesId", newSeriesId);
+                configure.Parameters.AddWithValue("@NewPrefix", newPrefix);
                 configure.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
                 configure.Parameters.AddWithValue("@AuthorizationNumber", $"MIXED-{newAuthorizationId:N}");
                 configure.Parameters.AddWithValue("@IssuerTaxId", ServerSliceFixture.SupplierTaxId);
@@ -870,24 +1512,65 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                             "IVA-0", 0m, 0m, PurchasingTaxTreatments.NotApplicable,
                             PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)])]
             };
+            var originalCosts = request.AdditionalCostDocuments!.ToArray();
+            request = request with
+            {
+                AdditionalCostDocuments = originalCosts.Concat(
+                    Enumerable.Range(2, newSeriesDocuments - 2).Select(_ =>
+                        originalCosts[1] with { CostDocumentId = Guid.NewGuid() })).ToArray()
+            };
             using var client = fixture.CreateAdminClient(
                 PurchasingPermissionCodes.CreateGoodsReceipts,
                 PurchasingPermissionCodes.ConfirmGoodsReceipts);
             using var message = CreateMessage(request, $"mixed-support-series-{request.DocumentId:N}");
+            using var lookup = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter: command => command.CommandText.Contains("fs.FiscalAuthorizationId", StringComparison.Ordinal)
+                    && command.CommandText.Contains("dbo.PartyContacts", StringComparison.Ordinal));
+            using var acceptance = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter: command => command.CommandType == CommandType.StoredProcedure &&
+                    command.CommandText == "dbo.AccountingSourcesAccept");
+            using var withholding = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter: command => command.CommandText.Contains(
+                    "INSERT dbo.DocumentWithholdingSnapshots", StringComparison.Ordinal));
+            var fiscalBatchSizes = new List<int>();
+            using var fiscalPersistence = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter: command => command.CommandText.Contains(
+                    "INSERT fiscal.PurchaseSupportFiscalSnapshots", StringComparison.Ordinal),
+                beforeExecute: command =>
+                {
+                    using var sourceBatch = JsonDocument.Parse((string)command.Parameters["@SourcesJson"].Value);
+                    fiscalBatchSizes.Add(sourceBatch.RootElement.GetArrayLength());
+                });
             using var response = await client.SendAsync(message);
             Assert.True(response.StatusCode == HttpStatusCode.Accepted,
                 await response.Content.ReadAsStringAsync());
+            Assert.Equal(1, lookup.Count);
+            Assert.Equal((1, 1), (acceptance.Count, withholding.Count));
+            Assert.Equal(2, fiscalPersistence.Count);
+            Assert.Equal(new[] { 1, newSeriesDocuments }, fiscalBatchSizes.Order().ToArray());
             var primaryNumber = await ScalarAsync<string>(
                 "SELECT FiscalNumber FROM dbo.FiscalDocuments WHERE DocumentId=@Id", request.DocumentId);
             Assert.StartsWith("DS", primaryNumber);
-            Assert.False(primaryNumber.StartsWith("DSN", StringComparison.Ordinal));
-            var firstCostNumber = await ScalarAsync<string>(
-                "SELECT FiscalNumber FROM dbo.FiscalDocuments WHERE DocumentId=@Id", costDocumentId);
-            var secondCostNumber = await ScalarAsync<string>(
-                "SELECT FiscalNumber FROM dbo.FiscalDocuments WHERE DocumentId=@Id", secondCostDocumentId);
-            Assert.StartsWith("DSN", firstCostNumber);
-            Assert.StartsWith("DSN", secondCostNumber);
-            Assert.NotEqual(firstCostNumber, secondCostNumber);
+            Assert.False(primaryNumber.StartsWith(newPrefix, StringComparison.Ordinal));
+            await using var fiscalConnection = new SqlConnection(fixture.ConnectionString);
+            await fiscalConnection.OpenAsync();
+            await using var fiscalDocuments = new SqlCommand("""
+                SELECT fiscal.FiscalNumber FROM OPENJSON(@Documents) WITH(Id uniqueidentifier '$') requested
+                JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=requested.Id AND fiscal.BusinessId=@BusinessId;
+                """, fiscalConnection);
+            fiscalDocuments.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            fiscalDocuments.Parameters.Add("@Documents", SqlDbType.NVarChar, -1).Value =
+                JsonSerializer.Serialize(request.AdditionalCostDocuments.Select(cost => cost.CostDocumentId));
+            var numbers = new List<string>();
+            await using (var reader = await fiscalDocuments.ExecuteReaderAsync())
+                while (await reader.ReadAsync()) numbers.Add(reader.GetString(0));
+            Assert.Equal(newSeriesDocuments, numbers.Count);
+            Assert.Equal(newSeriesDocuments, numbers.Distinct(StringComparer.Ordinal).Count());
+            Assert.All(numbers, number => Assert.StartsWith(newPrefix, number));
         }
         finally
         {
@@ -905,6 +1588,74 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             restore.Parameters.AddWithValue("@AuthorizationId", newAuthorizationId);
             await restore.ExecuteNonQueryAsync();
         }
+    }
+
+    [Fact]
+    public async Task Support_root_failure_rolls_back_the_whole_acceptance_and_retries_once()
+    {
+        await ConfigureSupportDocumentAsync();
+        var baseRequest = CreateRequest();
+        var costs = Enumerable.Range(0, 2).Select(_ => new GoodsReceiptCostDocumentRequest(
+            Guid.NewGuid(), fixture.SupplierId, PurchaseEvidenceTypes.BuyerElectronicSupportDocument, "",
+            baseRequest.ReceivedAt, true, baseRequest.ReceivedAt.AddDays(30), "COP", 1m,
+            DateOnly.FromDateTime(baseRequest.ReceivedAt.Date), "FunctionalCurrency",
+            [new(1, PurchaseCostKinds.Freight, "Flete con soporte", 1_000m, 1_000m, "IVA-0", 0m, 0m,
+                PurchasingTaxTreatments.NotApplicable, PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)])).ToArray();
+        var request = baseRequest with
+        {
+            SupplierInvoiceNumber = null, PurchaseEvidenceType = PurchaseEvidenceTypes.BuyerElectronicSupportDocument,
+            Lines = [baseRequest.Lines.Single() with { TaxCode = "IVA-0", TaxRate = 0m, TaxTreatment = PurchasingTaxTreatments.NotApplicable }],
+            AdditionalCostDocuments = costs
+        };
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts, PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        var trigger = $"TestRejectSupport_{Guid.NewGuid():N}";
+        await using (var create = new SqlCommand($"""
+            CREATE TRIGGER fiscal.[{trigger}] ON fiscal.PurchaseSupportFiscalSnapshots AFTER INSERT AS
+            BEGIN
+              IF EXISTS(SELECT 1 FROM inserted WHERE DocumentId='{costs[^1].CostDocumentId:D}')
+                THROW 51997,'Injected support batch failure.',1;
+            END;
+            """, connection)) await create.ExecuteNonQueryAsync();
+        try
+        {
+            using var failedMessage = CreateMessage(request, request.DocumentId.ToString("N"));
+            using var failed = await client.SendAsync(failedMessage);
+            Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
+            await using var verify = new SqlCommand("""
+                SELECT (SELECT COUNT(*) FROM dbo.FiscalDocuments WHERE DocumentId IN(SELECT value FROM OPENJSON(@Ids))) +
+                  (SELECT COUNT(*) FROM fiscal.PurchaseSupportFiscalSnapshots WHERE DocumentId IN(SELECT value FROM OPENJSON(@Ids))) +
+                  (SELECT COUNT(*) FROM dbo.FiscalDocumentProcesses WHERE DocumentId IN(SELECT value FROM OPENJSON(@Ids))) +
+                  (SELECT COUNT(*) FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id) +
+                  (SELECT COUNT(*) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id) +
+                  (SELECT COUNT(*) FROM dbo.Payables WHERE SourceDocumentId IN(SELECT value FROM OPENJSON(@Ids)));
+                """, connection);
+            verify.Parameters.AddWithValue("@Id", request.DocumentId);
+            verify.Parameters.Add("@Ids", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(
+                costs.Select(cost => cost.CostDocumentId).Prepend(request.DocumentId));
+            Assert.Equal(0, (int)(await verify.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await using var drop = new SqlCommand($"DROP TRIGGER fiscal.[{trigger}];", connection);
+            await drop.ExecuteNonQueryAsync();
+        }
+        using (var retryMessage = CreateMessage(request, request.DocumentId.ToString("N")))
+        using (var retried = await client.SendAsync(retryMessage))
+            Assert.True(retried.StatusCode == HttpStatusCode.Accepted, await retried.Content.ReadAsStringAsync());
+        using (var replayMessage = CreateMessage(request, request.DocumentId.ToString("N")))
+        using (var replay = await client.SendAsync(replayMessage))
+            Assert.True((await replay.Content.ReadFromJsonAsync<GoodsReceiptAcceptance>())!.IdempotentReplay);
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.FiscalDocuments WHERE DocumentId=@Id", request.DocumentId));
+        await using var complete = new SqlCommand("""
+            SELECT COUNT(*) FROM fiscal.PurchaseSupportFiscalSnapshots
+            WHERE DocumentId IN(SELECT value FROM OPENJSON(@Ids));
+            """, connection);
+        complete.Parameters.Add("@Ids", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(
+            costs.Select(cost => cost.CostDocumentId).Prepend(request.DocumentId));
+        Assert.Equal(3, (int)(await complete.ExecuteScalarAsync())!);
     }
 
     [Fact]
@@ -1398,6 +2149,20 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             $"Expected custom due date to be accepted, got {response.StatusCode}: {body}");
     }
 
+    private async Task<JsonElement> ReadValuationEvidenceAsync(Guid documentId)
+    {
+        var json = await ScalarAsync<string>("""
+            SELECT ValuationMode,CostPoolScope,PoolQuantityBefore,PoolQuantityAfter,
+              PoolInventoryValueBefore,PoolInventoryValueAfter
+            FROM dbo.InventoryMovements
+            WHERE DocumentId=@Id AND BusinessId=@BusinessId AND LineNumber=1
+              AND DocumentType=N'GoodsReceipt' AND MovementType=N'GoodsReceipt'
+            FOR JSON PATH,WITHOUT_ARRAY_WRAPPER;
+            """, documentId);
+        using var parsed = JsonDocument.Parse(json);
+        return parsed.RootElement.Clone();
+    }
+
     private ConfirmGoodsReceiptRequest CreateRequest()
     {
         var received = new DateTimeOffset(2026, 7, 31, 11, 30, 0, TimeSpan.FromHours(-5));
@@ -1636,6 +2401,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                 WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId)
               UPDATE dbo.InventoryBalances
               SET QuantityOnHand=@Quantity,AverageUnitCost=@Average,InventoryValue=@Value,
+                  OriginContextId=NULL,OriginSnapshotSequence=NULL,
                   UpdatedAt=SYSUTCDATETIME()
               WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
             ELSE

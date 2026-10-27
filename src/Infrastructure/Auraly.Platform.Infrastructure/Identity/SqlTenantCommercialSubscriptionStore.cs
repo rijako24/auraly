@@ -20,19 +20,13 @@ public sealed class SqlTenantCommercialSubscriptionStore(ApplicationDbContext db
                    subscription.CurrentPeriodStart,subscription.CurrentPeriodEnd,
                    subscription.FullUserLimit,subscription.SellerUserLimit,
                    subscription.PosDeviceLimit,subscription.DianDocumentMonthlyLimit,
-                   COALESCE(periodValue.DianDocumentsUsed,0),subscription.PayrollEmployeeLimit
+                   quota.DocumentsUsed,subscription.PayrollEmployeeLimit,quota.HasQuota
             FROM billing.TenantSubscriptions subscription
             INNER JOIN billing.TenantCommercialPlans planValue
               ON planValue.TenantCommercialPlanId=subscription.TenantCommercialPlanId
             INNER JOIN billing.BillableServices serviceValue
               ON serviceValue.BillableServiceId=planValue.BillableServiceId
-            OUTER APPLY(
-              SELECT TOP(1) usageValue.DianDocumentsUsed
-              FROM billing.TenantSubscriptionUsagePeriods usageValue
-              WHERE usageValue.TenantSubscriptionId=subscription.TenantSubscriptionId
-                AND SYSUTCDATETIME()>=usageValue.PeriodStart
-                AND SYSUTCDATETIME()<usageValue.PeriodEnd
-              ORDER BY usageValue.PeriodStart DESC) periodValue
+            CROSS APPLY billing.TenantDianQuotaSnapshot(subscription.TenantId,SYSDATETIMEOFFSET()) quota
             WHERE subscription.TenantId=@TenantId;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
@@ -41,7 +35,7 @@ public sealed class SqlTenantCommercialSubscriptionStore(ApplicationDbContext db
         return new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
             reader.GetString(4), reader.GetFieldValue<DateTimeOffset>(5),
             reader.GetFieldValue<DateTimeOffset>(6), reader.GetInt32(7), reader.GetInt32(8),
-            reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12));
+            reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11), reader.GetInt32(12),reader.GetBoolean(13));
     }
 
     public async Task<PlatformTenantSubscriptionPageDto> ListPlatformAsync(
@@ -67,29 +61,40 @@ public sealed class SqlTenantCommercialSubscriptionStore(ApplicationDbContext db
                    OR (@Status=N'Missing' AND subscription.TenantSubscriptionId IS NULL)
                    OR subscription.Status=@Status);
 
+            WITH tenantPage AS (
+              SELECT tenantValue.TenantId,ROW_NUMBER() OVER(ORDER BY
+                CASE WHEN subscription.TenantSubscriptionId IS NULL THEN 0
+                  WHEN subscription.Status=N'Suspended' THEN 1
+                  WHEN subscription.Status=N'PastDue' THEN 2 ELSE 3 END,
+                subscription.CurrentPeriodEnd,tenantValue.Name,tenantValue.TenantId) PageOrdinal
+              FROM dbo.Tenants tenantValue
+              LEFT JOIN billing.TenantSubscriptions subscription ON subscription.TenantId=tenantValue.TenantId
+              WHERE (@Search IS NULL OR tenantValue.Name LIKE N'%'+@Search+N'%'
+                     OR tenantValue.TenantKey LIKE N'%'+@Search+N'%'
+                     OR tenantValue.Email LIKE N'%'+@Search+N'%')
+                AND (@Status IS NULL
+                     OR (@Status=N'Missing' AND subscription.TenantSubscriptionId IS NULL)
+                     OR subscription.Status=@Status)
+              ORDER BY PageOrdinal OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+            )
             SELECT tenantValue.TenantId,tenantValue.TenantKey,tenantValue.Name,tenantValue.Email,
                    subscription.TenantSubscriptionId,serviceValue.Code,serviceValue.Name,
                    subscription.BillingPeriod,subscription.Status,
                    subscription.CurrentPeriodStart,subscription.CurrentPeriodEnd,
                    subscription.FullUserLimit,subscription.SellerUserLimit,
                    subscription.PosDeviceLimit,subscription.DianDocumentMonthlyLimit,
-                   COALESCE(periodValue.DianDocumentsUsed,0),subscription.PayrollEmployeeLimit,
+                   COALESCE(quota.DocumentsUsed,0),subscription.PayrollEmployeeLimit,
                    renewal.TenantSubscriptionRenewalOrderId,renewal.Status,renewal.DueAt,
                    renewal.PayableAmount
-            FROM dbo.Tenants tenantValue
+            FROM tenantPage selected
+            JOIN dbo.Tenants tenantValue ON tenantValue.TenantId=selected.TenantId
             LEFT JOIN billing.TenantSubscriptions subscription
               ON subscription.TenantId=tenantValue.TenantId
             LEFT JOIN billing.TenantCommercialPlans planValue
               ON planValue.TenantCommercialPlanId=subscription.TenantCommercialPlanId
             LEFT JOIN billing.BillableServices serviceValue
               ON serviceValue.BillableServiceId=planValue.BillableServiceId
-            OUTER APPLY(
-              SELECT TOP(1) usageValue.DianDocumentsUsed
-              FROM billing.TenantSubscriptionUsagePeriods usageValue
-              WHERE usageValue.TenantSubscriptionId=subscription.TenantSubscriptionId
-                AND SYSUTCDATETIME()>=usageValue.PeriodStart
-                AND SYSUTCDATETIME()<usageValue.PeriodEnd
-              ORDER BY usageValue.PeriodStart DESC) periodValue
+            OUTER APPLY billing.TenantDianQuotaSnapshot(tenantValue.TenantId,SYSDATETIMEOFFSET()) quota
             OUTER APPLY(
               SELECT TOP(1) orderValue.TenantSubscriptionRenewalOrderId,
                      orderValue.Status,orderValue.DueAt,orderValue.PayableAmount
@@ -97,18 +102,7 @@ public sealed class SqlTenantCommercialSubscriptionStore(ApplicationDbContext db
               WHERE orderValue.TenantSubscriptionId=subscription.TenantSubscriptionId
                 AND orderValue.IsCurrent=1
               ORDER BY orderValue.TargetPeriodStart DESC,orderValue.Revision DESC) renewal
-            WHERE (@Search IS NULL OR tenantValue.Name LIKE N'%'+@Search+N'%'
-                   OR tenantValue.TenantKey LIKE N'%'+@Search+N'%'
-                   OR tenantValue.Email LIKE N'%'+@Search+N'%')
-              AND (@Status IS NULL
-                   OR (@Status=N'Missing' AND subscription.TenantSubscriptionId IS NULL)
-                   OR subscription.Status=@Status)
-            ORDER BY CASE
-                       WHEN subscription.TenantSubscriptionId IS NULL THEN 0
-                       WHEN subscription.Status=N'Suspended' THEN 1
-                       WHEN subscription.Status=N'PastDue' THEN 2 ELSE 3 END,
-                     subscription.CurrentPeriodEnd,tenantValue.Name
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            ORDER BY selected.PageOrdinal;
             """, connection);
         command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
         command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);

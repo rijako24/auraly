@@ -296,4 +296,39 @@ propietario: costo promedio ponderado de inventario, último costo del proveedor
 (mercancía neta comparable) y último costo puesto por unidad reconocido en una
 recepción procesada. La base de la propuesta continúa obedeciendo
 `Tenant.InventoryCostBasis`; mostrar las tres referencias no recalcula ni sustituye
-esa política.
+esa política. Verificación del 2026-10-20: `SqlGoodsReceiptDocumentHandler`
+carga `tenant.InventoryCostBasis` en el campo interno `PriceFormationCostBasis`.
+Aunque el maestro de bodegas conserve una propiedad del mismo nombre, ese handler
+no la usa como override. No documentar una precedencia por bodega que hoy no existe.
+
+## 13. Revisiones de costos de recepción — diseño 2026-10-20
+
+La asociación de comprobantes y el presupuesto de reparto pertenecen a
+[Purchasing](implementation/goods-receipts-design.md#ampliación-2026-10-20-asociar-comprobantes-y-cargos-posteriores).
+Este diseño conserva el circuito de preparar y publicar: una revisión de costo
+puede sustituir la preparación pendiente, nunca publicar automáticamente ni
+modificar una venta histórica. `PricingService` y su store siguen siendo el único
+camino de publicación, con versión, alcance de sedes compartidas, auditoría y outbox.
+
+El reemplazo de propuestas pendientes ya existe. El cambio necesario de esquema
+es distinguir revisiones del mismo origen: `PriceRevisionProposals.SourceRevision`
+participará en la unicidad junto a sede, recepción y línea. La recepción inicial
+usa revisión 0. Conservar estados y FK actuales; una propuesta publicada permanece
+histórica. No crear otro sistema de propuestas para cargos posteriores.
+
+La revisión aplicada y el producto/alcance se bloquean y versionan para impedir
+que un trabajo atrasado vuelva vigente una propuesta vieja. Publicar compara
+versión y origen vigentes; si un cargo cambió la preparación entre selección y
+publicación, devuelve conflicto con el estado autoritativo para revisar.
+
+El promedio sigue siendo el promedio de inventario. Asociar un cargo sin efecto
+de valoración no puede cambiarlo ni generar un «promedio para precios» paralelo.
+La aclaración final del usuario admite el ajuste contable de valoración mientras
+la factura y su deuda permanecen iguales. Purchasing especifica el tratamiento
+propuesto y el cierre técnico pendiente de atribución entre existencias y salidas;
+no permanece pendiente una autorización de principio para contabilizar el ajuste.
+
+La publicación modifica precio y base comercial publicados. El costo reconocido
+por el kardex pertenece al motor de inventario y no espera la publicación de un
+precio comercial. Esta frontera evita afirmar que publicar revaloriza inventario
+o recalcula el costo de ventas anteriores.

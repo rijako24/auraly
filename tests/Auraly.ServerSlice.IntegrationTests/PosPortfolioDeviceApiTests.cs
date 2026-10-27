@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Receivables;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Pos.Printing;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -10,6 +12,36 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class PosPortfolioDeviceApiTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData("Accepted", HttpStatusCode.OK)]
+    [InlineData("Processed", HttpStatusCode.OK)]
+    [InlineData(null, HttpStatusCode.OK)]
+    [InlineData("Rejected", HttpStatusCode.BadRequest)]
+    public async Task Receipt_rendering_preserves_the_payment_state_and_legacy_unconfirmed_payload(
+        string? status, HttpStatusCode expected)
+    {
+        using var client = fixture.CreateAdminClient(PayablesPermissionCodes.Read);
+        var receipt = new PortfolioPaymentReceipt(Guid.NewGuid(), "Payable", "PGP-STATE",
+            new(2026, 10, 21, 12, 0, 0, TimeSpan.Zero), "Empresa", null, null, null, null,
+            "Sede", null, null, "Proveedor", "900123", "Contador", 100m,
+            [new("FC-STATE", 100m)], [new("Transferencia configurada", 100m, "REF-STATE")], status);
+        var payload = JsonSerializer.SerializeToNode(receipt, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();
+        if (status is null) payload.Remove("status");
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/pos/drafts/portfolio-payments/receipt/render",
+            new { receipt = payload, paperWidthMillimeters = 58, format = "Receipt" });
+        Assert.Equal(expected, response.StatusCode);
+        if (expected != HttpStatusCode.OK) return;
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var html = document.RootElement.GetProperty("html").GetString()!;
+        Assert.Contains("Transferencia configurada", html);
+        Assert.Equal(status == "Processed", html.Contains("Valor pagado"));
+        Assert.Equal(status == "Processed", html.Contains("Facturas aplicadas"));
+        Assert.Equal(status != "Processed", html.Contains("Este registro no confirma un abono aplicado"));
+        if (status == "Accepted") Assert.Contains("pendiente de aplicar", html);
+        if (status is null) Assert.Contains("Aplicaci&#243;n sin confirmar", html);
+    }
+
     [Fact]
     public async Task Portfolio_party_picker_uses_portfolio_permission_without_workspace_permission()
     {

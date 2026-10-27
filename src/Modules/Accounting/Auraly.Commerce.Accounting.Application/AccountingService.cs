@@ -1,11 +1,20 @@
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Expenses;
+using Auraly.Contracts.Payables;
+using Auraly.Contracts.Receivables;
 using Auraly.Commerce.Accounting.Domain;
+using Auraly.Application.Fiscal;
 
 namespace Auraly.Commerce.Accounting.Application;
 
 public interface IAccountingStore
 {
+    Task<VoucherDraftPreparation> GetSupportCancellationCaptureAsync(AccountingUserIdentity user, Guid payableId,
+        CancellationToken cancellationToken);
+    Task<UnapplicationCandidate?> GetUnapplicationAsync(AccountingUserIdentity user, string kind,
+        Guid positionId, Guid transactionId, CancellationToken cancellationToken);
+    Task<AccountingOpenPositionPage> OpenPositionsAsync(AccountingUserIdentity user, AccountingOpenPositionQuery query, CancellationToken cancellationToken);
     Task<AccountingAccountOptionPage> AccountOptionsAsync(AccountingUserIdentity user, AccountingAccountOptionQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<IReadOnlyList<BankAccountView>> ListBankAccountsAsync(AccountingUserIdentity user, bool includeInactive, CancellationToken cancellationToken);
@@ -27,6 +36,8 @@ public interface IAccountingStore
     Task<IReadOnlyList<AccountingOpeningBalancePosting>> ListPendingOpeningPostingsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<VoucherDraftView?> GetVoucherDraftAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<VoucherDraftView> SaveVoucherDraftAsync(AccountingUserIdentity user, SaveVoucherDraftRequest request, CancellationToken cancellationToken);
+    Task<VoucherFiscalPreview> PreviewFiscalVoucherAsync(AccountingUserIdentity user,
+        ConfirmManualAccountingVoucherRequest request, CancellationToken cancellationToken);
     Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(AccountingUserIdentity user, ConfirmAccountAdjustmentRequest request, CancellationToken cancellationToken, string? draftVersion = null);
     Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request, CancellationToken cancellationToken, string? draftVersion = null);
     Task<AccountingAccountView> CreateAccountAsync(AccountingUserIdentity user, CreateAccountingAccountRequest request, CancellationToken cancellationToken);
@@ -41,7 +52,7 @@ public interface IAccountingStore
     Task<AccountingPostingView?> GetPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<AccountingEntryView?> GetEntryAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TrialBalanceRow>> GetTrialBalanceAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
-    Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to, CancellationToken cancellationToken, Guid? costCenterId = null);
+    Task<AccountMovementPage> GetAccountMovementsPageAsync(AccountingUserIdentity user, AccountMovementQuery query, CancellationToken cancellationToken, int? maximumRows = null);
     Task<IReadOnlyList<AccountingJournalRow>> GetJournalAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<IReadOnlyList<GeneralLedgerRow>> GetGeneralLedgerAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<IReadOnlyList<FinancialStatementRow>> GetBalanceSheetAsync(AccountingUserIdentity user, DateOnly asOf, CancellationToken cancellationToken);
@@ -53,8 +64,8 @@ public interface IAccountingStore
 
 public interface IBankReconciliationStore
 {
-    Task<IReadOnlyList<BankReconciliationSummaryView>> ListAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
-    Task<BankReconciliationDetailView?> GetAsync(AccountingUserIdentity user, Guid reconciliationId, CancellationToken cancellationToken);
+    Task<BankReconciliationPage> ListAsync(AccountingUserIdentity user, BankReconciliationQuery query, CancellationToken cancellationToken);
+    Task<BankReconciliationDetailView?> GetAsync(AccountingUserIdentity user, Guid reconciliationId, BankReconciliationDetailQuery query, CancellationToken cancellationToken);
     Task<BankReconciliationDetailView> ImportAsync(AccountingUserIdentity user, ImportBankReconciliationRequest request, CancellationToken cancellationToken);
     Task<BankReconciliationDetailView> AllocateAsync(AccountingUserIdentity user, Guid reconciliationId, CreateBankReconciliationAllocationRequest request, CancellationToken cancellationToken);
     Task<BankReconciliationDetailView> ReverseAllocationAsync(AccountingUserIdentity user, Guid reconciliationId, Guid matchId, ReverseBankReconciliationAllocationRequest request, CancellationToken cancellationToken);
@@ -65,20 +76,59 @@ public interface IBankReconciliationStore
 public sealed partial class AccountingService(
     IAccountingStore store,
     IBankReconciliationStore bankReconciliations,
-    AccountingProcessingCoordinator processing)
+    AccountingProcessingCoordinator processing,
+    IAuralyIdGenerator ids,
+    FiscalProcessingCoordinator fiscal)
 {
-    public Task<IReadOnlyList<BankReconciliationSummaryView>> ListBankReconciliationsAsync(
-        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+    public Task<AccountingOpenPositionPage> OpenPositionsAsync(AccountingUserIdentity user,
+        AccountingOpenPositionQuery query, CancellationToken cancellationToken = default)
+    {
+        var sourceReadPermission = query.SubledgerKind switch
+        {
+            AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.SupplierCredit => PayablesPermissionCodes.Read,
+            AccountingSubledgerKinds.Receivable or AccountingSubledgerKinds.CustomerCredit => ReceivablesPermissionCodes.Read,
+            _ => null
+        };
+        if (!user.Permissions.Contains(AccountingPermissionCodes.Read)
+            && (sourceReadPermission is null || !user.Permissions.Contains(sourceReadPermission)))
+            throw new AccountingForbiddenException("No tienes permiso para consultar estas obligaciones.");
+        if (query.SubledgerKind is not (AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable or
+            AccountingSubledgerKinds.SupplierCredit or AccountingSubledgerKinds.CustomerCredit)
+            || query.Page < 1 || query.PageSize is < 1 or > 50 || query.PartyId == Guid.Empty
+            || query.AccountId == Guid.Empty || query.SubledgerId == Guid.Empty || query.CounterpartyRoleId == Guid.Empty || query.Search?.Length > 120
+            || query.DueFrom > query.DueTo || query.ManualSupportOnly && query.SubledgerKind != AccountingSubledgerKinds.Payable)
+            throw new AccountingValidationException("Los filtros de documentos pendientes no son válidos.");
+        return store.OpenPositionsAsync(user, query with { Search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim() }, cancellationToken);
+    }
+
+    public Task<BankReconciliationPage> ListBankReconciliationsAsync(
+        AccountingUserIdentity user, BankReconciliationQuery query, CancellationToken cancellationToken = default)
     {
         Demand(user, AccountingPermissionCodes.BankReconciliationRead);
-        return bankReconciliations.ListAsync(user, cancellationToken);
+        ValidateBankPage(query.Page, query.PageSize);
+        if (query.BankAccountId == Guid.Empty || query.Search?.Length > 160 ||
+            query.SortBy is not ("periodTo" or "updatedAt" or "bankDisplayName") ||
+            query.SortDirection is not ("asc" or "desc"))
+            throw new AccountingValidationException("Los filtros de conciliación no son válidos.");
+        return bankReconciliations.ListAsync(user, query with { Search = query.Search?.Trim() }, cancellationToken);
     }
 
     public Task<BankReconciliationDetailView?> GetBankReconciliationAsync(
-        AccountingUserIdentity user, Guid reconciliationId, CancellationToken cancellationToken = default)
+        AccountingUserIdentity user, Guid reconciliationId, BankReconciliationDetailQuery query, CancellationToken cancellationToken = default)
     {
         Demand(user, AccountingPermissionCodes.BankReconciliationRead);
-        return bankReconciliations.GetAsync(user, reconciliationId, cancellationToken);
+        foreach (var page in new[] { query.StatementPage, query.BookPage, query.AllocationPage, query.EventPage })
+            ValidateBankPage(page, query.PageSize);
+        if (query.StatementSearch?.Length > 160 || query.BookSearch?.Length > 160)
+            throw new AccountingValidationException("La búsqueda de movimientos supera 160 caracteres.");
+        return bankReconciliations.GetAsync(user, reconciliationId, query with
+        { StatementSearch = query.StatementSearch?.Trim(), BookSearch = query.BookSearch?.Trim() }, cancellationToken);
+    }
+
+    private static void ValidateBankPage(int page, int pageSize)
+    {
+        if (page < 1 || page > 1_000_000 || pageSize is < 1 or > 100)
+            throw new AccountingValidationException("La página debe ser positiva y admitir entre 1 y 100 filas.");
     }
 
     public Task<BankReconciliationDetailView> ImportBankReconciliationAsync(
@@ -88,13 +138,15 @@ public sealed partial class AccountingService(
         Demand(user, AccountingPermissionCodes.BankReconciliationManage);
         if (request.ReconciliationId == Guid.Empty || request.BankAccountId == Guid.Empty ||
             request.PeriodFrom == default || request.PeriodTo < request.PeriodFrom ||
-            request.Lines is null || request.Lines.Count == 0)
+            request.Lines is null || request.Lines.Count is 0 or > 100_000)
             throw new AccountingValidationException("El extracto y su periodo son obligatorios.");
         ValidateText(request.FileName, 260, "Nombre del archivo");
         if (request.Lines.Select(line => line.LineNumber).Distinct().Count() != request.Lines.Count ||
             request.Lines.Any(line => line.LineNumber <= 0 || line.Amount == 0 ||
                 line.TransactionDate < request.PeriodFrom || line.TransactionDate > request.PeriodTo ||
-                string.IsNullOrWhiteSpace(line.Description) || line.Description.Length > 500))
+                string.IsNullOrWhiteSpace(line.Description) || line.Description.Length > 500 || line.Reference?.Length > 160 ||
+                !IsBankMoney(line.Amount) || (line.Balance.HasValue && !IsBankMoney(line.Balance.Value))) ||
+            !IsBankMoney(request.OpeningBalance) || !IsBankMoney(request.ClosingBalance))
             throw new AccountingValidationException("Las líneas del extracto no son válidas para el periodo.");
         var orderedLines = request.Lines.OrderBy(line => line.LineNumber).ToArray();
         var runningBalance = request.OpeningBalance;
@@ -112,6 +164,9 @@ public sealed partial class AccountingService(
         return bankReconciliations.ImportAsync(user, request, cancellationToken);
     }
 
+    private static bool IsBankMoney(decimal amount) =>
+        amount is > -1_000_000_000_000_000m and < 1_000_000_000_000_000m && decimal.Round(amount, 4) == amount;
+
     public Task<BankReconciliationDetailView> AllocateBankReconciliationAsync(
         AccountingUserIdentity user, Guid reconciliationId,
         CreateBankReconciliationAllocationRequest request,
@@ -120,7 +175,7 @@ public sealed partial class AccountingService(
         Demand(user, AccountingPermissionCodes.BankReconciliationManage);
         if (reconciliationId == Guid.Empty || request.MatchId == Guid.Empty ||
             request.StatementLineId == Guid.Empty || request.EntryId == Guid.Empty ||
-            request.EntryLineNumber <= 0 || request.Amount <= 0 || string.IsNullOrWhiteSpace(request.RowVersion))
+            request.EntryLineNumber <= 0 || request.Amount <= 0 || !IsBankMoney(request.Amount) || string.IsNullOrWhiteSpace(request.RowVersion))
             throw new AccountingValidationException("El cruce bancario no es válido.");
         return bankReconciliations.AllocateAsync(user, reconciliationId, request, cancellationToken);
     }
@@ -193,6 +248,7 @@ public sealed partial class AccountingService(
             throw new AccountingValidationException("El tipo de ajuste de cartera no es válido.");
         if (request.Amount <= 0)
             throw new AccountingValidationException("El valor del ajuste debe ser positivo.");
+        ValidateDraftReference(request.Reference);
         ValidateText(request.ConceptCode, 40, "Concept code");
         ValidateText(request.Description, 500, "Descripción");
     }
@@ -203,6 +259,8 @@ public sealed partial class AccountingService(
     {
         Demand(user, AccountingPermissionCodes.ManualCreate);
         Demand(user, AccountingPermissionCodes.ManualSend);
+        if (request.PayloadVersion == 4)
+            throw new AccountingValidationException("Guarda y envía la versión financiera desde la captura del comprobante; no admite aceptación directa sin su borrador.");
         ValidateManualVoucher(user, request);
         var result = await store.ConfirmManualVoucherAsync(user, request, cancellationToken);
         if (!result.IsDuplicate)
@@ -211,25 +269,50 @@ public sealed partial class AccountingService(
         return result;
     }
 
-    private static void ValidateManualVoucher(AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request)
+    private static void ValidateManualVoucher(AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request,
+        bool requireFiscalReview = true)
     {
-        if (request.VoucherId == Guid.Empty || request.BusinessId != user.BusinessId ||
+        if (request.PayloadVersion != 4 && (request.VoucherTypeCode is not null || request.WorkSessionId is not null ||
+            request.CurrencyCode is not null || request.FinancialEffects is not null || request.FiscalCapture is not null ||
+            request.Lines?.Any(line => line is not null && (line.ExistingPosition is not null || line.FinancialGroupId is not null ||
+                line.DueDate is not null || line.PartySiteId is not null || line.PaymentEvidence is not null || line.Reference is not null)) == true))
+            throw new AccountingValidationException("Los vínculos y efectos financieros requieren la versión financiera del comprobante.");
+        if (request.VoucherId == Guid.Empty || request.BusinessId != user.BusinessId || request.MainPartyId == Guid.Empty ||
             request.Lines is null || request.Lines.Count is < 2 or > 500)
             throw new AccountingValidationException("El comprobante manual requiere al menos dos partidas.");
         ValidateText(request.ConceptCode, 40, "Concept code");
         ValidateText(request.Description, 500, "Descripción");
+        ValidateDraftReference(request.Reference);
         foreach (var line in request.Lines)
         {
-            if (line is null || line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 ||
-                (line.Debit > 0) == (line.Credit > 0))
-                throw new AccountingValidationException(
-                    "Each manual line requires exactly one positive debit or credit.");
+            if (line is null)
+                throw new AccountingValidationException("El comprobante contiene una partida vacía.");
             ValidateText(line.Description, 500, "Descripción de la partida");
         }
-        var debit = request.Lines.Sum(line => line.Debit);
-        var credit = request.Lines.Sum(line => line.Credit);
-        if (debit <= 0 || decimal.Round(debit, 4) != decimal.Round(credit, 4))
-            throw new AccountingValidationException("El comprobante manual no está cuadrado.");
+        try
+        {
+            if (request.PayloadVersion == 4)
+                AccountingJournal.ValidateIdentifiedSourceLines(request.Lines.Select(line => line.LineId));
+            else ValidateManualLineIdentities(request.PayloadVersion, request.Lines.Select(line => line.LineId));
+            // Acceptance and posting use the same per-line precision, side and
+            // balance rules. Keep the original request for legacy replay hashes.
+            AccountingJournal.Validate(request.Lines.Select(line => new JournalLine(
+                line.AccountId, line.Debit, line.Credit, line.PartyId, line.CostCenterId, line.Description,
+                line.LineId, BaseAmount: line.BaseAmount)));
+        }
+        catch (AccountingRuleException error)
+        {
+            throw new AccountingValidationException(
+                "Las partidas deben tener un solo lado positivo, cuadrar a cuatro decimales por partida y respetar el importe máximo contable.", error);
+        }
+        ValidateFiscalCapture(user, request.PayloadVersion, request.VoucherTypeCode,
+            request.Lines.Select(line => line.LineId), request.FiscalCapture, requireReview: requireFiscalReview);
+    }
+
+    private static void ValidateManualLineIdentities(int? payloadVersion, IEnumerable<Guid?> source)
+    {
+        try { AccountingJournal.ValidateSourceLineIdentities(payloadVersion, source); }
+        catch (AccountingRuleException error) { throw new AccountingValidationException("La versión del comprobante y las identidades únicas de sus partidas no son válidas.", error); }
     }
     public Task<AccountingReadinessView> GetReadinessAsync(
         AccountingUserIdentity user, DateOnly? effectiveFrom = null,
@@ -253,7 +336,8 @@ public sealed partial class AccountingService(
         if (request.OpeningBalanceMode is not ("ZeroDeclared" or "ImportedAndApproved"))
             throw new AccountingValidationException("El modo de saldos iniciales no es válido.");
         var result = await store.ActivateAsync(user, request, cancellationToken);
-        if (request.OpeningBalanceMode == "ImportedAndApproved")
+        if (result.Status == AccountingActivationStatuses.Configuring &&
+            request.OpeningBalanceMode == "ImportedAndApproved")
         {
             foreach (var pending in await store.ListPendingOpeningPostingsAsync(user, cancellationToken))
                 await processing.RequestPostingAsync(pending.BusinessId, pending.BatchId,
@@ -287,6 +371,9 @@ public sealed partial class AccountingService(
             throw new AccountingValidationException("El saldo inicial requiere al menos una partida.");
         foreach (var line in request.Lines)
         {
+            if (line.LineId == Guid.Empty || line.ExistingPosition is { } position &&
+                (position.SubledgerId == Guid.Empty || position.ReversesTransactionId is not null || position.SubledgerKind is not ("Payable" or "Receivable")))
+                throw new AccountingValidationException("La referencia de la obligación o la identidad de la partida no es válida.");
             if (line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 ||
                 (line.Debit > 0) == (line.Credit > 0))
                 throw new AccountingValidationException("Cada partida del saldo inicial requiere exactamente un débito o un crédito positivo.");
@@ -353,7 +440,7 @@ public sealed partial class AccountingService(
         Demand(user, AccountingPermissionCodes.Configure);
         if (request.BankAccountId == Guid.Empty || request.AccountingAccountId == Guid.Empty ||
             request.AccountTypeOptionId == Guid.Empty)
-            throw new AccountingValidationException("La cuenta bancaria, el auxiliar PUC y el tipo de cuenta son obligatorios.");
+            throw new AccountingValidationException("La cuenta bancaria y el tipo de cuenta son obligatorios; si indicas un auxiliar, su identificador debe ser válido.");
         ValidateText(request.BankName, 120, "Banco");
         ValidateText(request.AccountNumber, 64, "Número de cuenta");
         ValidateText(request.DisplayName, 160, "Nombre para mostrar");
@@ -407,18 +494,15 @@ public sealed partial class AccountingService(
             throw new AccountingForbiddenException("La cuenta pertenece a otra entidad legal o no tiene identificador.");
         ValidateText(request.Code, 32, "Código de cuenta");
         ValidateText(request.Name, 200, "Nombre de cuenta");
+        ValidateAccountSemantics(request.Semantics);
         var code = request.Code.Trim();
         if (code.Any(character => !char.IsAsciiDigit(character)) ||
             code.Length is 3 or 5 || code.Length < 1)
             throw new AccountingValidationException(
                 "El código PUC debe tener 1 dígito para clase, 2 para grupo, 4 para cuenta, 6 para subcuenta o más de 6 para auxiliar.");
-        var allowsPosting = code.Length >= 6;
-        if (request.AllowsPosting != allowsPosting)
-            throw new AccountingValidationException(
-                allowsPosting
-                    ? "Las subcuentas y auxiliares deben permitir movimientos."
-                    : "Las clases, grupos y cuentas son niveles de agrupación y no permiten movimientos.");
-        if (request.AccountType is not ("Asset" or "Liability" or "Equity" or "Revenue" or "Expense" or "ContraRevenue"))
+        if (request.AllowsPosting && code.Length < 6)
+            throw new AccountingValidationException("Las clases, grupos y cuentas son niveles de agrupación y no permiten movimientos.");
+        if (request.AccountType is not ("Asset" or "Liability" or "Equity" or "Revenue" or "Expense" or "ContraRevenue" or "OrderDebit" or "OrderCredit"))
             throw new AccountingValidationException("El tipo de cuenta no es válido.");
         var compatibleType = code[0] switch
         {
@@ -427,6 +511,8 @@ public sealed partial class AccountingService(
             '3' => request.AccountType == "Equity",
             '4' => request.AccountType is "Revenue" or "ContraRevenue",
             '5' or '6' or '7' => request.AccountType == "Expense",
+            '8' => request.AccountType == "OrderDebit",
+            '9' => request.AccountType == "OrderCredit",
             _ => false
         };
         if (!compatibleType)
@@ -442,7 +528,18 @@ public sealed partial class AccountingService(
         if (accountId == Guid.Empty)
             throw new AccountingValidationException("La cuenta es obligatoria.");
         ValidateText(request.Name, 200, "Nombre de cuenta");
+        ValidateAccountSemantics(request.Semantics);
         return store.UpdateAccountAsync(user, accountId, request with { Name = request.Name.Trim() }, cancellationToken);
+    }
+
+    private static void ValidateAccountSemantics(AccountingAccountSemantics? value)
+    {
+        if (value is null) return;
+        ValidateText(value.FinancialFunction, 64, "Función financiera");
+        ValidateText(value.BalanceSide, 6, "Naturaleza del saldo");
+        if (value.ParentAccountId == Guid.Empty || value.BusinessId == Guid.Empty ||
+            value.BankAccountId == Guid.Empty || value.PaymentMethodOptionId == Guid.Empty)
+            throw new AccountingValidationException("Las relaciones de la cuenta deben tener identificadores válidos.");
     }
 
     public Task<AccountingCostCenterView> CreateCostCenterAsync(AccountingUserIdentity user, CreateCostCenterRequest request, CancellationToken cancellationToken = default)
@@ -540,12 +637,48 @@ public sealed partial class AccountingService(
         return store.GetTrialBalanceAsync(user, from, to, cancellationToken);
     }
 
-    public Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to, CancellationToken cancellationToken = default, Guid? costCenterId = null)
+    public async Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to, CancellationToken cancellationToken = default, Guid? costCenterId = null)
     {
-        Demand(user, AccountingPermissionCodes.Read);
-        ValidateText(accountCode, 30, "Código de cuenta");
-        if (from == default || to < from) throw new AccountingValidationException("El rango de fechas del informe no es válido.");
-        return store.GetAccountMovementsAsync(user, accountCode.Trim(), from, to, cancellationToken, costCenterId);
+        ValidateReport(user, from, to);
+        ValidateText(accountCode, 32, "Código de cuenta");
+        // Preserve the pre-existing array contract while the admin consumes the
+        // bounded page contract. Both adapters use the same journal query owner.
+        var page = await store.GetAccountMovementsPageAsync(user,
+            new(from, to, 1, int.MaxValue, CostCenterId: costCenterId, AccountRootCode: accountCode.Trim()), cancellationToken);
+        return page.Items;
+    }
+
+    public Task<AccountMovementPage> GetAccountMovementsPageAsync(AccountingUserIdentity user,
+        AccountMovementQuery query, CancellationToken cancellationToken = default)
+    {
+        var normalized = NormalizeAccountMovementQuery(user, query);
+        if (query.Page < 1 || query.PageSize is < 1 or > 200 ||
+            (long)(query.Page - 1) * query.PageSize > int.MaxValue)
+            throw new AccountingValidationException("La paginación o fecha final del auxiliar no es válida.");
+        return store.GetAccountMovementsPageAsync(user, normalized, cancellationToken);
+    }
+
+    // A bounded full report shares the journal reader with the page. The SQL
+    // owner rejects an oversized snapshot before enriching movement details.
+    public Task<AccountMovementPage> GetAccountMovementReportAsync(AccountingUserIdentity user,
+        AccountMovementQuery query, CancellationToken cancellationToken = default)
+    {
+        const int maximumRows = 5000;
+        var normalized = NormalizeAccountMovementQuery(user, query) with { Page = 1, PageSize = maximumRows };
+        return store.GetAccountMovementsPageAsync(user, normalized, cancellationToken, maximumRows);
+    }
+
+    private static AccountMovementQuery NormalizeAccountMovementQuery(AccountingUserIdentity user, AccountMovementQuery query)
+    {
+        ValidateReport(user, query.From, query.To);
+        var from = Normalize(query.AccountFrom);
+        var to = Normalize(query.AccountTo);
+        var root = Normalize(query.AccountRootCode);
+        if (from?.Length > 32 || to?.Length > 32 || root?.Length > 32 ||
+            from is not null && to is not null && string.CompareOrdinal(from, to) > 0 ||
+            query.PartyId == Guid.Empty || query.CostCenterId == Guid.Empty)
+            throw new AccountingValidationException("El rango de cuentas o los filtros del auxiliar no son válidos.");
+        return query with { AccountFrom = from, AccountTo = to, AccountRootCode = root };
     }
 
     public Task<IReadOnlyList<AccountingJournalRow>> GetJournalAsync(
@@ -637,5 +770,9 @@ public sealed partial class AccountingService(
 }
 
 public sealed class AccountingForbiddenException(string message) : Exception(message);
-public sealed class AccountingValidationException(string message) : Exception(message);
+public sealed class AccountingValidationException : Exception
+{
+    public AccountingValidationException(string message) : base(message) { }
+    public AccountingValidationException(string message, Exception innerException) : base(message, innerException) { }
+}
 public sealed class AccountingConflictException(string message) : Exception(message);

@@ -88,6 +88,7 @@ public static class AccountingProcessingPolicy
         "SalesDebitNote",
         "GoodsReceipt",
         "GoodsReceiptCostDocument",
+        "GoodsReceiptCostRevision",
         "PurchaseReturn",
         "PayablePayment",
         "ReceivablePayment",

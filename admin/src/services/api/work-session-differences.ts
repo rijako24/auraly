@@ -3,6 +3,7 @@ import type {
   PosWorkSessionClosure,
   PosWorkSessionClosurePreview,
   PosWorkSessionPaymentCount,
+  WorkSessionInvoiceCharge,
 } from "@/services/pos/pos-edge-client";
 
 export interface WorkSessionCashDifference {
@@ -25,8 +26,9 @@ export interface WorkSessionCashDifference {
 }
 
 export const workSessionDifferencesApi = {
-  closureSnapshot: (workSessionId: string) => apiClient.get<PosWorkSessionClosure>(
-    `/commerce/v1/work-sessions/${encodeURIComponent(workSessionId)}/closure`, undefined, { cache: "no-store" }),
+  invoiceCharges: (closureId: string, page = 1, paymentMethodCode?: string) =>
+    apiClient.get<ClosureInvoiceChargePage>(`/commerce/v1/work-sessions/closures/${closureId}/invoice-charges/page`,
+      { page, pageSize: 50, paymentMethodCode }),
   current: () =>
     apiClient.get<ActiveWorkSession | undefined>(
       "/commerce/v1/work-sessions/current",
@@ -94,9 +96,14 @@ export interface ActiveWorkSession {
 }
 
 export interface ClosurePaymentTotal { paymentMethodCode:string; salesAmount:number; refundAmount:number; otherAmount:number; netAmount:number; countedAmount:number|null; difference:number|null; reconciledDifference?:number|null; requiresCount:boolean }
+export interface ClosureInvoiceChargePage {
+  items: WorkSessionInvoiceCharge[]; page: number; pageSize: number; totalItems: number; totalAmount: number;
+  closureSummary: { count: number; invoicedAmount: number; expenseAmount: number;
+    paymentMethods: Array<{ paymentMethodCode: string; count: number; amount: number }> };
+}
 export interface ClosureManualMovement { movementId:string; paymentMethodCode:string; movementType:"Sale"|"Refund"|"ReceivablePayment"|"PayablePayment"|"CashIn"|"CashOut"; amount:number; observation:string }
 export interface ClosureCashShortageClaim { receivableId:string; employeePartyId:string; amount:number }
-export interface ClosurePaymentVerification { verificationKey:string; paymentMethodCode:string; movementType:"Sale"|"Refund"|"CashIn"|"CashOut"|"SalePayment"|"CreditSale"|"ReceivablePayment"|"PayablePayment"; sourceDocumentType:"SalesInvoice"|"SalesReceipt"|"ServiceInvoice"|"SalesReturn"|"CashMovement"; sourceId:string; documentNumber:string; sourceNumber:number; amount:number; reference:string|null; cardFranchiseCode:string|null; approvalNumber:string|null; occurredAt:string; customerName:string|null; counterpartyName?:string|null; reasonName?:string|null; notes?:string|null; status:"Verified"|"Missing"|null; correctedPaymentMethodCode?:string|null; correctedAmount?:number|null; correctionReason?:string|null; tenderMethodCode?:string|null; correctedTenderMethodCode?:string|null; correctedCardFranchiseCode?:string|null; correctedApprovalNumber?:string|null; correctedReference?:string|null }
+export interface ClosurePaymentVerification { verificationKey:string; paymentMethodCode:string; movementType:"Sale"|"Refund"|"CashIn"|"CashOut"|"SalePayment"|"CreditSale"|"ReceivablePayment"|"PayablePayment"; sourceDocumentType:"SalesInvoice"|"SalesReceipt"|"ServiceInvoice"|"SalesReturn"|"CashMovement"|"ManualAccountingVoucher"; sourceId:string; documentNumber:string; sourceNumber:number; amount:number; reference:string|null; cardFranchiseCode:string|null; approvalNumber:string|null; occurredAt:string; customerName:string|null; counterpartyName?:string|null; reasonName?:string|null; notes?:string|null; status:"Verified"|"Missing"|null; correctedPaymentMethodCode?:string|null; correctedAmount?:number|null; correctionReason?:string|null; tenderMethodCode?:string|null; correctedTenderMethodCode?:string|null; correctedCardFranchiseCode?:string|null; correctedApprovalNumber?:string|null; correctedReference?:string|null }
 export interface ClosurePaymentVerificationGroup { paymentMethodCode:string; movementType:string; count:number; totalAmount:number; reviewedCount?:number; reviewedAmount?:number; effectiveCount?:number; effectiveTotalAmount?:number; effectiveReviewedCount?:number; effectiveReviewedAmount?:number }
 export interface ClosurePaymentVerificationPage { items:ClosurePaymentVerification[]; groups:ClosurePaymentVerificationGroup[]; page:number; pageSize:number; totalItems:number; manualMovements?:ClosureManualMovement[]; cashShortageClaim?:ClosureCashShortageClaim|null; reconciliationNote?:string|null }
 export interface WorkSessionClosure { workSessionClosureId:string; workSessionId:string; businessId:string; businessName:string; warehouseId:string|null; warehouseName:string|null; userId:string; userName:string; openedAt:string; closedAt:string; salesCount:number; creditSalesCount:number; returnCount:number; totalSales:number; totalRefunds:number; netAmount:number; reconciliationStatus:"Pending"|"Partial"|"Reconciled"|"ReconciledWithDifferences"; accountingStatus:string; paymentTotals:ClosurePaymentTotal[]; expectedCash?:number }

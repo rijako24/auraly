@@ -17,6 +17,86 @@ async function json(route: Route, body: unknown) {
   await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 }
 
+test("concilia una obligación anterior, conserva su identidad y exige guardar antes de aprobar", async ({ page }) => {
+  const accountId = "44444444-4444-4444-4444-444444444444";
+  const equityId = "55555555-5555-5555-5555-555555555555";
+  const partyId = "66666666-6666-6666-6666-666666666666";
+  const positionId = "77777777-7777-7777-7777-777777777777";
+  let saved: Record<string, unknown> | null = null;
+  let openingReads = 0;
+  let positionRequest = "";
+  await page.route("**/api/auth/me", route => json(route, { userId: "33333333-3333-3333-3333-333333333333", tenantId, username: "e2e", roles: ["Administrator"], permissions }));
+  await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
+  await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly" }]));
+  await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions }));
+  await page.route("**/api/commerce/v1/reference-options**", route => json(route, []));
+  await page.route("**/api/commerce/v1/parties**", route => json(route, { items: [
+    { partyId, displayName: "Proveedor histórico", identification: "900100200", roles: ["Supplier"], isActive: true },
+  ], page: 1, pageSize: 30, totalCount: 1, totalPages: 1 }));
+  await page.route("**/api/commerce/v1/accounting/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/accounts")) return json(route, [
+      { accountId, code: "22050501", name: "Proveedores", accountType: "Liability", allowsPosting: true, requiresParty: true, isActive: true, semantics: { financialFunction: "Payable" } },
+      { accountId: equityId, code: "310505", name: "Capital", accountType: "Equity", allowsPosting: true, requiresParty: false, isActive: true },
+    ]);
+    if (path.endsWith("/readiness")) return json(route, { status: "Disabled", blockingIssues: [], canEditOpeningBalances: true });
+    if (path.endsWith("/opening-balances")) {
+      if (route.request().method() === "GET") { openingReads++; return json(route, saved); }
+      const request = route.request().postDataJSON();
+      saved = { ...request, status: "Draft", rowVersion: "AQID", debitTotal: 1500, creditTotal: 1500,
+        lines: request.lines.map((line: Record<string, unknown>, index: number) => ({ ...line, lineNumber: index + 1,
+          existingPositionDocumentNumber: line.existingPosition ? "HIST-1500" : null })) };
+      return json(route, saved);
+    }
+    if (path.endsWith("/open-positions")) {
+      positionRequest = route.request().url();
+      return json(route, { items: [{ subledgerKind: "Payable", subledgerId: positionId, partyId,
+        documentNumber: "HIST-1500", partyName: "Proveedor histórico", outstandingAmount: 1500,
+        availableAmount: 1500, openingEntryId: null }], page: 1, pageSize: 10, totalCount: 1, totalOutstandingAmount: 1500 });
+    }
+    return json(route, []);
+  });
+  await authenticate(page);
+  await page.goto("/dashboard/accounting");
+  await page.getByRole("button", { name: "Saldos iniciales" }).click();
+  const rows = page.locator("tbody tr");
+  await rows.nth(0).getByRole("combobox").first().click();
+  await page.getByRole("option", { name: /22050501.*Proveedores/ }).click();
+  const positionPicker = page.getByRole("combobox", { name: "Vincular obligación anterior en partida 1" });
+  await expect(positionPicker).toBeDisabled();
+  expect(positionRequest).toBe("");
+  await rows.nth(0).getByRole("combobox", { name: "Seleccionar tercero" }).click();
+  await page.getByRole("option", { name: /Proveedor histórico/ }).click();
+  await positionPicker.click();
+  await page.getByRole("option", { name: /HIST-1500/ }).click();
+  await expect(rows.nth(0).getByRole("spinbutton").nth(1)).toHaveValue("1500");
+  const query = new URL(positionRequest).searchParams;
+  expect(query.get("partyId")).toBe(partyId);
+  expect(query.get("subledgerKind")).toBe("Payable");
+  expect(Number(query.get("pageSize"))).toBeLessThanOrEqual(100);
+  await rows.nth(1).getByRole("combobox").first().click();
+  await page.getByRole("option", { name: /310505.*Capital/ }).click();
+  await rows.nth(1).getByRole("spinbutton").first().fill("1500");
+  const approve = page.getByRole("button", { name: "Aprobar saldos" });
+  await expect(approve).toBeDisabled();
+  await page.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(approve).toBeEnabled();
+  expect(openingReads).toBe(1);
+  const savedLines = saved!.lines as Array<Record<string, unknown>>;
+  expect(savedLines[0].existingPosition).toEqual({ subledgerKind: "Payable", subledgerId: positionId });
+  const stableId = savedLines[0].lineId;
+  expect(stableId).toEqual(expect.any(String));
+  await rows.nth(0).getByRole("textbox").fill("Conciliación revisada");
+  await expect(approve).toBeDisabled();
+  await page.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(approve).toBeEnabled();
+  expect((saved!.lines as Array<Record<string, unknown>>)[0].lineId).toBe(stableId);
+  await page.reload();
+  await page.getByRole("button", { name: "Saldos iniciales" }).click();
+  await expect(page.getByRole("combobox", { name: "Vincular obligación anterior en partida 1" })).toContainText("HIST-1500");
+  expect(openingReads).toBe(2);
+});
+
 test("saldos iniciales busca cualquier tercero activo sin filtrar por rol", async ({ page }) => {
   let partyRequest = "";
   await page.route("**/api/auth/me", route => json(route, { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions }));
@@ -80,7 +160,8 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
     if (path.endsWith("/accounts")) return json(route, [{ accountId: bankAccountId, code: "111005", name: "Bancos", accountType: "Asset", allowsPosting: true, requiresParty: false, isActive: true }]);
     if (path.endsWith("/bank-accounts") && route.request().method() === "GET") return json(route, savedBankAccount ? [savedBankAccount] : []);
     if (path.includes("/bank-accounts/") && route.request().method() === "PUT") {
-      savedBankAccount = { ...route.request().postDataJSON(), accountingAccountCode: "111005", accountingAccountName: "Bancos", accountTypeCode: "Savings", accountTypeName: "Ahorros", currencyCode: "COP", rowVersion: "AQID" };
+      expect(route.request().postDataJSON()).not.toHaveProperty("accountingAccountId");
+      savedBankAccount = { ...route.request().postDataJSON(), accountingAccountId:null, accountingAccountCode:null, accountingAccountName:null, auxiliaryCount:0, accountTypeCode: "Savings", accountTypeName: "Ahorros", currencyCode: "COP", rowVersion: "AQID" };
       return json(route, savedBankAccount);
     }
     if (path.endsWith("/readiness")) return json(route, { status: "Ready", functionalCurrencyCode: "COP", effectiveFrom: "2026-01-01", openingBalanceMode: "ZeroDeclared", activatedAt: "2026-01-01T00:00:00Z", blockingIssues: [], canEditOpeningBalances: false });
@@ -93,15 +174,24 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
     return json(route, [{ ruleId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", businessId, version: 1, code: "RF-COMPRA", name: "Retefuente compras", kind: "IncomeTax", direction: "Purchase", moment: "Accrual", baseKind: "TaxExclusiveAmount", conceptCode: null, jurisdictionCode: null, rate: 2.5, minimumBase: 100000, requiredResponsibilities: [], effectiveFrom: "2026-01-01", effectiveTo: null, isActive: true }]);
   });
   let appliedRequest = "";
+  let appliedRequests = 0;
   await page.route("**/api/commerce/v1/taxation/withholdings/applied?**", route => {
+    appliedRequests++;
     appliedRequest = route.request().url();
     return json(route, { from: "2026-10-01", to: "2026-10-31", page: 1, pageSize: 25,
-      totalCount: 1, incomeTaxTotal: 250, vatTotal: 0, industryCommerceTotal: 0,
+      totalCount: 2, incomeTaxTotal: 500, vatTotal: 0, industryCommerceTotal: 0,
       items: [{ documentId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", documentType: "GoodsReceiptCostDocument",
         lineNumber: 1, recognizedAt: "2026-10-03T12:00:00-05:00", documentNumber: "FLETE-42",
         supplierName: "Transportes Andinos", supplierIdentification: "900100200", kind: "IncomeTax",
         name: "Retefuente flete", ruleCode: "RF-FLETE", jurisdictionCode: null,
-        taxableBase: 10000, rate: 2.5, amount: 250, isManual: false }] });
+        taxableBase: 10000, rate: 2.5, amount: 250, isManual: false,
+        documentTypeLabel: "Factura adicional configurada", kindLabel: "Retención configurada" },
+        { documentId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaab", documentType: "ManualAccountingVoucher",
+        lineNumber: 1, recognizedAt: "2026-10-03T12:00:00-05:00", documentNumber: "DS-43",
+        supplierName: "Servicios del tercero", supplierIdentification: "900100201", kind: "IncomeTax",
+        name: "Retención del soporte", ruleCode: "RF-SOPORTE", jurisdictionCode: null,
+        taxableBase: 10000, rate: 2.5, amount: 250, isManual: false,
+        documentTypeLabel: "Soporte manual configurado", kindLabel: "Retención configurada" }] });
   });
 
   await authenticate(page);
@@ -114,13 +204,13 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
   await bankForm.getByText("Tipo de cuenta", { exact: true }).locator("..").getByRole("combobox").click();
   await page.getByRole("option", { name: "Ahorros" }).click();
   await bankForm.getByText("Número de cuenta", { exact: true }).locator("..").locator("input").fill("123456789");
-  await bankForm.getByText("Cuenta auxiliar del PUC", { exact: true }).locator("..").getByRole("combobox").click();
-  await page.getByRole("option", { name: /111005.*Bancos/ }).click();
+  await expect(bankForm.getByText("Cuenta auxiliar del PUC", { exact: true })).toHaveCount(0);
   await bankForm.getByRole("button", { name: "Guardar cuenta bancaria" }).click();
 
   await expect.poll(() => savedBankAccount?.accountTypeOptionId).toBe(bankTypeId);
   await expect(bankForm.getByText("Tipo de cuenta", { exact: true }).locator("..").getByRole("combobox")).toContainText("Seleccionar tipo");
-  await expect(bankForm.getByText("Cuenta auxiliar del PUC", { exact: true }).locator("..").getByRole("combobox")).toContainText("Seleccionar auxiliar de bancos");
+  expect(savedBankAccount).not.toHaveProperty("accountingAccountId",expect.any(String));
+  await expect(page.getByRole("row").filter({hasText:"Cuenta principal E2E"})).toContainText("0 auxiliares vinculados");
 
   await page.getByRole("button", { name: "Retenciones" }).click();
   await expect(page.getByRole("heading", { name: "Reglas de retención" })).toBeVisible();
@@ -131,12 +221,17 @@ test("limpia el tipo de cuenta bancaria y expone la creación de reglas de reten
   await expect(page.getByRole("heading", { name: "Retenciones practicadas" })).toBeVisible();
   await expect(page.getByText("FLETE-42")).toBeVisible();
   await expect(page.getByText("Transportes Andinos")).toBeVisible();
+  await expect(page.getByText("DS-43")).toBeVisible();
+  await expect(page.getByText("Soporte manual configurado")).toBeVisible();
+  await expect(page.getByText("Factura adicional configurada")).toBeVisible();
+  expect(appliedRequests).toBe(1);
   expect(new URL(appliedRequest).searchParams.get("pageSize")).toBe("25");
   await expect(page.getByRole("heading", { name: "Reglas de retención" })).toHaveCount(0);
   expect(ruleRequests).toBe(1);
   await page.getByRole("tab", { name: "Configuración" }).click();
   await expect(page.getByRole("heading", { name: "Reglas de retención" })).toBeVisible();
   await expect(page.getByText("FLETE-42")).toHaveCount(0);
+  expect(appliedRequests).toBe(1);
   expect(ruleRequests).toBe(1);
   await page.getByRole("button", { name: "Nueva regla" }).click();
   await expect(page.getByRole("heading", { name: "Nueva regla de retención" })).toBeVisible();

@@ -114,9 +114,10 @@ public sealed class SalesReturnService(
         };
         var accepted = await store.AcceptAsync(
             user, idempotencyKey.Trim(), normalized, cancellationToken);
-        await signals.PublishAsync(new DocumentProcessingSignal(
-            accepted.MovementId, request.BusinessId, request.ReturnId,
-            SalesReturnDocumentTypes.SalesReturn), cancellationToken);
+        if (accepted.Status != "Processed")
+            await signals.PublishAsync(new DocumentProcessingSignal(
+                accepted.MovementId, request.BusinessId, request.ReturnId,
+                SalesReturnDocumentTypes.SalesReturn), cancellationToken);
         return accepted;
     }
 
@@ -127,6 +128,6 @@ public sealed class SalesReturnService(
     }
 }
 
-public sealed class SalesReturnValidationException(string message) : Exception(message);
+public sealed class SalesReturnValidationException(string message, Exception? innerException = null) : Exception(message, innerException);
 public sealed class SalesReturnForbiddenException(string message) : Exception(message);
 public sealed class SalesReturnConflictException(string message) : Exception(message);

@@ -28,13 +28,26 @@ test("cash groups its six source types and keeps individual verification where r
     ["receivable", "payable", "in", "out", "credit", "transfer-sale", "transfer-refund", "debit-sale", "credit-refund"],
   );
   assert.deepEqual(
-    cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Cash"), true).map(group => [group.label, group.items.length]),
+    cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Cash")).map(group => [group.label, group.items.length]),
     [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 1], ["Pagos a proveedores", 1], ["Entradas de dinero", 1], ["Salidas de dinero", 1]],
   );
   assert.deepEqual(
-    cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Transfer"), false).map(group => [group.label, group.items.length]),
-    [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 0], ["Pagos a proveedores", 0]],
+    cashClosurePaymentGroups(items.filter(item => item.paymentMethodCode === "Transfer")).map(group => [group.label, group.items.length]),
+    [["Facturas y comprobantes", 1], ["Devoluciones", 1], ["Abonos a cartera", 0], ["Pagos a proveedores", 0], ["Entradas de dinero", 0], ["Salidas de dinero", 0]],
   );
+});
+
+test("bank and card entries and exits keep their signs and require every decision", () => {
+  const bank = [
+    { verificationKey: "bank-in", paymentMethodCode: "Transfer", movementType: "CashIn", amount: 500 },
+    { verificationKey: "bank-out", paymentMethodCode: "Transfer", movementType: "CashOut", amount: -800 },
+    { verificationKey: "card-out", paymentMethodCode: "Card", movementType: "CashOut", amount: -200 },
+  ];
+  assert.equal(cashClosurePaymentGroups(bank)[4].items.length, 1);
+  assert.equal(cashClosurePaymentGroups(bank)[5].items.length, 2);
+  assert.equal(isCashClosureMethodConfirmed("Transfer", bank, { "bank-in": "Verified" }, false), false);
+  assert.equal(correctedCashClosureAmount("Transfer", bank, { "bank-in": "Verified", "bank-out": "Verified" }, {}, 0), -300);
+  assert.equal(correctedCashClosureAmount("Card", bank, { "card-out": "Missing" }, {}, 0), 0);
 });
 
 test("source correction moves a confirmed tender without changing physical cash", () => {

@@ -40,6 +40,7 @@ public sealed class SqlAccountingProcessingSignalGate(
                       ON receipt.GoodsReceiptId=cost.GoodsReceiptId
                      AND receipt.BusinessId=@BusinessId
                     WHERE cost.GoodsReceiptId=@DocumentId
+                      AND cost.SourceEntryId IS NULL
                       AND cost.CostDocumentId=job.SourceDocumentId
                   )
                 )

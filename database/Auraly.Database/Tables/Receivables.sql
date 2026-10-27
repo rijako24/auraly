@@ -36,13 +36,20 @@ CREATE TABLE [dbo].[Receivables]
     [Status] NVARCHAR(24) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    [OpeningEntryId] UNIQUEIDENTIFIER NULL,
+    [OpeningEntryLineNumber] INT NULL,
+    [SourceLineId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_Receivables] PRIMARY KEY ([ReceivableId]),
+    CONSTRAINT [FK_Receivables_OpeningEntryLine] FOREIGN KEY ([OpeningEntryId],[OpeningEntryLineNumber]) REFERENCES [dbo].[AccountingEntryLines] ([EntryId],[LineNumber]),
+    CONSTRAINT [CK_Receivables_OpeningEntryLine] CHECK (([OpeningEntryId] IS NULL AND [OpeningEntryLineNumber] IS NULL) OR ([OpeningEntryId] IS NOT NULL AND [OpeningEntryLineNumber] IS NOT NULL)),
     CONSTRAINT [FK_Receivables_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_Receivables_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
     CONSTRAINT [FK_Receivables_Parties] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
     CONSTRAINT [FK_Receivables_PartySites] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [FK_Receivables_SourceJob] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType]) REFERENCES [dbo].[AccountingPostingJobs] ([SourceDocumentId],[SourceDocumentType]),
-    CONSTRAINT [UQ_Receivables_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType]),
+    CONSTRAINT [UQ_Receivables_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType],[SourceLineId]),
+    CONSTRAINT [CK_Receivables_SourceLine] CHECK ([SourceLineId] IS NULL OR
+      ([SourceLineId]<>'00000000-0000-0000-0000-000000000000' AND [SourceDocumentType]=N'ManualAccountingVoucher')),
     CONSTRAINT [CK_Receivables_Amounts] CHECK ([OriginalAmount] > 0 AND [OutstandingAmount] >= 0),
     CONSTRAINT [CK_Receivables_Debtor] CHECK (([CustomerId] IS NOT NULL AND [PartyId] IS NULL AND [PartySiteId] IS NOT NULL)
         OR ([CustomerId] IS NULL AND [PartyId] IS NOT NULL AND [PartySiteId] IS NULL)),
@@ -71,25 +78,40 @@ CREATE TABLE [dbo].[ReceivableTransactions]
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [SourceDocumentType] NVARCHAR(64) NULL,
+    [SourceLineId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_ReceivableTransactions] PRIMARY KEY ([ReceivableTransactionId]),
+    [ReversesTransactionId] UNIQUEIDENTIFIER NULL,
+    CONSTRAINT [FK_ReceivableTransactions_Reversal] FOREIGN KEY ([ReversesTransactionId])
+      REFERENCES [dbo].[ReceivableTransactions]([ReceivableTransactionId]),
+    CONSTRAINT [CK_ReceivableTransactions_Reversal] CHECK (
+      ([TransactionType] NOT IN(N'Unapplication',N'CreditUnapplication') AND [ReversesTransactionId] IS NULL) OR
+      ([TransactionType] IN(N'Unapplication',N'CreditUnapplication') AND [ReversesTransactionId] IS NOT NULL AND [Amount]>0 AND [SourceDocumentType]=N'ManualAccountingVoucher' AND [SourceLineId] IS NOT NULL)),
     CONSTRAINT [FK_ReceivableTransactions_Receivables] FOREIGN KEY ([ReceivableId]) REFERENCES [dbo].[Receivables] ([ReceivableId]),
-    CONSTRAINT [UQ_ReceivableTransactions_Source] UNIQUE ([ReceivableId],[TransactionType],[SourceDocumentId]),
-    CONSTRAINT [CK_ReceivableTransactions_Type] CHECK ([TransactionType] IN (N'Opening',N'Payment',N'Reversal',N'Adjustment')),
+    CONSTRAINT [FK_ReceivableTransactions_TypedSource] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType])
+      REFERENCES [dbo].[AccountingSourceDocuments]([SourceDocumentId],[SourceDocumentType]),
+    CONSTRAINT [UQ_ReceivableTransactions_Source] UNIQUE ([ReceivableId],[TransactionType],[SourceDocumentId],[SourceLineId]),
+    CONSTRAINT [CK_ReceivableTransactions_Line] CHECK ([SourceLineId] IS NULL OR
+      ([SourceLineId]<>'00000000-0000-0000-0000-000000000000' AND [SourceDocumentType] IS NOT NULL AND [SourceDocumentType]=N'ManualAccountingVoucher')),
+    CONSTRAINT [CK_ReceivableTransactions_Type] CHECK ([TransactionType] IN (N'Opening',N'Payment',N'Reversal',N'Adjustment',N'CreditApplication',N'Unapplication',N'CreditUnapplication')),
     CONSTRAINT [CK_ReceivableTransactions_Amount] CHECK ([Amount] <> 0)
 );
+GO
+CREATE INDEX [IX_ReceivableTransactions_Unapplications] ON [dbo].[ReceivableTransactions]([ReceivableId],[OccurredAt])
+    INCLUDE([Amount],[ReversesTransactionId],[CreatedAt]) WHERE [TransactionType]=N'Unapplication';
 GO
 
 CREATE TABLE [dbo].[CustomerPayments]
 (
     [PaymentId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [CustomerId] UNIQUEIDENTIFIER NOT NULL,
+    [CustomerId] UNIQUEIDENTIFIER NULL,
     [WorkSessionId] UNIQUEIDENTIFIER NULL,
-    [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
-    [DocumentNumber] NVARCHAR(40) NOT NULL,
-    [DocumentPrefix] NVARCHAR(8) NOT NULL,
-    [DocumentSeriesCode] NVARCHAR(16) NOT NULL,
-    [DocumentConsecutive] BIGINT NOT NULL,
+    [DocumentSeriesId] UNIQUEIDENTIFIER NULL,
+    [DocumentNumber] NVARCHAR(40) NULL,
+    [DocumentPrefix] NVARCHAR(8) NULL,
+    [DocumentSeriesCode] NVARCHAR(16) NULL,
+    [DocumentConsecutive] BIGINT NULL,
     [IdempotencyKey] NVARCHAR(160) NOT NULL,
     [PayloadHash] BINARY(32) NOT NULL,
     [PaidAt] DATETIMEOFFSET(7) NOT NULL,
@@ -101,13 +123,33 @@ CREATE TABLE [dbo].[CustomerPayments]
     [AcceptedAt] DATETIMEOFFSET(7) NOT NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    [PartyId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[Parties]([PartyId]),
+    -- NULL also permits native collections spanning several invoice sites.
+    [PartySiteId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[PartySites]([PartySiteId]),
+    -- NULL denotes the native payment's own source. A manual group references
+    -- the existing parent source and never owns another job or document number.
+    [ParentSourceDocumentId] UNIQUEIDENTIFIER NULL,
+    [ParentSourceDocumentType] NVARCHAR(64) NULL,
+    [SourceGroupId] UNIQUEIDENTIFIER NULL,
+    CONSTRAINT [FK_CustomerPayments_ParentSource] FOREIGN KEY ([ParentSourceDocumentId],[ParentSourceDocumentType])
+      REFERENCES [dbo].[AccountingSourceDocuments]([SourceDocumentId],[SourceDocumentType]),
+    CONSTRAINT [CK_CustomerPayments_Party] CHECK (
+      ([CustomerId] IS NOT NULL AND [PartyId] IS NULL) OR
+      ([CustomerId] IS NULL AND [PartyId] IS NOT NULL AND [ParentSourceDocumentId] IS NOT NULL)),
+    CONSTRAINT [CK_CustomerPayments_Origin] CHECK (
+      ([ParentSourceDocumentId] IS NULL AND [ParentSourceDocumentType] IS NULL AND [SourceGroupId] IS NULL
+        AND [DocumentSeriesId] IS NOT NULL AND [DocumentNumber] IS NOT NULL AND [DocumentPrefix] IS NOT NULL
+        AND [DocumentSeriesCode] IS NOT NULL AND [DocumentConsecutive] IS NOT NULL)
+      OR ([ParentSourceDocumentId] IS NOT NULL AND [ParentSourceDocumentType] IS NOT NULL AND [SourceGroupId] IS NOT NULL
+        AND [SourceGroupId]<>'00000000-0000-0000-0000-000000000000'
+        AND [DocumentSeriesId] IS NULL AND [DocumentNumber] IS NULL AND [DocumentPrefix] IS NULL
+        AND [DocumentSeriesCode] IS NULL AND [DocumentConsecutive] IS NULL)),
     CONSTRAINT [PK_CustomerPayments] PRIMARY KEY ([PaymentId]),
     CONSTRAINT [FK_CustomerPayments_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_CustomerPayments_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
     CONSTRAINT [FK_CustomerPayments_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_CustomerPayments_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_CustomerPayments_Users] FOREIGN KEY ([ConfirmedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
-    CONSTRAINT [UQ_CustomerPayments_Business_Number] UNIQUE ([BusinessId],[DocumentNumber]),
     CONSTRAINT [UQ_CustomerPayments_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [CK_CustomerPayments_Total] CHECK ([TotalAmount] > 0),
     CONSTRAINT [CK_CustomerPayments_Currency] CHECK ([CurrencyCode] = 'COP'),
@@ -115,6 +157,14 @@ CREATE TABLE [dbo].[CustomerPayments]
 );
 GO
 CREATE INDEX [IX_CustomerPayments_Business_Paid] ON [dbo].[CustomerPayments] ([BusinessId],[PaidAt] DESC) INCLUDE ([CustomerId],[Status],[TotalAmount]);
+GO
+
+CREATE UNIQUE INDEX [UX_CustomerPayments_NativeNumber]
+    ON [dbo].[CustomerPayments]([BusinessId],[DocumentNumber]) WHERE [ParentSourceDocumentId] IS NULL;
+GO
+CREATE UNIQUE INDEX [UX_CustomerPayments_ParentGroup]
+    ON [dbo].[CustomerPayments]([ParentSourceDocumentId],[ParentSourceDocumentType],[SourceGroupId])
+    WHERE [ParentSourceDocumentId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[CustomerPaymentTenders]
@@ -129,6 +179,11 @@ CREATE TABLE [dbo].[CustomerPaymentTenders]
     [Notes] NVARCHAR(500) NULL,
     [CardFranchiseCode] NVARCHAR(64) NULL,
     [ApprovalNumber] NVARCHAR(100) NULL,
+    [AccountId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[AccountingAccounts]([AccountId]),
+    [SourceLineId] UNIQUEIDENTIFIER NULL,
+    CONSTRAINT [CK_CustomerPaymentTenders_SourceLine] CHECK (
+      ([AccountId] IS NULL AND [SourceLineId] IS NULL) OR
+      ([SourceLineId] IS NOT NULL AND [SourceLineId]<>'00000000-0000-0000-0000-000000000000')),
     CONSTRAINT [PK_CustomerPaymentTenders] PRIMARY KEY CLUSTERED ([PaymentId],[LineNumber]),
     CONSTRAINT [FK_CustomerPaymentTenders_Payment] FOREIGN KEY ([PaymentId]) REFERENCES [dbo].[CustomerPayments] ([PaymentId]),
     CONSTRAINT [FK_CustomerPaymentTenders_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),

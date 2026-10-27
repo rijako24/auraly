@@ -25,7 +25,8 @@ public sealed record PortfolioPaymentReceipt(
     string ResponsibleName,
     decimal TotalAmount,
     IReadOnlyList<PortfolioPaymentReceiptAllocation> Allocations,
-    IReadOnlyList<PortfolioPaymentReceiptTender> Payments);
+    IReadOnlyList<PortfolioPaymentReceiptTender> Payments,
+    string? Status = null);
 
 public sealed class PortfolioPaymentReceiptRenderer
 {
@@ -41,6 +42,7 @@ public sealed class PortfolioPaymentReceiptRenderer
             (format == "Receipt" && paperWidthMillimeters is not (58 or 80)) ||
             receipt.PaymentId == Guid.Empty ||
             receipt.Direction is not ("Receivable" or "Payable") ||
+            receipt.Status is not (null or "Accepted" or "Processed") ||
             string.IsNullOrWhiteSpace(receipt.DocumentNumber) ||
             string.IsNullOrWhiteSpace(receipt.CompanyName) ||
             string.IsNullOrWhiteSpace(receipt.PartyName) ||
@@ -57,6 +59,11 @@ public sealed class PortfolioPaymentReceiptRenderer
             throw new ArgumentException("El comprobante de pago no contiene datos consistentes.", nameof(receipt));
 
         var incoming = receipt.Direction == "Receivable";
+        var applied = receipt.Status == "Processed";
+        var statusText = applied ? "Abono aplicado" : receipt.Status == "Accepted"
+            ? "Registro recibido · pendiente de aplicar" : "Aplicación sin confirmar";
+        var allocationsTitle = applied ? "Facturas aplicadas" : receipt.Status == "Accepted"
+            ? "Abonos por aplicar" : "Documentos relacionados";
         var sheet = format != "Receipt";
         var template = incoming
             ? sheet ? PosPrintTemplateCatalog.ReceivablePaymentSheet : PosPrintTemplateCatalog.ReceivablePayment
@@ -115,13 +122,13 @@ public sealed class PortfolioPaymentReceiptRenderer
         if (!string.IsNullOrWhiteSpace(receipt.BusinessPhone))
             html.Append($"<p>Tel. {E(receipt.BusinessPhone)}</p>");
         html.Append($$"""
-            </header><section class="kind"><small>{{(incoming ? "Entrada de dinero" : "Salida de dinero")}}</small>
-            <h2>{{(incoming ? "Recibo de abono a cartera" : "Pago a proveedor")}}</h2></section>
+            </header><section class="kind"><small>{{E(statusText)}}</small>
+            <h2>{{(incoming ? "Registro de abono a cartera" : "Registro de pago a proveedor")}}</h2></section>
             <section class="block grid"><div><span class="label">Comprobante</span><span class="value">{{E(receipt.DocumentNumber)}}</span></div>
             <div><span class="label">Fecha y hora</span><span class="value">{{date.ToString("dd/MM/yyyy HH:mm", Culture)}}</span></div></section>
-            <section class="block"><span class="label">{{(incoming ? "Recibido de" : "Pagado a")}}</span><span class="value">{{E(receipt.PartyName)}}</span>
+            <section class="block"><span class="label">{{(incoming ? "Cliente" : "Proveedor")}}</span><span class="value">{{E(receipt.PartyName)}}</span>
             <div>{{E(receipt.PartyIdentification)}}</div></section>
-            <section class="block"><h3>Facturas aplicadas</h3>
+            <section class="block"><h3>{{allocationsTitle}}</h3>
             """);
         foreach (var line in receipt.Allocations)
             html.Append($"<div class=\"row\"><span>{E(line.DocumentNumber)}</span><strong>{Money(line.Amount)}</strong></div>");
@@ -133,10 +140,12 @@ public sealed class PortfolioPaymentReceiptRenderer
                 html.Append($"<span class=\"ref\">Referencia: {E(line.Reference)}</span>");
         }
         html.Append($$"""
-            </section><div class="total"><span>Valor {{(incoming ? "recibido" : "pagado")}}</span><strong>{{Money(receipt.TotalAmount)}}</strong></div>
+            </section><div class="total"><span>{{(applied ? (incoming ? "Valor recibido" : "Valor pagado") : "Valor registrado")}}</span><strong>{{Money(receipt.TotalAmount)}}</strong></div>
             <section class="block"><span class="label">Registrado por</span><span class="value">{{E(receipt.ResponsibleName)}}</span></section>
             """);
-        if (!incoming)
+        if (!applied)
+            html.Append("<p class=\"signature-note\">Este registro no confirma un abono aplicado. Consulta el estado del pago.</p>");
+        else if (!incoming)
             html.Append($"<div class=\"signature\">Firma de recibido · {E(receipt.PartyName)}</div><p class=\"signature-note\">Documento: {E(receipt.PartyIdentification)}</p>");
         else
             html.Append("<p class=\"signature-note\">Conserve este comprobante de su abono.</p>");

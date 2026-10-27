@@ -18,9 +18,10 @@ type Props = {
   columns: ReportColumn[];
   fileName?: string;
   documentDownloads?: boolean;
+  searchable?: boolean;
 };
 
-export function ReportViewer({ onClose, title, description, rows, columns, fileName, documentDownloads = false }: Props) {
+export function ReportViewer({ onClose, title, description, rows, columns, fileName, documentDownloads = false, searchable = true }: Props) {
   const [search, setSearch] = useState("");
   const [exporting, setExporting] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -33,15 +34,17 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
     staleTime: 10 * 60 * 1000,
   });
   const brandName = branding.data?.legalName ?? branding.data?.displayName ?? selectedTenantName;
+  const brandIdentification = branding.data?.nit
+    ? `NIT ${branding.data.nit}${branding.data.verificationDigit ? `-${branding.data.verificationDigit}` : ""}` : undefined;
   const generatedAt = useMemo(() => new Date(), []);
-  const filtered = useMemo(() => filterReportRows(rows, columns, search), [columns, rows, search]);
+  const filtered = useMemo(() => filterReportRows(rows, columns, searchable ? search : ""), [columns, rows, search, searchable]);
   const recordCount = useMemo(() => filtered.filter(row => !row.__group).length, [filtered]);
 
   async function exportFile(format: "pdf" | "xlsx") {
     setExporting(format); setExportError(null);
     try {
       const { exportReportPdf, exportReportExcel } = await import("@/lib/report-export");
-      await (format === "pdf" ? exportReportPdf : exportReportExcel)({ title, brandName,
+      await (format === "pdf" ? exportReportPdf : exportReportExcel)({ title, brandName: [brandName, brandIdentification].filter(Boolean).join(" · "),
         description, fileName: fileName ?? title, rows: filtered, columns });
     } catch (error) { setExportError(error instanceof Error ? error.message : "No se pudo exportar."); }
     finally { setExporting(null); }
@@ -59,10 +62,10 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
   return <div className="flex min-h-[calc(100dvh-9rem)] flex-col overflow-hidden rounded-2xl border bg-background">
         <header className="flex flex-wrap items-center gap-4 border-b px-5 py-4"><Button type="button" size="sm" variant="ghost" onClick={onClose}><ArrowLeft className="mr-2 h-4 w-4"/>Volver</Button><TenantBrand displayName={brandName} logoUrl={branding.data?.logoUrl}/><div><h1 className="text-lg font-semibold">{title}</h1><p className="text-sm text-muted-foreground">{description ?? `${recordCount.toLocaleString("es-CO")} registros`}</p></div></header>
         <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center">
-          <label className="relative min-w-0 flex-1">
+          {searchable ? <label className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar dentro del reporte" />
-          </label>
+          </label> : <p className="min-w-0 flex-1 text-sm text-muted-foreground">Se imprime y exporta el informe completo con los filtros aplicados.</p>}
           <span className="text-sm tabular-nums text-muted-foreground">{recordCount.toLocaleString("es-CO")} filas</span>
           <Button variant="outline" disabled={!!exporting} onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />{documentDownloads ? "Imprimir" : "Imprimir / PDF"}</Button>
           {documentDownloads && <><Button variant="outline" disabled={!!exporting} onClick={() => void exportFile("pdf")}>Descargar PDF</Button>
@@ -73,7 +76,20 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
         {exportError && <p role="alert" className="px-5 py-2 text-destructive">{exportError}</p>}
         <section id="auraly-report-print-area" className="min-h-0 flex-1 overflow-auto bg-white p-5 text-slate-950">
           <header className="mb-6 border-b-2 border-teal-700 pb-4">
-            <div className="flex flex-wrap items-start justify-between gap-4"><div><TenantBrand className="mb-4" displayName={brandName} logoUrl={branding.data?.logoUrl}/><p className="text-[10px] font-bold uppercase tracking-[.24em] text-teal-700">Reporte corporativo</p><h1 className="mt-1 text-2xl font-bold tracking-tight">{title}</h1>{description && <p className="mt-1 text-sm text-slate-600">{description}</p>}</div><dl className="grid min-w-56 gap-1 rounded-lg border bg-slate-50 p-3 text-xs"><div className="flex justify-between gap-4"><dt className="text-slate-500">Generado</dt><dd className="font-medium">{generatedAt.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Registros</dt><dd className="font-medium">{recordCount.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Sistema</dt><dd className="font-medium">Auraly</dd></div></dl></div>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <TenantBrand className="mb-4" displayName={brandName} logoUrl={branding.data?.logoUrl}/>
+                {brandIdentification && <p className="mb-2 text-xs text-slate-600">{brandIdentification}</p>}
+                <p className="text-[10px] font-bold uppercase tracking-[.24em] text-teal-700">Reporte corporativo</p>
+                <h1 className="mt-1 text-2xl font-bold tracking-tight">{title}</h1>
+                {description && <p className="mt-1 text-sm text-slate-600">{description}</p>}
+              </div>
+              <dl className="grid min-w-56 gap-1 rounded-lg border bg-slate-50 p-3 text-xs">
+                <div className="flex justify-between gap-4"><dt className="text-slate-500">Generado</dt><dd className="font-medium">{generatedAt.toLocaleString("es-CO")}</dd></div>
+                <div className="flex justify-between gap-4"><dt className="text-slate-500">Registros</dt><dd className="font-medium">{recordCount.toLocaleString("es-CO")}</dd></div>
+                <div className="flex justify-between gap-4"><dt className="text-slate-500">Sistema</dt><dd className="font-medium">Auraly</dd></div>
+              </dl>
+            </div>
           </header>
           <table className="w-full min-w-max border-collapse text-xs sm:text-sm">
             <thead className="sticky top-0 bg-slate-100 print:static">
@@ -102,16 +118,22 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
               min-height: 0 !important;
               max-height: none !important;
               overflow: visible !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              border: 0 !important;
+              box-shadow: none !important;
+              background: transparent !important;
             }
             body *:has(#auraly-report-print-area) > :not(:has(#auraly-report-print-area)):not(#auraly-report-print-area) {
               display: none !important;
             }
             #auraly-report-print-area, #auraly-report-print-area * { visibility: visible !important; }
             #auraly-report-print-area { position: static !important; width: auto !important; height: auto !important; min-height: 0 !important; overflow: visible !important; padding: 0 !important; }
-            #auraly-report-print-area table { width: 100% !important; min-width: 0 !important; font-size: 9pt; }
+            #auraly-report-print-area table { width: 100% !important; min-width: 0 !important; font-size: ${columns.length > 10 ? 7 : 9}pt; }
+            #auraly-report-print-area th, #auraly-report-print-area td { font-size: inherit !important; line-height: 1.2 !important; padding: 3pt 4pt !important; }
             #auraly-report-print-area thead { display: table-header-group; }
             #auraly-report-print-area tr { break-inside: avoid; }
-            @page { size: landscape; margin: 10mm; }
+            @page { size: A4 landscape; margin: 10mm; }
           }
         `}</style>
   </div>;

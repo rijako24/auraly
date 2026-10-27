@@ -101,6 +101,10 @@ public sealed class ServerSliceArchitectureTests
             string.Concat("Pedidos", "OK")
         };
         var violations = new List<string>();
+        // Match a marker, not the letters inside a legitimate Spanish word
+        // such as "método" in a user-facing validation message.
+        var pendingMarker = new System.Text.RegularExpressions.Regex(@"\bTODO\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
         foreach (var scope in scopes)
         {
             foreach (var file in Directory.GetFiles(scope, "*", SearchOption.AllDirectories)
@@ -120,7 +124,7 @@ public sealed class ServerSliceArchitectureTests
                     }
                 }
 
-                if (text.Contains("TODO", StringComparison.OrdinalIgnoreCase) ||
+                if (pendingMarker.IsMatch(text) ||
                     text.Contains("NotImplementedException", StringComparison.Ordinal))
                 {
                     violations.Add($"{Path.GetRelativePath(root, file)}: placeholder");

@@ -15,7 +15,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
+import { PortfolioTransactions } from "@/components/payments/portfolio-transactions";
+import { PortfolioUnapplicationDialog, type PortfolioUnapplicationTarget } from "@/components/payments/portfolio-unapplication-dialog";
 import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
 import { useQueryClient } from "@tanstack/react-query";
 import { PortfolioLedgerTabs, type PortfolioLedgerTab, type PartyRow } from "@/components/payments/portfolio-ledger-tabs";
@@ -59,6 +61,7 @@ export default function PayablesPage() {
   const [paymentPartySiteId, setPaymentPartySiteId] = useState<string>();
   const [paymentPartySiteName, setPaymentPartySiteName] = useState<string>();
   const [selectedId, setSelectedId] = useState<string>();
+  const [unapplicationTarget, setUnapplicationTarget] = useState<PortfolioUnapplicationTarget | null>(null);
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [adjustmentObligationId, setAdjustmentObligationId] = useState<string | null>(null);
   const [portfolioPaymentOpen,setPortfolioPaymentOpen]=useState(false);
@@ -106,14 +109,14 @@ export default function PayablesPage() {
     {
       accessorKey: "originalAmount",
       header: "Valor original",
-      cell: ({ row }) => formatCurrency(row.original.originalAmount, row.original.currencyCode),
+      cell: ({ row }) => formatCurrency(row.original.originalAmount, row.original.currencyCode,4),
     },
     {
       accessorKey: "outstandingAmount",
       header: "Saldo",
       cell: ({ row }) => (
         <span className="font-semibold">
-          {formatCurrency(row.original.outstandingAmount, row.original.currencyCode)}
+          {formatCurrency(row.original.outstandingAmount, row.original.currencyCode,4)}
         </span>
       ),
     },
@@ -149,7 +152,7 @@ export default function PayablesPage() {
         <div className="ml-auto flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={() => setReportOpen(true)}><Files className="mr-2 h-4 w-4"/>Reportes</Button>{permissions?.includes("accounting.manual.create")&&<Button variant="outline" onClick={()=>{setAdjustmentObligationId(null);setAdjustmentOpen(true)}}><FilePenLine className="mr-2 h-4 w-4"/>Ajuste de cartera</Button>}{canPay&&<Button onClick={()=>{setPaymentTarget(undefined);setPaymentParty(null);setPaymentPartySiteId(undefined);setPaymentPartySiteName(undefined);setPortfolioPaymentOpen(true)}}><Landmark className="mr-2 h-4 w-4"/>Pagar proveedores</Button>}</div>
       </header>
 
-    <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} partySiteId={partySiteId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} filters={
+    <PortfolioLedgerTabs direction="payable" value={activeTab} onValueChange={setActiveTab} search={search.trim()||undefined} partyId={supplierId} partySiteId={partySiteId} status={status==="all"?undefined:status} overdue={overdue} from={from||undefined} to={to||undefined} onRefreshInvoices={()=>void query.refetch()} onPartyClick={openPartyPayment} onInvoiceClick={setSelectedId} invoiceSummary={query.isError ? undefined : query.data} invoiceLoading={query.isFetching} filters={
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-medium">Filtros</summary><div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         <PagedEntitySelect<PartySiteRoleOption> queryKey={["payable-supplier-site-options",businessId]} value={partySiteId??""} selectedOption={supplierFilter} placeholder="Filtrar por proveedor y sede" ariaLabel="Filtrar proveedor y sede" loadPage={(term,page,pageSize)=>partiesApi.portfolioSiteOptions({role:"Supplier",search:term||undefined,page,pageSize})} getOption={item=>({value:item.partySiteId,label:`${item.displayName} · ${item.siteName}`,description:item.identification})} onChange={(_,option,item)=>{if(!item)return;setSupplierId(item.roleId);setPartySiteId(item.partySiteId);setSupplierFilter(option);setPage(1)}} onClear={()=>{setSupplierId(undefined);setPartySiteId(undefined);setSupplierFilter(null);setPage(1)}}/>
         <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Número de documento o identificación" />
@@ -197,8 +200,8 @@ export default function PayablesPage() {
           {detailQuery.isLoading ? <p className="py-8 text-center text-muted-foreground">Cargando trazabilidad...</p> : detail ? (
             <div className="space-y-5">
               <dl className="grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-3">
-                <Metric label="Valor original" value={formatCurrency(detail.originalAmount, detail.currencyCode)} />
-                <Metric label="Saldo actual" value={formatCurrency(detail.outstandingAmount, detail.currencyCode)} emphasized />
+                <Metric label="Valor original" value={formatCurrency(detail.originalAmount, detail.currencyCode,4)} />
+                <Metric label="Saldo actual" value={formatCurrency(detail.outstandingAmount, detail.currencyCode,4)} emphasized />
                 <Metric label="Vence" value={formatDate(detail.dueDate)} />
               </dl>
               {detail.sourceDocumentType === "Expense" && <section className="rounded-xl border p-4 text-sm">
@@ -211,17 +214,10 @@ export default function PayablesPage() {
                 <span>{detail.sourceDocumentType === "GoodsReceiptCostDocument" ? "Factura adicional de recepción" : "Recepción de compra"}</span>
                 {permissions?.includes("purchasing.goods-receipts.read") && <Button variant="outline" onClick={() => router.push(`/dashboard/purchasing/goods-receipts?receiptId=${detail.goodsReceiptId}`)}>Ver recepción</Button>}
               </section>}
-              <section>
-                <h3 className="mb-3 text-sm font-semibold">Movimientos</h3>
-                <div className="space-y-2">
-                  {detail.transactions.map((transaction) => (
-                    <div key={transaction.transactionId} className="flex items-center justify-between rounded-lg border p-3 text-sm">
-                      <div><p className="font-medium">{transaction.type === "Opening" ? "Obligación creada" : transaction.type === "Payment" ? "Pago aplicado" : "Ajuste de saldo"}</p><p className="text-xs text-muted-foreground">{formatDateTime(transaction.occurredAt)}</p></div>
-                      <span className={transaction.type === "Payment" ? "font-semibold text-emerald-700" : "font-semibold"}>{transaction.type === "Payment" ? "−" : transaction.amount >= 0 ? "+" : ""}{formatCurrency(transaction.amount, detail.currencyCode)}</span>
-                    </div>
-                  ))}
-                </div>
-              </section>
+              <PortfolioTransactions transactions={detail.transactions} currencyCode={detail.currencyCode} direction="payable"
+                onUnapply={canPay && permissions?.includes("accounting.read") && permissions.includes("accounting.manual.create") ? transactionId => {
+                  setUnapplicationTarget({ subledgerKind: "Payable", subledgerId: detail.payableId, transactionId }); setSelectedId(undefined);
+                } : undefined} />
               <DialogFooter>
                 <Button variant="outline" onClick={() => setSelectedId(undefined)}>Cerrar</Button>{permissions?.includes("accounting.manual.create") && <Button variant="outline" onClick={() => { setAdjustmentObligationId(detail.payableId); setSelectedId(undefined); setAdjustmentOpen(true); }}>Ajuste de cartera</Button>}
                 {canPay && detail.outstandingAmount > 0 && <Button onClick={openPayment}><Landmark className="mr-2 h-4 w-4" /> Registrar pago</Button>}
@@ -232,6 +228,7 @@ export default function PayablesPage() {
       </Dialog>
 
       {businessId && <PortfolioAdjustmentDialog direction="Payable" businessId={businessId} open={adjustmentOpen} obligationId={adjustmentObligationId} onClose={() => setAdjustmentOpen(false)} />}
+      {businessId && unapplicationTarget && <PortfolioUnapplicationDialog businessId={businessId} target={unapplicationTarget} onClose={() => setUnapplicationTarget(null)} />}
       <PortfolioPaymentWizard direction="payable" open={portfolioPaymentOpen} onOpenChange={open=>{setPortfolioPaymentOpen(open);if(!open){setPaymentTarget(undefined);setPaymentParty(null);setPaymentPartySiteId(undefined);setPaymentPartySiteName(undefined)}}} onCompleted={()=>{for(const key of ["payables","payable-suppliers","payable-payments","payable"]){void queryClient.invalidateQueries({queryKey:[key,businessId]});}}} initialInvoice={paymentTarget?{id:paymentTarget.payableId,number:paymentTarget.documentNumber,dueDate:paymentTarget.dueDate,outstanding:paymentTarget.outstandingAmount,currency:paymentTarget.currencyCode,overdue:false}:null} initialPartySiteId={paymentPartySiteId} initialPartySiteName={paymentPartySiteName} initialParty={paymentTarget?{partyId:"",roleId:paymentTarget.supplierId,role:"Supplier",displayName:paymentTarget.supplierName,identification:paymentTarget.supplierIdentification,supplierPurchaseEvidencePolicy:null,supplierDefaultPaymentDueDays:null,customerId:null,supplierId:paymentTarget.supplierId,sellerId:null,carrierId:null,employeeId:null,userId:null}:paymentParty}/>
       {reportOpen && <PortfolioReportDialog direction="payable" onClose={() => setReportOpen(false)}
         initialPartyId={supplierId} initialPartySiteId={partySiteId} initialPartyLabel={supplierFilter?.label}

@@ -2,6 +2,7 @@ using System.Data;
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Parties;
 using Auraly.Contracts.Receivables;
@@ -16,8 +17,145 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 [Trait("EngineCertification", "Accounting")]
-public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
+public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Customer_collection_cannot_reserve_a_party_only_obligation()
+    {
+        var (customerId, userId, _) = await ConfigureAsync();
+        using var client = fixture.CreateUserClient(userId, ReceivablesPermissionCodes.ManageCredit,
+            ReceivablesPermissionCodes.RegisterPayment);
+        var id = Guid.NewGuid();
+        var date = new DateTimeOffset(2026, 8, 1, 9, 0, 0, TimeSpan.FromHours(-5));
+        using (var imported = await client.PostAsJsonAsync("/api/commerce/v1/receivables/preexisting/import",
+            new ImportPreexistingReceivablesRequest(fixture.BusinessId,
+                [new(id, customerId, null, null, $"PARTY-{id:N}", date, date.AddDays(30), 1000m,
+                    await AccountIdByCodeAsync("413595"), null)])))
+            Assert.True(imported.IsSuccessStatusCode, await imported.Content.ReadAsStringAsync());
+
+        // Represents an employee/other-party position, which has no customer role.
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await ExecuteAsync(connection, null, """
+                UPDATE dbo.Receivables SET CustomerId=NULL,PartySiteId=NULL,PartyId=@PartyId
+                WHERE ReceivableId=@Id;
+                """, new("@Id", id), new("@PartyId", fixture.SupplierPartyId));
+        }
+        var payment = new ConfirmCustomerPaymentRequest(Guid.NewGuid(), fixture.BusinessId, customerId,
+            null, date.AddDays(1), "COP", null, [new(id, 100m)], [new("Cash", 100m, 100m)]);
+        using var rejected = await SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", payment,
+            payment.PaymentId.ToString("N"));
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Contains("no corresponde al cliente", await rejected.Content.ReadAsStringAsync());
+        Assert.Equal(1000m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", id));
+        foreach (var table in new[] { "CustomerPayments", "CustomerPaymentTenders", "CustomerPaymentApplications" })
+            Assert.Equal(0, await CountAsync(table, "PaymentId", payment.PaymentId));
+        foreach (var table in new[] { "AccountingSourceDocuments", "AccountingPostingJobs", "AccountingEntries", "ReceivableTransactions" })
+            Assert.Equal(0, await CountAsync(table, "SourceDocumentId", payment.PaymentId));
+    }
+
+    [Fact]
+    public async Task Direct_adjustment_and_assisted_collection_share_the_same_available_balance()
+    {
+        var (customerId, userId, _) = await ConfigureAsync();
+        using var client = fixture.CreateUserClient(userId, ReceivablesPermissionCodes.Read,
+            ReceivablesPermissionCodes.ManageCredit, ReceivablesPermissionCodes.RegisterPayment,
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Retry);
+        var id = Guid.NewGuid();
+        var accountId = await AccountIdByCodeAsync("413595");
+        var date = new DateTimeOffset(2026, 8, 1, 9, 0, 0, TimeSpan.FromHours(-5));
+        using (var imported = await client.PostAsJsonAsync("/api/commerce/v1/receivables/preexisting/import",
+            new ImportPreexistingReceivablesRequest(fixture.BusinessId,
+                [new(id, customerId, null, null, $"RES-{id:N}", date, date.AddDays(30), 1000m, accountId, null)])))
+            Assert.True(imported.IsSuccessStatusCode, await imported.Content.ReadAsStringAsync());
+
+        using var scope = fixture.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IAccountingStore>();
+        var user = new AccountingUserIdentity(userId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.ManualSend });
+        var adjustment = new ConfirmAccountAdjustmentRequest(Guid.NewGuid(), fixture.BusinessId,
+            "Receivable", id, "Decrease", 700m, accountId, null, date.AddDays(1), "ACCOUNT_ADJUSTMENT", "Reserva del ajuste");
+        await store.ConfirmAccountAdjustmentAsync(user, adjustment, CancellationToken.None);
+        await Assert.ThrowsAsync<AccountingConflictException>(() => store.ConfirmAccountAdjustmentAsync(user,
+            adjustment with { AdjustmentId = Guid.NewGuid() }, CancellationToken.None));
+
+        var payment = new ConfirmCustomerPaymentRequest(Guid.NewGuid(), fixture.BusinessId, customerId,
+            null, date.AddDays(1), "COP", "Abono asistido", [new(id, 700m)], [new("Cash", 700m, 700m)]);
+        using (var rejected = await SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", payment, payment.PaymentId.ToString("N")))
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Equal(0, await CountAsync("CustomerPayments", "PaymentId", payment.PaymentId));
+        var partial = payment with { PaymentId = Guid.NewGuid(), Allocations = [new(id, 300m)], Payments = [new("Cash", 300m, 300m)] };
+        using (var accepted = await SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", partial, partial.PaymentId.ToString("N")))
+            Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
+        Assert.Equal(700m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", id));
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var posted = await client.PostAsync($"/api/commerce/v1/accounting/postings/{adjustment.AdjustmentId}/retry", null);
+            Assert.True(posted.IsSuccessStatusCode, await posted.Content.ReadAsStringAsync());
+        }
+        Assert.Equal(0m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", id));
+        Assert.Equal(1, await CountAsync("ReceivableTransactions", "SourceDocumentId", adjustment.AdjustmentId));
+        Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", adjustment.AdjustmentId));
+    }
+
+    [Fact]
+    public async Task Adjustments_reopen_a_paid_balance_and_preserve_settlement_status_without_repeating_effects()
+    {
+        var (customerId, userId, _) = await ConfigureAsync();
+        using var client = fixture.CreateUserClient(userId, ReceivablesPermissionCodes.Read,
+            ReceivablesPermissionCodes.ManageCredit, ReceivablesPermissionCodes.RegisterPayment,
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend);
+        var id = Guid.NewGuid();
+        var accountId = await AccountIdByCodeAsync("413595");
+        var date = new DateTimeOffset(2026, 8, 1, 9, 0, 0, TimeSpan.FromHours(-5));
+        using (var imported = await client.PostAsJsonAsync("/api/commerce/v1/receivables/preexisting/import",
+            new ImportPreexistingReceivablesRequest(fixture.BusinessId,
+                [new(id, customerId, null, null, $"STATUS-{id:N}", date, date.AddDays(30), 1000m, accountId, null)])))
+            Assert.True(imported.IsSuccessStatusCode, await imported.Content.ReadAsStringAsync());
+
+        async Task AssertBalanceAsync(decimal amount, string status)
+        {
+            Assert.Equal(amount, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", id));
+            Assert.Equal(status, await ScalarAsync<string>("SELECT Status FROM dbo.Receivables WHERE ReceivableId=@Id", id));
+        }
+
+        async Task AdjustAsync(string direction, decimal amount, decimal expected, string status)
+        {
+            var adjustment = new ConfirmAccountAdjustmentRequest(Guid.NewGuid(), fixture.BusinessId,
+                "Receivable", id, direction, amount, accountId, null, date.AddDays(1), "ACCOUNT_ADJUSTMENT", "Ajuste de saldo trazable");
+            using var writes = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter: command => command.CommandText.Contains("JOIN @PortfolioChanges change", StringComparison.Ordinal));
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                using var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/account-adjustments", adjustment);
+                Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            }
+            Assert.Equal(1, writes.Count);
+            Assert.Equal(1, await CountAsync("ReceivableTransactions", "SourceDocumentId", adjustment.AdjustmentId));
+            Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", adjustment.AdjustmentId));
+            await AssertBalanceAsync(expected, status);
+        }
+
+        await AdjustAsync("Increase", 500m, 1500m, "Open");
+        var payment = new ConfirmCustomerPaymentRequest(Guid.NewGuid(), fixture.BusinessId, customerId,
+            null, date.AddDays(1), "COP", "Abono a saldo ajustado", [new(id, 100m)], [new("Cash", 100m, 100m)]);
+        using (var response = await SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", payment, payment.PaymentId.ToString("N")))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        await AssertBalanceAsync(1400m, "PartiallyPaid");
+        await AdjustAsync("Decrease", 1400m, 0m, "Paid");
+        await AdjustAsync("Increase", 100m, 100m, "PartiallyPaid");
+        await AdjustAsync("Increase", 900m, 1000m, "Open");
+
+        var invalid = new ConfirmAccountAdjustmentRequest(Guid.NewGuid(), fixture.BusinessId, "Receivable", id,
+            "Decrease", 1001m, accountId, null, date.AddDays(1), "ACCOUNT_ADJUSTMENT", "No puede exceder el saldo");
+        using (var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/account-adjustments", invalid))
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal(0, await CountAsync("ReceivableTransactions", "SourceDocumentId", invalid.AdjustmentId));
+        await AssertBalanceAsync(1000m, "Open");
+    }
+
     [Fact]
     public async Task Report_ages_outstanding_by_local_due_day_before_pagination()
     {
@@ -37,9 +175,12 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 new DateTimeOffset(due.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(-5)),
                 1_000m, counterpart, null);
         }).ToArray();
+        using (var commands = new InventoryBalanceProcessingTests.CommandCounter(
+                   new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog))
         using (var response = await client.PostAsJsonAsync("/api/commerce/v1/receivables/preexisting/import",
                    new ImportPreexistingReceivablesRequest(fixture.BusinessId, entries)))
-            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                $"{await response.Content.ReadAsStringAsync()}\nÚltimo comando SQL: {commands.LastCommandText}");
 
         var report = await client.GetFromJsonAsync<ReceivablesReportPage>(
             $"/api/commerce/v1/receivables/report?page=1&pageSize=3&consolidated=false&cutoff={cutoff:yyyy-MM-dd}&customerId={customerId:D}");
@@ -631,6 +772,10 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             [new CustomerPaymentAllocationRequest(receivable.ReceivableId, partialAmount)],
             [new CustomerPaymentTenderRequest(CustomerPaymentMethods.Cash,partialAmount,partialAmount)]);
         var paymentKey = $"receivable-payment-{payment.PaymentId:N}";
+        await fixture.AssertPaymentAcceptanceRollbackAsync("Receivable", payment.PaymentId,
+            () => SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey));
+        Assert.Equal(receivable.OriginalAmount, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", receivable.ReceivableId));
         CustomerPaymentAcceptance acceptance;
         using (var response = await SendAsync(client,
                    "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))
@@ -644,6 +789,17 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.CustomerPayments WHERE PaymentId=@Id", payment.PaymentId));
+        await fixture.AssertPaymentReplayRequiresItsSourceAsync(payment.PaymentId,
+            () => SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey));
+        using (var scope = fixture.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<Auraly.Application.Receivables.ReceivablesService>();
+            var wrongTenant = new ReceivablesUserIdentity(userId, Guid.NewGuid(), fixture.BusinessId,
+                new HashSet<string> { ReceivablesPermissionCodes.RegisterPayment });
+            await fixture.AssertPaymentDoesNotWriteNumberingAsync("ReceivablePayment", async () =>
+                await Assert.ThrowsAsync<Auraly.Application.Receivables.ReceivablesValidationException>(
+                    () => service.ConfirmPaymentAsync(wrongTenant, paymentKey, payment)));
+        }
         Assert.Equal(receivable.OriginalAmount - partialAmount, await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
             receivable.ReceivableId));
@@ -771,6 +927,10 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
                 WHERE account.TenantId=@TenantId AND account.Code=N'111020'
                   AND optionValue.CatalogCode=N'bank-account-type'
                   AND optionValue.Code=N'Checking' AND optionValue.IsActive=1;
+                UPDATE account SET BankAccountId=bank.BankAccountId,FinancialFunction=N'Bank',BalanceSide=N'Debit'
+                FROM dbo.AccountingAccounts account JOIN accounting.BankAccounts bank
+                  ON bank.AccountingAccountId=account.AccountId AND bank.TenantId=account.TenantId
+                WHERE account.TenantId=@TenantId AND account.Code=N'111020';
                 """, new("@TenantId", fixture.TenantId), new("@UserId", userId));
             await transaction.CommitAsync();
         }
@@ -1362,8 +1522,11 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             "SalesPayments:DocumentId",
             "ReceivableTransactions:SourceDocumentId",
             "AccountingEntries:SourceDocumentId",
+            "AccountingSourceDocuments:SourceDocumentId",
             "AccountingPostingJobs:SourceDocumentId",
             "CustomerPaymentApplications:PaymentId",
+            "CustomerPaymentTenders:PaymentId",
+            "CustomerPayments:PaymentId",
             "ServerOutboxMessages:DocumentId"
         });
         return ScalarAsync<int>(

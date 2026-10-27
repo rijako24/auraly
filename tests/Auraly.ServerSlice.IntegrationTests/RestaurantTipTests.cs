@@ -1,7 +1,11 @@
 using System.Net.Http.Json;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Accounting.Application;
+using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Commerce.Accounting.Infrastructure;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -23,6 +27,12 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
         using var cashier = fixture.CreateAdminClient("sales.create", "businesses.update");
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
+        using var accountingScope = fixture.CreateScope();
+        var accounting = accountingScope.ServiceProvider.GetRequiredService<AccountingService>();
+        var accountingUser = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Configure, AccountingPermissionCodes.Activate });
+        await accounting.EnsureDefaultsAsync(accountingUser);
+        await accounting.ActivateAsync(accountingUser, new(new(2026, 1, 1), "COP", "ZeroDeclared"));
         await using (var setup = new SqlCommand("""
             UPDATE dbo.Businesses
             SET PointOfSaleMode=N'RestaurantBar',RestaurantSuggestedTipPercent=10
@@ -195,6 +205,8 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
                 Assert.Equal(initial.Total, paid.Collected);
                 Assert.Equal(3_000m, paid.TipsCollected);
             }
+            paid = await AssertTipReversalUsesOriginalJournalAsync(cashier, connection, account.AccountId, workSessionId, paid,
+                documentType == PosSaleDocumentTypes.Invoice);
             var collectionId = Guid.NewGuid();
             using (var request = new HttpRequestMessage(HttpMethod.Post,
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/collections"))
@@ -375,5 +387,107 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
             restore.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             await restore.ExecuteNonQueryAsync();
         }
+    }
+
+    private async Task<RestaurantCollectionSummary> AssertTipReversalUsesOriginalJournalAsync(
+        HttpClient cashier, SqlConnection connection, Guid accountId, Guid workSessionId, RestaurantCollectionSummary before, bool bankPayment)
+    {
+        var id = Guid.NewGuid();
+        using var admin = fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
+        Guid? bankId = null;
+        if (bankPayment)
+        {
+            bankId = Guid.NewGuid();
+            await using var type = new SqlCommand("SELECT OptionId FROM reference.Options WHERE CatalogCode=N'bank-account-type' AND Code=N'Checking'", connection);
+            var typeId = (Guid)(await type.ExecuteScalarAsync())!;
+            using var bank = await admin.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bankId}",
+                new SaveBankAccountRequest(bankId.Value, null, typeId, "Banco para reversión", bankId.Value.ToString("N"), "Propina bancaria", false, true, null));
+            Assert.True(bank.IsSuccessStatusCode, await bank.Content.ReadAsStringAsync());
+            await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, admin, "1119", "Asset", "Bank", "Debit", bankId);
+        }
+        var payment = bankPayment ? new OnlineSalesPayment("Transfer", 123m, "PROPINA", BankAccountId: bankId)
+            : new OnlineSalesPayment("Cash", 123m, null, TenderedAmount: 123m);
+        using var capture = new HttpRequestMessage(HttpMethod.Post, $"/api/commerce/v1/restaurant/accounts/{accountId}/collections")
+        {
+            Content = JsonContent.Create(new CaptureRestaurantCollectionRequest(id, workSessionId, before.AccountVersion,
+                [], [], payment))
+        };
+        capture.Headers.Add("Idempotency-Key", id.ToString("N"));
+        using var accepted = await cashier.SendAsync(capture);
+        Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
+        var captured = (await accepted.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
+        using var scope = fixture.CreateScope();
+        var processor = scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>();
+        await processor.ProcessAsync(id, "RestaurantTip", fixture.BusinessId, default);
+        if (bankPayment)
+        {
+            // Model an already posted pre-cutover source. Ambiguous new bank
+            // configuration must not prevent reversal of its actual journal.
+            await using var legacy = new SqlCommand("UPDATE dbo.AccountingPostingJobs SET ResolvedBankAccountsJson=NULL,ResolvedAccountMappingsJson=NULL WHERE SourceDocumentId=@Id AND SourceDocumentType=N'RestaurantTip' AND BusinessId=@Business", connection);
+            legacy.Parameters.AddWithValue("@Id", id);
+            legacy.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            Assert.Equal(1, await legacy.ExecuteNonQueryAsync());
+            await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, admin, "1118", "Asset", "Bank", "Debit", bankId);
+        }
+        var cash = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, admin);
+        var liability = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, admin,
+            "2389", "Liability", "General", "Credit");
+        await using var mapping = new SqlCommand("""
+            DECLARE @Previous nvarchar(max)=(SELECT MappingId,AccountId FROM dbo.AccountingAccountMappings
+              WHERE TenantId=@Tenant AND Category IN(N'Cash',N'RestaurantTipsPayable') FOR JSON PATH);
+            UPDATE dbo.AccountingAccountMappings SET AccountId=CASE Category WHEN N'Cash' THEN @Cash ELSE @Liability END
+              WHERE TenantId=@Tenant AND Category IN(N'Cash',N'RestaurantTipsPayable');
+            SELECT @Previous;
+            """, connection);
+        mapping.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+        mapping.Parameters.AddWithValue("@Cash", cash.AccountId);
+        mapping.Parameters.AddWithValue("@Liability", liability.AccountId);
+        var previous = (string)(await mapping.ExecuteScalarAsync())!;
+        RestaurantCollectionSummary result;
+        try
+        {
+            using var reverse = await cashier.PostAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{accountId}/collections/{id}/reverse",
+                new ReverseRestaurantCollectionRequest(captured.AccountVersion));
+            Assert.True(reverse.IsSuccessStatusCode, await reverse.Content.ReadAsStringAsync());
+            result = (await reverse.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
+            await processor.ProcessAsync(id, "RestaurantTipReversal", fixture.BusinessId, default);
+            await processor.ProcessAsync(id, "RestaurantTipReversal", fixture.BusinessId, default);
+            await using var verify = new SqlCommand("""
+                SELECT entry.SourceDocumentType,line.AccountId,line.Debit,line.Credit,line.CostCenterId
+                FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+                WHERE entry.SourceDocumentId=@Id AND entry.BusinessId=@Business AND entry.TenantId=@Tenant
+                  AND entry.SourceDocumentType IN(N'RestaurantTip',N'RestaurantTipReversal')
+                ORDER BY entry.SourceDocumentType,line.LineNumber;
+                """, connection);
+            verify.Parameters.AddWithValue("@Id", id);
+            verify.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            verify.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            var original = new List<(Guid Account, decimal Debit, decimal Credit, Guid Center)>();
+            var reversed = new List<(Guid Account, decimal Debit, decimal Credit, Guid Center)>();
+            await using var rows = await verify.ExecuteReaderAsync();
+            while (await rows.ReadAsync())
+            {
+                var line = (rows.GetGuid(1), rows.GetDecimal(2), rows.GetDecimal(3), rows.GetGuid(4));
+                if (rows.GetString(0) == "RestaurantTip") original.Add(line);
+                else reversed.Add(line);
+            }
+            Assert.Equal(2, original.Count);
+            Assert.Equal(original.Select(line => (line.Account, line.Credit, line.Debit, line.Center)), reversed);
+            Assert.DoesNotContain(reversed, line => line.Account == cash.AccountId || line.Account == liability.AccountId);
+            Assert.Equal(before.TipsCollected, result.TipsCollected);
+        }
+        finally
+        {
+            await using var restore = new SqlCommand("""
+                UPDATE mapping SET AccountId=original.AccountId FROM dbo.AccountingAccountMappings mapping
+                JOIN OPENJSON(@Previous) WITH(MappingId uniqueidentifier,AccountId uniqueidentifier) original ON original.MappingId=mapping.MappingId
+                WHERE mapping.TenantId=@Tenant;
+                """, connection);
+            restore.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            restore.Parameters.AddWithValue("@Previous", previous);
+            await restore.ExecuteNonQueryAsync();
+        }
+        return result;
     }
 }

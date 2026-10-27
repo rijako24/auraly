@@ -14,6 +14,232 @@ namespace Auraly.Commerce.Accounting.Infrastructure;
 
 public sealed partial class SqlAccountingPostingProcessor
 {
+    // Runs inside the existing journal-lines command and transaction. The account
+    // remains authoritative on the immutable line; the portfolio stores its FK only.
+    private const string BindSourceOpeningLinesSql = """
+        DECLARE @Openings TABLE(Kind int,PositionId uniqueidentifier,PartyId uniqueidentifier,
+          Amount decimal(19,4),OpeningEntryId uniqueidentifier,OpeningEntryLineNumber int,
+          OpeningDocumentId uniqueidentifier,ExistingPositionId uniqueidentifier,SourceLineId uniqueidentifier,
+          PRIMARY KEY(Kind,PositionId));
+        INSERT @Openings
+        SELECT @PayableOpening,balance.PayableId,party.PartyId,
+          COALESCE(balance.FunctionalOriginalAmount,
+            CASE WHEN balance.CurrencyCode=N'COP' THEN balance.OriginalAmount END),
+          balance.OpeningEntryId,balance.OpeningEntryLineNumber,NULL,NULL,balance.SourceLineId
+        FROM dbo.Payables balance
+        LEFT JOIN dbo.Suppliers supplier ON supplier.SupplierId=balance.SupplierId
+          AND supplier.TenantId=@TenantId
+        LEFT JOIN dbo.Parties party ON party.PartyId=supplier.PartyId AND party.TenantId=@TenantId
+        WHERE balance.SourceDocumentId=@DocumentId AND balance.SourceDocumentType=@DocumentType
+          AND balance.BusinessId=@BusinessId;
+        DECLARE @ReceivableOrigins TABLE(PositionId uniqueidentifier PRIMARY KEY,OpeningDocumentId uniqueidentifier);
+        INSERT @ReceivableOrigins
+        SELECT ReceivableId,NULL FROM dbo.Receivables
+        WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType AND BusinessId=@BusinessId;
+        IF @DocumentType=N'WorkSessionClosureReconciliation'
+          INSERT @ReceivableOrigins
+          SELECT DISTINCT balance.ReceivableId,line.OpeningDocumentId
+          FROM @JournalLines line
+          JOIN dbo.Receivables balance ON balance.SourceDocumentId=line.OpeningDocumentId
+            AND balance.SourceDocumentType IN(N'SalesReceipt',N'SalesInvoice') AND balance.BusinessId=@BusinessId
+          WHERE line.OpeningKind=@ReceivableOpening AND line.OpeningDocumentId IS NOT NULL
+            AND EXISTS(SELECT 1 FROM dbo.ReceivableTransactions opening
+              WHERE opening.ReceivableId=balance.ReceivableId AND opening.TransactionType=N'Opening'
+                AND opening.SourceDocumentId=@DocumentId);
+        INSERT @Openings
+        SELECT @ReceivableOpening,balance.ReceivableId,party.PartyId,balance.OriginalAmount,
+          balance.OpeningEntryId,balance.OpeningEntryLineNumber,origin.OpeningDocumentId,NULL,balance.SourceLineId
+        FROM @ReceivableOrigins origin JOIN dbo.Receivables balance ON balance.ReceivableId=origin.PositionId
+        LEFT JOIN dbo.Customers customer ON customer.CustomerId=balance.CustomerId
+          AND customer.TenantId=@TenantId
+        LEFT JOIN dbo.Parties party ON party.PartyId=COALESCE(balance.PartyId,customer.PartyId)
+          AND party.TenantId=@TenantId;
+
+        INSERT @Openings
+        SELECT @SupplierCreditOpening,credit.SupplierCreditId,party.PartyId,
+          CASE WHEN credit.CurrencyCode=N'COP' THEN credit.OriginalAmount END,
+          credit.OpeningEntryId,credit.OpeningEntryLineNumber,
+          CASE WHEN credit.SourceLineId IS NULL THEN COALESCE(credit.SourceDocumentId,credit.SourcePurchaseReturnId) END,
+          NULL,credit.SourceLineId
+        FROM dbo.SupplierCreditTransactions opening
+        JOIN dbo.SupplierCredits credit ON credit.SupplierCreditId=opening.SupplierCreditId AND credit.BusinessId=@BusinessId
+        JOIN dbo.Suppliers supplier ON supplier.SupplierId=credit.SupplierId AND supplier.TenantId=@TenantId
+        JOIN dbo.Parties party ON party.PartyId=supplier.PartyId AND party.TenantId=@TenantId
+        WHERE opening.SourceDocumentId=@DocumentId AND opening.SourceDocumentType=@DocumentType AND opening.TransactionType=N'Opening';
+
+        INSERT @Openings
+        SELECT @CustomerCreditOpening,credit.CustomerCreditId,party.PartyId,
+          CASE WHEN credit.CurrencyCode=N'COP' THEN credit.OriginalAmount END,
+          credit.OpeningEntryId,credit.OpeningEntryLineNumber,
+          CASE WHEN credit.SourceLineId IS NULL THEN COALESCE(credit.SourceDocumentId,credit.SourceReturnId) END,
+          NULL,credit.SourceLineId
+        FROM dbo.CustomerCreditTransactions opening
+        JOIN dbo.CustomerCredits credit ON credit.CustomerCreditId=opening.CustomerCreditId AND credit.BusinessId=@BusinessId
+        LEFT JOIN dbo.Customers customer ON customer.CustomerId=credit.CustomerId AND customer.TenantId=@TenantId
+        LEFT JOIN dbo.Parties party ON party.PartyId=COALESCE(credit.PartyId,customer.PartyId) AND party.TenantId=@TenantId
+        WHERE opening.SourceDocumentId=@DocumentId AND opening.SourceDocumentType=@DocumentType AND opening.TransactionType=N'Opening';
+
+        -- The shared opening validator already read and locked these existing
+        -- positions in this transaction. Reuse that proof instead of reading
+        -- their balances again or creating another portfolio opening.
+        IF @DocumentType=N'AccountingOpeningBalance'
+          INSERT @Openings
+          SELECT line.OpeningKind,line.ExistingPositionId,line.PartyId,
+            CASE WHEN line.OpeningKind IN(@PayableOpening,@CustomerCreditOpening) THEN line.Credit ELSE line.Debit END,
+            NULL,NULL,NULL,line.ExistingPositionId,NULL
+          FROM @JournalLines line WHERE line.ExistingPositionId IS NOT NULL;
+
+        IF EXISTS(SELECT 1 FROM @Openings WHERE PartyId IS NULL OR Amount IS NULL OR Amount<=0
+            OR OpeningEntryId IS NOT NULL OR OpeningEntryLineNumber IS NOT NULL)
+          THROW 51844,'The opening position has invalid scope, value or an existing journal binding.',1;
+        IF EXISTS(SELECT 1 FROM @JournalLines line WHERE line.OpeningDocumentId IS NOT NULL
+          AND NOT EXISTS(SELECT 1 FROM @Openings opening WHERE opening.Kind=line.OpeningKind
+            AND opening.OpeningDocumentId=line.OpeningDocumentId AND opening.PartyId=line.PartyId))
+          THROW 51844,'The identified opening document has no matching position in this source.',1;
+        IF EXISTS(SELECT 1 FROM @JournalLines line WHERE line.ExistingPositionId IS NOT NULL
+          AND NOT EXISTS(SELECT 1 FROM @Openings opening WHERE opening.Kind=line.OpeningKind
+            AND opening.ExistingPositionId=line.ExistingPositionId AND opening.PartyId=line.PartyId))
+          THROW 51844,'The reconciled position has no validated opening binding.',1;
+
+        DECLARE @OpeningLines TABLE(Kind int,PositionId uniqueidentifier,LineNumber int,
+          PRIMARY KEY(Kind,PositionId));
+        INSERT @OpeningLines
+        SELECT opening.Kind,opening.PositionId,MIN(line.LineNumber)
+        FROM @Openings opening
+        JOIN @JournalLines line ON line.OpeningKind=opening.Kind AND line.PartyId=opening.PartyId
+          AND (line.OpeningDocumentId=opening.OpeningDocumentId
+            OR line.OpeningDocumentId IS NULL AND opening.OpeningDocumentId IS NULL)
+          AND (line.ExistingPositionId=opening.ExistingPositionId
+            OR line.ExistingPositionId IS NULL AND opening.ExistingPositionId IS NULL)
+          AND (opening.SourceLineId IS NULL OR line.SourceLineId=opening.SourceLineId)
+        GROUP BY opening.Kind,opening.PositionId
+        HAVING COUNT(*)=1;
+        IF (SELECT COUNT(*) FROM @OpeningLines)<>(SELECT COUNT(*) FROM @Openings)
+          THROW 51844,'Each opening position requires one identified journal line.',1;
+        IF EXISTS(SELECT 1 FROM @OpeningLines binding
+          JOIN @Openings opening ON opening.Kind=binding.Kind AND opening.PositionId=binding.PositionId
+          JOIN @JournalLines line ON line.LineNumber=binding.LineNumber
+          WHERE opening.Amount<>CASE WHEN opening.Kind IN(@PayableOpening,@CustomerCreditOpening) THEN line.Credit ELSE line.Debit END)
+          THROW 51844,'The opening position and its journal line have different values.',1;
+
+        UPDATE balance SET OpeningEntryId=@EntryId,OpeningEntryLineNumber=binding.LineNumber
+        FROM dbo.Payables balance JOIN @OpeningLines binding ON binding.Kind=@PayableOpening
+          AND binding.PositionId=balance.PayableId
+        WHERE balance.BusinessId=@BusinessId AND balance.OpeningEntryId IS NULL;
+        IF @@ROWCOUNT<>(SELECT COUNT(*) FROM @Openings WHERE Kind=@PayableOpening)
+          THROW 51844,'The payable opening binding changed.',1;
+        UPDATE balance SET OpeningEntryId=@EntryId,OpeningEntryLineNumber=binding.LineNumber
+        FROM dbo.Receivables balance JOIN @OpeningLines binding ON binding.Kind=@ReceivableOpening
+          AND binding.PositionId=balance.ReceivableId
+        WHERE balance.BusinessId=@BusinessId AND balance.OpeningEntryId IS NULL;
+        IF @@ROWCOUNT<>(SELECT COUNT(*) FROM @Openings WHERE Kind=@ReceivableOpening)
+          THROW 51844,'The receivable opening binding changed.',1;
+        UPDATE credit SET OpeningEntryId=@EntryId,OpeningEntryLineNumber=binding.LineNumber
+        FROM dbo.SupplierCredits credit JOIN @OpeningLines binding ON binding.Kind=@SupplierCreditOpening
+          AND binding.PositionId=credit.SupplierCreditId
+        WHERE credit.BusinessId=@BusinessId AND credit.OpeningEntryId IS NULL;
+        IF @@ROWCOUNT<>(SELECT COUNT(*) FROM @Openings WHERE Kind=@SupplierCreditOpening)
+          THROW 51844,'The supplier credit opening binding changed.',1;
+        UPDATE credit SET OpeningEntryId=@EntryId,OpeningEntryLineNumber=binding.LineNumber
+        FROM dbo.CustomerCredits credit JOIN @OpeningLines binding ON binding.Kind=@CustomerCreditOpening
+          AND binding.PositionId=credit.CustomerCreditId
+        WHERE credit.BusinessId=@BusinessId AND credit.OpeningEntryId IS NULL;
+        IF @@ROWCOUNT<>(SELECT COUNT(*) FROM @Openings WHERE Kind=@CustomerCreditOpening)
+          THROW 51844,'The customer credit opening binding changed.',1;
+        """;
+
+    // Source-specific preparation stays in each existing operation. All new
+    // receivables and Opening transactions are written by this same SQL batch,
+    // including closure corrections whose transaction source differs from the sale.
+    private const string DeclareReceivableOpeningsSql = """
+        DECLARE @ReceivableOpenings TABLE(ReceivableId uniqueidentifier PRIMARY KEY,
+          TransactionId uniqueidentifier,CustomerId uniqueidentifier,PartyId uniqueidentifier,
+          PartySiteId uniqueidentifier,DocumentId uniqueidentifier,DocumentType nvarchar(64),
+          SourceLineId uniqueidentifier,Number nvarchar(64),Amount decimal(19,4),
+          DueDate datetimeoffset(7),OccurredAt datetimeoffset(7),TransactionSourceId uniqueidentifier);
+        """;
+
+    private const string OpenReceivablesSql = """
+        DECLARE @ReceivableOpeningCount int=(SELECT COUNT(*) FROM @ReceivableOpenings);
+        INSERT dbo.Receivables(ReceivableId,BusinessId,CustomerId,PartyId,PartySiteId,
+          SourceDocumentId,SourceDocumentType,SourceLineId,DocumentNumber,CurrencyCode,
+          OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
+        SELECT opening.ReceivableId,@BusinessId,opening.CustomerId,opening.PartyId,opening.PartySiteId,
+          opening.DocumentId,opening.DocumentType,opening.SourceLineId,opening.Number,N'COP',
+          opening.Amount,opening.Amount,opening.DueDate,N'Open',@Now
+        FROM @ReceivableOpenings opening JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
+        LEFT JOIN dbo.Customers customer ON customer.CustomerId=opening.CustomerId AND customer.TenantId=business.TenantId
+        LEFT JOIN dbo.PartySites site ON site.PartySiteId=opening.PartySiteId AND site.PartyId=customer.PartyId
+        LEFT JOIN dbo.Parties party ON party.PartyId=opening.PartyId AND party.TenantId=business.TenantId
+        WHERE opening.CustomerId IS NOT NULL AND opening.PartyId IS NULL AND customer.CustomerId IS NOT NULL AND site.PartySiteId IS NOT NULL
+          OR opening.CustomerId IS NULL AND opening.PartySiteId IS NULL AND party.PartyId IS NOT NULL;
+        IF @@ROWCOUNT<>@ReceivableOpeningCount THROW 51845,'A receivable debtor or site is outside the source scope.',1;
+        INSERT dbo.ReceivableTransactions(ReceivableTransactionId,ReceivableId,TransactionType,Amount,
+          SourceDocumentId,OccurredAt,CreatedAt)
+        SELECT TransactionId,ReceivableId,N'Opening',Amount,COALESCE(TransactionSourceId,DocumentId),OccurredAt,@Now
+        FROM @ReceivableOpenings;
+        IF @@ROWCOUNT<>@ReceivableOpeningCount THROW 51845,'The receivable opening transactions are incomplete.',1;
+        """;
+
+    private const string DeclareSupplierCreditOpeningsSql = """
+        DECLARE @SupplierCreditOpenings TABLE(CreditId uniqueidentifier PRIMARY KEY,TransactionId uniqueidentifier,
+          SupplierId uniqueidentifier,PartySiteId uniqueidentifier,PurchaseReturnId uniqueidentifier,
+          DocumentId uniqueidentifier,DocumentType nvarchar(40),SourceLineId uniqueidentifier,
+          Nature nvarchar(16),Currency char(3),Amount decimal(19,4));
+        """;
+
+    private const string OpenSupplierCreditsSql = """
+        DECLARE @SupplierCreditOpeningCount int=(SELECT COUNT(*) FROM @SupplierCreditOpenings);
+        INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,PartySiteId,SourcePurchaseReturnId,
+          SourceDocumentId,SourceDocumentType,SourceLineId,CreditNature,CurrencyCode,OriginalAmount,AvailableAmount,Status,CreatedAt)
+        SELECT input.CreditId,@BusinessId,input.SupplierId,input.PartySiteId,input.PurchaseReturnId,
+          input.DocumentId,input.DocumentType,input.SourceLineId,input.Nature,input.Currency,input.Amount,input.Amount,N'Open',@Now
+        FROM @SupplierCreditOpenings input JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
+        JOIN dbo.Suppliers supplier ON supplier.SupplierId=input.SupplierId AND supplier.TenantId=business.TenantId
+        JOIN dbo.AccountingPostingJobs origin ON origin.SourceDocumentId=@CreditParentDocumentId
+          AND origin.SourceDocumentType=@CreditParentDocumentType AND origin.BusinessId=@BusinessId AND origin.TenantId=business.TenantId
+        LEFT JOIN dbo.PartySites site ON site.PartySiteId=input.PartySiteId AND site.PartyId=supplier.PartyId
+        WHERE input.Nature IN(N'Credit',N'Advance') AND input.Currency IS NOT NULL AND LEN(input.Currency)=3
+          AND (input.PartySiteId IS NULL OR site.PartySiteId IS NOT NULL);
+        IF @@ROWCOUNT<>@SupplierCreditOpeningCount THROW 51846,'The supplier credit opening has invalid source, party, site or currency.',1;
+        INSERT dbo.SupplierCreditTransactions(SupplierCreditTransactionId,SupplierCreditId,TransactionType,Amount,
+          SourceDocumentId,SourceDocumentType,SourceLineId,OccurredAt,CreatedAt)
+        SELECT TransactionId,CreditId,N'Opening',Amount,@CreditParentDocumentId,@CreditParentDocumentType,
+          SourceLineId,@CreditAt,@Now FROM @SupplierCreditOpenings;
+        IF @@ROWCOUNT<>@SupplierCreditOpeningCount THROW 51846,'The supplier credit opening transactions are incomplete.',1;
+        """;
+
+    private const string DeclareCustomerCreditOpeningsSql = """
+        DECLARE @CustomerCreditOpenings TABLE(CreditId uniqueidentifier PRIMARY KEY,TransactionId uniqueidentifier,
+          CustomerId uniqueidentifier,PartyId uniqueidentifier,PartySiteId uniqueidentifier,ReturnId uniqueidentifier,
+          DocumentId uniqueidentifier,DocumentType nvarchar(64),SourceLineId uniqueidentifier,
+          Nature nvarchar(16),Currency char(3),Amount decimal(19,4));
+        """;
+
+    private const string OpenCustomerCreditsSql = """
+        DECLARE @CustomerCreditOpeningCount int=(SELECT COUNT(*) FROM @CustomerCreditOpenings);
+        INSERT dbo.CustomerCredits(CustomerCreditId,BusinessId,CustomerId,PartyId,PartySiteId,SourceReturnId,
+          SourceDocumentId,SourceDocumentType,SourceLineId,CreditNature,CurrencyCode,OriginalAmount,AvailableAmount,Status,CreatedAt)
+        SELECT input.CreditId,@BusinessId,input.CustomerId,input.PartyId,input.PartySiteId,input.ReturnId,
+          input.DocumentId,input.DocumentType,input.SourceLineId,input.Nature,input.Currency,input.Amount,input.Amount,N'Open',@Now
+        FROM @CustomerCreditOpenings input JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
+        JOIN dbo.AccountingPostingJobs origin ON origin.SourceDocumentId=@CreditParentDocumentId
+          AND origin.SourceDocumentType=@CreditParentDocumentType AND origin.BusinessId=@BusinessId AND origin.TenantId=business.TenantId
+        LEFT JOIN dbo.Customers customer ON customer.CustomerId=input.CustomerId AND customer.TenantId=business.TenantId
+        LEFT JOIN dbo.PartySites site ON site.PartySiteId=input.PartySiteId AND site.PartyId=customer.PartyId
+        LEFT JOIN dbo.Parties party ON party.PartyId=input.PartyId AND party.TenantId=business.TenantId
+        WHERE input.Nature IN(N'Credit',N'Advance') AND input.Currency=N'COP' AND (
+          input.CustomerId IS NOT NULL AND customer.CustomerId IS NOT NULL AND input.PartyId IS NULL
+            AND (input.PartySiteId IS NULL OR site.PartySiteId IS NOT NULL)
+          OR input.CustomerId IS NULL AND party.PartyId IS NOT NULL AND input.PartySiteId IS NULL);
+        IF @@ROWCOUNT<>@CustomerCreditOpeningCount THROW 51847,'The customer credit opening has invalid source, party, site or currency.',1;
+        INSERT dbo.CustomerCreditTransactions(CustomerCreditTransactionId,CustomerCreditId,TransactionType,Amount,
+          SourceDocumentId,SourceDocumentType,SourceLineId,OccurredAt,CreatedAt)
+        SELECT TransactionId,CreditId,N'Opening',Amount,@CreditParentDocumentId,@CreditParentDocumentType,
+          SourceLineId,@CreditAt,@Now FROM @CustomerCreditOpenings;
+        IF @@ROWCOUNT<>@CustomerCreditOpeningCount THROW 51847,'The customer credit opening transactions are incomplete.',1;
+        """;
+
     private async Task ApplyFinancialEffectsAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -21,6 +247,7 @@ public sealed partial class SqlAccountingPostingProcessor
         CancellationToken cancellationToken)
     {
         Guid? affectedCustomerId = null;
+        IReadOnlyList<Guid> affectedCustomerIds = [];
         switch (source.DocumentType)
         {
             case "SalesInvoice":
@@ -100,18 +327,20 @@ public sealed partial class SqlAccountingPostingProcessor
                 await ApplyAccountAdjustmentFinancialEffectsAsync(
                     connection, transaction, source, cancellationToken);
                 break;
+            case AccountingManualDocumentTypes.ManualVoucher:
+                affectedCustomerIds = await ApplyManualVoucherFinancialEffectsAsync(connection, transaction, source, cancellationToken);
+                break;
             case WorkSessionAccountingDocumentTypes.ClosureReconciliation:
-                var closure = JsonSerializer.Deserialize<WorkSessionClosureReconciliationPayload>(
-                    source.PayloadJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))
-                    ?? throw new InvalidOperationException("The closure correction payload is invalid.");
-                await ApplyClosureCorrectionFinancialEffectsAsync(
+                var closure = ReadClosureReconciliation(source);
+                affectedCustomerIds = await ApplyClosureCorrectionFinancialEffectsAsync(
                     connection, transaction, closure, cancellationToken);
                 break;
         }
 
-        if (affectedCustomerId is Guid customerId)
-            await SqlAccountingPosSynchronizationOutbox.InsertCustomerAsync(
-                connection, transaction, source.BusinessId, customerId,
+        if (affectedCustomerId.HasValue || affectedCustomerIds.Count > 0)
+            await SqlAccountingPosSynchronizationOutbox.InsertCustomersAsync(
+                connection, transaction, source.BusinessId,
+                affectedCustomerId is Guid customerId ? [customerId] : affectedCustomerIds,
                 ids, timeProvider.GetUtcNow(), cancellationToken);
     }
 
@@ -143,18 +372,12 @@ public sealed partial class SqlAccountingPostingProcessor
             invoice.CommercialSnapshot.PayableAmount - invoice.Payment.Amount, 4);
         if (creditAmount <= 0) return;
 
-        await using var receivable = new SqlCommand("""
-            INSERT dbo.Receivables
-              (ReceivableId,BusinessId,CustomerId,PartySiteId,SourceDocumentId,SourceDocumentType,
-               DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-            VALUES(@ReceivableId,@BusinessId,@CustomerId,@PartySiteId,@DocumentId,N'ServiceInvoice',
-               @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now);
-            INSERT dbo.ReceivableTransactions
-              (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
-               SourceDocumentId,OccurredAt,CreatedAt)
-            VALUES(@TransactionId,@ReceivableId,N'Opening',@Amount,
-               @DocumentId,@OccurredAt,@Now);
-            """, connection, transaction);
+        await using var receivable = new SqlCommand(DeclareReceivableOpeningsSql + """
+            INSERT @ReceivableOpenings(ReceivableId,TransactionId,CustomerId,PartySiteId,DocumentId,DocumentType,
+              Number,Amount,DueDate,OccurredAt)
+            VALUES(@ReceivableId,@TransactionId,@CustomerId,@PartySiteId,@DocumentId,N'ServiceInvoice',
+              @Number,@Amount,@DueDate,@OccurredAt);
+            """ + OpenReceivablesSql, connection, transaction);
         receivable.Parameters.AddWithValue("@ReceivableId", ids.NewId());
         receivable.Parameters.AddWithValue("@TransactionId", ids.NewId());
         receivable.Parameters.AddWithValue("@BusinessId", invoice.BusinessId);
@@ -168,9 +391,7 @@ public sealed partial class SqlAccountingPostingProcessor
             "@DueDate", invoice.UblSnapshot.DueDate.ToDateTime(TimeOnly.MinValue));
         receivable.Parameters.AddWithValue("@OccurredAt", invoice.CommercialSnapshot.IssuedAt);
         receivable.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        if (await receivable.ExecuteNonQueryAsync(token) != 2)
-            throw new DBConcurrencyException(
-                "The service-invoice receivable was not opened atomically.");
+        await receivable.ExecuteNonQueryAsync(token);
     }
 
     private async Task ApplySalesDebitNoteFinancialEffectsAsync(
@@ -179,19 +400,15 @@ public sealed partial class SqlAccountingPostingProcessor
         SalesDebitNoteDocumentPayload value,
         CancellationToken token)
     {
-        await using var command = new SqlCommand("""
-            INSERT dbo.Receivables
-              (ReceivableId,BusinessId,CustomerId,PartySiteId,SourceDocumentId,SourceDocumentType,
-               DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-            SELECT @ReceivableId,@BusinessId,@CustomerId,document.CustomerPartySiteId,@DocumentId,N'SalesDebitNote',
-               @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now
+        await using var command = new SqlCommand(DeclareReceivableOpeningsSql + """
+            INSERT @ReceivableOpenings(ReceivableId,TransactionId,CustomerId,PartySiteId,DocumentId,DocumentType,
+              Number,Amount,DueDate,OccurredAt)
+            SELECT @ReceivableId,@TransactionId,@CustomerId,document.CustomerPartySiteId,@DocumentId,N'SalesDebitNote',
+              @Number,@Amount,@DueDate,@OccurredAt
             FROM dbo.SalesDocuments document
             WHERE document.DocumentId=@OriginalDocumentId AND document.BusinessId=@BusinessId;
-            INSERT dbo.ReceivableTransactions
-              (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
-               SourceDocumentId,OccurredAt,CreatedAt)
-            VALUES(@TransactionId,@ReceivableId,N'Opening',@Amount,@DocumentId,@OccurredAt,@Now);
-            """, connection, transaction);
+            IF @@ROWCOUNT<>1 THROW 51845,'The debit-note original is unavailable.',1;
+            """ + OpenReceivablesSql, connection, transaction);
         command.Parameters.AddWithValue("@ReceivableId", ids.NewId());
         command.Parameters.AddWithValue("@TransactionId", ids.NewId());
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
@@ -203,8 +420,7 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@DueDate", value.DueAt);
         command.Parameters.AddWithValue("@OccurredAt", value.IssuedAt);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        if (await command.ExecuteNonQueryAsync(token) != 2)
-            throw new DBConcurrencyException("The debit-note receivable was not opened atomically.");
+        await command.ExecuteNonQueryAsync(token);
     }
 
     private async Task ApplyAccountAdjustmentFinancialEffectsAsync(
@@ -218,37 +434,18 @@ public sealed partial class SqlAccountingPostingProcessor
             ? request.Amount : -request.Amount;
         var now = timeProvider.GetUtcNow();
         var isReceivable = request.SubledgerKind == AccountingSubledgerKinds.Receivable;
-        var sql = isReceivable
-            ? """
-              UPDATE dbo.Receivables
-              SET OutstandingAmount=OutstandingAmount+@Delta,
-                  Status=CASE WHEN OutstandingAmount+@Delta=0 THEN N'Paid'
-                              WHEN OutstandingAmount+@Delta>=OriginalAmount THEN N'Open'
-                              ELSE N'PartiallyPaid' END
-              WHERE ReceivableId=@SubledgerId AND BusinessId=@BusinessId
-                AND Status<>N'Cancelled' AND OutstandingAmount+@Delta>=0;
-              IF @@ROWCOUNT<>1 THROW 51000,'The receivable adjustment is no longer valid.',1;
-              INSERT dbo.ReceivableTransactions
-                (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
-                 SourceDocumentId,OccurredAt,CreatedAt)
-              VALUES(@TransactionId,@SubledgerId,N'Adjustment',@Delta,
-                     @DocumentId,@OccurredAt,@Now);
-              """
-            : """
-              UPDATE dbo.Payables
-              SET OutstandingAmount=OutstandingAmount+@Delta,
-                  Status=CASE WHEN OutstandingAmount+@Delta=0 THEN N'Paid'
-                              WHEN OutstandingAmount+@Delta>=OriginalAmount THEN N'Open'
-                              ELSE N'PartiallyPaid' END
-              WHERE PayableId=@SubledgerId AND BusinessId=@BusinessId
-                AND Status<>N'Cancelled' AND OutstandingAmount+@Delta>=0;
-              IF @@ROWCOUNT<>1 THROW 51000,'The payable adjustment is no longer valid.',1;
-              INSERT dbo.PayableTransactions
-                (PayableTransactionId,PayableId,TransactionType,Amount,
-                 SourceDocumentId,OccurredAt,CreatedAt)
-              VALUES(@TransactionId,@SubledgerId,N'Adjustment',@Delta,
-                     @DocumentId,@OccurredAt,@Now);
-              """;
+        var positionTable = isReceivable ? "Receivables" : "Payables";
+        var positionId = isReceivable ? "ReceivableId" : "PayableId";
+        var transactionTable = isReceivable ? "ReceivableTransactions" : "PayableTransactions";
+        var transactionId = isReceivable ? "ReceivableTransactionId" : "PayableTransactionId";
+        var sql = DeclarePortfolioBalanceChangesSql + """
+            INSERT @PortfolioChanges VALUES(@SubledgerId,@Delta);
+            """ + PortfolioBalanceChangesSql(positionTable, positionId, PortfolioBalanceChangeKind.Adjustment) + $"""
+            INSERT dbo.[{transactionTable}]([{transactionId}],[{positionId}],TransactionType,Amount,
+              SourceDocumentId,OccurredAt,CreatedAt)
+            VALUES(@TransactionId,@SubledgerId,N'Adjustment',@Delta,@DocumentId,@OccurredAt,@Now);
+            IF @@ROWCOUNT<>1 THROW 51607,'The portfolio adjustment history is incomplete.',1;
+            """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@SubledgerId", request.SubledgerId);
         command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
@@ -257,9 +454,7 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@OccurredAt", request.OccurredAt);
         command.Parameters.AddWithValue("@Now", now);
         AddMoney(command, "@Delta", delta);
-        if (await command.ExecuteNonQueryAsync(token) != 2)
-            throw new DBConcurrencyException(
-                "The account adjustment was not applied atomically.");
+        await command.ExecuteNonQueryAsync(token);
     }
 
     private async Task ApplySaleFinancialEffectsAsync(
@@ -279,18 +474,12 @@ public sealed partial class SqlAccountingPostingProcessor
 
         if (sale.Credit is not null)
         {
-            await using var receivable = new SqlCommand("""
-                INSERT dbo.Receivables
-                  (ReceivableId,BusinessId,CustomerId,PartySiteId,SourceDocumentId,SourceDocumentType,
-                   DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-                VALUES(@ReceivableId,@BusinessId,@CustomerId,@PartySiteId,@DocumentId,@DocumentType,
-                   @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now);
-                INSERT dbo.ReceivableTransactions
-                  (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
-                   SourceDocumentId,OccurredAt,CreatedAt)
-                VALUES(@TransactionId,@ReceivableId,N'Opening',@Amount,
-                   @DocumentId,@OccurredAt,@Now);
-                """, connection, transaction);
+            await using var receivable = new SqlCommand(DeclareReceivableOpeningsSql + """
+                INSERT @ReceivableOpenings(ReceivableId,TransactionId,CustomerId,PartySiteId,DocumentId,DocumentType,
+                  Number,Amount,DueDate,OccurredAt)
+                VALUES(@ReceivableId,@TransactionId,@CustomerId,@PartySiteId,@DocumentId,@DocumentType,
+                  @Number,@Amount,@DueDate,@OccurredAt);
+                """ + OpenReceivablesSql, connection, transaction);
             receivable.Parameters.AddWithValue("@ReceivableId", ids.NewId());
             receivable.Parameters.AddWithValue("@TransactionId", ids.NewId());
             receivable.Parameters.AddWithValue("@BusinessId", sale.BusinessId);
@@ -304,8 +493,7 @@ public sealed partial class SqlAccountingPostingProcessor
             receivable.Parameters.AddWithValue("@DueDate", sale.Credit.DueDate);
             receivable.Parameters.AddWithValue("@OccurredAt", sale.CommercialSnapshot.IssuedAt);
             receivable.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-            if (await receivable.ExecuteNonQueryAsync(token) != 2)
-                throw new DBConcurrencyException("The receivable was not opened atomically.");
+            await receivable.ExecuteNonQueryAsync(token);
         }
 
         if (sale.Payments.Count > 0)
@@ -395,14 +583,16 @@ public sealed partial class SqlAccountingPostingProcessor
         if (value.CustomerId is null)
             throw new InvalidOperationException("Customer credit requires an identified customer.");
         Guid? receivableId = null;
-        decimal outstanding = 0;
+        decimal availableAmount = 0;
         await using (var load = new SqlCommand("""
-            SELECT TOP(1) receivable.ReceivableId,receivable.OutstandingAmount
+            SELECT TOP(1) receivable.ReceivableId,available.AvailableAmount
             FROM dbo.Receivables receivable WITH(UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.SalesDocuments sale
               ON sale.DocumentId=receivable.SourceDocumentId
              AND sale.BusinessId=receivable.BusinessId
              AND sale.DocumentType=receivable.SourceDocumentType
+            CROSS APPLY accounting.ObligationAvailability(receivable.BusinessId,N'Receivable',receivable.ReceivableId,
+              receivable.OutstandingAmount,NULL) available
             WHERE receivable.BusinessId=@BusinessId AND receivable.CustomerId=@CustomerId
               AND receivable.SourceDocumentId=@OriginalId
               AND receivable.Status IN(N'Open',N'PartiallyPaid')
@@ -416,49 +606,53 @@ public sealed partial class SqlAccountingPostingProcessor
             if (await reader.ReadAsync(token))
             {
                 receivableId = reader.GetGuid(0);
-                outstanding = reader.GetDecimal(1);
+                availableAmount = reader.GetDecimal(1);
             }
         }
-        var applied = decimal.Min(value.TotalAmount, outstanding);
+        if (availableAmount < 0)
+            throw new InvalidOperationException("La cartera y sus reservas requieren conciliación antes de aplicar la devolución.");
+        var applied = decimal.Min(value.TotalAmount, availableAmount);
         var credit = value.TotalAmount - applied;
         var now = timeProvider.GetUtcNow();
         if (receivableId is not null && applied > 0)
         {
-            var after = outstanding - applied;
-            await using var apply = new SqlCommand("""
-                UPDATE dbo.Receivables SET OutstandingAmount=@After,
-                  Status=CASE WHEN @After=0 THEN N'Paid' ELSE N'PartiallyPaid' END
-                WHERE ReceivableId=@ReceivableId;
+            await using var apply = new SqlCommand(DeclarePortfolioBalanceChangesSql + """
+                INSERT @PortfolioChanges VALUES(@ReceivableId,-@Amount);
+                """ + PortfolioBalanceChangesSql("Receivables", "ReceivableId", PortfolioBalanceChangeKind.Settlement) + """
                 INSERT dbo.ReceivableTransactions
                   (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
                    SourceDocumentId,OccurredAt,CreatedAt)
                 VALUES(@TransactionId,@ReceivableId,N'Reversal',@Amount,@ReturnId,@At,@Now);
+                IF @@ROWCOUNT<>1 THROW 51607,'The return transaction was not persisted.',1;
                 INSERT dbo.SalesReturnReceivableApplications
                   (ReturnId,ReceivableId,Amount,AppliedAt)
                 VALUES(@ReturnId,@ReceivableId,@Amount,@Now);
+                SELECT @@ROWCOUNT;
                 """, connection, transaction);
-            apply.Parameters.AddWithValue("@After", after);
+            apply.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             apply.Parameters.AddWithValue("@ReceivableId", receivableId.Value);
             apply.Parameters.AddWithValue("@TransactionId", ids.NewId());
             AddMoney(apply, "@Amount", applied);
             apply.Parameters.AddWithValue("@ReturnId", value.ReturnId);
             apply.Parameters.AddWithValue("@At", value.ReturnedAt);
             apply.Parameters.AddWithValue("@Now", now);
-            if (await apply.ExecuteNonQueryAsync(token) != 3)
+            if (await apply.ExecuteScalarAsync(token) is not int written || written != 1)
                 throw new DBConcurrencyException("The return was not applied to its receivable.");
         }
         if (credit > 0)
         {
-            await using var createCredit = new SqlCommand("""
-                INSERT dbo.CustomerCredits
-                  (CustomerCreditId,BusinessId,CustomerId,SourceReturnId,
-                   OriginalAmount,AvailableAmount,Status,CreatedAt)
-                VALUES(@Id,@BusinessId,@CustomerId,@ReturnId,@Amount,@Amount,N'Open',@Now);
-                """, connection, transaction);
+            await using var createCredit = new SqlCommand(DeclareCustomerCreditOpeningsSql + """
+                INSERT @CustomerCreditOpenings(CreditId,TransactionId,CustomerId,ReturnId,Nature,Currency,Amount)
+                VALUES(@Id,@CreditTransactionId,@CustomerId,@ReturnId,N'Credit',N'COP',@Amount);
+                """ + OpenCustomerCreditsSql, connection, transaction);
             createCredit.Parameters.AddWithValue("@Id", ids.NewId());
+            createCredit.Parameters.AddWithValue("@CreditTransactionId", ids.NewId());
             createCredit.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             createCredit.Parameters.AddWithValue("@CustomerId", value.CustomerId.Value);
             createCredit.Parameters.AddWithValue("@ReturnId", value.ReturnId);
+            createCredit.Parameters.AddWithValue("@CreditParentDocumentId", value.ReturnId);
+            createCredit.Parameters.AddWithValue("@CreditParentDocumentType", "SalesReturn");
+            createCredit.Parameters.AddWithValue("@CreditAt", value.ReturnedAt);
             AddMoney(createCredit, "@Amount", credit);
             createCredit.Parameters.AddWithValue("@Now", now);
             await createCredit.ExecuteNonQueryAsync(token);
@@ -468,17 +662,13 @@ public sealed partial class SqlAccountingPostingProcessor
     private async Task ApplyPreexistingReceivableAsync(SqlConnection connection,SqlTransaction transaction,
         PreexistingReceivablePayload value,CancellationToken token)
     {
-        await using var command=new SqlCommand("""
-            INSERT dbo.Receivables(ReceivableId,BusinessId,CustomerId,PartySiteId,SourceDocumentId,
-              SourceDocumentType,DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-            VALUES(@Id,@BusinessId,@CustomerId,@PartySiteId,@Id,N'PreexistingReceivable',@Number,N'COP',
-              @Amount,@Amount,@DueDate,N'Open',@Now);
-            INSERT dbo.ReceivableTransactions(ReceivableTransactionId,ReceivableId,TransactionType,Amount,
-              SourceDocumentId,OccurredAt,CreatedAt)
-            VALUES(@TransactionId,@Id,N'Opening',@Amount,@Id,@IssuedAt,@Now);
-            """,connection,transaction);
+        await using var command=new SqlCommand(DeclareReceivableOpeningsSql + """
+            INSERT @ReceivableOpenings(ReceivableId,TransactionId,CustomerId,PartySiteId,DocumentId,DocumentType,
+              Number,Amount,DueDate,OccurredAt)
+            VALUES(@Id,@TransactionId,@CustomerId,@PartySiteId,@Id,N'PreexistingReceivable',@Number,@Amount,@DueDate,@IssuedAt);
+            """ + OpenReceivablesSql,connection,transaction);
         command.Parameters.AddWithValue("@Id",value.ReceivableId);command.Parameters.AddWithValue("@TransactionId",ids.NewId());command.Parameters.AddWithValue("@BusinessId",value.BusinessId);command.Parameters.AddWithValue("@CustomerId",value.CustomerId);command.Parameters.AddWithValue("@PartySiteId",(object?)value.PartySiteId??DBNull.Value);command.Parameters.AddWithValue("@Number",value.DocumentNumber);AddMoney(command,"@Amount",value.Amount);command.Parameters.AddWithValue("@DueDate",value.DueDate);command.Parameters.AddWithValue("@IssuedAt",value.IssuedAt);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
-        if(await command.ExecuteNonQueryAsync(token)!=2)throw new DBConcurrencyException("The preexisting receivable was not opened atomically.");
+        await command.ExecuteNonQueryAsync(token);
     }
 
     private async Task ApplySalesReturnChargeFinancialEffectsAsync(
@@ -492,14 +682,14 @@ public sealed partial class SqlAccountingPostingProcessor
             charge.AppliedChargeId,
             charge.SupplierId,
             TransactionId = ids.NewId(),
-            SupplierCreditId = ids.NewId()
+            SupplierCreditId = ids.NewId(), CreditTransactionId = ids.NewId()
         }).ToArray();
-        await using var command = new SqlCommand("""
+        await using var command = new SqlCommand(DeclareSupplierCreditOpeningsSql + """
             DECLARE @Input TABLE(AppliedChargeId uniqueidentifier PRIMARY KEY,SupplierId uniqueidentifier,
-              TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier);
-            INSERT @Input SELECT AppliedChargeId,SupplierId,TransactionId,SupplierCreditId
+              TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier,CreditTransactionId uniqueidentifier);
+            INSERT @Input SELECT AppliedChargeId,SupplierId,TransactionId,SupplierCreditId,CreditTransactionId
             FROM OPENJSON(@Rows) WITH(AppliedChargeId uniqueidentifier,SupplierId uniqueidentifier,
-              TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier);
+              TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier,CreditTransactionId uniqueidentifier);
             DECLARE @ExpenseStatus TABLE(AppliedChargeId uniqueidentifier PRIMARY KEY,Status nvarchar(40));
             INSERT @ExpenseStatus
             SELECT input.AppliedChargeId,expense.Status FROM @Input input
@@ -511,32 +701,37 @@ public sealed partial class SqlAccountingPostingProcessor
               THROW 51607,'El estado de uno o más gastos del cargo cambió antes de procesar la devolución.',1;
             DECLARE @Effects TABLE(AppliedChargeId uniqueidentifier PRIMARY KEY,SupplierId uniqueidentifier,
               PayableId uniqueidentifier,OriginalAmount decimal(19,4),OutstandingAmount decimal(19,4),
+              AvailableAmount decimal(19,4),
               PayableCredit decimal(19,4),SupplierCredit decimal(19,4),TransactionId uniqueidentifier,SupplierCreditId uniqueidentifier);
             INSERT @Effects
-            SELECT input.AppliedChargeId,input.SupplierId,payable.PayableId,payable.OriginalAmount,payable.OutstandingAmount,
-              CASE WHEN payable.OutstandingAmount<payable.OriginalAmount THEN payable.OutstandingAmount ELSE payable.OriginalAmount END,
-              payable.OriginalAmount-CASE WHEN payable.OutstandingAmount<payable.OriginalAmount THEN payable.OutstandingAmount ELSE payable.OriginalAmount END,
+            SELECT input.AppliedChargeId,input.SupplierId,payable.PayableId,payable.OriginalAmount,payable.OutstandingAmount,available.AvailableAmount,
+              CASE WHEN available.AvailableAmount<payable.OriginalAmount THEN available.AvailableAmount ELSE payable.OriginalAmount END,
+              payable.OriginalAmount-CASE WHEN available.AvailableAmount<payable.OriginalAmount THEN available.AvailableAmount ELSE payable.OriginalAmount END,
               input.TransactionId,input.SupplierCreditId
             FROM @Input input
             JOIN @ExpenseStatus expense ON expense.AppliedChargeId=input.AppliedChargeId
               AND expense.Status=N'Processed'
             JOIN dbo.Payables payable WITH(UPDLOCK,HOLDLOCK)
               ON payable.BusinessId=@BusinessId AND payable.SourceDocumentId=input.AppliedChargeId
-             AND payable.SourceDocumentType=N'Expense' AND payable.SupplierId=input.SupplierId;
+             AND payable.SourceDocumentType=N'Expense' AND payable.SupplierId=input.SupplierId
+            CROSS APPLY accounting.ObligationAvailability(payable.BusinessId,N'Payable',payable.PayableId,payable.OutstandingAmount,NULL) available;
             IF (SELECT COUNT(*) FROM @Effects)<>(SELECT COUNT(*) FROM @ExpenseStatus WHERE Status=N'Processed')
               THROW 51607,'No fue posible localizar la cuenta por pagar de uno o más cargos.',1;
+            IF EXISTS(SELECT 1 FROM @Effects WHERE AvailableAmount<0)
+              THROW 51607,'Las obligaciones y sus reservas requieren conciliación antes de devolver los cargos.',1;
             UPDATE payable SET OutstandingAmount=payable.OutstandingAmount-effect.PayableCredit,
               Status=CASE WHEN effect.PayableCredit=effect.OriginalAmount AND effect.OutstandingAmount=effect.OriginalAmount
                 THEN N'Cancelled' WHEN payable.OutstandingAmount-effect.PayableCredit=0 THEN N'Paid' ELSE N'PartiallyPaid' END
             FROM dbo.Payables payable JOIN @Effects effect ON effect.PayableId=payable.PayableId;
             INSERT dbo.PayableTransactions(PayableTransactionId,PayableId,TransactionType,Amount,SourceDocumentId,OccurredAt,CreatedAt)
             SELECT TransactionId,PayableId,N'Credit',PayableCredit,@ReturnId,@At,@Now FROM @Effects WHERE PayableCredit>0;
-            INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,PartySiteId,SourceDocumentId,SourceDocumentType,
-              OriginalAmount,AvailableAmount,Status,CreatedAt)
-            SELECT effect.SupplierCreditId,@BusinessId,effect.SupplierId,payable.PartySiteId,
-              effect.AppliedChargeId,N'SalesReturnCharge',effect.SupplierCredit,effect.SupplierCredit,N'Open',@Now
+            INSERT @SupplierCreditOpenings(CreditId,TransactionId,SupplierId,PartySiteId,DocumentId,DocumentType,Nature,Currency,Amount)
+            SELECT effect.SupplierCreditId,input.CreditTransactionId,effect.SupplierId,payable.PartySiteId,
+              effect.AppliedChargeId,N'SalesReturnCharge',N'Credit',N'COP',effect.SupplierCredit
             FROM @Effects effect JOIN dbo.Payables payable ON payable.PayableId=effect.PayableId
+            JOIN @Input input ON input.AppliedChargeId=effect.AppliedChargeId
             WHERE effect.SupplierCredit>0;
+            """ + OpenSupplierCreditsSql + """
             INSERT dbo.SalesReturnChargeFinancialEffects(ReturnId,AppliedChargeId,PayableId,PayableCreditAmount,SupplierCreditAmount,CreatedAt)
             SELECT @ReturnId,AppliedChargeId,PayableId,PayableCredit,SupplierCredit,@Now FROM @Effects;
             """, connection, transaction);
@@ -544,6 +739,9 @@ public sealed partial class SqlAccountingPostingProcessor
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
         command.Parameters.AddWithValue("@OriginalDocumentId", value.OriginalDocumentId);
         command.Parameters.AddWithValue("@ReturnId", value.ReturnId);
+        command.Parameters.AddWithValue("@CreditParentDocumentId", value.ReturnId);
+        command.Parameters.AddWithValue("@CreditParentDocumentType", "SalesReturn");
+        command.Parameters.AddWithValue("@CreditAt", value.ReturnedAt);
         command.Parameters.AddWithValue("@At", value.ReturnedAt);
         command.Parameters.AddWithValue("@Now", now);
         command.Parameters.AddWithValue("@Count", rows.Length);
@@ -553,12 +751,19 @@ public sealed partial class SqlAccountingPostingProcessor
     private Task ApplyGoodsReceiptFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
         GoodsReceiptDocumentPayload value, CancellationToken token) =>
-        value.CreatesPayable && value.Withholding.NetAmount > 0
+        value.CreatesPayable && value.Withholding.NetAmount -
+            (value.FinancialDiscount?.AnticipatedInCost == true
+                ? value.FinancialDiscount.FunctionalAmount : 0m) > 0
             ? OpenPayableAsync(connection, transaction, value.BusinessId, value.SupplierId,
                 value.DocumentId, "GoodsReceipt", value.DocumentNumber, value.CurrencyCode,
-                decimal.Round(value.GrandTotal - value.Withholding.WithholdingTotal / value.ExchangeRate, 4),
+                decimal.Round(value.GrandTotal - value.Withholding.WithholdingTotal / value.ExchangeRate -
+                    (value.FinancialDiscount?.AnticipatedInCost == true
+                        ? value.FinancialDiscount.Amount : 0m), 4),
                 value.DueDate!.Value, value.SupplierInvoiceDate ?? value.ReceivedAt, token,
-                value.Withholding.NetAmount, value.ExchangeRate, value.DocumentId, value.PartySiteId)
+                value.Withholding.NetAmount -
+                    (value.FinancialDiscount?.AnticipatedInCost == true
+                        ? value.FinancialDiscount.FunctionalAmount : 0m),
+                value.ExchangeRate, value.DocumentId, value.PartySiteId)
             : Task.CompletedTask;
 
     private Task ApplyGoodsReceiptCostDocumentFinancialEffectsAsync(
@@ -603,14 +808,14 @@ public sealed partial class SqlAccountingPostingProcessor
         var now = timeProvider.GetUtcNow();
         if (value.PayableId is Guid payableId)
         {
-            await using var payable = new SqlCommand("""
-                UPDATE dbo.Payables SET OutstandingAmount=0,
-                  FunctionalOutstandingAmount=0,
-                  Status=CASE WHEN @Credit=OriginalAmount THEN N'Cancelled' ELSE N'Paid' END
+            await using var payable = new SqlCommand(DeclarePortfolioBalanceChangesSql + """
+                INSERT @PortfolioChanges(PositionId,Delta)
+                SELECT PayableId,-@Credit FROM dbo.Payables WITH(UPDLOCK,HOLDLOCK)
                 WHERE PayableId=@PayableId AND BusinessId=@BusinessId
                   AND SourceDocumentId=@ExpenseId AND SourceDocumentType=N'Expense'
                   AND OutstandingAmount=@Credit;
                 IF @@ROWCOUNT<>1 THROW 51801,'The expense payable changed before cancellation.',1;
+                """ + PortfolioBalanceChangesSql("Payables", "PayableId", PortfolioBalanceChangeKind.Cancellation) + """
                 IF @Credit>0 INSERT dbo.PayableTransactions
                   (PayableTransactionId,PayableId,TransactionType,Amount,
                    SourceDocumentId,OccurredAt,CreatedAt)
@@ -627,20 +832,25 @@ public sealed partial class SqlAccountingPostingProcessor
         }
         if (value.SupplierCredit > 0)
         {
-            await using var credit = new SqlCommand("""
-                INSERT dbo.SupplierCredits(SupplierCreditId,BusinessId,SupplierId,PartySiteId,
-                  SourceDocumentId,SourceDocumentType,OriginalAmount,AvailableAmount,Status,CreatedAt)
-                SELECT @Id,@BusinessId,@SupplierId,payable.PartySiteId,@CancellationId,N'ExpenseCancellation',
-                  @Amount,@Amount,N'Open',@Now FROM dbo.Payables payable
+            await using var credit = new SqlCommand(DeclareSupplierCreditOpeningsSql + """
+                INSERT @SupplierCreditOpenings(CreditId,TransactionId,SupplierId,PartySiteId,
+                  DocumentId,DocumentType,Nature,Currency,Amount)
+                SELECT @Id,@CreditTransactionId,@SupplierId,payable.PartySiteId,@CancellationId,N'ExpenseCancellation',
+                  N'Credit',@Currency,@Amount FROM dbo.Payables payable
                 WHERE payable.BusinessId=@BusinessId AND payable.SourceDocumentId=@ExpenseId
                   AND payable.SourceDocumentType=N'Expense';
                 IF @@ROWCOUNT<>1 THROW 51843,'The expense payable site is unavailable for credit.',1;
-                """, connection, transaction);
+                """ + OpenSupplierCreditsSql, connection, transaction);
             credit.Parameters.AddWithValue("@Id", ids.NewId());
+            credit.Parameters.AddWithValue("@CreditTransactionId", ids.NewId());
             credit.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             credit.Parameters.AddWithValue("@SupplierId", value.Original.SupplierId);
             credit.Parameters.AddWithValue("@CancellationId", value.CancellationId);
             credit.Parameters.AddWithValue("@ExpenseId", value.Original.ExpenseId);
+            credit.Parameters.AddWithValue("@CreditParentDocumentId", value.CancellationId);
+            credit.Parameters.AddWithValue("@CreditParentDocumentType", "ExpenseCancellation");
+            credit.Parameters.AddWithValue("@CreditAt", value.CancelledAt);
+            credit.Parameters.AddWithValue("@Currency", value.Original.CurrencyCode);
             AddMoney(credit, "@Amount", value.SupplierCredit);
             credit.Parameters.AddWithValue("@Now", now);
             await credit.ExecuteNonQueryAsync(token);
@@ -658,71 +868,77 @@ public sealed partial class SqlAccountingPostingProcessor
             throw new DBConcurrencyException("The expense cancellation state changed before accounting.");
     }
 
-    private async Task OpenPayableAsync(
+    private Task OpenPayableAsync(
         SqlConnection connection, SqlTransaction transaction,
         Guid businessId, Guid supplierId, Guid documentId, string documentType,
         string number, string currency, decimal amount, DateTimeOffset dueDate,
         DateTimeOffset occurredAt, CancellationToken token,
         decimal? functionalAmount = null, decimal exchangeRate = 1,
-        Guid? parentGoodsReceiptId = null, Guid? partySiteId = null)
+        Guid? parentGoodsReceiptId = null, Guid? partySiteId = null) =>
+        OpenPayablesAsync(connection, transaction, businessId,
+            [new(ids.NewId(), ids.NewId(), supplierId, partySiteId, documentId, documentType, null,
+                number, currency, amount, functionalAmount ?? amount, exchangeRate, parentGoodsReceiptId, dueDate, occurredAt)], token);
+
+    private sealed record PayableOpening(Guid PayableId, Guid TransactionId, Guid SupplierId, Guid? PartySiteId,
+        Guid DocumentId, string DocumentType, Guid? SourceLineId, string Number, string Currency, decimal Amount,
+        decimal FunctionalAmount, decimal ExchangeRate, Guid? ParentGoodsReceiptId, DateTimeOffset DueDate, DateTimeOffset OccurredAt);
+
+    private async Task OpenPayablesAsync(SqlConnection connection, SqlTransaction transaction,
+        Guid businessId, IReadOnlyList<PayableOpening> openings, CancellationToken token)
     {
+        if (openings.Count is < 1 or > 500)
+            throw new InvalidOperationException("The payable opening batch is outside the source-line limit.");
         await using var command = new SqlCommand("""
+            DECLARE @Openings TABLE(PayableId uniqueidentifier PRIMARY KEY,TransactionId uniqueidentifier,
+              SupplierId uniqueidentifier,PartySiteId uniqueidentifier,DocumentId uniqueidentifier,DocumentType nvarchar(64),
+              SourceLineId uniqueidentifier,Number nvarchar(80),Currency char(3),Amount decimal(19,4),FunctionalAmount decimal(19,4),
+              ExchangeRate decimal(19,8),ParentGoodsReceiptId uniqueidentifier,DueDate datetimeoffset(7),OccurredAt datetimeoffset(7));
+            INSERT @Openings SELECT * FROM OPENJSON(@Rows) WITH(PayableId uniqueidentifier,TransactionId uniqueidentifier,
+              SupplierId uniqueidentifier,PartySiteId uniqueidentifier,DocumentId uniqueidentifier,DocumentType nvarchar(64),
+              SourceLineId uniqueidentifier,Number nvarchar(80),Currency char(3),Amount decimal(19,4),FunctionalAmount decimal(19,4),
+              ExchangeRate decimal(19,8),ParentGoodsReceiptId uniqueidentifier,DueDate datetimeoffset(7),OccurredAt datetimeoffset(7));
+            IF @@ROWCOUNT<>@Count THROW 51842,'The payable opening batch is incomplete.',1;
             INSERT dbo.Payables
               (PayableId,BusinessId,SupplierId,PartySiteId,SourceDocumentId,SourceDocumentType,
                DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,FunctionalOriginalAmount,
-               FunctionalOutstandingAmount,ExchangeRate,ParentGoodsReceiptId,DueDate,Status,CreatedAt)
-            SELECT @PayableId,@BusinessId,@SupplierId,
-               COALESCE(@PartySiteId,site.PartySiteId),@DocumentId,@DocumentType,
-               @Number,@Currency,@Amount,@Amount,@FunctionalAmount,@FunctionalAmount,@ExchangeRate,
-               @ParentGoodsReceiptId,@DueDate,N'Open',@Now
-            FROM dbo.Suppliers supplier
+               ExchangeRate,ParentGoodsReceiptId,DueDate,Status,CreatedAt,SourceLineId)
+            SELECT opening.PayableId,@BusinessId,opening.SupplierId,
+               site.PartySiteId,opening.DocumentId,opening.DocumentType,
+               opening.Number,opening.Currency,opening.Amount,opening.Amount,opening.FunctionalAmount,opening.ExchangeRate,
+               opening.ParentGoodsReceiptId,opening.DueDate,N'Open',@Now,opening.SourceLineId
+            FROM @Openings opening JOIN dbo.Suppliers supplier ON supplier.SupplierId=opening.SupplierId
             JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
               AND business.TenantId=supplier.TenantId
             CROSS APPLY (SELECT TOP(1) chosen.PartySiteId FROM dbo.PartySites chosen
               WHERE chosen.PartyId=supplier.PartyId AND
-                (@PartySiteId IS NOT NULL AND chosen.PartySiteId=@PartySiteId OR
-                 @PartySiteId IS NULL AND chosen.IsActive=1)
-              ORDER BY chosen.IsPrimary DESC,chosen.PartySiteId) site
-            WHERE supplier.SupplierId=@SupplierId;
-            IF @@ROWCOUNT<>1 THROW 51842,'Supplier site is missing or invalid.',1;
+                (opening.PartySiteId IS NOT NULL AND chosen.PartySiteId=opening.PartySiteId OR
+                 opening.PartySiteId IS NULL AND chosen.IsActive=1)
+              ORDER BY chosen.IsPrimary DESC,chosen.PartySiteId) site;
+            IF @@ROWCOUNT<>@Count THROW 51842,'Supplier site is missing or invalid.',1;
             INSERT dbo.PayableTransactions
               (PayableTransactionId,PayableId,TransactionType,Amount,
                SourceDocumentId,OccurredAt,CreatedAt)
-            VALUES(@TransactionId,@PayableId,N'Opening',@Amount,@DocumentId,@At,@Now);
+            SELECT TransactionId,PayableId,N'Opening',Amount,DocumentId,OccurredAt,@Now FROM @Openings;
+            IF @@ROWCOUNT<>@Count THROW 51842,'The payable opening transactions are incomplete.',1;
             """, connection, transaction);
-        command.Parameters.AddWithValue("@PayableId", ids.NewId());
-        command.Parameters.AddWithValue("@TransactionId", ids.NewId());
+        command.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(openings);
+        command.Parameters.AddWithValue("@Count", openings.Count);
         command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@SupplierId", supplierId);
-        command.Parameters.AddWithValue("@PartySiteId", (object?)partySiteId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@DocumentId", documentId);
-        command.Parameters.AddWithValue("@DocumentType", documentType);
-        command.Parameters.AddWithValue("@Number", number);
-        command.Parameters.AddWithValue("@Currency", currency);
-        AddMoney(command, "@Amount", amount);
-        AddMoney(command, "@FunctionalAmount", functionalAmount ?? amount);
-        var rate = command.Parameters.Add("@ExchangeRate", SqlDbType.Decimal);
-        rate.Precision = 19;
-        rate.Scale = 8;
-        rate.Value = exchangeRate;
-        command.Parameters.AddWithValue("@ParentGoodsReceiptId", (object?)parentGoodsReceiptId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@DueDate", dueDate);
-        command.Parameters.AddWithValue("@At", occurredAt);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        if (await command.ExecuteNonQueryAsync(token) != 2)
-            throw new DBConcurrencyException("The payable was not opened atomically.");
+        await command.ExecuteNonQueryAsync(token);
     }
 
     private async Task ApplyPurchaseReturnFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
         PurchaseReturnDocumentPayload value, CancellationToken token)
     {
+        var settlementAmount = PurchaseReturnSupplierSettlement(value);
         Guid? payableId = null;
         Guid? partySiteId = null;
-        decimal outstanding = 0;
+        decimal availableAmount = 0;
         await using (var load = new SqlCommand("""
-            SELECT payable.PayableId,payable.OutstandingAmount,
-              COALESCE(payable.PartySiteId,receipt.PartySiteId,primarySite.PartySiteId)
+            SELECT payable.PayableId,
+              COALESCE(payable.PartySiteId,receipt.PartySiteId,primarySite.PartySiteId),available.AvailableAmount
             FROM dbo.GoodsReceipts receipt
             JOIN dbo.Suppliers supplier ON supplier.SupplierId=receipt.SupplierId
             OUTER APPLY (SELECT TOP(1) site.PartySiteId FROM dbo.PartySites site
@@ -731,6 +947,7 @@ public sealed partial class SqlAccountingPostingProcessor
             LEFT JOIN dbo.Payables payable WITH(UPDLOCK,HOLDLOCK)
               ON payable.BusinessId=receipt.BusinessId AND payable.SourceDocumentId=receipt.GoodsReceiptId
               AND payable.SourceDocumentType=N'GoodsReceipt'
+            CROSS APPLY accounting.ObligationAvailability(payable.BusinessId,N'Payable',payable.PayableId,payable.OutstandingAmount,NULL) available
             WHERE receipt.BusinessId=@BusinessId AND receipt.GoodsReceiptId=@OriginalId;
             """, connection, transaction))
         {
@@ -740,46 +957,52 @@ public sealed partial class SqlAccountingPostingProcessor
             if (await reader.ReadAsync(token))
             {
                 payableId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
-                outstanding = reader.IsDBNull(1) ? 0 : reader.GetDecimal(1);
-                partySiteId = reader.IsDBNull(2) ? null : reader.GetGuid(2);
+                partySiteId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+                availableAmount = reader.IsDBNull(2) && payableId is null ? 0 : reader.GetDecimal(2);
             }
         }
-        var payableCredit = decimal.Min(value.TotalAmount, outstanding);
-        var supplierCredit = value.TotalAmount - payableCredit;
+        if (availableAmount < 0)
+            throw new InvalidOperationException("La cuenta por pagar y sus reservas requieren conciliación antes de aplicar la devolución.");
+        var payableCredit = decimal.Min(settlementAmount, availableAmount);
+        var supplierCredit = settlementAmount - payableCredit;
         var now = timeProvider.GetUtcNow();
         if (payableId is not null && payableCredit > 0)
         {
-            await using var apply = new SqlCommand("""
-                UPDATE dbo.Payables SET OutstandingAmount=@After,
-                  Status=CASE WHEN @After=0 THEN N'Paid' ELSE N'PartiallyPaid' END
-                WHERE PayableId=@PayableId;
+            await using var apply = new SqlCommand(DeclarePortfolioBalanceChangesSql + """
+                INSERT @PortfolioChanges VALUES(@PayableId,-@Amount);
+                """ + PortfolioBalanceChangesSql("Payables", "PayableId", PortfolioBalanceChangeKind.Settlement) + """
                 INSERT dbo.PayableTransactions
                   (PayableTransactionId,PayableId,TransactionType,Amount,
                    SourceDocumentId,OccurredAt,CreatedAt)
                 VALUES(@TransactionId,@PayableId,N'Credit',@Amount,@ReturnId,@At,@Now);
+                SELECT @@ROWCOUNT;
                 """, connection, transaction);
-            apply.Parameters.AddWithValue("@After", outstanding - payableCredit);
+            apply.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             apply.Parameters.AddWithValue("@PayableId", payableId.Value);
             apply.Parameters.AddWithValue("@TransactionId", ids.NewId());
             AddMoney(apply, "@Amount", payableCredit);
             apply.Parameters.AddWithValue("@ReturnId", value.ReturnId);
             apply.Parameters.AddWithValue("@At", value.ReturnedAt);
             apply.Parameters.AddWithValue("@Now", now);
-            await apply.ExecuteNonQueryAsync(token);
+            if (await apply.ExecuteScalarAsync(token) is not int written || written != 1)
+                throw new DBConcurrencyException("The purchase return transaction was not persisted.");
         }
         if (supplierCredit > 0)
         {
-            await using var credit = new SqlCommand("""
-                INSERT dbo.SupplierCredits
-                  (SupplierCreditId,BusinessId,SupplierId,PartySiteId,SourcePurchaseReturnId,
-                   OriginalAmount,AvailableAmount,Status,CreatedAt)
-                VALUES(@Id,@BusinessId,@SupplierId,@PartySiteId,@ReturnId,@Amount,@Amount,N'Open',@Now);
-                """, connection, transaction);
+            await using var credit = new SqlCommand(DeclareSupplierCreditOpeningsSql + """
+                INSERT @SupplierCreditOpenings(CreditId,TransactionId,SupplierId,PartySiteId,PurchaseReturnId,Nature,Currency,Amount)
+                VALUES(@Id,@CreditTransactionId,@SupplierId,@PartySiteId,@ReturnId,N'Credit',@Currency,@Amount);
+                """ + OpenSupplierCreditsSql, connection, transaction);
             credit.Parameters.AddWithValue("@Id", ids.NewId());
+            credit.Parameters.AddWithValue("@CreditTransactionId", ids.NewId());
             credit.Parameters.AddWithValue("@BusinessId", value.BusinessId);
             credit.Parameters.AddWithValue("@SupplierId", value.SupplierId);
             credit.Parameters.AddWithValue("@PartySiteId", (object?)partySiteId ?? DBNull.Value);
             credit.Parameters.AddWithValue("@ReturnId", value.ReturnId);
+            credit.Parameters.AddWithValue("@CreditParentDocumentId", value.ReturnId);
+            credit.Parameters.AddWithValue("@CreditParentDocumentType", "PurchaseReturn");
+            credit.Parameters.AddWithValue("@CreditAt", value.ReturnedAt);
+            credit.Parameters.AddWithValue("@Currency", value.CurrencyCode);
             AddMoney(credit, "@Amount", supplierCredit);
             credit.Parameters.AddWithValue("@Now", now);
             await credit.ExecuteNonQueryAsync(token);
@@ -797,142 +1020,42 @@ public sealed partial class SqlAccountingPostingProcessor
         await effect.ExecuteNonQueryAsync(token);
     }
 
+    private static decimal PurchaseReturnSupplierSettlement(PurchaseReturnDocumentPayload value)
+    {
+        if (value.Lines is null || value.Lines.Count == 0 ||
+            value.Lines.Any(line => line.FinancialDiscountAmount < 0 ||
+                line.FinancialDiscountAmount > line.NetAmount ||
+                line.FinancialDiscountAmount + line.FinancialDiscountAdjustment < 0 ||
+                line.FinancialDiscountAmount + line.FinancialDiscountAdjustment > line.NetAmount))
+            throw new InvalidOperationException("The returned financial discount is invalid.");
+        var amount = value.TotalAmount - value.Lines.Sum(line =>
+            line.FinancialDiscountAmount + line.FinancialDiscountAdjustment);
+        if (amount <= 0)
+            throw new InvalidOperationException("The returned purchase has no net supplier settlement.");
+        return amount;
+    }
+
     private async Task ApplyPayablePaymentFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
         SupplierPaymentDocumentPayload payment, CancellationToken token)
     {
-        await using (var apply = new SqlCommand("""
-            DECLARE @Allocations TABLE(LineNumber int UNIQUE,PayableId uniqueidentifier PRIMARY KEY,
-              Amount decimal(19,4),TransactionId uniqueidentifier);
-            INSERT @Allocations SELECT LineNumber,PayableId,Amount,TransactionId FROM OPENJSON(@AllocationsJson)
-              WITH(LineNumber int,PayableId uniqueidentifier,Amount decimal(19,4),TransactionId uniqueidentifier);
-            DECLARE @Ready TABLE(LineNumber int,PayableId uniqueidentifier PRIMARY KEY,
-              Amount decimal(19,4),BalanceAfter decimal(19,4),TransactionId uniqueidentifier);
-            INSERT @Ready SELECT input.LineNumber,input.PayableId,input.Amount,
-              balance.OutstandingAmount-input.Amount,input.TransactionId
-            FROM @Allocations input JOIN dbo.Payables balance WITH(UPDLOCK,HOLDLOCK)
-              ON balance.PayableId=input.PayableId AND balance.BusinessId=@BusinessId
-              AND balance.SupplierId=@SupplierId AND balance.CurrencyCode=@Currency
-              AND balance.Status IN(N'Open',N'PartiallyPaid') AND balance.OutstandingAmount>=input.Amount
-            JOIN dbo.SupplierPaymentApplications application WITH(UPDLOCK,HOLDLOCK)
-              ON application.PayableId=input.PayableId AND application.PaymentId=@PaymentId
-              AND application.LineNumber=input.LineNumber AND application.Amount=input.Amount AND application.AppliedAt IS NULL;
-            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment allocations are no longer valid.',1;
-            UPDATE balance SET OutstandingAmount=ready.BalanceAfter,
-              Status=CASE WHEN ready.BalanceAfter=0 THEN N'Paid' ELSE N'PartiallyPaid' END
-            FROM dbo.Payables balance JOIN @Ready ready ON ready.PayableId=balance.PayableId;
-            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment balances were not updated atomically.',1;
-            UPDATE application SET AppliedAt=@Now FROM dbo.SupplierPaymentApplications application
-              JOIN @Ready ready ON ready.LineNumber=application.LineNumber AND ready.PayableId=application.PayableId
-              WHERE application.PaymentId=@PaymentId AND application.AppliedAt IS NULL;
-            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment applications were not updated atomically.',1;
-            INSERT dbo.PayableTransactions(PayableTransactionId,PayableId,TransactionType,Amount,
-              SourceDocumentId,OccurredAt,CreatedAt)
-            SELECT TransactionId,PayableId,N'Payment',Amount,@PaymentId,@At,@Now FROM @Ready;
-            """, connection, transaction))
-        {
-            apply.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
-            apply.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
-            apply.Parameters.AddWithValue("@SupplierId", payment.SupplierId);
-            apply.Parameters.AddWithValue("@Currency", payment.CurrencyCode);
-            apply.Parameters.AddWithValue("@AllocationCount", payment.Allocations.Count);
-            apply.Parameters.AddWithValue("@At", payment.PaidAt);
-            apply.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-            apply.Parameters.Add("@AllocationsJson", SqlDbType.NVarChar, -1).Value = System.Text.Json.JsonSerializer.Serialize(
-                payment.Allocations.Select(allocation => new { allocation.LineNumber,allocation.PayableId,allocation.Amount,
-                    TransactionId = ids.NewId() }));
-            await apply.ExecuteNonQueryAsync(token);
-        }
-        await CompleteSupplierPaymentAsync(connection, transaction, payment, token);
+        await ApplyPortfolioPaymentsAsync(connection, transaction, payment.BusinessId, AccountingSubledgerKinds.Payable,
+            [new(payment.PaymentId, payment.SupplierId, null, payment.WorkSessionId,
+                payment.PaidAt, payment.ConfirmedByUserId, payment.CurrencyCode,
+                payment.Allocations.Select(item => new PortfolioAllocation(item.LineNumber, item.PayableId, item.Amount)).ToArray(),
+                payment.Payments.Select(item => new PortfolioTender(item.LineNumber, item.MethodCode, item.Amount, item.Reference)).ToArray())], token);
+        if (payment.Allocations.Any(item => item.FinancialDiscountEarned is not null))
+            await PrepareSupplierDiscountPricesAsync(connection, transaction, payment, token);
     }
 
-    private async Task CompleteSupplierPaymentAsync(
+    private Task ApplyReceivablePaymentFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
-        SupplierPaymentDocumentPayload payment, CancellationToken token)
-    {
-        var now = timeProvider.GetUtcNow();
-        await using var complete = new SqlCommand("""
-            UPDATE dbo.SupplierPayments SET Status=N'Processed',ProcessedAt=@Now
-            WHERE PaymentId=@PaymentId AND BusinessId=@BusinessId AND Status=N'Accepted'
-              AND NOT EXISTS(SELECT 1 FROM dbo.SupplierPaymentApplications
-                             WHERE PaymentId=@PaymentId AND AppliedAt IS NULL);
-            """, connection, transaction);
-        complete.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
-        complete.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
-        complete.Parameters.AddWithValue("@Now", now);
-        if (await complete.ExecuteNonQueryAsync(token) != 1)
-            throw new DBConcurrencyException("The supplier payment could not be completed.");
-        if (payment.WorkSessionId is null) return;
-        await InsertPaymentSessionMovementsAsync(connection, transaction,
-            payment.WorkSessionId.Value, payment.PaymentId, "PayablePayment",
-            payment.Payments.Select(item => (item.LineNumber, item.MethodCode, -item.Amount, item.Reference)),
-            payment.PaidAt, payment.ConfirmedByUserId, "payable-payment", token);
-    }
-
-    private async Task ApplyReceivablePaymentFinancialEffectsAsync(
-        SqlConnection connection, SqlTransaction transaction,
-        CustomerPaymentDocumentPayload payment, CancellationToken token)
-    {
-        await using (var apply = new SqlCommand("""
-            DECLARE @Allocations TABLE(LineNumber int UNIQUE,ReceivableId uniqueidentifier PRIMARY KEY,
-              Amount decimal(19,4),TransactionId uniqueidentifier);
-            INSERT @Allocations SELECT LineNumber,ReceivableId,Amount,TransactionId FROM OPENJSON(@AllocationsJson)
-              WITH(LineNumber int,ReceivableId uniqueidentifier,Amount decimal(19,4),TransactionId uniqueidentifier);
-            DECLARE @Ready TABLE(LineNumber int,ReceivableId uniqueidentifier PRIMARY KEY,
-              Amount decimal(19,4),BalanceAfter decimal(19,4),TransactionId uniqueidentifier);
-            INSERT @Ready SELECT input.LineNumber,input.ReceivableId,input.Amount,
-              balance.OutstandingAmount-input.Amount,input.TransactionId
-            FROM @Allocations input JOIN dbo.Receivables balance WITH(UPDLOCK,HOLDLOCK)
-              ON balance.ReceivableId=input.ReceivableId AND balance.BusinessId=@BusinessId
-              AND balance.CustomerId=@CustomerId AND balance.CurrencyCode=@Currency
-              AND balance.Status IN(N'Open',N'PartiallyPaid') AND balance.OutstandingAmount>=input.Amount
-            JOIN dbo.CustomerPaymentApplications application WITH(UPDLOCK,HOLDLOCK)
-              ON application.ReceivableId=input.ReceivableId AND application.PaymentId=@PaymentId
-              AND application.LineNumber=input.LineNumber AND application.Amount=input.Amount AND application.AppliedAt IS NULL;
-            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment allocations are no longer valid.',1;
-            UPDATE balance SET OutstandingAmount=ready.BalanceAfter,
-              Status=CASE WHEN ready.BalanceAfter=0 THEN N'Paid' ELSE N'PartiallyPaid' END
-            FROM dbo.Receivables balance JOIN @Ready ready ON ready.ReceivableId=balance.ReceivableId;
-            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment balances were not updated atomically.',1;
-            UPDATE application SET AppliedAt=@Now FROM dbo.CustomerPaymentApplications application
-              JOIN @Ready ready ON ready.LineNumber=application.LineNumber AND ready.ReceivableId=application.ReceivableId
-              WHERE application.PaymentId=@PaymentId AND application.AppliedAt IS NULL;
-            IF @@ROWCOUNT<>@AllocationCount THROW 51607,'The payment applications were not updated atomically.',1;
-            INSERT dbo.ReceivableTransactions(ReceivableTransactionId,ReceivableId,TransactionType,Amount,
-              SourceDocumentId,OccurredAt,CreatedAt)
-            SELECT TransactionId,ReceivableId,N'Payment',Amount,@PaymentId,@At,@Now FROM @Ready;
-            """, connection, transaction))
-        {
-            apply.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
-            apply.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
-            apply.Parameters.AddWithValue("@CustomerId", payment.CustomerId);
-            apply.Parameters.AddWithValue("@Currency", payment.CurrencyCode);
-            apply.Parameters.AddWithValue("@AllocationCount", payment.Allocations.Count);
-            apply.Parameters.AddWithValue("@At", payment.PaidAt);
-            apply.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-            apply.Parameters.Add("@AllocationsJson", SqlDbType.NVarChar, -1).Value = System.Text.Json.JsonSerializer.Serialize(
-                payment.Allocations.Select(allocation => new { allocation.LineNumber,allocation.ReceivableId,allocation.Amount,
-                    TransactionId = ids.NewId() }));
-            await apply.ExecuteNonQueryAsync(token);
-        }
-        var completedAt = timeProvider.GetUtcNow();
-        await using var complete = new SqlCommand("""
-            UPDATE dbo.CustomerPayments SET Status=N'Processed',ProcessedAt=@Now
-            WHERE PaymentId=@PaymentId AND BusinessId=@BusinessId AND Status=N'Accepted'
-              AND NOT EXISTS(SELECT 1 FROM dbo.CustomerPaymentApplications
-                             WHERE PaymentId=@PaymentId AND AppliedAt IS NULL);
-            """, connection, transaction);
-        complete.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
-        complete.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
-        complete.Parameters.AddWithValue("@Now", completedAt);
-        if (await complete.ExecuteNonQueryAsync(token) != 1)
-            throw new DBConcurrencyException("The customer payment could not be completed.");
-        if (payment.WorkSessionId is Guid sessionId)
-            await InsertPaymentSessionMovementsAsync(connection, transaction,
-                sessionId, payment.PaymentId, "ReceivablePayment",
-                payment.Payments.Select(item => (item.LineNumber, item.MethodCode, item.Amount, item.Reference)),
-                payment.PaidAt, payment.ConfirmedByUserId, "receivable-payment", token);
-    }
+        CustomerPaymentDocumentPayload payment, CancellationToken token) =>
+        ApplyPortfolioPaymentsAsync(connection, transaction, payment.BusinessId, AccountingSubledgerKinds.Receivable,
+            [new(payment.PaymentId, payment.CustomerId, null, payment.WorkSessionId,
+                payment.PaidAt, payment.ConfirmedByUserId, payment.CurrencyCode,
+                payment.Allocations.Select(item => new PortfolioAllocation(item.LineNumber, item.ReceivableId, item.Amount)).ToArray(),
+                payment.Payments.Select(item => new PortfolioTender(item.LineNumber, item.MethodCode, item.Amount, item.Reference)).ToArray())], token);
 
     private async Task ApplyCashMovementFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,
@@ -956,61 +1079,36 @@ public sealed partial class SqlAccountingPostingProcessor
             throw new DBConcurrencyException("The cash movement could not be completed.");
     }
 
-    private async Task InsertSessionMovementAsync(
+    private Task InsertSessionMovementAsync(
         SqlConnection connection, SqlTransaction transaction,
         Guid sessionId, Guid? documentId, string movementType, string method,
         decimal amount, string? reference, DateTimeOffset occurredAt, Guid userId,
-        string sourceKey, CancellationToken token)
+        string sourceKey, CancellationToken token) =>
+        InsertSessionMovementsAsync(connection, transaction,
+            [new(ids.NewId(), sessionId, documentId, movementType, method, amount,
+                reference, occurredAt, userId, sourceKey)], token);
+
+    private sealed record SessionMovementWrite(Guid Id, Guid SessionId, Guid? DocumentId,
+        string MovementType, string Method, decimal Amount, string? Reference,
+        DateTimeOffset OccurredAt, Guid UserId, string SourceKey);
+
+    private static async Task InsertSessionMovementsAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        IReadOnlyList<SessionMovementWrite> movements, CancellationToken token)
     {
         await using var command = new SqlCommand("""
             INSERT dbo.WorkSessionMovements
               (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,BusinessDate,
                MovementType,PaymentMethodCode,Amount,Reference,SourceKey,OccurredAt,RecordedByUserId)
-            VALUES(@Id,@SessionId,@DocumentId,NULL,@Date,@Type,@Method,@Amount,
-               @Reference,@SourceKey,@At,@UserId);
+            SELECT Id,SessionId,DocumentId,NULL,CONVERT(date,OccurredAt),MovementType,Method,Amount,
+              Reference,SourceKey,OccurredAt,UserId
+            FROM OPENJSON(@Movements) WITH(Id uniqueidentifier,SessionId uniqueidentifier,DocumentId uniqueidentifier,
+              MovementType nvarchar(32),Method nvarchar(32),Amount decimal(19,4),Reference nvarchar(160),
+              SourceKey nvarchar(160),OccurredAt datetimeoffset(7),UserId uniqueidentifier);
             """, connection, transaction);
-        command.Parameters.AddWithValue("@Id", ids.NewId());
-        command.Parameters.AddWithValue("@SessionId", sessionId);
-        command.Parameters.AddWithValue("@DocumentId", (object?)documentId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@Date", occurredAt.Date);
-        command.Parameters.AddWithValue("@Type", movementType);
-        command.Parameters.AddWithValue("@Method", method);
-        AddMoney(command, "@Amount", amount);
-        command.Parameters.AddWithValue("@Reference", (object?)reference ?? DBNull.Value);
-        command.Parameters.AddWithValue("@SourceKey", sourceKey);
-        command.Parameters.AddWithValue("@At", occurredAt);
-        command.Parameters.AddWithValue("@UserId", userId);
-        await command.ExecuteNonQueryAsync(token);
+        command.Parameters.Add("@Movements", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(movements);
+        if (await command.ExecuteNonQueryAsync(token) != movements.Count)
+            throw new DBConcurrencyException("The work-session movements were not recorded atomically.");
     }
 
-    private async Task InsertPaymentSessionMovementsAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid sessionId, Guid paymentId,
-        string movementType, IEnumerable<(int LineNumber, string MethodCode, decimal Amount, string? Reference)> values,
-        DateTimeOffset occurredAt, Guid userId, string sourcePrefix, CancellationToken token)
-    {
-        var rows = values.Select(value => new
-        {
-            MovementId = ids.NewId(), value.LineNumber, value.MethodCode, value.Amount, value.Reference,
-            SourceKey = $"{sourcePrefix}:{paymentId:N}:{value.LineNumber}"
-        }).ToArray();
-        await using var command = new SqlCommand("""
-            INSERT dbo.WorkSessionMovements
-              (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,BusinessDate,
-               MovementType,PaymentMethodCode,Amount,Reference,SourceKey,OccurredAt,RecordedByUserId)
-            SELECT input.MovementId,@SessionId,@PaymentId,NULL,CONVERT(date,@At),@Type,
-                   input.MethodCode,input.Amount,input.Reference,input.SourceKey,@At,@UserId
-            FROM OPENJSON(@Rows) WITH(
-              MovementId uniqueidentifier,LineNumber int,MethodCode nvarchar(32),Amount decimal(19,4),
-              Reference nvarchar(160),SourceKey nvarchar(160)) input;
-            IF @@ROWCOUNT<>@Count THROW 51608,'The work-session payment breakdown was not recorded atomically.',1;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@SessionId", sessionId);
-        command.Parameters.AddWithValue("@PaymentId", paymentId);
-        command.Parameters.AddWithValue("@At", occurredAt);
-        command.Parameters.AddWithValue("@Type", movementType);
-        command.Parameters.AddWithValue("@UserId", userId);
-        command.Parameters.AddWithValue("@Count", rows.Length);
-        command.Parameters.Add("@Rows", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(rows);
-        await command.ExecuteNonQueryAsync(token);
-    }
 }

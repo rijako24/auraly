@@ -12,9 +12,14 @@ namespace Auraly.Foundation.Tests;
 public sealed class FiscalGenerationWorkerTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Expense_lines_and_supported_withholdings_survive_generation_and_adjustment(bool adjustment)
+    [InlineData(false, "Expense", false)]
+    [InlineData(true, "Expense", false)]
+    [InlineData(false, "Receipt", false)]
+    [InlineData(false, "CostDocument", false)]
+    [InlineData(false, "Manual", false)]
+    [InlineData(true, "Manual", false)]
+    [InlineData(true, "Manual", true)]
+    public async Task Acquisition_lines_and_supported_withholdings_survive_generation_and_adjustment(bool adjustment, string source, bool sameDay)
     {
         var work = CreateWork();
         var sale = work.Sale!;
@@ -34,19 +39,54 @@ public sealed class FiscalGenerationWorkerTests
             "https://example.test/qr",sale.UblSnapshot!.Customer,sale.UblSnapshot.Authorization,[
                 new(1,"GASTO-1","999","EA","IVA","01"),new(2,"GASTO-2","999","EA","IVA","01")],
             Expense:expense,SellerPostalZone:"110111");
+        if (source == "Receipt")
+            snapshot = snapshot with { Expense = null, Receipt = new(
+                expense.TenantId, work.BusinessId, work.DocumentId, Guid.NewGuid(), expense.SupplierId,
+                Guid.NewGuid(), "COMPRA-1", Guid.NewGuid(), "COMPRA", "00", 1, null, issued, issued,
+                true, expense.DueDate, "COP", null, expense.TaxExclusiveAmount, expense.VatAmount, expense.GrossAmount,
+                expense.Lines!.Select(line => new Auraly.Contracts.Purchasing.GoodsReceiptLineSnapshot(
+                    line.LineNumber, Guid.NewGuid(), line.Description, 1m, line.TaxExclusiveAmount, 0m, "IVA", line.TaxRate,
+                    line.TaxTreatment, line.TaxExclusiveAmount, line.VatAmount, line.TaxExclusiveAmount + line.VatAmount)).ToArray(),
+                withholding) };
+        else if (source == "CostDocument")
+            snapshot = snapshot with { Expense = null, CostDocument = new(
+                expense.TenantId, work.BusinessId, Guid.NewGuid(), new(work.DocumentId, expense.SupplierId,
+                    "BuyerElectronicSupportDocument", "CARGO-1", issued, true, expense.DueDate, "COP", 1m,
+                    DateOnly.FromDateTime(issued.Date), "FunctionalCurrency", expense.TaxExclusiveAmount,
+                    expense.VatAmount, expense.GrossAmount, expense.TaxExclusiveAmount, expense.VatAmount, expense.GrossAmount,
+                    withholding, expense.Lines!.Select(line => new Auraly.Contracts.Purchasing.GoodsReceiptCostLineSnapshot(
+                        line.LineNumber, "Freight", line.Description, line.TaxExclusiveAmount, line.TaxExclusiveAmount,
+                        "IVA", line.TaxRate, line.VatAmount, line.TaxTreatment, "Capitalize", "Value",
+                        line.TaxExclusiveAmount, line.TaxExclusiveAmount, line.VatAmount,
+                        line.TaxExclusiveAmount + line.VatAmount, [])).ToArray())) };
+        else if (source == "Manual")
+            snapshot = snapshot with { Expense = null, ManualAcquisition = new(
+                expense.TenantId, work.BusinessId, work.DocumentId, expense.SupplierId,
+                issued, expense.DueDate, "COP", expense.Lines!.Select(line => new ManualPurchaseSupportLineSnapshot(
+                    line.LineNumber, Guid.NewGuid(), line.Description, line.TaxExclusiveAmount, line.VatAmount,
+                    line.TaxRate)).ToArray(), withholding) };
+        if (source != "Manual")
+            Assert.DoesNotContain("manualAcquisition", PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
+        Assert.DoesNotContain("manualCancellation", PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
         work = work with { Sale=null,FiscalDocumentType=FiscalDocumentTypeCodes.SupportDocument,SupportDocument=snapshot };
         if (adjustment)
         {
             var cancellation = new Auraly.Contracts.Expenses.ExpenseCancellationPayload(sale.TenantId,work.BusinessId,
-                Guid.NewGuid(),Guid.NewGuid(),issued.AddDays(1),"Anulación",expense,null,112_650m,0m);
+                Guid.NewGuid(),Guid.NewGuid(),sameDay ? issued.AddHours(-1) : issued.AddDays(1),"Anulación",expense,null,112_650m,0m);
+            var manualCancellation = source == "Manual" ? new ManualPurchaseSupportCancellationPayload(
+                sale.TenantId, work.BusinessId, cancellation.CancellationId, cancellation.CancelledAt,
+                snapshot.ManualAcquisition!) : null;
             work = work with { DocumentId=cancellation.CancellationId,FiscalDocumentType=FiscalDocumentTypeCodes.SupportDocumentAdjustment,
-                SupportDocument=snapshot with { Expense=null,ExpenseCancellation=cancellation,OriginalSupportNumber="SETP1",
+                SupportDocument=snapshot with { Expense=null,OriginalSupportNumber="SETP1",
+                    ManualAcquisition = null, ManualCancellation = manualCancellation,
+                    ExpenseCancellation = manualCancellation is null ? cancellation : null,
                     OriginalSupportCuds=new string('a',96),OriginalSupportIssuedOn=DateOnly.FromDateTime(issued.Date) } };
         }
         var store = new TestStore(work);
         var processed = await CreateWorker(store).ProcessAsync(work.BusinessId,work.DocumentId,"worker-a",CancellationToken.None);
         Assert.True(processed, store.ErrorMessage);
         Assert.True(store.Completed is not null,store.ErrorMessage);
+        Assert.Equal(adjustment ? sameDay ? issued.AddHours(-1) : issued.AddDays(1) : issued, store.Completed!.SignedAt);
         var xml = XDocument.Parse(Encoding.UTF8.GetString(store.Completed!.UnsignedXml));
         XNamespace cac=DianUblNamespaces.Cac,cbc=DianUblNamespaces.Cbc;
         Assert.Equal(2,xml.Root!.Elements(cac+(adjustment?"CreditNoteLine":"InvoiceLine")).Count());
@@ -55,7 +95,54 @@ public sealed class FiscalGenerationWorkerTests
         // cancels the referenced support, while accounting reverses all retentions.
         Assert.Equal(adjustment ? 0m : 5_350m,xml.Root.Elements(cac+"WithholdingTaxTotal").Sum(group=>(decimal)group.Element(cbc+"TaxAmount")!));
         Assert.Equal(adjustment ? 0 : 2,xml.Root.Elements(cac+"WithholdingTaxTotal").Count());
+        if (adjustment)
+        {
+            Assert.Equal("95", (string?)xml.Root.Element(cbc + "CreditNoteTypeCode"));
+            Assert.Equal("2", (string?)xml.Descendants(cac + "DiscrepancyResponse").Single().Element(cbc + "ResponseCode"));
+            Assert.Equal("SETP1", (string?)xml.Descendants(cac + "BillingReference").Single()
+                .Element(cac + "InvoiceDocumentReference")?.Element(cbc + "ID"));
+        }
         Assert.Contains("Servicio A",xml.ToString()); Assert.Contains("Servicio B",xml.ToString());
+    }
+
+    [Theory]
+    [InlineData("Business")]
+    [InlineData("Tenant")]
+    [InlineData("Identity")]
+    [InlineData("Date")]
+    [InlineData("OriginalDate")]
+    [InlineData("Lines")]
+    [InlineData("Reference")]
+    [InlineData("TwoSources")]
+    public async Task Manual_support_adjustment_rejects_an_inconsistent_immutable_original(string fault)
+    {
+        var work = CreateWork();
+        var sale = work.Sale!;
+        var issued = sale.CommercialSnapshot.IssuedAt;
+        var original = new ManualPurchaseSupportPayload(sale.TenantId, work.BusinessId, Guid.NewGuid(),
+            Guid.NewGuid(), issued, issued.AddDays(30), "COP",
+            [new(1, Guid.NewGuid(), "Servicio", 100m, 0m, 0m)], new(100m, 0m, 100m, []));
+        original = fault switch {
+            "Business" => original with { BusinessId = Guid.NewGuid() },
+            "Tenant" => original with { TenantId = Guid.NewGuid() },
+            "Identity" => original with { DocumentId = work.DocumentId },
+            "Lines" => original with { Lines = [] },
+            _ => original
+        };
+        var snapshot = new PurchaseSupportFiscalSnapshot(null, work.Issuer.Id, work.FiscalNumber, 2,
+            "https://example.test/qr", sale.UblSnapshot!.Customer, sale.UblSnapshot.Authorization,
+            [new(1, "SERVICIO", "999", "EA", "IVA", "01")],
+            OriginalSupportNumber: fault == "Reference" ? null : "SETP1", OriginalSupportCuds: new string('a', 96),
+            OriginalSupportIssuedOn: DateOnly.FromDateTime(issued.Date).AddDays(fault == "OriginalDate" ? -1 : 0),
+            SellerPostalZone: "110111", ManualAcquisition: fault == "TwoSources" ? original : null,
+            ManualCancellation: new(sale.TenantId, work.BusinessId, work.DocumentId,
+                issued.AddDays(fault == "Date" ? -1 : 1), original));
+        work = work with { Sale = null, FiscalDocumentType = FiscalDocumentTypeCodes.SupportDocumentAdjustment,
+            SupportDocument = snapshot };
+        var store = new TestStore(work);
+        Assert.False(await CreateWorker(store).ProcessAsync(work.BusinessId, work.DocumentId, "worker-a"));
+        Assert.Null(store.Completed);
+        Assert.Equal(FiscalDocumentStatusCodes.MissingMandatoryFiscalData, store.FinalStatus);
     }
 
     [Fact]

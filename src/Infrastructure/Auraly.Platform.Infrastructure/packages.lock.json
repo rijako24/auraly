@@ -912,6 +912,7 @@
       "auraly.commerce.accounting.application": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.Fiscal": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
@@ -919,12 +920,18 @@
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
+          "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Auraly.Contracts.Inventory": "[1.0.0, )",
+          "Auraly.Contracts.Payables": "[1.0.0, )",
+          "Auraly.Contracts.Receivables": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )"
         }
       },
       "auraly.commerce.accounting.contracts": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+        }
       },
       "auraly.commerce.accounting.domain": {
         "type": "Project"
@@ -980,6 +987,7 @@
       "auraly.contracts.fiscal": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
           "Auraly.Contracts.Returns": "[1.0.0, )",
@@ -1005,11 +1013,23 @@
       "auraly.contracts.parties": {
         "type": "Project"
       },
+      "auraly.contracts.payables": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "auraly.contracts.purchasing": {
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+        }
+      },
+      "auraly.contracts.receivables": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
       "auraly.contracts.returns": {

@@ -8,7 +8,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlWithholdingRuleStore(
+public sealed partial class SqlWithholdingRuleStore(
     SqlServerConnectionFactory connections, TimeProvider timeProvider) : IWithholdingRuleStore
 {
     public async Task<AppliedWithholdingReportView> ListAppliedAsync(
@@ -18,43 +18,69 @@ public sealed class SqlWithholdingRuleStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
-            SELECT s.DocumentId,s.DocumentType,l.LineNumber,s.RecognizedAt,
-                   COALESCE(e.DocumentNumber,g.DocumentNumber,c.DocumentNumber) AS DocumentNumber,
-                   supplier.Name AS SupplierName,supplier.Identification AS SupplierIdentification,
-                   l.Kind,l.Name,l.RuleCode,l.JurisdictionCode,l.TaxableBase,l.Rate,l.Amount,
-                   CONVERT(bit,CASE WHEN l.ManualLineId IS NULL THEN 0 ELSE 1 END) AS IsManual
-            INTO #Applied
+            -- The tax snapshot owns the scoped facts. Resolve source metadata,
+            -- including the potentially large fiscal JSON, only for this page.
+            SELECT s.DocumentId,s.DocumentType,s.RecognizedAt
+            INTO #AppliedDocuments
             FROM dbo.DocumentWithholdingSnapshots s
             JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId AND b.TenantId=@TenantId
-            JOIN dbo.DocumentWithholdingLines l
-              ON l.DocumentId=s.DocumentId AND l.DocumentType=s.DocumentType
             LEFT JOIN dbo.Expenses e ON s.DocumentType=N'Expense'
               AND e.ExpenseId=s.DocumentId AND e.BusinessId=s.BusinessId
-            LEFT JOIN dbo.GoodsReceipts g ON s.DocumentType=N'GoodsReceipt'
-              AND g.GoodsReceiptId=s.DocumentId AND g.BusinessId=s.BusinessId
-            LEFT JOIN purchasing.GoodsReceiptCostDocuments c
-              ON s.DocumentType=N'GoodsReceiptCostDocument' AND c.CostDocumentId=s.DocumentId
-              AND EXISTS (SELECT 1 FROM dbo.GoodsReceipts parent
-                          WHERE parent.GoodsReceiptId=c.GoodsReceiptId AND parent.BusinessId=s.BusinessId)
-            JOIN dbo.Suppliers supplier
-              ON supplier.SupplierId=COALESCE(e.SupplierId,g.SupplierId,c.SupplierId)
-              AND supplier.TenantId=b.TenantId
             WHERE s.BusinessId=@BusinessId AND s.RecognizedAt>=@From AND s.RecognizedAt<@ToExclusive
-              AND s.DocumentType IN (N'Expense',N'GoodsReceipt',N'GoodsReceiptCostDocument')
-              AND (e.ExpenseId IS NULL OR e.CancelledAt IS NULL OR e.CancelledAt>=@ToExclusive);
+              AND s.DocumentType IN (N'Expense',N'GoodsReceipt',N'GoodsReceiptCostDocument',N'ManualAccountingVoucher')
+              AND (e.ExpenseId IS NULL OR e.CancelledAt IS NULL OR e.CancelledAt>=@ToExclusive)
+              AND NOT EXISTS(SELECT 1 FROM dbo.Payables payable
+                JOIN accounting.SourcePositionIndex target ON target.BusinessId=payable.BusinessId
+                  AND target.SubledgerKind=N'Payable' AND target.SubledgerId=payable.PayableId AND target.EffectKind=N'Cancellation'
+                JOIN dbo.PayableTransactions applied ON applied.PayableTransactionId=target.EffectId
+                  AND applied.PayableId=payable.PayableId AND applied.TransactionType=N'Credit'
+                  AND applied.SourceDocumentId=target.SourceDocumentId AND applied.SourceDocumentType=target.SourceDocumentType
+                WHERE s.DocumentType=N'ManualAccountingVoucher' AND payable.SourceDocumentId=s.DocumentId
+                  AND payable.SourceDocumentType=s.DocumentType AND payable.BusinessId=@BusinessId
+                  AND applied.OccurredAt<@ToExclusive);
 
             SELECT COUNT_BIG(*),
-                   COALESCE(SUM(CASE WHEN Kind=N'IncomeTax' THEN Amount ELSE 0 END),0),
-                   COALESCE(SUM(CASE WHEN Kind=N'Vat' THEN Amount ELSE 0 END),0),
-                   COALESCE(SUM(CASE WHEN Kind=N'IndustryCommerce' THEN Amount ELSE 0 END),0)
-            FROM #Applied;
+                   COALESCE(SUM(CASE WHEN l.Kind=N'IncomeTax' THEN l.Amount ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN l.Kind=N'Vat' THEN l.Amount ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN l.Kind=N'IndustryCommerce' THEN l.Amount ELSE 0 END),0)
+            FROM #AppliedDocuments d JOIN dbo.DocumentWithholdingLines l
+              ON l.DocumentId=d.DocumentId AND l.DocumentType=d.DocumentType;
 
-            SELECT DocumentId,DocumentType,LineNumber,RecognizedAt,DocumentNumber,
-                   SupplierName,SupplierIdentification,Kind,Name,RuleCode,JurisdictionCode,
-                   TaxableBase,Rate,Amount,IsManual
-            FROM #Applied
-            ORDER BY RecognizedAt DESC,DocumentId DESC,LineNumber DESC
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            WITH page AS (
+                SELECT d.DocumentId,d.DocumentType,l.LineNumber,d.RecognizedAt,
+                       l.Kind,l.Name,l.RuleCode,l.JurisdictionCode,l.TaxableBase,l.Rate,l.Amount,
+                       CONVERT(bit,CASE WHEN l.ManualLineId IS NULL THEN 0 ELSE 1 END) AS IsManual
+                FROM #AppliedDocuments d JOIN dbo.DocumentWithholdingLines l
+                  ON l.DocumentId=d.DocumentId AND l.DocumentType=d.DocumentType
+                ORDER BY d.RecognizedAt DESC,d.DocumentId DESC,l.LineNumber DESC
+                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+            )
+            SELECT page.DocumentId,page.DocumentType,page.LineNumber,page.RecognizedAt,
+                   COALESCE(e.DocumentNumber,g.DocumentNumber,c.DocumentNumber,manual.FiscalNumber),
+                   supplier.Name,supplier.Identification,page.Kind,page.Name,page.RuleCode,page.JurisdictionCode,
+                   page.TaxableBase,page.Rate,page.Amount,page.IsManual,
+                   COALESCE(documentType.Label,page.DocumentType),COALESCE(kind.Label,page.Kind)
+            FROM page
+            LEFT JOIN dbo.Expenses e ON page.DocumentType=N'Expense'
+              AND e.ExpenseId=page.DocumentId AND e.BusinessId=@BusinessId
+            LEFT JOIN dbo.GoodsReceipts g ON page.DocumentType=N'GoodsReceipt'
+              AND g.GoodsReceiptId=page.DocumentId AND g.BusinessId=@BusinessId
+            LEFT JOIN purchasing.GoodsReceiptCostDocuments c
+              ON page.DocumentType=N'GoodsReceiptCostDocument' AND c.CostDocumentId=page.DocumentId
+              AND c.SourceEntryId IS NULL
+              AND EXISTS(SELECT 1 FROM dbo.GoodsReceipts parent
+                WHERE parent.GoodsReceiptId=c.GoodsReceiptId AND parent.BusinessId=@BusinessId)
+            LEFT JOIN dbo.FiscalDocuments manual ON page.DocumentType=N'ManualAccountingVoucher'
+              AND manual.DocumentId=page.DocumentId AND manual.BusinessId=@BusinessId
+              AND manual.SourceDocumentType=page.DocumentType AND manual.FiscalDocumentType=N'SupportDocument'
+            LEFT JOIN fiscal.PurchaseSupportFiscalSnapshots manualSnapshot ON manualSnapshot.DocumentId=manual.DocumentId
+            LEFT JOIN dbo.Suppliers supplier ON supplier.SupplierId=COALESCE(e.SupplierId,g.SupplierId,c.SupplierId,
+                TRY_CONVERT(uniqueidentifier,JSON_VALUE(manualSnapshot.SnapshotJson,'$.manualAcquisition.supplierId')))
+              AND supplier.TenantId=@TenantId
+            LEFT JOIN reference.Options documentType ON documentType.CatalogCode=N'accounting-document-type'
+              AND documentType.Code=page.DocumentType
+            LEFT JOIN reference.Options kind ON kind.CatalogCode=N'accounting-withholding-kind' AND kind.Code=page.Kind
+            ORDER BY page.RecognizedAt DESC,page.DocumentId DESC,page.LineNumber DESC;
             """, connection);
         command.Parameters.Add("@TenantId", SqlDbType.UniqueIdentifier).Value = tenantId;
         command.Parameters.Add("@BusinessId", SqlDbType.UniqueIdentifier).Value = businessId;
@@ -75,13 +101,17 @@ public sealed class SqlWithholdingRuleStore(
         await reader.NextResultAsync(ct);
         var items = new List<AppliedWithholdingLineView>();
         while (await reader.ReadAsync(ct))
+        {
+            if (reader.IsDBNull(4) || reader.IsDBNull(5) || reader.IsDBNull(6))
+                throw new TaxationValidationException("No se pudo completar el informe: una retención no conserva el documento o proveedor de origen. Revisa su integridad antes de usar los totales.");
             items.Add(new AppliedWithholdingLineView(
                 reader.GetGuid(0), reader.GetString(1), reader.GetInt32(2),
                 reader.GetDateTimeOffset(3), reader.GetString(4), reader.GetString(5),
                 reader.GetString(6), reader.GetString(7), reader.GetString(8),
                 reader.GetString(9), reader.IsDBNull(10) ? null : reader.GetString(10),
                 reader.GetDecimal(11), reader.GetDecimal(12), reader.GetDecimal(13),
-                reader.GetBoolean(14)));
+                reader.GetBoolean(14),reader.GetString(15),reader.GetString(16)));
+        }
         return new AppliedWithholdingReportView(from, to, page, pageSize, count,
             incomeTax, vat, industryCommerce, items);
     }

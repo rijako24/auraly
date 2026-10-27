@@ -19,6 +19,5 @@ WHERE FunctionalLineTotal=0 AND LineTotal>0;
 
 UPDATE dbo.Payables
 SET FunctionalOriginalAmount=OriginalAmount,
-    FunctionalOutstandingAmount=OutstandingAmount,
     ExchangeRate=1
 WHERE FunctionalOriginalAmount IS NULL;

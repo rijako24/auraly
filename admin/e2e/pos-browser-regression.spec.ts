@@ -1,48 +1,40 @@
 import { expect, test, type Page } from "@playwright/test";
-import { login as sharedLogin } from "./support/auth";
-
-async function login(page: Page) {
-  await sharedLogin(page, undefined, 60_000);
-}
+import { realAccountingWorkspace } from "./support/real-accounting-workspace";
+import { createRealProduct } from "./support/real-product";
+import type { AccountingEntry } from "../src/services/api/accounting";
 
 async function openOnlinePos(page: Page) {
-  let businessId = process.env.AURALY_E2E_BUSINESS_ID;
-  if (!businessId) {
-    const response = page.waitForResponse((item) => item.request().method() === "GET" &&
-      item.url().includes("/pos/workspace/bootstrap"));
-    await page.goto("/pos?workspace=change");
-    const bootstrap = await response;
-    expect(bootstrap.ok()).toBe(true);
-    const options = (await bootstrap.json() as {
-      options: { businessId: string; pointOfSaleMode: string }[];
-    }).options;
-    businessId = options.find((option) => option.pointOfSaleMode === "DirectSale")?.businessId;
-    expect(businessId, "La prueba requiere una sede de venta directa").toBeTruthy();
-  }
-  await page.addInitScript((value) => {
-    localStorage.setItem("selected_business_id", value);
-  }, businessId!.toLowerCase());
   await page.goto("/pos");
-  const setup = page.getByRole("heading", { name: /Prepara (?:tu espacio de venta|facturación)/ });
-  if (await setup.isVisible({ timeout: 20_000 }).catch(() => false)) {
+  const ready = page.getByText("Lista para vender", { exact: true });
+  const continueButton = page.getByRole("button", { name: /(?:Entrar|Continuar) a ventas(?: online)?/ });
+  await expect(ready.or(continueButton)).toBeVisible({ timeout: 30_000 });
+  if (await continueButton.isVisible()) {
+    const warehouse = page.getByRole("combobox").filter({ hasText: "Selecciona bodega" });
+    if (await warehouse.count()) {
+      await warehouse.click();
+      await page.getByRole("option").first().click();
+    }
     const receipt = page.getByRole("button", { name: /Comprobante de venta/ });
     if (await receipt.count()) await receipt.click();
-    const continueButton = page.getByRole("button", { name: /(?:Entrar|Continuar) a ventas(?: online)?/ });
     await expect(continueButton).toBeEnabled({ timeout: 20_000 });
     await continueButton.click();
   }
-  await expect(page.getByText("Lista para vender", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(ready).toBeVisible({ timeout: 30_000 });
 }
 
 test("vende un comprobante online con teclado, imprime tirilla y deja una venta nueva", async ({ page }) => {
   test.setTimeout(150_000);
-  await login(page);
+  const { scopedJson } = await realAccountingWorkspace(page);
+  const productName = await createRealProduct(page, false);
   await openOnlinePos(page);
 
   // A failed previous browser run may have left the recoverable active draft intact.
   // Reset it through the UI so this regression also proves the confirmation flow.
   const existingQuantity = page.getByRole("spinbutton", { name: /Cantidad de/ });
   if (await existingQuantity.count()) {
+    const labels = await existingQuantity.evaluateAll(inputs => inputs.map(input => input.getAttribute("aria-label")));
+    expect(labels.every(label => label?.startsWith("Cantidad de Producto E2E ")),
+      "No se reinicia una venta ajena a los datos de esta regresión local.").toBe(true);
     await page.getByRole("button", { name: /Reiniciar/ }).click();
     const confirmation = page.getByRole("alertdialog");
     await expect(confirmation).toBeVisible();
@@ -53,7 +45,9 @@ test("vende un comprobante online con teclado, imprime tirilla y deja una venta 
   await page.keyboard.press("F1");
   const productSearch = page.getByRole("dialog").filter({ hasText: "Buscar producto" });
   await expect(productSearch).toBeVisible();
+  await productSearch.getByRole("combobox", { name: "Buscar producto", exact: true }).fill(productName);
   const firstProduct = productSearch.getByRole("option").first();
+  await expect(firstProduct).toContainText(productName);
   const productCode = (await firstProduct.innerText()).split(/\s+/).find((part) => part.startsWith("PRD-"));
   expect(productCode).toBeTruthy();
   await page.keyboard.press("Escape");
@@ -91,6 +85,13 @@ test("vende un comprobante online con teclado, imprime tirilla y deja una venta 
   await payment.getByRole("button", { name: /Emitir e imprimir/ }).click();
   const ticket = await ticketPromise;
   expect(ticket.ok(), await ticket.text()).toBe(true);
+  const { receipts } = ticket.request().postDataJSON() as { receipts: Array<{ documentId: string }> };
+  expect(receipts).toHaveLength(1);
+  const { documentId } = receipts[0];
+  expect(documentId).toBeTruthy();
+  const entry = await scopedJson<AccountingEntry>("GET", `/api/commerce/v1/accounting/entries/by-document/${documentId}`);
+  expect(entry.debitTotal).toBeGreaterThan(0);
+  expect(entry.debitTotal).toBe(entry.creditTotal);
 
   await expect(page.getByText(/emitida e impresa/)).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Entregar al cliente", { exact: true })).toBeVisible();

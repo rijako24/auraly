@@ -38,11 +38,11 @@ public sealed partial class SqlReceivablesStore
                 "La sede no pertenece a la empresa autenticada.");
         await using var command = new SqlCommand($"""
             SET NOCOUNT ON;
-            WITH Scoped AS (
               SELECT r.ReceivableId,r.CustomerId,r.PartyId,r.PartySiteId,r.DocumentNumber,
                 r.CurrencyCode,r.OriginalAmount,r.DueDate,r.Status,source.OccurredAt IssuedAt,
                 COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                 COALESCE(p.Identification,N'') Identification,site.Name PartySiteName
+              INTO #Scoped
               FROM dbo.Receivables r
               JOIN dbo.Businesses business ON business.BusinessId=r.BusinessId
               LEFT JOIN dbo.Customers customer ON customer.CustomerId=r.CustomerId
@@ -61,23 +61,25 @@ public sealed partial class SqlReceivablesStore
                   OR site.Name LIKE N'%' + @Search + N'%'
                   OR site.Code LIKE N'%' + @Search + N'%')
                 AND (@From IS NULL OR r.CreatedAt>=@From)
-                AND (@To IS NULL OR r.CreatedAt<@To)
-            ), Movement AS (
+                AND (@To IS NULL OR r.CreatedAt<@To);
+            -- Reuse this authorized set with real cardinality statistics. Inlining
+            -- its party/search joins into each aggregate led to nested loops over
+            -- millions of reads for a 10,000-position historical report.
+            CREATE UNIQUE CLUSTERED INDEX IX_Scoped ON #Scoped(ReceivableId);
+            WITH Movement AS (
               SELECT tx.ReceivableId,
-                SUM(CASE WHEN tx.TransactionType IN(N'Opening',N'Adjustment') THEN tx.Amount
-                  ELSE -tx.Amount END) Balance
+                SUM(effect.BalanceChange) Balance
               FROM dbo.ReceivableTransactions tx
-              JOIN Scoped scoped ON scoped.ReceivableId=tx.ReceivableId
+              CROSS APPLY accounting.PortfolioTransactionEffect(tx.TransactionType,tx.Amount) effect
+              JOIN #Scoped scoped ON scoped.ReceivableId=tx.ReceivableId
               WHERE tx.CreatedAt<@Cutoff AND tx.OccurredAt<@Cutoff
               GROUP BY tx.ReceivableId
             ), Paid AS (
-              SELECT application.ReceivableId,SUM(application.Amount) PaidAmount
-              FROM dbo.CustomerPaymentApplications application
-              JOIN Scoped scoped ON scoped.ReceivableId=application.ReceivableId
-              JOIN dbo.CustomerPayments payment ON payment.PaymentId=application.PaymentId
-                AND payment.BusinessId=@BusinessId
-              WHERE application.AppliedAt<@Cutoff AND payment.PaidAt<@Cutoff
-              GROUP BY application.ReceivableId
+              SELECT application.PositionId ReceivableId,SUM(application.Amount) PaidAmount
+              FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Receivable') application
+              JOIN #Scoped scoped ON scoped.ReceivableId=application.PositionId
+              WHERE application.AppliedAt<@Cutoff AND application.OccurredAt<@Cutoff
+              GROUP BY application.PositionId
             )
             SELECT scoped.*,COALESCE(movement.Balance,0) OutstandingAmount,
               COALESCE(paid.PaidAmount,0) PaidAmount,
@@ -86,7 +88,7 @@ public sealed partial class SqlReceivablesStore
                 WHEN movement.Balance>=scoped.OriginalAmount THEN N'Open'
                 ELSE N'PartiallyPaid' END HistoricalStatus
             INTO #Ledger
-            FROM Scoped scoped
+            FROM #Scoped scoped
             JOIN Movement movement ON movement.ReceivableId=scoped.ReceivableId
             LEFT JOIN Paid paid ON paid.ReceivableId=scoped.ReceivableId;
 
@@ -133,14 +135,15 @@ public sealed partial class SqlReceivablesStore
               OverdueAmount,ReceivableId,DocumentNumber,IssuedAt,DueDate,
               NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount,PartyId
             FROM #Page ORDER BY {order};
-            SELECT application.ReceivableId,payment.DocumentNumber,application.AppliedAt,
+            SELECT application.PositionId,
+              CASE WHEN application.Amount<0 THEN CONCAT(N'Desaplicación de ',origin.DocumentNumber) ELSE origin.DocumentNumber END,application.AppliedAt,
               application.Amount
-            FROM dbo.CustomerPaymentApplications application
-            JOIN #Page page ON page.ReceivableId=application.ReceivableId
-            JOIN dbo.CustomerPayments payment ON payment.PaymentId=application.PaymentId
-              AND payment.BusinessId=@BusinessId
-            WHERE application.AppliedAt<@Cutoff AND payment.PaidAt<@Cutoff
-            ORDER BY application.ReceivableId,application.AppliedAt,application.LineNumber;
+            FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Receivable') application
+            JOIN #Page page ON page.ReceivableId=application.PositionId
+            JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=application.PaymentId
+              AND origin.SubledgerKind=N'Receivable' AND origin.BusinessId=@BusinessId
+            WHERE application.AppliedAt<@Cutoff AND application.OccurredAt<@Cutoff
+            ORDER BY application.PositionId,application.AppliedAt,application.PaymentId,application.UnapplicationTransactionId;
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);

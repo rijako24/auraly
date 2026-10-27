@@ -59,7 +59,7 @@ CREATE TABLE [dbo].[ProductPricePreparations]
     CONSTRAINT [FK_ProductPricePreparations_Proposals] FOREIGN KEY ([SourceProposalId]) REFERENCES [dbo].[PriceRevisionProposals] ([PriceRevisionProposalId]),
     CONSTRAINT [FK_ProductPricePreparations_SourceProducts] FOREIGN KEY ([SourceProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [FK_ProductPricePreparations_Users] FOREIGN KEY ([PreparedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
-    CONSTRAINT [CK_ProductPricePreparations_Origin] CHECK ([PreparationOrigin] IN (N'GoodsReceipt',N'ProposalReview',N'Product',N'LinkedProduct',N'Migration')),
+    CONSTRAINT [CK_ProductPricePreparations_Origin] CHECK ([PreparationOrigin] IN (N'GoodsReceipt',N'ProposalReview',N'Product',N'LinkedProduct',N'SupplierDiscount',N'Migration')),
     CONSTRAINT [CK_ProductPricePreparations_Amounts] CHECK ([PublicAmountSnapshot] >= 0 AND [PreparedAmount] >= 0 AND ([CostBasisAmount] IS NULL OR [CostBasisAmount] >= 0)),
     CONSTRAINT [CK_ProductPricePreparations_Margin] CHECK (([TargetMarginPercent] IS NULL OR [TargetMarginPercent] BETWEEN 0 AND 99.999999) AND ([EffectiveMarginPercent] IS NULL OR [EffectiveMarginPercent] < 100)),
     CONSTRAINT [CK_ProductPricePreparations_InputMode] CHECK ([InputMode] IN (N'Margin',N'SalePrice')),

@@ -23,7 +23,7 @@ BEGIN
     INSERT dbo.AccountingAccounts(
         AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
     SELECT NEWID(),@TenantId,a.AccountCode,a.AccountName,a.AccountType,a.AllowsPosting,a.RequiresParty,1,@Now
-    FROM dbo.AccountingConfigurationProfileAccounts a
+    FROM accounting.DefaultAccountDefinitions(@ProfileCode) a
     WHERE a.ProfileCode=@ProfileCode AND
       NOT EXISTS (SELECT 1 FROM dbo.AccountingAccounts currentAccount
                   WHERE currentAccount.TenantId=@TenantId AND currentAccount.Code=a.AccountCode);
@@ -38,14 +38,14 @@ BEGIN
     INSERT dbo.AccountingAccountMappings(
         MappingId,TenantId,BusinessId,Category,AccountId,EffectiveFrom,EffectiveTo,CreatedAt)
     SELECT NEWID(),@TenantId,NULL,a.Category,account.AccountId,@StartsOn,NULL,@Now
-    FROM dbo.AccountingConfigurationProfileAccounts a
+    FROM accounting.DefaultAccountDefinitions(@ProfileCode) a
     INNER JOIN dbo.AccountingAccounts account ON account.TenantId=@TenantId AND account.Code=a.AccountCode
       AND account.Name=a.AccountName AND account.AccountType=a.AccountType
       AND account.IsActive=1 AND account.AllowsPosting=1
     WHERE a.ProfileCode=@ProfileCode AND
       NOT EXISTS (SELECT 1 FROM dbo.AccountingAccountMappings mapping
                       WHERE mapping.TenantId=@TenantId AND mapping.BusinessId IS NULL
-                        AND mapping.Category=a.Category AND mapping.EffectiveFrom=@StartsOn);
+                        AND mapping.Category=a.Category);
 
     IF NOT EXISTS (SELECT 1 FROM dbo.AccountingCostCenters WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1)
         INSERT dbo.AccountingCostCenters(

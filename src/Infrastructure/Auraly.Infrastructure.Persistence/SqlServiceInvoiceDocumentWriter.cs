@@ -39,12 +39,6 @@ internal static class SqlServiceInvoiceDocumentWriter
         var hash = ServiceInvoiceSnapshotSerializer.Hash(snapshot);
         await using var command = new SqlCommand("""
             SET XACT_ABORT ON;
-            DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS
-            (
-              SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
-              WHERE TenantId=@TenantId AND Status=N'Ready'
-                AND EffectiveFrom<=CONVERT(date,@Now)
-            ) THEN 1 ELSE 0 END);
             INSERT dbo.SalesDocuments
               (DocumentId,BusinessId,WarehouseId,DeviceId,SourceMode,DocumentSeriesId,
                DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
@@ -80,17 +74,10 @@ internal static class SqlServiceInvoiceDocumentWriter
               (DocumentId,SnapshotJson,PayloadHash,Environment,CreatedAt)
             VALUES(@DocumentId,@Payload,@Hash,@Environment,@Now);
 
-            INSERT dbo.AccountingSourceDocuments
-              (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
-               PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-            VALUES(@DocumentId,N'ServiceInvoice',@TenantId,@BusinessId,@Payload,
-               @Hash,@Now,@Now,@AccountingEntryRequired);
-            INSERT dbo.AccountingPostingJobs
-              (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-               SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,
-               Status,AttemptCount,CreatedAt)
-            VALUES(@AccountingJobId,@TenantId,@BusinessId,@DocumentId,
-               N'ServiceInvoice',@Hash,@Now,@AccountingEntryRequired,N'Pending',0,@Now);
+            DECLARE @Sources nvarchar(max)=(SELECT @DocumentId DocumentId,N'ServiceInvoice' DocumentType,
+              @BusinessId BusinessId,@Payload Payload,CONVERT(varchar(64),@Hash,2) Hash,
+              @Now OccurredAt,@AccountingJobId JobId FOR JSON PATH);
+            EXEC dbo.AccountingSourcesAccept @TenantId,@Sources,@Now,1;
             """, connection, transaction);
         Add(command, "@DocumentId", snapshot.DocumentId);
         Add(command, "@BusinessId", snapshot.BusinessId);

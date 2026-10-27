@@ -6,6 +6,42 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class PortfolioPaymentReceiptRendererTests
 {
     [Theory]
+    [InlineData("Payable", "Accepted")]
+    [InlineData("Receivable", "Accepted")]
+    [InlineData("Payable", null)]
+    [InlineData("Receivable", null)]
+    [InlineData("Payable", "Processed")]
+    [InlineData("Receivable", "Processed")]
+    public void Print_keeps_the_acknowledged_payment_state_in_every_format(string direction, string? status)
+    {
+        var receipt = Sample(direction) with { Status = status };
+        foreach (var format in new[] { "Receipt", "HalfLetter", "HalfLegal", "Letter" })
+        {
+            var html = new PortfolioPaymentReceiptRenderer().Render(receipt, format, 80);
+            var applied = status == "Processed";
+            Assert.Contains(format == "Receipt" ? "data-auraly-report-version=\"3\"" : "data-auraly-report-version=\"4\"", html);
+            Assert.Equal(applied, html.Contains("Facturas aplicadas"));
+            Assert.Equal(applied, html.Contains("Abono aplicado"));
+            Assert.Equal(applied && direction == "Payable", html.Contains("Valor pagado"));
+            Assert.Equal(applied && direction == "Payable", html.Contains("Firma de recibido"));
+            Assert.Equal(!applied, html.Contains("Este registro no confirma un abono aplicado"));
+            if (status == "Accepted") Assert.Contains("pendiente de aplicar", html);
+            if (status is null)
+            {
+                Assert.Contains("Aplicaci&#243;n sin confirmar", html);
+                Assert.Contains("Documentos relacionados", html);
+            }
+        }
+    }
+
+    [Fact]
+    public void Rejected_payments_cannot_be_printed_as_an_acknowledged_payment()
+    {
+        Assert.Throws<ArgumentException>(() => new PortfolioPaymentReceiptRenderer().Render(
+            Sample("Payable") with { Status = "Rejected" }, 80));
+    }
+
+    [Theory]
     [InlineData("Receivable", 58, false)]
     [InlineData("Receivable", 80, false)]
     [InlineData("Payable", 58, true)]
@@ -61,5 +97,5 @@ public sealed class PortfolioPaymentReceiptRendererTests
         "Sede", "Calle 1", "3001234567", "Cliente <prueba>", "CC 123",
         "Laura", 125_000m,
         [new("VTA-123", 125_000m)],
-        [new("Efectivo", 100_000m, null), new("Transferencia", 25_000m, "BAN-88291")]);
+        [new("Efectivo", 100_000m, null), new("Transferencia", 25_000m, "BAN-88291")], "Processed");
 }

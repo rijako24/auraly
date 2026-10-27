@@ -41,3 +41,51 @@ La impresión automática de múltiples facturas desde un lote administrativo, r
 - Se actualizaron los constructores históricos de `OrderSnapshot` para eliminar el argumento `TaxTotal` en vez de conservar una sobrecarga legacy.
 - Se corrigieron las pruebas que aún buscaban semillas en `database/Auraly.Database`; ahora usan `database/Auraly.Database`.
 - Se verificó explícitamente que `SourceOrderId` llegue a la outbox SQLite y al vínculo único del servidor.
+
+## Regresión de la vista con el cambio contable — 2026-10-22
+
+`admin/e2e/orders-real-local.spec.ts` usa autenticación, BFF, API y SQL reales,
+sin interceptar solicitudes. Exige las URLs locales y tenant/sede explícitos del
+fixture aislado. Crea su cliente con sede por la API canónica y su producto por
+la vista; comparte esos preparadores con Gastos y Recepción de compra. No cambia
+maestros existentes ni inserta estados financieros directamente en SQL.
+
+El recorrido guarda dos pedidos, edita cantidad y observación en Pedidos,
+recupera uno en Facturación, cambia su cantidad y guarda sobre el mismo pedido
+con confirmación explícita. Comprueba cliente/sede, precio pactado y liberación
+del claim. Después emite dos comprobantes independientes desde la selección,
+verifica su vínculo y sus asientos balanceados y repite las mismas claves sin
+crear otra factura. La prueba completa pasó en 54,2 segundos; con las aserciones
+adicionales de sede pasó nuevamente en la regresión conjunta. Se revisó su
+captura visual `work/pedidos-reales-facturados.png`.
+
+La primera versión usó un producto propio sin control de inventario. La regresión
+del 2026-10-24 lo cambió a inventariable y preparó veinte unidades mediante la API
+canónica de ajuste, con el motivo activo del catálogo del fixture. Después de
+editar/recuperar y facturar cuatro unidades entre los dos pedidos, la misma
+consulta paginada de balances verifica dieciséis disponibles, también tras los
+replays. El recorrido pasó en 45,7 segundos con la API Release actualizada y su
+captura visual fue revisada. Complementa los 112 casos SQL/API de inventario,
+compras, devoluciones, producción y consumidores de pedidos; no prueba envío
+externo DIAN. Si un intento interrumpido
+deja un borrador, solo permite reiniciarlo mediante Sales después de comprobar
+que proviene de un pedido marcado por esta misma regresión local; conserva el
+pedido y no recorre ni elimina otros documentos.
+
+La venta directa de `pos-browser-regression.spec.ts` utiliza el mismo fixture
+local y un producto propio. Selecciona la bodega por la vista, busca y captura
+con teclado, cambia cantidad, cobra en efectivo, genera la tirilla mediante el
+renderer existente y verifica asiento balanceado y borrador limpio. Pasó en
+54,4 segundos. Este recorrido no verifica una impresora física. Las esperas de
+preparación observan la venta lista o el botón de continuación, evitando actuar
+sobre el encabezado transitorio de carga.
+
+La revisión de presentación con login local encontró un fallo previo en los tres
+tamaños de `orders-dispatch-style-regression.spec.ts`: exige la misma tipografía
+para Pedidos y Despachos, pero `HEAD` ya conserva `text-2xl font-semibold` en
+Pedidos y `text-3xl font-bold` en Despachos. La ronda autenticada llega a ambas
+pantallas y falla en esa aserción de Despachos. Se conserva la comprobación;
+no se declara aprobada ni se cambia la presentación durante la implementación
+financiera. Este hallazgo no es un fallo del recorrido de recuperar, editar o
+facturar pedidos descrito arriba. La prueba reutiliza ahora el login y alcance
+locales canónicos, con tenant/sede explícitos, en vez de credenciales por defecto.

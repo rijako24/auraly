@@ -883,10 +883,6 @@ public sealed class SqlPayrollStore(
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
             var jobId = ids.NewId(); var now = timeProvider.GetUtcNow();
             await using var save = new SqlCommand("""
-                DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS(
-                  SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
-                  WHERE TenantId=@TenantId AND Status=N'Ready'
-                    AND EffectiveFrom<=CONVERT(date,@OccurredAt)) THEN 1 ELSE 0 END);
                 INSERT payroll.PaymentBatches(PaymentBatchId,TenantId,BusinessId,PaymentDate,
                   PaymentMethodOptionId,ReferenceNumber,Status,TotalAmount,CreatedBy,CreatedAt,
                   ConfirmedBy,ConfirmedAt)
@@ -899,12 +895,10 @@ public sealed class SqlPayrollStore(
                     JOIN payroll.PaymentBatches pb ON pb.PaymentBatchId=pl.PaymentBatchId
                     WHERE pl.PayrollRunEmployeeId=re.PayrollRunEmployeeId AND pb.Status<>N'Voided');
                 IF @@ROWCOUNT<>@EmployeeCount THROW 51735,N'Los empleados por pagar cambiaron durante la confirmación.',1;
-                INSERT dbo.AccountingSourceDocuments(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                  PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-                VALUES(@BatchId,N'PayrollPayment',@TenantId,@BusinessId,@Payload,@PayloadHash,@OccurredAt,@Now,@AccountingEntryRequired);
-                INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-                  SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,CreatedAt)
-                VALUES(@JobId,@TenantId,@BusinessId,@BatchId,N'PayrollPayment',@PayloadHash,@OccurredAt,@AccountingEntryRequired,N'Pending',@Now);
+                DECLARE @Sources nvarchar(max)=(SELECT @BatchId DocumentId,N'PayrollPayment' DocumentType,
+                  @BusinessId BusinessId,@Payload Payload,CONVERT(varchar(64),@PayloadHash,2) Hash,
+                  @OccurredAt OccurredAt,@JobId JobId FOR JSON PATH);
+                EXEC dbo.AccountingSourcesAccept @TenantId,@Sources,@Now,1;
                 INSERT payroll.OutboxMessages(OutboxMessageId,TenantId,BusinessId,AggregateId,MessageType,
                   PayloadJson,OccurredAt,AttemptCount)
                 VALUES(@OutboxId,@TenantId,@BusinessId,@BatchId,N'AccountingPostingRequested',@Payload,@Now,0);
@@ -1294,10 +1288,6 @@ public sealed class SqlPayrollStore(
                     AND a.DeductedToDate+deductions.Amount>a.AuthorizedTotal)
                   THROW 51763,N'Los descuentos superan el saldo autorizado. Revisa el acuerdo y recalcula.',1;
 
-                DECLARE @AccountingEntryRequired bit=CONVERT(bit,CASE WHEN EXISTS(
-                  SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
-                  WHERE TenantId=@TenantId AND Status=N'Ready'
-                    AND EffectiveFrom<=CONVERT(date,@OccurredAt)) THEN 1 ELSE 0 END);
                 UPDATE payroll.Runs SET Status=N'Approved',ApprovedBy=@UserId,ApprovedAt=@Now,
                   ApprovalIdempotencyKey=@Key,ApprovalRequestHash=@RequestHash
                 WHERE PayrollRunId=@RunId AND TenantId=@TenantId AND BusinessId=@BusinessId
@@ -1316,12 +1306,10 @@ public sealed class SqlPayrollStore(
                   WHERE e.PayrollRunId=@RunId AND l.DeductionAgreementId IS NOT NULL GROUP BY l.DeductionAgreementId
                 ) l ON l.DeductionAgreementId=a.DeductionAgreementId;
 
-                INSERT dbo.AccountingSourceDocuments(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                  PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-                VALUES(@RunId,@DocumentType,@TenantId,@BusinessId,@Payload,@PayloadHash,@OccurredAt,@Now,@AccountingEntryRequired);
-                INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-                  SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,CreatedAt)
-                VALUES(@JobId,@TenantId,@BusinessId,@RunId,@DocumentType,@PayloadHash,@OccurredAt,@AccountingEntryRequired,N'Pending',@Now);
+                DECLARE @Sources nvarchar(max)=(SELECT @RunId DocumentId,@DocumentType DocumentType,
+                  @BusinessId BusinessId,@Payload Payload,CONVERT(varchar(64),@PayloadHash,2) Hash,
+                  @OccurredAt OccurredAt,@JobId JobId FOR JSON PATH);
+                EXEC dbo.AccountingSourcesAccept @TenantId,@Sources,@Now,1;
                 INSERT payroll.OutboxMessages(OutboxMessageId,TenantId,BusinessId,AggregateId,MessageType,
                   PayloadJson,OccurredAt,AttemptCount)
                 VALUES(@OutboxId,@TenantId,@BusinessId,@RunId,N'AccountingPostingRequested',@Payload,@Now,0);

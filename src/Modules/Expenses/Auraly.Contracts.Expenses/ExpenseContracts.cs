@@ -52,7 +52,7 @@ public sealed record ConfirmExpenseRequest(Guid ExpenseId, Guid BusinessId, Guid
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<WithholdingAdjustmentRequest>? WithholdingAdjustments = null);
 
-public sealed record ExpenseLineInput(Guid ExpenseAccountId, Guid? ConceptId, Guid? CostCenterId,
+public sealed record ExpenseLineInput(Guid? ExpenseAccountId, Guid? ConceptId, Guid? CostCenterId,
     string Description, decimal TaxExclusiveAmount, Guid? TaxProfileId, string TaxTreatment,
     string? WithholdingConceptCode);
 public sealed record ExpenseLineSnapshot(int LineNumber, Guid ExpenseAccountId, string AccountCode,

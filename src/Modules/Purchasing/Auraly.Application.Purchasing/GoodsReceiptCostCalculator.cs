@@ -1,5 +1,6 @@
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
+using System.Text.Json.Serialization;
 
 namespace Auraly.Application.Purchasing;
 
@@ -21,7 +22,15 @@ public sealed record GoodsReceiptCostCalculation(
     decimal FunctionalTaxAmount,
     decimal FunctionalGrandTotal,
     IReadOnlyList<GoodsReceiptLineSnapshot> ReceiptLines,
-    IReadOnlyList<CalculatedGoodsReceiptCostDocument> AdditionalDocuments);
+    IReadOnlyList<CalculatedGoodsReceiptCostDocument> AdditionalDocuments,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<CalculatedGoodsReceiptVoucherCost>? ReferencedDocuments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    GoodsReceiptFinancialDiscountSnapshot? FinancialDiscount = null);
+
+public sealed record CalculatedGoodsReceiptVoucherCost(
+    GoodsReceiptVoucherCostRequest Request,
+    IReadOnlyList<GoodsReceiptCostAllocationSnapshot> Allocations);
 
 public static class GoodsReceiptCostCalculator
 {
@@ -33,8 +42,18 @@ public static class GoodsReceiptCostCalculator
             request.CurrencyCode, request.ExchangeRate, request.ExchangeRateDate,
             request.ExchangeRateSource, request.SupplierInvoiceDate ?? request.ReceivedAt);
         var requestLines = request.Lines.ToDictionary(line => line.LineNumber);
+        var allocationInputs = merchandise.Lines.ToDictionary(line => line.LineNumber, line =>
+        {
+            var requested = requestLines[line.LineNumber];
+            return new AllocationInput(line.NetAmount, line.Quantity,
+                requested.TotalGrossWeightKg, requested.TotalVolumeM3);
+        });
         var allocated = merchandise.Lines.ToDictionary(line => line.LineNumber, _ => 0m);
         var documents = new List<CalculatedGoodsReceiptCostDocument>();
+        ValidateReferencedDocuments(request.ReferencedCostDocuments);
+        var associationIds = (request.ReferencedCostDocuments ?? []).Select(document => document.AssociationId).ToHashSet();
+        if ((request.AdditionalCostDocuments ?? []).Any(document => associationIds.Contains(document.CostDocumentId)))
+            throw new PurchasingValidationException("La factura adicional y la asociación de comprobante requieren identificadores distintos.");
 
         foreach (var document in request.AdditionalCostDocuments ?? [])
         {
@@ -53,8 +72,9 @@ public static class GoodsReceiptCostCalculator
                     ? functionalAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
                         ? functionalTax : 0m)
                     : 0m;
-                var allocations = Allocate(
-                    line, capitalizable, merchandise.Lines, requestLines);
+                var allocations = Allocate(line.LineNumber, line.AllocationMethod,
+                    line.EligibleReceiptLineNumbers, line.ManualAllocations,
+                    capitalizable, allocationInputs);
                 foreach (var allocation in allocations)
                     allocated[allocation.ReceiptLineNumber] += allocation.FunctionalAmount;
                 calculatedLines.Add(new(
@@ -73,6 +93,17 @@ public static class GoodsReceiptCostCalculator
                 Money((net + tax) * documentExchange.Rate), calculatedLines));
         }
 
+        var referenced = CalculateReferenced(request.ReferencedCostDocuments ?? [], allocationInputs);
+        foreach (var allocation in referenced.SelectMany(document => document.Allocations))
+            allocated[allocation.ReceiptLineNumber] += allocation.FunctionalAmount;
+
+        var financialDiscount = CalculateFinancialDiscount(request.FinancialDiscount,
+            merchandise, exchange.Rate, allocationInputs);
+        var anticipatedByLine = financialDiscount?.AnticipatedInCost == true
+            ? financialDiscount.Lines.ToDictionary(line => line.ReceiptLineNumber,
+                line => line.FunctionalAmount)
+            : new Dictionary<int, decimal>();
+
         var receiptLines = merchandise.Lines.Select(line =>
         {
             var source = requestLines[line.LineNumber];
@@ -81,7 +112,10 @@ public static class GoodsReceiptCostCalculator
             var landed = Money(allocated[line.LineNumber]);
             var recognized = Money(functionalNet +
                 (line.TaxTreatment == PurchaseTaxTreatment.CapitalizedCost ? functionalTax : 0m) +
-                landed);
+                landed - anticipatedByLine.GetValueOrDefault(line.LineNumber));
+            if (recognized < 0)
+                throw new PurchasingValidationException(
+                    "El descuento financiero anticipado supera el costo del producto.");
             return new GoodsReceiptLineSnapshot(
                 line.LineNumber, line.ProductId, line.Description, line.Quantity, line.UnitCost,
                 line.DiscountAmount, line.TaxCode, line.TaxRate, line.TaxTreatment.ToString(),
@@ -90,7 +124,7 @@ public static class GoodsReceiptCostCalculator
                 source.PurchaseOrderLineId, source.OverReceiptReason, false,
                 source.TotalGrossWeightKg, source.TotalVolumeM3,
                 functionalNet, functionalTax, Money(line.LineTotal * exchange.Rate),
-                landed, recognized, source.UnitGrossWeightKg);
+                landed, recognized, source.UnitGrossWeightKg, line.CommercialDiscountPercent);
         }).ToArray();
 
         return new(
@@ -98,55 +132,134 @@ public static class GoodsReceiptCostCalculator
             Money(merchandise.NetAmount * exchange.Rate),
             Money(merchandise.TaxAmount * exchange.Rate),
             Money(merchandise.GrandTotal * exchange.Rate),
-            receiptLines, documents);
+            receiptLines, documents, referenced.Count == 0 ? null : referenced,
+            financialDiscount);
+    }
+
+    private static GoodsReceiptFinancialDiscountSnapshot? CalculateFinancialDiscount(
+        GoodsReceiptFinancialDiscountRequest? request, GoodsReceiptCalculation merchandise,
+        decimal exchangeRate, IReadOnlyDictionary<int, AllocationInput> allocationInputs)
+    {
+        if (request is null) return null;
+        if (request.Percent <= 0 || request.Percent > 100 ||
+            request.Percent != decimal.Round(request.Percent, 6, MidpointRounding.AwayFromZero))
+            throw new PurchasingValidationException(
+                "El descuento financiero debe ser un porcentaje mayor que cero y hasta 100 con máximo seis decimales.");
+        var baseAmount = merchandise.NetAmount;
+        var amount = Money(baseAmount * request.Percent / 100m);
+        var functionalAmount = Money(amount * exchangeRate);
+        if (baseAmount <= 0 || amount <= 0 || functionalAmount <= 0)
+            throw new PurchasingValidationException(
+                "La base de mercancía y el descuento financiero deben tener un valor positivo.");
+        var eligible = allocationInputs.Where(line => line.Value.NetAmount > 0)
+            .ToDictionary(line => line.Key, line => line.Value);
+        var sourceAllocations = Allocate(0, PurchaseCostAllocationMethods.Value,
+            null, null, amount, eligible).ToDictionary(line => line.ReceiptLineNumber);
+        var functionalAllocations = Allocate(0, PurchaseCostAllocationMethods.Value,
+            null, null, functionalAmount, eligible).ToDictionary(line => line.ReceiptLineNumber);
+        var lines = merchandise.Lines.Select(line => new GoodsReceiptFinancialDiscountLineSnapshot(
+            line.LineNumber,
+            sourceAllocations.GetValueOrDefault(line.LineNumber)?.FunctionalAmount ?? 0m,
+            functionalAllocations.GetValueOrDefault(line.LineNumber)?.FunctionalAmount ?? 0m)).ToArray();
+        return new(request.Percent, baseAmount, amount, functionalAmount,
+            request.ExpectedOn, request.AnticipateInCost, lines);
+    }
+
+    // Cost revisions use the accepted receipt's frozen factors. They never
+    // reread product weights or reconstruct the original purchase calculation.
+    public static IReadOnlyList<CalculatedGoodsReceiptVoucherCost> CalculateReferenced(
+        IReadOnlyList<GoodsReceiptVoucherCostRequest> documents,
+        IReadOnlyList<GoodsReceiptLineSnapshot> receiptLines)
+    {
+        ArgumentNullException.ThrowIfNull(receiptLines);
+        var inputs = receiptLines.ToDictionary(line => line.LineNumber, line =>
+            new AllocationInput(line.NetAmount, line.Quantity,
+                line.TotalGrossWeightKg, line.TotalVolumeM3));
+        return CalculateReferenced(documents, inputs);
+    }
+
+    private static IReadOnlyList<CalculatedGoodsReceiptVoucherCost> CalculateReferenced(
+        IReadOnlyList<GoodsReceiptVoucherCostRequest> documents,
+        IReadOnlyDictionary<int, AllocationInput> inputs)
+    {
+        ValidateReferencedDocuments(documents);
+        return documents.Select(document => new CalculatedGoodsReceiptVoucherCost(document,
+            document.Lines.SelectMany(line => Allocate(line.EntryLineNumber,
+                line.AllocationMethod, null, line.ManualAllocations,
+                line.FunctionalAmount, inputs)).ToArray())).ToArray();
+    }
+
+    public static void ValidateReferencedDocuments(IReadOnlyList<GoodsReceiptVoucherCostRequest>? documents)
+    {
+        if (documents is null) return;
+        if (documents.Count > 100 || documents.Any(document => document is null) ||
+            documents.Sum(document => document.Lines?.Count ?? 0) > 500 ||
+            documents.Any(document => document.AssociationId == Guid.Empty || document.EntryId == Guid.Empty || document.EntryNumber?.Length > 24) ||
+            documents.Select(document => document.AssociationId).Distinct().Count() != documents.Count ||
+            documents.Select(document => document.EntryId).Distinct().Count() != documents.Count)
+            throw new PurchasingValidationException("Selecciona hasta 100 comprobantes únicos y 500 partidas de costo.");
+        foreach (var document in documents)
+        {
+            if (document.Lines is null || (document.Mode switch
+                {
+                    GoodsReceiptCostAssociationModes.Associate => document.Lines.Count != 0,
+                    GoodsReceiptCostAssociationModes.Distribute => document.Lines.Count == 0,
+                    _ => true
+                }))
+                throw new PurchasingValidationException("Elige solo asociar o distribuir con sus partidas de costo.");
+            if (document.Lines.Any(line => line is null || line.EntryLineNumber <= 0 || line.FunctionalAmount <= 0 ||
+                    line.FunctionalAmount > 999_999_999_999_999.9999m ||
+                    line.FunctionalAmount != Money(line.FunctionalAmount) ||
+                    !PurchaseCostAllocationMethods.IsValid(line.AllocationMethod) ||
+                    line.AllocationMethod == PurchaseCostAllocationMethods.None) ||
+                document.Lines.Select(line => line.EntryLineNumber).Distinct().Count() != document.Lines.Count)
+                throw new PurchasingValidationException("Indica un importe positivo en COP y un método de reparto para cada partida única.");
+        }
     }
 
     private static IReadOnlyList<GoodsReceiptCostAllocationSnapshot> Allocate(
-        GoodsReceiptCostLineRequest line,
+        int costLineNumber, string allocationMethod,
+        IReadOnlyCollection<int>? eligibleReceiptLineNumbers,
+        IReadOnlyCollection<GoodsReceiptCostManualAllocationRequest>? manualAllocations,
         decimal amount,
-        IReadOnlyList<CalculatedGoodsReceiptLine> merchandise,
-        IReadOnlyDictionary<int, GoodsReceiptLineRequest> requests)
+        IReadOnlyDictionary<int, AllocationInput> inputs)
     {
         if (amount == 0)
-        {
-            if (line.AllocationMethod != PurchaseCostAllocationMethods.None &&
-                line.CostTreatment == PurchaseCostTreatments.Expense)
-                return [];
             return [];
-        }
-        if (line.AllocationMethod == PurchaseCostAllocationMethods.None)
+        if (allocationMethod == PurchaseCostAllocationMethods.None)
             throw new PurchasingValidationException("Un costo capitalizable requiere un método de distribución.");
 
-        var eligibleNumbers = line.EligibleReceiptLineNumbers is { Count: > 0 }
-            ? line.EligibleReceiptLineNumbers.Distinct().Order().ToArray()
-            : merchandise.Select(value => value.LineNumber).Order().ToArray();
-        if (eligibleNumbers.Length == 0 || eligibleNumbers.Any(number => !requests.ContainsKey(number)))
+        var eligibleNumbers = eligibleReceiptLineNumbers is { Count: > 0 }
+            ? eligibleReceiptLineNumbers.Distinct().Order().ToArray()
+            : inputs.Keys.Order().ToArray();
+        if (eligibleNumbers.Length == 0 || eligibleNumbers.Any(number => !inputs.ContainsKey(number)))
             throw new PurchasingValidationException("La distribución del costo contiene una línea de recepción inválida.");
 
-        if (line.AllocationMethod == PurchaseCostAllocationMethods.Manual)
+        if (allocationMethod == PurchaseCostAllocationMethods.Manual)
         {
-            var manual = (line.ManualAllocations ?? []).OrderBy(value => value.ReceiptLineNumber).ToArray();
+            if (manualAllocations?.Any(value => value is null) == true)
+                throw new PurchasingValidationException("Completa cada partida del reparto manual.");
+            var manual = (manualAllocations ?? []).OrderBy(value => value.ReceiptLineNumber).ToArray();
             if (manual.Length != eligibleNumbers.Length ||
                 !manual.Select(value => value.ReceiptLineNumber).SequenceEqual(eligibleNumbers) ||
-                manual.Any(value => value.FunctionalAmount < 0) ||
+                manual.Any(value => value.FunctionalAmount < 0 || value.FunctionalAmount != Money(value.FunctionalAmount)) ||
                 Money(manual.Sum(value => value.FunctionalAmount)) != amount)
                 throw new PurchasingValidationException("La distribución manual debe cubrir las líneas elegibles y sumar el valor capitalizable en COP.");
             return manual.Select(value => new GoodsReceiptCostAllocationSnapshot(
-                line.LineNumber, value.ReceiptLineNumber,
+                costLineNumber, value.ReceiptLineNumber,
                 amount == 0 ? 0 : value.FunctionalAmount / amount,
-                Money(value.FunctionalAmount), line.AllocationMethod)).ToArray();
+                Money(value.FunctionalAmount), allocationMethod)).ToArray();
         }
 
         var weights = eligibleNumbers.Select(number =>
         {
-            var calculated = merchandise.Single(value => value.LineNumber == number);
-            var request = requests[number];
-            return line.AllocationMethod switch
+            var input = inputs[number];
+            return allocationMethod switch
             {
-                PurchaseCostAllocationMethods.Value => calculated.NetAmount,
-                PurchaseCostAllocationMethods.Quantity => calculated.Quantity,
-                PurchaseCostAllocationMethods.Weight => request.TotalGrossWeightKg ?? 0,
-                PurchaseCostAllocationMethods.Volume => request.TotalVolumeM3 ?? 0,
+                PurchaseCostAllocationMethods.Value => input.NetAmount,
+                PurchaseCostAllocationMethods.Quantity => input.Quantity,
+                PurchaseCostAllocationMethods.Weight => input.TotalGrossWeightKg ?? 0,
+                PurchaseCostAllocationMethods.Volume => input.TotalVolumeM3 ?? 0,
                 PurchaseCostAllocationMethods.Equal => 1m,
                 _ => throw new PurchasingValidationException("El método de distribución del costo es inválido.")
             };
@@ -167,7 +280,7 @@ public static class GoodsReceiptCostCalculator
             rounded[target] = Money(rounded[target] + residual);
         }
         return eligibleNumbers.Select((number, index) => new GoodsReceiptCostAllocationSnapshot(
-            line.LineNumber, number, weights[index] / totalWeight, rounded[index], line.AllocationMethod)).ToArray();
+            costLineNumber, number, weights[index] / totalWeight, rounded[index], allocationMethod)).ToArray();
     }
 
     private static void ValidateDocument(GoodsReceiptCostDocumentRequest document)
@@ -183,9 +296,6 @@ public static class GoodsReceiptCostCalculator
                 "Cada documento adicional requiere un número de hasta 80 caracteres; el documento soporte lo numera Auraly.");
         if (document.IssuedAt == default || document.Lines is null || document.Lines.Count == 0)
             throw new PurchasingValidationException("Cada documento adicional requiere fecha de emisión y conceptos.");
-        if (!document.CreatesPayable)
-            throw new PurchasingValidationException(
-                "El documento adicional debe generar una cuenta por pagar; el pago de contado se registra por separado.");
         if (document.CreatesPayable && document.DueDate is null)
             throw new PurchasingValidationException("El documento adicional requiere fecha de vencimiento.");
         if (document.DueDate < document.IssuedAt)
@@ -245,4 +355,7 @@ public static class GoodsReceiptCostCalculator
     }
 
     private static decimal Money(decimal value) => decimal.Round(value, 4, MidpointRounding.AwayFromZero);
+
+    private sealed record AllocationInput(decimal NetAmount, decimal Quantity,
+        decimal? TotalGrossWeightKg, decimal? TotalVolumeM3);
 }

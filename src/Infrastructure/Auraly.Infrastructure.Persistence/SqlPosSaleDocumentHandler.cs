@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using System.Data;
 using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
@@ -87,7 +88,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await InsertPaymentsAsync(session, request, cancellationToken);
 
         await SqlAccountingPostingJobWriter.InsertAsync(
-            session, document, request.CommercialSnapshot.IssuedAt,
+            session.Connection, session.Transaction, document, request.CommercialSnapshot.IssuedAt,
             _idGenerator, _timeProvider, cancellationToken,
             AccountingJobRequirement.PreserveCommercialEffects);
         await SqlSalesReportingJobWriter.InsertAsync(
@@ -105,49 +106,20 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 pascal.ValueKind == JsonValueKind.True);
     }
 
-    private static async Task PersistWithholdingSnapshotAsync(
+    private static Task PersistWithholdingSnapshotAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
         CancellationToken cancellationToken)
     {
         var withholding = request.CommercialSnapshot.Withholding;
-        if (withholding is null) return;
-        await using (var command = new SqlCommand("""
-            INSERT dbo.DocumentWithholdingSnapshots
-              (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt)
-            VALUES
-              (@DocumentId,@DocumentType,@BusinessId,@Gross,@Withholding,@Net,@RecognizedAt);
-            """, session.Connection, session.Transaction))
-        {
-            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-            command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
-            command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-            AddDecimal(command, "@Gross", withholding.GrossAmount, 19, 4);
-            AddDecimal(command, "@Withholding", withholding.WithholdingTotal, 19, 4);
-            AddDecimal(command, "@Net", withholding.NetAmount, 19, 4);
-            command.Parameters.AddWithValue("@RecognizedAt", request.CommercialSnapshot.IssuedAt);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        if (withholding.Lines.Count > 0)
-        {
-            await using var command = new SqlCommand("""
-                INSERT dbo.DocumentWithholdingLines
-                  (DocumentId,DocumentType,LineNumber,RuleId,RuleVersion,RuleCode,Name,
-                   Kind,BaseKind,TaxableBase,Rate,Amount,JurisdictionCode)
-                SELECT @DocumentId,@DocumentType,CONVERT(int,j.[key])+1,line.RuleId,line.RuleVersion,line.RuleCode,line.Name,
-                   line.Kind,line.BaseKind,line.TaxableBase,line.Rate,line.Amount,line.JurisdictionCode
-                FROM OPENJSON(@Lines) j CROSS APPLY OPENJSON(j.value) WITH(
-                  RuleId uniqueidentifier,RuleVersion int,RuleCode nvarchar(64),Name nvarchar(200),
-                  Kind nvarchar(32),BaseKind nvarchar(32),TaxableBase decimal(19,4),Rate decimal(9,6),
-                  Amount decimal(19,4),JurisdictionCode nvarchar(16)) line;
-                """, session.Connection, session.Transaction);
-            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-            command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
-            command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(withholding.Lines);
-            if (await command.ExecuteNonQueryAsync(cancellationToken) != withholding.Lines.Count)
-                throw new DBConcurrencyException("The complete sale withholding snapshot was not persisted.");
-        }
+        if (withholding is null) return Task.CompletedTask;
+        // Preserve the sales capture's existing persisted fields; its original
+        // immutable upload remains the owner of any additional annotations.
+        var persisted = withholding with { Adjustments = null,
+            Lines = withholding.Lines.Select(line => line with { AccountId = null, ManualLineId = null }).ToArray() };
+        return SqlWithholdingRuleStore.InsertDocumentSnapshotsAsync(session.Connection, session.Transaction,
+            request.BusinessId, [new(request.DocumentId, request.CommercialSnapshot.DocumentType,
+                request.CommercialSnapshot.IssuedAt, persisted)], cancellationToken);
     }
 
     private static async Task InsertLinesAsync(
@@ -315,13 +287,12 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               (@AccountingEnabled=1 AND EXISTS(
                   SELECT 1 FROM accounting.BankAccounts bank
                   INNER JOIN dbo.Businesses business ON business.TenantId=bank.TenantId
-                  INNER JOIN dbo.AccountingAccounts account
-                    ON account.AccountId=bank.AccountingAccountId AND account.TenantId=bank.TenantId
+                  CROSS APPLY accounting.BankPostingAccount(bank.TenantId,@BusinessId,bank.BankAccountId) account
                   WHERE bank.BankAccountId=input.BankAccountId
                     AND business.BusinessId=@BusinessId AND bank.IsActive=1
-                    AND account.IsActive=1 AND account.AllowsPosting=1));
+                    AND account.AccountId IS NOT NULL));
             IF @@ROWCOUNT<>@PaymentCount
-                THROW 51000,N'The transfer bank account is not active for the sale tenant.',1;
+                THROW 51000,N'The transfer bank account must be active for this tenant and have exactly one configured posting auxiliary for this business.',1;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);

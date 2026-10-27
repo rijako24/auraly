@@ -24,7 +24,7 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 import {businessStatusLabel,fiscalStatusLabel} from "@/lib/accounting-labels";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 
-const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 4 });
 
 
 export default function ExpensesPage() {
@@ -55,9 +55,9 @@ function ExpenseWorkspace({businessId}:{businessId:string|null}) {
   const reportQuery=useQuery({queryKey:reportKey,queryFn:()=>expensesApi.list(filters),enabled:!!businessId,refetchOnWindowFocus:false,refetchOnReconnect:false});
   const optionsQuery=useQuery({queryKey:["expense-options",businessId],queryFn:expensesApi.options,enabled:!!businessId,staleTime:5*60*1000,refetchOnWindowFocus:false,refetchOnReconnect:false});
   const detailKey=["expense-detail",businessId,selectedId];
-  const detailQuery=useQuery({queryKey:detailKey,queryFn:()=>expensesApi.get(selectedId!),enabled:!!businessId&&!!selectedId,refetchOnWindowFocus:false,refetchOnReconnect:false});
+  const detailQuery=useQuery({queryKey:detailKey,queryFn:()=>expensesApi.get(selectedId!),enabled:!!businessId&&!!selectedId,staleTime:0,refetchOnWindowFocus:false,refetchOnReconnect:false});
   const report=reportQuery.data,options=optionsQuery.data,detail=detailQuery.data;
-  const loading=reportQuery.isFetching,detailLoading=detailQuery.isPending;
+  const loading=reportQuery.isFetching,detailLoading=detailQuery.isFetching;
   const load=async()=>{await reportQuery.refetch()};
   async function cancelExpense(){if(!detail||!selectedCancellationReason)return;setCancelBusy(true);try{
     await expensesApi.cancel(detail.expenseId,cancellationId,selectedCancellationReason.id);
@@ -94,7 +94,7 @@ function ExpenseWorkspace({businessId}:{businessId:string|null}) {
     <Dialog open={creating} onOpenChange={open=>{if(!formBusy)setCreating(open)}}><DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-4 sm:max-w-6xl sm:p-6"><DialogHeader><DialogTitle>Registrar gasto</DialogTitle><DialogDescription>Distribuye el gasto por cuentas, revisa impuestos y retenciones, y confirma el neto por pagar.</DialogDescription></DialogHeader>{optionsQuery.isPending&&<p>Cargando opciones del gasto…</p>}{optionsQuery.isError&&<p role="alert">No fue posible cargar las opciones. <Button variant="outline" onClick={()=>void optionsQuery.refetch()}>Reintentar</Button></p>}{options&&<ExpenseForm businessId={businessId} options={options} onBusyChange={setFormBusy} onSaved={async()=>{setCreating(false);await load()}}/>}</DialogContent></Dialog>
     <Dialog open={configuring} onOpenChange={open=>{if(!conceptBusy)setConfiguring(open)}}><DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-4 sm:max-w-2xl sm:p-6"><DialogHeader><DialogTitle>Conceptos de gasto</DialogTitle><DialogDescription>Clasifican el gasto y determinan su cuenta contable.</DialogDescription></DialogHeader>{options&&<ExpenseConceptEditor businessId={businessId} options={options} onBusyChange={setConceptBusy} onSaved={async saved=>{queryClient.setQueryData<ExpenseOptions>(["expense-options",businessId],current=>current?{...current,concepts:[...current.concepts.filter(item=>item.conceptId!==saved.conceptId),saved].sort((a,b)=>a.name.localeCompare(b.name))}:current)}}/>}</DialogContent></Dialog>
     <Dialog open={!!selectedId} onOpenChange={open=>{if(!open)setSelectedId(undefined)}}><DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-4 sm:max-w-2xl sm:p-6"><DialogHeader><DialogTitle>{detail?.documentNumber??"Detalle del gasto"}</DialogTitle><DialogDescription>{detail?.supplierName??"Cargando gasto..."}</DialogDescription></DialogHeader>
-      {detailLoading?<p className="py-8 text-center text-muted-foreground">Cargando...</p>:detail?<div className="min-w-0 space-y-4 break-words text-sm">
+      {detailLoading?<p className="py-8 text-center text-muted-foreground">Cargando...</p>:detailQuery.isError?<p role="alert" className="py-6 text-destructive">No fue posible consultar el gasto. <Button variant="outline" onClick={()=>void detailQuery.refetch()}>Reintentar</Button></p>:detail?<div className="min-w-0 space-y-4 break-words text-sm">
         <dl className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
           <div><dt className="text-muted-foreground">Concepto</dt><dd>{detail.conceptName}</dd></div><div><dt className="text-muted-foreground">Estado</dt><dd>{detail.chargeReturned&&detail.status==="Processed"?"Devuelto en factura":businessStatusLabel(detail.status)}</dd></div>
           <div><dt className="text-muted-foreground">Emisión</dt><dd>{detail.issuedAt.slice(0,10)}</dd></div><div><dt className="text-muted-foreground">Vencimiento</dt><dd>{detail.dueDate.slice(0,10)}</dd></div>

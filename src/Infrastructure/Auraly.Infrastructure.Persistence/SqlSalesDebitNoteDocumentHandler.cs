@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
@@ -27,7 +28,7 @@ public sealed class SqlSalesDebitNoteDocumentHandler(
         var session = sessions.Current;
         await InsertFiscalWorkAsync(session, value, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
-            session, document, value.IssuedAt, ids, timeProvider, cancellationToken,
+            session.Connection, session.Transaction, document, value.IssuedAt, ids, timeProvider, cancellationToken,
             AccountingJobRequirement.PreserveCommercialEffects);
         await InsertOutboxAsync(session, value, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, value, cancellationToken);

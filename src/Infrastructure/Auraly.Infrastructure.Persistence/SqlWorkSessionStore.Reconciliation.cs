@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Auraly.Application.WorkSessions;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -17,19 +18,27 @@ public sealed partial class SqlWorkSessionStore
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
+        // A tenant-wide calendar report must use each business's configured
+        // zone. Load that metadata once; never convert dates with a fixed UTC offset.
+        var zones=await SqlBusinessLocalDates.ReadTenantTimeZonesAsync(connection,identity.TenantId,cancellationToken);
+        var rangesJson=JsonSerializer.Serialize(zones.Select(item=>new {
+            BusinessId=item.Key,StartsAt=SqlBusinessLocalDates.StartOfDay(from,item.Value),
+            Until=SqlBusinessLocalDates.StartOfDay(to.AddDays(1),item.Value) }));
         const string filter = """
             FROM dbo.WorkSessionClosures closure
             INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
             INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
+            INNER JOIN OPENJSON(@Ranges) WITH(BusinessId uniqueidentifier,StartsAt datetimeoffset(7),Until datetimeoffset(7)) calendar
+              ON calendar.BusinessId=business.BusinessId
             LEFT JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=session.WarehouseId
             INNER JOIN dbo.AppUsers cashier ON cashier.UserId=session.UserId
-            WHERE business.TenantId=@TenantId AND closure.ClosedAt>=@From AND closure.ClosedAt<@Until
+            WHERE business.TenantId=@TenantId AND closure.ClosedAt>=calendar.StartsAt AND closure.ClosedAt<calendar.Until
               AND (@Status IS NULL OR closure.ReconciliationStatus=@Status)
             """;
         int total;
         await using (var count = new SqlCommand("SELECT COUNT(*) " + filter, connection))
         {
-            AddClosureSearchParameters(count, identity, from, to, status);
+            AddClosureSearchParameters(count, identity, rangesJson, status);
             total = Convert.ToInt32(await count.ExecuteScalarAsync(cancellationToken));
         }
         await using var command = new SqlCommand("""
@@ -47,7 +56,7 @@ public sealed partial class SqlWorkSessionStore
             ORDER BY closure.ClosedAt DESC,closure.WorkSessionClosureId DESC
             OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             """, connection);
-        AddClosureSearchParameters(command, identity, from, to, status);
+        AddClosureSearchParameters(command, identity, rangesJson, status);
         command.Parameters.AddWithValue("@Skip", (page - 1) * pageSize);
         command.Parameters.AddWithValue("@Take", pageSize);
         var items = new List<WorkSessionClosureListItem>();
@@ -89,6 +98,75 @@ public sealed partial class SqlWorkSessionStore
         }
     }
 
+    public async Task<WorkSessionInvoiceChargePage> ListClosureInvoiceChargesAsync(
+        WorkSessionIdentity identity, Guid closureId, string? paymentMethodCode,
+        int page, int pageSize, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await EnsureClosureScopeAsync(connection, null, identity.TenantId, closureId, cancellationToken);
+        await using var command = new SqlCommand("""
+            -- Read only the frozen charge array, not the rest of the closure.
+            DECLARE @Charges nvarchar(max)=(SELECT JSON_QUERY(ReceiptSnapshotJson,N'$.invoiceCharges')
+              FROM dbo.WorkSessionClosures WHERE WorkSessionClosureId=@ClosureId);
+            SELECT CONVERT(int,raw.[key]) RowNumber,
+              charge.Amount,charge.InvoicedAmount,charge.ExpenseAmount
+            INTO #ClosureCharges
+            FROM OPENJSON(@Charges) raw CROSS APPLY OPENJSON(raw.value) WITH(
+              Amount decimal(19,4) '$.amount',InvoicedAmount decimal(19,4) '$.invoicedAmount',
+              ExpenseAmount decimal(19,4) '$.expenseAmount') charge;
+            CREATE UNIQUE CLUSTERED INDEX IX_ClosureCharges ON #ClosureCharges(RowNumber);
+            -- Do not carry a JSON LOB into the indexed facts: its estimated
+            -- width makes even a small closure request a large sort grant.
+            SELECT CONVERT(int,raw.[key]) RowNumber,payment.PaymentMethodCode,SUM(payment.Amount) Amount
+            INTO #ChargePayments FROM OPENJSON(@Charges) raw
+            CROSS APPLY OPENJSON(raw.value,N'$.payments') WITH(
+              PaymentMethodCode nvarchar(32) '$.paymentMethodCode',Amount decimal(19,4) '$.amount') payment
+            GROUP BY CONVERT(int,raw.[key]),payment.PaymentMethodCode;
+            CREATE UNIQUE CLUSTERED INDEX IX_ChargePayments ON #ChargePayments(RowNumber,PaymentMethodCode);
+            SELECT COUNT(*),COALESCE(SUM(InvoicedAmount),0),COALESCE(SUM(ExpenseAmount),0)
+            FROM #ClosureCharges;
+            SELECT PaymentMethodCode,COUNT(*),SUM(Amount) FROM #ChargePayments GROUP BY PaymentMethodCode
+            ORDER BY PaymentMethodCode;
+            SELECT charge.RowNumber,CASE WHEN @Method IS NULL THEN charge.Amount ELSE payment.Amount END Amount
+            INTO #FilteredCharges FROM #ClosureCharges charge
+            LEFT JOIN #ChargePayments payment ON payment.RowNumber=charge.RowNumber AND payment.PaymentMethodCode=@Method
+            WHERE @Method IS NULL OR payment.RowNumber IS NOT NULL OPTION(RECOMPILE);
+            SELECT COUNT(*),COALESCE(SUM(Amount),0) FROM #FilteredCharges;
+            -- Bound the keys before returning/deserializing any presentation details.
+            SELECT raw.value FROM
+              (SELECT RowNumber FROM #FilteredCharges ORDER BY RowNumber
+               OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY) selected
+            -- Hash the bounded keys and stream the frozen array once. A nested
+            -- loop here would expand the entire array again for every key.
+            INNER HASH JOIN OPENJSON(@Charges) raw ON CONVERT(int,raw.[key])=selected.RowNumber
+            ORDER BY selected.RowNumber OPTION(RECOMPILE,FORCE ORDER);
+            """, connection);
+        command.Parameters.AddWithValue("@ClosureId", closureId);
+        command.Parameters.Add("@Method", SqlDbType.NVarChar, 32).Value = (object?)paymentMethodCode ?? DBNull.Value;
+        command.Parameters.AddWithValue("@Skip", (page - 1) * pageSize);
+        command.Parameters.AddWithValue("@Take", pageSize);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        var count = reader.GetInt32(0);
+        var invoiced = reader.GetDecimal(1);
+        var expense = reader.GetDecimal(2);
+        await reader.NextResultAsync(cancellationToken);
+        var methods = new List<WorkSessionInvoiceChargeMethodSummary>();
+        while (await reader.ReadAsync(cancellationToken))
+            methods.Add(new(reader.GetString(0), reader.GetInt32(1), reader.GetDecimal(2)));
+        await reader.NextResultAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        var filteredCount = reader.GetInt32(0);
+        var filteredAmount = reader.GetDecimal(1);
+        await reader.NextResultAsync(cancellationToken);
+        var items = new List<WorkSessionInvoiceCharge>();
+        while (await reader.ReadAsync(cancellationToken))
+            items.Add(JsonSerializer.Deserialize<WorkSessionInvoiceCharge>(reader.GetString(0), Json)
+                ?? throw new InvalidDataException("The frozen closure charge has no readable snapshot."));
+        return new(items, page, pageSize, filteredCount, filteredAmount, new(count, invoiced, expense, methods));
+    }
+
     public async Task<WorkSessionPaymentVerificationPage> ListClosurePaymentVerificationPageAsync(
         WorkSessionIdentity identity, Guid closureId, string? paymentMethodCode,
         string? movementType, int page, int pageSize, CancellationToken cancellationToken)
@@ -96,15 +174,15 @@ public sealed partial class SqlWorkSessionStore
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await EnsureClosureScopeAsync(connection, null, identity.TenantId, closureId, cancellationToken);
-        await using var command = new SqlCommand(PaymentVerificationSourceSql + "\n" + """
-            , SummaryRows AS
+        await using var command = new SqlCommand(PaymentVerificationFactsSql + """
+            WITH SummaryRows AS
             (
               SELECT movement.PaymentMethodCode,movement.MovementType,movement.Amount,
                 decision.Status,correction.PaymentMethodCode CorrectedPaymentMethodCode,
                 correction.Amount CorrectedAmount
-              FROM EligibleMovements movement
-              LEFT JOIN DecisionStatuses decision ON decision.VerificationKey=movement.VerificationKey
-              LEFT JOIN CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
+              FROM #EligibleMovements movement
+              LEFT JOIN #DecisionStatuses decision ON decision.VerificationKey=movement.VerificationKey
+              LEFT JOIN #CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
               WHERE (@Method IS NULL OR COALESCE(correction.PaymentMethodCode,movement.PaymentMethodCode)=@Method)
                 AND (@Movement IS NULL OR movement.MovementType=@Movement)
             ),
@@ -138,19 +216,22 @@ public sealed partial class SqlWorkSessionStore
               ON original.PaymentMethodCode=effective.PaymentMethodCode
                 AND original.MovementType=effective.MovementType
             OPTION (RECOMPILE);
-            """ + PaymentVerificationSourceSql + "\n" + """
-            , PagedMovements AS
-            (
-              SELECT movement.*
-              FROM EligibleMovements movement
-              LEFT JOIN CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
+              SELECT movement.* INTO #PagedMovements
+              FROM #EligibleMovements movement
+              LEFT JOIN #CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
               WHERE (@Method IS NULL OR COALESCE(correction.PaymentMethodCode,movement.PaymentMethodCode)=@Method)
                 AND (@Movement IS NULL OR movement.MovementType=@Movement)
               ORDER BY movement.SortOrder,movement.OccurredAt,movement.VerificationKey
-              OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY
-            )
-            """ + PaymentVerificationSelectSql + " PagedMovements " + PaymentVerificationJoinsSql + """
-            OPTION (RECOMPILE);
+              OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY OPTION (RECOMPILE);
+              SELECT manual.* INTO #SelectedManualMovements FROM #ManualTreasury manual
+              JOIN #PagedMovements movement ON movement.SourceId=manual.MovementId
+                AND movement.SourceDocumentType=N'ManualAccountingVoucher';
+            """ + PaymentVerificationEvidenceSql + PaymentVerificationPartyDetailsSql + PaymentVerificationSelectSql + " #PagedMovements " + PaymentVerificationJoinsSql + """
+            -- The page is already bounded. Start enrichment there rather than
+            -- exploring the join permutations of all underlying source views.
+            -- Indexed lookups on at most 100 selected rows also avoid a large
+            -- hash-join memory grant while an interactive page waits for RAM.
+            OPTION (RECOMPILE, FORCE ORDER, LOOP JOIN);
             SELECT VerificationKey,PaymentMethodCode,MovementType,SourceId,DocumentNumber,
               SourceNumber,Amount,Reference,CardFranchiseCode,ApprovalNumber,OccurredAt,
               SourceDocumentType,CustomerName,Status,ReasonName,Notes,
@@ -449,20 +530,19 @@ public sealed partial class SqlWorkSessionStore
             var payload = new WorkSessionClosureReconciliationPayload(reconciliationId,closureId,identity.TenantId,businessId,
                 identity.UserId,reconciledAt,accountingLines,request.Reclassifications,verification.Corrections,
                 cashShortageClaim);
+            var hasFinancialEffects = cashShortageClaim is not null ||
+                verification.Corrections.Any(item => item.Amount != item.OriginalAmount ||
+                    item.OriginalTenderCategory != item.TenderCategory);
             var accountingRequired = accountingLines.Any(line => line.VerifiedAmount != line.CountedAmount)
-                || differences.Values.Any(value => value != 0) ||
-                   cashShortageClaim is not null ||
-                   verification.Corrections.Any(item => item.Amount != item.OriginalAmount ||
-                       item.OriginalTenderCategory != item.TenderCategory);
-            var accountingQueued = accountingRequired && await InsertReconciliationAccountingJobAsync(
-                connection, transaction, payload, cancellationToken);
-            if (cashShortageClaim is not null)
-            {
-                if (!accountingQueued)
-                    throw new WorkSessionValidationException("No se pudo registrar el documento contable del faltante.");
-                await InsertCashShortageReceivableAsync(connection, transaction, businessId,
-                    reconciliationId, closureId, cashShortageClaim, reconciledAt, cancellationToken);
-            }
+                || differences.Values.Any(value => value != 0) || hasFinancialEffects;
+            var accountingQueued = accountingRequired && await SqlAccountingPostingJobWriter.InsertSourcesAsync(
+                connection, transaction,
+                [new(payload.TenantId, businessId, reconciliationId, "WorkSessionClosureReconciliation",
+                    JsonSerializer.Serialize(payload, Json), reconciledAt, ids.NewId())], reconciledAt,
+                hasFinancialEffects ? AccountingJobRequirement.PreserveCommercialEffects : AccountingJobRequirement.AccountingEntryOnly,
+                cancellationToken) > 0;
+            if (cashShortageClaim is not null && !accountingQueued)
+                throw new WorkSessionValidationException("No se pudo registrar el documento contable del faltante.");
             await transaction.CommitAsync(cancellationToken);
             return new(reconciliationId,closureId,businessId,status,reconciledAt,identity.UserId,normalizedLines,
                 request.Reclassifications,request.Note,accountingQueued ? "Pending" : "NotRequired");
@@ -473,62 +553,6 @@ public sealed partial class SqlWorkSessionStore
             throw new WorkSessionConflictException("El cierre ya fue conciliado o la operación ya fue recibida.");
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
-    }
-
-    private async Task InsertCashShortageReceivableAsync(SqlConnection connection, SqlTransaction transaction,
-        Guid businessId, Guid reconciliationId, Guid closureId, WorkSessionCashShortageClaim claim,
-        DateTimeOffset reconciledAt, CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            INSERT dbo.Receivables
-              (ReceivableId,BusinessId,PartyId,SourceDocumentId,SourceDocumentType,
-               DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-            VALUES(@ReceivableId,@BusinessId,@PartyId,@ReconciliationId,
-              N'WorkSessionClosureReconciliation',@DocumentNumber,N'COP',@Amount,@Amount,
-              @At,N'Open',@At);
-            INSERT dbo.ReceivableTransactions
-              (ReceivableTransactionId,ReceivableId,TransactionType,Amount,SourceDocumentId,OccurredAt,CreatedAt)
-            VALUES(@TransactionId,@ReceivableId,N'Opening',@Amount,@ReconciliationId,@At,@At);
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@ReceivableId", claim.ReceivableId);
-        command.Parameters.AddWithValue("@TransactionId", ids.NewId());
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@PartyId", claim.EmployeePartyId);
-        command.Parameters.AddWithValue("@ReconciliationId", reconciliationId);
-        command.Parameters.AddWithValue("@DocumentNumber", $"FALT-{closureId:N}");
-        command.Parameters.AddWithValue("@Amount", claim.Amount);
-        command.Parameters.AddWithValue("@At", reconciledAt);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private async Task<bool> InsertReconciliationAccountingJobAsync(SqlConnection connection, SqlTransaction transaction,
-        WorkSessionClosureReconciliationPayload payload, CancellationToken cancellationToken)
-    {
-        var json=JsonSerializer.Serialize(payload,Json); var hash=SHA256.HashData(Encoding.UTF8.GetBytes(json));
-        await using var command=new SqlCommand("""
-            IF EXISTS(SELECT 1 FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId AND Status=N'Ready')
-              OR @HasFinancialEffects=1
-            BEGIN
-              INSERT dbo.AccountingSourceDocuments(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-              VALUES(@DocumentId,N'WorkSessionClosureReconciliation',@TenantId,@BusinessId,@Payload,@Hash,@At,@At,
-                CASE WHEN EXISTS(SELECT 1 FROM dbo.AccountingTenantSettings
-                  WHERE TenantId=@TenantId AND Status=N'Ready') THEN 1 ELSE 0 END);
-              INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,CreatedAt)
-              VALUES(@JobId,@TenantId,@BusinessId,@DocumentId,N'WorkSessionClosureReconciliation',@Hash,@At,
-                CASE WHEN EXISTS(SELECT 1 FROM dbo.AccountingTenantSettings
-                  WHERE TenantId=@TenantId AND Status=N'Ready') THEN 1 ELSE 0 END,N'Pending',0,@At);
-              SELECT CAST(1 AS bit);
-            END
-            ELSE SELECT CAST(0 AS bit);
-            """,connection,transaction);
-        command.Parameters.AddWithValue("@DocumentId",payload.ReconciliationId); command.Parameters.AddWithValue("@JobId",ids.NewId());
-        command.Parameters.AddWithValue("@TenantId",payload.TenantId); command.Parameters.AddWithValue("@BusinessId",payload.BusinessId);
-        command.Parameters.AddWithValue("@Payload",json); command.Parameters.Add("@Hash",SqlDbType.Binary,32).Value=hash;
-        command.Parameters.AddWithValue("@At",payload.ReconciledAt);
-        command.Parameters.AddWithValue("@HasFinancialEffects",payload.CashShortageClaim is not null || payload.PaymentCorrections?.Any(item =>
-            item.Amount != item.OriginalAmount || item.OriginalTenderCategory != item.TenderCategory) == true);
-        return (bool)(await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new DBConcurrencyException("The reconciliation accounting state is unavailable."));
     }
 
     private static async Task<IReadOnlyList<WorkSessionPaymentTotal>> ReadClosurePaymentTotalsAsync(
@@ -637,34 +661,86 @@ public sealed partial class SqlWorkSessionStore
             throw new WorkSessionNotFoundException("El cierre no existe en la empresa autenticada.");
     }
 
+    // Shared by summary, page and transactional validation. Materialize accepted
+    // manual facts once per command, before the two page projections and before
+    // enriching only selected rows. Projection rows are excluded by movement ID.
+    private const string PaymentVerificationPreparationSql = """
+            SELECT session.WorkSessionId,session.TenantId,session.BusinessId,session.UserId,session.OpenedAt,
+              closure.ClosedAt,closure.ReceiptSnapshotJson SnapshotJson,
+              COALESCE(TRY_CONVERT(int,JSON_VALUE(closure.ReceiptSnapshotJson,'$.receiptTemplateVersion')),1) TemplateVersion
+            INTO #ClosureContext
+            FROM dbo.WorkSessionClosures closure
+            JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+            WHERE closure.WorkSessionClosureId=@ClosureId;
+            SELECT movement.* INTO #ManualTreasury FROM #ClosureContext context
+            CROSS APPLY worksessions.ManualTreasuryMovements(context.TenantId,context.BusinessId,context.WorkSessionId) movement;
+            CREATE UNIQUE CLUSTERED INDEX IX_ManualTreasury ON #ManualTreasury(MovementId);
+
+            -- The same frozen cash detail feeds the summary and the page. A CTE
+            -- over OPENJSON can be re-expanded for each enriched row; persist
+            -- these transient keys once and join the selected page by identity.
+            SELECT raw.[key] SnapshotIndex,raw.value RowJson INTO #ClosureCashRows
+            FROM #ClosureContext context CROSS APPLY OPENJSON(context.SnapshotJson,N'$.cashMovements') raw
+            WHERE NOT EXISTS(SELECT 1 FROM #ManualTreasury manual
+              WHERE manual.MovementId=TRY_CONVERT(uniqueidentifier,JSON_VALUE(raw.value,N'$.workSessionMovementId')));
+            SELECT detail.DocumentId,detail.ReasonName,detail.Notes,detail.Direction,detail.DocumentNumber,
+              detail.Amount,detail.Reference,detail.OccurredAt,detail.WorkSessionMovementId,detail.MovementType,
+              raw.SnapshotIndex,
+              context.TemplateVersion
+            INTO #ClosureCashMovements
+            FROM #ClosureCashRows raw CROSS JOIN #ClosureContext context
+            CROSS APPLY OPENJSON(raw.RowJson) WITH(DocumentId uniqueidentifier '$.documentId',ReasonName nvarchar(200) '$.reasonName',
+              Notes nvarchar(500) '$.notes',Direction nvarchar(8) '$.direction',DocumentNumber nvarchar(100) '$.documentNumber',
+              Amount decimal(19,4) '$.amount',Reference nvarchar(500) '$.reference',OccurredAt datetimeoffset '$.occurredAt',
+              WorkSessionMovementId uniqueidentifier '$.workSessionMovementId',MovementType nvarchar(32) '$.movementType') detail;
+            CREATE INDEX IX_ClosureCashMovements ON #ClosureCashMovements(WorkSessionMovementId,DocumentId);
+            SELECT DocumentId,WorkSessionMovementId,MAX(ReasonName) ReasonName,MAX(Notes) Notes,MAX(TemplateVersion) TemplateVersion
+            INTO #CashMovementDescriptions FROM #ClosureCashMovements GROUP BY DocumentId,WorkSessionMovementId;
+            CREATE UNIQUE CLUSTERED INDEX IX_CashMovementDescriptions ON #CashMovementDescriptions(DocumentId,WorkSessionMovementId);
+
+            """;
+
+    private const string PaymentVerificationFactsSql = PaymentVerificationPreparationSql +
+        PaymentVerificationSourceSql + """
+            -- OPENJSON array keys use BIN2. Normalize the generated public key
+            -- before materializing it so it joins the saved decisions in this DB.
+            SELECT CONVERT(nvarchar(200),VerificationKey) COLLATE DATABASE_DEFAULT VerificationKey,
+              PaymentMethodCode,MovementType,SourceId,DocumentNumber,SourceNumber,Amount,Reference,
+              CardFranchiseCode,ApprovalNumber,OccurredAt,SourceDocumentType,CustomerName,TenderMethodCode,SortOrder
+            INTO #EligibleMovements FROM EligibleMovements OPTION (RECOMPILE);
+            """ + PaymentVerificationStateSql;
+
+    // Expand each selected immutable source once, after paging or selecting the
+    // corrections. Summary/preview facts do not hydrate evidence for all lines.
+    private const string PaymentVerificationEvidenceSql = """
+            SELECT source.SourceDocumentId,source.PayloadJson INTO #ManualEvidenceSources
+            FROM (SELECT DISTINCT SourceDocumentId,BusinessId FROM #SelectedManualMovements) selected
+            CROSS JOIN #ClosureContext context
+            JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=selected.SourceDocumentId
+              AND source.SourceDocumentType=N'ManualAccountingVoucher' AND source.BusinessId=selected.BusinessId
+              AND source.TenantId=context.TenantId;
+            SELECT source.SourceDocumentId,line.LineId,line.PartyId,line.CardFranchiseCode,line.ApprovalNumber,line.Notes
+            INTO #ManualEvidenceLines
+            FROM #ManualEvidenceSources source CROSS APPLY OPENJSON(source.PayloadJson,'$.Lines') WITH(
+              LineId uniqueidentifier,PartyId uniqueidentifier,CardFranchiseCode nvarchar(64) '$.PaymentEvidence.CardFranchiseCode',
+              ApprovalNumber nvarchar(100) '$.PaymentEvidence.ApprovalNumber',Notes nvarchar(500) '$.PaymentEvidence.Notes') line;
+            CREATE UNIQUE CLUSTERED INDEX IX_ManualEvidenceLines ON #ManualEvidenceLines(SourceDocumentId,LineId);
+            SELECT selected.MovementId,line.PartyId,line.CardFranchiseCode,line.ApprovalNumber,line.Notes
+            INTO #ManualTreasuryEvidence
+            FROM #SelectedManualMovements selected JOIN #ManualEvidenceLines line
+              ON line.SourceDocumentId=selected.SourceDocumentId AND line.LineId=selected.SourceLineId;
+            CREATE UNIQUE CLUSTERED INDEX IX_ManualTreasuryEvidence ON #ManualTreasuryEvidence(MovementId);
+
+            """;
+
     private const string PaymentVerificationSourceSql = """
             WITH ClosureContext AS
             (
-                SELECT session.WorkSessionId,session.BusinessId,session.UserId,session.OpenedAt,closure.ClosedAt,closure.ReceiptSnapshotJson SnapshotJson
-                FROM dbo.WorkSessionClosures closure
-                INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
-                WHERE closure.WorkSessionClosureId=@ClosureId
+                SELECT * FROM #ClosureContext
             ),
             ClosureCashMovements AS
             (
-                SELECT detail.DocumentId,detail.ReasonName,detail.Notes,detail.Direction,detail.DocumentNumber,
-                    detail.Amount,detail.Reference,detail.OccurredAt,
-                    detail.WorkSessionMovementId,detail.MovementType,raw.[key] SnapshotIndex,
-                    COALESCE(TRY_CONVERT(int,JSON_VALUE(context.SnapshotJson,'$.receiptTemplateVersion')),1) TemplateVersion
-                FROM ClosureContext context CROSS APPLY OPENJSON(context.SnapshotJson,N'$.cashMovements') raw
-                CROSS APPLY OPENJSON(raw.value)
-                WITH(DocumentId uniqueidentifier '$.documentId',ReasonName nvarchar(200) '$.reasonName',
-                    Notes nvarchar(500) '$.notes',Direction nvarchar(8) '$.direction',
-                    DocumentNumber nvarchar(100) '$.documentNumber',Amount decimal(19,4) '$.amount',
-                    Reference nvarchar(500) '$.reference',OccurredAt datetimeoffset '$.occurredAt',
-                    WorkSessionMovementId uniqueidentifier '$.workSessionMovementId',
-                    MovementType nvarchar(32) '$.movementType') detail
-            ),
-            CashMovementDescriptions AS
-            (
-                SELECT DocumentId,WorkSessionMovementId,MAX(ReasonName) ReasonName,
-                  MAX(Notes) Notes,MAX(TemplateVersion) TemplateVersion
-                FROM ClosureCashMovements GROUP BY DocumentId,WorkSessionMovementId
+                SELECT * FROM #ClosureCashMovements
             ),
             VerificationMovements AS
             (
@@ -712,8 +788,8 @@ public sealed partial class SqlWorkSessionStore
                    N'SalesReturn',CAST(NULL AS nvarchar(300)),settlement.MethodCode
                 FROM dbo.SalesReturnSettlements settlement
                 INNER JOIN dbo.SalesReturns saleReturn ON saleReturn.ReturnId=settlement.ReturnId
-                INNER JOIN ClosureContext context ON saleReturn.CreatedByUserId=context.UserId
-                  AND saleReturn.ReturnedAt>=context.OpenedAt AND saleReturn.ReturnedAt<=context.ClosedAt
+                INNER JOIN ClosureContext context ON saleReturn.WorkSessionId=context.WorkSessionId
+                  AND saleReturn.BusinessId=context.BusinessId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=settlement.MethodCode
                 WHERE settlement.SettlementType=N'Refund'
                 UNION ALL
@@ -725,9 +801,20 @@ public sealed partial class SqlWorkSessionStore
                 INNER JOIN ClosureContext context ON context.WorkSessionId=movement.WorkSessionId
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=movement.PaymentMethodCode
                 WHERE movement.MovementType NOT IN(N'SalePayment',N'Refund')
+                  AND NOT EXISTS(SELECT 1 FROM #ManualTreasury manual WHERE manual.MovementId=movement.WorkSessionMovementId)
                   AND (COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode)<>N'Cash' OR
                     movement.MovementType NOT IN(N'CashIn',N'CashOut',N'PayablePayment',N'ReceivablePayment') OR
-                    COALESCE(TRY_CONVERT(int,JSON_VALUE(context.SnapshotJson,'$.receiptTemplateVersion')),1)<4)
+                    context.TemplateVersion<4)
+                UNION ALL
+                SELECT CONCAT(CASE WHEN manual.MethodCode=N'Cash' THEN N'CashMovement:' ELSE N'Movement:' END,
+                    CONVERT(nvarchar(36),manual.MovementId)),
+                  COALESCE(mapping.ClosureMethodCode,manual.MethodCode),
+                  CASE WHEN manual.Amount>0 THEN N'CashIn' ELSE N'CashOut' END,
+                  manual.MovementId,manual.DocumentNumber,0,manual.Amount,manual.Reference,
+                  NULL,NULL,manual.OccurredAt,
+                  N'ManualAccountingVoucher',CAST(NULL AS nvarchar(300)),manual.MethodCode
+                FROM #ManualTreasury manual
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=manual.MethodCode
                 UNION ALL
                 SELECT CONCAT(N'CashMovement:',CONVERT(nvarchar(36),COALESCE(detail.WorkSessionMovementId,detail.DocumentId)),
                   CASE WHEN detail.WorkSessionMovementId IS NULL AND
@@ -744,30 +831,6 @@ public sealed partial class SqlWorkSessionStore
                 LEFT JOIN dbo.CustomerPayments customerPayment ON customerPayment.PaymentId=detail.DocumentId
                 LEFT JOIN dbo.SupplierPayments supplierPayment ON supplierPayment.PaymentId=detail.DocumentId
                 WHERE detail.TemplateVersion>=4
-            ), LatestReconciliation AS
-            (
-                SELECT TOP(1) reconciliation.SnapshotJson
-                FROM dbo.WorkSessionClosureReconciliations reconciliation
-                WHERE reconciliation.WorkSessionClosureId=@ClosureId
-                ORDER BY reconciliation.ReconciledAt DESC,reconciliation.ReconciliationId DESC
-            ), DecisionStatuses AS
-            (
-                SELECT JSON_VALUE(value.value,N'$.verificationKey') VerificationKey,
-                  JSON_VALUE(value.value,N'$.status') Status
-                FROM LatestReconciliation reconciliation
-                CROSS APPLY OPENJSON(reconciliation.SnapshotJson,N'$.paymentVerifications') value
-            ), CorrectionStatuses AS
-            (
-                SELECT JSON_VALUE(value.value,N'$.verificationKey') VerificationKey,
-                  JSON_VALUE(value.value,N'$.paymentMethodCode') PaymentMethodCode,
-                  TRY_CONVERT(decimal(19,4),JSON_VALUE(value.value,N'$.amount')) Amount,
-                   JSON_VALUE(value.value,N'$.reason') Reason,
-                   JSON_VALUE(value.value,N'$.tenderMethodCode') TenderMethodCode,
-                   JSON_VALUE(value.value,N'$.cardFranchiseCode') CardFranchiseCode,
-                   JSON_VALUE(value.value,N'$.approvalNumber') ApprovalNumber,
-                   JSON_VALUE(value.value,N'$.reference') Reference
-                FROM LatestReconciliation reconciliation
-                CROSS APPLY OPENJSON(reconciliation.SnapshotJson,N'$.paymentCorrections') value
             ), EligibleMovements AS
             (
                 SELECT movement.*,COALESCE(closureOption.SortOrder,15) SortOrder
@@ -778,28 +841,95 @@ public sealed partial class SqlWorkSessionStore
             )
             """;
 
+    private const string PaymentVerificationStateSql = """
+            DECLARE @ReconciliationSnapshot nvarchar(max)=(SELECT TOP(1) reconciliation.SnapshotJson
+                FROM dbo.WorkSessionClosureReconciliations reconciliation
+                WHERE reconciliation.WorkSessionClosureId=@ClosureId
+                ORDER BY reconciliation.ReconciledAt DESC,reconciliation.ReconciliationId DESC);
+                SELECT CONVERT(nvarchar(200),JSON_VALUE(value.value,N'$.verificationKey')) COLLATE DATABASE_DEFAULT VerificationKey,
+                  CONVERT(nvarchar(12),JSON_VALUE(value.value,N'$.status')) Status
+                INTO #DecisionStatuses
+                FROM OPENJSON(@ReconciliationSnapshot,N'$.paymentVerifications') value;
+            CREATE INDEX IX_DecisionStatuses ON #DecisionStatuses(VerificationKey);
+                SELECT CONVERT(nvarchar(200),JSON_VALUE(value.value,N'$.verificationKey')) COLLATE DATABASE_DEFAULT VerificationKey,
+                  JSON_VALUE(value.value,N'$.paymentMethodCode') PaymentMethodCode,
+                  TRY_CONVERT(decimal(19,4),JSON_VALUE(value.value,N'$.amount')) Amount,
+                   JSON_VALUE(value.value,N'$.reason') Reason,
+                   JSON_VALUE(value.value,N'$.tenderMethodCode') TenderMethodCode,
+                   JSON_VALUE(value.value,N'$.cardFranchiseCode') CardFranchiseCode,
+                   JSON_VALUE(value.value,N'$.approvalNumber') ApprovalNumber,
+                   JSON_VALUE(value.value,N'$.reference') Reference
+                INTO #CorrectionStatuses
+                FROM OPENJSON(@ReconciliationSnapshot,N'$.paymentCorrections') value;
+            CREATE INDEX IX_CorrectionStatuses ON #CorrectionStatuses(VerificationKey);
+            """;
+
+    // Resolve each kind from the bounded page before combining its labels with
+    // other evidence. A long chain of optional live-source joins inflated one
+    // selected row to 156,448 estimated rows and requested a 19 MB sort grant.
+    // The unique key proves the actual one-to-one shape to the final projection.
+    private const string PaymentVerificationPartyDetailsSql = """
+            SELECT selected.* INTO #SelectedCounterparties FROM
+            (
+              SELECT movement.VerificationKey,CAST(NULL AS nvarchar(100)) DocumentNumber,
+                COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),
+                  NULLIF(party.Identification,N''),NULLIF(sale.CustomerIdentification,N''),N'Cliente') CustomerName,
+                CAST(NULL AS nvarchar(300)) CounterpartyName
+              FROM #PagedMovements movement CROSS JOIN #ClosureContext context
+              JOIN dbo.SalesDocuments sale ON sale.DocumentId=movement.SourceId AND sale.BusinessId=context.BusinessId
+              LEFT JOIN dbo.Customers customer ON customer.CustomerId=sale.CustomerId AND customer.TenantId=context.TenantId
+              LEFT JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=context.TenantId
+              WHERE movement.MovementType=N'CreditSale'
+              UNION ALL
+              SELECT movement.VerificationKey,origin.DocumentNumber,NULL,
+                COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),NULLIF(party.Identification,N''))
+              FROM #PagedMovements movement CROSS JOIN #ClosureContext context
+              LEFT JOIN dbo.WorkSessionMovements cash ON cash.WorkSessionMovementId=movement.SourceId
+              JOIN dbo.CustomerPayments payment ON payment.PaymentId=COALESCE(cash.DocumentId,movement.SourceId)
+                AND payment.BusinessId=context.BusinessId
+              JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
+                AND origin.SubledgerKind=N'Receivable' AND origin.BusinessId=context.BusinessId AND origin.TenantId=context.TenantId
+              LEFT JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId AND customer.TenantId=context.TenantId
+              LEFT JOIN dbo.Parties party ON party.PartyId=COALESCE(payment.PartyId,customer.PartyId) AND party.TenantId=context.TenantId
+              WHERE movement.MovementType=N'ReceivablePayment'
+              UNION ALL
+              SELECT movement.VerificationKey,origin.DocumentNumber,NULL,
+                COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),NULLIF(party.Identification,N''))
+              FROM #PagedMovements movement CROSS JOIN #ClosureContext context
+              LEFT JOIN dbo.WorkSessionMovements cash ON cash.WorkSessionMovementId=movement.SourceId
+              JOIN dbo.SupplierPayments payment ON payment.PaymentId=COALESCE(cash.DocumentId,movement.SourceId)
+                AND payment.BusinessId=context.BusinessId
+              JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
+                AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=context.BusinessId AND origin.TenantId=context.TenantId
+              LEFT JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId AND supplier.TenantId=context.TenantId
+              LEFT JOIN dbo.Parties party ON party.PartyId=supplier.PartyId AND party.TenantId=context.TenantId
+              WHERE movement.MovementType=N'PayablePayment'
+            ) selected OPTION(RECOMPILE,FORCE ORDER,LOOP JOIN);
+            CREATE UNIQUE CLUSTERED INDEX IX_SelectedCounterparties ON #SelectedCounterparties(VerificationKey);
+            """;
+
     private const string PaymentVerificationSelectSql = """
             SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType,movement.SourceId,
               CASE WHEN movement.MovementType IN(N'ReceivablePayment',N'PayablePayment')
-                THEN COALESCE(customerPayment.DocumentNumber,supplierPayment.DocumentNumber,N'')
+                THEN COALESCE(counterparty.DocumentNumber,N'')
                 ELSE movement.DocumentNumber END DocumentNumber,
               movement.SourceNumber,movement.Amount,movement.Reference,
-              movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt,
+              COALESCE(evidence.CardFranchiseCode,movement.CardFranchiseCode) CardFranchiseCode,
+              COALESCE(evidence.ApprovalNumber,movement.ApprovalNumber) ApprovalNumber,movement.OccurredAt,
               movement.SourceDocumentType,
               CASE WHEN movement.MovementType=N'CreditSale' THEN
-                COALESCE(NULLIF(creditParty.DisplayName,N''),NULLIF(creditParty.LegalName,N''),
-                  NULLIF(creditParty.Identification,N''),NULLIF(creditSale.CustomerIdentification,N''),N'Cliente')
+                COALESCE(counterparty.CustomerName,N'Cliente')
                 ELSE movement.CustomerName END CustomerName,
-              decision.Status,detail.ReasonName,detail.Notes,
+              decision.Status,COALESCE(detail.ReasonName,manual.Description) ReasonName,
+              COALESCE(detail.Notes,evidence.Notes,manual.Description) Notes,
               correction.PaymentMethodCode CorrectedPaymentMethodCode,
               correction.Amount CorrectedAmount,correction.Reason CorrectionReason,
               movement.TenderMethodCode,correction.TenderMethodCode CorrectedTenderMethodCode,
               correction.CardFranchiseCode CorrectedCardFranchiseCode,
               correction.ApprovalNumber CorrectedApprovalNumber,
               correction.Reference CorrectedReference,
-              COALESCE(NULLIF(customerParty.DisplayName,N''),NULLIF(customerParty.LegalName,N''),
-                NULLIF(customerParty.Identification,N''),NULLIF(supplierParty.DisplayName,N''),
-                NULLIF(supplierParty.LegalName,N''),NULLIF(supplierParty.Identification,N'')) CounterpartyName,
+              COALESCE(counterparty.CounterpartyName,
+                NULLIF(manualParty.DisplayName,N''),NULLIF(manualParty.LegalName,N''),NULLIF(manualParty.Identification,N'')) CounterpartyName,
               movement.SortOrder
             INTO #PaymentVerifications
             FROM
@@ -807,39 +937,29 @@ public sealed partial class SqlWorkSessionStore
 
     private const string PaymentVerificationJoinsSql = """
             movement
-            CROSS JOIN ClosureContext context
-            LEFT JOIN dbo.SalesDocuments creditSale ON movement.MovementType=N'CreditSale'
-              AND creditSale.DocumentId=movement.SourceId AND creditSale.BusinessId=context.BusinessId
-            LEFT JOIN dbo.Customers creditCustomer ON creditCustomer.CustomerId=creditSale.CustomerId
-            LEFT JOIN dbo.Parties creditParty ON creditParty.PartyId=creditCustomer.PartyId
+            CROSS JOIN #ClosureContext context
+            LEFT JOIN #ManualTreasury manual ON manual.MovementId=movement.SourceId AND movement.SourceDocumentType=N'ManualAccountingVoucher'
+            LEFT JOIN #ManualTreasuryEvidence evidence ON evidence.MovementId=manual.MovementId
+            LEFT JOIN dbo.Parties manualParty ON manualParty.PartyId=evidence.PartyId AND manualParty.TenantId=context.TenantId
+            LEFT JOIN #SelectedCounterparties counterparty ON counterparty.VerificationKey=movement.VerificationKey
             LEFT JOIN dbo.WorkSessionMovements cashMovement ON cashMovement.WorkSessionMovementId=movement.SourceId
               AND movement.MovementType IN(N'CashIn',N'CashOut',N'ReceivablePayment',N'PayablePayment')
-            LEFT JOIN dbo.CustomerPayments customerPayment ON movement.MovementType=N'ReceivablePayment'
-              AND customerPayment.PaymentId=COALESCE(cashMovement.DocumentId,movement.SourceId)
-              AND customerPayment.BusinessId=context.BusinessId
-            LEFT JOIN dbo.Customers paymentCustomer ON paymentCustomer.CustomerId=customerPayment.CustomerId
-            LEFT JOIN dbo.Parties customerParty ON customerParty.PartyId=paymentCustomer.PartyId
-            LEFT JOIN dbo.SupplierPayments supplierPayment ON movement.MovementType=N'PayablePayment'
-              AND supplierPayment.PaymentId=COALESCE(cashMovement.DocumentId,movement.SourceId)
-              AND supplierPayment.BusinessId=context.BusinessId
-            LEFT JOIN dbo.Suppliers paymentSupplier ON paymentSupplier.SupplierId=supplierPayment.SupplierId
-            LEFT JOIN dbo.Parties supplierParty ON supplierParty.PartyId=paymentSupplier.PartyId
-            LEFT JOIN CashMovementDescriptions detail
+            LEFT JOIN #CashMovementDescriptions detail
               ON detail.DocumentId=CASE WHEN detail.TemplateVersion>=4 THEN COALESCE(cashMovement.DocumentId,movement.SourceId)
                    ELSE COALESCE(cashMovement.DocumentId,cashMovement.WorkSessionMovementId) END
                 AND (detail.WorkSessionMovementId IS NULL OR detail.WorkSessionMovementId=movement.SourceId)
                 AND movement.MovementType IN(N'CashIn',N'CashOut',N'ReceivablePayment',N'PayablePayment')
-            LEFT JOIN DecisionStatuses decision ON decision.VerificationKey=movement.VerificationKey
-            LEFT JOIN CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
+            LEFT JOIN #DecisionStatuses decision ON decision.VerificationKey=movement.VerificationKey
+            LEFT JOIN #CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
             WHERE (@Method IS NULL OR COALESCE(correction.PaymentMethodCode,movement.PaymentMethodCode)=@Method)
               AND (@Movement IS NULL OR movement.MovementType=@Movement)
             """;
 
-    private static string PaymentVerificationRowsSql(bool preview) => PaymentVerificationSourceSql + "\n" +
+    private static string PaymentVerificationRowsSql(bool preview) =>
         "SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType," +
         "movement.SourceId,movement.SourceNumber,movement.Amount,movement.Reference," +
         "movement.CardFranchiseCode,movement.ApprovalNumber,movement.SourceDocumentType," +
-        "movement.TenderMethodCode INTO #PaymentVerifications FROM EligibleMovements movement" +
+        "movement.TenderMethodCode INTO #PaymentVerifications FROM #EligibleMovements movement" +
         (preview ? " WHERE movement.VerificationKey IN (SELECT [value] FROM OPENJSON(@TargetKeys))" : "") +
         " OPTION (RECOMPILE);\n";
 
@@ -878,14 +998,14 @@ public sealed partial class SqlWorkSessionStore
             bool preview, CancellationToken cancellationToken)
     {
         var rowsSql = corrections.Count == 0
-            ? PaymentVerificationSourceSql + "\n" + """
+            ? """
                 SELECT movement.VerificationKey,movement.PaymentMethodCode,
                   movement.MovementType,movement.Amount
                 INTO #PaymentVerifications
-                FROM EligibleMovements movement OPTION (RECOMPILE);
+                FROM #EligibleMovements movement OPTION (RECOMPILE);
                 """ + "\n"
             : PaymentVerificationRowsSql(preview);
-        var validationSql = rowsSql + """
+        var validationSql = PaymentVerificationFactsSql + rowsSql + """
             CREATE TABLE #Decisions(VerificationKey nvarchar(200) COLLATE Latin1_General_100_CI_AS,
               Status nvarchar(12));
             INSERT #Decisions(VerificationKey,Status)
@@ -938,12 +1058,87 @@ public sealed partial class SqlWorkSessionStore
 
         if (corrections.Count > 0)
             validationSql += """
+            SELECT manual.* INTO #SelectedManualMovements FROM #ManualTreasury manual
+            JOIN #PaymentVerifications source ON source.SourceId=manual.MovementId
+              AND source.SourceDocumentType=N'ManualAccountingVoucher'
+            JOIN #Corrections correction ON correction.VerificationKey=source.VerificationKey COLLATE Latin1_General_100_CI_AS;
+            """ + PaymentVerificationEvidenceSql + """
+            -- A manual treasury correction has no sale, refund or portfolio
+            -- position to hydrate. Keep the same validation result contract
+            -- without compiling the wide optional-source join for this case.
+            IF NOT EXISTS(
+              SELECT 1 FROM #Corrections correction
+              LEFT JOIN #PaymentVerifications source
+                ON source.VerificationKey COLLATE Latin1_General_100_CI_AS=correction.VerificationKey
+              WHERE source.SourceDocumentType IS NULL OR source.SourceDocumentType<>N'ManualAccountingVoucher')
+            BEGIN
+              SELECT correction.VerificationKey,source.MovementType,source.SourceId,
+                source.SourceNumber,source.PaymentMethodCode,source.Amount,
+                correction.PaymentMethodCode,correction.Amount,correction.Reason,
+                decision.Status,source.SourceDocumentType,evidence.PartyId,
+                CAST(NULL AS uniqueidentifier) CustomerId,
+                CAST(NULL AS uniqueidentifier) SubledgerId,
+                CAST(NULL AS decimal(19,4)) OutstandingAmount,
+                1 ApplicationCount,1 TenderCount,
+                CAST(NULL AS nvarchar(64)) CounterpartAccountingCategory,
+                CAST(CASE WHEN manual.EntryId IS NOT NULL THEN 1 ELSE 0 END AS bit) SourceProcessed,
+                CAST(NULL AS char(3)) CurrencyCode,
+                CAST(NULL AS uniqueidentifier) PartySiteId,
+                CAST(NULL AS nvarchar(100)) DocumentNumber,
+                CAST(NULL AS datetimeoffset) IssuedAt,
+                CAST(NULL AS decimal(19,4)) ReturnTotal,
+                CAST(NULL AS uniqueidentifier) CustomerCreditId,
+                CAST(NULL AS decimal(19,4)) CreditAmount,
+                source.TenderMethodCode,correction.TenderMethodCode,
+                correction.CardFranchiseCode,correction.ApprovalNumber,correction.Reference,
+                correctedMapping.ClosureMethodCode,franchise.OptionId,
+                evidence.CardFranchiseCode,evidence.ApprovalNumber,source.Reference,
+                COALESCE(CASE WHEN manual.AccountId IS NOT NULL
+                    THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),manual.AccountId)) END,
+                  originalTenderCategory.Category,originalClosureCategory.Category) OriginalTenderCategory,
+                correctedTenderCategory.Category,
+                CAST(0 AS bit) HasUnapplications
+              FROM #Corrections correction
+              JOIN #PaymentVerifications source
+                ON source.VerificationKey COLLATE Latin1_General_100_CI_AS=correction.VerificationKey
+              JOIN #ManualTreasury manual ON manual.MovementId=source.SourceId
+              LEFT JOIN #ManualTreasuryEvidence evidence ON evidence.MovementId=manual.MovementId
+              LEFT JOIN #Decisions decision ON decision.VerificationKey=correction.VerificationKey
+              LEFT JOIN worksessions.CashClosurePaymentMethodMappings correctedMapping
+                ON correctedMapping.PaymentMethodCode=COALESCE(correction.TenderMethodCode,
+                    CASE WHEN correction.PaymentMethodCode=source.PaymentMethodCode
+                      THEN source.TenderMethodCode ELSE correction.PaymentMethodCode END)
+                  AND correctedMapping.RequiresCount=1
+              LEFT JOIN reference.Options franchise ON franchise.CatalogCode=N'card-franchise'
+                AND franchise.Code=correction.CardFranchiseCode AND franchise.IsActive=1
+              LEFT JOIN dbo.AccountingConfigurationProfiles profile
+                ON profile.IsDefault=1 AND profile.IsActive=1
+              LEFT JOIN dbo.AccountingSourceCategoryMappings originalTenderCategory
+                ON originalTenderCategory.ProfileCode=profile.ProfileCode
+                  AND originalTenderCategory.SourceType=CASE WHEN source.MovementType=N'CashOut'
+                    THEN N'SupplierPaymentMethod' ELSE N'PosPaymentMethod' END
+                  AND originalTenderCategory.SourceCode=source.TenderMethodCode
+              LEFT JOIN dbo.AccountingSourceCategoryMappings originalClosureCategory
+                ON originalClosureCategory.ProfileCode=profile.ProfileCode
+                  AND originalClosureCategory.SourceType=N'ClosurePaymentMethod'
+                  AND originalClosureCategory.SourceCode=source.PaymentMethodCode
+              LEFT JOIN dbo.AccountingSourceCategoryMappings correctedTenderCategory
+                ON correctedTenderCategory.ProfileCode=profile.ProfileCode
+                  AND correctedTenderCategory.SourceType=CASE WHEN source.MovementType=N'CashOut'
+                    THEN N'SupplierPaymentMethod' ELSE N'PosPaymentMethod' END
+                  AND correctedTenderCategory.SourceCode=COALESCE(correction.TenderMethodCode,
+                    CASE WHEN correction.PaymentMethodCode=source.PaymentMethodCode
+                      THEN source.TenderMethodCode ELSE correction.PaymentMethodCode END)
+              OPTION(RECOMPILE,LOOP JOIN);
+            END
+            ELSE
+            BEGIN
             SELECT correction.VerificationKey,source.MovementType,source.SourceId,
               source.SourceNumber,source.PaymentMethodCode,source.Amount,
               correction.PaymentMethodCode,correction.Amount,correction.Reason,
               decision.Status,source.SourceDocumentType,
               COALESCE(saleParty.PartyId,customerParty.PartyId,supplierParty.PartyId,
-                returnParty.PartyId) PartyId,
+                returnParty.PartyId,evidence.PartyId) PartyId,
               COALESCE(sale.CustomerId,customerPayment.CustomerId,saleReturn.CustomerId) CustomerId,
               COALESCE(saleReceivable.ReceivableId,customerApplication.ReceivableId,
                 supplierApplication.PayableId) SubledgerId,
@@ -958,7 +1153,8 @@ public sealed partial class SqlWorkSessionStore
                 (source.MovementType=N'Refund' AND saleReturn.Status=N'Processed') OR
                 (source.MovementType=N'ReceivablePayment' AND customerPayment.Status=N'Processed') OR
                 (source.MovementType=N'PayablePayment' AND supplierPayment.Status=N'Processed') OR
-                (source.MovementType IN(N'CashIn',N'CashOut') AND cashDocument.Status=N'Processed')
+                (source.MovementType IN(N'CashIn',N'CashOut') AND cashDocument.Status=N'Processed') OR
+                (source.SourceDocumentType=N'ManualAccountingVoucher' AND manual.EntryId IS NOT NULL)
                 THEN 1 ELSE 0 END AS bit) SourceProcessed,
               supplierPayment.CurrencyCode, sale.CustomerPartySiteId,
               sale.DocumentNumber,sale.IssuedAt,
@@ -967,9 +1163,17 @@ public sealed partial class SqlWorkSessionStore
               source.TenderMethodCode,correction.TenderMethodCode,
               correction.CardFranchiseCode,correction.ApprovalNumber,correction.Reference,
               correctedMapping.ClosureMethodCode,
-              franchise.OptionId,source.CardFranchiseCode,source.ApprovalNumber,
+              franchise.OptionId,COALESCE(evidence.CardFranchiseCode,source.CardFranchiseCode),
+              COALESCE(evidence.ApprovalNumber,source.ApprovalNumber),
               source.Reference,
-              COALESCE(NULLIF(CONCAT(N'BankAccount:',CONVERT(nvarchar(36),
+              COALESCE(CASE
+                WHEN source.SourceDocumentType=N'ManualAccountingVoucher' AND manual.AccountId IS NOT NULL
+                  THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),manual.AccountId))
+                WHEN source.MovementType=N'ReceivablePayment' AND customerTender.TenderCount=1 AND customerTender.AccountId IS NOT NULL
+                  THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),customerTender.AccountId))
+                WHEN source.MovementType=N'PayablePayment' AND supplierTender.TenderCount=1 AND supplierTender.AccountId IS NOT NULL
+                  THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),supplierTender.AccountId)) END,
+                NULLIF(CONCAT(N'BankAccount:',CONVERT(nvarchar(36),
                 CASE WHEN source.MovementType=N'Sale' THEN saleTender.BankAccountId
                      WHEN source.MovementType=N'Refund' THEN refundTender.BankAccountId
                      WHEN source.MovementType=N'ReceivablePayment' AND customerTender.TenderCount=1
@@ -977,9 +1181,25 @@ public sealed partial class SqlWorkSessionStore
                      WHEN source.MovementType=N'PayablePayment' AND supplierTender.TenderCount=1
                        THEN supplierTender.BankAccountId END)),N'BankAccount:'),
                 originalTenderCategory.Category,originalClosureCategory.Category),
-              correctedTenderCategory.Category
+              correctedTenderCategory.Category,
+              CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.PayableTransactions original
+                JOIN accounting.SourcePositionIndex reversal ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Payable'
+                  AND reversal.ReversesTransactionId=original.PayableTransactionId
+                WHERE original.PayableId=supplierApplication.PayableId AND original.SourceDocumentId=supplierPayment.PaymentId AND original.TransactionType=N'Payment')
+                OR EXISTS(SELECT 1 FROM dbo.ReceivableTransactions original
+                JOIN accounting.SourcePositionIndex reversal ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Receivable'
+                  AND reversal.ReversesTransactionId=original.ReceivableTransactionId
+                WHERE original.ReceivableId=customerApplication.ReceivableId AND original.SourceDocumentId=customerPayment.PaymentId AND original.TransactionType=N'Payment')
+                THEN 1 ELSE 0 END AS bit) HasUnapplications
             FROM #Corrections correction
             LEFT JOIN #PaymentVerifications source ON source.VerificationKey COLLATE Latin1_General_100_CI_AS = correction.VerificationKey
+            LEFT JOIN #ManualTreasury manual ON manual.MovementId=source.SourceId AND source.SourceDocumentType=N'ManualAccountingVoucher'
+            LEFT JOIN #ManualTreasuryEvidence evidence ON evidence.MovementId=manual.MovementId
+            CROSS APPLY (VALUES(CASE
+              WHEN source.MovementType=N'ReceivablePayment' THEN N'CustomerPaymentMethod'
+              WHEN source.MovementType=N'PayablePayment' OR
+                (source.MovementType=N'CashOut' AND source.SourceDocumentType=N'ManualAccountingVoucher') THEN N'SupplierPaymentMethod'
+              ELSE N'PosPaymentMethod' END)) tenderSource(SourceType)
             LEFT JOIN #Decisions decision ON decision.VerificationKey=correction.VerificationKey
             LEFT JOIN worksessions.CashClosurePaymentMethodMappings correctedMapping
               ON correctedMapping.PaymentMethodCode=COALESCE(correction.TenderMethodCode,
@@ -992,10 +1212,7 @@ public sealed partial class SqlWorkSessionStore
               ON profile.IsDefault=1 AND profile.IsActive=1
             LEFT JOIN dbo.AccountingSourceCategoryMappings originalTenderCategory
               ON originalTenderCategory.ProfileCode=profile.ProfileCode
-                AND originalTenderCategory.SourceType=CASE
-                  WHEN source.MovementType=N'ReceivablePayment' THEN N'CustomerPaymentMethod'
-                  WHEN source.MovementType=N'PayablePayment' THEN N'SupplierPaymentMethod'
-                  ELSE N'PosPaymentMethod' END
+                AND originalTenderCategory.SourceType=tenderSource.SourceType
                 AND originalTenderCategory.SourceCode=source.TenderMethodCode
             LEFT JOIN dbo.AccountingSourceCategoryMappings originalClosureCategory
               ON originalClosureCategory.ProfileCode=profile.ProfileCode
@@ -1003,10 +1220,7 @@ public sealed partial class SqlWorkSessionStore
                 AND originalClosureCategory.SourceCode=source.PaymentMethodCode
             LEFT JOIN dbo.AccountingSourceCategoryMappings correctedTenderCategory
               ON correctedTenderCategory.ProfileCode=profile.ProfileCode
-                AND correctedTenderCategory.SourceType=CASE
-                  WHEN source.MovementType=N'ReceivablePayment' THEN N'CustomerPaymentMethod'
-                  WHEN source.MovementType=N'PayablePayment' THEN N'SupplierPaymentMethod'
-                  ELSE N'PosPaymentMethod' END
+                AND correctedTenderCategory.SourceType=tenderSource.SourceType
                 AND correctedTenderCategory.SourceCode=COALESCE(correction.TenderMethodCode,
                   CASE WHEN correction.PaymentMethodCode=source.PaymentMethodCode
                     THEN source.TenderMethodCode ELSE correction.PaymentMethodCode END)
@@ -1030,10 +1244,10 @@ public sealed partial class SqlWorkSessionStore
               ON source.MovementType=N'ReceivablePayment' AND customerPayment.PaymentId=COALESCE(paymentMovement.DocumentId,source.SourceId)
                 AND customerPayment.BusinessId=@BusinessId
             LEFT JOIN dbo.Customers paymentCustomer ON paymentCustomer.CustomerId=customerPayment.CustomerId
-            LEFT JOIN dbo.Parties customerParty ON customerParty.PartyId=paymentCustomer.PartyId
+            LEFT JOIN dbo.Parties customerParty ON customerParty.PartyId=COALESCE(customerPayment.PartyId,paymentCustomer.PartyId)
             OUTER APPLY (SELECT COUNT(*) ApplicationCount,MAX(ReceivableId) ReceivableId
               FROM dbo.CustomerPaymentApplications WHERE PaymentId=customerPayment.PaymentId) customerApplication
-            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId FROM dbo.CustomerPaymentTenders
+            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId FROM dbo.CustomerPaymentTenders
               WHERE PaymentId=customerPayment.PaymentId) customerTender
             LEFT JOIN dbo.Receivables customerBalance WITH(UPDLOCK,HOLDLOCK)
               ON customerBalance.ReceivableId=customerApplication.ReceivableId
@@ -1045,7 +1259,7 @@ public sealed partial class SqlWorkSessionStore
             LEFT JOIN dbo.Parties supplierParty ON supplierParty.PartyId=paymentSupplier.PartyId
             OUTER APPLY (SELECT COUNT(*) ApplicationCount,MAX(PayableId) PayableId
               FROM dbo.SupplierPaymentApplications WHERE PaymentId=supplierPayment.PaymentId) supplierApplication
-            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId FROM dbo.SupplierPaymentTenders
+            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId FROM dbo.SupplierPaymentTenders
               WHERE PaymentId=supplierPayment.PaymentId) supplierTender
             LEFT JOIN dbo.Payables supplierBalance WITH(UPDLOCK,HOLDLOCK)
               ON supplierBalance.PayableId=supplierApplication.PayableId
@@ -1068,7 +1282,12 @@ public sealed partial class SqlWorkSessionStore
                 AND cashDocument.DocumentId=COALESCE(cashMovement.DocumentId,source.SourceId)
                 AND cashDocument.BusinessId=@BusinessId
             LEFT JOIN dbo.CashMovementReasons cashReason
-              ON cashReason.ReasonId=cashDocument.ReasonId AND cashReason.BusinessId=@BusinessId;
+              ON cashReason.ReasonId=cashDocument.ReasonId AND cashReason.BusinessId=@BusinessId
+            -- Corrections are already selected by key. Recompile for that set
+            -- and seek its sources instead of reserving hash memory for the
+            -- unfiltered financial tables behind the optional joins.
+            OPTION(RECOMPILE,FORCE ORDER,LOOP JOIN);
+            END
             """;
         await using var command = new SqlCommand(validationSql, connection, transaction);
         command.Parameters.AddWithValue("@ClosureId", closureId);
@@ -1115,6 +1334,8 @@ public sealed partial class SqlWorkSessionStore
             var originalAmount = reader.GetDecimal(5);
             var method = reader.GetString(6);
             var amount = reader.GetDecimal(7);
+            if (amount != originalAmount && reader.GetBoolean(38))
+                throw new WorkSessionValidationException("No se modificó el pago: tiene desaplicaciones aceptadas. Deben resolverse antes de corregir su importe; el pago original se conserva.");
             var originalTender = reader.GetString(26);
             var tender = reader.IsDBNull(27)
                 ? (method.Equals(originalMethod, StringComparison.OrdinalIgnoreCase) ? originalTender : method)
@@ -1154,7 +1375,8 @@ public sealed partial class SqlWorkSessionStore
                 (method.Equals(originalMethod, StringComparison.OrdinalIgnoreCase) &&
                  amount == originalAmount && !tenderDetailsChanged))
                 throw new WorkSessionValidationException("La corrección debe conservar el sentido del pago y cambiar el medio o valor.");
-            if (movementType is "CashIn" or "CashOut" && method != "Cash")
+            var manualVoucher = reader.GetString(10) == "ManualAccountingVoucher";
+            if (movementType is "CashIn" or "CashOut" && method != "Cash" && !manualVoucher)
                 throw new WorkSessionValidationException("Las entradas y salidas de caja conservan el medio efectivo.");
             if (!reader.IsDBNull(27) &&
                 (!originalMethod.Equals(method, StringComparison.OrdinalIgnoreCase) ||
@@ -1162,6 +1384,8 @@ public sealed partial class SqlWorkSessionStore
                 (originalTenderCategory is null || tenderCategory is null))
                 throw new WorkSessionValidationException("Falta la configuración contable del medio de pago corregido.");
             var delta = amount - originalAmount;
+            if (manualVoucher && delta != 0)
+                throw new WorkSessionValidationException("El valor y las contrapartidas del comprobante manual se corrigen desde contabilidad. El cierre permite verificarlo y corregir su medio o evidencia sin cambiar ese valor.");
             if (movementType == "Sale" && delta != 0 &&
                 reader.GetString(10) is ("SalesInvoice" or "ServiceInvoice") &&
                 (reader.IsDBNull(25) || reader.GetDecimal(25) == 0))
@@ -1286,11 +1510,10 @@ public sealed partial class SqlWorkSessionStore
                 reader.IsDBNull(24) ? null : reader.GetString(24));
 
     private static void AddClosureSearchParameters(SqlCommand command, WorkSessionIdentity identity,
-        DateOnly from, DateOnly to, string? status)
+        string rangesJson, string? status)
     {
         command.Parameters.AddWithValue("@TenantId",identity.TenantId);
-        command.Parameters.AddWithValue("@From",new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue),TimeSpan.Zero));
-        command.Parameters.AddWithValue("@Until",new DateTimeOffset(to.AddDays(1).ToDateTime(TimeOnly.MinValue),TimeSpan.Zero));
+        command.Parameters.Add("@Ranges",SqlDbType.NVarChar,-1).Value=rangesJson;
         command.Parameters.AddWithValue("@Status",(object?)status ?? DBNull.Value);
     }
 }

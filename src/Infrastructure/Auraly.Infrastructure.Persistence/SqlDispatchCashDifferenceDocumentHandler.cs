@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Dispatching;
@@ -30,7 +31,7 @@ public sealed class SqlDispatchCashDifferenceDocumentHandler(
                 "The dispatch cash-difference envelope does not match its payload.");
 
         await SqlAccountingPostingJobWriter.InsertAsync(
-            sessions.Current, document, payload.OccurredAt, ids, timeProvider,
+            sessions.Current.Connection, sessions.Current.Transaction, document, payload.OccurredAt, ids, timeProvider,
             cancellationToken);
     }
 }

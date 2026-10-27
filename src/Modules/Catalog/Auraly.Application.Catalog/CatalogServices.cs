@@ -140,7 +140,10 @@ public sealed class CatalogService(
     public Task<IReadOnlyList<TaxProfileSummary>> ListTaxProfilesAsync(
         CatalogUserIdentity user, bool includeInactive, CancellationToken ct)
     {
-        Require(user, CatalogPermissionCodes.Read);
+        // Manual fiscal capture consumes the same active tax catalogue. It does
+        // not grant access to product data, inactive profiles or configuration.
+        if (includeInactive || !user.Permissions.Contains("accounting.manual.create"))
+            Require(user, CatalogPermissionCodes.Read);
         return store.ListTaxProfilesAsync(user, includeInactive, ct);
     }
 

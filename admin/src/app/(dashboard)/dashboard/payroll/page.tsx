@@ -18,7 +18,7 @@ import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { PayrollEmploymentSelect } from "@/components/payroll/payroll-employment-select";
 import { accountingApi, type AccountingAccount, type AccountingCategoryDefinition, type AccountingMapping } from "@/services/api/accounting";
 import { payrollApi, type PayrollCatalogOption, type PayrollConcept, type PayrollDeductionAgreement, type PayrollEmployment, type PayrollOptions, type PayrollReportDefinition, type PayrollRuleSet, type PayrollRun, type PayrollRunSummary, type SaveConcept, type SaveDeductionAgreement, type SaveEmployment, type SavePayrollNovelty, type SaveRuleSet } from "@/services/api/payroll";
-import { tenantCommercialApi } from "@/services/api/tenants";
+import { useTenantCommercialSubscription } from "@/hooks/use-tenants";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
@@ -43,7 +43,7 @@ function PayrollWorkspace({ tenantId, businessId, permissions }: { tenantId: str
     const detail = useQuery({ queryKey: ["payroll-run", tenantId, businessId, selectedId], queryFn: () => payrollApi.run(selectedId!), enabled: Boolean(selectedId) });
     const options = workspace.data?.options ?? null, runs = workspace.data?.runs ?? [], selected = detail.data ?? null, loading = workspace.isFetching;
     const [creatingRun, setCreatingRun] = useState(false), [creatingEmployment, setCreatingEmployment] = useState(false), [editingEmployment, setEditingEmployment] = useState<PayrollEmployment | null>(null), [employmentRevision, setEmploymentRevision] = useState(0), [preselectedPartyId, setPreselectedPartyId] = useState<string | null>(null), [creatingConcept, setCreatingConcept] = useState(false), [editingConcept, setEditingConcept] = useState<PayrollConcept | null>(null), [creatingRules, setCreatingRules] = useState(false), [editingRules, setEditingRules] = useState<PayrollRuleSet | null>(null), [creatingElectronic, setCreatingElectronic] = useState(false), [creatingAgreement, setCreatingAgreement] = useState(false), [editingAgreement, setEditingAgreement] = useState<PayrollDeductionAgreement | null>(null), [creatingNovelty, setCreatingNovelty] = useState(false), [creatingPayment, setCreatingPayment] = useState(false);
-    const subscription = useQuery({ queryKey: ["tenant-commercial", "subscription", tenantId], queryFn: tenantCommercialApi.subscription, enabled: permissions.has("payroll.fiscal") });
+    const subscription = useTenantCommercialSubscription(permissions.has("payroll.fiscal"));
     const dianRemaining = subscription.data ? Math.max(0, subscription.data.dianDocumentMonthlyLimit - subscription.data.dianDocumentsUsed) : null;
     const openElectronic = () => {
         setCreatingElectronic(true);

@@ -1,15 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-
-const username = process.env.AURALY_E2E_USERNAME ?? "admin";
-const password = process.env.AURALY_E2E_PASSWORD ?? "Admin123!";
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.locator("#username").fill(username);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /Iniciar sesi/ }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\/|$)/, { timeout: 20_000 });
-}
+import { expect, test } from "@playwright/test";
+import { realAccountingContext } from "./support/real-accounting-workspace";
 
 const viewports = [
   { name: "teléfono", width: 390, height: 844 },
@@ -20,7 +10,7 @@ const viewports = [
 for (const viewport of viewports) {
   test(`Pedidos y Despachos comparten la cabecera estándar en ${viewport.name}`, async ({ page }) => {
     await page.setViewportSize(viewport);
-    await login(page);
+    await realAccountingContext(page);
 
     const styles: string[] = [];
     for (const view of [

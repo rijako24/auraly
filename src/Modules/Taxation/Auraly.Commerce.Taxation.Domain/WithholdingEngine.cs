@@ -122,8 +122,8 @@ public sealed class WithholdingEngine
     public (WithholdingCalculation Calculation, IReadOnlyList<string> Diagnostics) CalculateDocument(
         IReadOnlyList<WithholdingCalculationContext> contexts, IEnumerable<WithholdingRule> candidateRules)
     {
-        if (contexts.Count is < 1 or > 100)
-            throw new WithholdingRuleException("A document requires between 1 and 100 bases.");
+        if (contexts.Count is < 1 or > 500)
+            throw new WithholdingRuleException("A document requires between 1 and 500 bases.");
         var first = contexts[0];
         if (contexts.Any(c => c.BusinessId != first.BusinessId || c.CounterpartyId != first.CounterpartyId ||
             c.Direction != first.Direction || c.Moment != first.Moment || c.OccurredAt != first.OccurredAt ||

@@ -1,19 +1,208 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text.Json;
+using Auraly.Application.Purchasing;
+using Auraly.Domain.Purchasing;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
 using Auraly.Commerce.Taxation.Contracts;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class GoodsReceiptWorkspaceTests(
+public sealed partial class GoodsReceiptWorkspaceTests(
     ServerSliceFixture fixture,
     ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Financial_discount_terms_survive_draft_save_and_reload()
+    {
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ReadGoodsReceipts);
+        var request = CreateDraft() with
+        {
+            FinancialDiscount = new(2.5m, new DateOnly(2026, 8, 15), true)
+        };
+        using var saved = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}", request);
+        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+        var recovered = await client.GetFromJsonAsync<GoodsReceiptDraft>(
+            $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}");
+        Assert.Equal(request.FinancialDiscount, recovered?.FinancialDiscount);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Oversized_receipt_text_is_a_validation_error_before_saving_or_confirming(bool description)
+    {
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var draft = CreateDraft();
+        var line = draft.Lines.Single();
+        draft = draft with { Lines = [description
+            ? line with { Description = new string('X', 251) }
+            : line with { TaxCode = new string('X', 33) }] };
+        using (var save = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/goods-receipts/drafts/{draft.DraftId:D}", draft))
+            Assert.Equal(HttpStatusCode.BadRequest, save.StatusCode);
+        var request = new ConfirmGoodsReceiptRequest(draft.DraftId, fixture.BusinessId,
+            fixture.WarehouseId, fixture.SupplierId, draft.SupplierInvoiceNumber, draft.SupplierInvoiceDate,
+            draft.ReceivedAt, true, draft.DueDate, "COP", draft.Notes, draft.Lines);
+        using var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
+            { Content = JsonContent.Create(request) };
+        message.Headers.Add("Idempotency-Key", $"invalid-receipt-text-{draft.DraftId:N}");
+        using var response = await client.SendAsync(message);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Legacy_receipt_fingerprint_still_replays_and_a_percentage_cannot_change_an_accepted_receipt()
+    {
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.ReadGoodsReceipts,
+            PurchasingPermissionCodes.CreateGoodsReceipts, PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var draft = CreateDraft();
+        var request = new ConfirmGoodsReceiptRequest(draft.DraftId, fixture.BusinessId,
+            fixture.WarehouseId, fixture.SupplierId, draft.SupplierInvoiceNumber, draft.SupplierInvoiceDate,
+            draft.ReceivedAt, true, draft.DueDate, "COP", draft.Notes, draft.Lines);
+        async Task<HttpResponseMessage> Confirm(ConfirmGoodsReceiptRequest value)
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
+                { Content = JsonContent.Create(value) };
+            message.Headers.Add("Idempotency-Key", $"legacy-fingerprint-{value.DocumentId:N}");
+            return await client.SendAsync(message);
+        }
+        using (var accepted = await Confirm(request))
+            Assert.True(accepted.StatusCode == HttpStatusCode.Accepted, await accepted.Content.ReadAsStringAsync());
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var read = new SqlCommand("""
+            SELECT receipt.PayloadHash,payload.PayloadJson FROM dbo.GoodsReceipts receipt
+            JOIN dbo.DocumentProcessingPayloads payload ON payload.DocumentId=receipt.GoodsReceiptId
+              AND payload.DocumentType=N'GoodsReceipt' AND payload.BusinessId=receipt.BusinessId
+            WHERE receipt.GoodsReceiptId=@Id;
+            """, connection);
+        read.Parameters.AddWithValue("@Id", request.DocumentId);
+        await using var reader = await read.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        var fingerprint = reader.GetFieldValue<byte[]>(0);
+        var source = GoodsReceiptContractSerializer.Deserialize(reader.GetString(1));
+        var legacyFingerprint = LegacyReceiptFingerprint(request, source);
+        Assert.NotEqual(legacyFingerprint, fingerprint);
+        await reader.DisposeAsync();
+        // Keep a real pre-cutover signature in the disposable fixture. New
+        // acceptances use submitted facts, without rewriting historical rows.
+        await using (var historical = new SqlCommand(
+            "UPDATE dbo.GoodsReceipts SET PayloadHash=@Hash WHERE GoodsReceiptId=@Id", connection))
+        {
+            historical.Parameters.AddWithValue("@Id", request.DocumentId);
+            historical.Parameters.AddWithValue("@Hash", legacyFingerprint);
+            Assert.Equal(1, await historical.ExecuteNonQueryAsync());
+        }
+        using (var replay = await Confirm(request)) Assert.Equal(HttpStatusCode.Accepted, replay.StatusCode);
+        using var conflict = await Confirm(request with {
+            Lines = [request.Lines.Single() with { CommercialDiscountPercent = 0m }]
+        });
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task Percentage_draft_lines_are_saved_in_one_batch_with_a_constant_number_of_SQL_commands()
+    {
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<GoodsReceiptWorkspaceService>();
+        var user = new PurchasingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { PurchasingPermissionCodes.CreateGoodsReceipts });
+        await service.SaveDraftAsync(user, CreateDraft());
+        var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        int? firstCount = null;
+        foreach (var count in new[] { 1, 50, 500 })
+        {
+            var request = CreateDraft();
+            var template = request.Lines.Single() with { CommercialDiscountPercent = 12.5m };
+            request = request with { Lines = Enumerable.Range(1, count)
+                .Select(number => template with { LineNumber = number }).ToArray() };
+            using var activity = new Activity("purchase-discount-draft").SetIdFormat(ActivityIdFormat.W3C).Start();
+            using var counter = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId);
+            var timer = Stopwatch.StartNew();
+            var saved = await service.SaveDraftAsync(user, request);
+            timer.Stop();
+            firstCount ??= counter.Count;
+            Assert.Equal(firstCount.Value, counter.Count);
+            Assert.InRange(counter.Count, 1, 6);
+            Assert.Equal(count, saved.Lines.Count);
+            Assert.All(saved.Lines, line => Assert.Equal(12.5m, line.CommercialDiscountPercent));
+            Assert.True(timer.Elapsed < TimeSpan.FromSeconds(2), $"{count} líneas: {timer.Elapsed.TotalMilliseconds:F1} ms.");
+            output.WriteLine($"Borrador con porcentaje, {count} líneas: {counter.Count} SQL, {timer.Elapsed.TotalMilliseconds:F1} ms.");
+        }
+    }
+
+    [Fact]
+    public async Task Commercial_percentage_survives_draft_confirmation_and_replay_with_the_same_tax_and_inventory_cost()
+    {
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.ReadGoodsReceipts,
+            PurchasingPermissionCodes.CreateGoodsReceipts, PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var draftRequest = CreateDraft();
+        draftRequest = draftRequest with { Lines = [draftRequest.Lines.Single() with { CommercialDiscountPercent = 10m }] };
+        using var savedResponse = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/goods-receipts/drafts/{draftRequest.DraftId:D}", draftRequest);
+        Assert.True(savedResponse.StatusCode == HttpStatusCode.OK, await savedResponse.Content.ReadAsStringAsync());
+        var saved = await savedResponse.Content.ReadFromJsonAsync<GoodsReceiptDraft>();
+        Assert.NotNull(saved);
+        Assert.Equal(10m, Assert.Single(saved.Lines).CommercialDiscountPercent);
+        Assert.Equal(1m, saved.Lines[0].DiscountAmount);
+        Assert.Equal(10.71m, saved.GrandTotal);
+        var recovered = await client.GetFromJsonAsync<GoodsReceiptDraft>(
+            $"/api/commerce/v1/goods-receipts/drafts/{draftRequest.DraftId:D}");
+        Assert.NotNull(recovered);
+        Assert.Equal(saved.Lines, recovered.Lines);
+
+        var request = new ConfirmGoodsReceiptRequest(draftRequest.DraftId, fixture.BusinessId,
+            fixture.WarehouseId, fixture.SupplierId, draftRequest.SupplierInvoiceNumber,
+            draftRequest.SupplierInvoiceDate, draftRequest.ReceivedAt, true, draftRequest.DueDate,
+            "COP", draftRequest.Notes, draftRequest.Lines, saved.ConcurrencyToken);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
+                { Content = JsonContent.Create(request) };
+            message.Headers.Add("Idempotency-Key", $"commercial-percent-{request.DocumentId:N}");
+            using var confirmed = await client.SendAsync(message);
+            Assert.True(confirmed.StatusCode == HttpStatusCode.Accepted, await confirmed.Content.ReadAsStringAsync());
+        }
+        var detail = await client.GetFromJsonAsync<GoodsReceiptDetail>(
+            $"/api/commerce/v1/goods-receipts/{request.DocumentId:D}");
+        Assert.NotNull(detail);
+        var line = Assert.Single(detail.Lines);
+        Assert.Equal(10m, line.CommercialDiscountPercent);
+        Assert.Equal(1m, line.DiscountAmount);
+        Assert.Equal(9m, line.RecognizedInventoryCostAmount);
+        Assert.Equal(1.71m, line.TaxAmount);
+        Assert.Equal(10.71m, detail.GrandTotal);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var verify = new SqlCommand("""
+            SELECT CommercialDiscountPercent,DiscountAmount,RecognizedInventoryCostAmount,
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id),
+              (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id)
+            FROM dbo.GoodsReceiptLines WHERE GoodsReceiptId=@Id;
+            """, connection);
+        verify.Parameters.AddWithValue("@Id", request.DocumentId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(10m, reader.GetDecimal(0));
+        Assert.Equal(1m, reader.GetDecimal(1));
+        Assert.Equal(9m, reader.GetDecimal(2));
+        Assert.Equal(1, reader.GetInt32(3));
+        Assert.Equal(1, reader.GetInt32(4));
+        Assert.False(await reader.ReadAsync());
+    }
+
     [Fact]
     public async Task Product_search_defaults_to_ten_rows()
     {
@@ -425,6 +614,43 @@ public sealed class GoodsReceiptWorkspaceTests(
             using var accepted = await SendConfirmationAsync(client,
                 confirmation with { WithholdingReviewHash = preview.ReviewHash });
             Assert.Equal(System.Net.HttpStatusCode.Accepted, accepted.StatusCode);
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var persisted = new SqlCommand("""
+                SELECT receipt.Status,snapshot.DocumentId,snapshot.GrossAmount,snapshot.WithholdingTotal,
+                  snapshot.NetAmount,snapshot.AdjustmentsJson,line.RuleId,line.RuleVersion,
+                  line.TaxableBase,line.Rate,line.Amount
+                FROM dbo.GoodsReceipts receipt
+                JOIN dbo.DocumentWithholdingSnapshots snapshot ON snapshot.BusinessId=receipt.BusinessId
+                  AND ((snapshot.DocumentId=receipt.GoodsReceiptId AND snapshot.DocumentType=N'GoodsReceipt')
+                    OR (snapshot.DocumentId=@CostId AND snapshot.DocumentType=N'GoodsReceiptCostDocument'))
+                JOIN dbo.DocumentWithholdingLines line ON line.DocumentId=snapshot.DocumentId
+                  AND line.DocumentType=snapshot.DocumentType
+                WHERE receipt.GoodsReceiptId=@ReceiptId AND receipt.BusinessId=@BusinessId;
+                """, connection);
+            persisted.Parameters.AddWithValue("@ReceiptId", request.DraftId);
+            persisted.Parameters.AddWithValue("@CostId", costDocument.CostDocumentId);
+            persisted.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            var expectedSnapshots = new Dictionary<Guid, WithholdingCalculationSnapshot>
+            {
+                [request.DraftId] = preview, [costDocument.CostDocumentId] = costPreview
+            };
+            await using var reader = await persisted.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                Assert.Equal("Processed", reader.GetString(0));
+                Assert.True(expectedSnapshots.Remove(reader.GetGuid(1), out var expected));
+                Assert.Equal((expected!.GrossAmount, expected.WithholdingTotal, expected.NetAmount),
+                    (reader.GetDecimal(2), reader.GetDecimal(3), reader.GetDecimal(4)));
+                Assert.Equal(expected.Adjustments!.ToArray(),
+                    JsonSerializer.Deserialize<WithholdingAdjustmentSnapshot[]>(reader.GetString(5)));
+                var expectedLine = Assert.Single(expected.Lines);
+                Assert.Equal((expectedLine.RuleId, expectedLine.RuleVersion, expectedLine.TaxableBase,
+                    expectedLine.Rate, expectedLine.Amount),
+                    (reader.GetGuid(6), reader.GetInt32(7), reader.GetDecimal(8),
+                        reader.GetDecimal(9), reader.GetDecimal(10)));
+            }
+            Assert.Empty(expectedSnapshots);
         }
         finally
         {
@@ -626,6 +852,7 @@ public sealed class GoodsReceiptWorkspaceTests(
             PurchasingPermissionCodes.CreateGoodsReceipts,
             PurchasingPermissionCodes.ConfirmGoodsReceipts);
         var draftRequest = CreateDraft();
+        var failureTrigger = $"TestReceiptWrite_{draftRequest.DraftId:N}";
 
         try
         {
@@ -635,15 +862,24 @@ public sealed class GoodsReceiptWorkspaceTests(
             var savedDraft = await savedResponse.Content.ReadFromJsonAsync<GoodsReceiptDraft>();
             Assert.NotNull(savedDraft);
 
-            var invalidDetail = draftRequest.Lines.Single() with
+            await using (var faultConnection = new SqlConnection(fixture.ConnectionString))
             {
-                Description = new string('X', 251)
-            };
+                await faultConnection.OpenAsync();
+                await using var fault = new SqlCommand($"""
+                    CREATE TRIGGER dbo.[{failureTrigger}] ON dbo.GoodsReceiptLines AFTER INSERT AS
+                    BEGIN
+                      SET NOCOUNT ON;
+                      IF EXISTS(SELECT 1 FROM inserted WHERE GoodsReceiptId='{draftRequest.DraftId:D}')
+                        THROW 51098,N'Injected receipt detail persistence failure.',1;
+                    END;
+                    """, faultConnection);
+                await fault.ExecuteNonQueryAsync();
+            }
             var confirmation = new ConfirmGoodsReceiptRequest(
                 draftRequest.DraftId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
                 draftRequest.SupplierInvoiceNumber, draftRequest.SupplierInvoiceDate,
                 draftRequest.ReceivedAt, draftRequest.CreatesPayable, draftRequest.DueDate,
-                draftRequest.CurrencyCode, draftRequest.Notes, [invalidDetail],
+                draftRequest.CurrencyCode, draftRequest.Notes, draftRequest.Lines,
                 savedDraft.ConcurrencyToken,
                 PurchaseEvidenceType: PurchaseEvidenceTypes.SupplierElectronicInvoice);
             using var message = new HttpRequestMessage(
@@ -680,7 +916,8 @@ public sealed class GoodsReceiptWorkspaceTests(
         {
             await using var connection = new SqlConnection(fixture.ConnectionString);
             await connection.OpenAsync();
-            await using var cleanup = new SqlCommand("""
+            await using var cleanup = new SqlCommand($"""
+                DROP TRIGGER IF EXISTS dbo.[{failureTrigger}];
                 DELETE dbo.GoodsReceiptDraftLines WHERE GoodsReceiptDraftId=@Id;
                 DELETE dbo.GoodsReceiptDrafts WHERE GoodsReceiptDraftId=@Id;
                 """, connection);

@@ -16,14 +16,25 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlGoodsReceiptStore(
+public sealed partial class SqlGoodsReceiptStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider) : IGoodsReceiptStore
 {
+    public async Task<GoodsReceiptAcceptance?> FindReplayAsync(
+        PurchasingUserIdentity user, string idempotencyKey, Guid documentId,
+        byte[] commandHash, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        return await TryLoadReplayAsync(connection, null, user, documentId,
+            idempotencyKey, commandHash, null, cancellationToken);
+    }
+
     public async Task<GoodsReceiptAcceptance> AcceptAsync(
         PurchasingUserIdentity user,
         string idempotencyKey,
+        byte[] commandHash,
         ConfirmGoodsReceiptRequest request,
         GoodsReceiptCalculation calculation,
         GoodsReceiptCostCalculation costCalculation,
@@ -31,14 +42,13 @@ public sealed class SqlGoodsReceiptStore(
         IReadOnlyDictionary<Guid, WithholdingCalculationSnapshot> additionalWithholdings,
         CancellationToken cancellationToken)
     {
-        var requestHash = HashRequest(request, calculation, costCalculation, withholding, additionalWithholdings);
         for (var attempt = 1; ; attempt++)
         {
             try
             {
                 return await AcceptAttemptAsync(
                     user, idempotencyKey, request, calculation, costCalculation,
-                    withholding, additionalWithholdings, requestHash, cancellationToken);
+                    withholding, additionalWithholdings, commandHash, cancellationToken);
             }
             catch (SqlException exception) when (exception.Number == 1205 && attempt < 4)
             {
@@ -67,15 +77,31 @@ public sealed class SqlGoodsReceiptStore(
         try
         {
             var replay = await TryLoadReplayAsync(
-                connection, transaction, user.BusinessId, request.DocumentId,
-                idempotencyKey, requestHash, cancellationToken);
+                connection, transaction, user, request.DocumentId,
+                idempotencyKey, requestHash,
+                () => HashRequest(request, calculation, costCalculation, withholding, additionalWithholdings),
+                cancellationToken);
             if (replay is not null)
             {
                 await transaction.CommitAsync(cancellationToken);
                 return replay;
             }
 
+            if (!request.CreatesPayable)
+                throw new PurchasingValidationException(
+                    "La compra debe registrar su cuenta por pagar. Confirma la compra con vencimiento y registra el pago mediante un egreso, aunque sea de contado.");
+            if (costCalculation.AdditionalDocuments.Any(document => !document.Request.CreatesPayable))
+                throw new PurchasingValidationException(
+                    "El documento adicional debe generar una cuenta por pagar; el pago de contado se registra por separado.");
+            if (costCalculation.FinancialDiscount is { AnticipatedInCost: true } discount &&
+                discount.FunctionalAmount > withholding.NetAmount)
+                throw new PurchasingValidationException(
+                    "El descuento financiero anticipado supera la obligación neta después de retenciones.");
+
             await ValidateScopeAsync(connection, transaction, user, request, cancellationToken);
+            var referencedDocuments = await ResolveReferencedCostsAsync(
+                connection, transaction, user, costCalculation.ReferencedDocuments,
+                request.SupplierInvoiceDate ?? request.ReceivedAt, cancellationToken);
             var overReceiptLines = await ValidatePurchaseOrderAsync(
                 connection, transaction, user, request, cancellationToken);
             var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, cancellationToken);
@@ -143,9 +169,8 @@ public sealed class SqlGoodsReceiptStore(
                 calculation.GrandTotal,
                 costCalculation.ReceiptLines.Select(line =>
                 {
-                    var source = request.Lines.Single(item => item.LineNumber == line.LineNumber);
                     return line with { OverReceiptAuthorized =
-                        source.PurchaseOrderLineId is Guid lineId && overReceiptLines.Contains(lineId) };
+                        line.PurchaseOrderLineId is Guid lineId && overReceiptLines.Contains(lineId) };
                 }).ToArray(),
                 withholding,
                 PurchaseEvidenceType: request.PurchaseEvidenceType,
@@ -157,7 +182,9 @@ public sealed class SqlGoodsReceiptStore(
                 FunctionalTaxAmount: costCalculation.FunctionalTaxAmount,
                 FunctionalGrandTotal: costCalculation.FunctionalGrandTotal,
                 AdditionalCostDocuments: additionalDocuments,
-                PartySiteId: request.PartySiteId);
+                PartySiteId: request.PartySiteId,
+                ReferencedCostDocuments: referencedDocuments,
+                FinancialDiscount: costCalculation.FinancialDiscount);
             var payloadJson = GoodsReceiptContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
 
@@ -165,12 +192,13 @@ public sealed class SqlGoodsReceiptStore(
             await InsertReceiptAsync(
                 connection, transaction, user, request, calculation, costCalculation, number,
                 support, idempotencyKey, requestHash, now, cancellationToken);
-            await InsertLinesAsync(connection, transaction, request.DocumentId, request.Lines,
-                costCalculation, cancellationToken);
+            await InsertLinesAsync(connection, transaction, request.DocumentId,
+                payload.Lines, cancellationToken);
             await InsertCostDocumentsAsync(connection, transaction, request.DocumentId,
-                additionalDocuments, now, cancellationToken);
+                additionalDocuments, referencedDocuments, now, cancellationToken);
             await InsertJobAsync(
-                connection, transaction, user.BusinessId, request.DocumentId, movementId,
+                connection, transaction, user.BusinessId, request.DocumentId,
+                PurchasingDocumentTypes.GoodsReceipt, movementId,
                 sequence, payloadJson, payloadHash, now, cancellationToken);
             if (support is not null)
                 await InsertSupportFiscalAsync(connection, transaction, payload, support,
@@ -185,59 +213,62 @@ public sealed class SqlGoodsReceiptStore(
             return new GoodsReceiptAcceptance(
                 request.DocumentId, movementId, number.FullNumber, "Accepted", sequence, false);
         }
-        catch (PurchasingConflictException)
+        catch (Exception exception)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-        catch (SqlException exception) when (exception.Number == 1205)
-        {
-            if (transaction.Connection is not null)
-            {
+            if (transaction.Connection?.State == ConnectionState.Open)
                 await transaction.RollbackAsync(CancellationToken.None);
-            }
-            throw;
-        }
-        catch (SqlException exception) when (exception.Number is 2601 or 2627)
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw new PurchasingConflictException(
-                "El número de recepción, la factura del proveedor o la clave de confirmación ya está en uso.");
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (exception is SqlException { Number: 2601 or 2627 })
+                throw new PurchasingConflictException(
+                    "El número de recepción, la factura del proveedor o la clave de confirmación ya está en uso.", exception);
             throw;
         }
     }
 
     private static async Task<GoodsReceiptAcceptance?> TryLoadReplayAsync(
         SqlConnection connection,
-        SqlTransaction transaction,
-        Guid businessId,
+        SqlTransaction? transaction,
+        PurchasingUserIdentity user,
         Guid documentId,
         string idempotencyKey,
         byte[] requestHash,
+        Func<byte[]>? legacyHash,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        // The read-only shortcut and the serialized acceptance use the same
+        // identity/scope check. Acceptance must recheck after a concurrent insert.
+        var lockHint = transaction is null ? "" : "WITH (UPDLOCK,HOLDLOCK)";
+        var sql = $"""
             SELECT r.GoodsReceiptId,r.DocumentNumber,r.Status,r.PayloadHash,j.ProcessingSequence,j.JobId
-            FROM dbo.GoodsReceipts r WITH (UPDLOCK,HOLDLOCK)
-            INNER JOIN dbo.DocumentProcessingJobs j
-              ON j.DocumentId=r.GoodsReceiptId AND j.DocumentType=N'GoodsReceipt'
+            FROM dbo.GoodsReceipts r {lockHint}
+            JOIN dbo.Businesses business ON business.BusinessId=r.BusinessId AND business.TenantId=@TenantId
+            LEFT JOIN dbo.DocumentProcessingJobs j
+              ON j.DocumentId=r.GoodsReceiptId AND j.DocumentType=N'GoodsReceipt' AND j.BusinessId=r.BusinessId
             WHERE r.BusinessId=@BusinessId
               AND (r.GoodsReceiptId=@DocumentId OR r.IdempotencyKey=@IdempotencyKey);
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@IdempotencyKey", idempotencyKey);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
-        if (!reader.GetFieldValue<byte[]>(3).AsSpan().SequenceEqual(requestHash))
-            throw new PurchasingConflictException("Esta recepción ya se intentó confirmar con datos diferentes. Recárgala antes de continuar.");
-        return new GoodsReceiptAcceptance(
+        if (reader.GetGuid(0) != documentId)
+            throw new PurchasingConflictException("La clave de confirmación pertenece a otra recepción.");
+        if (reader.IsDBNull(4) || reader.IsDBNull(5))
+            throw new InvalidOperationException("La recepción aceptada no conserva su trabajo documental.");
+        var storedHash = reader.GetFieldValue<byte[]>(3);
+        var acceptance = new GoodsReceiptAcceptance(
             reader.GetGuid(0), reader.GetGuid(5), reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true);
+        if (await reader.ReadAsync(cancellationToken))
+            throw new PurchasingConflictException("El identificador y la clave corresponden a recepciones diferentes.");
+        if (storedHash.AsSpan().SequenceEqual(requestHash)) return acceptance;
+        // Existing rows retain their v1 calculated signature. Verify that frozen
+        // format only on a mismatch; never rewrite a historical receipt or guess
+        // its submitted facts. New commands persist only the v2 intent signature.
+        if (legacyHash is null) return null;
+        if (storedHash.AsSpan().SequenceEqual(legacyHash())) return acceptance;
+        throw new PurchasingConflictException("Esta recepción ya se intentó confirmar con datos diferentes. Recárgala antes de continuar.");
     }
 
     private static async Task ValidateScopeAsync(
@@ -310,7 +341,7 @@ public sealed class SqlGoodsReceiptStore(
               WITH (SupplierId uniqueidentifier '$.SupplierId',DocumentNumber nvarchar(80) '$.DocumentNumber',
                 PurchaseEvidenceType nvarchar(64) '$.PurchaseEvidenceType') x
             INNER JOIN purchasing.GoodsReceiptCostDocuments d
-              ON d.SupplierId=x.SupplierId AND d.DocumentNumber=x.DocumentNumber
+              ON d.SupplierId=x.SupplierId AND d.DocumentNumber=x.DocumentNumber AND d.SourceEntryId IS NULL
             INNER JOIN dbo.GoodsReceipts r ON r.GoodsReceiptId=d.GoodsReceiptId AND r.BusinessId=@BusinessId
             INNER JOIN dbo.Suppliers s ON s.SupplierId=x.SupplierId
               AND s.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
@@ -530,146 +561,33 @@ public sealed class SqlGoodsReceiptStore(
     }
 
     private static async Task InsertLinesAsync(SqlConnection connection, SqlTransaction transaction, Guid documentId,
-        IReadOnlyCollection<GoodsReceiptLineRequest> requestLines, GoodsReceiptCostCalculation calculation,
-        CancellationToken cancellationToken)
+        IReadOnlyList<GoodsReceiptLineSnapshot> lines, CancellationToken cancellationToken)
     {
-        const string sql = """
-            INSERT dbo.GoodsReceiptLines
-              (GoodsReceiptId,LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
-               TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,
-               PurchaseOrderLineId,OverReceiptReason,OverReceiptAuthorized,TotalGrossWeightKg,TotalVolumeM3,
-               FunctionalNetAmount,FunctionalTaxAmount,FunctionalLineTotal,AllocatedLandedCostAmount,RecognizedInventoryCostAmount)
-            VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,
-                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation,
-                   @PurchaseOrderLineId,@OverReceiptReason,@OverReceiptAuthorized,@Weight,@Volume,
-                   @FunctionalNet,@FunctionalTax,@FunctionalTotal,@LandedCost,@RecognizedCost);
-            """;
-        foreach (var line in calculation.ReceiptLines)
-        {
-            var source = requestLines.Single(item => item.LineNumber == line.LineNumber);
-            await using var command = new SqlCommand(sql, connection, transaction);
-            command.Parameters.AddWithValue("@Id", documentId);
-            command.Parameters.AddWithValue("@Line", line.LineNumber);
-            command.Parameters.AddWithValue("@ProductId", line.ProductId);
-            command.Parameters.AddWithValue("@Description", line.Description);
-            AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
-            AddDecimal(command, "@UnitCost", line.UnitCost, 19, 6);
-            AddDecimal(command, "@Discount", line.DiscountAmount, 19, 4);
-            command.Parameters.AddWithValue("@TaxCode", line.TaxCode);
-            AddDecimal(command, "@TaxRate", line.TaxRate, 9, 6);
-            command.Parameters.AddWithValue("@TaxTreatment", line.TaxTreatment);
-            AddDecimal(command, "@Net", line.NetAmount, 19, 4);
-            AddDecimal(command, "@Tax", line.TaxAmount, 19, 4);
-            AddDecimal(command, "@Total", line.LineTotal, 19, 4);
-            command.Parameters.AddWithValue("@PresentationName", source.PresentationName);
-            AddDecimal(command, "@PresentationQuantity", source.PresentationQuantity, 19, 6);
-            AddDecimal(command, "@UnitsPerPresentation", source.UnitsPerPresentation, 19, 6);
-            command.Parameters.AddWithValue("@PurchaseOrderLineId", (object?)source.PurchaseOrderLineId ?? DBNull.Value);
-            command.Parameters.AddWithValue("@OverReceiptReason", (object?)source.OverReceiptReason ?? DBNull.Value);
-            command.Parameters.AddWithValue("@OverReceiptAuthorized", source.PurchaseOrderLineId is not null &&
-                source.OverReceiptReason is not null);
-            AddNullableDecimal(command, "@Weight", line.TotalGrossWeightKg, 19, 6);
-            AddNullableDecimal(command, "@Volume", line.TotalVolumeM3, 19, 6);
-            AddDecimal(command, "@FunctionalNet", line.FunctionalNetAmount, 19, 4);
-            AddDecimal(command, "@FunctionalTax", line.FunctionalTaxAmount, 19, 4);
-            AddDecimal(command, "@FunctionalTotal", line.FunctionalLineTotal, 19, 4);
-            AddDecimal(command, "@LandedCost", line.AllocatedLandedCostAmount, 19, 4);
-            AddDecimal(command, "@RecognizedCost", line.RecognizedInventoryCostAmount, 19, 4);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
+        await using var command = new SqlCommand("purchasing.GoodsReceiptLinesInsert", connection, transaction)
+        { CommandType = CommandType.StoredProcedure };
+        command.Parameters.Add("@DocumentId", SqlDbType.UniqueIdentifier).Value = documentId;
+        command.Parameters.Add("@LinesJson", SqlDbType.NVarChar, -1).Value =
+            JsonSerializer.Serialize(lines);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task InsertCostDocumentsAsync(
         SqlConnection connection, SqlTransaction transaction, Guid goodsReceiptId,
         IReadOnlyCollection<GoodsReceiptCostDocumentSnapshot> documents,
-        DateTimeOffset now, CancellationToken cancellationToken)
+        IReadOnlyList<GoodsReceiptVoucherCostSnapshot>? referencedDocuments,
+        DateTimeOffset now, CancellationToken cancellationToken, Guid? revisionId = null)
     {
-        foreach (var document in documents)
-        {
-            await using (var command = new SqlCommand("""
-                INSERT purchasing.GoodsReceiptCostDocuments
-                  (CostDocumentId,GoodsReceiptId,SupplierId,PartySiteId,PurchaseEvidenceType,DocumentNumber,
-                   IssuedAt,CreatesPayable,DueDate,CurrencyCode,ExchangeRate,ExchangeRateDate,
-                   ExchangeRateSource,NetAmount,TaxAmount,GrandTotal,FunctionalNetAmount,
-                   FunctionalTaxAmount,FunctionalGrandTotal,CreatedAt)
-                VALUES(@Id,@ReceiptId,@SupplierId,@PartySiteId,@Evidence,@Number,@IssuedAt,@CreatesPayable,@DueDate,
-                   @Currency,@ExchangeRate,@ExchangeRateDate,@ExchangeRateSource,@Net,@Tax,@Total,
-                   @FunctionalNet,@FunctionalTax,@FunctionalTotal,@Now);
-                """, connection, transaction))
-            {
-                command.Parameters.AddWithValue("@Id", document.CostDocumentId);
-                command.Parameters.AddWithValue("@ReceiptId", goodsReceiptId);
-                command.Parameters.AddWithValue("@SupplierId", document.SupplierId);
-                command.Parameters.AddWithValue("@PartySiteId", (object?)document.PartySiteId ?? DBNull.Value);
-                command.Parameters.AddWithValue("@Evidence", document.PurchaseEvidenceType);
-                command.Parameters.AddWithValue("@Number", document.DocumentNumber);
-                command.Parameters.AddWithValue("@IssuedAt", document.IssuedAt);
-                command.Parameters.AddWithValue("@CreatesPayable", document.CreatesPayable);
-                command.Parameters.AddWithValue("@DueDate", (object?)document.DueDate ?? DBNull.Value);
-                command.Parameters.AddWithValue("@Currency", document.CurrencyCode);
-                AddDecimal(command, "@ExchangeRate", document.ExchangeRate, 19, 8);
-                command.Parameters.AddWithValue("@ExchangeRateDate", document.ExchangeRateDate.ToDateTime(TimeOnly.MinValue));
-                command.Parameters.AddWithValue("@ExchangeRateSource", document.ExchangeRateSource);
-                AddDecimal(command, "@Net", document.NetAmount, 19, 4);
-                AddDecimal(command, "@Tax", document.TaxAmount, 19, 4);
-                AddDecimal(command, "@Total", document.GrandTotal, 19, 4);
-                AddDecimal(command, "@FunctionalNet", document.FunctionalNetAmount, 19, 4);
-                AddDecimal(command, "@FunctionalTax", document.FunctionalTaxAmount, 19, 4);
-                AddDecimal(command, "@FunctionalTotal", document.FunctionalGrandTotal, 19, 4);
-                command.Parameters.AddWithValue("@Now", now);
-                await command.ExecuteNonQueryAsync(cancellationToken);
-            }
-
-            foreach (var line in document.Lines)
-            {
-                await using (var command = new SqlCommand("""
-                    INSERT purchasing.GoodsReceiptCostLines
-                      (CostDocumentId,LineNumber,CostKind,DescriptionSnapshot,Amount,TaxableBaseAmount,
-                       TaxCode,TaxRate,TaxAmount,TaxTreatment,CostTreatment,AllocationMethod,
-                       FunctionalAmount,FunctionalTaxableBaseAmount,FunctionalTaxAmount,FunctionalDocumentAmount)
-                    VALUES(@DocumentId,@Line,@Kind,@Description,@Amount,@TaxableBase,@TaxCode,@TaxRate,@Tax,
-                       @TaxTreatment,@CostTreatment,@AllocationMethod,@FunctionalAmount,@FunctionalTaxableBase,
-                       @FunctionalTax,@FunctionalDocumentAmount);
-                    """, connection, transaction))
-                {
-                    command.Parameters.AddWithValue("@DocumentId", document.CostDocumentId);
-                    command.Parameters.AddWithValue("@Line", line.LineNumber);
-                    command.Parameters.AddWithValue("@Kind", line.CostKind);
-                    command.Parameters.AddWithValue("@Description", line.Description);
-                    AddDecimal(command, "@Amount", line.Amount, 19, 4);
-                    AddDecimal(command, "@TaxableBase", line.TaxableBaseAmount, 19, 4);
-                    command.Parameters.AddWithValue("@TaxCode", line.TaxCode);
-                    AddDecimal(command, "@TaxRate", line.TaxRate, 9, 6);
-                    AddDecimal(command, "@Tax", line.TaxAmount, 19, 4);
-                    command.Parameters.AddWithValue("@TaxTreatment", line.TaxTreatment);
-                    command.Parameters.AddWithValue("@CostTreatment", line.CostTreatment);
-                    command.Parameters.AddWithValue("@AllocationMethod", line.AllocationMethod);
-                    AddDecimal(command, "@FunctionalAmount", line.FunctionalAmount, 19, 4);
-                    AddDecimal(command, "@FunctionalTaxableBase", line.FunctionalTaxableBaseAmount, 19, 4);
-                    AddDecimal(command, "@FunctionalTax", line.FunctionalTaxAmount, 19, 4);
-                    AddDecimal(command, "@FunctionalDocumentAmount", line.FunctionalDocumentAmount, 19, 4);
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                }
-
-                foreach (var allocation in line.Allocations)
-                {
-                    await using var command = new SqlCommand("""
-                        INSERT purchasing.GoodsReceiptCostAllocations
-                          (CostDocumentId,CostLineNumber,GoodsReceiptId,ReceiptLineNumber,
-                           AllocationMethod,AllocationFactor,FunctionalAmount)
-                        VALUES(@DocumentId,@CostLine,@ReceiptId,@ReceiptLine,@Method,@Factor,@Amount);
-                        """, connection, transaction);
-                    command.Parameters.AddWithValue("@DocumentId", document.CostDocumentId);
-                    command.Parameters.AddWithValue("@CostLine", line.LineNumber);
-                    command.Parameters.AddWithValue("@ReceiptId", goodsReceiptId);
-                    command.Parameters.AddWithValue("@ReceiptLine", allocation.ReceiptLineNumber);
-                    command.Parameters.AddWithValue("@Method", allocation.AllocationMethod);
-                    AddDecimal(command, "@Factor", allocation.Factor, 19, 12);
-                    AddDecimal(command, "@Amount", allocation.FunctionalAmount, 19, 4);
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                }
-            }
-        }
+        if (documents.Count == 0 && referencedDocuments is not { Count: > 0 }) return;
+        await using var command = new SqlCommand(
+            "purchasing.GoodsReceiptCostDocumentsInsert", connection, transaction)
+        { CommandType = CommandType.StoredProcedure };
+        command.Parameters.Add("@GoodsReceiptId", SqlDbType.UniqueIdentifier).Value = goodsReceiptId;
+        command.Parameters.Add("@DocumentsJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(documents);
+        command.Parameters.Add("@ReferencedDocumentsJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(referencedDocuments ?? []);
+        command.Parameters.Add("@RevisionId", SqlDbType.UniqueIdentifier).Value =
+            (object?)revisionId ?? DBNull.Value;
+        command.Parameters.AddWithValue("@Now", now);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<HashSet<Guid>> ValidatePurchaseOrderAsync(
@@ -720,9 +638,9 @@ public sealed class SqlGoodsReceiptStore(
 
     internal static async Task<SupportFiscalAllocation> AllocateSupportFiscalAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid supplierId,
-        DateTimeOffset issuedAt, DateTimeOffset now, CancellationToken cancellationToken) =>
-        (await AllocateSupportFiscalBatchAsync(connection, transaction, businessId, [supplierId],
-            issuedAt, now, cancellationToken))[0];
+        DateTimeOffset issuedAt, DateTimeOffset now, CancellationToken cancellationToken, Guid? partySiteId = null) =>
+        (await AllocateSupportFiscalBatchAsync(connection, transaction, businessId,
+            [(supplierId, issuedAt, partySiteId)], now, cancellationToken))[0];
 
     internal static async Task<IReadOnlyList<SupportFiscalAllocation>> AllocateSupportFiscalBatchAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId, IReadOnlyList<Guid> supplierIds,
@@ -733,37 +651,49 @@ public sealed class SqlGoodsReceiptStore(
     internal static async Task<IReadOnlyList<SupportFiscalAllocation>> AllocateSupportFiscalBatchAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId,
         IReadOnlyList<(Guid SupplierId, DateTimeOffset IssuedAt)> requests,
+        DateTimeOffset now, CancellationToken cancellationToken) =>
+        await AllocateSupportFiscalBatchAsync(connection, transaction, businessId,
+            requests.Select(item => (item.SupplierId, item.IssuedAt, PartySiteId: (Guid?)null)).ToArray(), now, cancellationToken);
+
+    private static async Task<IReadOnlyList<SupportFiscalAllocation>> AllocateSupportFiscalBatchAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        IReadOnlyList<(Guid SupplierId, DateTimeOffset IssuedAt, Guid? PartySiteId)> requests,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
         if (requests.Count is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(requests));
         const string sql = """
-            SELECT requested.[key],fs.SeriesId,fs.FiscalAuthorizationId,fs.Prefix,fs.RangeStart,fs.RangeEnd,
+            DECLARE @Requested TABLE(Ordinal int NOT NULL PRIMARY KEY,
+              SupplierId uniqueidentifier NOT NULL,IssuedAt datetimeoffset(7) NOT NULL,PartySiteId uniqueidentifier NULL);
+            INSERT @Requested(Ordinal,SupplierId,IssuedAt,PartySiteId)
+            SELECT CONVERT(int,requested.[key]),item.SupplierId,item.IssuedAt,item.PartySiteId
+            FROM OPENJSON(@Requests) requested
+            CROSS APPLY OPENJSON(requested.value) WITH(SupplierId uniqueidentifier,IssuedAt datetimeoffset(7),PartySiteId uniqueidentifier) item;
+            SELECT CONVERT(nvarchar(11),requested.Ordinal),fs.SeriesId,fs.FiscalAuthorizationId,fs.Prefix,fs.RangeStart,fs.RangeEnd,
                    a.AuthorizationNumber,a.ValidFrom,a.ValidUntil,a.Environment,a.QrValidationUrl,
                    c.FiscalIssuerConfigurationId,
                    p.PartyType,p.Identification,p.VerificationDigit,p.IdentificationTypeCode,
                    COALESCE(p.LegalName,p.DisplayName),COALESCE(p.DisplayName,p.LegalName),
                    country.Code,country.Name,division.Code,division.Name,city.Code,city.Name,site.AddressLine,
                    email.Value,phone.Value,site.PostalCode
-            FROM OPENJSON(@Requests) requested
-            CROSS APPLY OPENJSON(requested.value) WITH(SupplierId uniqueidentifier,IssuedAt datetimeoffset) item
+            FROM @Requested requested
             CROSS APPLY (SELECT TOP(1) value.* FROM dbo.FiscalSeries value WITH(UPDLOCK,HOLDLOCK)
               JOIN dbo.FiscalAuthorizations auth ON auth.FiscalAuthorizationId=value.FiscalAuthorizationId
               WHERE value.BusinessId=@BusinessId AND value.DocumentType=N'SupportDocument'
                 AND value.EmitterKind=N'Server' AND value.DeviceId IS NULL AND value.IsActive=1
-                AND auth.IsActive=1 AND auth.ValidFrom<=CONVERT(date,item.IssuedAt) AND auth.ValidUntil>=CONVERT(date,item.IssuedAt)
+                AND auth.IsActive=1 AND auth.ValidFrom<=CONVERT(date,requested.IssuedAt) AND auth.ValidUntil>=CONVERT(date,requested.IssuedAt)
                 AND EXISTS(SELECT 1 FROM dbo.FiscalIssuerConfigurations issuer WHERE issuer.BusinessId=value.BusinessId
                   AND issuer.IsActive=1 AND issuer.Environment=auth.Environment
-                  AND issuer.ValidFrom<=item.IssuedAt AND (issuer.ValidTo IS NULL OR issuer.ValidTo>item.IssuedAt))
+                  AND issuer.ValidFrom<=requested.IssuedAt AND (issuer.ValidTo IS NULL OR issuer.ValidTo>requested.IssuedAt))
               ORDER BY auth.ValidUntil DESC,value.SeriesId) fs
             JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=fs.FiscalAuthorizationId
             JOIN dbo.FiscalIssuerConfigurations c ON c.BusinessId=fs.BusinessId AND c.IsActive=1
               AND c.Environment=a.Environment
-              AND c.ValidFrom<=item.IssuedAt AND (c.ValidTo IS NULL OR c.ValidTo>item.IssuedAt)
-            JOIN dbo.Suppliers s ON s.SupplierId=item.SupplierId
+              AND c.ValidFrom<=requested.IssuedAt AND (c.ValidTo IS NULL OR c.ValidTo>requested.IssuedAt)
+            JOIN dbo.Suppliers s ON s.SupplierId=requested.SupplierId
               AND s.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=fs.BusinessId) AND s.IsActive=1
             JOIN dbo.Parties p ON p.PartyId=s.PartyId AND p.IsActive=1
             LEFT JOIN dbo.PartySites site ON site.PartyId=p.PartyId
-              AND site.IsActive=1 AND site.IsPrimary=1
+              AND site.IsActive=1 AND ((requested.PartySiteId IS NULL AND site.IsPrimary=1) OR site.PartySiteId=requested.PartySiteId)
             LEFT JOIN dbo.Countries country ON country.CountryId=site.CountryId
             LEFT JOIN dbo.AdministrativeDivisions division ON division.AdministrativeDivisionId=site.AdministrativeDivisionId
             LEFT JOIN dbo.Cities city ON city.CityId=site.CityId
@@ -775,13 +705,13 @@ public sealed class SqlGoodsReceiptStore(
               ORDER BY value.IsPrimary DESC,value.CreatedAt) phone
             WHERE fs.BusinessId=@BusinessId AND fs.DocumentType=N'SupportDocument'
               AND fs.EmitterKind=N'Server' AND fs.DeviceId IS NULL AND fs.IsActive=1
-              AND a.IsActive=1 AND a.ValidFrom<=CONVERT(date,item.IssuedAt) AND a.ValidUntil>=CONVERT(date,item.IssuedAt)
-            ORDER BY CONVERT(int,requested.[key]);
+              AND a.IsActive=1 AND a.ValidFrom<=CONVERT(date,requested.IssuedAt) AND a.ValidUntil>=CONVERT(date,requested.IssuedAt)
+            ORDER BY requested.Ordinal OPTION(RECOMPILE);
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@Requests", JsonSerializer.Serialize(
-            requests.Select(item => new { item.SupplierId, item.IssuedAt })));
+        command.Parameters.Add("@Requests", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(
+            requests.Select(item => new { item.SupplierId, item.IssuedAt, item.PartySiteId }));
         var allocations = new List<SupportFiscalAllocation>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         int? failedIndex = null;
@@ -997,29 +927,11 @@ public sealed class SqlGoodsReceiptStore(
                 return new PurchaseSupportLineMetadata(line.LineNumber, product.Code, "999",
                     product.Unit, PosSaleFiscalMappings.TaxName(dianTaxCode), dianTaxCode);
             }).ToArray(), SellerPostalZone: support.SellerPostalZone);
-        const string sql = """
-            INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
-              AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
-            VALUES(@DocumentId,@BusinessId,N'GoodsReceipt',N'SupportDocument',@AuralyNumber,@FiscalNumber,
-              N'CUDS',NULL,@IssuedAt,@Status,@Now,@Now);
-            INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
-            VALUES(@DocumentId,@SnapshotJson,@Environment,@Now);
-            INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
-              AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
-            VALUES(@DocumentId,@BusinessId,@IssuerId,@Status,0,@Now,@Now,@Now);
-            """;
-        await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
-        command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
-        command.Parameters.AddWithValue("@AuralyNumber", receipt.DocumentNumber);
-        command.Parameters.AddWithValue("@FiscalNumber", support.FiscalNumber);
-        command.Parameters.AddWithValue("@IssuedAt", receipt.SupplierInvoiceDate ?? receipt.ReceivedAt);
-        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
-        command.Parameters.AddWithValue("@Now", now);
-        command.Parameters.AddWithValue("@SnapshotJson", PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
-        command.Parameters.AddWithValue("@Environment", support.Environment);
-        command.Parameters.AddWithValue("@IssuerId", support.IssuerConfigurationId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await SqlFiscalDocumentStore.InsertPurchaseSupportSourcesAsync(connection, transaction, receipt.TenantId,
+            [new(receipt.DocumentId, receipt.BusinessId, PurchasingDocumentTypes.GoodsReceipt,
+                FiscalDocumentTypeCodes.SupportDocument, receipt.DocumentNumber, support.FiscalNumber,
+                receipt.SupplierInvoiceDate ?? receipt.ReceivedAt, support.IssuerConfigurationId,
+                support.Environment, PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot))], now, cancellationToken);
     }
 
     private static async Task InsertCostSupportFiscalBatchAsync(
@@ -1069,38 +981,13 @@ public sealed class SqlGoodsReceiptStore(
             }).ToArray(), SellerPostalZone: support.SellerPostalZone,
                 CostDocument: new GoodsReceiptCostDocumentAccountingPayload(
                     receipt.TenantId, receipt.BusinessId, receipt.DocumentId, document));
-            return new
-            {
-                DocumentId = document.CostDocumentId, receipt.BusinessId,
-                AuralyNumber = document.DocumentNumber, support.FiscalNumber,
-                document.IssuedAt, support.IssuerConfigurationId,
-                support.Environment,
-                SnapshotJson = PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot)
-            };
+            return new SqlFiscalDocumentStore.PurchaseSupportSource(document.CostDocumentId, receipt.BusinessId,
+                PurchasingDocumentTypes.GoodsReceiptCostDocument, FiscalDocumentTypeCodes.SupportDocument,
+                document.DocumentNumber, support.FiscalNumber, document.IssuedAt, support.IssuerConfigurationId,
+                support.Environment, PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
         }).ToArray();
-        await using var command = new SqlCommand("""
-            DECLARE @Rows TABLE(DocumentId uniqueidentifier PRIMARY KEY,BusinessId uniqueidentifier,
-              AuralyNumber nvarchar(80),FiscalNumber nvarchar(80),IssuedAt datetimeoffset,
-              IssuerId uniqueidentifier,Environment tinyint,SnapshotJson nvarchar(max));
-            INSERT @Rows SELECT DocumentId,BusinessId,AuralyNumber,FiscalNumber,IssuedAt,
-              IssuerConfigurationId,Environment,SnapshotJson
-            FROM OPENJSON(@RowsJson) WITH(DocumentId uniqueidentifier,BusinessId uniqueidentifier,
-              AuralyNumber nvarchar(80),FiscalNumber nvarchar(80),IssuedAt datetimeoffset,
-              IssuerConfigurationId uniqueidentifier,Environment tinyint,SnapshotJson nvarchar(max));
-            INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
-              AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
-            SELECT DocumentId,BusinessId,N'GoodsReceiptCostDocument',N'SupportDocument',
-              AuralyNumber,FiscalNumber,N'CUDS',NULL,IssuedAt,@Status,@Now,@Now FROM @Rows;
-            INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
-            SELECT DocumentId,SnapshotJson,Environment,@Now FROM @Rows;
-            INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
-              AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
-            SELECT DocumentId,BusinessId,IssuerId,@Status,0,@Now,@Now,@Now FROM @Rows;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@RowsJson", JsonSerializer.Serialize(rows));
-        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
-        command.Parameters.AddWithValue("@Now", now);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await SqlFiscalDocumentStore.InsertPurchaseSupportSourcesAsync(connection, transaction,
+            receipt.TenantId, rows, now, cancellationToken);
     }
 
     private static string ResolveDianTaxCode(
@@ -1125,22 +1012,24 @@ public sealed class SqlGoodsReceiptStore(
     }
 
     private async Task InsertJobAsync(SqlConnection connection, SqlTransaction transaction,
-        Guid businessId, Guid documentId, Guid movementId, long sequence, string payload, byte[] payloadHash,
+        Guid businessId, Guid documentId, string documentType, Guid movementId,
+        long sequence, string payload, byte[] payloadHash,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
             INSERT dbo.DocumentProcessingJobs
               (JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
-            VALUES(@JobId,@BusinessId,@Sequence,@DocumentId,N'GoodsReceipt',N'Pending',@Now,@Now);
+            VALUES(@JobId,@BusinessId,@Sequence,@DocumentId,@DocumentType,N'Pending',@Now,@Now);
             INSERT dbo.DocumentProcessingPayloads
               (DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
-            VALUES(@DocumentId,N'GoodsReceipt',@BusinessId,1,@Payload,@PayloadHash,@Now);
+            VALUES(@DocumentId,@DocumentType,@BusinessId,1,@Payload,@PayloadHash,@Now);
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@JobId", movementId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@Sequence", sequence);
         command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@DocumentType", documentType);
         command.Parameters.AddWithValue("@Now", now);
         command.Parameters.AddWithValue("@Payload", payload);
         command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = payloadHash;
@@ -1184,8 +1073,21 @@ public sealed class SqlGoodsReceiptStore(
             calculation.NetAmount,
             calculation.TaxAmount,
             calculation.GrandTotal,
-            Lines = calculation.Lines,
-            CostCalculation = costCalculation,
+            // The v1 fingerprint uses this frozen shape. New domain metadata
+            // must not invalidate a replay accepted before its introduction.
+            // Percentage metadata is captured in CostCalculation.ReceiptLines.
+            Lines = calculation.Lines.Select(line => new {
+                line.LineNumber, line.ProductId, line.Description, line.Quantity,
+                line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
+                line.TaxTreatment, line.NetAmount, line.TaxAmount, line.LineTotal
+            }).ToArray(),
+            CostCalculation = costCalculation with
+            {
+                // Display hints never identify the financial source or change
+                // an accepted command. The immutable entry supplies its number.
+                ReferencedDocuments = costCalculation.ReferencedDocuments?.Select(document => document with
+                { Request = document.Request with { EntryNumber = null } }).ToArray()
+            },
             Withholding = withholding,
             AdditionalWithholdings = additionalWithholdings.OrderBy(value => value.Key)
         };
@@ -1202,14 +1104,6 @@ public sealed class SqlGoodsReceiptStore(
         parameter.Precision = precision;
         parameter.Scale = scale;
         parameter.Value = value;
-    }
-
-    private static void AddNullableDecimal(SqlCommand command, string name, decimal? value, byte precision, byte scale)
-    {
-        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
-        parameter.Precision = precision;
-        parameter.Scale = scale;
-        parameter.Value = (object?)value ?? DBNull.Value;
     }
 
     internal sealed record SupportFiscalAllocation(

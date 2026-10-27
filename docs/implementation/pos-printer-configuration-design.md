@@ -167,6 +167,29 @@ de la versión 1. En la aplicación instalada cada formato usa su ruta de
 impresora de Facturas; en navegador abre el diálogo de impresión. Las vistas
 de CxC y CxP usan exactamente este wizard y no abren un segundo modal.
 
+La habilitación de confirmar vive una sola vez en `PosPaymentDialog`: cuadre,
+evidencia del medio, documento preparado, ausencia de envío activo y catálogo de
+medios cargado sin error. La usan el botón principal, los botones S/T/M/O/C y
+sus atajos. Ninguna opción de impresión permite iniciar un envío mientras ese
+estado no esté listo. «Sin imprimir» conserva su independencia de la carga de
+impresoras; las rutas que imprimen mantienen su validación de configuración.
+No cambia la frontera entre operación confirmada e impresión posterior, sus
+adaptadores, marca, plantillas ni versiones.
+
+La regresión local del 24 de octubre retiene explícitamente la respuesta del
+catálogo de medios: detectó «Sin imprimir» habilitado con «Confirmar pago»
+bloqueado, antes de que pudiera enviarse nada. Con la condición compartida, los
+ocho casos de captura, carga retenida, aceptación/aplicación, rechazo 409,
+respuesta incierta 503 y tarjeta pasaron desde la vista con HTTP controlado.
+También pasaron las 253 pruebas unitarias del POS, lint enfocado y build de
+interfaz. Son pruebas de interfaz y cálculo; no sustituyen los recorridos contra
+API/SQL reales ni la auditoría completa del rediseño contable.
+La repetición posterior contra API/SQL locales aprobó los siete recorridos de
+comprobantes, cartera, gasto, recepción/devolución/egreso, pedidos con inventario
+y POS con teclado e impresión. La venta POS pasó en 20,2 segundos; la tanda
+completa duró 4,7 minutos. No se modificaron el cálculo, el motor de emisión,
+el render ni el transporte para corregir esta habilitación.
+
 `cash-entry` y `cash-exit` versión 3 conservan su tirilla. La versión 4 usa los
 tres formatos de hoja con los mismos datos del movimiento. En la caja instalada
 usan las rutas de Facturas; el navegador presenta su diálogo de impresión.

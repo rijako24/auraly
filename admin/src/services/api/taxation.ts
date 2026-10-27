@@ -28,7 +28,8 @@ export interface AppliedWithholdingReport {
     recognizedAt: string; documentNumber: string; supplierName: string;
     supplierIdentification: string; kind: WithholdingKind; name: string;
     ruleCode: string; jurisdictionCode: string | null; taxableBase: number;
-    rate: number; amount: number; isManual: boolean }>;
+    rate: number; amount: number; isManual: boolean;
+    documentTypeLabel?: string | null; kindLabel?: string | null }>;
 }
 
 export interface SaveCounterpartyTaxProfile {

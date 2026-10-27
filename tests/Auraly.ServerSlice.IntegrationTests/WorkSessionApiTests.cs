@@ -1,14 +1,195 @@
+using System.Data;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using Auraly.Application.WorkSessions;
+using Auraly.Commerce.Accounting.Application;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Receivables;
+using Auraly.Contracts.Returns;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
+public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData(250)]
+    [InlineData(10_000)]
+    public async Task Closure_charge_pages_filter_before_paging_and_keep_complete_totals_with_two_commands(int size)
+    {
+        var userId = await CreateUserAsync("closure-charges");
+        using var client = fixture.CreateUserClient(userId, WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Close, WorkSessionPermissionCodes.ReadCashDifferences);
+        var session = await OpenAsync(client, new OpenWorkSessionRequest(fixture.BusinessId));
+        var closure = await CloseAsync(client, session.WorkSessionId, Guid.NewGuid().ToString("N"),
+            new CloseWorkSessionRequest(0m, null));
+        var charges = Enumerable.Range(0, size).Select(index => new WorkSessionInvoiceCharge(
+            Guid.NewGuid(), $"FV-CARGO-{index}", Guid.NewGuid(), Guid.NewGuid(), "DELIVERY", $"Cargo {index}",
+            "Proveedor del snapshot", index % 2 == 0 ? 5000m : 1000m, index % 2 == 0 ? 5000m : 0m,
+            index % 2 == 0 ? 0m : 1000m, 0m,
+            index % 2 == 0 ? [new(1, "Cash", 2000m), new(2, "Transfer", 3000m)] : [])).ToArray();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            Assert.StartsWith("AuralyServerSlice_", connection.Database);
+            // Fixture-only frozen evidence. Runtime never rewrites a closure.
+            await using var seed = connection.CreateCommand();
+            seed.CommandText = """
+                UPDATE dbo.WorkSessionClosures SET ReceiptSnapshotJson=
+                  JSON_MODIFY(ReceiptSnapshotJson,N'$.invoiceCharges',JSON_QUERY(@Charges))
+                WHERE WorkSessionClosureId=@ClosureId;
+                """;
+            seed.Parameters.AddWithValue("@ClosureId", closure.WorkSessionClosureId);
+            seed.Parameters.Add("@Charges", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(charges,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.Equal(1, await seed.ExecuteNonQueryAsync());
+        }
+        var path = $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/invoice-charges/page";
+        var first = await client.GetFromJsonAsync<WorkSessionInvoiceChargePage>($"{path}?page=1&pageSize=2");
+        Assert.NotNull(first);
+        Assert.Equal(size, first.TotalItems);
+        Assert.Equal(size * 3000m, first.TotalAmount);
+        Assert.Equal(size * 2500m, first.ClosureSummary.InvoicedAmount);
+        Assert.Equal(size * 500m, first.ClosureSummary.ExpenseAmount);
+        Assert.Equal(charges.Take(2).Select(charge => charge.AppliedChargeId), first.Items.Select(charge => charge.AppliedChargeId));
+        var filtered = await client.GetFromJsonAsync<WorkSessionInvoiceChargePage>(
+            $"{path}?paymentMethodCode=Transfer&page=2&pageSize=2");
+        Assert.NotNull(filtered);
+        Assert.Equal(size / 2, filtered.TotalItems);
+        Assert.Equal(size * 1500m, filtered.TotalAmount);
+        Assert.Equal(new[] { charges[4].AppliedChargeId, charges[6].AppliedChargeId },
+            filtered.Items.Select(charge => charge.AppliedChargeId));
+        Assert.Equal(first.ClosureSummary.InvoicedAmount, filtered.ClosureSummary.InvoicedAmount);
+        var transfer = Assert.Single(filtered.ClosureSummary.PaymentMethods, method => method.PaymentMethodCode == "Transfer");
+        Assert.Equal(size / 2, transfer.Count);
+        Assert.Equal(size * 1500m, transfer.Amount);
+        using (var forbidden = fixture.CreateUserClient(userId))
+        using (var response = await forbidden.GetAsync(path))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using (var response = await client.GetAsync($"{path}?pageSize=101"))
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        using (var response = await client.GetAsync($"/api/commerce/v1/work-sessions/closures/{Guid.NewGuid():D}/invoice-charges/page"))
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<WorkSessionService>();
+        var identity = new WorkSessionIdentity(userId, fixture.TenantId,
+            new HashSet<string> { WorkSessionPermissionCodes.ReadCashDifferences }, fixture.BusinessId);
+        var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        var times = new List<double>();
+        for (var sample = 0; sample <= 20; sample++)
+        {
+            using var count = new InventoryBalanceProcessingTests.CommandCounter(database);
+            var timer = Stopwatch.StartNew();
+            var result = await service.ListClosureInvoiceChargesAsync(identity, closure.WorkSessionClosureId,
+                sample % 2 == 0 ? null : "Transfer", 2, 50);
+            timer.Stop();
+            Assert.Equal(2, count.Count);
+            Assert.Equal(50, result.Items.Count);
+            Assert.Equal(size, result.ClosureSummary.Count);
+            if (sample > 0) times.Add(timer.Elapsed.TotalMilliseconds);
+        }
+        var ordered = times.Order().ToArray();
+        var p95 = ordered[(int)Math.Ceiling(ordered.Length * .95) - 1];
+        Console.WriteLine($"Cargos del cierre, {size} cargos: p95 {p95:F1} ms, 2 SQL y 50 filas, 20 muestras.");
+        Assert.True(p95 < 2000, $"Cargos de cierre: p95 {p95:F1} ms supera dos segundos.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Refund_verification_uses_its_session_when_the_same_user_has_overlapping_sessions(bool backdated)
+    {
+        var userId = await CreateUserAsync("refund-session-scope");
+        using var client = fixture.CreateUserClient(userId, SalesReturnPermissionCodes.Create,
+            WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences);
+        var web = await OpenAsync(client, new OpenWorkSessionRequest(fixture.BusinessId, null, null));
+        var deviceSessionId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = connection.CreateCommand();
+            seed.CommandText = """
+                INSERT dbo.WorkSessions(WorkSessionId,TenantId,BusinessId,UserId,DeviceId,
+                  OpenedAt,LastActivityAt,Status)
+                SELECT @SessionId,TenantId,BusinessId,UserId,@DeviceId,OpenedAt,LastActivityAt,N'Open'
+                FROM dbo.WorkSessions WHERE WorkSessionId=@WebSessionId;
+                """;
+            seed.Parameters.AddWithValue("@SessionId", deviceSessionId);
+            seed.Parameters.AddWithValue("@DeviceId", fixture.DeviceId);
+            seed.Parameters.AddWithValue("@WebSessionId", web.WorkSessionId);
+            Assert.Equal(1, await seed.ExecuteNonQueryAsync());
+        }
+        var sale = fixture.WithHistoricalSaleUblSnapshot(fixture.CreateValidRequest(backdated ? 9588 : 9587));
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(sale))
+        using (var uploaded = await pos.SendAsync(upload))
+            Assert.True(uploaded.IsSuccessStatusCode, await uploaded.Content.ReadAsStringAsync());
+        var returned = new ConfirmSalesReturnRequest(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            sale.DocumentId, DateTimeOffset.UtcNow.AddHours(backdated ? -1 : 0), ReturnEconomicResolutions.Refund, "Cash",
+            "Reintegro en la sesión web", [new(1, 1m, ReturnInventoryDispositions.Sellable)],
+            web.WorkSessionId, ReasonCode: "Other");
+        using (var confirmation = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+               { Content = JsonContent.Create(returned) })
+        {
+            confirmation.Headers.Add("Idempotency-Key", returned.ReturnId.ToString("D"));
+            using var accepted = await client.SendAsync(confirmation);
+            Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        }
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var processed = connection.CreateCommand();
+            processed.CommandText = "SELECT Status FROM dbo.SalesReturns WHERE ReturnId=@ReturnId";
+            processed.Parameters.AddWithValue("@ReturnId", returned.ReturnId);
+            Assert.Equal("Processed", await processed.ExecuteScalarAsync());
+        }
+        var deviceClosure = await CloseAsync(client, deviceSessionId, Guid.NewGuid().ToString("N"),
+            new CloseWorkSessionRequest(0m, null));
+        var webClosure = await CloseAsync(client, web.WorkSessionId, Guid.NewGuid().ToString("N"),
+            new CloseWorkSessionRequest(0m, null));
+
+        var devicePage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"/api/commerce/v1/work-sessions/closures/{deviceClosure.WorkSessionClosureId:D}/payment-verifications/page");
+        Assert.NotNull(devicePage);
+        Assert.DoesNotContain(devicePage.Items, item => item.SourceId == returned.ReturnId);
+        Assert.Empty(devicePage.Groups);
+        var webPage = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>(
+            $"/api/commerce/v1/work-sessions/closures/{webClosure.WorkSessionClosureId:D}/payment-verifications/page");
+        var refund = Assert.Single(webPage!.Items, item => item.SourceId == returned.ReturnId);
+        Assert.Equal("Refund", refund.MovementType);
+        Assert.Equal(-11_900m, refund.Amount);
+        Assert.Equal(webClosure.PaymentTotals.Single(item => item.PaymentMethodCode == "Cash").NetAmount,
+            webPage.Items.Sum(item => item.Amount));
+    }
+
+    [Fact]
+    public async Task Reconciliation_rejects_an_oversized_verification_key_before_loading_the_closure()
+    {
+        using var client = fixture.CreateAdminClient(WorkSessionPermissionCodes.ReconcileClosures);
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/commerce/v1/work-sessions/closures/{Guid.NewGuid():D}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                [new ReconcileWorkSessionClosureLine("Cash", 0m, true, null)], [], null,
+                [new WorkSessionPaymentVerificationDecision(new string('x', 201), "Verified")]))
+        };
+        request.Headers.Add("Idempotency-Key", $"invalid-key-{Guid.NewGuid():N}");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("La verificación individual de pagos no es válida.",
+            await response.Content.ReadAsStringAsync());
+    }
+
     [Fact]
     public async Task Opening_or_resuming_the_own_session_is_a_system_action_without_a_permission()
     {
@@ -1182,7 +1363,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                                item.PaymentMethodCode == "Transfer" ? 9_000m : 0m, true, null)).ToArray(),
                        [], null,
                        [new WorkSessionPaymentVerificationDecision(sale.VerificationKey, "Verified")],
-                       ManualMovements: [new(Guid.NewGuid(), "Transfer", "CashOut", 9_000m, "Omitido")]))
+                       ManualMovements: [new(Guid.NewGuid(), "Transfer", "CashOut", -9_000m, "Omitido")]))
                })
         {
             invalid.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
@@ -1231,10 +1412,11 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             command.Parameters.AddWithValue("@UserId", userId);
             await command.ExecuteNonQueryAsync();
         }
-        using var client = fixture.CreateUserClient(userId,
+        var permissions = new[] {
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ManageCash, WorkSessionPermissionCodes.ReadCashDifferences,
-            WorkSessionPermissionCodes.ReconcileClosures, ReceivablesPermissionCodes.Read);
+            WorkSessionPermissionCodes.ReconcileClosures, ReceivablesPermissionCodes.Read };
+        using var client = fixture.CreateUserClient(userId, permissions);
         var opened = await OpenAsync(client,
             new OpenWorkSessionRequest(fixture.BusinessId, fixture.WarehouseId, null));
         var reasons = await client.GetFromJsonAsync<CashMovementReasonView[]>(
@@ -1267,9 +1449,32 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             [], "Faltante confirmado en el arqueo",
             [new WorkSessionPaymentVerificationDecision(cashIn.VerificationKey, "Verified")],
             ChargeCashShortageToEmployee: true);
+        var reconciliationKey = $"reconcile-{Guid.NewGuid():N}";
+        using (var scope = fixture.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<IWorkSessionStore>();
+            var acceptedSource = await store.ReconcileClosureAsync(new(userId, fixture.TenantId,
+                permissions.ToHashSet(StringComparer.Ordinal), fixture.BusinessId), closure.WorkSessionClosureId,
+                reconciliationKey, request, default);
+            await using (var acceptanceConnection = new SqlConnection(fixture.ConnectionString))
+            {
+                await acceptanceConnection.OpenAsync();
+                await using var untouched = new SqlCommand("""
+                    SELECT (SELECT COUNT(*) FROM dbo.Receivables WHERE SourceDocumentId=@Id),
+                      (SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id);
+                    """, acceptanceConnection);
+                untouched.Parameters.AddWithValue("@Id", acceptedSource.ReconciliationId);
+                await using var untouchedReader = await untouched.ExecuteReaderAsync();
+                Assert.True(await untouchedReader.ReadAsync());
+                Assert.Equal(0, untouchedReader.GetInt32(0));
+                Assert.Equal(1, untouchedReader.GetInt32(1));
+            }
+            await scope.ServiceProvider.GetRequiredService<AccountingProcessingCoordinator>().RequestPostingAsync(
+                fixture.BusinessId, acceptedSource.ReconciliationId, WorkSessionAccountingDocumentTypes.ClosureReconciliation);
+        }
         using var message2 = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
         { Content = JsonContent.Create(request) };
-        message2.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        message2.Headers.Add("Idempotency-Key", reconciliationKey);
         using var response2 = await client.SendAsync(message2);
         response2.EnsureSuccessStatusCode();
         var accepted = await response2.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
@@ -1729,6 +1934,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             $"{path}/payment-verifications/page?movementType=ReceivablePayment&page=1&pageSize=10");
         Assert.Equal(collection.CounterpartyName, Assert.Single(collectionPage!.Items).CounterpartyName);
         Assert.Equal(collection.DocumentNumber, collectionPage.Items[0].DocumentNumber);
+        await AssertBoundedVerificationPagesAsync(client, path, "ReceivablePayment");
         var creditSale = Assert.Single(items!, item => item.MovementType == "CreditSale");
         using (var invalid = await client.PostAsJsonAsync($"{path}/payment-corrections/validate",
                    new[] { new WorkSessionPaymentCorrection(collection.VerificationKey, "Cash", 11_000m,
@@ -1793,9 +1999,17 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, checkedRow.GetInt32(3));
     }
 
-    [Fact]
-    public async Task Closure_correction_of_a_supplier_payment_restores_the_supplier_balance()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Closure_correction_of_a_supplier_payment_restores_the_supplier_balance(bool frozenAccount)
     {
+        Guid? acceptedAccount = null;
+        if (frozenAccount)
+        {
+            using var configuration = fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
+            acceptedAccount = (await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, configuration)).AccountId;
+        }
         var userId = await CreateUserAsync("work-session-correct-payable");
         using var client = fixture.CreateUserClient(userId,
             WorkSessionPermissionCodes.Read, WorkSessionPermissionCodes.Close,
@@ -1843,8 +2057,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                   @PaymentNumber,N'PGC',N'00',@Consecutive,@IdempotencyKey,
                   CONVERT(binary(32),0),SYSDATETIMEOFFSET(),N'COP',5000,N'Processed',
                   @UserId,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET());
-                INSERT dbo.SupplierPaymentTenders(PaymentId,LineNumber,MethodCode,Amount)
-                VALUES(@PaymentId,1,N'Cash',5000);
+                INSERT dbo.SupplierPaymentTenders(PaymentId,LineNumber,MethodCode,Amount,AccountId,SourceLineId)
+                VALUES(@PaymentId,1,N'Cash',5000,@AcceptedAccount,CASE WHEN @AcceptedAccount IS NOT NULL THEN NEWID() END);
                 INSERT dbo.SupplierPaymentApplications(PaymentId,LineNumber,PayableId,Amount,AppliedAt)
                 VALUES(@PaymentId,1,@PayableId,5000,SYSDATETIMEOFFSET());
                 INSERT dbo.WorkSessionMovements(WorkSessionMovementId,WorkSessionId,DocumentId,
@@ -1860,6 +2074,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             command.Parameters.AddWithValue("@SourceId", sourceId);
             command.Parameters.AddWithValue("@PayableId", payableId);
             command.Parameters.AddWithValue("@PaymentId", paymentId);
+            command.Parameters.Add("@AcceptedAccount", SqlDbType.UniqueIdentifier).Value = (object?)acceptedAccount ?? DBNull.Value;
             command.Parameters.AddWithValue("@InvoiceNumber", $"RC-{sourceId:N}"[..20]);
             command.Parameters.AddWithValue("@PaymentNumber", $"PGC-{paymentId:N}"[..20]);
             command.Parameters.AddWithValue("@Consecutive", (long)BitConverter.ToUInt32(paymentId.ToByteArray(), 0) + 1);
@@ -1896,6 +2111,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             $"{path}/payment-verifications/page?movementType=PayablePayment&page=1&pageSize=10");
         Assert.Equal(payment.CounterpartyName, Assert.Single(paymentPage!.Items).CounterpartyName);
         Assert.Equal(payment.DocumentNumber, paymentPage.Items[0].DocumentNumber);
+        await AssertBoundedVerificationPagesAsync(client, path, "PayablePayment");
         using var message = new HttpRequestMessage(HttpMethod.Post, $"{path}/reconcile")
         {
             Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
@@ -1920,7 +2136,10 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.PayableTransactions trans
                WHERE trans.PayableId=balance.PayableId
                  AND trans.SourceDocumentId=@ReconciliationId
-                 AND trans.TransactionType=N'Adjustment')
+                 AND trans.TransactionType=N'Adjustment'),
+              (SELECT COALESCE(SUM(line.Debit),0) FROM dbo.AccountingEntries entry
+               JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+               WHERE entry.SourceDocumentId=@ReconciliationId AND line.AccountId=@AcceptedAccount AND line.PartyId=@PartyId)
             FROM dbo.Payables balance
             JOIN dbo.SupplierPayments payment ON payment.PaymentId=@PaymentId
             JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=@ReconciliationId
@@ -1930,12 +2149,43 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         verify.Parameters.AddWithValue("@PaymentId", paymentId);
         verify.Parameters.AddWithValue("@PayableId", payableId);
         verify.Parameters.AddWithValue("@ReconciliationId", reconciliation.ReconciliationId);
+        verify.Parameters.Add("@AcceptedAccount", SqlDbType.UniqueIdentifier).Value = (object?)acceptedAccount ?? DBNull.Value;
+        verify.Parameters.AddWithValue("@PartyId", fixture.SupplierPartyId);
         await using var row = await verify.ExecuteReaderAsync();
         Assert.True(await row.ReadAsync());
         Assert.Equal(7_000m, row.GetDecimal(0));
         Assert.Equal(5_000m, row.GetDecimal(1));
         Assert.Equal("Posted", row.GetString(2));
         Assert.Equal(1, row.GetInt32(3));
+        // Paying 3,000 instead of 5,000 restores 2,000 to the original cash
+        // auxiliary and keeps its supplier, regardless of the aggregate mapping.
+        if (frozenAccount) Assert.Equal(2_000m, row.GetDecimal(4));
+    }
+
+    private async Task AssertBoundedVerificationPagesAsync(HttpClient client, string path, string kind)
+    {
+        foreach (var filter in new[] { "page=1&pageSize=1", $"movementType={kind}&page=1&pageSize=10" })
+        {
+            var times = new List<double>();
+            for (var sample = 0; sample <= 20; sample++)
+            {
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(
+                    new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                    commandFilter: command => command.CommandText.Contains("INTO #EligibleMovements FROM EligibleMovements", StringComparison.Ordinal)
+                        || command.CommandText.Contains("WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId;", StringComparison.Ordinal));
+                var timer = Stopwatch.StartNew();
+                var page = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>($"{path}/payment-verifications/page?{filter}");
+                timer.Stop();
+                Assert.Equal(2, counter.Count);
+                Assert.NotNull(page);
+                Assert.NotEmpty(page.Items);
+                Assert.True(page.Items.Count <= page.PageSize);
+                if (sample > 0) times.Add(timer.Elapsed.TotalMilliseconds);
+            }
+            var p95 = times.Order().ElementAt((int)Math.Ceiling(times.Count * .95) - 1);
+            output.WriteLine("Conciliación {0}, {1}: p95 {2:F1} ms, 2 SQL, 20 muestras.", kind, filter, p95);
+            Assert.True(p95 < 2000, $"La página de conciliación {kind}, {filter} superó dos segundos: p95 {p95:F1} ms.");
+        }
     }
 
     private static async Task<WorkSessionView> OpenAsync(
@@ -1992,31 +2242,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         return message;
     }
 
-    private async Task<Guid> CreateUserAsync(string prefix)
-    {
-        var userId = Guid.NewGuid();
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT dbo.AppUsers
-              (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
-               FirstName,LastName,IsActive,CreatedAt)
-            VALUES
-              (@UserId,@TenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
-               N'Operador',N'Auraly',1,SYSUTCDATETIME());
-            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
-            VALUES(NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
-            """;
-        command.Parameters.AddWithValue("@UserId", userId);
-        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
-        command.Parameters.AddWithValue("@RoleId", fixture.RoleId);
-        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-        command.Parameters.AddWithValue("@Username", $"{prefix}-{userId:N}");
-        command.Parameters.AddWithValue("@Email", $"{prefix}-{userId:N}@test.local");
-        await command.ExecuteNonQueryAsync();
-        return userId;
-    }
+    private Task<Guid> CreateUserAsync(string prefix) => fixture.CreateWorkSessionUserAsync(prefix);
 
     private async Task<Guid> CreateCustomerAsync(Guid userId, string name)
     {

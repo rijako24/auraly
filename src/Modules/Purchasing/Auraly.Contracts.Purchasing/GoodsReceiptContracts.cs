@@ -25,6 +25,7 @@ public static class PurchasingDocumentTypes
 {
     public const string GoodsReceipt = AuralyDocumentTypes.GoodsReceipt;
     public const string GoodsReceiptCostDocument = "GoodsReceiptCostDocument";
+    public const string GoodsReceiptCostRevision = "GoodsReceiptCostRevision";
     public const string PurchaseReturn = AuralyDocumentTypes.PurchaseReturn;
 }
 
@@ -92,6 +93,74 @@ public static class PurchaseCostAllocationMethods
 
 public sealed record GoodsReceiptCostManualAllocationRequest(int ReceiptLineNumber, decimal FunctionalAmount);
 
+public static class GoodsReceiptCostAssociationModes
+{
+    public const string Associate = "Associate";
+    public const string Distribute = "Distribute";
+}
+
+public sealed record GoodsReceiptVoucherCostLineRequest(
+    int EntryLineNumber, decimal FunctionalAmount, string AllocationMethod,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<GoodsReceiptCostManualAllocationRequest>? ManualAllocations = null);
+
+public sealed record GoodsReceiptVoucherCostRequest(
+    Guid AssociationId, Guid EntryId, string Mode,
+    IReadOnlyList<GoodsReceiptVoucherCostLineRequest> Lines,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? EntryNumber = null);
+
+public sealed record GoodsReceiptVoucherCostLineSnapshot(
+    int EntryLineNumber, Guid AccountId, Guid? PartyId, Guid? CostCenterId,
+    decimal FunctionalAmount, string AllocationMethod,
+    IReadOnlyList<GoodsReceiptVoucherCostAllocationSnapshot> Allocations);
+
+// Source line and method already belong to the containing cost line. Keep only
+// allocation facts here instead of repeating those fields for every product.
+public sealed record GoodsReceiptVoucherCostAllocationSnapshot(
+    int ReceiptLineNumber, decimal Factor, decimal FunctionalAmount);
+
+public sealed record GoodsReceiptVoucherCostSnapshot(
+    Guid AssociationId, Guid EntryId, Guid SourceDocumentId, string SourceDocumentType,
+    string EntryNumber, string Mode, IReadOnlyList<GoodsReceiptVoucherCostLineSnapshot> Lines,
+    int? CostRevisionNumber = null, string? CostRevisionStatus = null);
+
+public sealed record ReviseGoodsReceiptCostsRequest(
+    Guid RevisionId, Guid BusinessId, Guid GoodsReceiptId,
+    IReadOnlyList<GoodsReceiptVoucherCostRequest> ReferencedCostDocuments);
+
+public sealed record GoodsReceiptCostRevisionPayload(
+    Guid TenantId, Guid BusinessId, Guid RevisionId, Guid GoodsReceiptId,
+    int RevisionNumber, Guid WarehouseId, Guid SupplierId, Guid AcceptedByUserId,
+    string ReceiptNumber, DateTimeOffset OccurredAt,
+    IReadOnlyList<GoodsReceiptLineSnapshot> ReceiptLines,
+    IReadOnlyList<GoodsReceiptVoucherCostSnapshot> ReferencedCostDocuments);
+
+public sealed record GoodsReceiptCostRevisionAcceptance(
+    Guid RevisionId, Guid GoodsReceiptId, int RevisionNumber,
+    Guid? JobId, string Status, bool IdempotentReplay);
+
+public sealed record GoodsReceiptCostVoucherLine(
+    int LineNumber, Guid AccountId, string AccountCode, string AccountName,
+    Guid? PartyId, string? PartyName, string Description, decimal Debit, decimal Credit,
+    decimal EligibleFunctionalAmount, decimal AssignedFunctionalAmount);
+
+public sealed record GoodsReceiptCostVoucher(
+    Guid EntryId, string EntryNumber, Guid SourceDocumentId, string SourceDocumentType,
+    IReadOnlyList<GoodsReceiptCostVoucherLine> Lines);
+
+public sealed record GoodsReceiptCostVoucherCandidate(
+    Guid EntryId, string EntryNumber, string DocumentNumber, DateTimeOffset OccurredAt,
+    string PartyName, string Description, string AccountCode, string AccountName,
+    string Concept, int EligibleLineCount, decimal EligibleFunctionalAmount,
+    decimal AssignedFunctionalAmount);
+
+public sealed record GoodsReceiptCostVoucherCandidatePage(
+    IReadOnlyList<GoodsReceiptCostVoucherCandidate> Items, int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 :
+        (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
+
 public sealed record GoodsReceiptCostLineRequest(
     int LineNumber, string CostKind, string Description, decimal Amount,
     decimal TaxableBaseAmount, string TaxCode, decimal TaxRate, decimal TaxAmount,
@@ -129,7 +198,20 @@ public sealed record GoodsReceiptLineRequest(
     string? OverReceiptReason = null,
     decimal? TotalGrossWeightKg = null,
     decimal? TotalVolumeM3 = null,
-    decimal? UnitGrossWeightKg = null);
+    decimal? UnitGrossWeightKg = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    decimal? CommercialDiscountPercent = null);
+
+public sealed record GoodsReceiptFinancialDiscountRequest(
+    decimal Percent, DateOnly? ExpectedOn, bool AnticipateInCost);
+
+public sealed record GoodsReceiptFinancialDiscountLineSnapshot(
+    int ReceiptLineNumber, decimal Amount, decimal FunctionalAmount);
+
+public sealed record GoodsReceiptFinancialDiscountSnapshot(
+    decimal Percent, decimal EligibleBase, decimal Amount, decimal FunctionalAmount,
+    DateOnly? ExpectedOn, bool AnticipatedInCost,
+    IReadOnlyList<GoodsReceiptFinancialDiscountLineSnapshot> Lines);
 
 public sealed record ConfirmGoodsReceiptRequest(
     Guid DocumentId,
@@ -156,7 +238,11 @@ public sealed record ConfirmGoodsReceiptRequest(
     Guid? PartySiteId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WithholdingReviewHash = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WithholdingReviewHash = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<GoodsReceiptVoucherCostRequest>? ReferencedCostDocuments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -184,7 +270,9 @@ public sealed record GoodsReceiptLineSnapshot(
     decimal FunctionalLineTotal = 0,
     decimal AllocatedLandedCostAmount = 0,
     decimal RecognizedInventoryCostAmount = 0,
-    decimal? UnitGrossWeightKg = null);
+    decimal? UnitGrossWeightKg = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    decimal? CommercialDiscountPercent = null);
 
 public sealed record GoodsReceiptCostAllocationSnapshot(
     int CostLineNumber, int ReceiptLineNumber, decimal Factor,
@@ -247,7 +335,11 @@ public sealed record GoodsReceiptDocumentPayload(
     decimal FunctionalTaxAmount = 0,
     decimal FunctionalGrandTotal = 0,
     IReadOnlyList<GoodsReceiptCostDocumentSnapshot>? AdditionalCostDocuments = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<GoodsReceiptVoucherCostSnapshot>? ReferencedCostDocuments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    GoodsReceiptFinancialDiscountSnapshot? FinancialDiscount = null);
 
 public sealed record GoodsReceiptAcceptance(
     Guid DocumentId,
@@ -294,7 +386,11 @@ public sealed record SaveGoodsReceiptDraftRequest(
     IReadOnlyCollection<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null,
     Guid? PartySiteId = null,
     string? WithholdingConceptCode = null,
-    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null);
+    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<GoodsReceiptVoucherCostRequest>? ReferencedCostDocuments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null);
 
 public sealed record GoodsReceiptDraft(
     Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
@@ -311,7 +407,11 @@ public sealed record GoodsReceiptDraft(
     IReadOnlyList<GoodsReceiptCostDocumentRequest>? AdditionalCostDocuments = null,
     Guid? PartySiteId = null,
     string? WithholdingConceptCode = null,
-    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null);
+    IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>? WithholdingAdjustments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<GoodsReceiptVoucherCostRequest>? ReferencedCostDocuments = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null);
 
 public sealed record GoodsReceiptDetail(
     Guid DocumentId, string DocumentNumber, string Status,
@@ -331,7 +431,14 @@ public sealed record GoodsReceiptDetail(
     decimal FunctionalTaxAmount = 0,
     decimal FunctionalGrandTotal = 0,
     IReadOnlyList<GoodsReceiptCostDocumentSnapshot>? AdditionalCostDocuments = null,
-    IReadOnlyList<GoodsReceiptAccountingStatus>? AccountingStatuses = null);
+    IReadOnlyList<GoodsReceiptAccountingStatus>? AccountingStatuses = null,
+    IReadOnlyList<GoodsReceiptVoucherCostSnapshot>? ReferencedCostDocuments = null,
+    GoodsReceiptPayableView? Payable = null,
+    GoodsReceiptFinancialDiscountSnapshot? FinancialDiscount = null);
+
+public sealed record GoodsReceiptPayableView(
+    Guid PayableId, string Status, decimal OutstandingAmount, string CurrencyCode,
+    Guid? PartySiteId, string? PartySiteName, DateTimeOffset DueDate);
 
 public sealed record GoodsReceiptAccountingStatus(
     Guid SourceDocumentId, string SourceDocumentType, string Status,
@@ -361,7 +468,8 @@ public sealed record GoodsReceiptWorkspaceOptions(
     IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseTaxRates,
     IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseTaxTreatments,
     IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseCurrencies,
-    IReadOnlyList<PurchaseEvidenceTypeOption> ExchangeRateSources);
+    IReadOnlyList<PurchaseEvidenceTypeOption> ExchangeRateSources,
+    IReadOnlyList<PurchaseEvidenceTypeOption>? PurchaseCostAssociationModes = null);
 
 public sealed record GoodsReceiptWarehouseOption(Guid WarehouseId, string Code, string Name);
 public sealed record GoodsReceiptSupplierOption(
@@ -413,6 +521,13 @@ public static class GoodsReceiptContractSerializer
     public static GoodsReceiptCostDocumentAccountingPayload DeserializeCostDocument(string payload) =>
         JsonSerializer.Deserialize<GoodsReceiptCostDocumentAccountingPayload>(payload, Options)
         ?? throw new InvalidOperationException("The goods receipt cost document payload is invalid.");
+
+    public static string SerializeCostRevision(GoodsReceiptCostRevisionPayload payload) =>
+        JsonSerializer.Serialize(payload, Options);
+
+    public static GoodsReceiptCostRevisionPayload DeserializeCostRevision(string payload) =>
+        JsonSerializer.Deserialize<GoodsReceiptCostRevisionPayload>(payload, Options)
+        ?? throw new InvalidOperationException("The goods receipt cost revision payload is invalid.");
 }
 
 public sealed record PurchaseReturnLineRequest(int OriginalLineNumber, decimal Quantity);
@@ -426,7 +541,11 @@ public sealed record PurchaseReturnLineSnapshot(
     int LineNumber, int OriginalLineNumber, Guid ProductId, string Description,
     decimal Quantity, decimal UnitCost, decimal DiscountAmount, string TaxCode,
     decimal TaxRate, string TaxTreatment, decimal NetAmount, decimal TaxAmount,
-    decimal LineTotal, decimal RecognizedUnitCost);
+    decimal LineTotal, decimal RecognizedUnitCost,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    decimal FinancialDiscountAmount = 0m,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    decimal FinancialDiscountAdjustment = 0m);
 
 public sealed record PurchaseReturnDocumentPayload(
     Guid TenantId, Guid BusinessId, Guid ReturnId, Guid OriginalGoodsReceiptId,

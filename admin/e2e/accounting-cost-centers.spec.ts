@@ -30,7 +30,7 @@ test("contador edita centros y reglas con versión y conserva el vínculo bancar
     else if(path.endsWith("/cost-center-assignments"))body=rules;
     else if(path.includes("accounting-cost-center-operation"))body=[{id:"all",code:"All",label:"Todas las operaciones"},{id:"sales",code:"Sales",label:"Ventas"},{id:"expenses",code:"Expenses",label:"Gastos"}];
     else if(path.endsWith("/readiness"))body={status:"Ready",blockingIssues:[],canEditOpeningBalances:false};
-    else if(path.endsWith("/bank-accounts"))body=[{bankAccountId:"bank",accountingAccountId:"account",accountingAccountCode:"11100501",accountingAccountName:"Banco principal",accountTypeName:"Ahorros",bankName:"Banco prueba",accountNumber:"123456",displayName:"Cuenta operativa",isPrimary:true,isActive:true}];
+    else if(path.endsWith("/bank-accounts"))body=[{bankAccountId:"bank",accountingAccountId:"account",accountingAccountCode:"11100501",auxiliaryCount:1,accountingAccountName:"Banco principal",accountTypeName:"Ahorros",bankName:"Banco prueba",accountNumber:"123456",displayName:"Cuenta operativa",isPrimary:true,isActive:true}];
     await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify(body)});
   });
   await page.goto("/dashboard/accounting");

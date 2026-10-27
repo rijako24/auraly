@@ -30,6 +30,11 @@ financiero es directo mediante `AccountingSourceDocuments` y
   cliente congelada para cada obligación nueva.
 - `ReceivableTransactions`: libro inmutable de apertura, pago y futuras compensaciones.
 - `CustomerPayments`: encabezado durable e idempotente del recaudo.
+  Un grupo manual conserva su sede explícita, validada contra el padre aceptado.
+  Los recaudos nativos pueden abarcar varias sedes y mantienen esa distribución
+  exclusivamente en las aplicaciones. El historial filtrado suma las aplicaciones
+  de la sede y, cuando corresponda, el anticipo del grupo sin factura. Este último
+  importe se deriva del total menos aplicaciones; no existe otro saldo persistido.
 - `CustomerPaymentApplications`: distribución del recaudo entre obligaciones.
 
 Las tablas pertenecen al `BusinessId`; el `TenantId` se valida mediante la relación canónica con `Businesses`. No se duplican datos de Party ni del documento fiscal.
@@ -286,6 +291,12 @@ borran ni consolidan obligaciones ya emitidas.
 
 - Venta a crédito: débito a cuentas por cobrar y créditos a ingresos e impuestos, además del costo/inventario aplicable.
 - Recaudo: débito al medio de recaudo configurado y crédito a cuentas por cobrar.
+- Los nuevos recaudos fijan la cuenta disponible en `CustomerPaymentTenders`
+  durante la aceptación contable. Los reintentos conservan esa cuenta; solo un
+  retry explícito completa una cuenta que faltaba. Si no puede resolverse, no
+  se aplica el recaudo y se informa que no se realizó. Los medios históricos sin
+  identidad de partida conservan su contrato anterior. El propietario y corte
+  compartido con CxP están en `accounting-open-vouchers-design.md`, sección 13.7.
 - No se crean pagos de venta ficticios para representar financiación.
 - Con contabilidad inactiva, venta, recaudo y devolución conservan la misma
   cartera y transacciones, pero generan cero `AccountingEntries`.

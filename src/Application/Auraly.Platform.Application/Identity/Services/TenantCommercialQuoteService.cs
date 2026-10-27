@@ -19,6 +19,13 @@ public sealed class TenantCommercialQuoteService(ITenantCommercialCatalogStore s
     {
         ArgumentNullException.ThrowIfNull(request);
         var catalog = await store.GetAsync(cancellationToken);
+        return Quote(request, catalog);
+    }
+
+    public static TenantQuoteDto Quote(TenantQuoteRequest request, TenantCommercialCatalogDto catalog)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(catalog);
         var plan = catalog.Plans.SingleOrDefault(item =>
             string.Equals(item.Code, request.PlanCode?.Trim(), StringComparison.OrdinalIgnoreCase))
             ?? throw new ArgumentException("El plan seleccionado no está disponible.");

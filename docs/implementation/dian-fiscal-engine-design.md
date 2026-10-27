@@ -1,6 +1,54 @@
 # Diseño del motor fiscal DIAN
 
-Fecha de actualización: 2026-09-24.
+Fecha de actualización: 2026-10-24.
+
+## Aceptación compartida de documento soporte — prerrequisito local
+
+Para incorporar el comprobante manual sin copiar la persistencia fiscal,
+`SqlFiscalDocumentStore.InsertPurchaseSupportSourcesAsync` concentra la inserción
+de raíz, snapshot de soporte y proceso existentes. Recepción, cargos, gastos,
+devolución, anulación y habilitación conservan sus calculadores, numeración,
+reserva de cupo, snapshots tipados y transacción de aceptación. El participante
+no abre ni confirma otra transacción, no aplica cartera/asientos ni publica
+señales. No crea otro motor, writer, tabla o cola.
+
+Cada conjunto recibido se proyecta por lote, valida tenant/sede y
+emisor, y verifica el número de filas en las tres inserciones. No hay lecturas
+ni escrituras por concepto. Los productores conservan sus límites existentes,
+sin imponer otro ni fragmentar su escritura fiscal. El bloque de dos/diez costos
+requiere un comando de persistencia; la cabecera conserva su comando independiente,
+sin ampliar el presupuesto vigente de la
+captura fiscal. Textos se proyectan sin truncarlos antes de validar los límites
+de las tablas. Replay sigue resuelto por cada aceptación anterior y no invoca
+esta escritura para reparar un documento terminado.
+
+La regresión SQL/API pasó 54/54 casos (`auraly-support-source-owner-regression-final`):
+recepción/cargos/gastos/devolución/anulación/habilitación, consecutivos y cupos,
+incluida generación XSD/firma/CUDS por los mismos workers. Un fallo inyectado
+en la inserción del snapshot del último cargo revierte cabecera, raíces,
+snapshots, procesos y aceptación; reintentar y repetir conserva una única
+aceptación. Los conjuntos de dos/diez cargos comprueban una escritura fiscal
+por conjunto, además de la escritura independiente de cabecera.
+
+La primera corrida pasó 53/54: el contador global de la prueba de una/veinte
+partidas incluyó una llamada de autorización al expirar su caché. La medición
+se acotó al trace de la petición y cuenta esa llamada por separado (máximo
+una); no cambió autorización, caché ni el límite de dos segundos del HTTP
+completo. Pasaron los dos casos aislados y la repetición del grupo completo.
+
+La auditoría del participante y sus seis productores comprobó que conservan
+fecha, tipo técnico, snapshot, emisor, ambiente y TestSetId de habilitación.
+El único INSERT de snapshots de soporte del runtime reside en este participante,
+con prueba arquitectónica; la transacción sigue perteneciendo al productor.
+No se cambiaron contratos públicos, esquema, fórmula tributaria ni frontend.
+El rollback de código conserva el esquema y las fuentes inmutables existentes.
+Esta evidencia cubre este prerrequisito; no habilita el tipo manual sin su
+captura fiscal completa ni sustituye la auditoría global del rediseño.
+Pasaron también 876/876 pruebas de dominio/arquitectura
+(`auraly-support-source-foundation`) y la compilación Release de la API
+(`auraly-support-source-release-build`), sin errores. La compilación conserva
+las cuatro advertencias preexistentes de `System.Security.Cryptography.Xml`
+8.0.4; esta implementación no cambia dependencias. No se desplegó.
 
 ## Flujo vertical conectado
 
@@ -105,6 +153,24 @@ congela el código postal DIAN del vendedor, emite la identificación NIT exigid
 para la operación con residente, incluye `InvoicePeriod` por línea y conserva
 la cantidad base específica del documento soporte. Una corrección de ese perfil
 no modifica la estructura UBL de factura de venta.
+
+El documento soporte manual conserva esa misma generación. La aceptación del
+comprobante aporta `ManualPurchaseSupportPayload` al snapshot de soporte: bases,
+IVA, retenciones, fechas, identidad y proveedor. El worker exige exactamente un
+origen de adquisición y valida su identidad; no crea una recepción ni un gasto
+para poder emitir. La raíz y el proceso fiscales se insertan mediante el writer
+canónico dentro de la aceptación contable, con cupo y serie existentes. La
+proyección de líneas UBL se comparte con la adquisición de Gastos, y las
+retenciones de gasto, recepción, cargo y soporte manual pasan por la misma
+proyección fiscal. Los campos nuevos null se omiten en snapshots nativos para
+conservar sus firmas anteriores. El generador de notas 95 admite también
+`ManualPurchaseSupportCancellationPayload`, con original y fecha propios,
+reutilizando las mismas líneas, CUDS, XSD y firma. Rechaza identidades, ámbitos,
+fechas o referencias inconsistentes. La aceptación y captura del soporte manual
+se amplían en `accounting-open-vouchers-design.md`, apartado «Anulación de un
+soporte manual»: resuelven el original por su CxP y reutilizan este participante,
+la numeración y el motor existentes. Su regresión y auditoría están en curso;
+las pruebas del generador por sí solas no certifican esa aceptación completa.
 
 El QR de documento soporte conserva el texto detallado del anexo y termina en
 la URL de consulta DIAN `.../document/searchqr?documentkey=<CUDS>`. La

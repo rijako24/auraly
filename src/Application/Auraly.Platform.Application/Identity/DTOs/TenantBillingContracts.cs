@@ -51,7 +51,8 @@ public sealed record TenantCommercialSubscriptionDto(
     Guid SubscriptionId, string PlanCode, string PlanName, string BillingPeriod,
     string Status, DateTimeOffset CurrentPeriodStart, DateTimeOffset CurrentPeriodEnd,
     int FullUserLimit, int SellerUserLimit, int PosDeviceLimit,
-    int DianDocumentMonthlyLimit, int DianDocumentsUsed, int PayrollEmployeeLimit);
+    int DianDocumentMonthlyLimit, int DianDocumentsUsed, int PayrollEmployeeLimit,
+    bool HasDianDocumentQuota = false);
 
 public sealed record PlatformTenantSubscriptionDto(
     Guid TenantId, string TenantKey, string TenantName, string TenantEmail,
@@ -96,7 +97,9 @@ public sealed record TenantSubscriptionLifecycleCandidate(
     int DianDocumentPackSize, int PayrollEmployeePackSize,
     bool EmailRemindersEnabled, int PreDueReminderDays,
     int OverdueReminderIntervalDays, int GracePeriodDays,
-    string BillingTimeZoneId);
+    string BillingTimeZoneId,
+    DateTimeOffset? RenewalPeriodStart = null,
+    DateTimeOffset? NextRenewalEvaluationAt = null);
 
 public sealed record TenantSubscriptionLifecycleDecision(
     string? SubscriptionStatus, string? EventKey,

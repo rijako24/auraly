@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Diagnostics;
+using System.Text.Json.Nodes;
+using System.Collections.Concurrent;
+using Auraly.Application.DocumentProcessing;
+using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
@@ -16,6 +20,209 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Operational")]
 public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task One_and_twenty_return_lines_share_one_inventory_batch_without_multiplying_SQL_trips()
+    {
+        var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        using var user = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create);
+        var sessionId = await fixture.OpenWebWorkSessionAsync();
+        var commands = new List<int>();
+        var commandShapes = new List<ConcurrentDictionary<string,int>>();
+        foreach (var lineCount in new[] { 1, 20 })
+        {
+            var original = SplitSale(9_513 + lineCount, lineCount);
+            var soldQuantity = original.Lines.Sum(line => line.Quantity);
+            using (var pos = fixture.CreateClient())
+            using (var upload = fixture.CreateUploadMessage(original))
+            using (var response = await pos.SendAsync(upload))
+                Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            Assert.Equal("Completed", await JobStatusAsync(original.DocumentId));
+            var afterSale = await QuantityAsync();
+            var request = new ConfirmSalesReturnRequest(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+                original.DocumentId, DateTimeOffset.UtcNow, ReturnEconomicResolutions.Refund,
+                SalesReturnRefundMethods.Cash, "Devolución por lote con costo histórico",
+                original.Lines.Select(item => new ConfirmSalesReturnLineRequest(item.LineNumber,
+                    item.Quantity / 2m, ReturnInventoryDispositions.Sellable)).ToArray(), sessionId, ReasonCode: "Other");
+            // Compare warmed execution-access contexts. The ten-second access
+            // cache can expire while preparing the next sale; that independent
+            // resolution is bounded here instead of changing the flow's gate.
+            using(var accessCommands=new InventoryBalanceProcessingTests.CommandCounter(database,
+                commandFilter:command=>command.CommandType==System.Data.CommandType.StoredProcedure &&
+                    command.CommandText=="dbo.ExecutionAccessResolve"))
+            using(var access=await user.GetAsync("/api/v1/execution-context/access"))
+            {
+                access.EnsureSuccessStatusCode();
+                Assert.InRange(accessCommands.Count,0,1);
+            }
+            var shapes=new ConcurrentDictionary<string,int>(StringComparer.Ordinal);
+            commandShapes.Add(shapes);
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database,
+                beforeExecute:command=>shapes.AddOrUpdate(command.CommandText,1,(_,count)=>count+1)))
+            using (var message = Message(request, request.ReturnId.ToString("D")))
+            using (var response = await user.SendAsync(message))
+            {
+                Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+                commands.Add(counter.Count);
+            }
+            Assert.Equal("Completed", await JobStatusAsync(request.ReturnId));
+            Assert.Equal(afterSale + soldQuantity / 2m, await QuantityAsync());
+            Assert.Equal(await ScalarAsync<decimal>(
+                "SELECT TOP(1) CAST(QuantityAfter*AverageUnitCostAfter AS decimal(19,4)) FROM dbo.InventoryMovements WHERE DocumentId=@Id ORDER BY LineNumber DESC",
+                request.ReturnId), await InventoryValueAsync());
+            Assert.Equal(lineCount, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
+            Assert.Equal(lineCount, await ScalarAsync<int>("""
+                SELECT COUNT(DISTINCT movement.InventoryMovementId)
+                FROM dbo.InventoryMovements movement JOIN inventory.MovementOrigins origin
+                  ON origin.InventoryMovementId=movement.InventoryMovementId
+                JOIN dbo.InventoryMovements original ON original.InventoryMovementId=origin.ReferencedMovementId
+                JOIN dbo.SalesReturns returned ON returned.ReturnId=movement.DocumentId
+                  AND returned.OriginalDocumentId=original.DocumentId
+                WHERE movement.DocumentId=@Id AND original.MovementType=N'Sale';
+                """, request.ReturnId));
+            Assert.Equal(5_950m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id", request.ReturnId));
+            Assert.Equal(1, await CountAsync("SalesReturnSettlements", "ReturnId", request.ReturnId));
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.SalesReturnFiscalSnapshots WHERE DocumentId=@Id", request.ReturnId));
+            Assert.Equal(lineCount, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id AND ValuationMode=N'WeightedAverageReceipt' AND PoolInventoryValueAfter-PoolInventoryValueBefore=ValueChange",
+                request.ReturnId));
+            var elapsed = await ScalarAsync<long>(
+                "SELECT DATEDIFF_BIG(microsecond,StartedAt,CompletedAt) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id AND DocumentType=N'SalesReturn'",
+                request.ReturnId);
+            Console.WriteLine($"Motor de devolución, {lineCount} partidas: {elapsed / 1000m:F1} ms.");
+            Assert.InRange(elapsed, 0L, 2_000_000L);
+            Assert.Equal(-soldQuantity / 2m, await ScalarAsync<decimal>(
+                "SELECT SUM(Quantity) FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesReturn'",
+                request.ReturnId));
+            Assert.Equal(-5_950m, await ScalarAsync<decimal>(
+                "SELECT SUM(TotalAmount) FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesReturn'",
+                request.ReturnId));
+            Assert.Equal(0, await ScalarAsync<int>("""
+                SELECT COUNT(*) FROM reporting.SalesReportLineFacts fact
+                JOIN dbo.SalesReturnLines line ON line.ReturnId=fact.SourceDocumentId
+                  AND line.LineNumber=fact.SourceLineNumber
+                WHERE fact.SourceDocumentId=@Id AND fact.SourceDocumentType=N'SalesReturn'
+                  AND (fact.OriginalLineNumber<>line.OriginalLineNumber OR fact.ProductId<>line.ProductId
+                    OR fact.Quantity<>-line.Quantity OR fact.TotalAmount<>-line.LineTotal
+                    OR fact.RecognizedCostAmount<>-ROUND(line.Quantity*line.RecognizedUnitCost,4)
+                    OR fact.ReturnDisposition<>line.InventoryDisposition OR fact.ReturnReasonCode<>N'Other');
+                """, request.ReturnId));
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database,
+                commandFilter: command => command.CommandText.Contains("INSERT dbo.InventoryMovements", StringComparison.Ordinal)))
+            using (var message = Message(request, request.ReturnId.ToString("D")))
+            using (var response = await user.SendAsync(message))
+            {
+                Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+                Assert.True((await response.Content.ReadFromJsonAsync<SalesReturnAcceptance>())!.IdempotentReplay);
+                Assert.Equal(0, counter.Count);
+            }
+            Assert.Equal(afterSale + soldQuantity / 2m, await QuantityAsync());
+            Assert.Equal(lineCount, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesReturn'",
+                request.ReturnId));
+        }
+        Console.WriteLine($"Devolución de venta de una/veinte partidas: {commands[0]}/{commands[1]} comandos SQL.");
+        var extra=commandShapes[1].Where(shape=>shape.Value>commandShapes[0].GetValueOrDefault(shape.Key))
+            .Select(shape=>$"+{shape.Value-commandShapes[0].GetValueOrDefault(shape.Key)}: {shape.Key.Split('\n')[0].Trim()}");
+        Assert.True(commands[0] > 0 && commands[1] <= commands[0],
+            $"Una partida: {commands[0]} SQL; veinte: {commands[1]} SQL. Consultas adicionales: {string.Join("; ",extra)}");
+    }
+
+    [Fact]
+    public async Task Invalid_last_inventory_fact_rolls_back_the_entire_return_batch_before_fiscal_and_financial_work()
+    {
+        var original = SplitSale(9_534, 20);
+        using (var pos = fixture.CreateClient())
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var response = await pos.SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        var beforeQuantity = await QuantityAsync();
+        var beforeValue = await InventoryValueAsync();
+        var session = await fixture.OpenWebWorkSessionAsync();
+        var request = new ConfirmSalesReturnRequest(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            original.DocumentId, DateTimeOffset.UtcNow, ReturnEconomicResolutions.Refund,
+            SalesReturnRefundMethods.Cash, "Rollback de veinte partidas",
+            original.Lines.Select(line => new ConfirmSalesReturnLineRequest(line.LineNumber,
+                line.Quantity / 2m, ReturnInventoryDispositions.Sellable)).ToArray(), session, ReasonCode: "Other");
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            using var user = fixture.CreateAdminClient(SalesReturnPermissionCodes.Create);
+            using (var message = Message(request, request.ReturnId.ToString("D")))
+            using (var response = await user.SendAsync(message))
+                Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            Assert.Equal(request.ReturnId, signal.DocumentId);
+            using var scope = fixture.CreateScope();
+            var worker = scope.ServiceProvider.GetRequiredService<DocumentProcessingWorker>();
+            var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+            using (var fault = new InventoryBalanceProcessingTests.CommandCounter(database,
+                commandFilter: command => command.CommandText.Contains("INSERT dbo.InventoryMovements(", StringComparison.Ordinal)
+                    && command.Parameters["@DocumentId"].Value is Guid id && id == request.ReturnId,
+                beforeExecute: command =>
+                {
+                    var movements = JsonNode.Parse((string)command.Parameters["@Movements"].Value)!.AsArray();
+                    Assert.Equal(20, movements.Count);
+                    var last = movements[^1]!;
+                    last["PoolInventoryValueAfter"] = last["PoolInventoryValueAfter"]!.GetValue<decimal>() + 1m;
+                    command.Parameters["@Movements"].Value = movements.ToJsonString();
+                }))
+            {
+                var error = await Assert.ThrowsAsync<SqlException>(() => worker.ProcessOneAsync(signal));
+                Assert.Contains(error.Errors.Cast<SqlError>(), item => item.Number == 547);
+                Assert.Equal(1, fault.Count);
+            }
+            Assert.Equal(beforeQuantity, await QuantityAsync());
+            Assert.Equal(beforeValue, await InventoryValueAsync());
+            Assert.Equal(0, await ScalarAsync<int>("""
+                SELECT (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.SalesReturnFiscalSnapshots WHERE DocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id);
+                """, request.ReturnId));
+            Assert.Equal("Accepted", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.SalesReturns WHERE ReturnId=@Id", request.ReturnId));
+            Assert.Equal("RetryScheduled", await JobStatusAsync(request.ReturnId));
+            var availableAt = await ScalarAsync<DateTimeOffset>(
+                "SELECT AvailableAt FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id", request.ReturnId);
+            await ServerSliceFixture.WaitUntilAvailableAsync(availableAt);
+            Assert.Equal(DocumentProcessingResult.Processed, await worker.ProcessOneAsync(signal));
+            Assert.Equal(DocumentProcessingResult.AlreadyProcessed, await worker.ProcessOneAsync(signal));
+            Assert.Equal(beforeQuantity + .5m, await QuantityAsync());
+            Assert.Equal(20, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
+            Assert.Equal(1, await CountAsync("SalesReturnSettlements", "ReturnId", request.ReturnId));
+            Assert.Equal(5_950m, await ScalarAsync<decimal>(
+                "SELECT Amount FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id", request.ReturnId));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            fixture.DrainDocumentSignals();
+        }
+    }
+
+    private PosSaleUploadRequest SplitSale(long consecutive, int count)
+    {
+        var source = WithUblSnapshot(fixture.CreateValidRequest(consecutive));
+        var line = source.Lines[0];
+        return source with
+        {
+            Lines = Enumerable.Range(1, count).Select(number => line with
+            {
+                LineNumber = number, Quantity = line.Quantity / count,
+                DiscountAmount = line.DiscountAmount / count, UntaxedAmount = line.UntaxedAmount / count,
+                TaxAmount = line.TaxAmount / count, LineTotal = line.LineTotal / count
+            }).ToArray(),
+            UblSnapshot = source.UblSnapshot! with
+            {
+                Lines = Enumerable.Range(1, count).Select(number =>
+                    source.UblSnapshot.Lines[0] with { LineNumber = number }).ToArray()
+            }
+        };
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(-1)]
@@ -662,28 +869,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
     }
 
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
-    {
-        var address = new PosSaleUblAddressContract(
-            "11001", "Bogotá", "Bogotá D.C.", "11", "CL 1 2 3");
-        var supplier = new PosSaleUblPartyContract(
-            ServerSliceFixture.SupplierTaxId, "0", "31", "1",
-            "EMISOR HISTORICO", "EMISOR HISTORICO", "R-99-PN", "01", "IVA", address);
-        var customer = new PosSaleUblPartyContract(
-            "222222222", "0", "13", "2", "CLIENTE HISTORICO", "CLIENTE HISTORICO",
-            "R-99-PN", "ZZ", "No aplica", address);
-        return request with
-        {
-            UblSnapshot = new PosSaleUblSnapshotContract(
-                fixture.FiscalIssuerConfigurationId, "COP", "01", supplier, customer,
-                new PosSaleUblAuthorizationContract(
-                    ServerSliceFixture.AuthorizationNumber,
-                    new DateOnly(2026, 1, 1), new DateOnly(2028, 12, 31),
-                    ServerSliceFixture.Prefix, 1, 10000),
-                "auraly-test-software",
-                [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)],
-                "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot!.IssuedAt.Date), null)
-        };
-    }
+        => fixture.WithHistoricalSaleUblSnapshot(request);
 
     private async Task<decimal> QuantityAsync()
     {

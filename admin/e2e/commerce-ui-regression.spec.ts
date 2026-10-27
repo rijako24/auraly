@@ -23,10 +23,11 @@ async function createProduct(page: Page, suffix: string) {
   await dialog.getByPlaceholder("Referencia del fabricante").fill(reference);
   await dialog.getByPlaceholder("Escanea o escribe un código").fill(barcode);
   await dialog.getByPlaceholder("Escanea o escribe un código").press("Enter");
+  await chooseFirst(dialog, "Proveedor principal *", page);
   await chooseFirst(dialog, "IVA de venta *", page);
   await chooseFirst(dialog, "IVA de compra *", page);
-  await field(dialog, "Costo base").locator("input").fill("10000");
-  await field(dialog, "Margen sobre el precio antes de IVA").locator("input").fill("20");
+  await field(dialog, "Costo base *").locator("input").fill("10000");
+  await field(dialog, "Margen sobre el precio antes de IVA *").locator("input").fill("20");
   await dialog.getByRole("button", { name: "Crear producto" }).click();
   await expect(dialog).toBeHidden({ timeout: 20_000 });
 
@@ -36,10 +37,14 @@ async function createProduct(page: Page, suffix: string) {
   await expect(row).toBeVisible({ timeout: 20_000 });
   await row.getByRole("button", { name: "Editar" }).click();
   const edit = page.getByRole("dialog");
+  await expect(edit.getByText("Cargando identidad comercial del producto…")).toBeHidden({ timeout: 20_000 });
   await edit.locator("#product-name").fill(`${name} editado`);
+  const updating = page.waitForResponse(response => response.request().method() === "PUT" &&
+    /\/api\/commerce\/v1\/products\/[0-9a-f-]{36}$/i.test(response.url()));
   await edit.getByRole("button", { name: "Guardar producto" }).click();
-  await expect(edit.getByText(`${name} editado`, { exact: true })).toBeVisible({ timeout: 20_000 });
-  await edit.getByRole("button", { name: "Close" }).click();
+  const updated = await updating;
+  expect(updated.ok(), await updated.text()).toBe(true);
+  await expect(edit).toBeHidden({ timeout: 20_000 });
   return { name: `${name} editado`, reference, barcode };
 }
 
@@ -96,12 +101,13 @@ async function ensureWarehouses(page: Page) {
   }
 }
 
-async function selectInventoryProduct(page: Page, searchValue: string, quantity: string, index: number) {
-  const search = page.getByTestId("inventory-product-search");
+async function selectInventoryProduct(operation: Locator, searchValue: string, quantity: string, index: number) {
+  const search = operation.getByRole("textbox", { name: "Buscar producto" });
   await search.fill(searchValue);
-  await expect(page.getByRole("option").first()).toBeVisible({ timeout: 20_000 });
-  await search.press("Enter");
-  const quantityInput = page.getByTestId(`inventory-quantity-${index}`);
+  const option = operation.getByRole("option").first();
+  await expect(option).toBeVisible({ timeout: 20_000 });
+  await option.click();
+  const quantityInput = operation.getByRole("textbox", { name: /^Contar / }).nth(index);
   await expect(quantityInput).toBeFocused();
   await quantityInput.fill(quantity);
   await quantityInput.press("Enter");
@@ -128,22 +134,20 @@ test.describe.serial("regresión comercial desde navegador", () => {
     const secondProduct = await createProduct(page, `${suffix}4`);
     await ensureWarehouses(page);
     await page.goto("/dashboard/inventory");
-    await page.getByRole("tab", { name: "Nueva operación" }).click();
-    await page.getByRole("button", { name: /Conteo físico/ }).click();
-    await expect(page.getByTestId("inventory-reason-select")).toBeEnabled();
-    await chooseFirst(page.locator("main"), "Bodega", page);
-    await selectInventoryProduct(page, firstProduct.name, "4", 0);
-    await selectInventoryProduct(page, secondProduct.reference, "6", 1);
-    await page.getByRole("button", { name: "Preparar conteo" }).click();
-    await expect(page.getByText("El saldo base quedó congelado", { exact: false })).toBeVisible({ timeout: 20_000 });
-    await page.getByTestId("inventory-quantity-0").fill("4");
-    await page.getByTestId("inventory-quantity-1").fill("6");
-    await page.getByRole("button", { name: "Confirmar conteo físico" }).click();
-    await expect(page.getByText(/fue enviado al motor/)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: "Nueva operación" }).click();
+    const operation = page.getByRole("dialog", { name: "Nueva operación" });
+    await operation.getByRole("combobox", { name: "Motivo" }).click();
+    await page.getByRole("option", { name: "Conteo físico" }).click();
+    await chooseFirst(operation, "Bodega", page);
+    await chooseFirst(operation, "Motivo", page);
+    await selectInventoryProduct(operation, firstProduct.name, "4", 0);
+    await selectInventoryProduct(operation, secondProduct.reference, "6", 1);
+    await operation.getByRole("button", { name: "Aplicar inventario" }).click();
+    await expect(page.getByText(/fue enviado para aplicar/)).toBeVisible({ timeout: 20_000 });
     await page.waitForTimeout(1_500);
     await page.reload();
-    await page.getByRole("tab", { name: "Historial" }).click();
+    await page.getByRole("tab", { name: "Operaciones" }).click();
     await expect(page.getByText("Procesado", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText("Conteo físico programado", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Conteo físico", { exact: false }).first()).toBeVisible();
   });
 });

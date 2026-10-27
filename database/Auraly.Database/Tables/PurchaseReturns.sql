@@ -60,17 +60,18 @@ CREATE TABLE [dbo].[PurchaseReturnLines]
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [LineTotal] DECIMAL(19,4) NOT NULL,
     [RecognizedUnitCost] DECIMAL(19,6) NOT NULL,
+    [FinancialDiscountAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_PurchaseReturnLines_FinancialDiscountAmount] DEFAULT (0),
     CONSTRAINT [PK_PurchaseReturnLines] PRIMARY KEY CLUSTERED ([PurchaseReturnId], [LineNumber]),
     CONSTRAINT [FK_PurchaseReturnLines_Return] FOREIGN KEY ([PurchaseReturnId]) REFERENCES [dbo].[PurchaseReturns] ([PurchaseReturnId]),
     CONSTRAINT [FK_PurchaseReturnLines_OriginalLine] FOREIGN KEY ([OriginalGoodsReceiptId], [OriginalLineNumber]) REFERENCES [dbo].[GoodsReceiptLines] ([GoodsReceiptId], [LineNumber]),
     CONSTRAINT [FK_PurchaseReturnLines_Product] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [UQ_PurchaseReturnLines_Original] UNIQUE ([PurchaseReturnId], [OriginalGoodsReceiptId], [OriginalLineNumber]),
-    CONSTRAINT [CK_PurchaseReturnLines_Amounts] CHECK ([LineNumber] > 0 AND [OriginalLineNumber] > 0 AND [Quantity] > 0 AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [RecognizedUnitCost] >= 0 AND [LineTotal] = [NetAmount] + [TaxAmount])
+    CONSTRAINT [CK_PurchaseReturnLines_Amounts] CHECK ([LineNumber] > 0 AND [OriginalLineNumber] > 0 AND [Quantity] > 0 AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [RecognizedUnitCost] >= 0 AND [FinancialDiscountAmount] >= 0 AND ([FinancialDiscountAmount] = 0 OR [FinancialDiscountAmount] <= [NetAmount]) AND [LineTotal] = [NetAmount] + [TaxAmount])
 );
 GO
 CREATE INDEX [IX_PurchaseReturnLines_OriginalLine]
     ON [dbo].[PurchaseReturnLines] ([OriginalGoodsReceiptId], [OriginalLineNumber])
-    INCLUDE ([Quantity], [DiscountAmount], [NetAmount], [TaxAmount], [LineTotal]);
+    INCLUDE ([Quantity], [DiscountAmount], [NetAmount], [TaxAmount], [LineTotal], [FinancialDiscountAmount]);
 GO
 
 CREATE TABLE [dbo].[PurchaseReturnFinancialEffects]
@@ -101,7 +102,20 @@ CREATE TABLE [dbo].[SupplierCredits]
     [Status] NVARCHAR(24) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    [SourceLineId] UNIQUEIDENTIFIER NULL,
+    -- NULL preserves an unclassified historical balance until reconciliation.
+    [CreditNature] NVARCHAR(16) NULL,
+    [CurrencyCode] CHAR(3) NULL,
+    [OpeningEntryId] UNIQUEIDENTIFIER NULL,
+    [OpeningEntryLineNumber] INT NULL,
     CONSTRAINT [PK_SupplierCredits] PRIMARY KEY CLUSTERED ([SupplierCreditId]),
+    CONSTRAINT [FK_SupplierCredits_OpeningEntryLine] FOREIGN KEY ([OpeningEntryId],[OpeningEntryLineNumber]) REFERENCES [dbo].[AccountingEntryLines]([EntryId],[LineNumber]),
+    CONSTRAINT [CK_SupplierCredits_OpeningEntryLine] CHECK (([OpeningEntryId] IS NULL AND [OpeningEntryLineNumber] IS NULL)
+      OR ([OpeningEntryId] IS NOT NULL AND [OpeningEntryLineNumber] IS NOT NULL)),
+    CONSTRAINT [CK_SupplierCredits_Nature] CHECK ([CreditNature] IN(N'Credit',N'Advance')),
+    CONSTRAINT [CK_SupplierCredits_SourceLine] CHECK ([SourceLineId] IS NULL OR
+      ([SourceLineId]<>'00000000-0000-0000-0000-000000000000' AND [SourceDocumentType] IS NOT NULL
+        AND [SourceDocumentType]=N'ManualAccountingVoucher')),
     CONSTRAINT [FK_SupplierCredits_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SupplierCredits_Supplier] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
     CONSTRAINT [FK_SupplierCredits_PartySite] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
@@ -112,7 +126,7 @@ CREATE TABLE [dbo].[SupplierCredits]
 );
 GO
 CREATE UNIQUE INDEX [UX_SupplierCredits_SourceDocument]
-    ON [dbo].[SupplierCredits] ([SourceDocumentId],[SourceDocumentType])
+    ON [dbo].[SupplierCredits] ([SourceDocumentId],[SourceDocumentType],[SourceLineId])
     WHERE [SourceDocumentId] IS NOT NULL;
 GO
 CREATE UNIQUE INDEX [UX_SupplierCredits_PurchaseReturn]
@@ -121,4 +135,34 @@ CREATE UNIQUE INDEX [UX_SupplierCredits_PurchaseReturn]
 GO
 CREATE INDEX [IX_SupplierCredits_Business_Supplier]
     ON [dbo].[SupplierCredits] ([BusinessId], [SupplierId], [PartySiteId], [Status]);
+GO
+
+CREATE TABLE [dbo].[SupplierCreditTransactions]
+(
+    [SupplierCreditTransactionId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+    [SupplierCreditId] UNIQUEIDENTIFIER NOT NULL REFERENCES [dbo].[SupplierCredits]([SupplierCreditId]),
+    [TransactionType] NVARCHAR(24) NOT NULL,
+    [Amount] DECIMAL(19,4) NOT NULL,
+    [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [SourceDocumentType] NVARCHAR(64) NOT NULL,
+    [SourceLineId] UNIQUEIDENTIFIER NULL,
+    [AppliedPositionTransactionId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[PayableTransactions]([PayableTransactionId]),
+    [ReversesTransactionId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[SupplierCreditTransactions]([SupplierCreditTransactionId]),
+    [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [FK_SupplierCreditTransactions_SourceJob] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType])
+      REFERENCES [dbo].[AccountingPostingJobs]([SourceDocumentId],[SourceDocumentType]),
+    CONSTRAINT [UQ_SupplierCreditTransactions_Source] UNIQUE ([SupplierCreditId],[SourceDocumentId],[SourceDocumentType],[SourceLineId],[TransactionType],[AppliedPositionTransactionId]),
+    CONSTRAINT [CK_SupplierCreditTransactions_Type] CHECK (([TransactionType]=N'Opening' AND [AppliedPositionTransactionId] IS NULL AND [ReversesTransactionId] IS NULL)
+      OR ([TransactionType]=N'Application' AND [AppliedPositionTransactionId] IS NOT NULL AND [ReversesTransactionId] IS NULL AND [SourceLineId] IS NOT NULL AND [SourceDocumentType]=N'ManualAccountingVoucher')
+      OR ([TransactionType]=N'Unapplication' AND [AppliedPositionTransactionId] IS NOT NULL AND [ReversesTransactionId] IS NOT NULL AND [SourceLineId] IS NOT NULL AND [SourceDocumentType]=N'ManualAccountingVoucher')),
+    CONSTRAINT [CK_SupplierCreditTransactions_Amount] CHECK ([Amount]>0),
+    CONSTRAINT [CK_SupplierCreditTransactions_Line] CHECK ([SourceLineId] IS NULL OR [SourceLineId]<>'00000000-0000-0000-0000-000000000000')
+);
+GO
+CREATE UNIQUE INDEX [UX_SupplierCreditTransactions_Opening] ON [dbo].[SupplierCreditTransactions]([SupplierCreditId]) WHERE [TransactionType]=N'Opening';
+GO
+CREATE UNIQUE INDEX [UX_SupplierCreditTransactions_PositionTransaction] ON [dbo].[SupplierCreditTransactions]([AppliedPositionTransactionId]) WHERE [AppliedPositionTransactionId] IS NOT NULL;
+GO
+CREATE INDEX [IX_SupplierCreditTransactions_Source] ON [dbo].[SupplierCreditTransactions]([SourceDocumentId],[SourceDocumentType]) INCLUDE([SupplierCreditId],[Amount],[SourceLineId]);
 GO

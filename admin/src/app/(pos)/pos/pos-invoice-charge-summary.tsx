@@ -1,15 +1,16 @@
-import type { WorkSessionInvoiceCharge } from "@/services/pos/pos-edge-client";
+import type { ClosureInvoiceChargePage } from "@/services/api/work-session-differences";
+import { Button } from "@/components/ui/button";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 2 });
 
-export function InvoiceChargeSummary({ charges, paymentMethod }: {
-  charges: WorkSessionInvoiceCharge[]; paymentMethod?: string;
+export function InvoiceChargeSummary({ value, paymentMethod, onPage }: {
+  value: ClosureInvoiceChargePage; paymentMethod?: string; onPage: (page: number) => void;
 }) {
+  const charges = value.items;
   const rows = paymentMethod
     ? charges.flatMap(charge => charge.payments.filter(payment => payment.paymentMethodCode === paymentMethod)
       .map(payment => ({ charge, amount: payment.amount, key: `${charge.appliedChargeId}:${payment.paymentNumber}` })))
     : charges.map(charge => ({ charge, amount: charge.amount, key: charge.appliedChargeId }));
-  if (paymentMethod && rows.length === 0) return null;
   return <section className="m-4 overflow-hidden rounded-xl border border-teal-100 bg-teal-50/40">
     <h3 className="border-b border-teal-100 px-4 py-3 text-sm font-semibold text-teal-950">
       {paymentMethod ? "Cargos incluidos en este medio" : "Cargos de facturación"}
@@ -22,9 +23,15 @@ export function InvoiceChargeSummary({ charges, paymentMethod }: {
       </div>)}
       {rows.length === 0 && <p className="px-4 py-3 text-sm text-muted-foreground">Sin cargos en este cierre.</p>}
     </div>
-    {!paymentMethod && rows.length > 0 && <div className="grid gap-2 border-t border-teal-100 px-4 py-3 text-sm sm:grid-cols-2">
-      <p>Incluido en facturas <strong className="tabular-nums">{money.format(charges.reduce((sum, charge) => sum + charge.invoicedAmount, 0))}</strong></p>
-      <p>Registrado como gasto <strong className="tabular-nums">{money.format(charges.reduce((sum, charge) => sum + charge.expenseAmount, 0))}</strong></p>
+    {!paymentMethod && value.totalItems > 0 && <div className="grid gap-2 border-t border-teal-100 px-4 py-3 text-sm sm:grid-cols-2">
+      <p>Incluido en facturas <strong className="tabular-nums">{money.format(value.closureSummary.invoicedAmount)}</strong></p>
+      <p>Registrado como gasto <strong className="tabular-nums">{money.format(value.closureSummary.expenseAmount)}</strong></p>
     </div>}
+    {value.totalItems > 0 && <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-teal-100 px-4 py-3 text-sm">
+      <p>{value.totalItems} cargos · Total {money.format(value.totalAmount)}</p>
+      <div className="flex items-center gap-2"><Button type="button" size="sm" variant="outline" disabled={value.page === 1} onClick={() => onPage(value.page - 1)}>Anterior</Button>
+        <span>Página {value.page} de {Math.ceil(value.totalItems / value.pageSize)}</span>
+        <Button type="button" size="sm" variant="outline" disabled={value.page * value.pageSize >= value.totalItems} onClick={() => onPage(value.page + 1)}>Siguiente</Button></div>
+    </footer>}
   </section>;
 }

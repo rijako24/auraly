@@ -186,34 +186,22 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
             .Select(item => item.AccountId!.Value).Distinct().ToArray();
         var plan = await withholding.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId,
             [request.SupplierId], ct, manualAccounts);
-        var hasProfile = plan.Profiles.ContainsKey(request.SupplierId);
-        (WithholdingCalculationSnapshot Calculation, IReadOnlyList<string> Diagnostics) result;
+        PurchaseWithholdingReview review;
         try
         {
-            result = withholding.CalculateDocument(plan, resolved.Lines.Select(line =>
+            review = withholding.ReviewPurchaseDocument(plan, request.SupplierId, resolved.Lines.Select(line =>
                 new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
                     WithholdingRecognitionMoments.Accrual, request.SupplierId, line.WithholdingConceptCode,
-                    null, line.TaxExclusiveAmount, line.VatAmount, request.IssuedAt)).ToArray());
+                    null, line.TaxExclusiveAmount, line.VatAmount, request.IssuedAt)).ToArray(),
+                request.WithholdingAdjustments, user.UserId, request.IssuedAt);
         }
         catch (Auraly.Commerce.Taxation.Domain.WithholdingRuleException error)
         { throw new ExpenseValidationException($"Revisa la configuración de retenciones: {error.Message}"); }
-        WithholdingCalculationSnapshot finalCalculation;
-        try
-        {
-            finalCalculation = withholding.ApplyAdjustments(plan, result.Calculation,
-                request.WithholdingAdjustments, user.UserId, request.IssuedAt,
-                resolved.Lines.Sum(line => line.VatAmount));
-        }
         catch (TaxationValidationException error) { throw new ExpenseValidationException(error.Message); }
-        var hasManualWithholding = request.WithholdingAdjustments?.Any(item => item.Action == "Manual") == true;
-        IReadOnlyList<string> diagnostics = hasProfile ? result.Diagnostics :
-            [hasManualWithholding
-                ? "El proveedor no tiene perfil tributario; se aplicará únicamente la retención manual indicada."
-                : "Falta el perfil tributario del proveedor. En Terceros → Proveedores → Retenciones y perfil tributario, configura si aplica retención, sus responsabilidades y jurisdicción antes de confirmar."];
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new {
             request.BusinessId, request.SupplierId, request.IssuedAt, request.DueDate, request.PurchaseEvidenceType,
-            resolved.Lines, finalCalculation, diagnostics, hasProfile }))));
-        return new(resolved.Lines, finalCalculation, hash, diagnostics, hasProfile || hasManualWithholding);
+            resolved.Lines, finalCalculation = review.Calculation, diagnostics = review.Diagnostics, hasProfile = review.HasProfile }))));
+        return new(resolved.Lines, review.Calculation, hash, review.Diagnostics, review.CanConfirm);
     }
 
     private static void RequireWithholdingAdjustmentPermission(ExpenseUserIdentity user,
@@ -233,9 +221,10 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
             throw new ExpenseValidationException("En un gasto por líneas, el concepto y centro se eligen en cada línea y la jurisdicción se toma del perfil tributario.");
         foreach (var line in request.Lines)
         {
-            if (line is null || line.ExpenseAccountId == Guid.Empty || line.TaxExclusiveAmount <= 0 ||
+            if (line is null || line.ExpenseAccountId == Guid.Empty || line.ConceptId == Guid.Empty ||
+                (line.ExpenseAccountId is null && line.ConceptId is null) || line.TaxExclusiveAmount <= 0 ||
                 line.TaxExclusiveAmount > 999999999999m || line.TaxExclusiveAmount != decimal.Round(line.TaxExclusiveAmount, 4))
-                throw new ExpenseValidationException("Cada línea requiere una cuenta y una base positiva de máximo cuatro decimales.");
+                throw new ExpenseValidationException("Cada línea requiere un concepto configurado o una cuenta válida y una base positiva de máximo cuatro decimales.");
             _ = Text(line.Description, 300, "Descripción de la línea");
             if (line.TaxTreatment is not (PurchasingTaxTreatments.DeductibleInputVat or PurchasingTaxTreatments.CapitalizedCost))
                 throw new ExpenseValidationException("El tratamiento del IVA no es válido.");

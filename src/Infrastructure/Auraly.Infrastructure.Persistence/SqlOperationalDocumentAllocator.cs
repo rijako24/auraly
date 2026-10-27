@@ -11,11 +11,25 @@ public static class SqlOperationalDocumentAllocator
 
     public static async Task<IReadOnlyList<AuralyDocumentNumberAssignment>> AllocateNumbersAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId, string documentType,
-        int count, DateTimeOffset now, CancellationToken ct)
+        int count, DateTimeOffset now, CancellationToken ct) =>
+        await AllocateNumbersCoreAsync(connection, transaction, null, businessId, documentType,
+            count, true, now, ct);
+
+    // Financial captures require a configured series. They share cursor locking,
+    // range checks and formatting with other documents without provisioning one.
+    public static async Task<AuralyDocumentNumberAssignment> AllocateExistingNumberAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId, Guid businessId,
+        string documentType, DateTimeOffset now, CancellationToken ct) =>
+        (await AllocateNumbersCoreAsync(connection, transaction, tenantId, businessId, documentType,
+            1, false, now, ct))[0];
+
+    private static async Task<IReadOnlyList<AuralyDocumentNumberAssignment>> AllocateNumbersCoreAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid? tenantId, Guid businessId,
+        string documentType, int count, bool provisionSeries, DateTimeOffset now, CancellationToken ct)
     {
         if (count is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(count));
         await using var command = new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WITH(UPDLOCK,HOLDLOCK)
+            IF @ProvisionSeries=1 AND NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WITH(UPDLOCK,HOLDLOCK)
               WHERE BusinessId=@BusinessId AND DocumentType=@Type AND DeviceId IS NULL AND IsActive=1)
               INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
                 Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
@@ -25,6 +39,8 @@ public static class SqlOperationalDocumentAllocator
             SELECT TOP(1) @Id=ds.DocumentSeriesId,@SeriesCode=ds.SeriesCode,@ActualPrefix=ds.Prefix,
               @Padding=ds.Padding,@Start=COALESCE(c.NextConsecutive,ds.RangeStart),@End=ds.RangeEnd
             FROM dbo.DocumentSeries ds WITH(UPDLOCK,HOLDLOCK)
+            JOIN dbo.Businesses business ON business.BusinessId=ds.BusinessId
+              AND (@TenantId IS NULL OR business.TenantId=@TenantId)
             LEFT JOIN dbo.DocumentSeriesCursors c WITH(UPDLOCK,HOLDLOCK) ON c.DocumentSeriesId=ds.DocumentSeriesId
             WHERE ds.BusinessId=@BusinessId AND ds.DocumentType=@Type AND ds.DeviceId IS NULL AND ds.IsActive=1
             ORDER BY ds.DocumentSeriesId;
@@ -36,6 +52,8 @@ public static class SqlOperationalDocumentAllocator
             SELECT @Id,@ActualPrefix,@SeriesCode,@Padding,@Start;
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.Add("@TenantId", System.Data.SqlDbType.UniqueIdentifier).Value = (object?)tenantId ?? DBNull.Value;
+        command.Parameters.AddWithValue("@ProvisionSeries", provisionSeries);
         command.Parameters.AddWithValue("@Type", documentType);
         command.Parameters.AddWithValue("@Prefix", AuralyDocumentTypes.DefaultPrefix(documentType));
         command.Parameters.AddWithValue("@Count", count);

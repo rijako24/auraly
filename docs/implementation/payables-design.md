@@ -71,6 +71,10 @@ Permisos:
 ## Persistencia e idempotencia
 
 `SupplierPayments` conserva la cabecera comercial del pago.
+En grupos manuales conserva también la sede explícita del grupo aceptado para
+que el filtro incluya anticipos sin factura. La sede se valida contra la fuente
+padre inmutable en `accounting.PortfolioPaymentAccept`; no se vuelve a elegir al
+procesar. Los pagos nativos históricos mantienen el filtro por sus aplicaciones.
 `SupplierPaymentApplications` conserva cada asignación a una obligación. Las
 aplicaciones se insertan al aceptar el comando para reservar el saldo antes de
 que el worker lo procese. Una transacción serializable bloquea la obligación y
@@ -81,15 +85,16 @@ La identidad idempotente combina el alcance del Business, `PaymentId`, clave de
 idempotencia y hash del comando. Un replay idéntico devuelve la aceptación
 existente. Reutilizar el ID o la clave con otro contenido produce conflicto.
 
-El handler usa el mismo `ProcessingSequence`, sesión SQL y recibo idempotente del
-motor. En una sola transacción:
+La aceptación canónica crea la fuente y trabajo financiero-contable. El único
+`SqlAccountingPostingProcessor` procesa el pago nativo o los grupos del padre
+manual. En su transacción financiera:
 
 1. aplica todas las asignaciones;
 2. agrega movimientos `Payment` a la cartera;
 3. recalcula `OutstandingAmount` y `Status`;
 4. marca el pago procesado;
-5. registra el trabajo contable;
-6. publica el evento en outbox.
+5. registra el asiento si el modo aceptado requiere contabilidad;
+6. guarda la notificación en el outbox canónico.
 
 Una republicación del mensaje no repite ninguno de esos efectos.
 
@@ -106,6 +111,15 @@ La categoría `Bank` es explícita: no se reutiliza indebidamente la cuenta puen
 de transferencias. El procesador reconstruye la fuente inmutable desde
 `SupplierPayments`, conserva el hash del payload y genera como máximo un asiento
 por documento.
+
+Los nuevos medios nativos conservan identidad de partida y auxiliar en
+`SupplierPaymentTenders`. La aceptación contable fija las cuentas disponibles;
+un cambio posterior del mapping no cambia ese pago. El retry explícito solo
+puede completar una cuenta faltante. Sin auxiliar válido, el motor deja el pago
+sin aplicar y lo informa; no reduce el saldo ni confirma una salida. Los medios
+históricos sin identidad de partida conservan su contrato anterior. La regla,
+sus funciones compartidas y el corte de compatibilidad se detallan en
+`accounting-open-vouchers-design.md`, sección 13.7.
 
 ## Interfaz administrativa
 

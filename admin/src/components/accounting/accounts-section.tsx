@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Pencil, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -10,14 +10,10 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { DataTable } from "@/components/tables/data-table";
 import { ServerSearchInput } from "@/components/tables/server-search-input";
+import { AccountEditor } from "@/components/accounting/account-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export function AccountsSection({ tenantId }: { tenantId: string }) {
   const client = useQueryClient();
@@ -48,9 +44,9 @@ export function AccountsSection({ tenantId }: { tenantId: string }) {
   const columns: ColumnDef<AccountingAccount>[] = [
     { accessorKey: "code", header: "Código", cell: ({ row }) => <span className="font-mono font-semibold">{row.original.code}</span> },
     { accessorKey: "name", header: "Nombre" },
-    { accessorKey: "accountType", header: "Naturaleza", cell: ({ row }) => types.data?.find(type => type.code === row.original.accountType)?.label ?? row.original.accountType },
+    { accessorKey: "accountType", header: "Tipo de cuenta", cell: ({ row }) => types.data?.find(type => type.code === row.original.accountType)?.label ?? row.original.accountType },
     { accessorKey: "allowsPosting", header: "Movimientos", cell: ({ row }) => row.original.allowsPosting ? "Sí" : "Agrupación" },
-    { accessorKey: "requiresParty", header: "Tercero", cell: ({ row }) => row.original.requiresParty ? "Obligatorio" : "Opcional" },
+    { accessorKey: "requiresParty", header: "Tercero en cada partida", cell: ({ row }) => row.original.requiresParty ? "Obligatorio" : "Opcional" },
     { accessorKey: "isActive", header: "Estado", cell: ({ row }) => <Badge variant={row.original.isActive ? "secondary" : "outline"}>{row.original.isActive ? "Activa" : "Inactiva"}</Badge> },
     { id: "actions", header: "Acciones", cell: ({ row }) => canConfigure && <Button variant="outline" size="sm" onClick={() => setEditing(row.original)}><Pencil className="mr-2 h-4 w-4"/>Editar</Button> },
   ];
@@ -64,38 +60,8 @@ export function AccountsSection({ tenantId }: { tenantId: string }) {
       {list.isError ? <div role="alert"><p>{list.error.message}</p><Button variant="outline" onClick={() => void list.refetch()}>Reintentar</Button></div> :
         <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={page} pageSize={pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onRowClick={canConfigure ? setEditing : undefined} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }}/>}
     </CardContent>
-    {editing !== undefined && <AccountEditor tenantId={tenantId} account={editing} types={types.data ?? []} onClose={() => setEditing(undefined)} onSaved={saved}/>}
+    {editing !== undefined && <AccountEditor tenantId={tenantId} account={editing} types={types.data ?? []}
+      typesLoading={types.isPending} typesError={types.error} onRetryTypes={() => void types.refetch()}
+      onClose={() => setEditing(undefined)} onSaved={saved}/>}
   </Card>;
-}
-
-function AccountEditor({ tenantId, account, types, onClose, onSaved }: {
-  tenantId: string; account: AccountingAccount | null;
-  types: Array<{code:string;label:string}>; onClose: () => void;
-  onSaved: (account: AccountingAccount, created: boolean) => Promise<void>;
-}) {
-  const [accountId] = useState(() => crypto.randomUUID());
-  const [code, setCode] = useState(account?.code ?? ""), [name, setName] = useState(account?.name ?? "");
-  const [type, setType] = useState(account?.accountType ?? ""), [party, setParty] = useState(account?.requiresParty ?? false);
-  const allowsPosting = account?.allowsPosting ?? code.length >= 6;
-  const save = useMutation({
-    mutationFn: () => account
-      ? accountingApi.updateAccount(account.accountId, { name: name.trim(), requiresParty: party, rowVersion: account.rowVersion ?? "" })
-      : accountingApi.createAccount({ accountId, tenantId, code, name: name.trim(), accountType: type, allowsPosting, requiresParty: allowsPosting && party }),
-    onSuccess: value => onSaved(value, !account),
-    onError: error => toast.error(error.message),
-  });
-  return <Dialog open onOpenChange={open => { if (!open && !save.isPending) onClose(); }}>
-    <DialogContent><DialogHeader><DialogTitle>{account ? "Editar cuenta PUC" : "Nueva cuenta PUC"}</DialogTitle><DialogDescription>{account
-      ? "El código y la naturaleza se conservan para mantener la identidad contable. Exigir tercero aplica a las próximas contabilizaciones."
-      : "Código: 1 dígito para clase, 2 para grupo, 4 para cuenta, 6 para subcuenta y más de 6 para auxiliar."}</DialogDescription></DialogHeader>
-      <form className="space-y-4" onSubmit={event => { event.preventDefault(); if (!save.isPending) save.mutate(); }}>
-        <div className="space-y-2"><Label htmlFor="puc-code">Código PUC</Label><Input id="puc-code" value={code} maxLength={32} inputMode="numeric" disabled={!!account || save.isPending} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} required/></div>
-        <div className="space-y-2"><Label htmlFor="puc-name">Nombre</Label><Input id="puc-name" value={name} maxLength={200} disabled={save.isPending} onChange={event => setName(event.target.value)} required autoFocus={!!account}/></div>
-        <div className="space-y-2"><Label htmlFor="puc-type">Naturaleza</Label><Select value={type} disabled={!!account || save.isPending} onValueChange={setType}><SelectTrigger id="puc-type"><SelectValue placeholder="Seleccionar naturaleza"/></SelectTrigger><SelectContent>{types.map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></div>
-        {allowsPosting && <label className="flex items-center gap-2 text-sm"><Checkbox checked={party} disabled={save.isPending} onCheckedChange={checked => setParty(checked === true)}/>Exige tercero</label>}
-        {save.isError && <p role="alert" className="text-sm text-destructive">{save.error.message}</p>}
-        <DialogFooter><Button type="button" variant="outline" disabled={save.isPending} onClick={onClose}>Cancelar</Button><Button disabled={save.isPending || !code || !name.trim() || !type || (!!account && !account.rowVersion)}>{save.isPending ? "Guardando…" : account ? "Guardar cambios" : "Crear cuenta"}</Button></DialogFooter>
-      </form>
-    </DialogContent>
-  </Dialog>;
 }

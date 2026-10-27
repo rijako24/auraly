@@ -41,10 +41,10 @@ BEGIN
     END;
 
     DECLARE @TenantId UNIQUEIDENTIFIER,@SubscriptionId UNIQUEIDENTIFIER,
-            @PeriodId UNIQUEIDENTIFIER,@Limit INT,@Used INT,@SubscriptionStatus NVARCHAR(24),
+            @PeriodId UNIQUEIDENTIFIER,@Limit INT,@Used INT,
             @CurrentStart DATETIMEOFFSET(7),@CurrentEnd DATETIMEOFFSET(7),
-            @GraceDays INT,@PeriodStart DATETIMEOFFSET(7),@PeriodEnd DATETIMEOFFSET(7),
-            @MonthOffset INT;
+            @PeriodStart DATETIMEOFFSET(7),@PeriodEnd DATETIMEOFFSET(7),
+            @MonthOffset INT,@AnchorDay INT;
     SELECT @TenantId=business.TenantId
     FROM dbo.Businesses business WITH (UPDLOCK,HOLDLOCK)
     JOIN dbo.Tenants tenant ON tenant.TenantId=business.TenantId AND tenant.IsActive=1
@@ -68,8 +68,8 @@ BEGIN
     IF @Count=0 BEGIN SET @Reserved=1; RETURN; END;
 
     SELECT @SubscriptionId=TenantSubscriptionId,@Limit=DianDocumentMonthlyLimit,
-           @SubscriptionStatus=Status,@CurrentStart=CurrentPeriodStart,
-           @CurrentEnd=CurrentPeriodEnd
+           @CurrentStart=CurrentPeriodStart,
+           @CurrentEnd=CurrentPeriodEnd,@AnchorDay=BillingAnchorDay
     FROM billing.TenantSubscriptions WITH (UPDLOCK,HOLDLOCK)
     WHERE TenantId=@TenantId;
     IF @SubscriptionId IS NULL
@@ -79,34 +79,23 @@ BEGIN
         SET @Reserved=1;
         RETURN;
     END;
-    SELECT @GraceDays=GracePeriodDays FROM billing.PlatformBillingSettings
-    WHERE PlatformBillingSettingId=1;
-    IF @GraceDays IS NULL BEGIN SET @FailureReason=N'PeriodUnavailable'; RETURN; END;
-    IF @SubscriptionStatus NOT IN(N'Active',N'PastDue')
-       OR @Now>=DATEADD(day,@GraceDays,@CurrentEnd)
-    BEGIN SET @FailureReason=N'SubscriptionInactive'; RETURN; END;
-    SELECT @PeriodId=TenantSubscriptionUsagePeriodId,@Used=DianDocumentsUsed
-    FROM billing.TenantSubscriptionUsagePeriods WITH (UPDLOCK,HOLDLOCK)
-    WHERE TenantSubscriptionId=@SubscriptionId AND PeriodStart<=@Now AND PeriodEnd>@Now;
+    -- La suscripción ya está bloqueada: lectores y reserva comparten el snapshot.
+    SELECT @PeriodId=TenantSubscriptionUsagePeriodId,@Used=DocumentsUsed
+    FROM billing.TenantDianQuotaSnapshot(@TenantId,@Now);
     IF @PeriodId IS NULL
     BEGIN
-        IF @Now<@CurrentStart
-        BEGIN SET @FailureReason=N'PeriodUnavailable'; RETURN; END;
-        IF @Now>=@CurrentEnd
-        BEGIN
-            SET @PeriodStart=@CurrentEnd;
-            SET @PeriodEnd=DATEADD(month,1,@CurrentEnd);
-        END
-        ELSE
+        -- Solo un término pagado habilita nuevos subperiodos; la mora no regala cupo.
+        IF @Now<@CurrentStart OR @Now>=@CurrentEnd
+        BEGIN SET @FailureReason=N'QuotaExhausted'; RETURN; END;
         BEGIN
             SET @MonthOffset=DATEDIFF(month,@CurrentStart,@Now);
-            SET @PeriodStart=DATEADD(month,@MonthOffset,@CurrentStart);
+            SET @PeriodStart=billing.TenantSubscriptionPeriodBoundary(@CurrentStart,@MonthOffset,@AnchorDay);
             IF @PeriodStart>@Now
             BEGIN
                 SET @MonthOffset=@MonthOffset-1;
-                SET @PeriodStart=DATEADD(month,@MonthOffset,@CurrentStart);
+                SET @PeriodStart=billing.TenantSubscriptionPeriodBoundary(@CurrentStart,@MonthOffset,@AnchorDay);
             END;
-            SET @PeriodEnd=DATEADD(month,@MonthOffset+1,@CurrentStart);
+            SET @PeriodEnd=billing.TenantSubscriptionPeriodBoundary(@CurrentStart,@MonthOffset+1,@AnchorDay);
             IF @PeriodEnd>@CurrentEnd SET @PeriodEnd=@CurrentEnd;
         END;
         IF @PeriodEnd<=@Now

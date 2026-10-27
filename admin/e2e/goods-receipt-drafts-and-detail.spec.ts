@@ -1,15 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-
-const user = process.env.AURALY_E2E_USERNAME ?? "admin";
-const password = process.env.AURALY_E2E_PASSWORD ?? "Admin123!";
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.locator("#username").fill(user);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /Iniciar sesi.n/ }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\/|$)/, { timeout: 60_000 });
-}
+import { realAccountingWorkspace } from "./support/real-accounting-workspace";
+import type { GoodsReceiptDraft } from "../src/services/api/goods-receipts";
+import type { WarehouseMasterItem } from "../src/services/api/inventory";
 
 function field(scope: Locator, label: string) {
   return scope.getByText(label, { exact: true }).locator("..");
@@ -22,63 +14,46 @@ async function selectFirst(page: Page, scope: Locator, label: string) {
   await expect(option).toBeVisible({ timeout: 20_000 });
   await option.click();
 }
-async function cleanupTestDrafts(page: Page) {
-  const response = await page.request.get(
-    "/api/commerce/v1/goods-receipts?status=Draft&page=1&pageSize=100",
-  );
-  if (!response.ok()) return;
-  const result = await response.json() as { items: Array<{ documentId: string }> };
-  for (const item of result.items) {
-    const draftResponse = await page.request.get(
-      `/api/commerce/v1/goods-receipts/drafts/${item.documentId}`,
-    );
-    if (!draftResponse.ok()) continue;
-    const draft = await draftResponse.json() as { notes?: string; concurrencyToken: string };
-    if (!draft.notes?.startsWith("Prueba E2E ")) continue;
-    await page.request.delete(
-      `/api/commerce/v1/goods-receipts/drafts/${item.documentId}` +
-      `?concurrencyToken=${encodeURIComponent(draft.concurrencyToken)}`,
-    );
-  }
-  await page.reload();
-}
-
-
 test.describe("borradores y detalle de recepciones de compra", () => {
-  test.beforeEach(async ({ page }) => login(page));
   test.setTimeout(120_000);
 
   test("guardar cierra el modal y el borrador se puede recuperar y eliminar", async ({ page }) => {
+    const { scopedJson } = await realAccountingWorkspace(page);
+    const marker = `Prueba E2E ${Date.now()}`;
+    const warehouse = await scopedJson<WarehouseMasterItem>("POST", "/api/commerce/v1/inventory/warehouse-masters", {
+      name: marker, allowNegativeStockSales: false, priceFormationCostBasis: "LatestReceiptCost", useForSales: true, isActive: true,
+    });
     await page.goto("/dashboard/purchasing/goods-receipts");
     await page.getByRole("button", { name: "Nueva entrada" }).click();
     const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
     await selectFirst(page, dialog, "Proveedor · sede");
-    await selectFirst(page, dialog, "Bodega");
-
-    const marker = `Prueba E2E ${Date.now()}`;
-    const invoiceMarker = `E2E-${Date.now()}`;
-    await field(dialog, "Factura del proveedor").getByRole("textbox").fill(invoiceMarker);
-    await field(dialog, "Notas").getByRole("textbox").fill(marker);
-    await expect(dialog.getByRole("button", { name: "Cerrar", exact: true })).toBeVisible();
+    await field(dialog, "Bodega").getByRole("combobox").click();
+    await page.getByRole("option").filter({ hasText: warehouse.name }).click();
+    await dialog.getByPlaceholder("Observaciones de recepción").fill(marker);
+    const saving = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/goods-receipts/drafts/"));
     await dialog.getByRole("button", { name: "Guardar borrador" }).click();
 
+    const saveResponse = await saving;
+    expect(saveResponse.ok(), await saveResponse.text()).toBe(true);
+    const saved = await saveResponse.json() as GoodsReceiptDraft;
     await expect(dialog).toBeHidden({ timeout: 20_000 });
-    await expect(page.getByText("Borrador guardado y disponible para recuperar.")).toBeVisible();
-
-    const draftRow = page.getByText(`Factura proveedor ${invoiceMarker}`)
-      .locator("xpath=ancestor::tr");
+    const draftRow = page.getByRole("row").filter({ hasText: warehouse.name });
     await expect(draftRow).toBeVisible({ timeout: 20_000 });
     await draftRow.click();
 
     const recovered = page.getByRole("dialog", { name: /Recepción de compra/ });
     await expect(recovered).toBeVisible();
-    await expect(field(recovered, "Notas").getByRole("textbox")).toHaveValue(marker);
-    await recovered.getByRole("button", { name: "Eliminar borrador" }).click();
+    await expect(recovered.getByPlaceholder("Observaciones de recepción")).toHaveValue(marker);
+    const deleting = page.waitForResponse(response => response.request().method() === "DELETE" && response.url().includes(`/goods-receipts/drafts/${saved.draftId}`));
+    await recovered.getByRole("button", { name: "Descartar borrador", exact: true }).click();
+    const deleteResponse = await deleting;
+    expect(deleteResponse.ok(), await deleteResponse.text()).toBe(true);
     await expect(recovered).toBeHidden({ timeout: 20_000 });
-    await cleanupTestDrafts(page);
+    await expect(draftRow).toHaveCount(0);
   });
 
   test("una entrada confirmada abre su detalle inmutable", async ({ page }) => {
+    await realAccountingWorkspace(page);
     const documentId = "11111111-1111-1111-1111-111111111111";
     await page.route(/\/api\/commerce\/v1\/goods-receipts\?.*/, async (route) => {
       await route.fulfill({
@@ -153,6 +128,7 @@ test.describe("borradores y detalle de recepciones de compra", () => {
     await expect(detail.getByText("Aceite vegetal 3000 ml")).toBeVisible();
     await expect(detail.getByText("IVA descontable")).toBeVisible();
     await expect(detail.getByText("Proveedor de prueba")).toBeVisible();
+    await expect(detail.getByRole("button", { name: "Registrar egreso", exact: true })).toHaveCount(0);
     await detail.getByRole("button", { name: "Cerrar" }).click();
     await expect(detail).toBeHidden();
   });

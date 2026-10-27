@@ -5,11 +5,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatCurrency(amount: number, currency = "COP"): string {
+export function formatCurrency(amount: number, currency = "COP", maximumFractionDigits?: number): string {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency,
     minimumFractionDigits: 0,
+    maximumFractionDigits,
   }).format(amount);
 }
 

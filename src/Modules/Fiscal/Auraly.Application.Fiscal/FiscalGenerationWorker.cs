@@ -591,20 +591,23 @@ public sealed class FiscalGenerationWorker(
         var costDocument = snapshot.CostDocument;
         var adjustment = snapshot.Adjustment;
         var expenseCancellation = snapshot.ExpenseCancellation;
+        var manual = snapshot.ManualAcquisition;
+        var manualCancellation = snapshot.ManualCancellation;
         var sourceCount = (receipt is null ? 0 : 1) + (expense is null ? 0 : 1) +
                           (costDocument is null ? 0 : 1) + (adjustment is null ? 0 : 1) +
-                          (expenseCancellation is null ? 0 : 1);
+                          (expenseCancellation is null ? 0 : 1) + (manual is null ? 0 : 1) +
+                          (manualCancellation is null ? 0 : 1);
         if (sourceCount != 1)
             throw new FiscalSnapshotDataException(
                 "The purchase-support snapshot must contain exactly one acquisition source.");
-        if (adjustment is not null || expenseCancellation is not null)
+        if (adjustment is not null || expenseCancellation is not null || manualCancellation is not null)
             return await BuildSupportAdjustmentAsync(work, snapshot,
                 cancellationToken);
-        if (receipt is null && expense is null && costDocument is null)
+        if (receipt is null && expense is null && costDocument is null && manual is null)
             throw new FiscalSnapshotDataException(
                 "The support-document snapshot must contain exactly one acquisition source.");
-        var sourceDocumentId = receipt?.DocumentId ?? expense?.ExpenseId ?? costDocument!.Document.CostDocumentId;
-        var sourceBusinessId = receipt?.BusinessId ?? expense?.BusinessId ?? costDocument!.BusinessId;
+        var sourceDocumentId = receipt?.DocumentId ?? expense?.ExpenseId ?? costDocument?.Document.CostDocumentId ?? manual!.DocumentId;
+        var sourceBusinessId = receipt?.BusinessId ?? expense?.BusinessId ?? costDocument?.BusinessId ?? manual!.BusinessId;
         if (snapshot.FiscalIssuerConfigurationId != work.Issuer.Id ||
             sourceDocumentId != work.DocumentId || sourceBusinessId != work.BusinessId ||
             snapshot.FiscalNumber != work.FiscalNumber || snapshot.Environment != work.Issuer.Environment)
@@ -671,6 +674,19 @@ public sealed class FiscalGenerationWorker(
             discountAmount = 0m;
             createsPayable = cost.CreatesPayable;
         }
+        else if (manual is not null)
+        {
+            lines = AcquisitionFiscalLines(manual.Lines.Select(line => (line.LineNumber, line.Description,
+                line.TaxExclusiveAmount, line.VatAmount, line.TaxRate)), metadata);
+            issuedAt = manual.IssuedAt;
+            dueAt = manual.DueDate;
+            currencyCode = manual.CurrencyCode;
+            untaxedAmount = manual.Lines.Sum(line => line.TaxExclusiveAmount);
+            taxAmount = manual.Lines.Sum(line => line.VatAmount);
+            totalAmount = untaxedAmount + taxAmount;
+            discountAmount = 0;
+            createsPayable = true;
+        }
         else
         {
             lines = ExpenseFiscalLines(expense!, metadata);
@@ -700,7 +716,8 @@ public sealed class FiscalGenerationWorker(
             lines, taxes, new DianPayment(createsPayable ? "2" : "1", "42",
                 DateOnly.FromDateTime(dueAt.Date), null),
             untaxedAmount, untaxedAmount, untaxedAmount + taxAmount,
-            discountAmount, totalAmount, cuds.QrPayload, ExpenseFiscalWithholdings(expense?.Withholding));
+            discountAmount, totalAmount, cuds.QrPayload,
+            SupportFiscalWithholdings(receipt?.Withholding ?? costDocument?.Document.Withholding ?? expense?.Withholding ?? manual?.Withholding));
         return new FiscalUblBuildResult(
             supportDocumentBuilder.Build(document), cuds.Cuds, cuds.QrPayload);
     }
@@ -712,10 +729,12 @@ public sealed class FiscalGenerationWorker(
     {
         var adjustment = snapshot.Adjustment;
         var cancellation = snapshot.ExpenseCancellation;
-        if ((adjustment is null) == (cancellation is null))
+        var manualCancellation = snapshot.ManualCancellation;
+        if ((adjustment is null ? 0 : 1) + (cancellation is null ? 0 : 1) +
+            (manualCancellation is null ? 0 : 1) != 1)
             throw new FiscalSnapshotDataException("The support adjustment has no unique source.");
-        var documentId = adjustment?.ReturnId ?? cancellation!.CancellationId;
-        var businessId = adjustment?.BusinessId ?? cancellation!.BusinessId;
+        var documentId = adjustment?.ReturnId ?? cancellation?.CancellationId ?? manualCancellation!.CancellationId;
+        var businessId = adjustment?.BusinessId ?? cancellation?.BusinessId ?? manualCancellation!.BusinessId;
         if (work.FiscalDocumentType != FiscalDocumentTypeCodes.SupportDocumentAdjustment ||
             snapshot.FiscalIssuerConfigurationId != work.Issuer.Id ||
             documentId != work.DocumentId ||
@@ -727,6 +746,17 @@ public sealed class FiscalGenerationWorker(
             snapshot.OriginalSupportIssuedOn is null)
             throw new FiscalSnapshotDataException(
                 "The support-document adjustment differs from its durable fiscal root or original reference.");
+        if (manualCancellation is not null &&
+            (manualCancellation.Original is null || manualCancellation.TenantId == Guid.Empty ||
+             manualCancellation.Original.BusinessId != work.BusinessId ||
+             manualCancellation.Original.TenantId != manualCancellation.TenantId ||
+             manualCancellation.Original.DocumentId == Guid.Empty ||
+             manualCancellation.Original.DocumentId == manualCancellation.CancellationId ||
+             manualCancellation.Original.Lines is not { Count: >= 1 and <= 500 } ||
+             snapshot.OriginalSupportIssuedOn != DianFiscalDateTime.DateInColombia(manualCancellation.Original.IssuedAt) ||
+             DianFiscalDateTime.DateInColombia(manualCancellation.CancelledAt) <
+                DianFiscalDateTime.DateInColombia(manualCancellation.Original.IssuedAt)))
+            throw new FiscalSnapshotDataException("The cancelled manual acquisition differs from its immutable original.");
         var pin = await pins.ResolveAsync(work.BusinessId,
             work.Issuer.SoftwarePinSecretReference, cancellationToken);
         if (string.IsNullOrWhiteSpace(pin))
@@ -758,14 +788,18 @@ public sealed class FiscalGenerationWorker(
         }
         else
         {
-            var original = cancellation!.Original;
-            lines = ExpenseFiscalLines(original, metadata).Select(line => new DianCreditNoteLine(
+            var originalLines = cancellation is not null
+                ? ExpenseFiscalLines(cancellation.Original, metadata)
+                : AcquisitionFiscalLines(manualCancellation!.Original.Lines.OrderBy(line => line.LineNumber)
+                    .Select(line => (line.LineNumber, line.Description, line.TaxExclusiveAmount, line.VatAmount, line.TaxRate)), metadata);
+            lines = originalLines.Select(line => new DianCreditNoteLine(
                 line.Number, line.ProductCode, line.ProductCodeScheme, line.Description, line.UnitCode,
                 line.Quantity, line.UnitPrice, line.DiscountAmount, line.UntaxedAmount, line.Taxes)).ToArray();
-            issuedAt = cancellation.CancelledAt;
-            currencyCode = original.CurrencyCode;
-            untaxedAmount = original.TaxExclusiveAmount;
-            totalAmount = original.GrossAmount;
+            issuedAt = cancellation?.CancelledAt ?? manualCancellation!.CancelledAt;
+            currencyCode = cancellation?.Original.CurrencyCode ?? manualCancellation!.Original.CurrencyCode;
+            untaxedAmount = cancellation?.Original.TaxExclusiveAmount ?? originalLines.Sum(line => line.UntaxedAmount);
+            totalAmount = cancellation?.Original.GrossAmount ??
+                untaxedAmount + originalLines.Sum(line => line.Taxes.Sum(tax => tax.Amount));
             discountAmount = 0;
         }
         var taxes = SummarizeTaxes(lines.SelectMany(line => line.Taxes));
@@ -777,8 +811,8 @@ public sealed class FiscalGenerationWorker(
             snapshot.QrValidationUrl);
         var note = new DianCreditNote(snapshot.FiscalNumber, cuds.Cuds,
             issuedAt, currencyCode,
-            DianCreditNoteCodes.ReferencesInvoiceOperation, cancellation is null ? "1" : "2",
-            cancellation is null
+            DianCreditNoteCodes.ReferencesInvoiceOperation, adjustment is not null ? "1" : "2",
+            adjustment is not null
                 ? "Devolución parcial de los bienes y/o no aceptación parcial del servicio"
                 : "Anulación del documento soporte",
             snapshot.Environment,
@@ -808,18 +842,23 @@ public sealed class FiscalGenerationWorker(
             ?? [(1, expense.Description, expense.TaxExclusiveAmount, expense.VatAmount,
                 expense.TaxExclusiveAmount == 0 ? 0 : decimal.Round(
                     expense.VatAmount / expense.TaxExclusiveAmount * 100m, 6, MidpointRounding.AwayFromZero))];
-        return bases.Select(line => {
-            if (!metadata.TryGetValue(line.Item1, out var item) || string.IsNullOrWhiteSpace(item.DianTaxCode))
-                throw new FiscalSnapshotDataException($"Faltan los datos fiscales de la línea {line.Item1} del gasto.");
-            return new DianInvoiceLine(line.Item1, item.ProductCode, item.ProductCodeScheme,
-                line.Item2, item.UnitCode, 1m, line.Item3, 0, line.Item3,
-                [new DianTax(item.DianTaxCode, item.TaxName, line.Item3, line.Item4, line.Item5)]);
-        }).ToArray();
+        return AcquisitionFiscalLines(bases, metadata);
     }
+
+    private static IReadOnlyList<DianInvoiceLine> AcquisitionFiscalLines(
+        IEnumerable<(int Number, string Description, decimal TaxExclusiveAmount, decimal VatAmount, decimal TaxRate)> bases,
+        IReadOnlyDictionary<int, PurchaseSupportLineMetadata> metadata) =>
+        bases.Select(line => {
+            if (!metadata.TryGetValue(line.Number, out var item) || string.IsNullOrWhiteSpace(item.DianTaxCode))
+                throw new FiscalSnapshotDataException($"Faltan los datos fiscales de la línea {line.Number} de la adquisición.");
+            return new DianInvoiceLine(line.Number, item.ProductCode, item.ProductCodeScheme,
+                line.Description, item.UnitCode, 1m, line.TaxExclusiveAmount, 0, line.TaxExclusiveAmount,
+                [new DianTax(item.DianTaxCode, item.TaxName, line.TaxExclusiveAmount, line.VatAmount, line.TaxRate)]);
+        }).ToArray();
 
     // Annex 1.1, 16.2.2 permits 05/06 in the support document. Municipal ICA
     // remains in the accounting snapshot; it is not a supported fiscal tax code.
-    private static IReadOnlyList<DianTax>? ExpenseFiscalWithholdings(
+    private static IReadOnlyList<DianTax>? SupportFiscalWithholdings(
         Auraly.Commerce.Taxation.Contracts.WithholdingCalculationSnapshot? withholding) =>
         withholding?.Lines.Where(line => line.Kind is "Vat" or "IncomeTax")
             .Select(line => new DianTax(line.Kind == "Vat" ? "05" : "06",
@@ -912,10 +951,12 @@ public sealed class FiscalGenerationWorker(
             FiscalDocumentTypeCodes.SupportDocument =>
                 work.SupportDocument?.Receipt?.ReceivedAt ??
                 work.SupportDocument?.Expense?.IssuedAt ??
-                work.SupportDocument?.CostDocument?.Document.IssuedAt,
+                work.SupportDocument?.CostDocument?.Document.IssuedAt ??
+                work.SupportDocument?.ManualAcquisition?.IssuedAt,
             FiscalDocumentTypeCodes.SupportDocumentAdjustment =>
                 work.SupportDocument?.Adjustment?.ReturnedAt ??
-                work.SupportDocument?.ExpenseCancellation?.CancelledAt,
+                work.SupportDocument?.ExpenseCancellation?.CancelledAt ??
+                work.SupportDocument?.ManualCancellation?.CancelledAt,
             FiscalDocumentTypeCodes.CreditNote =>
                 work.CreditNote?.Return.ReturnedAt ?? work.FiscalOnlyCreditNote?.IssuedAt,
             FiscalDocumentTypeCodes.DebitNote => work.DebitNote?.DebitNote.IssuedAt,

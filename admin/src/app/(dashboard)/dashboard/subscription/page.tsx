@@ -9,7 +9,6 @@ import {
   RefreshCw,
   Users,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,13 +17,14 @@ import { PageLoading } from "@/components/ui/page-loading";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSubscriptionDetails } from "@/hooks/use-dashboard";
+import { useTenantCommercialSubscription } from "@/hooks/use-tenants";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { TenantCommercialSubscriptionCard } from "@/components/subscriptions/tenant-commercial-subscription-card";
 import { TenantRenewalOrderCard } from "@/components/subscriptions/tenant-renewal-order-card";
 import { PlatformTenantSubscriptions } from "@/components/subscriptions/platform-tenant-subscriptions";
 import { useAuthStore } from "@/stores/auth-store";
-import { tenantCommercialApi } from "@/services/api/tenants";
+import { type TenantCommercialSubscription } from "@/services/api/tenants";
 
 const operationLabels: Record<string, string> = {
   "1": "Turno del agente",
@@ -69,16 +69,17 @@ export default function SubscriptionPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const canReadAllTenants = useAuthStore((state) =>
     Boolean(state.user?.permissions.includes("tenants.read")));
-  const subscriptionQuery = useSubscriptionDetails();
-  const commercialQuery = useQuery({ queryKey: ["tenant-commercial", "subscription"], queryFn: tenantCommercialApi.subscription });
+  const subscriptionQuery = useSubscriptionDetails(!canReadAllTenants);
+  const commercialQuery = useTenantCommercialSubscription(!canReadAllTenants);
 
   if (canReadAllTenants) return <PlatformTenantSubscriptions />;
 
   if (commercialQuery.isLoading) return <PageLoading cards={3} />;
   if (commercialQuery.isError) return <PageError onRetry={commercialQuery.refetch} />;
+  if (businessId && subscriptionQuery.isLoading) return <PageLoading cards={4} />;
 
-  if (commercialQuery.data && (!businessId || subscriptionQuery.isLoading || subscriptionQuery.isError || !subscriptionQuery.data)) {
-    return <CommercialSubscriptionView />;
+  if (commercialQuery.data && (!businessId || subscriptionQuery.isError || !subscriptionQuery.data)) {
+    return <CommercialSubscriptionView subscription={commercialQuery.data} />;
   }
 
   if (!businessId) {
@@ -91,12 +92,11 @@ export default function SubscriptionPage() {
             Selecciona un negocio para consultar su suscripcion y consumo.
           </p>
         </div>
-        <TenantCommercialSubscriptionCard />
+        <TenantCommercialSubscriptionCard value={commercialQuery.data} />
       </div>
     );
   }
 
-  if (subscriptionQuery.isLoading) return <PageLoading cards={4} />;
   if (subscriptionQuery.isError) return <PageError onRetry={subscriptionQuery.refetch} />;
 
   const subscription = subscriptionQuery.data;
@@ -108,7 +108,7 @@ export default function SubscriptionPage() {
           <h1 className="text-3xl font-semibold tracking-tight">Suscripcion</h1>
           <p className="mt-1 text-muted-foreground">Plan, vigencia y consumo de creditos.</p>
         </div>
-        <TenantCommercialSubscriptionCard />
+        <TenantCommercialSubscriptionCard value={commercialQuery.data} />
         <Card>
           <CardContent className="flex min-h-56 flex-col items-center justify-center text-center">
             <CreditCard className="mb-4 h-10 w-10 text-muted-foreground" />
@@ -141,8 +141,8 @@ export default function SubscriptionPage() {
         </Badge>
       </div>
 
-      <TenantCommercialSubscriptionCard />
-      <TenantRenewalOrderCard />
+      <TenantCommercialSubscriptionCard value={commercialQuery.data} />
+      <TenantRenewalOrderCard key={commercialQuery.data?.subscriptionId} subscription={commercialQuery.data} />
 
       <div className="grid gap-5 xl:grid-cols-[1.15fr_1.85fr]">
         <Card className="overflow-hidden">
@@ -348,10 +348,10 @@ export default function SubscriptionPage() {
   );
 }
 
-function CommercialSubscriptionView() {
+function CommercialSubscriptionView({ subscription }: { subscription: TenantCommercialSubscription }) {
   return <div className="mx-auto max-w-[1600px] space-y-7">
     <div><p className="mb-1 text-sm font-medium text-primary">FACTURACIÓN</p><h1 className="text-3xl font-semibold tracking-tight">Suscripción</h1><p className="mt-1 text-muted-foreground">Plan contratado, cupos, vigencia y próxima renovación.</p></div>
-    <TenantCommercialSubscriptionCard />
-    <TenantRenewalOrderCard />
+    <TenantCommercialSubscriptionCard value={subscription} />
+    <TenantRenewalOrderCard key={subscription.subscriptionId} subscription={subscription} />
   </div>;
 }

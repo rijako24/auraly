@@ -37,7 +37,11 @@ public sealed record PurchaseSupportFiscalSnapshot(
     DateOnly? OriginalSupportIssuedOn = null,
     string? SellerPostalZone = null,
     ExpenseCancellationPayload? ExpenseCancellation = null,
-    GoodsReceiptCostDocumentAccountingPayload? CostDocument = null);
+    GoodsReceiptCostDocumentAccountingPayload? CostDocument = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    ManualPurchaseSupportPayload? ManualAcquisition = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    ManualPurchaseSupportCancellationPayload? ManualCancellation = null);
 
 public static class PurchaseSupportFiscalSnapshotSerializer
 {

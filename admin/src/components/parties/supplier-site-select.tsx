@@ -32,12 +32,13 @@ const toOption = (item: PartySiteRoleOption): PagedEntityOption => ({
   description: item.identification,
 });
 
-export function SupplierSiteSelect({ value, onChange, onResolved, roleId, selectedOption,
+export function SupplierSiteSelect({ value, onChange, onResolved, roleId, partyId, selectedOption,
   disabled = false, preload = false, placeholder = "Buscar proveedor y sede", sourceKey = "supplier-sites" }: {
   value: string;
   onChange: (siteId: string, supplier?: SupplierSiteSelection) => void;
   onResolved?: (supplier: SupplierSiteSelection) => void;
   roleId?: string;
+  partyId?: string;
   selectedOption?: PagedEntityOption | null;
   disabled?: boolean;
   preload?: boolean;
@@ -48,9 +49,9 @@ export function SupplierSiteSelect({ value, onChange, onResolved, roleId, select
   const [picked, setPicked] = useState<{ site: SupplierSiteSelection; option: PagedEntityOption } | null>(null);
   useEffect(() => { if (picked && picked.site.partySiteId !== value) setPicked(null); }, [picked, value]);
   const resolved = useQuery({
-    queryKey: ["supplier-site-select-value", businessId, value],
+    queryKey: ["supplier-site-select-value", businessId, value, partyId ?? "all"],
     queryFn: async () => {
-      const page = await partiesApi.portfolioSiteOptions({ role: "Supplier", partySiteId: value, page: 1, pageSize: 1 });
+      const page = await partiesApi.portfolioSiteOptions({ role: "Supplier", partySiteId: value, partyId, page: 1, pageSize: 1 });
       return page.items[0] ? toSelection(page.items[0]) : null;
     },
     enabled: !!businessId && !!value && picked?.site.partySiteId !== value && !selectedOption,
@@ -60,12 +61,12 @@ export function SupplierSiteSelect({ value, onChange, onResolved, roleId, select
   useEffect(() => { onResolvedRef.current = onResolved; }, [onResolved]);
   useEffect(() => { if (resolved.data) onResolvedRef.current?.(resolved.data); }, [resolved.data]);
   return <PagedEntitySelect<PartySiteRoleOption>
-    queryKey={[sourceKey, businessId, roleId ?? "all"]}
+    queryKey={[sourceKey, businessId, roleId ?? "all", partyId ?? "all"]}
     value={value}
     selectedOption={selectedOption ?? (picked?.site.partySiteId === value ? picked.option : null) ??
       (resolved.data ? toOption(resolved.data) : null)}
     loadPage={(search, page, pageSize) => partiesApi.portfolioSiteOptions({
-      role: "Supplier", roleId, search: search || undefined, page, pageSize,
+      role: "Supplier", roleId, partyId, search: search || undefined, page, pageSize,
     })}
     getOption={toOption}
     onChange={(siteId, option, item) => {

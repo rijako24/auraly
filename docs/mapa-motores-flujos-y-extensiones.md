@@ -1,5 +1,15 @@
 # Mapa de motores, flujos y puntos de extension
 
+> Diseño en preparación, 2026-10-20: la evolución del PUC, comprobantes, cruces y
+> fuentes de verdad se especifica en la sección 13 de
+> [comprobantes abiertos](implementation/accounting-open-vouchers-design.md).
+> Amplía los contratos del motor financiero existente. Asociaciones de compra y
+> revisiones de costo pertenecen a [Purchasing](implementation/goods-receipts-design.md);
+> su cierre técnico de valoración no autoriza otro writer de inventario ni
+> un promedio paralelo. Cada documento distingue los slices locales implementados
+> y su evidencia de los criterios todavía pendientes. La asociación de comprobantes
+> en la recepción inicial está en verificación; no habilita revisiones posteriores.
+
 Este documento responde qué componente es dueño de cada efecto y dónde se agrega una capacidad sin duplicar código. Es operativo; las decisiones detalladas enlazadas siguen siendo la autoridad de diseño.
 
 Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos de usuarios, vendedores, cajas, nómina o documentos DIAN, la autoridad es `docs/decision-aprovisionamiento-suscripciones-cuotas-y-wompi.md`. El alta física continúa en `ITenantProvisioningStore`; webhook y polling convergen antes de invocarlo.
@@ -13,6 +23,7 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Nuevo documento fiscal DIAN | snapshot/regla del `FiscalProcessingCoordinator` y workers fiscales existentes | worker DIAN por módulo, tenant o tipo |
 | Nuevo asiento automático | política/regla del `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor` | asiento desde API o segundo posting service |
 | Nuevo efecto de CxC/CxP, pago, aplicación, crédito o anticipo | contrato y transacción del único `SqlAccountingPostingProcessor`; el trabajo congela si además requiere asiento | handler operacional, worker financiero adicional o job lateral |
+| Resolver auxiliares de un banco | PUC → `accounting.BankPostingAccount`; aceptación contable → `accounting.BankAccountsFreeze` fija la configuración en el trabajo existente; conciliación → `accounting.BankBookAccounts` | otro catálogo de tesorería, FK inverso editable, resolver de nuevo una cuenta ya aceptada o copiar saldos/asientos por sede |
 | Nueva proyección de alto volumen | motor de reporting existente, con métrica, idempotencia, rebuild y benchmark documentados | consolidado preventivo o job por reporte |
 | Nueva opción de dropdown | seed/maestro → store de aplicación → endpoint de catálogo → `useReferenceOptions` | array `{value,label}`, switch de labels o prompt |
 | Nuevo endpoint | contrato/caso de uso de aplicación; adapter de persistencia en infraestructura | SQL o reglas de dominio en Minimal API |
@@ -38,7 +49,7 @@ transportes de facturas, conservando su snapshot y plantilla operacional propia.
 
 | Consultar o editar la empresa propia | `tenant.profile.read/update` → `TenantsController` limita el recurso a `User.TenantId` → `TenantService`; el plan se proyecta en solo lectura desde la suscripción canónica | conceder `tenants.*` al administrador cliente, confiar en el `tenantId` del navegador o duplicar el perfil empresarial |
 | Cargos de facturación | catálogo versionado `InvoiceChargeService`/`SqlInvoiceChargeStore` → `InvoiceChargeCalculation` compartido por borrador online y Edge → snapshot de la venta → writer común de Gastos | otro medio de pago, producto ficticio, cálculo en UI o tabla paralela de cargos emitidos |
-| Gasto manual o asociado a una factura | `ExpenseService` (cuentas por línea y preview con `WithholdingService`, ver `implementation/expenses-account-selection-and-withholdings-design.md`) o handler de venta → `SqlExpenseStore.PersistAcceptedAsync` → fuentes/trabajos financieros canónicos → `SqlAccountingPostingProcessor` abre CxP y marca el gasto procesado | consumir cursor operativo para gastos nuevos, abrir CxP desde POS o volver a registrar gasto al pagar al proveedor |
+| Gasto manual o asociado a una factura | `ExpenseService` (conceptos con cuenta automática y preview con `WithholdingService`, ver `implementation/expenses-account-selection-and-withholdings-design.md`) o handler de venta → `SqlExpenseStore.PersistAcceptedAsync` → fuentes/trabajos financieros canónicos → `SqlAccountingPostingProcessor` abre CxP y marca el gasto procesado | consumir cursor operativo para gastos nuevos, abrir CxP desde POS o volver a registrar gasto al pagar al proveedor |
 | Recaudar CxC o pagar CxP | wizard compartido → `ReceivablesService`/`PayablesService` → aceptación transaccional de aplicaciones y `payments[]` → `AccountingSourceDocuments`/`AccountingPostingJobs` → `SqlAccountingPostingProcessor`; desde POS preparado, Edge abre o retoma la sesión local, confirma su registro en el servidor, guarda primero la proyección mínima en SQLite y luego actúa como proxy online autenticado por dispositivo y sesión. Si la llamada al servidor falla, elimina esa proyección provisional sin programar un reintento automático del pago; un reintento manual conserva la clave idempotente. El cierre preparado lee solo proyecciones confirmadas. Los historiales paginados incluyen medios y aplicaciones por factura en el mismo viaje de lectura. | aceptar en servidor antes de escribir SQLite en caja preparada, usar `DocumentProcessingJobs`, crear otro motor, refetch automático posterior o contabilizar desde UI/API |
 
 La autorización de ese wizard depende de la superficie: POS web y preparado usan `pos.receivables.payments.create` o `pos.payables.payments.create`, solo consultan facturas pendientes del tercero elegido y abren o retoman la sesión operativa antes de confirmar; administración conserva `receivables.read`/`receivables.payments.create` y `payables.read`/`payables.payments.create`. El rol Cajero recibe solo los permisos POS; las dos superficies invocan los mismos servicios, stores y motor contable.
@@ -60,10 +71,13 @@ rutas y autorizaciones independientes.
 - SQL es la fuente de orden, lease, estado e idempotencia; la cola solo despierta consumidores.
 - Cada tipo documental tiene un handler. El handler no es un motor nuevo.
 - `InventoryValuationCalculator` es el único propietario de las fórmulas de costo promedio, valor y costo reconocido; no conoce SQL ni tipos documentales.
-- `SqlInventoryLedgerWriter` es la única puerta transaccional de valoración y escritura: bloquea y carga el estado, invoca una vez la calculadora, y persiste balance, revaloración común, kardex y notificación.
+- `SqlInventoryLedgerWriter` es la única puerta transaccional de valoración y escritura: bloquea y carga el conjunto, invoca la calculadora por movimiento en el orden del documento y persiste balance, revaloración común, kardex y notificación. `PostBatchAsync` admite las bodegas del mismo documento; los traslados conservan el costo de su salida dentro del lote. Conversión y producción usan dos fases dependientes, insumos y productos resultantes, en la misma transacción. Los handlers y el processor existente consumen esos lotes, sin otro writer ni fórmula.
+- Ese mismo punto admite `ValueAdjustment`: importe firmado sin cantidad para valorar existencias del pool positivo, sin otra entrada física. Conserva los dos comandos del lote, valida el sobre de la sesión activa y devuelve el cambio real del valor almacenado. La revisión de cargos sobre recepciones trazables entra por `GoodsReceiptService` → `SqlGoodsReceiptStore` → el mismo motor documental y `SqlGoodsReceiptDocumentHandler` → este writer y `SqlAccountingPostingProcessor`; no abre otra CxP ni altera el comprobante original. Una recepción antigua sin origen trazable no se revaloriza automáticamente.
+- La atribución por origen entra por ese mismo `PostBatchAsync`: `InventoryOriginAttribution` consume las entradas abiertas de la bodega y producto afectados; compartir costo promedio o precios no consume existencias ni orígenes de otra bodega. El writer conserva porciones inmutables en `inventory.MovementOrigins` y detalle abierto derivado en `inventory.OriginPositions`. `InventoryBalances` sigue suministrando cantidad/valor; su contexto nullable y secuencia observada de cobertura detectan escritores anteriores sin inventar recibos históricos. Traslados explícitos transportan porciones y devoluciones restauran el origen de su salida. Fabricación consume ingredientes y registra sus productos por el flujo actual, sin propagación retroactiva de cargos a productos terminados. No agrega comandos, workers, fuentes de saldo o un writer alterno.
 - `SqlInventoryOperationProcessor` coordina conteos, ajustes, traslados, conversiones y averías, incluida la asignación explícita de merma, pero no calcula costo promedio ni escribe balances por fuera del writer común.
 - `InventoryDemandResolver` es el único propietario de agrupar y convertir la demanda de presentaciones que comparten inventario con un producto padre. Los validadores online, Edge y de pedidos cargan hechos en lote y lo invocan internamente; el ledger writer conserva la resolución transaccional final.
 - POS sale, recepción, devolución de venta y devolución de compra usan el mismo writer con la política de valoración correspondiente.
+- El mismo writer conserva en `inventory.CostPoolEpochs` el contexto histórico del conjunto de sedes valorado y en `inventory.CostPoolHeads` su referencia actual y secuencia observada. No asignan secuencias ni almacenan un segundo saldo: `InventoryBalances` sigue siendo la autoridad de cantidad/valor. El vínculo nullable del kardex admite históricos y escritores anteriores sin inventar atribución por recepción. Las asignaciones de origen y los cargos posteriores siguen gobernados por `goods-receipts-design.md`.
 
 Para agregar un efecto: extender el contrato/handler correcto, elegir una política de valoración existente o modelar una nueva allí, agregar prueba de idempotencia/concurrencia y no tocar las tablas desde otro componente.
 
@@ -93,6 +107,19 @@ Documento operativo confirmado → proceso fiscal durable → `FiscalProcessingC
 - Service Bus, RabbitMQ e in-process son adapters equivalentes.
 - Un retry fiscal no repite inventario, caja, cartera ni contabilidad.
 - Folios, snapshots, intentos, track IDs, artefactos y estados pertenecen al módulo fiscal.
+- Recepción, cargos, gastos, devolución, anulación y habilitación de documento
+  soporte insertan su raíz, snapshot y proceso mediante
+  `SqlFiscalDocumentStore.InsertPurchaseSupportSourcesAsync`, dentro de su
+  transacción de aceptación. Conservan su numeración, cupo y construcción del
+  snapshot; el participante no publica ni aplica efectos financieros. El soporte
+  manual usa ese mismo participante desde la aceptación contable y aporta un
+  snapshot neutral de adquisición, sin crear otro gasto o recepción. Su deuda y
+  diario los aplica el processor contable existente. Los límites y la evidencia
+  vigentes están en `accounting-open-vouchers-design.md`.
+- Gastos, compras y ventas guardan las retenciones ya calculadas mediante
+  `SqlWithholdingRuleStore.InsertDocumentSnapshotsAsync`, dentro de su transacción
+  existente. Comparte la escritura por lote de cabeceras y líneas; el cálculo
+  continúa en `WithholdingService` y contabilidad solo consume los snapshots.
 
 ## Contabilidad
 
@@ -102,7 +129,115 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
 - La unicidad por documento fuente evita doble asiento.
 - Agregar un documento significa extender la política y el posting existente, con prueba; no copiar la lista ni insertar asientos desde el módulo origen.
 - El motor documental no escribe saldos financieros ni aplicaciones. No existe un worker financiero distinto del motor contable.
+- La CxC por faltante de empleado sigue ese mismo propietario: el cierre congela
+  el reclamo y su fuente; `SqlAccountingPostingProcessor` crea la obligación y
+  su apertura junto con el asiento. No queda una escritura de cartera en cierres.
 - Un documento financiero puro guarda `AccountingSourceDocuments` y `AccountingPostingJobs` en su transacción de aceptación; no crea job, payload ni secuencia operacional.
+- `dbo.AccountingSourcesAccept` es la única escritura de aceptación de esas fuentes y trabajos.
+  Los adaptadores del documento operacional, comprobante manual, apertura, gasto,
+  pago, factura de servicios, nómina, propina y cierre la invocan dentro de su
+  transacción existente. `SqlAccountingPostingJobWriter` reside en Accounting
+  Infrastructure y adapta los contratos a ese mismo procedimiento por lotes de
+  hasta 100 fuentes. La aceptación no aplica saldos ni asientos: esos efectos
+  siguen dentro de `SqlAccountingPostingProcessor`. Repetir una aceptación
+  conserva fuente, trabajo y modo congelados. El reintento explícito existente
+  de fuentes históricas sin trabajo conserva su recuperación en Accounting;
+  esa recuperación no se ejecuta desde aceptación ni desde un replay.
+  Los auxiliares de los nuevos medios nativos se fijan en los detalles de pago
+  existentes mediante `PortfolioPaymentAccountsFreeze`, llamado por esa
+  aceptación y el retry del mismo processor. `ConfiguredPostingAccount` y
+  `PaymentPostingCategory` comparten la resolución de configuración; no hay un
+  segundo motor ni un saldo de tesorería independiente. Los lectores históricos
+  y el corte están definidos en `accounting-open-vouchers-design.md`, 13.7.
+  Para los mappings generales, `AccountMappingsFreeze` fija identidades de
+  categorías en el mismo trabajo, una vez por sede/fecha del lote. Aceptación y
+  procesamiento pendiente lo reutilizan; `ResolvedPostingAccount` consume esa
+  selección tanto en las partidas automáticas como en la importación de cartera.
+  `ConfiguredPostingAccountIdentity` selecciona el override y
+  `PostingAccountReadiness` valida únicamente los auxiliares realmente usados.
+  Las anulaciones de propina toman sus cuentas y centros del asiento original,
+  sin una segunda selección de banco ni reconstrucción de mappings históricos.
+- `accounting.PortfolioPaymentAccept` es el participante transaccional de pagos
+  CxP y recaudos CxC: valida el conjunto de posiciones con
+  `accounting.ObligationAvailability` y guarda encabezado, medios y aplicaciones
+  en las tablas existentes. Los dos stores nativos lo invocan dentro de su
+  transacción; no contiene commit, job, saldo ni asiento. Replay conserva su
+  contrato. La numeración reutiliza `SqlOperationalDocumentAllocator` mediante
+  su entrada de serie existente, aislada por tenant y sin provisionar una serie
+  para sustituir una faltante o agotada. La captura financiera manual versionada
+  normaliza cuentas y vínculos y acepta sus grupos por ese mismo participante,
+  dentro del commit de la fuente padre. El processor aplica pagos nativos y grupos
+  con su misma rutina por lote; no crea trabajos ni números hijos. La vista de
+  lectura `accounting.PortfolioPaymentOrigins` conserva el vínculo al padre en
+  historial, reportes y cierres. Las aperturas manuales de CxP y las asistidas
+  convergen en `SqlAccountingPostingProcessor.OpenPayablesAsync`: un lote, una
+  escritura de obligación/transacción y vínculo a la partida fuente en el mismo
+  comando del asiento. Las nuevas CxC comparten `OpenReceivablesSql` con las
+  preparaciones nativas, incluidos cierres; los avisos de cartera de todas esas
+  fuentes convergen en `SqlAccountingPosSynchronizationOutbox`. La política
+  común de aplicaciones vive en `PortfolioSettlement` de BuildingBlocks Domain,
+  sin referencias de Accounting a dominios internos de otros módulos. El efecto
+  firmado de los movimientos del historial se proyecta desde
+  `accounting.PortfolioTransactionEffect` en detalle y reportes de ambos submayores; no se
+  persiste otra variación ni se calcula su signo por separado en cada vista.
+  `accounting.PortfolioAppliedAmounts` proyecta el importe neto que permanece
+  aplicado después de desaplicaciones para listados, cartera por tercero y
+  reportes. El historial del dinero pagado conserva su importe bruto. No hay
+  otro total editable; los reportes filtran una vez en su mismo comando y
+  enriquecen únicamente la página seleccionada.
+- La decisión expresa de descuento financiero en un pago asistido de proveedor
+  entra por `accounting.PortfolioPaymentAccept`, que congela el importe firmado
+  junto a la aplicación. `SqlAccountingPostingProcessor` usa el mismo lote para
+  extinguir la obligación, contabiliza su contrapartida en el auxiliar
+  configurable y llama una sola vez a `ProductLinkedCostsPrepare` para preparar
+  el precio futuro. No llama al writer de inventario. La devolución posterior
+  conserva su handler y su fuente inmutable; usa la decisión ya procesada para
+  el saldo a favor y revierte la proporción del descuento en el asiento.
+  Los cruces sin dinero normalizados preparan sus destinos mediante
+  `ManualVoucherCreditTargets` en esa aceptación; `SourcePositionIndex` conserva
+  la proyección derivada para `ObligationAvailability`, compartida con abonos.
+  Su backfill usa el mismo recorrido acotado del índice de terceros. Solo el
+  processor reduce saldos y registra transacciones/asiento: la reducción positiva
+  de CxP/CxC comparte `PortfolioBalanceReductionSql` con pagos. Ese adaptador y
+  los ajustes individuales/de cierre usan `PortfolioBalanceChangesSql`, dentro
+  del mismo processor y comando transaccional. La política de estado distingue
+  abonos de ajustes sin duplicar la escritura de saldo. No crea pagos ni
+  caja para representar el cruce. La desaplicación de abonos nativos/manuales
+  extiende ese mismo índice con vínculo a la transacción original y tipo de
+  efecto. El processor reabre la obligación y conserva el dinero como anticipo
+  mediante los mismos aplicadores; no crea otro egreso. Su captura visual e
+  integración completa con correcciones siguen en curso. La restitución de un
+  cruce sin dinero extiende ese mismo aplicador: `AppliedPortfolioSettlements`
+  prueba el original y su crédito, `CreditBalanceChangesSql` comparte la escritura
+  de disponible con las aplicaciones y `CreditUnapplication` conserva ambos
+    vínculos. Está verificada localmente en SQL/API y vistas; no abre otro crédito
+    ni mueve caja. La devolución real extiende esa misma desaplicación y los
+  movimientos directos de tesorería: `PaymentReturn` se normaliza por la cuenta
+  elegida y comparte presupuesto con el abono original. El processor reabre la
+  deuda, registra el dinero devuelto y el asiento en su misma transacción, sin
+  otro pago ni anticipo. El puente de soporte manual y su anulación
+  extienden los participantes fiscal/contable y el editor existentes; su contrato
+  y evidencia local están en `accounting-open-vouchers-design.md`.
+- Las aperturas nativas de saldo a favor del proveedor convergen en
+  `SqlAccountingPostingProcessor.OpenSupplierCreditsSql`. El detalle Opening
+  de `SupplierCreditTransactions` conserva el trabajo padre real y permite
+  enlazar la cuenta desde la línea inmutable, también para cargos devueltos.
+  `CustomerCredits` comparte `OpenCustomerCreditsSql` para aperturas nativas,
+  correcciones de reembolso y anticipos manuales. Los anticipos v4 preparan
+  esas aperturas y los grupos de pago en el mismo motor, participante de
+  aceptación y aplicador financiero existentes; no producen facturas ficticias
+  ni números hijos. Ambos detalles Opening enlazan el mayor desde su partida.
+  No es otro saldo ni un motor de anticipos. La API paginada de los cuatro tipos
+  y los cruces sin dinero tienen pruebas SQL/API dirigidas; la captura visual
+  v4 está en verificación. Los historiales incluyen anticipos por la sede
+  explícita del grupo aceptado; el corte copia solo esa dimensión del snapshot
+  y no repara metadatos durante replay. La captura fiscal manual usa el participante
+  anterior; la devolución de pagos usa el aplicador anterior. No se rellenan saldos históricos
+  por inferencia.
+- La búsqueda de terceros manuales reutiliza `accounting.SourcePartyIndex`,
+  derivado por esa aceptación mediante `accounting.ManualVoucherPartyReferences`.
+  El backfill de esquema comparte esa extracción y valida tenant. No existe una
+  carga, edición, job o writer independiente de ese índice ni contiene saldos.
 
 ## Nómina
 

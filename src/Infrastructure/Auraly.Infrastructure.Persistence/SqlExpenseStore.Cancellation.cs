@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using System.Data;
 using Auraly.Application.Expenses;
 using Auraly.Contracts.Expenses;
@@ -31,7 +32,7 @@ public sealed partial class SqlExpenseStore
                   e.CancellationReasonOptionId
                 FROM dbo.Expenses e WITH(UPDLOCK,HOLDLOCK)
                 JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.TenantId=@TenantId
-                JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=e.ExpenseId
+                JOIN dbo.AccountingSourceDocuments source WITH(UPDLOCK,HOLDLOCK) ON source.SourceDocumentId=e.ExpenseId
                   AND source.SourceDocumentType=N'Expense' AND source.BusinessId=e.BusinessId
                 LEFT JOIN dbo.Payables p WITH(UPDLOCK,HOLDLOCK) ON p.SourceDocumentId=e.ExpenseId
                   AND p.SourceDocumentType=N'Expense' AND p.BusinessId=e.BusinessId
@@ -106,23 +107,34 @@ public sealed partial class SqlExpenseStore
             if (outstanding < 0 || outstanding > original.Withholding.NetAmount)
                 throw new InvalidOperationException("El saldo de la cuenta por pagar no concilia con el gasto.");
             await using (var pending = new SqlCommand("""
-                SELECT (SELECT COUNT_BIG(*) FROM dbo.SupplierPaymentApplications a WITH(UPDLOCK,HOLDLOCK)
-                JOIN dbo.SupplierPayments payment WITH(UPDLOCK,HOLDLOCK) ON payment.PaymentId=a.PaymentId
-                WHERE a.PayableId=@PayableId AND a.AppliedAt IS NULL AND payment.Status=N'Accepted'),
-                (SELECT COALESCE(SUM(CASE WHEN TransactionType=N'Payment' THEN Amount ELSE 0 END),0)
-                  FROM dbo.PayableTransactions WITH(UPDLOCK,HOLDLOCK) WHERE PayableId=@PayableId),
+                SELECT CONVERT(bigint,CASE WHEN EXISTS(SELECT 1 FROM dbo.Payables payable
+                  CROSS APPLY accounting.ObligationAvailability(payable.BusinessId,N'Payable',payable.PayableId,payable.OutstandingAmount,NULL) available
+                  WHERE payable.PayableId=@PayableId AND (available.PendingPaymentAmount>0
+                    OR available.PendingApplicationAmount>0 OR available.PendingAdjustmentCount>0)) THEN 1 ELSE 0 END),
+                (SELECT COALESCE(SUM(applied.Amount),0)
+                  FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Payable') applied
+                  WHERE applied.PositionId=@PayableId),
                 (SELECT COUNT_BIG(*) FROM dbo.PayableTransactions WITH(UPDLOCK,HOLDLOCK)
-                  WHERE PayableId=@PayableId AND TransactionType NOT IN(N'Opening',N'Payment'));
+                  WHERE PayableId=@PayableId AND TransactionType NOT IN
+                    (N'Opening',N'Payment',N'Unapplication',N'CreditApplication',N'CreditUnapplication')),
+                CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM dbo.AccountingEntries entry
+                  CROSS APPLY purchasing.ReceiptCostVoucherLines(entry.EntryId) cost
+                  WHERE entry.SourceDocumentId=@ExpenseId AND entry.SourceDocumentType=N'Expense'
+                    AND cost.AssignedFunctionalAmount>0) THEN 1 ELSE 0 END);
                 """, connection, transaction))
             {
                 pending.Parameters.AddWithValue("@PayableId", (object?)payableId ?? DBNull.Value);
+                pending.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+                pending.Parameters.AddWithValue("@ExpenseId", expenseId);
                 await using var reader = await pending.ExecuteReaderAsync(ct);
                 await reader.ReadAsync(ct);
+                if (reader.GetBoolean(3))
+                    throw new ExpenseConflictException("El gasto tiene costos distribuidos en compras. Revierte esas asignaciones antes de anularlo.");
                 if (reader.GetInt64(0) > 0)
-                    throw new ExpenseConflictException("Hay un pago pendiente de procesar para este gasto.");
+                    throw new ExpenseConflictException("Hay un pago, cruce o ajuste pendiente de procesar para este gasto.");
                 if (reader.GetInt64(2) > 0 || reader.GetDecimal(1) != original.Withholding.NetAmount - outstanding)
                     throw new ExpenseConflictException(
-                        "La cuenta por pagar tiene ajustes distintos de pagos; primero se debe conciliar antes de anular el gasto.");
+                        "El gasto conserva cruces o ajustes aplicados. Desaplica los cruces o concilia esos ajustes antes de anularlo.");
             }
             var hasSupport = evidence == PurchaseEvidenceTypes.BuyerElectronicSupportDocument;
             PurchaseSupportFiscalSnapshot? originalSupport = null;
@@ -198,28 +210,12 @@ public sealed partial class SqlExpenseStore
             original.SellerOriginCode, OriginalSupportNumber: originalNumber,
             OriginalSupportCuds: originalCuds, OriginalSupportIssuedOn: originalIssuedOn,
             SellerPostalZone: original.SellerPostalZone, ExpenseCancellation: payload);
-        await using var command = new SqlCommand("""
-            INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
-              AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
-            VALUES(@Id,@BusinessId,N'ExpenseCancellation',N'SupportDocumentAdjustment',
-              @Number,@FiscalNumber,N'CUDS',NULL,@Now,@Status,@Now,@Now);
-            INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
-            VALUES(@Id,@Snapshot,@Environment,@Now);
-            INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
-              AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
-            VALUES(@Id,@BusinessId,@IssuerId,@Status,0,@Now,@Now,@Now);
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@Id", payload.CancellationId);
-        command.Parameters.AddWithValue("@BusinessId", payload.BusinessId);
         var auralyNumber = payload.Original.DocumentNumber;
-        command.Parameters.AddWithValue("@Number",
-            (auralyNumber.Length > 60 ? auralyNumber[..60] : auralyNumber) + "-ANU");
-        command.Parameters.AddWithValue("@FiscalNumber", allocation.FiscalNumber);
-        command.Parameters.AddWithValue("@Now", now);
-        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
-        command.Parameters.AddWithValue("@Snapshot", PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
-        command.Parameters.AddWithValue("@Environment", snapshot.Environment);
-        command.Parameters.AddWithValue("@IssuerId", snapshot.FiscalIssuerConfigurationId);
-        await command.ExecuteNonQueryAsync(ct);
+        await SqlFiscalDocumentStore.InsertPurchaseSupportSourcesAsync(connection, transaction, payload.TenantId,
+            [new(payload.CancellationId, payload.BusinessId, ExpenseDocumentTypes.Cancellation,
+                FiscalDocumentTypeCodes.SupportDocumentAdjustment,
+                (auralyNumber.Length > 60 ? auralyNumber[..60] : auralyNumber) + "-ANU",
+                allocation.FiscalNumber, now, snapshot.FiscalIssuerConfigurationId, snapshot.Environment,
+                PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot))], now, ct);
     }
 }

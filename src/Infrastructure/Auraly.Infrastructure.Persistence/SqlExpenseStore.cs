@@ -31,6 +31,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
             SELECT a.AccountId,a.Code,a.Name FROM dbo.AccountingAccounts a
               JOIN dbo.Businesses b ON b.TenantId=a.TenantId
                 WHERE @IncludeDirectories=1 AND b.BusinessId=@BusinessId AND a.IsActive=1 AND a.AllowsPosting=1 AND a.AccountType=N'Expense'
+                  AND (a.BusinessId IS NULL OR a.BusinessId=@BusinessId)
               ORDER BY a.Code;
             SELECT CostCenterId,Code,Name,IsDefault FROM dbo.AccountingCostCenters
               WHERE BusinessId=@BusinessId AND IsActive=1 ORDER BY IsDefault DESC,Code;
@@ -98,7 +99,8 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
                 IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                   THROW 51600,'La empresa está fuera del tenant.',1;
                 IF NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WHERE AccountId=@AccountId AND TenantId=@TenantId
-                  AND AccountType=N'Expense' AND AllowsPosting=1 AND IsActive=1)
+                  AND AccountType=N'Expense' AND AllowsPosting=1 AND IsActive=1
+                  AND (BusinessId IS NULL OR BusinessId=@BusinessId))
                   THROW 51601,'La cuenta debe ser una cuenta de gasto activa que permita movimientos.',1;
                 IF @CenterId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WHERE CostCenterId=@CenterId AND BusinessId=@BusinessId AND IsActive=1)
                   THROW 51602,'El centro de costo está fuera de la empresa.',1;
@@ -340,34 +342,15 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
                         $"GASTO-{line.AccountCode}", "999", "EA", "IVA", "01")).ToArray()
                     : [new PurchaseSupportLineMetadata(1, $"GASTO-{expense.ConceptId:N}", "999", "EA", "IVA", "01")],
                 Expense: expense, SellerPostalZone: support.SellerPostalZone);
-            return new { DocumentId = expense.ExpenseId, expense.BusinessId, expense.DocumentNumber,
-                expense.IssuedAt, support.FiscalNumber, support.IssuerConfigurationId, support.Environment,
-                SnapshotJson = PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot) };
+            return new SqlFiscalDocumentStore.PurchaseSupportSource(expense.ExpenseId, expense.BusinessId,
+                ExpenseDocumentTypes.Expense, FiscalDocumentTypeCodes.SupportDocument, expense.DocumentNumber,
+                support.FiscalNumber, expense.IssuedAt, support.IssuerConfigurationId, support.Environment,
+                PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
         }).ToArray();
-        await using var command = new SqlCommand("""
-            SET NOCOUNT ON;
-            DECLARE @Documents TABLE(DocumentId uniqueidentifier PRIMARY KEY,BusinessId uniqueidentifier,
-              DocumentNumber nvarchar(64),IssuedAt datetimeoffset,FiscalNumber nvarchar(64),
-              IssuerId uniqueidentifier,Environment tinyint,SnapshotJson nvarchar(max));
-            INSERT @Documents SELECT DocumentId,BusinessId,DocumentNumber,IssuedAt,FiscalNumber,
-              IssuerConfigurationId,Environment,SnapshotJson FROM OPENJSON(@DocumentsJson) WITH(
-              DocumentId uniqueidentifier,BusinessId uniqueidentifier,DocumentNumber nvarchar(64),
-              IssuedAt datetimeoffset,FiscalNumber nvarchar(64),IssuerConfigurationId uniqueidentifier,
-              Environment tinyint,SnapshotJson nvarchar(max));
-            INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
-              AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
-            SELECT DocumentId,BusinessId,N'Expense',N'SupportDocument',DocumentNumber,FiscalNumber,
-              N'CUDS',NULL,IssuedAt,@Status,@Now,@Now FROM @Documents;
-            INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
-            SELECT DocumentId,SnapshotJson,Environment,@Now FROM @Documents;
-            INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
-              AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
-            SELECT DocumentId,BusinessId,IssuerId,@Status,0,@Now,@Now,@Now FROM @Documents;
-            """, connection, tx);
-        command.Parameters.Add("@DocumentsJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(rows);
-        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
-        command.Parameters.AddWithValue("@Now", now);
-        await command.ExecuteNonQueryAsync(ct);
+        if (documents.Any(item => item.Expense.TenantId != documents[0].Expense.TenantId))
+            throw new InvalidOperationException("A purchase-support batch must belong to one tenant.");
+        await SqlFiscalDocumentStore.InsertPurchaseSupportSourcesAsync(connection, tx,
+            documents[0].Expense.TenantId, rows, now, ct);
     }
 
 }

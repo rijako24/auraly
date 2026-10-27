@@ -129,7 +129,6 @@ public sealed class SqlPlatformBillingPolicyStore(ApplicationDbContext db)
         if (request.PreDueReminderDays is < 0 or > 90) throw new ArgumentException("Los días previos deben estar entre 0 y 90.");
         if (request.OverdueReminderIntervalDays is < 1 or > 30) throw new ArgumentException("El intervalo de mora debe estar entre 1 y 30 días.");
         if (request.GracePeriodDays is < 1 or > 90) throw new ArgumentException("El periodo de gracia debe estar entre 1 y 90 días.");
-        if (request.GracePeriodDays <= request.OverdueReminderIntervalDays) throw new ArgumentException("El periodo de gracia debe superar el intervalo de recordatorio.");
         if (string.IsNullOrWhiteSpace(request.BillingTimeZoneId)) throw new ArgumentException("La zona horaria es obligatoria.");
         _ = TimeZoneInfo.FindSystemTimeZoneById(request.BillingTimeZoneId.Trim());
         if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5)

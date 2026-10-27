@@ -28,6 +28,10 @@ public sealed record WithholdingCalculationPlan(
     IReadOnlyDictionary<Guid, CounterpartyTaxProfileView> Profiles,
     IReadOnlySet<Guid> ValidManualAccountIds);
 
+public sealed record PurchaseWithholdingReview(
+    WithholdingCalculationSnapshot Calculation, IReadOnlyList<string> Diagnostics,
+    bool HasProfile, bool CanConfirm);
+
 public sealed class WithholdingService(
     IWithholdingRuleStore store,
     WithholdingEngine engine,
@@ -187,6 +191,26 @@ public sealed class WithholdingService(
     {
         var result = engine.CalculateDocument(bases.Select(basis => CreateContext(plan, basis)).ToArray(), plan.Rules);
         return (ToSnapshot(result.Calculation), result.Diagnostics);
+    }
+
+    // Acquisition forms share tax review; each document still owns its input,
+    // permission checks, review hash and transaction of acceptance.
+    public PurchaseWithholdingReview ReviewPurchaseDocument(
+        WithholdingCalculationPlan plan, Guid supplierId,
+        IReadOnlyList<WithholdingPreviewRequest> bases,
+        IReadOnlyList<WithholdingAdjustmentRequest>? adjustments,
+        Guid userId, DateTimeOffset occurredAt)
+    {
+        var result = CalculateDocument(plan, bases);
+        var calculation = ApplyAdjustments(plan, result.Calculation, adjustments,
+            userId, occurredAt, bases.Sum(basis => basis.VatAmount));
+        var hasProfile = plan.Profiles.ContainsKey(supplierId);
+        var hasManualWithholding = adjustments?.Any(item => item.Action == "Manual") == true;
+        IReadOnlyList<string> diagnostics = hasProfile ? result.Diagnostics :
+            [hasManualWithholding
+                ? "El proveedor no tiene perfil tributario; se aplicará únicamente la retención manual indicada."
+                : "Falta el perfil tributario del proveedor. En Terceros → Proveedores → Retenciones y perfil tributario, configura si aplica retención, sus responsabilidades y jurisdicción antes de confirmar."];
+        return new(calculation, diagnostics, hasProfile, hasProfile || hasManualWithholding);
     }
 
     public WithholdingCalculationSnapshot ApplyAdjustments(

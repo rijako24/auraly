@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using System.Data;
 using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
@@ -10,7 +11,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlGoodsReceiptDocumentHandler(
+public sealed partial class SqlGoodsReceiptDocumentHandler(
     SqlDocumentProcessingSessionAccessor sessions,
     IAuralyIdGenerator ids,
     SqlInventoryLedgerWriter inventoryWriter,
@@ -41,30 +42,30 @@ public sealed class SqlGoodsReceiptDocumentHandler(
                 throw new InvalidOperationException("An additional-cost withholding snapshot does not reconcile.");
 
         var session = sessions.Current;
-        foreach (var line in receipt.Lines.OrderBy(line => line.LineNumber))
-            await ProcessLineAsync(session, receipt, line, cancellationToken);
+        await ProcessLinesAsync(session, receipt, cancellationToken);
         await ApplyPurchaseOrderFulfillmentAsync(session, receipt, cancellationToken);
-        await PersistWithholdingSnapshotAsync(session, receipt, cancellationToken);
-        await SqlAccountingPostingJobWriter.InsertAsync(
-            session, document, receipt.SupplierInvoiceDate ?? receipt.ReceivedAt, ids, timeProvider,
-            cancellationToken, receipt.CreatesPayable
-                ? AccountingJobRequirement.PreserveCommercialEffects
-                : AccountingJobRequirement.AccountingEntryOnly);
+        await PersistWithholdingSnapshotsAsync(session, receipt, cancellationToken);
+        var accountingSources = new List<(bool CreatesPayable, SqlAccountingPostingJobWriter.Source Source)>
+        {
+            (receipt.CreatesPayable, new(receipt.TenantId, receipt.BusinessId, receipt.DocumentId,
+                document.DocumentType, null, receipt.SupplierInvoiceDate ?? receipt.ReceivedAt, ids.NewId()))
+        };
         foreach (var costDocument in receipt.AdditionalCostDocuments ?? [])
         {
-            await PersistWithholdingSnapshotAsync(session, receipt.BusinessId,
-                costDocument.CostDocumentId, PurchasingDocumentTypes.GoodsReceiptCostDocument,
-                costDocument.IssuedAt, costDocument.Withholding, cancellationToken);
             var payload = GoodsReceiptContractSerializer.SerializeCostDocument(
                 new GoodsReceiptCostDocumentAccountingPayload(
                     receipt.TenantId, receipt.BusinessId, receipt.DocumentId, costDocument));
-            await SqlAccountingPostingJobWriter.InsertSourceAsync(
-                session, receipt.TenantId, receipt.BusinessId, costDocument.CostDocumentId,
-                PurchasingDocumentTypes.GoodsReceiptCostDocument, payload, costDocument.IssuedAt,
-                ids, timeProvider, cancellationToken, costDocument.CreatesPayable
-                    ? AccountingJobRequirement.PreserveCommercialEffects
-                    : AccountingJobRequirement.AccountingEntryOnly);
+            accountingSources.Add((costDocument.CreatesPayable,
+                new(receipt.TenantId, receipt.BusinessId, costDocument.CostDocumentId,
+                    PurchasingDocumentTypes.GoodsReceiptCostDocument, payload, costDocument.IssuedAt, ids.NewId())));
         }
+        var acceptedAt = timeProvider.GetUtcNow();
+        foreach (var requirement in accountingSources.GroupBy(source => source.CreatesPayable))
+            foreach (var batch in requirement.Chunk(100))
+                await SqlAccountingPostingJobWriter.InsertSourcesAsync(
+                    session.Connection, session.Transaction, batch.Select(source => source.Source).ToArray(),
+                    acceptedAt, requirement.Key ? AccountingJobRequirement.PreserveCommercialEffects
+                        : AccountingJobRequirement.AccountingEntryOnly, cancellationToken);
         await SqlSalesReportingJobWriter.InsertAsync(
             session, document, ids, timeProvider, cancellationToken);
         await InsertOutboxAsync(session, receipt, document.Payload, cancellationToken);
@@ -106,350 +107,258 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private async Task PersistWithholdingSnapshotAsync(
+    private static Task PersistWithholdingSnapshotsAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         GoodsReceiptDocumentPayload receipt,
         CancellationToken cancellationToken)
-        => await PersistWithholdingSnapshotAsync(session, receipt.BusinessId, receipt.DocumentId,
-            PurchasingDocumentTypes.GoodsReceipt, receipt.SupplierInvoiceDate ?? receipt.ReceivedAt,
-            receipt.Withholding, cancellationToken);
-
-    private static async Task PersistWithholdingSnapshotAsync(
-        SqlDocumentProcessingSessionAccessor.Session session, Guid businessId,
-        Guid documentId, string documentType, DateTimeOffset recognizedAt,
-        Auraly.Commerce.Taxation.Contracts.WithholdingCalculationSnapshot withholding,
-        CancellationToken cancellationToken)
     {
-        await using (var command = new SqlCommand("""
-            INSERT dbo.DocumentWithholdingSnapshots
-              (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt,AdjustmentsJson)
-            VALUES(@DocumentId,@DocumentType,@BusinessId,@Gross,@Withholding,@Net,@At,@Adjustments);
-            """, session.Connection, session.Transaction))
+        var snapshots = (receipt.AdditionalCostDocuments ?? []).Select(document =>
+            new SqlWithholdingRuleStore.DocumentSnapshotSource(document.CostDocumentId,
+                PurchasingDocumentTypes.GoodsReceiptCostDocument, document.IssuedAt, document.Withholding))
+            .Prepend(new(receipt.DocumentId, PurchasingDocumentTypes.GoodsReceipt,
+                receipt.SupplierInvoiceDate ?? receipt.ReceivedAt, receipt.Withholding)).ToArray();
+        return SqlWithholdingRuleStore.InsertDocumentSnapshotsAsync(session.Connection, session.Transaction,
+            receipt.BusinessId, snapshots, cancellationToken);
+    }
+
+    private async Task ProcessLinesAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        GoodsReceiptDocumentPayload receipt, CancellationToken cancellationToken)
+    {
+        var lines = receipt.Lines.OrderBy(line => line.LineNumber).ToArray();
+        var inventoryTargets = await SqlProductLinkResolution.ResolveInventoryBatchAsync(
+            session, receipt.BusinessId, lines.Select(line => line.ProductId).ToArray(), cancellationToken);
+        var states = await LoadLineStatesAsync(session, receipt.BusinessId, receipt.WarehouseId,
+            receipt.SupplierId, inventoryTargets, cancellationToken);
+        // Keep the original line order and per-line rounding, including receipts
+        // containing several presentations of the same inventory product.
+        var costs = lines.Select(line =>
         {
-            command.Parameters.AddWithValue("@DocumentId", documentId);
-            command.Parameters.AddWithValue("@DocumentType", documentType);
-            command.Parameters.AddWithValue("@BusinessId", businessId);
-            AddDecimal(command, "@Gross", withholding.GrossAmount, 19, 4);
-            AddDecimal(command, "@Withholding", withholding.WithholdingTotal, 19, 4);
-            AddDecimal(command, "@Net", withholding.NetAmount, 19, 4);
-            command.Parameters.AddWithValue("@At", recognizedAt);
-            command.Parameters.AddWithValue("@Adjustments", withholding.Adjustments is null
-                ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(withholding.Adjustments));
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        if (withholding.Lines.Count > 0)
+            var legacyPayload = receipt.FunctionalGrandTotal == 0m && receipt.GrandTotal > 0m;
+            var recognized = legacyPayload ? line.NetAmount +
+                (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost ? line.TaxAmount : 0m)
+                : line.RecognizedInventoryCostAmount;
+            var supplier = legacyPayload ? recognized : line.FunctionalNetAmount +
+                (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost ? line.FunctionalTaxAmount : 0m);
+            return (Acquisition: decimal.Round(recognized / line.Quantity, 6, MidpointRounding.AwayFromZero),
+                Supplier: decimal.Round(supplier / line.Quantity, 6, MidpointRounding.AwayFromZero));
+        }).ToArray();
+        var postings = lines.Select((line, index) => (line, index))
+            .Where(item => states[item.line.ProductId].ManageStock)
+            .Select(item =>
+            {
+                var target = inventoryTargets[item.line.ProductId];
+                return new InventoryLedgerPosting(receipt.BusinessId, receipt.WarehouseId,
+                    target.ProductId, receipt.DocumentId, PurchasingDocumentTypes.GoodsReceipt,
+                    item.line.LineNumber, "GoodsReceipt", item.line.Quantity * target.Factor,
+                    costs[item.index].Acquisition / target.Factor,
+                    InventoryValuationMode.WeightedAverageReceipt, receipt.ReceivedAt);
+            }).ToArray();
+        var valuations = await inventoryWriter.PostBatchAsync(session, postings, cancellationToken);
+        var byLine = postings.Select((posting, index) => (posting.LineNumber, Result: valuations[index]))
+            .ToDictionary(item => item.LineNumber, item => item.Result);
+        var previousCosts = states.ToDictionary(item => item.Key, item => item.Value.PreviousObservedUnitCost);
+        var effects = new List<ReceiptLineEffects>(lines.Length);
+        var families = new List<SqlLinkedProductCostPreparation.Family>(lines.Length);
+        for (var index = 0; index < lines.Length; index++)
         {
-            await using var command = new SqlCommand("""
-                INSERT dbo.DocumentWithholdingLines
-                  (DocumentId,DocumentType,LineNumber,RuleId,RuleVersion,RuleCode,Name,Kind,
-                   BaseKind,TaxableBase,Rate,Amount,JurisdictionCode,AccountId,ManualLineId)
-                SELECT @DocumentId,@DocumentType,CONVERT(int,j.[key])+1,
-                  NULLIF(l.RuleId,'00000000-0000-0000-0000-000000000000'),NULLIF(l.RuleVersion,0),
-                  l.RuleCode,l.Name,l.Kind,l.BaseKind,l.TaxableBase,l.Rate,l.Amount,
-                  l.JurisdictionCode,l.AccountId,l.ManualLineId
-                FROM OPENJSON(@Lines) j CROSS APPLY OPENJSON(j.value) WITH(
-                  RuleId uniqueidentifier,RuleVersion int,RuleCode nvarchar(32),Name nvarchar(120),
-                  Kind nvarchar(32),BaseKind nvarchar(32),TaxableBase decimal(19,4),
-                  Rate decimal(9,6),Amount decimal(19,4),JurisdictionCode nvarchar(16),
-                  AccountId uniqueidentifier,ManualLineId uniqueidentifier) l;
-                """, session.Connection, session.Transaction);
-            command.Parameters.AddWithValue("@DocumentId", documentId);
-            command.Parameters.AddWithValue("@DocumentType", documentType);
-            command.Parameters.Add("@Lines", System.Data.SqlDbType.NVarChar, -1).Value =
-                System.Text.Json.JsonSerializer.Serialize(withholding.Lines);
-            if (await command.ExecuteNonQueryAsync(cancellationToken) != withholding.Lines.Count)
-                throw new DBConcurrencyException("The complete withholding snapshot was not persisted.");
+            var line = lines[index];
+            var state = states[line.ProductId];
+            var observed = state.ManageStock && state.PriceFormationCostBasis == "WeightedAverageCost"
+                ? byLine[line.LineNumber].AverageUnitCostAfter * inventoryTargets[line.ProductId].Factor
+                : costs[index].Acquisition;
+            ReceiptPriceProposal? proposal = null;
+            if (state.CostParentProductId is { } parent)
+                families.Add(new(parent, null, line.ProductId, receipt.DocumentId, line.LineNumber));
+            else
+            {
+                if (state.TargetMarginPercent is null or <= 0 or >= 100)
+                    throw new InvalidOperationException("The product requires a valid target margin before receiving merchandise.");
+                var targetMargin = state.TargetMarginPercent.Value;
+                var raw = PriceMargin.CalculateGrossSalePrice(observed, targetMargin, state.SalesTaxRate);
+                var rounded = PriceMargin.RoundPrice(raw, state.RoundingIncrement, state.RoundingMode);
+                proposal = new(observed, observed <= 0 ? null : PriceMargin.CalculateMarginPercentFromGross(
+                        observed, state.CurrentSalePrice, state.SalesTaxRate), targetMargin, raw, rounded,
+                    PriceMargin.CalculateMarginPercentFromGross(observed, rounded, state.SalesTaxRate),
+                    state.PriceFormationCostBasis == "WeightedAverageCost" ? "WeightedAverageCost" : "LatestReceiptCost",
+                    state.RoundingIncrement, state.RoundingMode);
+                families.Add(new(line.ProductId, observed, null, receipt.DocumentId, line.LineNumber));
+            }
+            effects.Add(new(ids.NewId(), line.LineNumber, line.ProductId, costs[index].Supplier,
+                previousCosts[line.ProductId], proposal));
+            previousCosts[line.ProductId] = costs[index].Supplier;
         }
-    }
-
-    private async Task ProcessLineAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        GoodsReceiptDocumentPayload receipt,
-        GoodsReceiptLineSnapshot line,
-        CancellationToken cancellationToken)
-    {
-        var inventoryTarget = await SqlProductLinkResolution.ResolveInventoryAsync(session, receipt.BusinessId, line.ProductId, cancellationToken);
-        var inventoryLine = line with { ProductId = inventoryTarget.ProductId, Quantity = line.Quantity * inventoryTarget.Factor };
-        var state = await LoadLineStateAsync(session, receipt, line, inventoryTarget.ProductId, cancellationToken);
-        // Accepted receipts may remain queued while the compatible schema/code rollout occurs.
-        // Their older immutable payload has no functional-cost fields, so preserve the
-        // original COP valuation instead of interpreting missing JSON members as zero.
-        var legacyPayload = receipt.FunctionalGrandTotal == 0m && receipt.GrandTotal > 0m;
-        var recognizedInventoryCost = legacyPayload
-            ? line.NetAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
-                ? line.TaxAmount : 0m)
-            : line.RecognizedInventoryCostAmount;
-        var supplierCost = legacyPayload
-            ? line.NetAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
-                ? line.TaxAmount : 0m)
-            : line.FunctionalNetAmount +
-              (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
-                  ? line.FunctionalTaxAmount : 0m);
-        var acquisitionUnitCost = decimal.Round(
-            recognizedInventoryCost / line.Quantity,
-            6,
-            MidpointRounding.AwayFromZero);
-        var supplierUnitCost = decimal.Round(
-            supplierCost / line.Quantity,
-            6, MidpointRounding.AwayFromZero);
-        var priceFormationCost = acquisitionUnitCost;
-        if (state.ManageStock)
-        {
-            var valuation = await ApplyInventoryReceiptAsync(
-                session, receipt, inventoryLine, acquisitionUnitCost / inventoryTarget.Factor, cancellationToken);
-            if (state.PriceFormationCostBasis == "WeightedAverageCost")
-                priceFormationCost = valuation.AverageUnitCostAfter * inventoryTarget.Factor;
-        }
-        await RecordSupplierCostAsync(
-            session, receipt, line, supplierUnitCost, state.PreviousObservedUnitCost,
-            cancellationToken);
-        await CreatePriceProposalAsync(
-            session, receipt, line, priceFormationCost, state, cancellationToken);
-    }
-
-    private static async Task<ReceiptLineState> LoadLineStateAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        GoodsReceiptDocumentPayload receipt,
-        GoodsReceiptLineSnapshot line,
-        Guid inventoryProductId,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT inventoryProduct.ManageStock,pp.Amount,lc.LatestUnitCost,
-                   COALESCE(tax.Rate,0),tenant.InventoryCostBasis,pp.TargetMarginPercent,
-                   COALESCE(pp.RoundingIncrement,1),COALESCE(pp.RoundingMode,N'Nearest'),
-                   costLink.ParentProductId
-            FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
-            INNER JOIN dbo.Warehouses w WITH (UPDLOCK,HOLDLOCK)
-              ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
-            INNER JOIN dbo.Businesses business WITH (UPDLOCK,HOLDLOCK)
-              ON business.BusinessId=@BusinessId
-            INNER JOIN dbo.Tenants tenant WITH (UPDLOCK,HOLDLOCK)
-              ON tenant.TenantId=business.TenantId
-            INNER JOIN dbo.SupplierProducts sp WITH (UPDLOCK,HOLDLOCK)
-              ON sp.ProductId=p.ProductId AND sp.SupplierId=@SupplierId
-             AND sp.TenantId=business.TenantId AND sp.IsActive=1
-            INNER JOIN dbo.Products inventoryProduct WITH (UPDLOCK,HOLDLOCK)
-             ON inventoryProduct.ProductId=@InventoryProductId
-             AND inventoryProduct.TenantId=business.TenantId
-            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.TenantId=business.TenantId
-            INNER JOIN dbo.ProductPrices pp WITH (UPDLOCK,HOLDLOCK)
-              ON pp.ProductId=p.ProductId AND pp.BusinessId=@BusinessId AND pp.IsActive=1
-            LEFT JOIN dbo.SupplierProductLatestCosts lc WITH (UPDLOCK,HOLDLOCK)
-              ON lc.BusinessId=@BusinessId AND lc.SupplierId=@SupplierId AND lc.ProductId=p.ProductId
-            LEFT JOIN dbo.ProductLinks costLink WITH (UPDLOCK,HOLDLOCK)
-              ON costLink.TenantId=business.TenantId AND costLink.ChildProductId=p.ProductId
-             AND costLink.SharesPrice=1 AND costLink.IsActive=1
-            WHERE p.ProductId=@ProductId
-              AND p.TenantId=business.TenantId;
-            """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
-        command.Parameters.AddWithValue("@WarehouseId", receipt.WarehouseId);
-        command.Parameters.AddWithValue("@SupplierId", receipt.SupplierId);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        command.Parameters.AddWithValue("@InventoryProductId", inventoryProductId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-            throw new InvalidOperationException(
-                "The receipt product, price, supplier association or warehouse is no longer valid.");
-        return new ReceiptLineState(
-            reader.GetBoolean(0),
-            reader.GetDecimal(1),
-            reader.IsDBNull(2) ? null : reader.GetDecimal(2),
-            reader.GetDecimal(3),reader.GetString(4),reader.IsDBNull(5) ? null : reader.GetDecimal(5),
-            reader.GetDecimal(6),reader.GetString(7),
-            reader.IsDBNull(8) ? null : reader.GetGuid(8));
-    }
-
-    private Task<InventoryLedgerPostingResult> ApplyInventoryReceiptAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        GoodsReceiptDocumentPayload receipt,
-        GoodsReceiptLineSnapshot line,
-        decimal acquisitionUnitCost,
-        CancellationToken cancellationToken) =>
-        inventoryWriter.PostAsync(
-            session,
-            new InventoryLedgerPosting(
-                receipt.BusinessId,
-                receipt.WarehouseId,
-                line.ProductId,
-                receipt.DocumentId,
-                PurchasingDocumentTypes.GoodsReceipt,
-                line.LineNumber,
-                "GoodsReceipt",
-                line.Quantity,
-                acquisitionUnitCost,
-                InventoryValuationMode.WeightedAverageReceipt,
-                receipt.ReceivedAt),
-            cancellationToken);
-
-    private async Task RecordSupplierCostAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        GoodsReceiptDocumentPayload receipt,
-        GoodsReceiptLineSnapshot line,
-        decimal acquisitionUnitCost,
-        decimal? previousCost,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            INSERT dbo.SupplierCostObservations
-              (SupplierCostObservationId,BusinessId,SupplierId,ProductId,SourceDocumentId,
-               SourceLineNumber,UnitCost,CurrencyCode,ObservedAt,CreatedAt)
-            VALUES(@ObservationId,@BusinessId,@SupplierId,@ProductId,@DocumentId,
-               @LineNumber,@UnitCost,@Currency,@ObservedAt,@Now);
-
-            IF EXISTS (SELECT 1 FROM dbo.SupplierProductLatestCosts WITH (UPDLOCK,HOLDLOCK)
-                       WHERE BusinessId=@BusinessId AND SupplierId=@SupplierId AND ProductId=@ProductId)
-              UPDATE dbo.SupplierProductLatestCosts
-              SET PreviousUnitCost=LatestUnitCost,LatestUnitCost=@UnitCost,CurrencyCode=@Currency,
-                  SourceDocumentId=@DocumentId,SourceLineNumber=@LineNumber,ObservedAt=@ObservedAt
-              WHERE BusinessId=@BusinessId AND SupplierId=@SupplierId AND ProductId=@ProductId;
-            ELSE
-              INSERT dbo.SupplierProductLatestCosts
-                (BusinessId,SupplierId,ProductId,PreviousUnitCost,LatestUnitCost,CurrencyCode,
-                 SourceDocumentId,SourceLineNumber,ObservedAt)
-              VALUES(@BusinessId,@SupplierId,@ProductId,@PreviousCost,@UnitCost,@Currency,
-                 @DocumentId,@LineNumber,@ObservedAt);
-
-            DECLARE @CatalogChange TABLE(CatalogChangeId BIGINT NOT NULL);
-            INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
-              OUTPUT inserted.CatalogChangeId INTO @CatalogChange
-            SELECT @BusinessId,@ProductId,N'Upsert',@Now
-            WHERE EXISTS(
-              SELECT 1 FROM dbo.ProductPrices price
-              WHERE price.BusinessId=@BusinessId AND price.ProductId=@ProductId
-                AND price.IsActive=1);
-            INSERT dbo.PosSynchronizationOutboxMessages(
-              NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-            SELECT NEWID(),@BusinessId,N'Catalog',CatalogChangeId,@Now
-            FROM @CatalogChange;
-            """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@ObservationId", ids.NewId());
-        command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
-        command.Parameters.AddWithValue("@SupplierId", receipt.SupplierId);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
-        command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
-        AddDecimal(command, "@UnitCost", acquisitionUnitCost, 19, 6);
-        command.Parameters.AddWithValue("@Currency", "COP");
-        command.Parameters.AddWithValue("@ObservedAt", receipt.ReceivedAt);
-        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        var previous = command.Parameters.Add("@PreviousCost", SqlDbType.Decimal);
-        previous.Precision = 19;
-        previous.Scale = 6;
-        previous.Value = (object?)previousCost ?? DBNull.Value;
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private async Task CreatePriceProposalAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        GoodsReceiptDocumentPayload receipt,
-        GoodsReceiptLineSnapshot line,
-        decimal observedCost,
-        ReceiptLineState state,
-        CancellationToken cancellationToken)
-    {
         var now = timeProvider.GetUtcNow();
-        if (state.CostParentProductId is Guid costParentProductId)
-        {
-            await SqlLinkedProductCostPreparation.PrepareFamilyAsync(
-                session.Connection, session.Transaction, receipt.BusinessId,
-                costParentProductId, null, line.ProductId, receipt.ConfirmedByUserId,
-                now, cancellationToken);
-            return;
-        }
-        if (state.TargetMarginPercent is null or <= 0 or >= 100)
-            throw new InvalidOperationException("The product requires a valid target margin before receiving merchandise.");
-        var currentMargin = observedCost <= 0 ? null : PriceMargin.CalculateMarginPercentFromGross(
-            observedCost, state.CurrentSalePrice, state.SalesTaxRate);
-        var targetMargin = state.TargetMarginPercent.Value;
-        var rawSuggested = PriceMargin.CalculateGrossSalePrice(observedCost, targetMargin, state.SalesTaxRate);
-        var suggested = PriceMargin.RoundPrice(rawSuggested, state.RoundingIncrement, state.RoundingMode);
-        var effectiveMargin = PriceMargin.CalculateMarginPercentFromGross(
-            observedCost, suggested, state.SalesTaxRate);
-        var costBasisType = state.PriceFormationCostBasis == "WeightedAverageCost"
-            ? "WeightedAverageCost"
-            : "LatestReceiptCost";
-        const string sql = """
-            DECLARE @SharesPrices BIT;
-            DECLARE @TenantId UNIQUEIDENTIFIER;
-            SELECT @SharesPrices=SharesProductPrices,@TenantId=TenantId
+        // Resolve linked costs against the pre-receipt pricing state plus the
+        // ordered family requests. Later parent lines must not rewrite earlier
+        // child preparations; all effects remain in this document transaction.
+        await SqlLinkedProductCostPreparation.PrepareFamiliesAsync(session.Connection, session.Transaction,
+            receipt.BusinessId, families, receipt.ConfirmedByUserId, now, cancellationToken);
+        await PersistLineEffectsAsync(session, receipt.BusinessId, receipt.SupplierId,
+            receipt.DocumentId, receipt.ConfirmedByUserId, receipt.ReceivedAt,
+            effects, now, cancellationToken);
+    }
+
+    private static async Task<IReadOnlyDictionary<Guid, ReceiptLineState>> LoadLineStatesAsync(
+        SqlDocumentProcessingSessionAccessor.Session session, Guid businessId, Guid warehouseId,
+        Guid supplierId,
+        IReadOnlyDictionary<Guid, InventoryProductResolution> targets, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            DECLARE @Products TABLE(ProductId uniqueidentifier PRIMARY KEY,InventoryProductId uniqueidentifier);
+            INSERT @Products SELECT ProductId,InventoryProductId FROM OPENJSON(@ProductsJson)
+              WITH(ProductId uniqueidentifier,InventoryProductId uniqueidentifier);
+            SELECT p.ProductId,inventoryProduct.ManageStock,pp.Amount,lc.LatestUnitCost,
+                   COALESCE(tax.Rate,0),tenant.InventoryCostBasis,pp.TargetMarginPercent,
+                   COALESCE(pp.RoundingIncrement,1),COALESCE(pp.RoundingMode,N'Nearest'),costLink.ParentProductId
+            FROM @Products input
+            JOIN dbo.Products p WITH(UPDLOCK,HOLDLOCK) ON p.ProductId=input.ProductId
+            JOIN dbo.Warehouses w WITH(UPDLOCK,HOLDLOCK) ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
+            JOIN dbo.Businesses business WITH(UPDLOCK,HOLDLOCK) ON business.BusinessId=@BusinessId
+            JOIN dbo.Tenants tenant WITH(UPDLOCK,HOLDLOCK) ON tenant.TenantId=business.TenantId
+            JOIN dbo.SupplierProducts sp WITH(UPDLOCK,HOLDLOCK) ON sp.ProductId=p.ProductId
+              AND sp.SupplierId=@SupplierId AND sp.TenantId=business.TenantId AND sp.IsActive=1
+            JOIN dbo.Products inventoryProduct WITH(UPDLOCK,HOLDLOCK) ON inventoryProduct.ProductId=input.InventoryProductId
+              AND inventoryProduct.TenantId=business.TenantId
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.TenantId=business.TenantId
+            JOIN dbo.ProductPrices pp WITH(UPDLOCK,HOLDLOCK) ON pp.ProductId=p.ProductId
+              AND pp.BusinessId=@BusinessId AND pp.IsActive=1
+            LEFT JOIN dbo.SupplierProductLatestCosts lc WITH(UPDLOCK,HOLDLOCK) ON lc.BusinessId=@BusinessId
+              AND lc.SupplierId=@SupplierId AND lc.ProductId=p.ProductId
+            LEFT JOIN dbo.ProductLinks costLink WITH(UPDLOCK,HOLDLOCK) ON costLink.TenantId=business.TenantId
+              AND costLink.ChildProductId=p.ProductId AND costLink.SharesPrice=1 AND costLink.IsActive=1
+            WHERE p.TenantId=business.TenantId
+            ORDER BY p.ProductId OPTION(RECOMPILE);
+            """, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@WarehouseId", warehouseId);
+        command.Parameters.AddWithValue("@SupplierId", supplierId);
+        command.Parameters.Add("@ProductsJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(
+            targets.Select(item => new { ProductId = item.Key, InventoryProductId = item.Value.ProductId }));
+        var states = new Dictionary<Guid, ReceiptLineState>(targets.Count);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            states.Add(reader.GetGuid(0), new(reader.GetBoolean(1), reader.GetDecimal(2),
+                reader.IsDBNull(3) ? null : reader.GetDecimal(3), reader.GetDecimal(4), reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetDecimal(6), reader.GetDecimal(7), reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetGuid(9)));
+        if (states.Count != targets.Count)
+            throw new InvalidOperationException("The receipt product, price, supplier association or warehouse is no longer valid.");
+        return states;
+    }
+
+    private static async Task PersistLineEffectsAsync(SqlDocumentProcessingSessionAccessor.Session session,
+        Guid businessId, Guid supplierId, Guid sourceDocumentId, Guid userId,
+        DateTimeOffset observedAt, IReadOnlyList<ReceiptLineEffects> effects, DateTimeOffset now,
+        CancellationToken cancellationToken, int sourceRevision = 0, bool persistSupplierCosts = true)
+    {
+        await using var command = new SqlCommand("""
+            DECLARE @TenantId uniqueidentifier,@SharesPrices bit;
+            SELECT @TenantId=TenantId,@SharesPrices=SharesProductPrices
             FROM dbo.Businesses WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId;
+            DECLARE @Lines TABLE(ObservationId uniqueidentifier,LineNumber int PRIMARY KEY,ProductId uniqueidentifier,
+              SupplierCost decimal(19,6),PreviousCost decimal(19,6),HasProposal bit,ObservedCost decimal(19,6),
+              CurrentMargin decimal(9,6),TargetMargin decimal(9,6),RawPrice decimal(19,4),RoundedPrice decimal(19,4),
+              EffectiveMargin decimal(9,6),CostBasisType nvarchar(32),RoundingIncrement decimal(19,4),RoundingMode nvarchar(16));
+            INSERT @Lines SELECT * FROM OPENJSON(@LinesJson) WITH(ObservationId uniqueidentifier,LineNumber int,
+              ProductId uniqueidentifier,SupplierCost decimal(19,6),PreviousCost decimal(19,6),HasProposal bit,
+              ObservedCost decimal(19,6),CurrentMargin decimal(9,6),TargetMargin decimal(9,6),RawPrice decimal(19,4),
+              RoundedPrice decimal(19,4),EffectiveMargin decimal(9,6),CostBasisType nvarchar(32),
+              RoundingIncrement decimal(19,4),RoundingMode nvarchar(16));
+            DECLARE @Latest TABLE(ProductId uniqueidentifier PRIMARY KEY,LineNumber int);
+            INSERT @Latest SELECT ProductId,MAX(LineNumber) FROM @Lines GROUP BY ProductId;
+            IF @PersistSupplierCosts=1
+            BEGIN
+              INSERT dbo.SupplierCostObservations(SupplierCostObservationId,BusinessId,SupplierId,ProductId,
+                SourceDocumentId,SourceLineNumber,UnitCost,CurrencyCode,ObservedAt,CreatedAt)
+              SELECT ObservationId,@BusinessId,@SupplierId,ProductId,@DocumentId,LineNumber,SupplierCost,N'COP',@ObservedAt,@Now
+              FROM @Lines;
+              IF @@ROWCOUNT<>@LineCount THROW 51606,'The receipt cost observations were not persisted atomically.',1;
+              UPDATE cost SET PreviousUnitCost=line.PreviousCost,LatestUnitCost=line.SupplierCost,CurrencyCode=N'COP',
+                SourceDocumentId=@DocumentId,SourceLineNumber=line.LineNumber,ObservedAt=@ObservedAt
+              FROM dbo.SupplierProductLatestCosts cost
+              JOIN @Latest last ON last.ProductId=cost.ProductId
+              JOIN @Lines line ON line.LineNumber=last.LineNumber
+              WHERE cost.BusinessId=@BusinessId AND cost.SupplierId=@SupplierId OPTION(RECOMPILE);
+              INSERT dbo.SupplierProductLatestCosts(BusinessId,SupplierId,ProductId,PreviousUnitCost,LatestUnitCost,
+                CurrencyCode,SourceDocumentId,SourceLineNumber,ObservedAt)
+              SELECT @BusinessId,@SupplierId,line.ProductId,line.PreviousCost,line.SupplierCost,N'COP',
+                @DocumentId,line.LineNumber,@ObservedAt
+              FROM @Latest last JOIN @Lines line ON line.LineNumber=last.LineNumber
+              WHERE NOT EXISTS(SELECT 1 FROM dbo.SupplierProductLatestCosts cost WITH(UPDLOCK,HOLDLOCK)
+                WHERE cost.BusinessId=@BusinessId AND cost.SupplierId=@SupplierId AND cost.ProductId=line.ProductId)
+              OPTION(RECOMPILE);
+            END;
+            DECLARE @Changes TABLE(CatalogChangeId bigint);
+            INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+              OUTPUT inserted.CatalogChangeId INTO @Changes
+            SELECT @BusinessId,last.ProductId,N'Upsert',@Now FROM @Latest last
+            WHERE EXISTS(SELECT 1 FROM dbo.ProductPrices price WHERE price.BusinessId=@BusinessId
+              AND price.ProductId=last.ProductId AND price.IsActive=1);
+            INSERT dbo.PosSynchronizationOutboxMessages(NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+            SELECT NEWID(),@BusinessId,N'Catalog',MAX(CatalogChangeId),@Now FROM @Changes HAVING COUNT(*)>0;
 
-            UPDATE proposal
-            SET Status=N'Superseded'
+            UPDATE proposal SET Status=N'Superseded'
             FROM dbo.PriceRevisionProposals proposal
-            INNER JOIN dbo.Businesses target ON target.BusinessId=proposal.BusinessId
-            WHERE proposal.ProductId=@ProductId
-              AND proposal.Status IN(N'PendingReview',N'Approved')
-              AND ((@SharesPrices=1 AND target.TenantId=@TenantId
-                    AND target.SharesProductPrices=1 AND target.IsActive=1)
-                OR (@SharesPrices=0 AND proposal.BusinessId=@BusinessId));
-
-            DECLARE @CreatedProposals TABLE(
-              ProposalId UNIQUEIDENTIFIER NOT NULL,
-              BusinessId UNIQUEIDENTIFIER NOT NULL);
-            INSERT dbo.PriceRevisionProposals
-              (PriceRevisionProposalId,BusinessId,ProductId,SourceDocumentId,SourceLineNumber,
-               PreviousObservedUnitCost,ObservedUnitCost,CurrentSalePrice,CurrentMarginPercent,
-               TargetMarginPercent,SuggestedSalePrice,RoundedSuggestedSalePrice,
-               EffectiveMarginAfterRounding,LastInputMode,Status,CreatedAt)
-            OUTPUT inserted.PriceRevisionProposalId,inserted.BusinessId
-              INTO @CreatedProposals(ProposalId,BusinessId)
-            SELECT NEWID(),price.BusinessId,@ProductId,@DocumentId,@LineNumber,@PreviousCost,@ObservedCost,
-               price.Amount,@CurrentMargin,@TargetMargin,@RawPrice,@RoundedPrice,
-               @EffectiveMargin,N'Margin',N'PendingReview',@Now
-            FROM dbo.ProductPrices price
-            INNER JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
-            WHERE price.ProductId=@ProductId AND price.IsActive=1
-              AND ((@SharesPrices=1 AND target.TenantId=@TenantId
-                    AND target.SharesProductPrices=1 AND target.IsActive=1)
-                OR (@SharesPrices=0 AND price.BusinessId=@BusinessId));
-
-            UPDATE preparation
-            SET Status=N'Superseded',SupersededAt=@Now
+            JOIN dbo.Businesses target ON target.BusinessId=proposal.BusinessId
+            WHERE proposal.Status IN(N'PendingReview',N'Approved')
+              AND EXISTS(SELECT 1 FROM @Lines line WHERE line.HasProposal=1 AND line.ProductId=proposal.ProductId)
+              AND ((@SharesPrices=1 AND target.TenantId=@TenantId AND target.SharesProductPrices=1 AND target.IsActive=1)
+                OR (@SharesPrices=0 AND proposal.BusinessId=@BusinessId)) OPTION(RECOMPILE);
+            DECLARE @Created TABLE(ProposalId uniqueidentifier,BusinessId uniqueidentifier,ProductId uniqueidentifier,
+              LineNumber int,Status nvarchar(32),PRIMARY KEY(BusinessId,LineNumber));
+            INSERT dbo.PriceRevisionProposals(PriceRevisionProposalId,BusinessId,ProductId,SourceDocumentId,SourceLineNumber,SourceRevision,
+              PreviousObservedUnitCost,ObservedUnitCost,CurrentSalePrice,CurrentMarginPercent,TargetMarginPercent,
+              SuggestedSalePrice,RoundedSuggestedSalePrice,EffectiveMarginAfterRounding,LastInputMode,Status,CreatedAt)
+            OUTPUT inserted.PriceRevisionProposalId,inserted.BusinessId,inserted.ProductId,inserted.SourceLineNumber,
+              inserted.Status INTO @Created
+            SELECT NEWID(),price.BusinessId,line.ProductId,@DocumentId,line.LineNumber,@SourceRevision,line.PreviousCost,line.ObservedCost,
+              price.Amount,line.CurrentMargin,line.TargetMargin,line.RawPrice,line.RoundedPrice,line.EffectiveMargin,N'Margin',
+              CASE WHEN line.LineNumber=last.LineNumber THEN N'PendingReview' ELSE N'Superseded' END,@Now
+            FROM @Lines line JOIN @Latest last ON last.ProductId=line.ProductId
+            JOIN dbo.ProductPrices price ON price.ProductId=line.ProductId AND price.IsActive=1
+            JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
+            WHERE line.HasProposal=1
+              AND ((@SharesPrices=1 AND target.TenantId=@TenantId AND target.SharesProductPrices=1 AND target.IsActive=1)
+                OR (@SharesPrices=0 AND price.BusinessId=@BusinessId)) OPTION(RECOMPILE);
+            UPDATE preparation SET Status=N'Superseded',SupersededAt=@Now
             FROM dbo.ProductPricePreparations preparation
-            INNER JOIN @CreatedProposals created ON created.BusinessId=preparation.BusinessId
-            WHERE preparation.ProductId=@ProductId AND preparation.Status=N'Pending';
-
-            INSERT dbo.ProductPricePreparations
-              (ProductPricePreparationId,BusinessId,ProductId,SourceProposalId,
-               SourceDocumentId,SourceLineNumber,PreparationOrigin,PublicAmountSnapshot,
-               PreparedAmount,CostBasisType,CostBasisAmount,TargetMarginPercent,
-               EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,
-               Status,PreparedByUserId,PreparedAt)
-            SELECT NEWID(),price.BusinessId,@ProductId,created.ProposalId,
-                   @DocumentId,@LineNumber,N'GoodsReceipt',price.Amount,@RoundedPrice,
-                   @CostBasisType,@ObservedCost,@TargetMargin,@EffectiveMargin,N'Margin',
-                   @RoundingIncrement,@RoundingMode,N'Pending',@UserId,@Now
-            FROM @CreatedProposals created
-            INNER JOIN dbo.ProductPrices price ON price.BusinessId=created.BusinessId
-              AND price.ProductId=@ProductId AND price.IsActive=1;
-            """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
-        command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
-        AddNullableDecimal(command, "@PreviousCost", state.PreviousObservedUnitCost, 19, 6);
-        AddDecimal(command, "@ObservedCost", observedCost, 19, 6);
-        AddNullableDecimal(command, "@CurrentMargin", currentMargin, 9, 6);
-        AddDecimal(command, "@TargetMargin", targetMargin, 9, 6);
-        AddDecimal(command, "@RawPrice", rawSuggested, 19, 4);
-        AddDecimal(command, "@RoundedPrice", suggested, 19, 4);
-        AddNullableDecimal(command, "@EffectiveMargin", effectiveMargin, 9, 6);
-        command.Parameters.AddWithValue("@CostBasisType", costBasisType);
-        command.Parameters.AddWithValue("@RoundingIncrement", state.RoundingIncrement);
-        command.Parameters.AddWithValue("@RoundingMode", state.RoundingMode);
-        command.Parameters.AddWithValue("@UserId", receipt.ConfirmedByUserId);
+            JOIN (SELECT DISTINCT BusinessId,ProductId FROM @Created) created
+              ON created.BusinessId=preparation.BusinessId AND created.ProductId=preparation.ProductId
+            WHERE preparation.Status=N'Pending';
+            INSERT dbo.ProductPricePreparations(ProductPricePreparationId,BusinessId,ProductId,SourceProposalId,
+              SourceDocumentId,SourceLineNumber,PreparationOrigin,PublicAmountSnapshot,PreparedAmount,CostBasisType,
+              CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,
+              Status,PreparedByUserId,PreparedAt,SupersededAt)
+            SELECT NEWID(),created.BusinessId,created.ProductId,created.ProposalId,@DocumentId,line.LineNumber,N'GoodsReceipt',
+              price.Amount,line.RoundedPrice,line.CostBasisType,line.ObservedCost,line.TargetMargin,line.EffectiveMargin,N'Margin',
+              line.RoundingIncrement,line.RoundingMode,
+              CASE WHEN created.Status=N'PendingReview' THEN N'Pending' ELSE N'Superseded' END,@UserId,@Now,
+              CASE WHEN created.Status=N'PendingReview' THEN NULL ELSE @Now END
+            FROM @Created created JOIN @Lines line ON line.LineNumber=created.LineNumber
+            JOIN dbo.ProductPrices price ON price.BusinessId=created.BusinessId AND price.ProductId=created.ProductId AND price.IsActive=1
+            OPTION(RECOMPILE);
+            """, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@SupplierId", supplierId);
+        command.Parameters.AddWithValue("@DocumentId", sourceDocumentId);
+        command.Parameters.AddWithValue("@ObservedAt", observedAt);
         command.Parameters.AddWithValue("@Now", now);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@LineCount", effects.Count);
+        command.Parameters.AddWithValue("@SourceRevision", sourceRevision);
+        command.Parameters.AddWithValue("@PersistSupplierCosts", persistSupplierCosts);
+        command.Parameters.Add("@LinesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(effects.Select(line => new
+        {
+            line.ObservationId, line.LineNumber, line.ProductId, SupplierCost = line.SupplierUnitCost,
+            PreviousCost = line.PreviousObservedUnitCost, HasProposal = line.Proposal is not null,
+            ObservedCost = line.Proposal?.ObservedCost, CurrentMargin = line.Proposal?.CurrentMargin,
+            TargetMargin = line.Proposal?.TargetMargin, RawPrice = line.Proposal?.RawPrice,
+            RoundedPrice = line.Proposal?.RoundedPrice, EffectiveMargin = line.Proposal?.EffectiveMargin,
+            CostBasisType = line.Proposal?.CostBasisType, RoundingIncrement = line.Proposal?.RoundingIncrement,
+            RoundingMode = line.Proposal?.RoundingMode
+        }));
         await command.ExecuteNonQueryAsync(cancellationToken);
-        await SqlLinkedProductCostPreparation.PrepareFamilyAsync(
-            session.Connection, session.Transaction, receipt.BusinessId, line.ProductId,
-            observedCost, null, receipt.ConfirmedByUserId, now, cancellationToken);
     }
 
     private async Task InsertOutboxAsync(
@@ -488,21 +397,11 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             throw new DBConcurrencyException("The goods receipt could not be marked as processed.");
     }
 
-    private static void AddDecimal(SqlCommand command, string name, decimal value, byte precision, byte scale)
-    {
-        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
-        parameter.Precision = precision;
-        parameter.Scale = scale;
-        parameter.Value = value;
-    }
-
-    private static void AddNullableDecimal(SqlCommand command, string name, decimal? value, byte precision, byte scale)
-    {
-        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
-        parameter.Precision = precision;
-        parameter.Scale = scale;
-        parameter.Value = (object?)value ?? DBNull.Value;
-    }
+    private sealed record ReceiptLineEffects(Guid ObservationId,int LineNumber,Guid ProductId,
+        decimal SupplierUnitCost,decimal? PreviousObservedUnitCost,ReceiptPriceProposal? Proposal);
+    private sealed record ReceiptPriceProposal(decimal ObservedCost,decimal? CurrentMargin,decimal TargetMargin,
+        decimal RawPrice,decimal RoundedPrice,decimal? EffectiveMargin,string CostBasisType,
+        decimal RoundingIncrement,string RoundingMode);
 
     private sealed record ReceiptLineState(
         bool ManageStock,

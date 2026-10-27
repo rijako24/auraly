@@ -83,7 +83,7 @@ public sealed class AccountingConfigurationArchitectureTests
                 Code: match.Groups["code"].Value, Type: match.Groups["type"].Value))
             .ToArray();
 
-        rows.Should().HaveCount(59);
+        rows.Should().HaveCount(63);
         rows.Select(row => row.Code).Should().OnlyHaveUniqueItems();
         foreach (var row in rows)
         {

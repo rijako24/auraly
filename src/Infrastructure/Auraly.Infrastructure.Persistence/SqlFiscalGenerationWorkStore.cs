@@ -24,7 +24,7 @@ public sealed class SqlFiscalGenerationWorkStore(
               SELECT 1 FROM purchasing.GoodsReceiptCostDocuments cost
               JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=cost.GoodsReceiptId
                 AND receipt.BusinessId=p.BusinessId
-              WHERE cost.CostDocumentId=p.DocumentId AND receipt.Status=N'Processed'))
+              WHERE cost.CostDocumentId=p.DocumentId AND cost.SourceEntryId IS NULL AND receipt.Status=N'Processed'))
         """;
 
     public async Task<FiscalGenerationWorkItem?> AcquireAsync(

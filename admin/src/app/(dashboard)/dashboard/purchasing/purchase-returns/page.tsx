@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowDownLeft, PackageCheck, RotateCcw, ShieldCheck, WalletCards } from "lucide-react";
@@ -20,10 +20,17 @@ import { useConfirmPurchaseReturn, useReturnableReceipts } from "@/hooks/use-pur
 import { purchaseReturnsApi, type ReturnableReceipt, type ReturnableReceiptListItem } from "@/services/api/purchase-returns";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { inventoryApi } from "@/services/api/inventory";
 
 export default function PurchaseReturnsPage() {
+  const tenantId = useTenantContextStore(state => state.selectedTenantId);
+  const businessId = useBusinessContextStore(state => state.selectedBusinessId);
+  return <PurchaseReturnsWorkspace key={`${tenantId}:${businessId}`} />;
+}
+
+function PurchaseReturnsWorkspace() {
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canCreate = permissions.has("purchasing.purchase-returns.create");
   const [page, setPage] = useState(1);
@@ -122,8 +129,11 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
   receipt?: ReturnableReceipt; open: boolean; canConfirm: boolean; onClose: () => void;
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const tenantId = useTenantContextStore((state) => state.selectedTenantId);
   const confirm = useConfirmPurchaseReturn();
-  const reasonsQuery = useQuery({queryKey:["business-reasons","PurchaseReturn"],queryFn:()=>inventoryApi.businessReasons("PurchaseReturn"),enabled:open});
+  const [returnId] = useState(() => crypto.randomUUID());
+  const returnedAt = useRef<string | null>(null);
+  const reasonsQuery = useQuery({queryKey:["business-reasons",tenantId,businessId,"PurchaseReturn"],queryFn:()=>inventoryApi.businessReasons("PurchaseReturn"),enabled:open&&!!tenantId&&!!businessId});
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [quantities, setQuantities] = useState<Record<number, number>>({});
@@ -140,22 +150,22 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
     }
     try {
       const result = await confirm.mutateAsync({
-        returnId: crypto.randomUUID(), businessId,
+        returnId, businessId,
         originalGoodsReceiptId: receipt.goodsReceiptId,
-        returnedAt: new Date().toISOString(), reasonCode: reason,
+        returnedAt: returnedAt.current ??= new Date().toISOString(), reasonCode: reason,
         notes: notes.trim() || null,
         lines: chosen.map((line) => ({
           originalLineNumber: line.originalLineNumber,
           quantity: quantities[line.originalLineNumber],
         })),
       });
-      toast.success(`Devolución ${result.documentNumber} confirmada y procesada por el motor.`);
+      toast.success(`Devolución ${result.documentNumber} confirmada y enviada al motor.`);
       onClose();
-    } catch { toast.error("No fue posible confirmar. Revisa existencias y cantidades disponibles."); }
+    } catch (error) { toast.error(error instanceof Error ? error.message : "No fue posible confirmar la devolución."); }
   };
 
-  return <Dialog open={open} onOpenChange={(value) => { if (!value) onClose(); }}>
-    <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
+  return <Dialog open={open} onOpenChange={(value) => { if (!value && !confirm.isPending) onClose(); }}>
+    <DialogContent showClose={!confirm.isPending} className="max-h-[92vh] max-w-5xl overflow-y-auto">
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2"><RotateCcw className="h-5 w-5 text-primary" /> Nueva devolución</DialogTitle>
         <DialogDescription>
@@ -170,7 +180,7 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
       </div>
 
       <div className="flex justify-end">
-        <Button type="button" variant="outline" size="sm" onClick={() =>
+        <Button type="button" variant="outline" size="sm" disabled={confirm.isPending} onClick={() =>
           setQuantities(Object.fromEntries(receipt.lines
             .filter((line) => line.availableQuantity > 0)
             .map((line) => [line.originalLineNumber, line.availableQuantity])))}>
@@ -187,18 +197,18 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
           <div><p className="font-medium">{line.description}</p><p className="text-xs text-muted-foreground">Costo {formatCurrency(line.unitCost)} · Devuelto {line.returnedQuantity}</p></div>
           <span>{line.receivedQuantity}</span><span className="font-semibold text-primary">{line.availableQuantity}</span>
           <Input type="number" min={0} max={line.availableQuantity} step="0.000001"
-            disabled={line.availableQuantity <= 0} value={quantities[line.originalLineNumber] ?? ""}
+            disabled={confirm.isPending || line.availableQuantity <= 0} value={quantities[line.originalLineNumber] ?? ""}
             onChange={(event) => setQuantities((current) => ({ ...current,
               [line.originalLineNumber]: Math.max(0, Number(event.target.value)) }))} />
         </div>)}
       </div>
 
       <div className="grid gap-4 md:grid-cols-[18rem_minmax(0,1fr)_14rem] md:items-end">
-        <div className="space-y-2"><Label>Motivo</Label><Select value={reason} onValueChange={setReason}>
+        <div className="space-y-2"><Label>Motivo</Label><Select value={reason} onValueChange={setReason} disabled={confirm.isPending}>
           <SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
             {(reasonsQuery.data??[]).map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}
           </SelectContent></Select></div>
-        <div className="space-y-2"><Label>Observación</Label><Textarea value={notes}
+        <div className="space-y-2"><Label>Observación</Label><Textarea value={notes} disabled={confirm.isPending}
           onChange={(event) => setNotes(event.target.value)} placeholder="Evidencia o acuerdo con el proveedor" /></div>
         <Card className="border-primary/20 bg-primary/5"><CardContent className="p-4">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Total estimado</p>
@@ -208,7 +218,7 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
       </div>
 
       <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Cancelar</Button>
+        <Button variant="outline" disabled={confirm.isPending} onClick={onClose}>Cancelar</Button>
         <Button disabled={!canConfirm || !reason || chosen.length === 0 || confirm.isPending} onClick={submit}>
           <RotateCcw className="mr-2 h-4 w-4" /> Confirmar devolución
         </Button>

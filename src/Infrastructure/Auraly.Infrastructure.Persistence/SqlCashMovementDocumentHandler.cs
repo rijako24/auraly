@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
@@ -44,7 +45,7 @@ public abstract class SqlCashMovementDocumentHandler(
         var session = sessions.Current;
         await LockAcceptedDocumentAsync(session, movement, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
-            session, document, movement.OccurredAt, ids, timeProvider,
+            session.Connection, session.Transaction, document, movement.OccurredAt, ids, timeProvider,
             cancellationToken, AccountingJobRequirement.PreserveCommercialEffects);
         await InsertOutboxAsync(
             session, movement, document.Payload, cancellationToken);

@@ -21,6 +21,12 @@ public sealed class SqlTenantSubscriptionSettlementService(
     IFiscalTechnicalKeyProvider technicalKeys) : ITenantSubscriptionSettlementService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private const string ReadExistingSettlementSql = """
+        SELECT link.SalesDocumentId,document.BusinessId
+        FROM billing.TenantSubscriptionInvoiceLinks link WITH(UPDLOCK,HOLDLOCK)
+        JOIN dbo.SalesDocuments document ON document.DocumentId=link.SalesDocumentId
+        WHERE link.PaymentTransactionId=@PaymentId;
+        """;
 
     public async Task<bool> IsSettledAsync(
         Guid paymentTransactionId,
@@ -61,12 +67,16 @@ public sealed class SqlTenantSubscriptionSettlementService(
         ArgumentNullException.ThrowIfNull(payment);
         if (payment.Status != PaymentTransactionStatus.Confirmed ||
             payment.SubjectType != "TenantSubscription" ||
-            payment.SubjectId is not Guid orderId)
+            payment.SubjectId is not Guid orderId || string.IsNullOrWhiteSpace(payment.PaymentReferenceId)
+            || payment.PaymentReferenceId.Length > 200)
             throw new InvalidOperationException(
                 "El pago confirmado no corresponde a una renovación de tenant.");
 
-        var keyReference = await ReadFiscalKeyReferenceAsync(
-            payment.PaymentTransactionId, orderId, cancellationToken);
+        var now = time.GetUtcNow();
+        var context = await ReadSettlementContextAsync(payment, orderId, now, cancellationToken);
+        if (context.Existing is not null) return context.Existing;
+        var keyReference = context.KeyReference ?? throw new InvalidOperationException(
+            "La resolución fiscal del cobro no está disponible.");
         var fiscalMaterial = await technicalKeys.ResolveAsync(
             keyReference, cancellationToken)
             ?? throw new InvalidOperationException(
@@ -96,7 +106,6 @@ public sealed class SqlTenantSubscriptionSettlementService(
                 throw new InvalidOperationException(
                     "El pago no coincide exactamente con la orden de renovación vigente.");
 
-            var now = time.GetUtcNow();
             var configuration = await SqlOnlineSalesDraftStore.ReadCheckoutConfigurationAsync(
                 connection, transaction, source.BillingBusinessId,
                 ServiceInvoiceDocumentTypes.ServiceInvoice,
@@ -172,7 +181,9 @@ public sealed class SqlTenantSubscriptionSettlementService(
                     lines.Select(line => new PosSaleUblLineContract(
                         line.LineNumber, line.ServiceCode, "999", line.UnitCode,
                         line.TaxName, line.TaxRate)).ToArray(),
-                    "1", "42", DateOnly.FromDateTime(now.Date),
+                    "1", PosSaleFiscalMappings.PaymentMeansCode(source.PaymentMethodCode)
+                        ?? throw new InvalidOperationException("El medio de pago confirmado no tiene equivalencia fiscal."),
+                    DateOnly.FromDateTime(now.Date),
                     source.ExternalPaymentReference),
                 lines,
                 new PosSalePaymentContract(1, source.PaymentMethodCode, source.PayableAmount,
@@ -186,17 +197,31 @@ public sealed class SqlTenantSubscriptionSettlementService(
         }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (transaction.Connection is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
     }
 
-    private async Task<FiscalKeyReference> ReadFiscalKeyReferenceAsync(
-        Guid paymentId, Guid orderId, CancellationToken cancellationToken)
+    private async Task<(FiscalKeyReference? KeyReference, TenantSubscriptionSettlementResult? Existing)> ReadSettlementContextAsync(
+        PaymentTransaction payment, Guid orderId, DateTimeOffset asOf, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
+        // Replays need neither today's fiscal setup nor a secret lookup. Fresh
+        // work still resolves its key outside SQL locks and checks for a raced
+        // settlement again inside the existing serializable transaction.
         await using var command = new SqlCommand("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.PaymentTransactions
+                WHERE PaymentTransactionId=@PaymentId AND SubjectType=N'TenantSubscription'
+                    AND SubjectId=@OrderId AND Status=@Confirmed
+                    AND AmountInCents=@AmountInCents
+                    AND DATALENGTH(PaymentReferenceId)=DATALENGTH(@PaymentReference)
+                    AND PaymentReferenceId COLLATE Latin1_General_100_BIN2=@PaymentReference)
+                THROW 51090,N'El pago no coincide con la renovación confirmada.',1;
+            """ + ReadExistingSettlementSql + """
+            IF @@ROWCOUNT=0
+            BEGIN
             SELECT TOP(2) billingTenant.TenantId,billing.BusinessId,
                    fiscalAuthorization.FiscalAuthorizationId,
                    fiscalAuthorization.AuthorizationNumber,
@@ -219,19 +244,27 @@ public sealed class SqlTenantSubscriptionSettlementService(
             WHERE payment.PaymentTransactionId=@PaymentId
               AND payment.SubjectType=N'TenantSubscription' AND payment.SubjectId=@OrderId
               AND payment.Status=@Confirmed
-              AND CONVERT(date,SYSDATETIMEOFFSET()) BETWEEN fiscalAuthorization.ValidFrom AND fiscalAuthorization.ValidUntil
+              AND CONVERT(date,@AsOf) BETWEEN fiscalAuthorization.ValidFrom AND fiscalAuthorization.ValidUntil
             ORDER BY series.SeriesId;
+            END;
             """, connection);
-        command.Parameters.AddWithValue("@PaymentId", paymentId);
+        command.Parameters.AddWithValue("@PaymentId", payment.PaymentTransactionId);
         command.Parameters.AddWithValue("@OrderId", orderId);
         command.Parameters.AddWithValue("@Confirmed", (int)PaymentTransactionStatus.Confirmed);
+        command.Parameters.AddWithValue("@AmountInCents", payment.AmountInCents);
+        command.Parameters.Add("@PaymentReference", SqlDbType.NVarChar, 200).Value = (object?)payment.PaymentReferenceId ?? DBNull.Value;
+        command.Parameters.AddWithValue("@AsOf", asOf);
         var rows = new List<FiscalKeyReference>(2);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken))
+            return (null, new(reader.GetGuid(0), reader.GetGuid(1), true));
+        if (!await reader.NextResultAsync(cancellationToken))
+            throw new InvalidOperationException("No se pudo resolver el contexto de la renovación confirmada.");
         while (await reader.ReadAsync(cancellationToken))
             rows.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
                 reader.GetString(3), reader.GetString(4),
                 (FiscalEnvironment)reader.GetByte(5)));
-        return rows.Count == 1 ? rows[0] : throw new InvalidOperationException(
+        return rows.Count == 1 ? (rows[0], null) : throw new InvalidOperationException(
             rows.Count == 0
                 ? "Auraly no tiene una resolución online activa y vigente para facturar el pago."
                 : "Auraly tiene más de una resolución online activa para facturación.");
@@ -241,12 +274,7 @@ public sealed class SqlTenantSubscriptionSettlementService(
         SqlConnection connection, SqlTransaction transaction, Guid paymentId,
         CancellationToken cancellationToken)
     {
-        await using var command = new SqlCommand("""
-            SELECT link.SalesDocumentId,document.BusinessId
-            FROM billing.TenantSubscriptionInvoiceLinks link WITH(UPDLOCK,HOLDLOCK)
-            JOIN dbo.SalesDocuments document ON document.DocumentId=link.SalesDocumentId
-            WHERE link.PaymentTransactionId=@PaymentId;
-            """, connection, transaction);
+        await using var command = new SqlCommand(ReadExistingSettlementSql, connection, transaction);
         command.Parameters.AddWithValue("@PaymentId", paymentId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
@@ -325,32 +353,32 @@ public sealed class SqlTenantSubscriptionSettlementService(
     {
         if (quoteLines.Count == 0)
             throw new InvalidOperationException("La orden pagada no tiene servicios.");
+        // Una lectura por conjunto para todas las líneas de la orden pagada.
+        var services = new Dictionary<string, (Guid Id, string Code, string Name, string Unit,
+            string TaxCode, string TaxName, decimal TaxRate)>(StringComparer.OrdinalIgnoreCase);
+        await using (var command = new SqlCommand("""
+            SELECT service.BillableServiceId,service.Code,service.Name,
+                   service.UblUnitCode,tax.DianTaxCode,tax.Name,tax.Rate
+            FROM billing.BillableServices service
+            JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=service.SalesTaxProfileId
+            JOIN OPENJSON(@Codes) requested ON requested.value=service.Code
+            WHERE service.BusinessId=@BusinessId AND service.IsActive=1 AND tax.IsActive=1;
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@BusinessId", source.BillingBusinessId);
+            command.Parameters.AddWithValue("@Codes", JsonSerializer.Serialize(quoteLines.Select(line => line.Code).Distinct()));
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                services.Add(reader.GetString(1), (reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                    reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetDecimal(6)));
+        }
         var lines = new List<ServiceInvoiceLineContract>(quoteLines.Count);
         for (var index = 0; index < quoteLines.Count; index++)
         {
             var quote = quoteLines[index];
-            await using var command = new SqlCommand("""
-                SELECT service.BillableServiceId,service.Code,service.Name,
-                       service.UblUnitCode,tax.DianTaxCode,tax.Name,tax.Rate
-                FROM billing.BillableServices service
-                JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=service.SalesTaxProfileId
-                WHERE service.BusinessId=@BusinessId AND service.Code=@Code
-                  AND service.IsActive=1 AND tax.IsActive=1;
-                """, connection, transaction);
-            command.Parameters.AddWithValue("@BusinessId", source.BillingBusinessId);
-            command.Parameters.AddWithValue("@Code", quote.Code);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken))
-                throw new InvalidOperationException(
-                    $"El servicio '{quote.Code}' de la orden ya no está disponible.");
-            var serviceId = reader.GetGuid(0);
-            var code = reader.GetString(1);
-            var name = reader.GetString(2);
-            var unitCode = reader.GetString(3);
-            var taxCode = reader.GetString(4);
-            var taxName = reader.GetString(5);
-            var taxRate = reader.GetDecimal(6);
-            await reader.DisposeAsync();
+            if (!services.TryGetValue(quote.Code, out var service))
+                throw new InvalidOperationException($"El servicio '{quote.Code}' de la orden ya no está disponible.");
+            var (serviceId, code, name, unitCode, taxCode, taxName, taxRate) = service;
             if (taxRate != quote.SalesTaxRate)
                 throw new InvalidOperationException(
                     $"El impuesto del servicio '{quote.Code}' cambió después de crear la orden.");
@@ -414,6 +442,7 @@ public sealed class SqlTenantSubscriptionSettlementService(
             cancellationToken);
         await using var command = new SqlCommand("""
             SET XACT_ABORT ON;
+            DECLARE @AnchorDay int=(SELECT BillingAnchorDay FROM billing.TenantSubscriptions WHERE TenantSubscriptionId=@SubscriptionId);
             INSERT billing.TenantSubscriptionInvoiceLinks
               (SalesDocumentId,TenantSubscriptionId,TenantSubscriptionRenewalOrderId,
                PaymentTransactionId,CreatedAt)
@@ -426,19 +455,52 @@ public sealed class SqlTenantSubscriptionSettlementService(
               AND Status IN(N'PendingPayment',N'PaymentConfirmed',N'Invoicing');
             IF @@ROWCOUNT<>1 THROW 51090,N'La orden pagada cambió durante la liquidación.',1;
 
+            -- Preserve the old paid term before an early renewal replaces its
+            -- dates. Missing annual months must remain available to the same
+            -- quota owner; existing consumption and period identities stay intact.
+            WITH MonthOffsets(OffsetValue) AS(
+                SELECT monthValue FROM (VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11)) monthValues(monthValue)
+            ), PaidPeriods AS(
+                SELECT subscription.TenantSubscriptionId,bounds.PeriodStart,
+                    CASE WHEN bounds.NextStart>subscription.CurrentPeriodEnd
+                        THEN subscription.CurrentPeriodEnd ELSE bounds.NextStart END PeriodEnd
+                FROM billing.TenantSubscriptions subscription
+                CROSS JOIN MonthOffsets monthOffset
+                CROSS APPLY(VALUES(
+                    billing.TenantSubscriptionPeriodBoundary(subscription.CurrentPeriodStart,monthOffset.OffsetValue,@AnchorDay),
+                    billing.TenantSubscriptionPeriodBoundary(subscription.CurrentPeriodStart,monthOffset.OffsetValue+1,@AnchorDay)
+                )) bounds(PeriodStart,NextStart)
+                WHERE subscription.TenantSubscriptionId=@SubscriptionId AND subscription.CurrentPeriodEnd<=@PeriodEnd
+                    AND bounds.PeriodStart<subscription.CurrentPeriodEnd
+            )
+            INSERT billing.TenantSubscriptionUsagePeriods
+                (TenantSubscriptionUsagePeriodId,TenantSubscriptionId,PeriodStart,PeriodEnd,
+                 DianDocumentsUsed,CreatedAt,UpdatedAt)
+            SELECT NEWID(),paid.TenantSubscriptionId,paid.PeriodStart,paid.PeriodEnd,0,@Now,@Now
+            FROM PaidPeriods paid
+            WHERE NOT EXISTS(SELECT 1 FROM billing.TenantSubscriptionUsagePeriods existing WITH(UPDLOCK,HOLDLOCK)
+                WHERE existing.TenantSubscriptionId=paid.TenantSubscriptionId AND existing.PeriodStart=paid.PeriodStart);
+
             UPDATE billing.TenantSubscriptions
             SET TenantCommercialPlanId=@PlanId,BillingPeriod=@BillingPeriod,
                 Status=N'Active',CurrentPeriodStart=@PeriodStart,CurrentPeriodEnd=@PeriodEnd,
-                BillingAnchorDay=DAY(@PeriodStart),FullUserLimit=@FullUsers,
+                FullUserLimit=@FullUsers,
                 SellerUserLimit=@SellerUsers,PosDeviceLimit=@PosDevices,
                 DianDocumentMonthlyLimit=@DianDocuments,
                 PayrollEmployeeLimit=@PayrollEmployees,UpdatedAt=@Now
-            WHERE TenantSubscriptionId=@SubscriptionId;
+            WHERE TenantSubscriptionId=@SubscriptionId AND CurrentPeriodEnd<=@PeriodEnd;
+            -- Pagar un cobro antiguo nunca reemplaza capacidad o fechas de otro más reciente.
+            UPDATE subscription SET Status=CASE WHEN EXISTS(
+                SELECT 1 FROM billing.TenantSubscriptionRenewalOrders renewal
+                WHERE renewal.TenantSubscriptionId=@SubscriptionId AND renewal.IsCurrent=1
+                  AND renewal.Status IN(N'Draft',N'PendingPayment',N'PaymentFailed',N'Expired')
+                  AND renewal.DueAt<=@Now) THEN N'PastDue' ELSE N'Active' END,
+                UpdatedAt=@Now
+            FROM billing.TenantSubscriptions subscription WHERE TenantSubscriptionId=@SubscriptionId;
             IF @@ROWCOUNT<>1 THROW 51091,N'La suscripción pagada ya no existe.',1;
 
             UPDATE scheduled
-            SET Status=0,ScheduledAtUtc=CONVERT(datetime2,SWITCHOFFSET(
-                  DATEADD(day,-settings.PreDueReminderDays,@PeriodEnd),'+00:00')),
+            SET Status=0,ScheduledAtUtc=@Now,
                 Attempts=0,LockedUntilUtc=NULL,SentAtUtc=NULL,LastError=NULL,UpdatedAt=@Now
             FROM dbo.ScheduledAutomationJobs scheduled
             CROSS JOIN billing.PlatformBillingSettings settings
@@ -462,8 +524,8 @@ public sealed class SqlTenantSubscriptionSettlementService(
                 (TenantSubscriptionUsagePeriodId,TenantSubscriptionId,PeriodStart,PeriodEnd,
                  DianDocumentsUsed,CreatedAt,UpdatedAt)
               VALUES(@UsagePeriodId,@SubscriptionId,@PeriodStart,
-                 CASE WHEN DATEADD(month,1,@PeriodStart)<@PeriodEnd
-                      THEN DATEADD(month,1,@PeriodStart) ELSE @PeriodEnd END,
+                 CASE WHEN billing.TenantSubscriptionPeriodBoundary(@PeriodStart,1,@AnchorDay)<@PeriodEnd
+                      THEN billing.TenantSubscriptionPeriodBoundary(@PeriodStart,1,@AnchorDay) ELSE @PeriodEnd END,
                  0,@Now,@Now);
             """, connection, transaction);
         Add(command, "@DocumentId", snapshot.DocumentId);

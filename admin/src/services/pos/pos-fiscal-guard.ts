@@ -5,7 +5,7 @@ export const fiscalConfigurationRequiredMessage =
 export const localFiscalSeriesRequiredMessage =
   "La facturación electrónica local no está lista en esta caja. Revisa su configuración fiscal y asigna o renueva una resolución DIAN para este equipo. Las facturas desde pedidos usan la resolución online de la sede.";
 export const dianQuotaExhaustedMessage =
-  "No hay cupo de documentos DIAN. La venta no se cambiará automáticamente: selecciona comprobante de venta o compra un paquete antes de emitir una factura electrónica.";
+  "No tienes documentos DIAN disponibles. Puedes seguir registrando comprobantes de venta y entradas de mercancía. Renueva o amplía tu cupo para emitir documentos electrónicos. Puedes volver y elegir un comprobante no electrónico.";
 
 type FiscalReadiness = {
   isReadyForOnlineSales: boolean;

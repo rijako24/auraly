@@ -11,6 +11,25 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class ExpenseSupplierSelectionTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Manual_creator_selects_supplier_sites_with_a_server_side_party_filter()
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.ManualCreate);
+        var path = "/api/commerce/v1/portfolio/parties/site-options?role=Supplier&page=1&pageSize=1";
+        var result = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(path + $"&partyId={fixture.SupplierPartyId:D}");
+        Assert.NotNull(result);
+        Assert.Single(result.Items);
+        Assert.All(result.Items, item => Assert.Equal(fixture.SupplierPartyId, item.PartyId));
+        var empty = await client.GetFromJsonAsync<PartySiteRoleOptionPage>(path + $"&partyId={Guid.NewGuid():D}");
+        Assert.Empty(empty!.Items);
+        Assert.Equal(0, empty.TotalCount);
+        using var reader = fixture.CreateAdminClient(AccountingPermissionCodes.Read);
+        using var denied = await reader.GetAsync(path);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        using var customer = await client.GetAsync(path.Replace("role=Supplier", "role=Customer"));
+        Assert.Equal(HttpStatusCode.Forbidden, customer.StatusCode);
+    }
+
+    [Fact]
     public async Task Expense_options_can_omit_directories_used_by_remote_pickers()
     {
         using var client = fixture.CreateAdminClient(ExpensePermissionCodes.Read);

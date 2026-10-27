@@ -9,13 +9,6 @@ import { taxationApi } from "@/services/api/taxation";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
-const kindLabels: Record<string, string> = {
-  IncomeTax: "Retención en la fuente", Vat: "ReteIVA", IndustryCommerce: "ReteICA",
-};
-const sourceLabels: Record<string, string> = {
-  Expense: "Gasto", GoodsReceipt: "Recepción de compra",
-  GoodsReceiptCostDocument: "Factura adicional de compra",
-};
 
 export function AppliedWithholdingsReport() {
   const businessId = useBusinessContextStore(state => state.selectedBusinessId);
@@ -42,7 +35,7 @@ export function AppliedWithholdingsReport() {
   return <Card className="overflow-hidden rounded-3xl">
     <CardHeader className="border-b bg-muted/30">
       <CardTitle>Retenciones practicadas</CardTitle>
-      <p className="text-sm text-muted-foreground">Consolidado de gastos y compras causados. Renta y ReteIVA son soporte para revisar la declaración mensual ante la DIAN; ReteICA corresponde al municipio. Este informe no presenta ni paga declaraciones.</p>
+      <p className="text-sm text-muted-foreground">Consolidado de gastos, compras y documentos soporte registrados. Renta y ReteIVA son soporte para revisar la declaración mensual ante la DIAN; ReteICA corresponde al municipio. Este informe no presenta ni paga declaraciones.</p>
       <div className="grid gap-3 pt-3 sm:grid-cols-2 lg:max-w-2xl">
         <label className="space-y-1 text-sm font-medium">Desde<DatePicker value={from} onChange={value => { setFrom(value); setPage(1); }} max={to || undefined}/></label>
         <label className="space-y-1 text-sm font-medium">Hasta<DatePicker value={to} onChange={value => { setTo(value); setPage(1); }} min={from || undefined}/></label>
@@ -68,9 +61,9 @@ export function AppliedWithholdingsReport() {
             </tr></thead>
             <tbody>{data.items.map(item => <tr key={`${item.documentType}-${item.documentId}-${item.lineNumber}`} className="border-t align-top">
               <td className="p-3 whitespace-nowrap">{new Date(item.recognizedAt).toLocaleDateString("es-CO", { timeZone: "America/Bogota" })}</td>
-              <td className="p-3 font-medium">{item.documentNumber}<small className="block font-normal text-muted-foreground">{sourceLabels[item.documentType] ?? item.documentType}</small></td>
+              <td className="p-3 font-medium">{item.documentNumber}<small className="block font-normal text-muted-foreground">{item.documentTypeLabel ?? item.documentType}</small></td>
               <td className="p-3">{item.supplierName}<small className="block text-muted-foreground">{item.supplierIdentification}</small></td>
-              <td className="p-3">{item.name}<small className="block text-muted-foreground">{kindLabels[item.kind] ?? item.kind}{item.jurisdictionCode ? ` · ${item.jurisdictionCode}` : ""} · {item.isManual ? "Puntual" : item.ruleCode}</small></td>
+              <td className="p-3">{item.name}<small className="block text-muted-foreground">{item.kindLabel ?? item.kind}{item.jurisdictionCode ? ` · ${item.jurisdictionCode}` : ""} · {item.isManual ? "Puntual" : item.ruleCode}</small></td>
               <td className="p-3 text-right tabular-nums">{money.format(item.taxableBase)}</td>
               <td className="p-3 text-right tabular-nums">{item.rate}%</td>
               <td className="p-3 text-right font-semibold tabular-nums">{money.format(item.amount)}</td>

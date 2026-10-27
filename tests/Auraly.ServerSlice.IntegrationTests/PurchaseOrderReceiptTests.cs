@@ -37,8 +37,11 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var daysUntilFriday = ((int)DayOfWeek.Friday - (int)today.DayOfWeek + 7) % 7;
         var plannedFriday = today.AddDays(daysUntilFriday == 0 ? 7 : daysUntilFriday);
-        var firstFriday = plannedFriday.AddDays(-14);
         var secondFriday = plannedFriday.AddDays(-7);
+        // Only completed days belong to the planner's history. On Friday the
+        // previous planned Friday is today and must not be seeded as history.
+        if (secondFriday >= today) secondFriday = secondFriday.AddDays(-7);
+        var firstFriday = secondFriday.AddDays(-7);
         using var client = CreateClient(InventoryPermissionCodes.Read);
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -266,15 +269,22 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
-            SELECT OverReceiptAuthorized,OverReceiptReason
-            FROM dbo.GoodsReceiptLines
-            WHERE PurchaseOrderLineId=@LineId AND Quantity=12;
+            SELECT line.OverReceiptAuthorized,line.OverReceiptReason,
+              (SELECT COUNT(*) FROM dbo.Payables payable
+               WHERE payable.SourceDocumentId=line.GoodsReceiptId AND payable.SourceDocumentType=N'GoodsReceipt'),
+              JSON_VALUE(payload.PayloadJson,'$.lines[0].overReceiptAuthorized')
+            FROM dbo.GoodsReceiptLines line
+            JOIN dbo.DocumentProcessingPayloads payload ON payload.DocumentId=line.GoodsReceiptId
+              AND payload.DocumentType=N'GoodsReceipt'
+            WHERE line.PurchaseOrderLineId=@LineId AND line.Quantity=12;
             """, connection);
         command.Parameters.AddWithValue("@LineId", source.Lines.Single().LineId);
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         Assert.True(reader.GetBoolean(0));
         Assert.Equal("El proveedor despachó dos unidades adicionales", reader.GetString(1));
+        Assert.Equal(1, reader.GetInt32(2));
+        Assert.Equal("true", reader.GetString(3));
     }
 
     [Fact]
@@ -365,7 +375,7 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
     {
         using var message = CreateReceiptMessage(source, quantity, overReceiptReason);
         using var response = await client.SendAsync(message);
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
     }
 
     private HttpRequestMessage CreateReceiptMessage(PurchaseOrderReceiptSource source,
@@ -375,7 +385,7 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
         var orderLine = source.Lines.Single();
         var request = new ConfirmGoodsReceiptRequest(
             Guid.NewGuid(), fixture.BusinessId, source.WarehouseId, source.SupplierId,
-            $"FC-{Guid.NewGuid():N}", receivedAt, receivedAt, false, null, "COP",
+            $"FC-{Guid.NewGuid():N}", receivedAt, receivedAt, true, receivedAt, "COP",
             "Recepción vinculada", [new GoodsReceiptLineRequest(1, orderLine.ProductId,
                 orderLine.Description, quantity, orderLine.UnitCost, 0m, orderLine.TaxCode,
                 orderLine.TaxRate, orderLine.TaxTreatment, orderLine.PresentationName,

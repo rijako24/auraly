@@ -208,7 +208,7 @@ public sealed class SqlPurchaseReturnStore(
             if (request.ReturnedAt < original.ReceivedAt)
                 throw new PurchasingValidationException(
                     "ReturnedAt cannot be earlier than the original receipt.");
-            var lines = await AllocateLinesAsync(connection, transaction, request,
+            var lines = await AllocateLinesAsync(connection, transaction, request, original,
                 cancellationToken);
             var net=lines.Sum(line=>line.NetAmount);
             var tax=lines.Sum(line=>line.TaxAmount);
@@ -225,8 +225,9 @@ public sealed class SqlPurchaseReturnStore(
                 supportAdjustment = await SqlGoodsReceiptStore.AllocateSupportFiscalAsync(
                     connection, transaction, user.BusinessId, original.SupplierId,
                     request.ReturnedAt, now, cancellationToken);
-            var number=await AllocateNumberAsync(connection,transaction,user.BusinessId,cancellationToken);
-            var sequence=await AllocateSequenceAsync(connection,transaction,user.BusinessId,now,cancellationToken);
+            var number=await AllocateNumberAsync(connection,transaction,user.TenantId,user.BusinessId,now,cancellationToken);
+            var sequence=await SqlOperationalDocumentAllocator.AllocateSequenceAsync(
+                connection,transaction,user.BusinessId,now,cancellationToken);
             var payload=new PurchaseReturnDocumentPayload(
                 user.TenantId,user.BusinessId,request.ReturnId,request.OriginalGoodsReceiptId,
                 original.WarehouseId,original.SupplierId,user.UserId,number.FullNumber,
@@ -246,27 +247,14 @@ public sealed class SqlPurchaseReturnStore(
             return new PurchaseReturnAcceptance(request.ReturnId,jobId,number.FullNumber,
                 "Accepted",sequence,false);
         }
-        catch (PurchasingConflictException)
+        catch (Exception exception)
         {
-            await transaction.RollbackAsync(CancellationToken.None); throw;
-        }
-        catch (SqlException exception) when (exception.Number == 1205)
-        {
-            if (transaction.Connection is not null)
-            {
+            if (transaction.Connection?.State == ConnectionState.Open)
                 await transaction.RollbackAsync(CancellationToken.None);
-            }
+            if (exception is SqlException { Number: 2601 or 2627 })
+                throw new PurchasingConflictException(
+                    "The purchase return number, DocumentId or idempotency key is already in use.", exception);
             throw;
-        }
-        catch (SqlException exception) when (exception.Number is 2601 or 2627)
-        {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw new PurchasingConflictException(
-                "The purchase return number, DocumentId or idempotency key is already in use.");
-        }
-        catch
-        {
-            await transaction.RollbackAsync(CancellationToken.None); throw;
         }
     }
 
@@ -303,15 +291,29 @@ public sealed class SqlPurchaseReturnStore(
         await using var command=new SqlCommand("""
             SELECT r.WarehouseId,r.SupplierId,r.ReceivedAt,r.CurrencyCode,
                    fiscal.FiscalNumber,fiscal.UniqueCode,fiscal.IssuedAt,
-                   fiscal.FiscalStatus,snapshot.SnapshotJson
+                   fiscal.FiscalStatus,snapshot.SnapshotJson,payload.PayloadJson,
+                   discountApplication.FinancialDiscountEarned,discountPayment.Status
             FROM dbo.GoodsReceipts r WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
+            LEFT JOIN dbo.Payables originalBalance WITH(UPDLOCK,HOLDLOCK)
+              ON originalBalance.SourceDocumentId=r.GoodsReceiptId
+                AND originalBalance.SourceDocumentType=N'GoodsReceipt'
+                AND originalBalance.SourceLineId IS NULL AND originalBalance.BusinessId=@BusinessId
+            LEFT JOIN dbo.SupplierPaymentApplications discountApplication WITH(UPDLOCK,HOLDLOCK)
+              ON discountApplication.PayableId=originalBalance.PayableId
+                AND discountApplication.FinancialDiscountEarned IS NOT NULL
+            LEFT JOIN dbo.SupplierPayments discountPayment
+              ON discountPayment.PaymentId=discountApplication.PaymentId
+                AND discountPayment.BusinessId=@BusinessId
             LEFT JOIN dbo.FiscalDocuments fiscal
               ON fiscal.DocumentId=r.GoodsReceiptId
              AND fiscal.BusinessId=r.BusinessId
              AND fiscal.FiscalDocumentType=N'SupportDocument'
             LEFT JOIN fiscal.PurchaseSupportFiscalSnapshots snapshot
               ON snapshot.DocumentId=fiscal.DocumentId
+            LEFT JOIN dbo.DocumentProcessingPayloads payload
+              ON payload.DocumentId=r.GoodsReceiptId AND payload.DocumentType=N'GoodsReceipt'
+                AND payload.BusinessId=r.BusinessId
             WHERE r.GoodsReceiptId=@Id AND r.BusinessId=@BusinessId AND r.Status=N'Processed';
             """,connection,transaction);
         command.Parameters.AddWithValue("@Id",request.OriginalGoodsReceiptId);
@@ -336,8 +338,17 @@ public sealed class SqlPurchaseReturnStore(
                     reader.GetDateTimeOffset(6)),
                 PurchaseSupportFiscalSnapshotSerializer.Deserialize(reader.GetString(8)));
         }
+        var discount = reader.IsDBNull(9) ? null :
+            GoodsReceiptContractSerializer.Deserialize(reader.GetString(9)).FinancialDiscount;
+        if (!reader.IsDBNull(10) && discount is null)
+            throw new PurchasingConflictException(
+                "La devolución no se aceptó: falta el descuento congelado de la compra pagada.");
+        if (!reader.IsDBNull(10) && (reader.IsDBNull(11) || reader.GetString(11)!="Processed"))
+            throw new PurchasingConflictException(
+                "La devolución no se aceptó: termina primero el pago que decidió el descuento financiero.");
         var value=new OriginalReceipt(reader.GetGuid(0),reader.GetGuid(1),
-            reader.GetDateTimeOffset(2),reader.GetString(3),support);
+            reader.GetDateTimeOffset(2),reader.GetString(3),support,
+            discount,reader.IsDBNull(10) ? null : reader.GetBoolean(10));
         if(value.CurrencyCode!="COP")
             throw new PurchasingValidationException(
                 "Purchase returns currently require an original receipt in COP.");
@@ -346,31 +357,58 @@ public sealed class SqlPurchaseReturnStore(
 
     private static async Task<IReadOnlyList<PurchaseReturnLineSnapshot>> AllocateLinesAsync(
         SqlConnection connection, SqlTransaction transaction,
-        ConfirmPurchaseReturnRequest request, CancellationToken cancellationToken)
+        ConfirmPurchaseReturnRequest request, OriginalReceipt original,
+        CancellationToken cancellationToken)
     {
-        var result=new List<PurchaseReturnLineSnapshot>(); var lineNumber=0;
-        foreach(var requested in request.Lines.OrderBy(line=>line.OriginalLineNumber))
-        {
-            await using var command=new SqlCommand("""
+        var requestedLines = request.Lines.ToDictionary(line => line.OriginalLineNumber);
+        var discountByLine = original.FinancialDiscount?.Lines.ToDictionary(
+            line => line.ReceiptLineNumber) ?? [];
+        var result=new List<PurchaseReturnLineSnapshot>(requestedLines.Count); var lineNumber=0;
+        await using var command=new SqlCommand("""
+                DECLARE @Requested TABLE(OriginalLineNumber int PRIMARY KEY);
+                INSERT @Requested SELECT OriginalLineNumber FROM OPENJSON(@Lines)
+                  WITH(OriginalLineNumber int);
+                WITH revised AS
+                (
+                  SELECT allocation.ReceiptLineNumber,SUM(allocation.FunctionalAmount) Amount
+                  FROM purchasing.GoodsReceiptCostDocuments cost
+                  JOIN purchasing.GoodsReceiptCostRevisions revision
+                    ON revision.RevisionId=cost.CostRevisionId
+                  JOIN purchasing.GoodsReceiptCostAllocations allocation
+                    ON allocation.CostDocumentId=cost.CostDocumentId
+                  JOIN @Requested requested ON requested.OriginalLineNumber=allocation.ReceiptLineNumber
+                  WHERE cost.GoodsReceiptId=@ReceiptId
+                    AND revision.Status IN(N'Accepted',N'Processed')
+                  GROUP BY allocation.ReceiptLineNumber
+                )
                 SELECT l.ProductId,l.DescriptionSnapshot,l.Quantity,l.UnitCost,
                        l.DiscountAmount,l.TaxCode,l.TaxRate,l.TaxTreatment,
                        l.NetAmount,l.TaxAmount,l.LineTotal,
                        COALESCE(SUM(prl.Quantity),0),COALESCE(SUM(prl.DiscountAmount),0),
                        COALESCE(SUM(prl.NetAmount),0),COALESCE(SUM(prl.TaxAmount),0),
-                       COALESCE(SUM(prl.LineTotal),0),l.RecognizedInventoryCostAmount
-                FROM dbo.GoodsReceiptLines l WITH (UPDLOCK,HOLDLOCK)
+                       COALESCE(SUM(prl.LineTotal),0),
+                       l.RecognizedInventoryCostAmount+COALESCE(revised.Amount,0),
+                       COALESCE(SUM(prl.FinancialDiscountAmount),0),requested.OriginalLineNumber
+                FROM @Requested requested
+                LEFT JOIN dbo.GoodsReceiptLines l WITH (UPDLOCK,HOLDLOCK)
+                  ON l.GoodsReceiptId=@ReceiptId AND l.LineNumber=requested.OriginalLineNumber
                 LEFT JOIN dbo.PurchaseReturnLines prl WITH (UPDLOCK,HOLDLOCK)
                   ON prl.OriginalGoodsReceiptId=l.GoodsReceiptId
                  AND prl.OriginalLineNumber=l.LineNumber
-                WHERE l.GoodsReceiptId=@ReceiptId AND l.LineNumber=@Line
-                GROUP BY l.ProductId,l.DescriptionSnapshot,l.Quantity,l.UnitCost,
+                LEFT JOIN revised ON revised.ReceiptLineNumber=l.LineNumber
+                GROUP BY requested.OriginalLineNumber,l.ProductId,l.DescriptionSnapshot,l.Quantity,l.UnitCost,
                          l.DiscountAmount,l.TaxCode,l.TaxRate,l.TaxTreatment,
-                         l.NetAmount,l.TaxAmount,l.LineTotal,l.RecognizedInventoryCostAmount;
+                         l.NetAmount,l.TaxAmount,l.LineTotal,l.RecognizedInventoryCostAmount,revised.Amount
+                ORDER BY requested.OriginalLineNumber OPTION(RECOMPILE);
                 """,connection,transaction);
-            command.Parameters.AddWithValue("@ReceiptId",request.OriginalGoodsReceiptId);
-            command.Parameters.AddWithValue("@Line",requested.OriginalLineNumber);
-            await using var reader=await command.ExecuteReaderAsync(cancellationToken);
-            if(!await reader.ReadAsync(cancellationToken))
+        command.Parameters.AddWithValue("@ReceiptId",request.OriginalGoodsReceiptId);
+        command.Parameters.Add("@Lines",SqlDbType.NVarChar,-1).Value = JsonSerializer.Serialize(
+            request.Lines.Select(line => new { line.OriginalLineNumber }));
+        await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken))
+        {
+            var requested = requestedLines[reader.GetInt32(18)];
+            if(reader.IsDBNull(0))
                 throw new PurchasingValidationException(
                     $"Original receipt line {requested.OriginalLineNumber} does not exist.");
             PurchaseReturnAllocation allocation;
@@ -389,68 +427,61 @@ public sealed class SqlPurchaseReturnStore(
             }
             var recognizedCost=decimal.Round(reader.GetDecimal(16)/reader.GetDecimal(2),6,
                 MidpointRounding.AwayFromZero);
+            var financialDiscount = 0m;
+            var financialAdjustment = 0m;
+            if (discountByLine.TryGetValue(requested.OriginalLineNumber, out var originalDiscount))
+            {
+                var originalNet = reader.GetDecimal(8);
+                var alreadyReturned = reader.GetDecimal(13);
+                var alreadyDiscounted = reader.GetDecimal(17);
+                if (originalNet <= 0 || alreadyDiscounted > originalDiscount.Amount)
+                    throw new PurchasingConflictException(
+                        "El descuento financiero de la compra requiere revisión antes de devolver mercancía.");
+                var completesLine = reader.GetDecimal(11) + allocation.Quantity == reader.GetDecimal(2);
+                var targetDiscount = completesLine ? originalDiscount.Amount :
+                    decimal.Round(originalDiscount.Amount *
+                        (alreadyReturned + allocation.NetAmount) / originalNet, 4,
+                        MidpointRounding.AwayFromZero);
+                var previousTarget = decimal.Round(originalDiscount.Amount * alreadyReturned / originalNet,
+                    4, MidpointRounding.AwayFromZero);
+                var priorDiscount = original.FinancialDiscount!.AnticipatedInCost
+                    ? alreadyDiscounted : previousTarget;
+                var currentDiscount = decimal.Min(originalDiscount.Amount, targetDiscount) - priorDiscount;
+                if (currentDiscount < 0 || currentDiscount > allocation.NetAmount)
+                    throw new PurchasingConflictException(
+                        "El descuento financiero de la devolución no concilia con la compra.");
+                financialDiscount = original.FinancialDiscount.AnticipatedInCost ? currentDiscount : 0m;
+                if (original.FinancialDiscountEarned is { } earned)
+                    financialAdjustment = (earned ? currentDiscount : 0m) - financialDiscount;
+            }
             result.Add(new PurchaseReturnLineSnapshot(++lineNumber,
                 requested.OriginalLineNumber,reader.GetGuid(0),reader.GetString(1),
                 allocation.Quantity,reader.GetDecimal(3),allocation.DiscountAmount,
                 reader.GetString(5),reader.GetDecimal(6),reader.GetString(7),
-                allocation.NetAmount,allocation.TaxAmount,allocation.LineTotal,recognizedCost));
+                allocation.NetAmount,allocation.TaxAmount,allocation.LineTotal,recognizedCost,
+                financialDiscount,financialAdjustment));
         }
         return result;
     }
 
     private static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(
-        SqlConnection connection,SqlTransaction transaction,Guid businessId,
-        CancellationToken cancellationToken)
-    {
-        await using var select=new SqlCommand("""
-            SELECT TOP(1) ds.DocumentSeriesId,ds.Prefix,ds.SeriesCode,ds.Padding,
-                   ds.RangeEnd,COALESCE(c.NextConsecutive,ds.RangeStart)
-            FROM dbo.DocumentSeries ds WITH(UPDLOCK,HOLDLOCK)
-            LEFT JOIN dbo.DocumentSeriesCursors c WITH(UPDLOCK,HOLDLOCK)
-              ON c.DocumentSeriesId=ds.DocumentSeriesId
-            WHERE ds.BusinessId=@BusinessId AND ds.DocumentType=N'PurchaseReturn'
-              AND ds.DeviceId IS NULL AND ds.IsActive=1
-            ORDER BY ds.DocumentSeriesId;
-            """,connection,transaction);
-        select.Parameters.AddWithValue("@BusinessId",businessId);
-        Guid id;string prefix;string code;byte padding;long end;long next;
-        await using(var reader=await select.ExecuteReaderAsync(cancellationToken))
-        {
-            if(!await reader.ReadAsync(cancellationToken))
-                throw new PurchasingValidationException(
-                    "No active PurchaseReturn document series is configured for the business.");
-            id=reader.GetGuid(0);prefix=reader.GetString(1);code=reader.GetString(2);
-            padding=reader.GetByte(3);end=reader.GetInt64(4);next=reader.GetInt64(5);
-        }
-        if(next>end)throw new PurchasingValidationException(
-            "The PurchaseReturn document series is exhausted.");
-        await using var update=new SqlCommand("""
-            IF EXISTS(SELECT 1 FROM dbo.DocumentSeriesCursors WHERE DocumentSeriesId=@Id)
-              UPDATE dbo.DocumentSeriesCursors SET NextConsecutive=@Next,UpdatedAt=@Now WHERE DocumentSeriesId=@Id;
-            ELSE INSERT dbo.DocumentSeriesCursors(DocumentSeriesId,NextConsecutive,UpdatedAt)
-              VALUES(@Id,@Next,@Now);
-            """,connection,transaction);
-        update.Parameters.AddWithValue("@Id",id);update.Parameters.AddWithValue("@Next",next+1);
-        update.Parameters.AddWithValue("@Now",DateTimeOffset.UtcNow);
-        await update.ExecuteNonQueryAsync(cancellationToken);
-        return AuralyDocumentNumberAssignment.Create(id,AuralyDocumentTypes.PurchaseReturn,
-            prefix,code,next,padding);
-    }
-
-    private static async Task<long> AllocateSequenceAsync(
-        SqlConnection connection,SqlTransaction transaction,Guid businessId,
+        SqlConnection connection,SqlTransaction transaction,Guid tenantId,Guid businessId,
         DateTimeOffset now,CancellationToken cancellationToken)
     {
-        await using var command=new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId)
-              INSERT dbo.BusinessProcessingCursors(BusinessId,LastAssignedSequence,LastCompletedSequence,UpdatedAt) VALUES(@BusinessId,0,0,@Now);
-            UPDATE dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK)
-            SET LastAssignedSequence=LastAssignedSequence+1,UpdatedAt=@Now
-            OUTPUT inserted.LastAssignedSequence WHERE BusinessId=@BusinessId;
-            """,connection,transaction);
-        command.Parameters.AddWithValue("@BusinessId",businessId);
-        command.Parameters.AddWithValue("@Now",now);
-        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken));
+        try
+        {
+            return await SqlOperationalDocumentAllocator.AllocateExistingNumberAsync(
+                connection,transaction,tenantId,businessId,AuralyDocumentTypes.PurchaseReturn,now,cancellationToken);
+        }
+        catch(SqlException exception) when(exception.Number==51730)
+        {
+            throw new PurchasingValidationException(
+                "No active PurchaseReturn document series is configured for the business.", exception);
+        }
+        catch(SqlException exception) when(exception.Number==51731)
+        {
+            throw new PurchasingValidationException("The PurchaseReturn document series is exhausted.", exception);
+        }
     }
 
     private static async Task InsertAsync(
@@ -472,6 +503,19 @@ public sealed class SqlPurchaseReturnStore(
             VALUES(@Id,@BusinessId,@OriginalId,@WarehouseId,@SupplierId,@SeriesId,
                @Number,@Prefix,@SeriesCode,@Consecutive,@Key,@Hash,@ReturnedAt,@Reason,
                @Notes,@Currency,@Net,@Tax,@Total,N'Accepted',@UserId,@Now);
+            INSERT dbo.PurchaseReturnLines
+              (PurchaseReturnId,LineNumber,OriginalGoodsReceiptId,OriginalLineNumber,
+               ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,TaxCode,
+               TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,RecognizedUnitCost,FinancialDiscountAmount)
+            SELECT @Id,LineNumber,@OriginalId,OriginalLineNumber,ProductId,Description,
+              Quantity,UnitCost,DiscountAmount,TaxCode,TaxRate,TaxTreatment,
+              NetAmount,TaxAmount,LineTotal,RecognizedUnitCost,COALESCE(FinancialDiscountAmount,0)
+            FROM OPENJSON(@Lines) WITH(LineNumber int,OriginalLineNumber int,ProductId uniqueidentifier,
+              Description nvarchar(250),Quantity decimal(19,6),UnitCost decimal(19,6),DiscountAmount decimal(19,4),
+              TaxCode nvarchar(32),TaxRate decimal(9,6),TaxTreatment nvarchar(32),NetAmount decimal(19,4),
+              TaxAmount decimal(19,4),LineTotal decimal(19,4),RecognizedUnitCost decimal(19,6),
+              FinancialDiscountAmount decimal(19,4));
+            IF @@ROWCOUNT<>@LineCount THROW 50000,N'La devolución de compra quedó incompleta.',1;
             """,connection,transaction))
         {
             command.Parameters.AddWithValue("@Id",request.ReturnId);
@@ -493,33 +537,8 @@ public sealed class SqlPurchaseReturnStore(
             AddMoney(command,"@Net",net);AddMoney(command,"@Tax",tax);AddMoney(command,"@Total",total);
             command.Parameters.AddWithValue("@UserId",user.UserId);
             command.Parameters.AddWithValue("@Now",now);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-        foreach(var line in lines)
-        {
-            await using var command=new SqlCommand("""
-                INSERT dbo.PurchaseReturnLines
-                  (PurchaseReturnId,LineNumber,OriginalGoodsReceiptId,OriginalLineNumber,
-                   ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,TaxCode,
-                   TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,RecognizedUnitCost)
-                VALUES(@Id,@Line,@OriginalId,@OriginalLine,@ProductId,@Description,@Quantity,
-                   @UnitCost,@Discount,@TaxCode,@TaxRate,@TaxTreatment,@Net,@Tax,@Total,@RecognizedCost);
-                """,connection,transaction);
-            command.Parameters.AddWithValue("@Id",request.ReturnId);
-            command.Parameters.AddWithValue("@Line",line.LineNumber);
-            command.Parameters.AddWithValue("@OriginalId",request.OriginalGoodsReceiptId);
-            command.Parameters.AddWithValue("@OriginalLine",line.OriginalLineNumber);
-            command.Parameters.AddWithValue("@ProductId",line.ProductId);
-            command.Parameters.AddWithValue("@Description",line.Description);
-            AddDecimal(command,"@Quantity",line.Quantity,19,6);
-            AddDecimal(command,"@UnitCost",line.UnitCost,19,6);
-            AddMoney(command,"@Discount",line.DiscountAmount);
-            command.Parameters.AddWithValue("@TaxCode",line.TaxCode);
-            AddDecimal(command,"@TaxRate",line.TaxRate,9,6);
-            command.Parameters.AddWithValue("@TaxTreatment",line.TaxTreatment);
-            AddMoney(command,"@Net",line.NetAmount);AddMoney(command,"@Tax",line.TaxAmount);
-            AddMoney(command,"@Total",line.LineTotal);
-            AddDecimal(command,"@RecognizedCost",line.RecognizedUnitCost,19,6);
+            command.Parameters.Add("@Lines",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(lines);
+            command.Parameters.AddWithValue("@LineCount",lines.Count);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         await using var job=new SqlCommand("""
@@ -561,29 +580,11 @@ public sealed class SqlPurchaseReturnStore(
             OriginalSupportCuds: original.Cuds,
             OriginalSupportIssuedOn: original.IssuedOn,
             SellerPostalZone: allocation.SellerPostalZone);
-        await using var command = new SqlCommand("""
-            INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
-              AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
-            VALUES(@DocumentId,@BusinessId,N'PurchaseReturn',N'SupportDocumentAdjustment',
-              @DocumentNumber,@FiscalNumber,N'CUDS',NULL,@IssuedAt,@Status,@Now,@Now);
-            INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
-            VALUES(@DocumentId,@SnapshotJson,@Environment,@Now);
-            INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
-              AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
-            VALUES(@DocumentId,@BusinessId,@IssuerId,@Status,0,@Now,@Now,@Now);
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@DocumentId", adjustment.ReturnId);
-        command.Parameters.AddWithValue("@BusinessId", adjustment.BusinessId);
-        command.Parameters.AddWithValue("@DocumentNumber", adjustment.DocumentNumber);
-        command.Parameters.AddWithValue("@FiscalNumber", allocation.FiscalNumber);
-        command.Parameters.AddWithValue("@IssuedAt", adjustment.ReturnedAt);
-        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
-        command.Parameters.AddWithValue("@Now", now);
-        command.Parameters.AddWithValue("@SnapshotJson",
-            PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
-        command.Parameters.AddWithValue("@Environment", snapshot.Environment);
-        command.Parameters.AddWithValue("@IssuerId", snapshot.FiscalIssuerConfigurationId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await SqlFiscalDocumentStore.InsertPurchaseSupportSourcesAsync(connection, transaction, adjustment.TenantId,
+            [new(adjustment.ReturnId, adjustment.BusinessId, PurchasingDocumentTypes.PurchaseReturn,
+                FiscalDocumentTypeCodes.SupportDocumentAdjustment, adjustment.DocumentNumber, allocation.FiscalNumber,
+                adjustment.ReturnedAt, snapshot.FiscalIssuerConfigurationId, snapshot.Environment,
+                PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot))], now, cancellationToken);
     }
 
     private static void AddMoney(SqlCommand command,string name,decimal value)=>
@@ -594,7 +595,8 @@ public sealed class SqlPurchaseReturnStore(
         parameter.Precision=precision;parameter.Scale=scale;parameter.Value=value;
     }
     private sealed record OriginalReceipt(Guid WarehouseId,Guid SupplierId,
-        DateTimeOffset ReceivedAt,string CurrencyCode,SupportDocumentReference? Support);
+        DateTimeOffset ReceivedAt,string CurrencyCode,SupportDocumentReference? Support,
+        GoodsReceiptFinancialDiscountSnapshot? FinancialDiscount,bool? FinancialDiscountEarned);
     private sealed record SupportDocumentReference(string FiscalNumber,string Cuds,
         DateOnly IssuedOn,PurchaseSupportFiscalSnapshot Snapshot);
 }

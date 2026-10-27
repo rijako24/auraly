@@ -28,8 +28,174 @@ public sealed class AccountingSliceCollection : ICollectionFixture<ServerSliceFi
 
 [Collection(AccountingSliceCollection.Name)]
 [Trait("EngineCertification", "Accounting")]
-public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixture)
+public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixture, Xunit.Abstractions.ITestOutputHelper output) : IAsyncLifetime
 {
+    private string? originalAccountingSettings;
+
+    public async Task InitializeAsync() => originalAccountingSettings = await CaptureOpeningTestSettingsAsync();
+
+    public Task DisposeAsync() => RestorePriorActivationAsync();
+
+    private Task RestorePriorActivationAsync() => RestoreOpeningTestSettingsAsync(originalAccountingSettings
+        ?? throw new InvalidOperationException("The accounting test configuration was not captured."));
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(50)]
+    [InlineData(500)]
+    public async Task Opening_balance_capture_has_constant_round_trips_and_preserves_the_whole_batch(int count)
+    {
+        await DisableAccountingAsync();
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<AccountingService>();
+        var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure });
+        await service.EnsureDefaultsAsync(user);
+        var accounts = await service.ListAccountsAsync(user);
+        var debit = accounts.First(account => account.AllowsPosting && account.IsActive && account.AccountType == "Asset" && account.RequiresParty);
+        var credit = accounts.First(account => account.AllowsPosting && account.IsActive && account.AccountType == "Equity" && !account.RequiresParty);
+        var request = new SaveAccountingOpeningBalanceRequest(Guid.NewGuid(), fixture.BusinessId,
+            new DateOnly(2026, 1, 1).AddDays(count), "COP", "  Apertura por conjunto  ", null,
+            Enumerable.Range(1, count).Select(index => index % 2 == 1
+                ? new AccountingOpeningBalanceLineRequest(debit.AccountId, fixture.SupplierPartyId, null, $"  Deudora {index}  ", index, 0)
+                : new AccountingOpeningBalanceLineRequest(credit.AccountId, null, null, $"  Acreedora {index}  ", 0, index)).ToArray());
+        AccountingOpeningBalanceView saved;
+        using (var counter = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog))
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            saved = await service.SaveOpeningBalanceAsync(user, request);
+            watch.Stop();
+            output.WriteLine("Opening capture {0} lines: {1} SQL commands, {2:F1} ms", count, counter.Count, watch.Elapsed.TotalMilliseconds);
+            Assert.Equal(3, counter.Count);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"Opening capture took {watch.Elapsed}.");
+        }
+        Assert.Equal(count, saved.Lines.Count);
+        Assert.Equal("Apertura por conjunto", saved.Description);
+        Assert.Equal(request.Lines.Sum(line => line.Debit), saved.DebitTotal);
+        Assert.Equal(request.Lines.Sum(line => line.Credit), saved.CreditTotal);
+        Assert.Equal(request.Lines.Select((line, index) => (index + 1, line.AccountId, line.PartyId, line.Description.Trim(), line.Debit, line.Credit)),
+            saved.Lines.Select(line => (line.LineNumber, line.AccountId, line.PartyId, line.Description, line.Debit, line.Credit)));
+        Assert.Equal(0, await CountAsync("AccountingSourceDocuments", "SourceDocumentId", saved.BatchId));
+        Assert.Equal(0, await CountAsync("AccountingPostingJobs", "SourceDocumentId", saved.BatchId));
+    }
+
+    [Fact]
+    public async Task Opening_balance_batch_preserves_the_existing_decimal_parameter_precision()
+    {
+        await DisableAccountingAsync();
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<AccountingService>();
+        var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure });
+        await service.EnsureDefaultsAsync(user);
+        var accounts = await service.ListAccountsAsync(user);
+        var account = accounts.First(value => value.AllowsPosting && value.IsActive && !value.RequiresParty);
+        const decimal captured = 123.45675m;
+        decimal previous;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("SELECT @Amount;", connection);
+            var amount = command.Parameters.Add("@Amount", System.Data.SqlDbType.Decimal);
+            amount.Precision = 19;
+            amount.Scale = 4;
+            amount.Value = captured;
+            previous = (decimal)(await command.ExecuteScalarAsync())!;
+        }
+        var saved = await service.SaveOpeningBalanceAsync(user, new(Guid.NewGuid(), fixture.BusinessId,
+            new(2026, 10, 23), "COP", "Compatibilidad de precisión", null, [
+                new(account.AccountId, null, null, "Débito", captured, 0),
+                new(account.AccountId, null, null, "Crédito", 0, captured)]));
+        Assert.Equal(previous, saved.DebitTotal);
+        Assert.Equal(previous, saved.CreditTotal);
+    }
+
+    [Fact]
+    public async Task Opening_balance_rejection_keeps_the_saved_batch_and_approval_revalidates_its_dimensions()
+    {
+        await DisableAccountingAsync();
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<AccountingService>();
+        var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure, AccountingPermissionCodes.Activate });
+        await service.EnsureDefaultsAsync(user);
+        var accounts = await service.ListAccountsAsync(user);
+        var secondBusinessId = Guid.NewGuid();
+        await CreateBusinessWithUserAccessAsync(secondBusinessId, fixture.UserId);
+        try
+        {
+            var codes = Enumerable.Range(190000, 10000).Select(value => value.ToString())
+                .Where(code => accounts.All(account => account.Code != code)).Take(2).ToArray();
+            var debit = await service.CreateAccountAsync(user, new(Guid.NewGuid(), fixture.TenantId, codes[0],
+                "Apertura de esta sede", "Asset", true, true,
+                new(null, "General", "Debit", fixture.BusinessId, null, null)));
+            var other = await service.CreateAccountAsync(user, new(Guid.NewGuid(), fixture.TenantId, codes[1],
+                "Apertura de otra sede", "Asset", true, false,
+                new(null, "General", "Debit", secondBusinessId, null, null)));
+            var credit = accounts.First(account => account.AllowsPosting && account.IsActive && account.AccountType == "Equity" && !account.RequiresParty);
+            var request = new SaveAccountingOpeningBalanceRequest(Guid.NewGuid(), fixture.BusinessId,
+                new(2026, 10, 22), "COP", "Captura que debe conservarse", null, [
+                    new(debit.AccountId, fixture.SupplierPartyId, null, "Saldo deudor", 100, 0),
+                    new(credit.AccountId, null, null, "Contrapartida", 0, 100)]);
+            var saved = await service.SaveOpeningBalanceAsync(user, request);
+            foreach (var invalid in new[] {
+                request.Lines[0] with { AccountId = Guid.NewGuid() },
+                request.Lines[0] with { AccountId = other.AccountId },
+                request.Lines[0] with { PartyId = null },
+                request.Lines[0] with { PartyId = Guid.NewGuid() },
+                request.Lines[0] with { CostCenterId = Guid.NewGuid() } })
+            {
+                await Assert.ThrowsAsync<AccountingValidationException>(() => service.SaveOpeningBalanceAsync(user,
+                    request with { RowVersion = saved.RowVersion, Description = "No debe guardarse",
+                        Lines = [request.Lines[1], invalid] }));
+                await AssertUnchanged(saved);
+            }
+            Assert.Null(await service.GetOpeningBalanceAsync(user with { BusinessId = secondBusinessId }, request.EffectiveOn));
+            await Assert.ThrowsAsync<AccountingValidationException>(() => service.SaveOpeningBalanceAsync(
+                user with { TenantId = Guid.NewGuid() }, request));
+            await AssertUnchanged(saved);
+
+            var updated = await service.SaveOpeningBalanceAsync(user, request with { RowVersion = saved.RowVersion,
+                Description = "Edición vigente", Lines = [request.Lines[1], request.Lines[0]] });
+            await Assert.ThrowsAsync<AccountingConflictException>(() => service.SaveOpeningBalanceAsync(user,
+                request with { RowVersion = saved.RowVersion, Description = "Edición obsoleta" }));
+            await AssertUnchanged(updated);
+
+            var moved = await service.UpdateAccountAsync(user, debit.AccountId,
+                new(debit.Name, debit.RequiresParty, debit.RowVersion!, debit.Semantics! with { BusinessId = secondBusinessId }));
+            await Assert.ThrowsAsync<AccountingValidationException>(() => service.ApproveOpeningBalanceAsync(user, saved.BatchId));
+            await AssertUnchanged(updated);
+            await service.UpdateAccountAsync(user, debit.AccountId,
+                new(moved.Name, moved.RequiresParty, moved.RowVersion!, debit.Semantics));
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog))
+            {
+                var approved = await service.ApproveOpeningBalanceAsync(user, saved.BatchId);
+                Assert.Equal(5, counter.Count);
+                Assert.Equal(AccountingOpeningBalanceStatuses.Approved, approved.Status);
+                Assert.Equal(updated.Lines.ToArray(), approved.Lines.ToArray());
+            }
+            Assert.Equal(0, await CountAsync("AccountingPostingJobs", "SourceDocumentId", saved.BatchId));
+
+            async Task AssertUnchanged(AccountingOpeningBalanceView expected)
+            {
+                var actual = (await service.GetOpeningBalanceAsync(user, request.EffectiveOn))!;
+                Assert.Equal(expected.RowVersion, actual.RowVersion);
+                Assert.Equal(expected.Description, actual.Description);
+                Assert.Equal(expected.Status, actual.Status);
+                Assert.Equal(expected.Lines.ToArray(), actual.Lines.ToArray());
+            }
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var cleanup = new SqlCommand("UPDATE dbo.Businesses SET IsActive=0 WHERE BusinessId=@Id AND TenantId=@TenantId", connection);
+            cleanup.Parameters.AddWithValue("@Id", secondBusinessId);
+            cleanup.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            Assert.Equal(1, await cleanup.ExecuteNonQueryAsync());
+        }
+    }
+
     [Fact]
     public async Task Default_accounting_profile_keeps_customs_and_aseo_in_their_correct_puc_codes()
     {
@@ -886,6 +1052,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             activate.EnsureSuccessStatusCode();
 
         var bankAccountId = await CreatePrimaryBankAccountAsync(accounting);
+        var selectedBank = Assert.Single((await accounting.GetFromJsonAsync<BankAccountView[]>(
+            "/api/commerce/v1/accounting/bank-accounts"))!, bank => bank.BankAccountId == bankAccountId);
+        var bankAccountCode = selectedBank.AccountingAccountCode
+            ?? throw new InvalidOperationException("The test bank must have exactly one configured auxiliary.");
         var (customerId, customerPartySiteId) = await CreateCustomerAsync();
         var request = WithUblSnapshot(fixture.CreateValidRequest(9_900)) with
         {
@@ -930,7 +1100,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(1_900m, await AccountAmountAsync(request.DocumentId, "110505", true));
         Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "13809501", true));
         Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "13809502", true));
-        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "111005", true));
+        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, bankAccountCode, true));
         Assert.Equal(4_000m, await AccountAmountAsync(request.DocumentId, "130505", true));
         Assert.Equal("TR-2000|Pago recibido en la cuenta seleccionada", await ScalarAsync<string>(
             "SELECT CONCAT(Reference,N'|',Notes) FROM dbo.SalesPayments WHERE DocumentId=@Id AND MethodCode=N'Transfer'",
@@ -974,7 +1144,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                 $"Expected Accepted but received {response.StatusCode}: {responseBody}");
         }
         await AssertBalancedAsync(salesReturn.ReturnId);
-        Assert.Equal(1_190m, await AccountAmountAsync(salesReturn.ReturnId, "111005", false));
+        Assert.Equal(1_190m, await AccountAmountAsync(salesReturn.ReturnId, bankAccountCode, false));
         Assert.Equal("TR-RETURN-2000|Reintegro confirmado por el banco", await ScalarAsync<string>(
             "SELECT CONCAT(Reference,N'|',Notes) FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id",
             salesReturn.ReturnId));
@@ -1104,7 +1274,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     [Fact]
     public async Task Approved_opening_balances_are_posted_before_accounting_becomes_ready()
     {
-        await DisableAccountingAsync();
+        // This shared fixture already has its accepted zero activation and may
+        // contain other scenarios' balances. Exercise its existing activation,
+        // not a new initial declaration of zero over those balances.
+        await MoveActivationAfterExistingTestDataAsync();
         using var accounting = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read,
             AccountingPermissionCodes.Configure,
@@ -1113,6 +1286,14 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             defaults.EnsureSuccessStatusCode();
 
         var effectiveOn = new DateOnly(2026, 3, 1);
+        using (var absent = await accounting.GetAsync(
+                   $"/api/commerce/v1/accounting/opening-balances?effectiveOn={effectiveOn:yyyy-MM-dd}"))
+        {
+            absent.EnsureSuccessStatusCode();
+            Assert.Equal("application/json", absent.Content.Headers.ContentType?.MediaType);
+            Assert.Equal("null", await absent.Content.ReadAsStringAsync());
+            Assert.Null(await absent.Content.ReadFromJsonAsync<AccountingOpeningBalanceView>());
+        }
         using (var activateInZero = await accounting.PostAsJsonAsync(
                    "/api/commerce/v1/accounting/activate",
                    new ActivateAccountingRequest(effectiveOn, "COP", "ZeroDeclared")))
@@ -1154,8 +1335,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         {
             await connection.OpenAsync();
             await using var command = new SqlCommand("""
-                DELETE dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id;
                 DELETE dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id;
+                DELETE dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id;
                 """, connection);
             command.Parameters.AddWithValue("@Id", priorSourceId);
             Assert.Equal(2, await command.ExecuteNonQueryAsync());
@@ -1205,6 +1386,17 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         var temporarilyDisabledBusinesses = await DisableOtherTestBusinessesAsync();
         try
         {
+            // Durable acceptance precedes activation: only the existing processor
+            // may mark the imported opening as posted and the tenant as Ready.
+            using var acceptedScope = fixture.CreateScope();
+            var acceptedStore = acceptedScope.ServiceProvider.GetRequiredService<IAccountingStore>();
+            var accepted = await acceptedStore.ActivateAsync(
+                new(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+                    new HashSet<string> { AccountingPermissionCodes.Activate }),
+                new(effectiveOn, "COP", "ImportedAndApproved"), default);
+            Assert.Equal(AccountingActivationStatuses.Configuring, accepted.Status);
+            Assert.Null(accepted.ActivatedAt);
+            Assert.False(accepted.CanEditOpeningBalances);
             using var activate = await accounting.PostAsJsonAsync(
                 "/api/commerce/v1/accounting/activate",
                 new ActivateAccountingRequest(effectiveOn, "COP", "ImportedAndApproved"));
@@ -1228,6 +1420,24 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Equal(entry.DebitTotal, entry.CreditTotal);
         Assert.Equal(2, entry.Lines.Count);
         Assert.Contains(entry.Lines, line => line.PartyId == supplierPartyId);
+
+        // Replaying a completed import returns its original readiness, without
+        // sending opening jobs again or rejecting the already posted batch.
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<AccountingService>();
+        var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Activate });
+        var beforeReplay = await service.GetReadinessAsync(user with
+        {
+            Permissions = new HashSet<string> { AccountingPermissionCodes.Read }
+        }, effectiveOn, "ImportedAndApproved");
+        using var counter = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog);
+        var replay = await service.ActivateAsync(user, new(effectiveOn, "COP", "ImportedAndApproved"));
+        Assert.Equal(2, counter.Count);
+        Assert.Equal(beforeReplay.ActivatedAt, replay.ActivatedAt);
+        Assert.Equal(AccountingActivationStatuses.Ready, replay.Status);
+        Assert.False(replay.CanEditOpeningBalances);
     }
 
     [Fact]
@@ -1341,6 +1551,12 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             unconfiguredInvoice.DocumentId, "venta sin contabilidad activa");
         Assert.Equal(0, await CountAsync(
             "AccountingEntries", "SourceDocumentId", unconfiguredInvoice.DocumentId));
+
+        // Restore the fixture's previously accepted activation. Initial cutover
+        // over commercial balances is covered in AccountingInitialCutTests.
+        // This scenario proves that the frozen commercial source is not replayed
+        // as a book entry when accounting is subsequently available.
+        await RestorePriorActivationAsync();
 
         using var accounting = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
@@ -1582,6 +1798,17 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         var receivableId = await ScalarAsync<Guid>(
             "SELECT ReceivableId FROM dbo.Receivables WHERE SourceDocumentId=@Id",
             creditInvoice.DocumentId);
+        Assert.Equal(11_900m, await ScalarAsync<decimal>("""
+            SELECT line.Debit FROM dbo.Receivables balance
+            JOIN dbo.AccountingEntryLines line ON line.EntryId=balance.OpeningEntryId
+              AND line.LineNumber=balance.OpeningEntryLineNumber
+            JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId
+              AND entry.SourceDocumentId=balance.SourceDocumentId AND entry.SourceDocumentType=balance.SourceDocumentType
+              AND entry.BusinessId=balance.BusinessId
+            JOIN dbo.Customers customer ON customer.CustomerId=balance.CustomerId AND customer.PartyId=line.PartyId
+            JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=entry.TenantId
+            WHERE balance.SourceDocumentId=@Id AND account.Code=N'130505';
+            """, creditInvoice.DocumentId));
         var creditAccounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
             "/api/commerce/v1/accounting/accounts") ?? [];
         var otherIncomeAccountId = Assert.Single(
@@ -2038,20 +2265,37 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             receiptWithoutSettlement,
             $"accounting-unsettled-{receiptWithoutSettlement.DocumentId:N}"))
         using (var response = await accounting.SendAsync(message))
-            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        Assert.Equal(
-            AccountingPostingStatuses.PendingConfiguration,
-            await ScalarAsync<string>(
-                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
-                receiptWithoutSettlement.DocumentId));
-        Assert.Equal(
-            "SettlementSourceMissing",
-            await ScalarAsync<string>(
-                "SELECT LastErrorCode FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
-                receiptWithoutSettlement.DocumentId));
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("egreso", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.Equal(0, await CountAsync("GoodsReceipts", "GoodsReceiptId", receiptWithoutSettlement.DocumentId));
+        Assert.Equal(0, await CountAsync("AccountingSourceDocuments", "SourceDocumentId", receiptWithoutSettlement.DocumentId));
+        Assert.Equal(0, await CountAsync("AccountingPostingJobs", "SourceDocumentId", receiptWithoutSettlement.DocumentId));
+        Assert.Equal(0, await CountAsync("InventoryMovements", "DocumentId", receiptWithoutSettlement.DocumentId));
         Assert.Equal(0, await CountAsync(
             "AccountingEntries", "SourceDocumentId",
             receiptWithoutSettlement.DocumentId));
+
+        // An immediately due acquisition still opens the supplier obligation.
+        // Paying it belongs to the existing payable-payment flow.
+        var immediatelyDueReceipt = receiptWithoutSettlement with { CreatesPayable = true, DueDate = receipt.SupplierInvoiceDate };
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var message = CreateGoodsReceiptMessage(immediatelyDueReceipt,
+                $"accounting-immediate-{immediatelyDueReceipt.DocumentId:N}");
+            using var response = await accounting.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        Assert.Equal(AccountingPostingStatuses.Posted, await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", immediatelyDueReceipt.DocumentId));
+        await AssertBalancedAsync(immediatelyDueReceipt.DocumentId);
+        Assert.Equal(1_000m, await AccountAmountAsync(immediatelyDueReceipt.DocumentId, "220505", debit: false));
+        Assert.Equal(1_000m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE SourceDocumentId=@Id", immediatelyDueReceipt.DocumentId));
+        Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", immediatelyDueReceipt.DocumentId));
+        Assert.Equal(1, await CountAsync("Payables", "SourceDocumentId", immediatelyDueReceipt.DocumentId));
+        Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", immediatelyDueReceipt.DocumentId));
 
         var webSessionId = await fixture.OpenWebWorkSessionAsync();
         var returnRequest = new ConfirmSalesReturnRequest(
@@ -2146,8 +2390,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         {
             response.EnsureSuccessStatusCode();
             var rows = await response.Content.ReadFromJsonAsync<AccountingExceptionRow[]>() ?? [];
-            Assert.Contains(rows, row => row.SourceDocumentId == receiptWithoutSettlement.DocumentId &&
-                row.ErrorCode == "SettlementSourceMissing");
+            Assert.DoesNotContain(rows, row => row.SourceDocumentId == receiptWithoutSettlement.DocumentId);
         }
 
         using (var definitionsResponse = await accounting.GetAsync(
@@ -3030,7 +3273,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     [Fact]
     public async Task Card_settlement_reconciles_the_real_bank_without_duplicating_revenue()
     {
-        await GrantReconciliationRolePermissionsAsync();
+        await fixture.GrantReconciliationRolePermissionsAsync();
         using var client = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
@@ -3177,7 +3420,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     [Fact]
     public async Task Reconciliation_covers_all_businesses_previous_entries_and_retroactive_changes()
     {
-        await GrantReconciliationRolePermissionsAsync();
+        await fixture.GrantReconciliationRolePermissionsAsync();
         using var client = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate,
@@ -3647,12 +3890,6 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         string accountCode,
         bool debit)
     {
-        Assert.Contains(
-            accountCode,
-            new[] { "143505", "240805", "240810", "413595", "519595", "613595", "220505",
-                "236570", "236701", "236805", "110505", "111005", "130505",
-                "13809501", "13809502", "13809503", "13809506", "13809505", "429595", "429553",
-                "429581", "539595", "53959501", "53959503" });
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -3823,25 +4060,6 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         Assert.Fail($"Dispatch accounting did not complete: {string.Join(" | ", values)}");
     }
 
-    private async Task GrantReconciliationRolePermissionsAsync()
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand("""
-            INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
-            SELECT NEWID(),@RoleId,permission.PermissionId,SYSUTCDATETIME()
-            FROM dbo.Permissions permission
-            WHERE permission.Resource IN
-              (N'accounting.bank-reconciliation.read',
-               N'accounting.bank-reconciliation.manage',
-               N'accounting.bank-reconciliation.close')
-              AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing
-                WHERE existing.RoleId=@RoleId AND existing.PermissionId=permission.PermissionId);
-            """, connection);
-        command.Parameters.AddWithValue("@RoleId", fixture.RoleId);
-        await command.ExecuteNonQueryAsync();
-    }
-
     private async Task CreateBusinessWithUserAccessAsync(Guid businessId, Guid userId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -3953,8 +4171,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
-            DELETE dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PendingBankTest';
             DELETE dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PendingBankTest';
+            DELETE dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PendingBankTest';
             """, connection);
         command.Parameters.AddWithValue("@Id", sourceId);
         Assert.Equal(2, await command.ExecuteNonQueryAsync());
@@ -3965,13 +4183,26 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     private async Task SetWarehouseNegativeSalesPolicyAsync(bool value)
     { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand("UPDATE dbo.Warehouses SET AllowNegativeStockSales=@Value WHERE WarehouseId=@Id", connection); command.Parameters.AddWithValue("@Value", value); command.Parameters.AddWithValue("@Id", fixture.WarehouseId); Assert.Equal(1, await command.ExecuteNonQueryAsync()); }
     private async Task<int> CountAsync(string table, string column, Guid id)
-    { Assert.Contains($"{table}:{column}", new[] { "AccountingEntries:SourceDocumentId", "AccountingPostingJobs:SourceDocumentId", "AccountingSourceDocuments:SourceDocumentId", "DocumentProcessingJobs:DocumentId" }); await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand($"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id", connection); command.Parameters.AddWithValue("@Id", id); return Convert.ToInt32(await command.ExecuteScalarAsync()); }
+    {
+        Assert.Contains($"{table}:{column}", new[] { "AccountingEntries:SourceDocumentId", "AccountingPostingJobs:SourceDocumentId",
+            "AccountingSourceDocuments:SourceDocumentId", "DocumentProcessingJobs:DocumentId", "GoodsReceipts:GoodsReceiptId",
+            "InventoryMovements:DocumentId", "Payables:SourceDocumentId", "CustomerCredits:SourceReturnId",
+            "CustomerCreditTransactions:SourceDocumentId", "SalesReturnReceivableApplications:ReturnId" });
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand($"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id", connection);
+        command.Parameters.AddWithValue("@Id", id);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
 
     private async Task<Guid> CreatePrimaryBankAccountAsync(HttpClient accounting)
     {
-        var accounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
-            "/api/commerce/v1/accounting/accounts") ?? [];
-        var postingAccount = Assert.Single(accounts, account => account.Code == "111005");
+        var accountId = Guid.NewGuid();
+        var accountCode = "111" + BitConverter.ToUInt64(accountId.ToByteArray()).ToString("D20", System.Globalization.CultureInfo.InvariantCulture);
+        using (var account = await accounting.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
+            new CreateAccountingAccountRequest(accountId, fixture.TenantId, accountCode,
+                "Auxiliar exclusivo del banco de prueba", "Asset", true, false)))
+            account.EnsureSuccessStatusCode();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var option = new SqlCommand("""
@@ -3983,7 +4214,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         var id = Guid.NewGuid();
         using var response = await accounting.PutAsJsonAsync(
             $"/api/commerce/v1/accounting/bank-accounts/{id:D}",
-            new SaveBankAccountRequest(id, postingAccount.AccountId, optionId,
+            new SaveBankAccountRequest(id, accountId, optionId,
                 "Banco prueba", $"{id:N}"[..12], "Cuenta principal prueba", true, true, null));
         Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
         return id;

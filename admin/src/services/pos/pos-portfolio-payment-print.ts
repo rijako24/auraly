@@ -8,6 +8,7 @@ export type PortfolioPaymentReceipt = {
   paymentId: string;
   direction: "Receivable" | "Payable";
   documentNumber: string;
+  status: string;
   paidAt: string;
   companyName: string;
   legalName: string | null;

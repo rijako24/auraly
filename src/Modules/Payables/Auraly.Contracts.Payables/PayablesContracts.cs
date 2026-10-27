@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Documents;
+using Auraly.BuildingBlocks.Domain.Payments;
 
 namespace Auraly.Contracts.Payables;
 
@@ -17,11 +18,11 @@ public static class PayablesDocumentTypes
 
 public static class SupplierPaymentMethods
 {
-    public const string Cash = "Cash";
-    public const string Transfer = "Transfer";
-    public const string DebitCard = "DebitCard";
-    public const string CreditCard = "CreditCard";
-    public static bool IsSupported(string value) => value is Cash or Transfer or DebitCard or CreditCard;
+    public const string Cash = PortfolioPaymentMethods.Cash;
+    public const string Transfer = PortfolioPaymentMethods.Transfer;
+    public const string DebitCard = PortfolioPaymentMethods.DebitCard;
+    public const string CreditCard = PortfolioPaymentMethods.CreditCard;
+    public static bool IsSupported(string value) => PortfolioPaymentMethods.IsSupported(value);
 }
 
 public sealed record PayablesUserIdentity(
@@ -55,7 +56,10 @@ public sealed record PayableListItem(
     DateTimeOffset CreatedAt,
     string? ExpenseConceptName = null,
     decimal PaidAmount = 0,
-    Guid? PartySiteId = null, string? PartySiteName = null);
+    Guid? PartySiteId = null, string? PartySiteName = null,
+    decimal? FinancialDiscountEligibleAmount = null,
+    bool? FinancialDiscountAnticipated = null,
+    bool FinancialDiscountPendingReturn = false);
 
 public sealed record PayablePage(
     IReadOnlyList<PayableListItem> Items,
@@ -86,7 +90,7 @@ public sealed record PayableTransactionView(
     string Type,
     decimal Amount,
     Guid SourceDocumentId,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt, decimal? BalanceChange = null);
 
 public sealed record PayableDetail(
     Guid PayableId,
@@ -110,7 +114,8 @@ public sealed record PayableDetail(
 
 public sealed record SupplierPaymentAllocationRequest(
     Guid PayableId,
-    decimal Amount);
+    decimal Amount,
+    bool? FinancialDiscountEarned = null);
 
 public sealed record SupplierPaymentTenderRequest(string MethodCode, decimal Amount,
     decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
@@ -130,7 +135,9 @@ public sealed record ConfirmSupplierPaymentRequest(
 public sealed record SupplierPaymentAllocationSnapshot(
     int LineNumber,
     Guid PayableId,
-    decimal Amount);
+    decimal Amount,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    bool? FinancialDiscountEarned = null);
 
 public sealed record SupplierPaymentTenderSnapshot(int LineNumber, string MethodCode, decimal Amount,
     decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
@@ -165,7 +172,13 @@ public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentN
     DateTimeOffset PaidAt, string CurrencyCode, decimal TotalAmount, string Status,
     int AppliedDocumentCount, IReadOnlyList<SupplierPaymentTenderSnapshot> Payments,
     IReadOnlyList<SupplierPaymentHistoryApplication> Applications,
-    Guid? SupplierId = null, string? SupplierName = null);
+    Guid? SupplierId = null, string? SupplierName = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? SourceDocumentId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? SourceDocumentType = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? SourceGroupId = null);
 public sealed record SupplierPaymentHistoryApplication(Guid PayableId,string DocumentNumber,decimal Amount);
 public sealed record SupplierPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? SupplierId,
     string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null,

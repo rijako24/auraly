@@ -13,41 +13,37 @@ public sealed partial class SqlAccountingStore(
     AccountingSqlConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider,
-    SqlAccountingPostingProcessor postingProcessor) : IAccountingStore
+    SqlAccountingPostingProcessor postingProcessor,
+    IManualVoucherFiscalParticipant fiscalParticipant) : IAccountingStore
 {
     public Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(
         AccountingUserIdentity user, ConfirmAccountAdjustmentRequest request,
         CancellationToken cancellationToken, string? draftVersion = null) => AcceptManualDocumentAsync(
             user, request.AdjustmentId, AccountingManualDocumentTypes.AccountAdjustment,
-            request.OccurredAt, request, async (connection, transaction, token) =>
+            request.OccurredAt, request, async (connection, transaction, accepted, token) =>
             {
                 var receivable = request.SubledgerKind == AccountingSubledgerKinds.Receivable;
                 var table = receivable ? "Receivables" : "Payables";
                 var idColumn = receivable ? "ReceivableId" : "PayableId";
                 var partyTable = receivable ? "Customers" : "Suppliers";
                 var partyColumn = receivable ? "CustomerId" : "SupplierId";
-                var applicationTable = receivable ? "CustomerPaymentApplications" : "SupplierPaymentApplications";
-                var paymentTable = receivable ? "CustomerPayments" : "SupplierPayments";
-                var transactionTable = receivable ? "ReceivableTransactions" : "PayableTransactions";
+                var positionParty = receivable ? "COALESCE(balance.PartyId,party.PartyId)" : "party.PartyId";
                 await using var target = new SqlCommand($"""
-                    SELECT balance.OutstandingAmount-COALESCE(payments.Reserved,0)-COALESCE(adjustments.Reserved,0),
-                      balance.Status,party.PartyId,source.OccurredAt,balance.CurrencyCode,settings.FunctionalCurrencyCode
+                    SELECT pending.AvailableAmount,
+                      balance.Status,{positionParty},source.OccurredAt,balance.CurrencyCode,settings.FunctionalCurrencyCode,
+                      pending.PendingCancellationCount,pending.SourceCancelled
                     FROM dbo.[{table}] balance WITH(UPDLOCK,HOLDLOCK)
                     JOIN dbo.AccountingTenantSettings settings ON settings.TenantId=@TenantId
-                    JOIN dbo.[{partyTable}] party ON party.[{partyColumn}]=balance.[{partyColumn}]
-                    JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=balance.SourceDocumentId
+                    LEFT JOIN dbo.[{partyTable}] party ON party.[{partyColumn}]=balance.[{partyColumn}] AND party.TenantId=@TenantId
+                    JOIN dbo.Parties identityParty ON identityParty.PartyId={positionParty} AND identityParty.TenantId=@TenantId
+                    JOIN dbo.AccountingPostingJobs source ON source.SourceDocumentId=balance.SourceDocumentId
                       AND source.SourceDocumentType=balance.SourceDocumentType AND source.BusinessId=balance.BusinessId
-                    OUTER APPLY(SELECT SUM(a.Amount) Reserved FROM dbo.[{applicationTable}] a
-                      JOIN dbo.[{paymentTable}] p ON p.PaymentId=a.PaymentId
-                      WHERE a.[{idColumn}]=balance.[{idColumn}] AND a.AppliedAt IS NULL AND p.Status=N'Accepted') payments
-                    OUTER APPLY(SELECT SUM(d.AdjustmentAmount) Reserved FROM accounting.VoucherDrafts d WITH(INDEX(IX_VoucherDrafts_Obligation))
-                      WHERE d.BusinessId=balance.BusinessId AND d.SubledgerKind=@Kind AND d.SubledgerId=balance.[{idColumn}]
-                        AND d.Direction=N'Decrease' AND d.SentAt IS NOT NULL
-                        AND NOT EXISTS(SELECT 1 FROM dbo.[{transactionTable}] t WHERE t.[{idColumn}]=balance.[{idColumn}]
-                          AND t.TransactionType=N'Adjustment' AND t.SourceDocumentId=d.DocumentId)) adjustments
+                      AND source.TenantId=@TenantId
+                    CROSS APPLY accounting.ObligationAvailability(@BusinessId,@Kind,@Id,balance.OutstandingAmount,@AdjustmentId) pending
                     WHERE balance.[{idColumn}]=@Id AND balance.BusinessId=@BusinessId;
                     """, connection, transaction);
                 target.Parameters.AddWithValue("@Id", request.SubledgerId);
+                target.Parameters.AddWithValue("@AdjustmentId", request.AdjustmentId);
                 target.Parameters.AddWithValue("@BusinessId", user.BusinessId);
                 target.Parameters.AddWithValue("@Kind", request.SubledgerKind);
                 target.Parameters.AddWithValue("@TenantId", user.TenantId);
@@ -57,6 +53,10 @@ public sealed partial class SqlAccountingStore(
                 var available = reader.GetDecimal(0);
                 var status = reader.GetString(1);
                 var partyId = reader.IsDBNull(2) ? (Guid?)null : reader.GetGuid(2);
+                if (reader.GetBoolean(7))
+                    throw new AccountingConflictException("No se registró el ajuste: el documento de origen fue anulado.");
+                if (reader.GetInt32(6) > 0)
+                    throw new AccountingConflictException("La obligación tiene una anulación aceptada pendiente. No se registró el ajuste.");
                 if (status == "Cancelled" || request.Direction == AccountingAdjustmentDirections.Decrease && request.Amount > available)
                     throw new AccountingConflictException("El ajuste supera el saldo disponible, incluidos los movimientos pendientes.");
                 if (draftVersion is not null && request.OccurredAt.Date < reader.GetDateTimeOffset(3).Date)
@@ -71,24 +71,62 @@ public sealed partial class SqlAccountingStore(
 
     public Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(
         AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request,
-        CancellationToken cancellationToken, string? draftVersion = null) => AcceptManualDocumentAsync(
+        CancellationToken cancellationToken, string? draftVersion = null)
+    {
+        PreparedManualVoucherFiscal? preparedFiscal = null;
+        return AcceptManualDocumentAsync(
             user, request.VoucherId, AccountingManualDocumentTypes.ManualVoucher,
-            request.OccurredAt, request, async (connection, transaction, token) =>
+            request.OccurredAt, request, async (connection, transaction, accepted, token) =>
             {
+                if (accepted.PayloadVersion == 4)
+                {
+                    await AcceptVoucherPaymentGroupsAsync(connection, transaction, user, accepted, cancellationToken);
+                    if (preparedFiscal is not null)
+                        await fiscalParticipant.PersistAsync(connection, transaction, user, accepted, preparedFiscal, token);
+                    return;
+                }
                 await ValidateVoucherDimensionsAsync(connection, transaction, user,
                     request.Lines.Select(line => new VoucherDraftLine(line.AccountId, line.PartyId,
                         line.CostCenterId, line.Description, line.Debit, line.Credit)).ToArray(),
-                    request.OccurredAt, request.ConceptCode, final: true, token, validateDraftReadiness: draftVersion is not null);
-            }, cancellationToken, draftVersion);
+                    request.OccurredAt, request.ConceptCode, final: true, token, validateDraftReadiness: draftVersion is not null,
+                    mainPartyId: request.MainPartyId);
+            }, cancellationToken, draftVersion, request.PayloadVersion == 4
+                ? async (connection, transaction, raw, token) =>
+                {
+                    if (raw.MainPartyId is null)
+                        throw new AccountingValidationException("Selecciona el tercero principal antes de contabilizar el comprobante.");
+                    var hasFiscalEffect = raw.VoucherTypeCode is "SupportDocument" or "SupportDocumentCancellation";
+                    if (hasFiscalEffect)
+                        await fiscalParticipant.ReserveAsync(connection, transaction, user, raw, token);
+                    var fiscalCalculation = hasFiscalEffect
+                        ? await fiscalParticipant.ReviewAsync(connection, transaction, user, raw, token) : null;
+                    var context = await ValidateVoucherDimensionsAsync(connection, transaction, user,
+                        raw.Lines.Select(line => new VoucherDraftLine(line.AccountId, line.PartyId, line.CostCenterId,
+                            line.Description, line.Debit, line.Credit, line.Reference, line.LineId, line.BaseAmount,
+                            line.ExistingPosition, line.FinancialGroupId, line.DueDate, line.PartySiteId, line.PaymentEvidence,
+                            line.FinancialDiscountEarned)).ToArray(),
+                        raw.OccurredAt, raw.ConceptCode, final: true, token, mainPartyId: raw.MainPartyId, financialCapture: true,
+                        voucherTypeCode: raw.VoucherTypeCode, workSessionId: raw.WorkSessionId);
+                    VoucherFiscalPreview? fiscalProof = null;
+                    if (fiscalCalculation is not null)
+                    {
+                        fiscalProof = AccountingVoucherFinancialValidation.ValidateFiscal(raw, fiscalCalculation, context!);
+                        preparedFiscal = await fiscalParticipant.PrepareAsync(connection, transaction, user, raw,
+                            fiscalCalculation, fiscalProof, token);
+                        raw = raw with { Reference = raw.Reference ?? preparedFiscal.FiscalNumber };
+                    }
+                    return raw with { FinancialEffects = AccountingVoucherFinancialValidation.Normalize(user, raw, context!, ids, fiscalProof) };
+                } : null);
+    }
 
     private async Task<AccountingManualDocumentAcceptance> AcceptManualDocumentAsync<T>(
         AccountingUserIdentity user, Guid documentId, string documentType,
         DateTimeOffset occurredAt, T payload,
-        Func<SqlConnection, SqlTransaction, CancellationToken, Task> validate,
-        CancellationToken cancellationToken, string? draftVersion = null)
+        Func<SqlConnection, SqlTransaction, T, CancellationToken, Task> validate,
+        CancellationToken cancellationToken, string? draftVersion = null,
+        Func<SqlConnection, SqlTransaction, T, CancellationToken, Task<T>>? prepare = null)
     {
         var json = JsonSerializer.Serialize(payload);
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
         var now = timeProvider.GetUtcNow();
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -96,136 +134,226 @@ public sealed partial class SqlAccountingStore(
             IsolationLevel.Serializable, cancellationToken);
         try
         {
+            var draftWasSent = false;
+            var draftExists = false;
+            string? frozenPayload = null;
+            string? capturedReference = null;
+            // Lock the position before publishing its reservation key, in the same
+            // order as native payments. Otherwise concurrent adjustments can hold
+            // each other's uncommitted source while waiting for the position.
             // Lock the editable aggregate before accepting its immutable source.
             // Legacy direct acceptance cannot bypass a saved draft's version or permission.
             await using (var draft = new SqlCommand("""
-                SELECT TenantId,BusinessId,DocumentType,RowVersion,SentAt
-                FROM accounting.VoucherDrafts WITH(UPDLOCK,HOLDLOCK) WHERE DocumentId=@Id;
+                DECLARE @LockedPosition uniqueidentifier;
+                IF @SubledgerKind=N'Payable'
+                    SELECT @LockedPosition=PayableId FROM dbo.Payables WITH(UPDLOCK,HOLDLOCK)
+                    WHERE PayableId=@SubledgerId AND BusinessId=@BusinessId;
+                IF @SubledgerKind=N'Receivable'
+                    SELECT @LockedPosition=ReceivableId FROM dbo.Receivables WITH(UPDLOCK,HOLDLOCK)
+                    WHERE ReceivableId=@SubledgerId AND BusinessId=@BusinessId;
+                DECLARE @Positions TABLE(Kind nvarchar(16),PositionId uniqueidentifier,PRIMARY KEY(Kind,PositionId));
+                INSERT @Positions SELECT DISTINCT Kind,PositionId FROM OPENJSON(@FinancialLines)
+                  WITH(Kind nvarchar(16) '$.ExistingPosition.SubledgerKind',PositionId uniqueidentifier '$.ExistingPosition.SubledgerId')
+                  WHERE PositionId IS NOT NULL AND Kind IN(N'Payable',N'Receivable',N'SupplierCredit',N'CustomerCredit');
+                SELECT @LockedPosition=p.PayableId FROM @Positions input JOIN dbo.Payables p WITH(UPDLOCK,HOLDLOCK)
+                  ON input.Kind=N'Payable' AND p.PayableId=input.PositionId AND p.BusinessId=@BusinessId
+                  ORDER BY input.PositionId OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1);
+                SELECT @LockedPosition=p.ReceivableId FROM @Positions input JOIN dbo.Receivables p WITH(UPDLOCK,HOLDLOCK)
+                  ON input.Kind=N'Receivable' AND p.ReceivableId=input.PositionId AND p.BusinessId=@BusinessId
+                  ORDER BY input.PositionId OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1);
+                SELECT @LockedPosition=p.SupplierCreditId FROM @Positions input JOIN dbo.SupplierCredits p WITH(UPDLOCK,HOLDLOCK)
+                  ON input.Kind=N'SupplierCredit' AND p.SupplierCreditId=input.PositionId AND p.BusinessId=@BusinessId
+                  ORDER BY input.PositionId OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1);
+                SELECT @LockedPosition=p.CustomerCreditId FROM @Positions input JOIN dbo.CustomerCredits p WITH(UPDLOCK,HOLDLOCK)
+                  ON input.Kind=N'CustomerCredit' AND p.CustomerCreditId=input.PositionId AND p.BusinessId=@BusinessId
+                  ORDER BY input.PositionId OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1);
+                DECLARE @Draft TABLE(TenantId uniqueidentifier,BusinessId uniqueidentifier,DocumentType nvarchar(64),
+                  [RowVersion] binary(8),SentAt datetimeoffset(7),FrozenPayload nvarchar(max),CapturedReference nvarchar(100));
+                INSERT @Draft(TenantId,BusinessId,DocumentType,[RowVersion],SentAt,CapturedReference)
+                SELECT d.TenantId,d.BusinessId,d.DocumentType,d.RowVersion,d.SentAt,d.Reference
+                FROM accounting.VoucherDrafts d WITH(UPDLOCK,HOLDLOCK) WHERE d.DocumentId=@Id;
+                -- An unsent draft has no immutable payload to read. A conditional
+                -- LEFT JOIN can still probe its missing source range under
+                -- SERIALIZABLE and block a concurrent fiscal acceptance's insert.
+                IF EXISTS(SELECT 1 FROM @Draft WHERE SentAt IS NOT NULL)
+                  UPDATE captured SET FrozenPayload=source.PayloadJson FROM @Draft captured
+                  JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=@Id
+                    AND source.SourceDocumentType=captured.DocumentType AND source.TenantId=captured.TenantId
+                    AND source.BusinessId=captured.BusinessId;
+                SELECT TenantId,BusinessId,DocumentType,[RowVersion],SentAt,FrozenPayload,CapturedReference FROM @Draft;
                 """, connection, transaction))
             {
                 draft.Parameters.AddWithValue("@Id", documentId);
+                draft.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+                var adjustment = payload as ConfirmAccountAdjustmentRequest;
+                draft.Parameters.AddWithValue("@SubledgerKind", (object?)adjustment?.SubledgerKind ?? DBNull.Value);
+                draft.Parameters.AddWithValue("@SubledgerId", (object?)adjustment?.SubledgerId ?? DBNull.Value);
+                draft.Parameters.Add("@FinancialLines", SqlDbType.NVarChar, -1).Value =
+                    payload is ConfirmManualAccountingVoucherRequest { PayloadVersion: 4 } financial ? JsonSerializer.Serialize(financial.Lines) : "[]";
                 await using var reader = await draft.ExecuteReaderAsync(cancellationToken);
-                var exists = await reader.ReadAsync(cancellationToken);
-                if (exists && (draftVersion is null || reader.GetGuid(0) != user.TenantId ||
+                draftExists = await reader.ReadAsync(cancellationToken);
+                draftWasSent = draftExists && !reader.IsDBNull(4);
+                if (draftWasSent && !reader.IsDBNull(5)) frozenPayload = reader.GetString(5);
+                if (draftExists && !reader.IsDBNull(6)) capturedReference = reader.GetString(6);
+                if (draftExists && (draftVersion is null || reader.GetGuid(0) != user.TenantId ||
                     reader.GetGuid(1) != user.BusinessId || reader.GetString(2) != documentType ||
                     (reader.IsDBNull(4) && Convert.ToBase64String((byte[])reader[3]) != draftVersion)))
                     throw new AccountingConflictException("El comprobante cambió o debe contabilizarse desde su captura guardada.");
-                if (!exists && draftVersion is not null)
+                if (!draftExists && draftVersion is not null)
                     throw new AccountingConflictException("El comprobante no existe en esta sede.");
             }
 
-            await using (var replay = new SqlCommand("""
-                SELECT s.PayloadHash,a.Status
-                FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)
-                INNER JOIN dbo.AccountingPostingJobs a
-                  ON a.SourceDocumentId=s.SourceDocumentId
-                 AND a.SourceDocumentType=s.SourceDocumentType
-                 AND a.BusinessId=s.BusinessId
-                WHERE s.SourceDocumentId=@DocumentId
-                  AND s.SourceDocumentType=@DocumentType
-                  AND s.BusinessId=@BusinessId;
-                """, connection, transaction))
+            if (prepare is not null)
             {
-                replay.Parameters.AddWithValue("@DocumentId", documentId);
-                replay.Parameters.AddWithValue("@DocumentType", documentType);
-                replay.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-                await using var replayReader = await replay.ExecuteReaderAsync(cancellationToken);
-                if (await replayReader.ReadAsync(cancellationToken))
+                if (!draftExists || draftVersion is null)
+                    throw new AccountingConflictException("La versión financiera requiere su captura guardada.");
+                if (draftWasSent && frozenPayload is not null)
                 {
-                    var existingHash = (byte[])replayReader[0];
-                    var existingStatus = replayReader.GetString(1);
-                    if (!existingHash.AsSpan().SequenceEqual(hash))
-                        throw new AccountingConflictException(
-                            "The manual document ID was reused with different content.");
-                    await replayReader.DisposeAsync();
-                    await transaction.CommitAsync(cancellationToken);
-                    return new(documentId, documentType, existingStatus, true);
+                    var accepted = JsonSerializer.Deserialize<T>(frozenPayload)
+                        ?? throw new AccountingConflictException("La fuente financiera aceptada requiere revisión.");
+                    if (accepted is not ConfirmManualAccountingVoucherRequest stored || stored.FinancialEffects is null)
+                        throw new AccountingConflictException("La captura no coincide con su fuente financiera aceptada.");
+                    var comparable = stored with { FinancialEffects = null };
+                    // A concurrent send may have read the unsent capture before
+                    // the first send assigned its fiscal number. Only that
+                    // server-owned default differs; captured references and all
+                    // remaining input must still match the immutable source.
+                    if (capturedReference is null && payload is ConfirmManualAccountingVoucherRequest { Reference: null } &&
+                        stored.VoucherTypeCode is "SupportDocument" or "SupportDocumentCancellation")
+                        comparable = comparable with { Reference = null };
+                    if (JsonSerializer.Serialize(comparable) != json)
+                        throw new AccountingConflictException("La captura no coincide con su fuente financiera aceptada.");
+                    payload = accepted;
+                    json = frozenPayload;
+                }
+                else if (!draftWasSent)
+                {
+                    payload = await prepare(connection, transaction, payload, cancellationToken);
+                    json = JsonSerializer.Serialize(payload);
                 }
             }
 
-            await using (var readiness = new SqlCommand("""
-                SELECT COUNT_BIG(1) FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
-                WHERE TenantId=@TenantId AND Status=N'Ready'
-                  AND EffectiveFrom<=CONVERT(date,@OccurredAt);
-                """, connection, transaction))
+            var acceptance = await SqlAccountingPostingJobWriter.AcceptSourcesAsync(connection, transaction,
+                [new(user.TenantId, user.BusinessId, documentId, documentType, json, occurredAt, ids.NewId())],
+                now, AccountingJobRequirement.ManualBookEntry, cancellationToken);
+            if (acceptance.QueuedCount == 0)
+                throw new AccountingConflictException("Accounting must be active for the manual document date.");
+            if (draftWasSent && acceptance.NewSourceCount != 0)
+                throw new AccountingConflictException("El comprobante enviado perdió su fuente aceptada y requiere revisión; no se vuelve a aceptar.");
+            if (draftExists && !draftWasSent && acceptance.NewSourceCount == 0)
+                throw new AccountingConflictException("La fuente ya fue aceptada, pero su captura no está congelada. Revisa la integridad del comprobante.");
+            var acceptedStatus = acceptance.SingleSourceStatus
+                ?? throw new DBConcurrencyException("The manual accounting acceptance has no authoritative status.");
+            if (acceptance.NewSourceCount == 0)
             {
-                readiness.Parameters.AddWithValue("@TenantId", user.TenantId);
-                readiness.Parameters.AddWithValue("@OccurredAt", occurredAt);
-                if (Convert.ToInt64(await readiness.ExecuteScalarAsync(cancellationToken)) != 1)
-                    throw new AccountingConflictException(
-                        "Accounting must be active for the manual document date.");
+                await transaction.CommitAsync(cancellationToken);
+                return new(documentId, documentType, acceptedStatus, true);
             }
 
-            await validate(connection, transaction, cancellationToken);
+            await validate(connection, transaction, payload, cancellationToken);
             await using var insert = new SqlCommand("""
-                INSERT dbo.AccountingSourceDocuments
-                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-                VALUES(@DocumentId,@DocumentType,@TenantId,@BusinessId,
-                   @Payload,@Hash,@OccurredAt,@Now,1);
-                INSERT dbo.AccountingPostingJobs
-                  (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-                   SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
-                VALUES(@AccountingJobId,@TenantId,@BusinessId,@DocumentId,
-                   @DocumentType,@Hash,@OccurredAt,N'Pending',0,@Now);
                 UPDATE accounting.VoucherDrafts SET SentAt=@Now,SentBy=@UserId,UpdatedAt=@Now,UpdatedBy=@UserId
                 WHERE DocumentId=@DocumentId AND TenantId=@TenantId AND BusinessId=@BusinessId AND SentAt IS NULL;
                 """, connection, transaction);
             insert.Parameters.AddWithValue("@UserId", user.UserId);
-            insert.Parameters.AddWithValue("@AccountingJobId", ids.NewId());
             insert.Parameters.AddWithValue("@TenantId", user.TenantId);
             insert.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             insert.Parameters.AddWithValue("@DocumentId", documentId);
-            insert.Parameters.AddWithValue("@DocumentType", documentType);
-            insert.Parameters.AddWithValue("@Payload", json);
-            insert.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = hash;
-            insert.Parameters.AddWithValue("@OccurredAt", occurredAt);
             insert.Parameters.AddWithValue("@Now", now);
-            if (await insert.ExecuteNonQueryAsync(cancellationToken) != (draftVersion is null ? 2 : 3))
+            if (await insert.ExecuteNonQueryAsync(cancellationToken) != (draftVersion is null ? 0 : 1))
                 throw new DBConcurrencyException(
                     "The manual accounting document was not accepted atomically.");
             await transaction.CommitAsync(cancellationToken);
-            return new(documentId, documentType, AccountingPostingStatuses.Pending, false);
+            return new(documentId, documentType, acceptedStatus, false);
+        }
+        catch (SqlException error) when (error.Number == 51731)
+        {
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingValidationException("El comprobante contiene datos que no pertenecen a esta empresa o no son válidos para su aceptación.");
+        }
+        catch (SqlException error) when (error.Number == 51848)
+        {
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingConflictException(error.Message);
+        }
+        catch (SqlException error) when (error.Number is 51849 or 51851)
+        {
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingValidationException(error.Number == 51851 ? error.Message
+                : "No se aceptó el cruce. Revisa la sede, moneda y conciliación de las posiciones seleccionadas.");
+        }
+        catch (SqlException error) when (error.Number is 51732 or 51733)
+        {
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingConflictException(error.Number == 51732
+                ? "El identificador del comprobante ya fue aceptado con otros datos."
+                : "El comprobante ya fue aceptado y requiere revisar su trabajo contable.");
         }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
     }
 
-    private static async Task<bool> ValidatePostingAccountAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid tenantId,
-        Guid accountId, CancellationToken token)
+    private async Task AcceptVoucherPaymentGroupsAsync(SqlConnection connection, SqlTransaction transaction,
+        AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request, CancellationToken token)
     {
-        await using var command = new SqlCommand("""
-            SELECT RequiresParty FROM dbo.AccountingAccounts
-            WHERE AccountId=@AccountId AND TenantId=@TenantId
-              AND IsActive=1 AND AllowsPosting=1;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@AccountId", accountId);
-        command.Parameters.AddWithValue("@TenantId", tenantId);
-        var value = await command.ExecuteScalarAsync(token);
-        if (value is null)
-            throw new AccountingValidationException(
-                "A manual document references an invalid posting account.");
-        return Convert.ToBoolean(value);
-    }
+        var effects = request.FinancialEffects ?? throw new InvalidOperationException("The financial source has no normalized effects.");
+        var sourceHash = SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request)));
+        await AcceptDirectionAsync(AccountingSubledgerKinds.Payable);
+        await AcceptDirectionAsync(AccountingSubledgerKinds.Receivable);
 
-    private static async Task ValidateCostCenterAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId,
-        Guid? costCenterId, CancellationToken token)
-    {
-        if (costCenterId is null) return;
-        await using var command = new SqlCommand("""
-            SELECT COUNT_BIG(1) FROM dbo.AccountingCostCenters
-            WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsActive=1;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@CostCenterId", costCenterId.Value);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        if (Convert.ToInt64(await command.ExecuteScalarAsync(token)) != 1)
-            throw new AccountingValidationException(
-                "A manual document references an invalid cost center.");
+        async Task AcceptDirectionAsync(string kind)
+        {
+            var groups = effects.Payments.Where(group => group.SubledgerKind == kind).ToArray();
+            if (groups.Length == 0) return;
+            var payable = kind == AccountingSubledgerKinds.Payable;
+            var payload = JsonSerializer.Serialize(new
+            {
+                groups = groups.Select(group => new
+                {
+                    tenantId = user.TenantId, businessId = user.BusinessId, paymentId = group.PaymentId,
+                    supplierId = payable ? group.CounterpartyRoleId : null, customerId = payable ? null : group.CounterpartyRoleId,
+                    partyId = group.PartyId, partySiteId = group.PartySiteId,
+                    confirmedByUserId = effects.AcceptedByUserId, workSessionId = request.WorkSessionId,
+                    paidAt = request.OccurredAt, currencyCode = request.CurrencyCode, notes = request.Description,
+                    totalAmount = group.Allocations.Sum(item => item.Amount) + group.AdvanceAmount,
+                    advanceAmount = group.AdvanceAmount, advancePositionId = group.AdvancePositionId,
+                    parentSourceDocumentId = request.VoucherId,
+                    parentSourceDocumentType = AccountingManualDocumentTypes.ManualVoucher, sourceGroupId = group.GroupId,
+                    allocations = group.Allocations.Select((item, index) => new
+                    {
+                        lineNumber = index + 1, payableId = payable ? (Guid?)item.SubledgerId : null,
+                        receivableId = payable ? null : (Guid?)item.SubledgerId, amount = item.Amount, sourceLineId = item.SourceLineId,
+                        financialDiscountEarned = item.FinancialDiscountEarned,
+                        financialDiscountAdjustment = item.FinancialDiscountAdjustment
+                    }),
+                    payments = group.Tenders.Select((item, index) => new
+                    {
+                        lineNumber = index + 1, methodCode = item.MethodCode, amount = item.Amount, tenderedAmount = item.TenderedAmount,
+                        bankAccountId = item.BankAccountId, reference = item.Reference, notes = item.Notes,
+                        cardFranchiseCode = item.CardFranchiseCode, approvalNumber = item.ApprovalNumber,
+                        accountId = item.AccountId, sourceLineId = item.SourceLineId
+                    })
+                })
+            });
+            await using var command = new SqlCommand("accounting.PortfolioPaymentAccept", connection, transaction)
+                { CommandType = CommandType.StoredProcedure };
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            command.Parameters.AddWithValue("@UserId", user.UserId);
+            command.Parameters.AddWithValue("@SubledgerKind", kind);
+            command.Parameters.Add("@Payload", SqlDbType.NVarChar, -1).Value = payload;
+            command.Parameters.AddWithValue("@IdempotencyKey", request.VoucherId.ToString("N"));
+            command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = sourceHash;
+            command.Parameters.AddWithValue("@AcceptedAt", timeProvider.GetUtcNow());
+            try { await command.ExecuteNonQueryAsync(token); }
+            catch (SqlException error) when (error.Number == 51402)
+            { throw new AccountingConflictException(error.Message); }
+            catch (SqlException error) when (error.Number is 51400 or 51401)
+            { throw new AccountingValidationException($"El pago no se realizó. {error.Message}", error); }
+        }
     }
 
     public async Task<AccountingAccountOptionPage> AccountOptionsAsync(
@@ -233,24 +361,30 @@ public sealed partial class SqlAccountingStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion
-            INTO #AccountOptions FROM dbo.AccountingAccounts
+        const string filters = """
             WHERE TenantId=@TenantId AND (@IncludeInactive=1 OR IsActive=1)
               AND (@IncludeStructural=1 OR AllowsPosting=1)
+              AND (@GroupingOnly=0 OR AllowsPosting=0)
+              AND (@IncludeStructural=1 OR BusinessId IS NULL OR BusinessId=@BusinessId)
               AND (@ExpenseOnly=0 OR AccountType=N'Expense')
               AND (@LiabilityOnly=0 OR AccountType=N'Liability')
               AND (@AccountId IS NULL OR AccountId=@AccountId)
-              AND (@Search IS NULL OR Code LIKE N'%'+@Search+N'%' OR Name LIKE N'%'+@Search+N'%');
-            SELECT * FROM #AccountOptions ORDER BY Code,AccountId
+              AND (@Search IS NULL OR Code LIKE N'%'+@Search+N'%' OR Name LIKE N'%'+@Search+N'%')
+            """;
+        await using var command = new SqlCommand($"""
+            SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion,
+              ParentAccountId,FinancialFunction,BalanceSide,BusinessId,BankAccountId,PaymentMethodOptionId,ConfigurationLockedAt
+            FROM dbo.AccountingAccounts {filters} ORDER BY Code,AccountId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
-            SELECT COUNT(*) FROM #AccountOptions;
+            SELECT COUNT(*) FROM dbo.AccountingAccounts {filters};
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@ExpenseOnly", query.ExpenseOnly);
         command.Parameters.AddWithValue("@LiabilityOnly", query.LiabilityOnly);
         command.Parameters.AddWithValue("@IncludeInactive", query.IncludeInactive);
         command.Parameters.AddWithValue("@IncludeStructural", query.IncludeStructural);
+        command.Parameters.AddWithValue("@GroupingOnly", query.GroupingOnly);
         command.Parameters.AddWithValue("@AccountId", (object?)query.AccountId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value);
         command.Parameters.AddWithValue("@Offset", (query.Page - 1) * query.PageSize);
@@ -270,7 +404,8 @@ public sealed partial class SqlAccountingStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion
+            SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion,
+              ParentAccountId,FinancialFunction,BalanceSide,BusinessId,BankAccountId,PaymentMethodOptionId,ConfigurationLockedAt
             FROM dbo.AccountingAccounts WHERE TenantId=@TenantId ORDER BY Code;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
@@ -390,13 +525,19 @@ public sealed partial class SqlAccountingStore(
                 IF @ProfileCode IS NULL
                   THROW 51403,'No active default accounting profile is configured.',1;
 
+                ;WITH DefaultAccounts AS(
+                  SELECT d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,
+                    ROW_NUMBER() OVER(PARTITION BY d.AccountCode
+                      ORDER BY CASE WHEN d.Category=N'OtherExpense' THEN 0 ELSE 1 END,d.Category) AccountRank
+                  FROM accounting.DefaultAccountDefinitions(@ProfileCode) d
+                )
                 INSERT dbo.AccountingAccounts(
                   AccountId,TenantId,Code,Name,AccountType,AllowsPosting,
                   RequiresParty,IsActive,CreatedAt)
                 SELECT NEWID(),@TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,
                        d.RequiresParty,1,@Now
-                FROM dbo.AccountingConfigurationProfileAccounts d
-                WHERE d.ProfileCode=@ProfileCode AND
+                FROM DefaultAccounts d
+                WHERE d.AccountRank=1 AND
                   NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts a WITH(UPDLOCK,HOLDLOCK)
                   WHERE a.TenantId=@TenantId AND a.Code=d.AccountCode);
 
@@ -405,9 +546,10 @@ public sealed partial class SqlAccountingStore(
                   EffectiveFrom,EffectiveTo,CreatedAt)
                 SELECT NEWID(),@TenantId,NULL,d.Category,a.AccountId,
                        CONVERT(date,'20000101'),NULL,@Now
-                FROM dbo.AccountingConfigurationProfileAccounts d
+                FROM accounting.DefaultAccountDefinitions(@ProfileCode) d
                 INNER JOIN dbo.AccountingAccounts a
-                  ON a.TenantId=@TenantId AND a.Code=d.AccountCode AND a.Name=d.AccountName
+                  ON a.TenantId=@TenantId AND a.Code=d.AccountCode
+                    AND (a.Name=d.AccountName OR d.Category=N'SupplierFinancialDiscountLost')
                     AND a.AccountType=d.AccountType AND a.IsActive=1 AND a.AllowsPosting=1
                 WHERE d.ProfileCode=@ProfileCode AND
                   NOT EXISTS(SELECT 1 FROM dbo.AccountingAccountMappings m WITH(UPDLOCK,HOLDLOCK)
@@ -476,54 +618,118 @@ public sealed partial class SqlAccountingStore(
         AccountingUserIdentity user, CreateAccountingAccountRequest request,
         CancellationToken cancellationToken)
     {
-        const string sql = """
-            INSERT dbo.AccountingAccounts
-            (AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
-            OUTPUT inserted.AccountId,inserted.Code,inserted.Name,inserted.AccountType,
-                inserted.AllowsPosting,inserted.RequiresParty,inserted.IsActive,inserted.RowVersion
-            VALUES(@AccountId,@TenantId,@Code,@Name,@AccountType,@AllowsPosting,@RequiresParty,1,@Now);
-            """;
-        await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@AccountId", request.AccountId); command.Parameters.AddWithValue("@TenantId", user.TenantId);
-        command.Parameters.AddWithValue("@Code", request.Code); command.Parameters.AddWithValue("@Name", request.Name);
-        command.Parameters.AddWithValue("@AccountType", request.AccountType); command.Parameters.AddWithValue("@AllowsPosting", request.AllowsPosting);
-        command.Parameters.AddWithValue("@RequiresParty", request.RequiresParty); command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         try
         {
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            await reader.ReadAsync(cancellationToken);
-            return ReadAccount(reader);
+            var existing = await ReadAccountForEditAsync(connection, transaction, user.TenantId, request.AccountId, cancellationToken);
+            if (existing is not null)
+            {
+                if (existing.Code != request.Code || existing.Name != request.Name || existing.AccountType != request.AccountType ||
+                    existing.AllowsPosting != request.AllowsPosting || existing.RequiresParty != request.RequiresParty || existing.Semantics != request.Semantics)
+                    throw new AccountingConflictException("El identificador ya pertenece a otra configuración de cuenta.");
+                await transaction.CommitAsync(cancellationToken);
+                return existing;
+            }
+            await ValidateAccountConfigurationAsync(connection, transaction, user.TenantId, request.AccountId,
+                request.Code, request.AccountType, request.AllowsPosting, request.RequiresParty, request.Semantics, cancellationToken);
+            await using var command = new SqlCommand("""
+                INSERT dbo.AccountingAccounts
+                  (AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt,
+                   ParentAccountId,FinancialFunction,BalanceSide,BusinessId,BankAccountId,PaymentMethodOptionId)
+                OUTPUT inserted.AccountId,inserted.Code,inserted.Name,inserted.AccountType,
+                  inserted.AllowsPosting,inserted.RequiresParty,inserted.IsActive,inserted.RowVersion,
+                  inserted.ParentAccountId,inserted.FinancialFunction,inserted.BalanceSide,inserted.BusinessId,
+                  inserted.BankAccountId,inserted.PaymentMethodOptionId,inserted.ConfigurationLockedAt
+                VALUES(@AccountId,@TenantId,@Code,@Name,@AccountType,@AllowsPosting,@RequiresParty,1,@Now,
+                  @Parent,@Function,@Balance,@BusinessId,@BankId,@PaymentId);
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@AccountId", request.AccountId);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            command.Parameters.AddWithValue("@Code", request.Code);
+            command.Parameters.AddWithValue("@Name", request.Name);
+            command.Parameters.AddWithValue("@AccountType", request.AccountType);
+            command.Parameters.AddWithValue("@AllowsPosting", request.AllowsPosting);
+            command.Parameters.AddWithValue("@RequiresParty", request.RequiresParty);
+            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            AddAccountConfigurationParameters(command, request.Semantics);
+            AccountingAccountView result;
+            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            {
+                await reader.ReadAsync(cancellationToken);
+                result = ReadAccount(reader);
+            }
+            await transaction.CommitAsync(cancellationToken);
+            return result;
         }
         catch (SqlException exception) when (IsConflict(exception))
-        {
-            throw new AccountingConflictException("Ya existe una cuenta con ese identificador o código.");
-        }
+        { throw new AccountingConflictException("Ya existe una cuenta con ese identificador o código."); }
+        catch (SqlException exception) when (exception.Number == 51411)
+        { throw new AccountingValidationException(exception.Message); }
     }
 
     public async Task<AccountingAccountView> UpdateAccountAsync(
         AccountingUserIdentity user, Guid accountId, UpdateAccountingAccountRequest request,
         CancellationToken cancellationToken)
     {
-        var version = RequiredRecordVersion(request.RowVersion);
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
+        var result = await UpdateAccountInTransactionAsync(connection, transaction, user, accountId, request, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
+    private async Task<AccountingAccountView> UpdateAccountInTransactionAsync(
+        SqlConnection connection, SqlTransaction transaction, AccountingUserIdentity user,
+        Guid accountId, UpdateAccountingAccountRequest request, CancellationToken cancellationToken,
+        bool preserveLegacyParent = false)
+    {
+        var version = RequiredRecordVersion(request.RowVersion);
         try
         {
+            var configurationChanged = false;
+            if (request.Semantics is not null)
+            {
+                var existing = await ReadAccountForEditAsync(connection, transaction, user.TenantId, accountId, cancellationToken)
+                    ?? throw new AccountingConflictException("La cuenta no está disponible en esta empresa.");
+                configurationChanged = existing.Semantics != request.Semantics;
+                if (configurationChanged)
+                {
+                    if (existing.RowVersion != request.RowVersion || existing.ConfigurationLocked)
+                        throw new AccountingConflictException("La cuenta cambió o ya fue utilizada. Su configuración financiera se conserva.");
+                    await ValidateAccountConfigurationAsync(connection, transaction, user.TenantId, accountId,
+                        existing.Code, existing.AccountType, existing.AllowsPosting, request.RequiresParty, request.Semantics, cancellationToken,
+                        preserveLegacyParent && existing.Semantics is null);
+                }
+            }
+
             await using var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WITH(UPDLOCK,HOLDLOCK)
                   WHERE AccountId=@AccountId AND TenantId=@TenantId
-                    AND (RowVersion=@Version OR (Name COLLATE Latin1_General_100_BIN2=@Name AND RequiresParty=@RequiresParty)))
+                    AND (RowVersion=@Version OR (@Configure=0 AND Name COLLATE Latin1_General_100_BIN2=@Name AND RequiresParty=@RequiresParty)))
                   THROW 51415,N'La cuenta cambió o no está disponible. Actualiza la lista antes de guardar.',1;
-                IF @RequiresParty=1 AND EXISTS(SELECT 1 FROM accounting.BankAccounts
-                  WHERE TenantId=@TenantId AND AccountingAccountId=@AccountId AND IsActive=1)
+                IF @RequiresParty=1 AND @Configure=0 AND EXISTS(SELECT 1 FROM accounting.BankAccounts bank
+                  JOIN dbo.AccountingAccounts account ON account.BankAccountId=bank.BankAccountId AND account.TenantId=bank.TenantId
+                  WHERE bank.TenantId=@TenantId AND account.AccountId=@AccountId AND bank.IsActive=1
+                    AND account.FinancialFunction=N'Bank')
                   THROW 51411,N'Una cuenta vinculada a un banco activo no puede exigir tercero.',1;
-                UPDATE dbo.AccountingAccounts SET Name=@Name,RequiresParty=@RequiresParty
+                IF @Configure=1 AND EXISTS(SELECT 1 FROM dbo.AccountingAccounts
+                  WHERE TenantId=@TenantId AND AccountId=@AccountId AND ConfigurationLockedAt IS NOT NULL)
+                  THROW 51415,N'La configuración financiera ya fue utilizada y no puede reasignarse.',1;
+                UPDATE dbo.AccountingAccounts SET Name=@Name,RequiresParty=@RequiresParty,
+                  ParentAccountId=CASE WHEN @Configure=1 THEN @Parent ELSE ParentAccountId END,
+                  FinancialFunction=CASE WHEN @Configure=1 THEN @Function ELSE FinancialFunction END,
+                  BalanceSide=CASE WHEN @Configure=1 THEN @Balance ELSE BalanceSide END,
+                  BusinessId=CASE WHEN @Configure=1 THEN @BusinessId ELSE BusinessId END,
+                  BankAccountId=CASE WHEN @Configure=1 THEN @BankId ELSE BankAccountId END,
+                  PaymentMethodOptionId=CASE WHEN @Configure=1 THEN @PaymentId ELSE PaymentMethodOptionId END
                 WHERE AccountId=@AccountId AND TenantId=@TenantId AND RowVersion=@Version
-                  AND (Name COLLATE Latin1_General_100_BIN2<>@Name OR RequiresParty<>@RequiresParty);
-                SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion
+                  AND (Name COLLATE Latin1_General_100_BIN2<>@Name OR RequiresParty<>@RequiresParty OR @Configure=1);
+                SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion,
+                  ParentAccountId,FinancialFunction,BalanceSide,BusinessId,BankAccountId,PaymentMethodOptionId,ConfigurationLockedAt
                 FROM dbo.AccountingAccounts WHERE AccountId=@AccountId AND TenantId=@TenantId;
                 """, connection, transaction);
             command.Parameters.AddWithValue("@TenantId", user.TenantId);
@@ -531,12 +737,14 @@ public sealed partial class SqlAccountingStore(
             command.Parameters.Add("@Version", SqlDbType.Binary, 8).Value = version;
             command.Parameters.AddWithValue("@Name", request.Name);
             command.Parameters.AddWithValue("@RequiresParty", request.RequiresParty);
+            command.Parameters.AddWithValue("@Configure", configurationChanged);
+            AddAccountConfigurationParameters(command, request.Semantics);
+
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
                 throw new AccountingConflictException("La cuenta cambió. Actualiza la lista antes de guardar.");
             var result = ReadAccount(reader);
             await reader.DisposeAsync();
-            await transaction.CommitAsync(cancellationToken);
             return result;
         }
         catch (SqlException exception) when (exception.Number == 51415)
@@ -547,12 +755,20 @@ public sealed partial class SqlAccountingStore(
         {
             throw new AccountingValidationException(exception.Message);
         }
+        catch (SqlException exception) when (exception.Number == 547)
+        {
+            throw new AccountingValidationException("Las propiedades no cumplen las reglas contables de la cuenta.");
+        }
     }
 
     private static AccountingAccountView ReadAccount(SqlDataReader reader) => new(
         reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
         reader.GetBoolean(4), reader.GetBoolean(5), reader.GetBoolean(6),
-        PucLevel(reader.GetString(1)), Convert.ToBase64String((byte[])reader[7]));
+        PucLevel(reader.GetString(1)), Convert.ToBase64String((byte[])reader[7]),
+        reader.IsDBNull(9) ? null : new(
+            reader.IsDBNull(8) ? null : reader.GetGuid(8), reader.GetString(9), reader.GetString(10),
+            reader.IsDBNull(11) ? null : reader.GetGuid(11), reader.IsDBNull(12) ? null : reader.GetGuid(12),
+            reader.IsDBNull(13) ? null : reader.GetGuid(13)), !reader.IsDBNull(14));
 
     public async Task<AccountingCostCenterView> CreateCostCenterAsync(
         AccountingUserIdentity user, CreateCostCenterRequest request,
@@ -745,17 +961,11 @@ public sealed partial class SqlAccountingStore(
         try
         {
             await using (var validate = new SqlCommand("""
-                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts
-                  WHERE AccountId=@AccountId AND TenantId=@TenantId AND IsActive=1 AND AllowsPosting=1)
-                  THROW 51402,'The mapping account is not active or postable.',1;
+                IF NOT EXISTS(SELECT 1 FROM accounting.PostingAccountReadiness(@TenantId,@BusinessId,@Category,@AccountId))
+                  THROW 51402,N'El auxiliar no está disponible o no corresponde al tipo contable y configuración de esta categoría.',1;
                 IF @BusinessId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Businesses
                   WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                   THROW 51403,'The mapping business is outside the legal entity.',1;
-                IF NOT EXISTS(
-                  SELECT 1 FROM dbo.AccountingConfigurationProfiles p
-                  INNER JOIN dbo.AccountingConfigurationProfileAccounts d ON d.ProfileCode=p.ProfileCode
-                  WHERE p.IsDefault=1 AND p.IsActive=1 AND d.Category=@Category)
-                  THROW 51403,'The accounting category is not configured in the active profile.',1;
                 IF EXISTS(SELECT 1 FROM dbo.AccountingAccountMappings WITH(UPDLOCK,HOLDLOCK)
                   WHERE TenantId=@TenantId AND Category=@Category
                     AND ((BusinessId=@BusinessId) OR (BusinessId IS NULL AND @BusinessId IS NULL))
@@ -878,6 +1088,14 @@ public sealed partial class SqlAccountingStore(
                        Status,AttemptCount,CreatedAt)
                     VALUES(@JobId,@TenantId,@BusinessId,@DocumentId,@DocumentType,@Hash,
                            @OccurredAt,@AccountingEntryRequired,N'Pending',0,@Now);
+                  UPDATE source SET AccountingPostingJobId=job.AccountingPostingJobId
+                  FROM dbo.AccountingSourceDocuments source
+                  JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=source.SourceDocumentId
+                    AND job.SourceDocumentType=source.SourceDocumentType
+                    AND job.TenantId=source.TenantId AND job.BusinessId=source.BusinessId
+                  WHERE source.SourceDocumentId=@DocumentId AND source.SourceDocumentType=@DocumentType
+                    AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId
+                    AND source.AccountingPostingJobId IS NULL;
                   SELECT @DocumentType;
                 END;
                 """, connection, transaction);
@@ -910,27 +1128,35 @@ public sealed partial class SqlAccountingStore(
         AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
-        Guid entryId; string number; string type; string description; DateTimeOffset occurred; DateTimeOffset posted; decimal debit; decimal credit;
+        Guid entryId; Guid? mainPartyId; string number; string type; string description; DateTimeOffset occurred; DateTimeOffset posted; decimal debit; decimal credit;
         await using (var command = new SqlCommand("""
-            SELECT EntryId,EntryNumber,SourceDocumentType,OccurredAt,PostedAt,Description,DebitTotal,CreditTotal
-            FROM dbo.AccountingEntries WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND SourceDocumentId=@DocumentId;
+            SELECT job.EntryId,job.EntryNumber,job.SourceDocumentType,job.OccurredAt,job.PostedAt,job.Description,job.DebitTotal,job.CreditTotal,
+              mainParty.PartyId
+            FROM dbo.AccountingEntries job
+            LEFT JOIN accounting.VoucherDrafts draft ON draft.DocumentId=job.SourceDocumentId
+              AND draft.DocumentType=job.SourceDocumentType AND draft.TenantId=job.TenantId AND draft.BusinessId=job.BusinessId
+            """ + "\n" + DocumentPrincipalPartySql + "\n" + """
+            WHERE job.TenantId=@TenantId AND job.BusinessId=@BusinessId AND job.SourceDocumentId=@DocumentId;
             """, connection))
         {
             AddScope(command, user, documentId); await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken)) return null;
             entryId = reader.GetGuid(0); number = reader.GetString(1); type = reader.GetString(2); occurred = reader.GetDateTimeOffset(3); posted = reader.GetDateTimeOffset(4); description = reader.GetString(5); debit = reader.GetDecimal(6); credit = reader.GetDecimal(7);
+            mainPartyId = NullableId(reader, 8);
         }
         var lines = new List<AccountingEntryLineView>();
         await using (var command = new SqlCommand("""
             SELECT l.LineNumber,a.Code,a.Name,l.Debit,l.Credit,l.PartyId,
                    l.PartyIdentificationSnapshot,l.PartyNameSnapshot,l.CostCenterId,
-                   l.CostCenterCodeSnapshot,l.CostCenterNameSnapshot,l.Description
+                   l.CostCenterCodeSnapshot,l.CostCenterNameSnapshot,l.Description,l.AccountId,l.SourceLineId,l.BaseAmount
             FROM dbo.AccountingEntryLines l
-            INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+            INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId AND a.TenantId=@TenantId
             WHERE l.EntryId=@EntryId ORDER BY l.LineNumber;
             """, connection))
         {
-            command.Parameters.AddWithValue("@EntryId", entryId); await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            command.Parameters.AddWithValue("@EntryId", entryId);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) lines.Add(new(
                 reader.GetInt32(0), reader.GetString(1), reader.GetString(2),
                 reader.GetDecimal(3), reader.GetDecimal(4),
@@ -939,9 +1165,10 @@ public sealed partial class SqlAccountingStore(
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.IsDBNull(8) ? null : reader.GetGuid(8),
                 reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetString(11)));
+                reader.IsDBNull(10) ? null : reader.GetString(10), reader.GetString(11), reader.GetGuid(12), NullableId(reader, 13),
+                reader.IsDBNull(14) ? null : reader.GetDecimal(14)));
         }
-        return new(entryId, number, documentId, type, occurred, posted, description, debit, credit, lines);
+        return new(entryId, number, documentId, type, occurred, posted, description, debit, credit, lines, mainPartyId);
     }
 
     public async Task<IReadOnlyList<TrialBalanceRow>> GetTrialBalanceAsync(
@@ -950,57 +1177,33 @@ public sealed partial class SqlAccountingStore(
     {
         await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            WITH Leaf AS (
-              SELECT a.Code,a.Name,
-                SUM(CASE WHEN CAST(e.OccurredAt AS date)<@From THEN l.Debit-l.Credit ELSE 0 END) OpeningBalance,
-                SUM(CASE WHEN CAST(e.OccurredAt AS date) BETWEEN @From AND @To THEN l.Debit ELSE 0 END) Debit,
-                SUM(CASE WHEN CAST(e.OccurredAt AS date) BETWEEN @From AND @To THEN l.Credit ELSE 0 END) Credit,
-                SUM(CASE WHEN CAST(e.OccurredAt AS date)<=@To THEN l.Debit-l.Credit ELSE 0 END) ClosingBalance
-              FROM dbo.AccountingEntries e
-              INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
-              INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
-              WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
-                AND CAST(e.OccurredAt AS date)<=@To
-              GROUP BY a.Code,a.Name
-            ), Expanded AS (
-              SELECT levelValue.Code,levelValue.Level,levelValue.SortOrder,
-                MAX(CASE WHEN leaf.Code=levelValue.Code THEN leaf.Name END) LeafName,
-                SUM(leaf.OpeningBalance) OpeningBalance,SUM(leaf.Debit) Debit,
-                SUM(leaf.Credit) Credit,SUM(leaf.ClosingBalance) ClosingBalance
-              FROM Leaf leaf
-              CROSS APPLY (VALUES
-                (LEFT(leaf.Code,1),N'Class',1),
-                (LEFT(leaf.Code,2),N'Group',2),
-                (LEFT(leaf.Code,4),N'Account',3),
-                (LEFT(leaf.Code,6),N'Subaccount',4),
-                (leaf.Code,N'Auxiliary',5)
-              ) levelValue(Code,Level,SortOrder)
-              WHERE (levelValue.Level<>N'Auxiliary' OR LEN(leaf.Code)>6)
-              GROUP BY levelValue.Code,levelValue.Level,levelValue.SortOrder
-            )
-            SELECT expanded.Code,
-              COALESCE(configured.Name,expanded.LeafName,
-                CASE expanded.Code
-                  WHEN N'1' THEN N'ACTIVO' WHEN N'2' THEN N'PASIVO'
-                  WHEN N'3' THEN N'PATRIMONIO' WHEN N'4' THEN N'INGRESOS'
-                  WHEN N'5' THEN N'GASTOS' WHEN N'6' THEN N'COSTOS DE VENTAS'
-                  WHEN N'7' THEN N'COSTOS DE PRODUCCIÓN O DE OPERACIÓN'
-                  WHEN N'11' THEN N'DISPONIBLE' WHEN N'13' THEN N'DEUDORES'
-                  WHEN N'14' THEN N'INVENTARIOS' WHEN N'22' THEN N'PROVEEDORES'
-                  WHEN N'23' THEN N'CUENTAS POR PAGAR'
-                  WHEN N'24' THEN N'IMPUESTOS, GRAVÁMENES Y TASAS'
-                  WHEN N'25' THEN N'OBLIGACIONES LABORALES'
-                  WHEN N'26' THEN N'PASIVOS ESTIMADOS Y PROVISIONES'
-                  WHEN N'41' THEN N'OPERACIONALES'
-                  WHEN N'51' THEN N'OPERACIONALES DE ADMINISTRACIÓN'
-                  WHEN N'61' THEN N'COSTO DE VENTAS Y DE PRESTACIÓN DE SERVICIOS'
-                  ELSE CONCAT(N'Nivel ',expanded.Code) END),
-              expanded.Level,expanded.OpeningBalance,expanded.Debit,expanded.Credit,
-              expanded.ClosingBalance
-            FROM Expanded expanded
+            -- Materialize balances once before expanding the configured hierarchy.
+            SELECT a.AccountId,a.Code,a.ParentAccountId,
+              SUM(CASE WHEN CAST(e.OccurredAt AS date)<@From THEN l.Debit-l.Credit ELSE 0 END) OpeningBalance,
+              SUM(CASE WHEN CAST(e.OccurredAt AS date) BETWEEN @From AND @To THEN l.Debit ELSE 0 END) Debit,
+              SUM(CASE WHEN CAST(e.OccurredAt AS date) BETWEEN @From AND @To THEN l.Credit ELSE 0 END) Credit,
+              SUM(l.Debit-l.Credit) ClosingBalance
+            INTO #ReportAccounts
+            FROM dbo.AccountingEntries e
+            INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+            INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId AND a.TenantId=@TenantId
+            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
+              AND CAST(e.OccurredAt AS date)<=@To
+            GROUP BY a.AccountId,a.Code,a.ParentAccountId;
+
+            """ + "\n" + ReportAccountHierarchySql + "\n" + """
+            SELECT hierarchy.Code,COALESCE(configured.Name,hierarchy.Code),
+              CASE LEN(hierarchy.Code)
+                WHEN 1 THEN N'Class' WHEN 2 THEN N'Group'
+                WHEN 4 THEN N'Account' WHEN 6 THEN N'Subaccount' ELSE N'Auxiliary' END,
+              SUM(leaf.OpeningBalance),SUM(leaf.Debit),SUM(leaf.Credit),SUM(leaf.ClosingBalance)
+            FROM Hierarchy hierarchy
+            JOIN #ReportAccounts leaf ON leaf.AccountId=hierarchy.LeafAccountId
             LEFT JOIN dbo.AccountingAccounts configured
-              ON configured.TenantId=@TenantId AND configured.Code=expanded.Code
-            ORDER BY expanded.Code,expanded.SortOrder;
+              ON configured.TenantId=@TenantId AND configured.Code=hierarchy.Code
+            GROUP BY hierarchy.Code,configured.Name
+            ORDER BY hierarchy.Code
+            OPTION(MAXRECURSION 32);
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId); command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue)); command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
@@ -1025,49 +1228,6 @@ public sealed partial class SqlAccountingStore(
         > 6 => "Auxiliary",
         _ => "Invalid"
     };
-
-    public async Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(
-        AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to,
-        CancellationToken cancellationToken, Guid? costCenterId = null)
-    {
-        await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            WITH AccountLines AS (
-              SELECT e.EntryId,e.EntryNumber,e.SourceDocumentId,e.SourceDocumentType,e.OccurredAt,
-                     l.LineNumber,l.Description,l.Debit,l.Credit,l.CostCenterId,
-                     l.CostCenterCodeSnapshot,l.CostCenterNameSnapshot,
-                     SUM(l.Debit-l.Credit) OVER(
-                       ORDER BY e.OccurredAt,e.EntryNumber,l.LineNumber
-                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) Balance
-              FROM dbo.AccountingEntries e
-              INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
-              INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
-              WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId AND a.Code=@AccountCode
-                AND (@CostCenterId IS NULL OR l.CostCenterId=@CostCenterId)
-                AND CAST(e.OccurredAt AS date)<=@To
-            )
-            SELECT EntryId,EntryNumber,SourceDocumentId,SourceDocumentType,OccurredAt,
-                   Description,Debit,Credit,Balance,LineNumber,CostCenterId,CostCenterCodeSnapshot,CostCenterNameSnapshot
-            FROM AccountLines
-            WHERE CAST(OccurredAt AS date)>=@From
-            ORDER BY OccurredAt,EntryNumber,LineNumber;
-            """, connection);
-        command.Parameters.AddWithValue("@CostCenterId", (object?)costCenterId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@TenantId", user.TenantId);
-        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-        command.Parameters.AddWithValue("@AccountCode", accountCode);
-        command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue));
-        command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
-        var rows = new List<AccountMovementRow>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken)) rows.Add(new(
-            reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetString(3),
-            reader.GetDateTimeOffset(4), reader.GetString(5), reader.GetDecimal(6),
-            reader.GetDecimal(7), reader.GetDecimal(8), reader.GetInt32(9),
-            reader.IsDBNull(10) ? null : reader.GetGuid(10),
-            reader.IsDBNull(11) ? null : reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetString(12)));
-        return rows;
-    }
 
     public async Task<IReadOnlyList<AccountingJournalRow>> GetJournalAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to,
@@ -1234,10 +1394,9 @@ public sealed partial class SqlAccountingStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(TraceabilityDocumentsSql + """
-            SELECT * FROM #Documents ORDER BY OccurredAt DESC,SourceDocumentId
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
-            SELECT COUNT(*) FROM #Documents;
+        await using var command = new SqlCommand(TraceabilityDocumentsSql(search, partyId, status is not null) + """
+            SELECT * FROM #Documents ORDER BY OccurredAt DESC,SourceDocumentId,SourceDocumentType;
+            SELECT COUNT(*) FROM #DocumentKeys;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -1268,7 +1427,8 @@ public sealed partial class SqlAccountingStore(
                 reader.IsDBNull(14) ? null : reader.GetString(14),
                 reader.IsDBNull(15) ? null : reader.GetString(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16),
-                reader.IsDBNull(17) ? null : reader.GetString(17), reader.GetBoolean(18)));
+                reader.IsDBNull(17) ? null : reader.GetString(17), reader.GetBoolean(18),
+                NullableId(reader, 19), NullableText(reader, 20), NullableText(reader, 21)));
         }
         await reader.NextResultAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
@@ -1283,28 +1443,43 @@ public sealed partial class SqlAccountingStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(TraceabilityDocumentsSql + """
+        await using var command = new SqlCommand(TraceabilityDocumentKeysSql(search, partyId) + """
+            SELECT d.*,line.LineNumber INTO #TraceabilityLinePage
+            FROM #DocumentKeys d
+            OUTER APPLY(
+              SELECT l.LineNumber FROM dbo.AccountingEntryLines l WHERE l.EntryId=d.EntryId
+              UNION ALL
+              SELECT l.LineNumber FROM accounting.VoucherDraftLines l
+                WHERE l.DocumentId=d.SourceDocumentId AND d.EntryId IS NULL
+            ) line
+            ORDER BY d.OccurredAt DESC,d.SourceDocumentId,d.SourceDocumentType,line.LineNumber
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT DISTINCT SourceDocumentId,SourceDocumentType,OccurredAt,Status,EntryId
+            INTO #DocumentPage FROM #TraceabilityLinePage;
+            """ + TraceabilityDocumentDetailsSql + """
             SELECT d.SourceDocumentId,d.SourceDocumentType,d.DocumentNumber,d.OccurredAt,d.Status,d.LastErrorMessage,
               d.EntryNumber,d.PostedAt,d.FiscalDocumentType,d.FiscalNumber,d.FiscalStatus,
-              line.LineNumber,account.Code,account.Name,line.PartyIdentification,line.PartyName,
-              line.CostCenterCode,line.CostCenterName,line.Description,line.Debit,line.Credit
-            INTO #TraceabilityLines
-            FROM #Documents d
-            OUTER APPLY(
-              SELECT l.LineNumber,l.AccountId,l.PartyIdentificationSnapshot PartyIdentification,l.PartyNameSnapshot PartyName,
-                l.CostCenterCodeSnapshot CostCenterCode,l.CostCenterNameSnapshot CostCenterName,l.Description,l.Debit,l.Credit
-              FROM dbo.AccountingEntryLines l WHERE l.EntryId=d.EntryId
-              UNION ALL
-              SELECT l.LineNumber,l.AccountId,p.Identification,p.DisplayName,c.Code,c.Name,l.Description,l.Debit,l.Credit
-              FROM accounting.VoucherDraftLines l
-              LEFT JOIN dbo.Parties p ON p.PartyId=l.PartyId AND p.TenantId=@TenantId
-              LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.BusinessId=@BusinessId
-              WHERE l.DocumentId=d.SourceDocumentId AND d.EntryId IS NULL
-            ) line
-            LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId;
-            SELECT * FROM #TraceabilityLines ORDER BY OccurredAt DESC,SourceDocumentId,LineNumber
-            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
-            SELECT COUNT(*) FROM #TraceabilityLines;
+              selected.LineNumber,account.Code,account.Name,
+              CASE WHEN d.EntryId IS NOT NULL THEN posted.PartyIdentificationSnapshot ELSE party.Identification END,
+              CASE WHEN d.EntryId IS NOT NULL THEN posted.PartyNameSnapshot ELSE party.DisplayName END,
+              CASE WHEN d.EntryId IS NOT NULL THEN posted.CostCenterCodeSnapshot ELSE center.Code END,
+              CASE WHEN d.EntryId IS NOT NULL THEN posted.CostCenterNameSnapshot ELSE center.Name END,
+              COALESCE(posted.Description,draft.Description),COALESCE(posted.Debit,draft.Debit),COALESCE(posted.Credit,draft.Credit)
+            FROM #TraceabilityLinePage selected
+            JOIN #Documents d ON d.SourceDocumentId=selected.SourceDocumentId AND d.SourceDocumentType=selected.SourceDocumentType
+            LEFT JOIN dbo.AccountingEntryLines posted ON posted.EntryId=d.EntryId AND posted.LineNumber=selected.LineNumber
+            LEFT JOIN accounting.VoucherDraftLines draft ON draft.DocumentId=d.SourceDocumentId
+              AND draft.LineNumber=selected.LineNumber AND d.EntryId IS NULL
+            LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=COALESCE(posted.AccountId,draft.AccountId) AND account.TenantId=@TenantId
+            LEFT JOIN dbo.Parties party ON party.PartyId=draft.PartyId AND party.TenantId=@TenantId
+            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=draft.CostCenterId AND center.BusinessId=@BusinessId
+            ORDER BY d.OccurredAt DESC,d.SourceDocumentId,d.SourceDocumentType,selected.LineNumber;
+            SELECT COALESCE(SUM(CASE WHEN totals.LineCount=0 THEN 1 ELSE totals.LineCount END),0)
+            FROM #DocumentKeys d
+            CROSS APPLY(SELECT
+              (SELECT COUNT(*) FROM dbo.AccountingEntryLines l WHERE l.EntryId=d.EntryId) +
+              (SELECT COUNT(*) FROM accounting.VoucherDraftLines l WHERE l.DocumentId=d.SourceDocumentId AND d.EntryId IS NULL) LineCount
+            ) totals;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -1368,6 +1543,44 @@ public sealed partial class SqlAccountingStore(
         return await ReadOpeningBalanceAsync(connection, null, user, effectiveOn, cancellationToken);
     }
 
+    private const string OpeningBalanceLinesTableSql = """
+        DECLARE @OpeningLines TABLE(LineNumber int PRIMARY KEY,AccountId uniqueidentifier,
+          PartyId uniqueidentifier,CostCenterId uniqueidentifier,Description nvarchar(300),
+          Debit decimal(19,4),Credit decimal(19,4),LineId uniqueidentifier,
+          ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier);
+        """;
+
+    private const string OpeningBalancePositionsValidationSql = """
+        DECLARE @ReconciliationLines nvarchar(max)=(SELECT LineNumber,AccountId,PartyId,Debit,Credit,
+          LineId,ExistingPayableId,ExistingReceivableId FROM @OpeningLines FOR JSON PATH);
+        EXEC accounting.OpeningPositionsValidate @TenantId,@BusinessId,@EffectiveOn,@ReconciliationLines;
+        """;
+
+    // Save and approval validate the same scoped batch. Neither path resolves
+    // accounts, roles or centers through a separate request for each line.
+    private const string OpeningBalanceDimensionsValidationSql = """
+        IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
+          THROW 51408,N'La sede no pertenece a la empresa.',1;
+        IF EXISTS(
+          SELECT 1 FROM @OpeningLines line
+          LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId
+            AND account.IsActive=1 AND account.AllowsPosting=1
+            AND (account.BusinessId IS NULL OR account.BusinessId=@BusinessId)
+          LEFT JOIN dbo.Parties party ON party.PartyId=line.PartyId AND party.TenantId=@TenantId AND party.IsActive=1
+          LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=line.CostCenterId
+            AND center.BusinessId=@BusinessId AND center.IsActive=1
+          WHERE account.AccountId IS NULL OR (account.RequiresParty=1 AND line.PartyId IS NULL)
+            OR (line.CostCenterId IS NOT NULL AND center.CostCenterId IS NULL)
+            OR (line.PartyId IS NOT NULL AND (party.PartyId IS NULL OR NOT (
+              EXISTS(SELECT 1 FROM dbo.Customers customer WHERE customer.PartyId=line.PartyId AND customer.TenantId=@TenantId)
+              OR EXISTS(SELECT 1 FROM dbo.Suppliers supplier WHERE supplier.PartyId=line.PartyId AND supplier.TenantId=@TenantId)
+              OR EXISTS(SELECT 1 FROM dbo.CommerceSellers seller WHERE seller.PartyId=line.PartyId AND seller.TenantId=@TenantId)
+              OR EXISTS(SELECT 1 FROM dbo.Carriers carrier WHERE carrier.PartyId=line.PartyId AND carrier.TenantId=@TenantId)
+              OR EXISTS(SELECT 1 FROM dbo.Employees employee WHERE employee.PartyId=line.PartyId AND employee.TenantId=@TenantId)
+              OR EXISTS(SELECT 1 FROM dbo.AppUsers appUser WHERE appUser.PartyId=line.PartyId AND appUser.TenantId=@TenantId)))))
+          THROW 51408,N'Hay partidas con cuentas, terceros o centros de costo inválidos para esta sede.',1;
+        """;
+
     public async Task<AccountingOpeningBalanceView> SaveOpeningBalanceAsync(
         AccountingUserIdentity user, SaveAccountingOpeningBalanceRequest request,
         CancellationToken cancellationToken)
@@ -1379,35 +1592,6 @@ public sealed partial class SqlAccountingStore(
         try
         {
             await EnsureOpeningBalancesEditableAsync(connection, transaction, user, cancellationToken);
-            foreach (var line in request.Lines)
-            {
-                var requiresParty = await ValidatePostingAccountAsync(connection, transaction,
-                    user.TenantId, line.AccountId, cancellationToken);
-                if (requiresParty && line.PartyId is null)
-                    throw new AccountingValidationException("La cuenta seleccionada exige un tercero.");
-                await ValidateCostCenterAsync(connection, transaction, user.BusinessId,
-                    line.CostCenterId, cancellationToken);
-                if (line.PartyId is Guid partyId)
-                {
-                    await using var party = new SqlCommand("""
-                        SELECT COUNT_BIG(1)
-                        FROM dbo.Parties p
-                        WHERE p.PartyId=@PartyId AND p.TenantId=@TenantId AND p.IsActive=1
-                          AND (EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId)
-                               OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId)
-                               OR EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.TenantId=@TenantId)
-                               OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.TenantId=@TenantId)
-                               OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.TenantId=@TenantId)
-                               OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId));
-                        """, connection, transaction);
-                    party.Parameters.AddWithValue("@PartyId", partyId);
-                    party.Parameters.AddWithValue("@TenantId", user.TenantId);
-                    party.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-                    if (Convert.ToInt64(await party.ExecuteScalarAsync(cancellationToken)) != 1)
-                        throw new AccountingValidationException("El saldo inicial referencia un tercero inexistente, inactivo o ajeno al negocio.");
-                }
-            }
-
             byte[]? expectedVersion = null;
             if (!string.IsNullOrWhiteSpace(request.RowVersion))
             {
@@ -1415,7 +1599,13 @@ public sealed partial class SqlAccountingStore(
                 catch (FormatException) { throw new AccountingValidationException("La versión del saldo inicial no es válida."); }
             }
             var now = timeProvider.GetUtcNow();
-            await using (var command = new SqlCommand("""
+            await using (var command = new SqlCommand(OpeningBalanceLinesTableSql + "\n" + """
+                INSERT @OpeningLines
+                SELECT LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId
+                FROM OPENJSON(@Lines) WITH(LineNumber int,AccountId uniqueidentifier,PartyId uniqueidentifier,
+                  CostCenterId uniqueidentifier,Description nvarchar(300),Debit decimal(19,4),Credit decimal(19,4),
+                  LineId uniqueidentifier,ExistingPayableId uniqueidentifier,ExistingReceivableId uniqueidentifier);
+                """ + "\n" + OpeningBalanceDimensionsValidationSql + "\n" + OpeningBalancePositionsValidationSql + "\n" + """
                 DECLARE @ExistingId uniqueidentifier=(SELECT BatchId
                   FROM dbo.AccountingOpeningBalanceBatches WITH(UPDLOCK,HOLDLOCK)
                   WHERE BusinessId=@BusinessId AND EffectiveOn=@EffectiveOn);
@@ -1437,6 +1627,10 @@ public sealed partial class SqlAccountingStore(
                      CreatedByUserId,CreatedAt,UpdatedByUserId,UpdatedAt)
                   VALUES(@BatchId,@TenantId,@BusinessId,@EffectiveOn,@Currency,@Description,N'Draft',
                          @UserId,@Now,@UserId,@Now);
+                INSERT dbo.AccountingOpeningBalanceLines
+                  (BatchId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,LineId,ExistingPayableId,ExistingReceivableId)
+                SELECT @BatchId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,LineId,
+                  ExistingPayableId,ExistingReceivableId FROM @OpeningLines;
                 """, connection, transaction))
             {
                 command.Parameters.AddWithValue("@BatchId", request.BatchId);
@@ -1447,37 +1641,30 @@ public sealed partial class SqlAccountingStore(
                 command.Parameters.AddWithValue("@Description", request.Description.Trim());
                 command.Parameters.AddWithValue("@UserId", user.UserId);
                 command.Parameters.AddWithValue("@Now", now);
+                command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(
+                    request.Lines.Select((line, index) => new { LineNumber = index + 1, line.AccountId,
+                        line.PartyId, line.CostCenterId, Description = line.Description.Trim(), line.Debit, line.Credit,
+                        LineId = line.LineId ?? ids.NewId(),
+                        ExistingPayableId = line.ExistingPosition?.SubledgerKind == "Payable" ? line.ExistingPosition.SubledgerId : (Guid?)null,
+                        ExistingReceivableId = line.ExistingPosition?.SubledgerKind == "Receivable" ? line.ExistingPosition.SubledgerId : (Guid?)null }));
                 command.Parameters.Add("@ExpectedVersion", SqlDbType.Timestamp).Value = (object?)expectedVersion ?? DBNull.Value;
                 try { await command.ExecuteNonQueryAsync(cancellationToken); }
                 catch (SqlException exception) when (exception.Number is 51405 or 51406)
                 { throw new AccountingConflictException(exception.Message); }
-            }
-            for (var index = 0; index < request.Lines.Count; index++)
-            {
-                var line = request.Lines[index];
-                await using var insert = new SqlCommand("""
-                    INSERT dbo.AccountingOpeningBalanceLines
-                      (BatchId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit)
-                    VALUES(@BatchId,@LineNumber,@AccountId,@PartyId,@CostCenterId,@Description,@Debit,@Credit);
-                    """, connection, transaction);
-                insert.Parameters.AddWithValue("@BatchId", request.BatchId);
-                insert.Parameters.AddWithValue("@LineNumber", index + 1);
-                insert.Parameters.AddWithValue("@AccountId", line.AccountId);
-                insert.Parameters.AddWithValue("@PartyId", (object?)line.PartyId ?? DBNull.Value);
-                insert.Parameters.AddWithValue("@CostCenterId", (object?)line.CostCenterId ?? DBNull.Value);
-                insert.Parameters.AddWithValue("@Description", line.Description.Trim());
-                AddMoney(insert, "@Debit", line.Debit);
-                AddMoney(insert, "@Credit", line.Credit);
-                await insert.ExecuteNonQueryAsync(cancellationToken);
             }
             var result = await ReadOpeningBalanceAsync(connection, transaction, user,
                 request.EffectiveOn, cancellationToken) ?? throw new DBConcurrencyException("The opening balance was not persisted.");
             await transaction.CommitAsync(cancellationToken);
             return result;
         }
+        catch (SqlException error) when (error.Number == 51408)
+        {
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingValidationException(error.Message, error);
+        }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
     }
@@ -1506,39 +1693,24 @@ public sealed partial class SqlAccountingStore(
                     throw new AccountingConflictException("El saldo inicial no existe o ya no está en borrador.");
                 effectiveOn = DateOnly.FromDateTime(date);
             }
-            await using (var validate = new SqlCommand("""
-                SELECT COUNT(*),COALESCE(SUM(Debit),0),COALESCE(SUM(Credit),0),
-                  SUM(CASE WHEN a.AccountId IS NULL OR a.IsActive=0 OR a.AllowsPosting=0
-                            OR (a.RequiresParty=1 AND l.PartyId IS NULL)
-                            OR (l.PartyId IS NOT NULL AND (p.PartyId IS NULL OR partyScope.IsInBusiness=0))
-                            OR (l.CostCenterId IS NOT NULL AND c.CostCenterId IS NULL)
-                           THEN 1 ELSE 0 END)
-                FROM dbo.AccountingOpeningBalanceLines l
-                LEFT JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId AND a.TenantId=@TenantId
-                LEFT JOIN dbo.Parties p ON p.PartyId=l.PartyId AND p.TenantId=@TenantId AND p.IsActive=1
-                LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.BusinessId=@BusinessId AND c.IsActive=1
-                CROSS APPLY(SELECT CONVERT(bit,CASE WHEN l.PartyId IS NULL
-                    OR EXISTS(SELECT 1 FROM dbo.Customers customer WHERE customer.PartyId=l.PartyId AND customer.TenantId=@TenantId)
-                    OR EXISTS(SELECT 1 FROM dbo.Suppliers supplier WHERE supplier.PartyId=l.PartyId AND supplier.TenantId=@TenantId)
-                    OR EXISTS(SELECT 1 FROM dbo.CommerceSellers seller WHERE seller.PartyId=l.PartyId AND seller.TenantId=@TenantId)
-                    OR EXISTS(SELECT 1 FROM dbo.Carriers carrier WHERE carrier.PartyId=l.PartyId AND carrier.TenantId=@TenantId)
-                    OR EXISTS(SELECT 1 FROM dbo.Employees employee WHERE employee.PartyId=l.PartyId AND employee.TenantId=@TenantId)
-                    OR EXISTS(SELECT 1 FROM dbo.AppUsers appUser WHERE appUser.PartyId=l.PartyId AND appUser.TenantId=@TenantId)
-                    THEN 1 ELSE 0 END) IsInBusiness) partyScope
-                WHERE l.BatchId=@BatchId;
+            await using (var validate = new SqlCommand(OpeningBalanceLinesTableSql + "\n" + """
+                INSERT @OpeningLines SELECT LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit,
+                  LineId,ExistingPayableId,ExistingReceivableId
+                FROM dbo.AccountingOpeningBalanceLines WHERE BatchId=@BatchId;
+                """ + "\n" + OpeningBalanceDimensionsValidationSql + "\n" + OpeningBalancePositionsValidationSql + "\n" + """
+                SELECT COUNT(*),COALESCE(SUM(Debit),0),COALESCE(SUM(Credit),0) FROM @OpeningLines;
                 """, connection, transaction))
             {
                 validate.Parameters.AddWithValue("@BatchId", batchId);
                 validate.Parameters.AddWithValue("@TenantId", user.TenantId);
                 validate.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+                validate.Parameters.AddWithValue("@EffectiveOn", effectiveOn.ToDateTime(TimeOnly.MinValue));
                 await using var reader = await validate.ExecuteReaderAsync(cancellationToken);
                 await reader.ReadAsync(cancellationToken);
                 var count = reader.GetInt32(0);
                 var debit = reader.GetDecimal(1);
                 var credit = reader.GetDecimal(2);
-                var invalid = reader.GetInt32(3);
                 if (count < 2) throw new AccountingValidationException("El saldo inicial requiere al menos dos líneas.");
-                if (invalid > 0) throw new AccountingValidationException("Hay líneas con cuentas, terceros o centros de costo inválidos.");
                 if (debit <= 0 || decimal.Round(debit, 4) != decimal.Round(credit, 4))
                     throw new AccountingValidationException("El saldo inicial debe estar cuadrado: débitos y créditos deben ser iguales.");
             }
@@ -1560,9 +1732,14 @@ public sealed partial class SqlAccountingStore(
             await transaction.CommitAsync(cancellationToken);
             return result;
         }
+        catch (SqlException error) when (error.Number == 51408)
+        {
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingValidationException(error.Message, error);
+        }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (transaction.Connection is not null) await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
     }
@@ -1608,45 +1785,45 @@ public sealed partial class SqlAccountingStore(
         DateOnly effectiveOn, CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT BatchId,BusinessId,EffectiveOn,CurrencyCode,Description,Status,
-                   RowVersion,UpdatedAt,ApprovedAt,PostedAt
-            FROM dbo.AccountingOpeningBalanceBatches
-            WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND EffectiveOn=@EffectiveOn;
+            SELECT batch.BatchId,batch.BusinessId,batch.EffectiveOn,batch.CurrencyCode,batch.Description,batch.Status,
+                   batch.RowVersion,batch.UpdatedAt,batch.ApprovedAt,batch.PostedAt,
+                   line.LineNumber,line.AccountId,line.PartyId,line.CostCenterId,line.Description,line.Debit,line.Credit,
+                   line.LineId,line.ExistingPayableId,line.ExistingReceivableId,
+                   COALESCE(payable.DocumentNumber,receivable.DocumentNumber)
+            FROM dbo.AccountingOpeningBalanceBatches batch
+            LEFT JOIN dbo.AccountingOpeningBalanceLines line ON line.BatchId=batch.BatchId
+            LEFT JOIN dbo.Payables payable ON payable.PayableId=line.ExistingPayableId AND payable.BusinessId=batch.BusinessId
+            LEFT JOIN dbo.Receivables receivable ON receivable.ReceivableId=line.ExistingReceivableId AND receivable.BusinessId=batch.BusinessId
+            WHERE batch.TenantId=@TenantId AND batch.BusinessId=@BusinessId AND batch.EffectiveOn=@EffectiveOn
+            ORDER BY line.LineNumber;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@EffectiveOn", effectiveOn.ToDateTime(TimeOnly.MinValue));
-        Guid batchId;
-        Guid businessId;
-        string currency;
-        string description;
-        string status;
-        string version;
-        DateTimeOffset updatedAt;
-        DateTimeOffset? approvedAt;
-        DateTimeOffset? postedAt;
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
-        {
-            if (!await reader.ReadAsync(cancellationToken)) return null;
-            batchId = reader.GetGuid(0); businessId = reader.GetGuid(1);
-            currency = reader.GetString(3); description = reader.GetString(4); status = reader.GetString(5);
-            version = Convert.ToBase64String((byte[])reader[6]);
-            updatedAt = reader.GetDateTimeOffset(7);
-            approvedAt = reader.IsDBNull(8) ? null : reader.GetDateTimeOffset(8);
-            postedAt = reader.IsDBNull(9) ? null : reader.GetDateTimeOffset(9);
-        }
-        await using var linesCommand = new SqlCommand("""
-            SELECT LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit
-            FROM dbo.AccountingOpeningBalanceLines WHERE BatchId=@BatchId ORDER BY LineNumber;
-            """, connection, transaction);
-        linesCommand.Parameters.AddWithValue("@BatchId", batchId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var batchId = reader.GetGuid(0);
+        var businessId = reader.GetGuid(1);
+        var currency = reader.GetString(3);
+        var description = reader.GetString(4);
+        var status = reader.GetString(5);
+        var version = Convert.ToBase64String((byte[])reader[6]);
+        var updatedAt = reader.GetDateTimeOffset(7);
+        var approvedAt = reader.IsDBNull(8) ? (DateTimeOffset?)null : reader.GetDateTimeOffset(8);
+        var postedAt = reader.IsDBNull(9) ? (DateTimeOffset?)null : reader.GetDateTimeOffset(9);
         var lines = new List<AccountingOpeningBalanceLineView>();
-        await using var linesReader = await linesCommand.ExecuteReaderAsync(cancellationToken);
-        while (await linesReader.ReadAsync(cancellationToken))
-            lines.Add(new(linesReader.GetInt32(0), linesReader.GetGuid(1),
-                linesReader.IsDBNull(2) ? null : linesReader.GetGuid(2),
-                linesReader.IsDBNull(3) ? null : linesReader.GetGuid(3), linesReader.GetString(4),
-                linesReader.GetDecimal(5), linesReader.GetDecimal(6)));
+        do
+        {
+            if (!reader.IsDBNull(10))
+                lines.Add(new(reader.GetInt32(10), reader.GetGuid(11),
+                    reader.IsDBNull(12) ? null : reader.GetGuid(12),
+                    reader.IsDBNull(13) ? null : reader.GetGuid(13), reader.GetString(14),
+                    reader.GetDecimal(15), reader.GetDecimal(16),
+                    reader.IsDBNull(17) ? null : reader.GetGuid(17),
+                    !reader.IsDBNull(18) ? new("Payable", reader.GetGuid(18)) :
+                    !reader.IsDBNull(19) ? new("Receivable", reader.GetGuid(19)) : null,
+                    reader.IsDBNull(20) ? null : reader.GetString(20)));
+        } while (await reader.ReadAsync(cancellationToken));
         return new(batchId, businessId, effectiveOn, currency, description, status,
             lines.Sum(line => line.Debit), lines.Sum(line => line.Credit), version,
             updatedAt, approvedAt, postedAt, lines);
@@ -1693,25 +1870,36 @@ public sealed partial class SqlAccountingStore(
             IsolationLevel.Serializable, cancellationToken);
         try
         {
+            AccountingReadinessView? existingReady = null;
+            await using (var current = new SqlCommand("""
+                SELECT Status,FunctionalCurrencyCode,EffectiveFrom,OpeningBalanceMode,ActivatedAt
+                FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+                WHERE TenantId=@TenantId;
+                """, connection, transaction))
+            {
+                current.Parameters.AddWithValue("@TenantId", user.TenantId);
+                await using var reader = await current.ExecuteReaderAsync(cancellationToken);
+                if (await reader.ReadAsync(cancellationToken) && reader.GetString(0) == AccountingActivationStatuses.Ready)
+                    existingReady = new(reader.GetString(0), reader.GetString(1),
+                        reader.IsDBNull(2) ? null : DateOnly.FromDateTime(reader.GetDateTime(2)),
+                        reader.IsDBNull(3) ? null : reader.GetString(3),
+                        reader.IsDBNull(4) ? null : reader.GetDateTimeOffset(4), [], false);
+            }
+            // An accepted activation is authoritative. A replay must not revalidate
+            // later configuration or report a new activation timestamp.
+            if (existingReady is not null && existingReady.EffectiveFrom == request.EffectiveFrom &&
+                existingReady.FunctionalCurrencyCode == request.FunctionalCurrencyCode &&
+                existingReady.OpeningBalanceMode == request.OpeningBalanceMode)
+                return await CompleteExistingAsync(existingReady);
+
             var issues = await ReadActivationIssuesAsync(
                 connection, transaction, user, request.EffectiveFrom,
                 request.OpeningBalanceMode, cancellationToken);
             if (issues.Count > 0)
                 throw new AccountingConflictException(
                     $"Accounting is not ready: {string.Join("; ", issues)}");
-            var wasReady = false;
+            var wasReady = existingReady is not null;
             var allowReadyReconfiguration = false;
-            await using (var current = new SqlCommand("""
-                SELECT Status FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
-                WHERE TenantId=@TenantId;
-                """, connection, transaction))
-            {
-                current.Parameters.AddWithValue("@TenantId", user.TenantId);
-                wasReady = string.Equals(
-                    await current.ExecuteScalarAsync(cancellationToken) as string,
-                    AccountingActivationStatuses.Ready,
-                    StringComparison.Ordinal);
-            }
             if (wasReady)
             {
                 allowReadyReconfiguration = request.OpeningBalanceMode == "ImportedAndApproved"
@@ -1721,6 +1909,8 @@ public sealed partial class SqlAccountingStore(
                     throw new AccountingConflictException(
                         "No se puede reemplazar el inicio en cero porque ya existen movimientos contables.");
             }
+            if (existingReady is not null && !allowReadyReconfiguration)
+                return await CompleteExistingAsync(existingReady);
             var now = timeProvider.GetUtcNow();
             await using var command = new SqlCommand("""
                 MERGE dbo.AccountingTenantSettings WITH(HOLDLOCK) AS target
@@ -1764,12 +1954,23 @@ public sealed partial class SqlAccountingStore(
             await transaction.CommitAsync(cancellationToken);
             return new(activationStatus,
                 request.FunctionalCurrencyCode, request.EffectiveFrom,
-                request.OpeningBalanceMode, now, [], activationStatus != AccountingActivationStatuses.Configuring);
+                request.OpeningBalanceMode,
+                activationStatus == AccountingActivationStatuses.Ready ? now : null,
+                [], activationStatus != AccountingActivationStatuses.Configuring);
         }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (transaction.Connection?.State == ConnectionState.Open)
+                await transaction.RollbackAsync(CancellationToken.None);
             throw;
+        }
+
+        async Task<AccountingReadinessView> CompleteExistingAsync(AccountingReadinessView stored)
+        {
+            var canEdit = await CanEditOpeningBalancesAsync(
+                connection, transaction, user.TenantId, true, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return stored with { CanEditOpeningBalances = canEdit };
         }
     }
 
@@ -1782,6 +1983,31 @@ public sealed partial class SqlAccountingStore(
         await using var command = new SqlCommand("""
             DECLARE @Profile nvarchar(32)=(SELECT TOP(1) ProfileCode
               FROM dbo.AccountingConfigurationProfiles WHERE IsDefault=1 AND IsActive=1);
+            DECLARE @NonZeroOpening bit=0,@PendingZeroCut bit=0;
+            -- Only the initial declaration is checked. Current activity cannot
+            -- invalidate a previously accepted zero opening or its replay.
+            IF @OpeningMode=N'ZeroDeclared' AND NOT EXISTS(SELECT 1 FROM dbo.AccountingTenantSettings
+                WHERE TenantId=@TenantId AND Status=N'Ready')
+            BEGIN
+              IF EXISTS(SELECT 1 FROM dbo.Payables balance JOIN dbo.Businesses business ON business.BusinessId=balance.BusinessId
+                  WHERE business.TenantId=@TenantId AND balance.OutstandingAmount<>0)
+                OR EXISTS(SELECT 1 FROM dbo.Receivables balance JOIN dbo.Businesses business ON business.BusinessId=balance.BusinessId
+                  WHERE business.TenantId=@TenantId AND balance.OutstandingAmount<>0)
+                OR EXISTS(SELECT 1 FROM dbo.SupplierCredits balance JOIN dbo.Businesses business ON business.BusinessId=balance.BusinessId
+                  WHERE business.TenantId=@TenantId AND balance.AvailableAmount<>0)
+                OR EXISTS(SELECT 1 FROM dbo.CustomerCredits balance JOIN dbo.Businesses business ON business.BusinessId=balance.BusinessId
+                  WHERE business.TenantId=@TenantId AND balance.AvailableAmount<>0)
+                OR EXISTS(SELECT 1 FROM dbo.InventoryBalances balance JOIN dbo.Businesses business ON business.BusinessId=balance.BusinessId
+                  WHERE business.TenantId=@TenantId AND balance.InventoryValue<>0)
+                OR EXISTS(SELECT 1 FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+                  WHERE entry.TenantId=@TenantId GROUP BY line.AccountId,line.PartyId HAVING SUM(line.Debit-line.Credit)<>0)
+                SET @NonZeroOpening=1;
+              IF EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs WHERE TenantId=@TenantId
+                  AND Status IN(N'Pending',N'AccountingPendingConfiguration'))
+                OR EXISTS(SELECT 1 FROM dbo.DocumentProcessingJobs job JOIN dbo.Businesses business ON business.BusinessId=job.BusinessId
+                  WHERE business.TenantId=@TenantId AND job.Status<>N'Completed')
+                SET @PendingZeroCut=1;
+            END;
             SELECT
               (SELECT COUNT(*) FROM dbo.AccountingConfigurationProfileAccounts d
                WHERE d.ProfileCode=@Profile AND d.IsRequired=1 AND NOT EXISTS
@@ -1804,7 +2030,8 @@ public sealed partial class SqlAccountingStore(
                  (SELECT 1 FROM dbo.AccountingOpeningBalanceBatches o
                   WHERE o.TenantId=@TenantId AND o.BusinessId=b.BusinessId
                     AND o.EffectiveOn=@EffectiveFrom
-                    AND o.Status IN (N'Approved',N'Posted')));
+                    AND o.Status IN (N'Approved',N'Posted'))),
+              @NonZeroOpening,@PendingZeroCut;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -1817,6 +2044,8 @@ public sealed partial class SqlAccountingStore(
         if (!reader.GetBoolean(1)) issues.Add("No existe un periodo abierto que incluya la fecha efectiva.");
         if (reader.GetInt32(2) > 0) issues.Add("Hay un negocio activo sin centro de costo predeterminado.");
         if (reader.GetInt32(3) > 0) issues.Add("Hay un negocio activo sin saldos iniciales aprobados para la fecha efectiva.");
+        if (reader.GetBoolean(4)) issues.Add("No se permite una apertura en cero: existen saldos contables, de cartera, créditos o inventario que requieren conciliación y saldos iniciales aprobados.");
+        if (reader.GetBoolean(5)) issues.Add("No se permite una apertura en cero mientras existan operaciones aceptadas pendientes de procesar o corregir en el corte.");
         return issues;
     }
 
@@ -1827,7 +2056,7 @@ public sealed partial class SqlAccountingStore(
         var batches = new List<OpeningBatchPosting>();
         await using (var command = new SqlCommand("""
             SELECT b.BatchId,b.BusinessId,b.Description,l.LineNumber,l.AccountId,
-                   l.PartyId,l.CostCenterId,l.Description,l.Debit,l.Credit
+                   l.PartyId,l.CostCenterId,l.Description,l.Debit,l.Credit,l.LineId,l.ExistingPayableId,l.ExistingReceivableId
             FROM dbo.AccountingOpeningBalanceBatches b WITH(UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Businesses business ON business.BusinessId=b.BusinessId AND business.IsActive=1
             INNER JOIN dbo.AccountingOpeningBalanceLines l ON l.BatchId=b.BatchId
@@ -1850,46 +2079,29 @@ public sealed partial class SqlAccountingStore(
                 batch.Lines.Add(new(reader.GetInt32(3), reader.GetGuid(4),
                     reader.IsDBNull(5) ? null : reader.GetGuid(5),
                     reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetString(7),
-                    reader.GetDecimal(8), reader.GetDecimal(9)));
+                    reader.GetDecimal(8), reader.GetDecimal(9),
+                    reader.IsDBNull(10) ? null : reader.GetGuid(10),
+                    !reader.IsDBNull(11) ? new("Payable", reader.GetGuid(11)) :
+                    !reader.IsDBNull(12) ? new("Receivable", reader.GetGuid(12)) : null));
             }
         }
 
-        foreach (var batch in batches)
-        {
-            var occurredAt = new DateTimeOffset(effectiveOn.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-            var payload = JsonSerializer.Serialize(new ConfirmManualAccountingVoucherRequest(
-                batch.BatchId, batch.BusinessId, occurredAt, "OPENING_BALANCE",
-                batch.Description, batch.Lines.Select(line => new ManualVoucherLineRequest(
-                    line.AccountId, line.PartyId, line.CostCenterId, line.Description,
-                    line.Debit, line.Credit)).ToArray()));
-            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
-            var jobId = ids.NewId();
-            await using (var insert = new SqlCommand("""
-                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments WITH(UPDLOCK,HOLDLOCK)
-                              WHERE SourceDocumentId=@BatchId AND SourceDocumentType=N'AccountingOpeningBalance')
-                BEGIN
-                  INSERT dbo.AccountingSourceDocuments
-                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-                  VALUES(@BatchId,N'AccountingOpeningBalance',@TenantId,@BusinessId,@Payload,@Hash,@OccurredAt,@Now,1);
-                  INSERT dbo.AccountingPostingJobs
-                  (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
-                   SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
-                VALUES(@JobId,@TenantId,@BusinessId,@BatchId,N'AccountingOpeningBalance',
-                       @Hash,@OccurredAt,N'Pending',0,@Now);
-                END
-                """, connection, transaction))
-            {
-                insert.Parameters.AddWithValue("@BatchId", batch.BatchId);
-                insert.Parameters.AddWithValue("@TenantId", user.TenantId);
-                insert.Parameters.AddWithValue("@BusinessId", batch.BusinessId);
-                insert.Parameters.AddWithValue("@Payload", payload);
-                insert.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = hash;
-                insert.Parameters.AddWithValue("@OccurredAt", occurredAt);
-                insert.Parameters.AddWithValue("@Now", now);
-                insert.Parameters.AddWithValue("@JobId", jobId);
-                await insert.ExecuteNonQueryAsync(cancellationToken);
-            }
-        }
+        var occurredAt = new DateTimeOffset(effectiveOn.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        foreach (var page in batches.Chunk(100))
+            await SqlAccountingPostingJobWriter.InsertSourcesAsync(connection, transaction,
+                page.Select(batch => new SqlAccountingPostingJobWriter.Source(user.TenantId, batch.BusinessId,
+                    batch.BatchId, "AccountingOpeningBalance",
+                    batch.Lines.Any(line => line.ExistingPosition is not null)
+                    ? JsonSerializer.Serialize(new AccountingReconciledOpeningPayload(
+                        batch.BatchId, batch.BusinessId, occurredAt, "OPENING_BALANCE", batch.Description,
+                        batch.Lines.Select(line => new AccountingReconciledOpeningLine(line.LineNumber,
+                            line.AccountId, line.PartyId, line.CostCenterId, line.Description,
+                            line.Debit, line.Credit, line.LineId, line.ExistingPosition)).ToArray()))
+                    : JsonSerializer.Serialize(new ConfirmManualAccountingVoucherRequest(
+                        batch.BatchId, batch.BusinessId, occurredAt, "OPENING_BALANCE", batch.Description,
+                        batch.Lines.Select(line => new ManualVoucherLineRequest(line.AccountId, line.PartyId,
+                            line.CostCenterId, line.Description, line.Debit, line.Credit)).ToArray())),
+                    occurredAt, ids.NewId())).ToArray(), now, AccountingJobRequirement.OpeningBalance, cancellationToken);
     }
 
     public async Task<IReadOnlyList<AccountingOpeningBalancePosting>> ListPendingOpeningPostingsAsync(
@@ -2023,28 +2235,41 @@ public sealed partial class SqlAccountingStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
+        return await ReadBankAccountsAsync(connection, null, user.TenantId, includeInactive, null, cancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<BankAccountView>> ReadBankAccountsAsync(
+        SqlConnection connection, SqlTransaction? transaction, Guid tenantId, bool includeInactive,
+        Guid? bankAccountId, CancellationToken cancellationToken)
+    {
         await using var command = new SqlCommand("""
-            SELECT b.BankAccountId,b.AccountingAccountId,a.Code,a.Name,
+            SELECT b.BankAccountId,CONVERT(uniqueidentifier,linked.SingleAccountId),linked.SingleCode,linked.SingleName,
                    b.AccountTypeOptionId,o.Code,o.Label,b.BankName,b.AccountNumber,
-                   b.DisplayName,b.CurrencyCode,b.IsPrimary,b.IsActive,b.RowVersion
+                   b.DisplayName,b.CurrencyCode,b.IsPrimary,b.IsActive,b.RowVersion,linked.AuxiliaryCount
             FROM accounting.BankAccounts b
-            INNER JOIN dbo.AccountingAccounts a
-              ON a.AccountId=b.AccountingAccountId AND a.TenantId=b.TenantId
+            OUTER APPLY(SELECT COUNT(*) AuxiliaryCount,
+              CASE WHEN COUNT(*)=1 THEN MAX(CONVERT(nvarchar(36),account.AccountId)) END SingleAccountId,
+              CASE WHEN COUNT(*)=1 THEN MAX(account.Code) END SingleCode,
+              CASE WHEN COUNT(*)=1 THEN MAX(account.Name) END SingleName
+              FROM dbo.AccountingAccounts account
+              WHERE account.TenantId=b.TenantId AND account.BankAccountId=b.BankAccountId) linked
             INNER JOIN reference.Options o
               ON o.OptionId=b.AccountTypeOptionId AND o.CatalogCode=N'bank-account-type'
             WHERE b.TenantId=@TenantId AND (@IncludeInactive=1 OR b.IsActive=1)
+              AND (@BankAccountId IS NULL OR b.BankAccountId=@BankAccountId)
             ORDER BY b.IsPrimary DESC,b.DisplayName,b.BankAccountId;
-            """, connection);
-        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@IncludeInactive", includeInactive);
+        command.Parameters.Add("@BankAccountId", SqlDbType.UniqueIdentifier).Value = (object?)bankAccountId ?? DBNull.Value;
         var values = new List<BankAccountView>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            values.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
-                reader.GetString(3), reader.GetGuid(4), reader.GetString(5), reader.GetString(6),
+            values.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetGuid(4), reader.GetString(5), reader.GetString(6),
                 reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.GetString(10),
                 reader.GetBoolean(11), reader.GetBoolean(12),
-                Convert.ToBase64String((byte[])reader[13])));
+                Convert.ToBase64String((byte[])reader[13]),reader.GetInt32(14)));
         return values;
     }
 
@@ -2085,28 +2310,19 @@ public sealed partial class SqlAccountingStore(
         {
             await using (var validation = new SqlCommand("""
                 IF NOT EXISTS(
-                    SELECT 1 FROM dbo.AccountingAccounts WITH(UPDLOCK,HOLDLOCK)
-                    WHERE AccountId=@AccountingAccountId AND TenantId=@TenantId
-                      AND IsActive=1 AND AllowsPosting=1 AND AccountType=N'Asset'
-                      AND RequiresParty=0)
-                    THROW 51400,N'La cuenta bancaria debe usar un auxiliar activo del activo, contabilizable y sin tercero obligatorio.',1;
-                IF NOT EXISTS(
                     SELECT 1 FROM reference.Options
                     WHERE OptionId=@AccountTypeOptionId AND CatalogCode=N'bank-account-type' AND IsActive=1)
                     THROW 51400,N'El tipo de cuenta bancaria no es válido.',1;
                 """, connection, transaction))
             {
-                validation.Parameters.AddWithValue("@AccountingAccountId", request.AccountingAccountId);
                 validation.Parameters.AddWithValue("@AccountTypeOptionId", request.AccountTypeOptionId);
-                validation.Parameters.AddWithValue("@TenantId", user.TenantId);
                 await validation.ExecuteNonQueryAsync(cancellationToken);
             }
 
             var exists = false;
             var wasPrimary = false;
-            Guid? previousAccountingAccountId = null;
             await using (var current = new SqlCommand("""
-                SELECT IsPrimary,AccountingAccountId FROM accounting.BankAccounts WITH(UPDLOCK,HOLDLOCK)
+                SELECT IsPrimary FROM accounting.BankAccounts WITH(UPDLOCK,HOLDLOCK)
                 WHERE BankAccountId=@BankAccountId AND TenantId=@TenantId;
                 """, connection, transaction))
             {
@@ -2114,26 +2330,26 @@ public sealed partial class SqlAccountingStore(
                 current.Parameters.AddWithValue("@TenantId", user.TenantId);
                 await using var reader = await current.ExecuteReaderAsync(cancellationToken);
                 exists = await reader.ReadAsync(cancellationToken);
-                if (exists) { wasPrimary = reader.GetBoolean(0); previousAccountingAccountId = reader.GetGuid(1); }
+                if (exists) wasPrimary = reader.GetBoolean(0);
             }
 
             if (exists && expectedVersion is null)
                 throw new AccountingConflictException("Actualiza la lista para obtener la versión vigente de la cuenta bancaria.");
-            if (exists && previousAccountingAccountId != request.AccountingAccountId)
+            if (!exists && expectedVersion is not null)
+                throw new AccountingConflictException("La cuenta bancaria no existe. Actualiza la lista antes de guardar.");
+            // Compatibility input is translated once into the PUC relationship.
+            // Updating a bank never rebinds its auxiliaries behind the account editor.
+            if (exists && request.AccountingAccountId is { } existingAccountId)
             {
-                await using var used = new SqlCommand("""
-                    SELECT CASE
-                      WHEN EXISTS(SELECT 1 FROM dbo.SalesPayments WHERE BankAccountId=@BankAccountId)
-                        OR EXISTS(SELECT 1 FROM dbo.SalesReturns WHERE BankAccountId=@BankAccountId)
-                        OR EXISTS(SELECT 1 FROM dbo.SalesReturnSettlements WHERE BankAccountId=@BankAccountId)
-                        OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentTenders WHERE BankAccountId=@BankAccountId)
-                        OR EXISTS(SELECT 1 FROM dbo.CustomerPaymentTenders WHERE BankAccountId=@BankAccountId)
-                        OR EXISTS(SELECT 1 FROM accounting.BankReconciliations WHERE BankAccountId=@BankAccountId)
-                      THEN 1 ELSE 0 END;
+                await using var linked = new SqlCommand("""
+                    SELECT COUNT(*) FROM dbo.AccountingAccounts WITH(UPDLOCK,HOLDLOCK)
+                    WHERE TenantId=@TenantId AND AccountId=@AccountId AND BankAccountId=@BankAccountId;
                     """, connection, transaction);
-                used.Parameters.AddWithValue("@BankAccountId", request.BankAccountId);
-                if (Convert.ToBoolean(await used.ExecuteScalarAsync(cancellationToken)))
-                    throw new AccountingConflictException("El auxiliar PUC no puede cambiar porque la cuenta bancaria ya tiene movimientos o conciliaciones.");
+                linked.Parameters.AddWithValue("@TenantId", user.TenantId);
+                linked.Parameters.AddWithValue("@AccountId", existingAccountId);
+                linked.Parameters.AddWithValue("@BankAccountId", request.BankAccountId);
+                if (Convert.ToInt32(await linked.ExecuteScalarAsync(cancellationToken)) != 1)
+                    throw new AccountingConflictException("Configura los auxiliares y sus vínculos bancarios desde el PUC.");
             }
 
             var makePrimary = request.IsActive && (request.IsPrimary || !await HasActiveBankAccountAsync(
@@ -2158,23 +2374,21 @@ public sealed partial class SqlAccountingStore(
             }
 
             await using var save = new SqlCommand(exists ? """
-                UPDATE accounting.BankAccounts SET AccountingAccountId=@AccountingAccountId,
-                    AccountTypeOptionId=@AccountTypeOptionId,BankName=@BankName,
+                UPDATE accounting.BankAccounts SET AccountTypeOptionId=@AccountTypeOptionId,BankName=@BankName,
                     AccountNumber=@AccountNumber,DisplayName=@DisplayName,
                     IsPrimary=@IsPrimary,IsActive=@IsActive,UpdatedByUserId=@UserId,UpdatedAt=@Now
                 WHERE BankAccountId=@BankAccountId AND TenantId=@TenantId
                   AND (@ExpectedVersion IS NULL OR RowVersion=@ExpectedVersion);
                 """ : """
-                INSERT accounting.BankAccounts(BankAccountId,TenantId,AccountingAccountId,
+                INSERT accounting.BankAccounts(BankAccountId,TenantId,
                     AccountTypeOptionId,BankName,AccountNumber,DisplayName,CurrencyCode,
                     IsPrimary,IsActive,CreatedByUserId,CreatedAt,UpdatedByUserId,UpdatedAt)
-                VALUES(@BankAccountId,@TenantId,@AccountingAccountId,@AccountTypeOptionId,
+                VALUES(@BankAccountId,@TenantId,@AccountTypeOptionId,
                     @BankName,@AccountNumber,@DisplayName,N'COP',@IsPrimary,@IsActive,
                     @UserId,@Now,@UserId,@Now);
                 """, connection, transaction);
             save.Parameters.AddWithValue("@BankAccountId", request.BankAccountId);
             save.Parameters.AddWithValue("@TenantId", user.TenantId);
-            save.Parameters.AddWithValue("@AccountingAccountId", request.AccountingAccountId);
             save.Parameters.AddWithValue("@AccountTypeOptionId", request.AccountTypeOptionId);
             save.Parameters.AddWithValue("@BankName", request.BankName);
             save.Parameters.AddWithValue("@AccountNumber", request.AccountNumber);
@@ -2189,10 +2403,29 @@ public sealed partial class SqlAccountingStore(
             if (await save.ExecuteNonQueryAsync(cancellationToken) != 1)
                 throw new AccountingConflictException("La cuenta bancaria cambió. Actualiza la lista e inténtalo de nuevo.");
 
+            if (!exists && request.AccountingAccountId is { } initialAccountId)
+            {
+                var account = await ReadAccountForEditAsync(connection, transaction, user.TenantId, initialAccountId, cancellationToken)
+                    ?? throw new AccountingConflictException("El auxiliar no pertenece a esta empresa.");
+                if (!account.IsActive || !account.AllowsPosting || account.AccountType != "Asset" || account.RequiresParty ||
+                    account.Semantics is { FinancialFunction: not ("General" or "Bank") } ||
+                    account.Semantics?.BankAccountId is not null)
+                    throw new AccountingValidationException("Selecciona un auxiliar activo del activo, sin tercero obligatorio ni vínculo bancario previo.");
+                var semantics = account.Semantics is { } configured
+                    ? configured with { FinancialFunction = "Bank", BalanceSide = "Debit", BankAccountId = request.BankAccountId }
+                    : new AccountingAccountSemantics(null, "Bank", "Debit", null, request.BankAccountId, null);
+                await UpdateAccountInTransactionAsync(connection, transaction, user, initialAccountId,
+                    new(account.Name, account.RequiresParty, account.RowVersion!, semantics), cancellationToken,
+                    preserveLegacyParent: true);
+            }
+
             await EnqueueBankAccountSynchronizationAsync(
                 connection, transaction, user.TenantId, cancellationToken);
 
+            var result = (await ReadBankAccountsAsync(connection, transaction, user.TenantId, true,
+                request.BankAccountId, cancellationToken)).Single();
             await transaction.CommitAsync(cancellationToken);
+            return result;
         }
         catch (SqlException exception) when (IsConflict(exception))
         {
@@ -2204,9 +2437,6 @@ public sealed partial class SqlAccountingStore(
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
-
-        return (await ListBankAccountsAsync(user, true, cancellationToken))
-            .Single(value => value.BankAccountId == request.BankAccountId);
     }
 
     private static async Task<bool> HasActiveBankAccountAsync(

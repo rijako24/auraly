@@ -1,14 +1,273 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Application.Purchasing;
 using Auraly.Contracts.Purchasing;
+using Auraly.Application.Payables;
+using Auraly.Contracts.Payables;
+using Auraly.Domain.Payables;
+using Auraly.BuildingBlocks.Domain.Payments;
+using Auraly.Commerce.Accounting.Infrastructure;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 [Trait("EngineCertification", "Operational")]
-public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
+public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Anticipated_financial_discount_reduces_each_return_settlement_without_creating_a_supplier_credit()
+    {
+        var receipt = await CreateReceiptAsync(10m, financialDiscount:
+            new GoodsReceiptFinancialDiscountRequest(10m, null, true));
+        Assert.Equal(54_500m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            receipt.Acceptance.DocumentId));
+        using var client = CreateReturnClient();
+        var first = CreateReturn(receipt.Acceptance.DocumentId, 4m);
+        using (var response = await SendAsync(client, first, first.ReturnId.ToString("N")))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Equal(2_000m, await ScalarAsync<decimal>(
+            "SELECT FinancialDiscountAmount FROM dbo.PurchaseReturnLines WHERE PurchaseReturnId=@Id", first.ReturnId));
+        Assert.Equal(21_800m, await ScalarAsync<decimal>(
+            "SELECT PayableCreditAmount FROM dbo.PurchaseReturnFinancialEffects WHERE PurchaseReturnId=@Id", first.ReturnId));
+        Assert.Equal(21_800m, await ScalarAsync<decimal>(
+            "SELECT DebitTotal FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PurchaseReturn'", first.ReturnId));
+        Assert.Equal(32_700m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            receipt.Acceptance.DocumentId));
+        Assert.Equal(27_000m, await InventoryAsync(receipt.ProductId, "InventoryValue"));
+        using (var replay = await SendAsync(client, first, first.ReturnId.ToString("N")))
+            Assert.True(replay.IsSuccessStatusCode, await replay.Content.ReadAsStringAsync());
+        Assert.Equal(1, await CountAsync("PurchaseReturnFinancialEffects", "PurchaseReturnId", first.ReturnId));
+
+        var second = CreateReturn(receipt.Acceptance.DocumentId, 6m);
+        using (var response = await SendAsync(client, second, second.ReturnId.ToString("N")))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Equal(3_000m, await ScalarAsync<decimal>(
+            "SELECT FinancialDiscountAmount FROM dbo.PurchaseReturnLines WHERE PurchaseReturnId=@Id", second.ReturnId));
+        Assert.Equal(32_700m, await ScalarAsync<decimal>(
+            "SELECT PayableCreditAmount FROM dbo.PurchaseReturnFinancialEffects WHERE PurchaseReturnId=@Id", second.ReturnId));
+        Assert.Equal(32_700m, await ScalarAsync<decimal>(
+            "SELECT CreditTotal FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id AND SourceDocumentType=N'PurchaseReturn'", second.ReturnId));
+        Assert.Equal(0m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+            receipt.Acceptance.DocumentId));
+        Assert.Equal(0m, await InventoryAsync(receipt.ProductId, "InventoryValue"));
+        Assert.Equal(0, await CountAsync("SupplierCredits", "SourcePurchaseReturnId", first.ReturnId));
+        Assert.Equal(0, await CountAsync("SupplierCredits", "SourcePurchaseReturnId", second.ReturnId));
+    }
+
+    [Fact]
+    public async Task Invalid_last_batch_line_rolls_back_acceptance_and_the_same_command_can_then_complete_once()
+    {
+        var receipt = await CreateReceiptAsync(10m, 20);
+        var request = CreateReturn(receipt.Acceptance.DocumentId, 4m) with
+        {
+            Lines = Enumerable.Range(1, 20).Select(number => new PurchaseReturnLineRequest(number, 4m)).ToArray()
+        };
+        var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        using var scope = fixture.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IPurchaseReturnStore>();
+        var user = new PurchasingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { PurchasingPermissionCodes.CreatePurchaseReturns, PurchasingPermissionCodes.ConfirmPurchaseReturns });
+        using (var fault = new InventoryBalanceProcessingTests.CommandCounter(database,
+            commandFilter: command => command.CommandText.Contains("INSERT dbo.PurchaseReturns", StringComparison.Ordinal)
+                && command.Parameters["@Id"].Value is Guid id && id == request.ReturnId,
+            beforeExecute: command =>
+            {
+                var lines = System.Text.Json.Nodes.JsonNode.Parse((string)command.Parameters["@Lines"].Value)!.AsArray();
+                lines[^1]!["RecognizedUnitCost"] = -1m;
+                command.Parameters["@Lines"].Value = lines.ToJsonString();
+            }))
+        {
+            var error = await Assert.ThrowsAsync<SqlException>(() => store.AcceptAsync(user,
+                request.ReturnId.ToString("N"), request, default));
+            Assert.Equal(547, error.Number);
+            Assert.Contains("CK_PurchaseReturnLines_Amounts", error.Message);
+            Assert.Equal(1, fault.Count);
+        }
+        Assert.Equal(0, await CountAsync("PurchaseReturns", "PurchaseReturnId", request.ReturnId));
+        Assert.Equal(0, await CountAsync("DocumentProcessingJobs", "DocumentId", request.ReturnId));
+        Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PurchaseReturnLines WHERE PurchaseReturnId=@Id", request.ReturnId));
+        Assert.Equal(200m, await InventoryAsync(receipt.ProductId, "QuantityOnHand"));
+        Assert.Equal(1_190_000m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'", receipt.Acceptance.DocumentId));
+        using var client = CreateReturnClient();
+        using (var accepted = await SendAsync(client, request, request.ReturnId.ToString("N"))) accepted.EnsureSuccessStatusCode();
+        using (var replay = await SendAsync(client, request, request.ReturnId.ToString("N"))) replay.EnsureSuccessStatusCode();
+        Assert.Equal(120m, await InventoryAsync(receipt.ProductId, "QuantityOnHand"));
+        Assert.Equal(20, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
+        Assert.Equal(1, await CountAsync("PayableTransactions", "SourceDocumentId", request.ReturnId));
+    }
+
+    [Fact]
+    public async Task One_and_twenty_return_lines_share_one_inventory_batch_and_constant_round_trips()
+    {
+        var commands = new List<int>();
+        foreach (var lineCount in new[] { 1, 20 })
+        {
+            var receipt = await CreateReceiptAsync(10m, lineCount);
+            var request = CreateReturn(receipt.Acceptance.DocumentId, 4m) with
+            {
+                Lines = Enumerable.Range(1, lineCount).Select(number => new PurchaseReturnLineRequest(number, 4m)).ToArray()
+            };
+            var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+            using var client = CreateReturnClient();
+            using (var count = new InventoryBalanceProcessingTests.CommandCounter(database))
+            {
+                using var response = await SendAsync(client, request, request.ReturnId.ToString("N"));
+                Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+                commands.Add(count.Count);
+            }
+            Assert.Equal(6m * lineCount, await InventoryAsync(receipt.ProductId, "QuantityOnHand"));
+            Assert.Equal(30_000m * lineCount, await InventoryAsync(receipt.ProductId, "InventoryValue"));
+            Assert.Equal(35_700m * lineCount, await ScalarAsync<decimal>(
+                "SELECT OutstandingAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
+                receipt.Acceptance.DocumentId));
+            Assert.Equal(lineCount, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
+            Assert.Equal(1, await CountAsync("PayableTransactions", "SourceDocumentId", request.ReturnId));
+            Assert.InRange(await ScalarAsync<long>("""
+                SELECT DATEDIFF_BIG(microsecond,StartedAt,CompletedAt) FROM dbo.DocumentProcessingJobs
+                WHERE DocumentId=@Id AND DocumentType=N'PurchaseReturn';
+                """, request.ReturnId), 0L, 2_000_000L);
+            using var replayCount = new InventoryBalanceProcessingTests.CommandCounter(database,
+                commandFilter: command => command.CommandText.Contains("INSERT dbo.InventoryMovements(", StringComparison.Ordinal));
+            using var replay = await SendAsync(client, request, request.ReturnId.ToString("N"));
+            replay.EnsureSuccessStatusCode();
+            Assert.Equal(0, replayCount.Count);
+            Assert.Equal(6m * lineCount, await InventoryAsync(receipt.ProductId, "QuantityOnHand"));
+        }
+        output.WriteLine("Devolución completa de una/veinte líneas: {0}/{1} comandos SQL.", commands[0], commands[1]);
+        Assert.True(commands[0] > 0, "Se requiere evidencia del camino SQL real.");
+        Assert.True(commands[1] <= commands[0], $"Una línea: {commands[0]} SQL; veinte: {commands[1]} SQL.");
+    }
+
+    [Fact]
+    public async Task Return_with_missing_original_account_keeps_the_debt_unchanged_until_explicit_retry()
+    {
+        var receipt = await CreateReceiptAsync(10m);
+        var payableId = await ScalarAsync<Guid>("SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", receipt.Acceptance.DocumentId);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Guid entryId; int lineNumber;
+        await using (var original = new SqlCommand("SELECT OpeningEntryId,OpeningEntryLineNumber FROM dbo.Payables WHERE PayableId=@Id", connection))
+        {
+            original.Parameters.AddWithValue("@Id", payableId);
+            await using var reader = await original.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync()); entryId = reader.GetGuid(0); lineNumber = reader.GetInt32(1);
+        }
+        var returned = CreateReturn(receipt.Acceptance.DocumentId, 4m);
+        try
+        {
+            await ExecuteAsync("UPDATE dbo.Payables SET OpeningEntryId=NULL,OpeningEntryLineNumber=NULL WHERE PayableId=@Id", payableId);
+            using var client = CreateReturnClient();
+            using var response = await SendAsync(client, returned, returned.ReturnId.ToString("N"));
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            Assert.Equal("OriginalPositionAccountMissing", await ScalarAsync<string>(
+                "SELECT LastErrorCode FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", returned.ReturnId));
+            Assert.Contains("No se aplicó la devolución", await ScalarAsync<string>(
+                "SELECT LastErrorMessage FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", returned.ReturnId));
+            Assert.Equal(59_500m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+            Assert.Equal(0, await CountAsync("PurchaseReturnFinancialEffects", "PurchaseReturnId", returned.ReturnId));
+            Assert.Equal(0, await CountAsync("PayableTransactions", "SourceDocumentId", returned.ReturnId));
+            Assert.Equal(0, await CountAsync("SupplierCredits", "SourcePurchaseReturnId", returned.ReturnId));
+        }
+        finally
+        {
+            await using var restore = new SqlCommand("UPDATE dbo.Payables SET OpeningEntryId=@EntryId,OpeningEntryLineNumber=@Line WHERE PayableId=@Id", connection);
+            restore.Parameters.AddWithValue("@Id", payableId); restore.Parameters.AddWithValue("@EntryId", entryId);
+            restore.Parameters.AddWithValue("@Line", lineNumber); await restore.ExecuteNonQueryAsync();
+        }
+        using var scope = fixture.CreateScope();
+        var processor = scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>();
+        await processor.ProcessAsync(returned.ReturnId, "PurchaseReturn", fixture.BusinessId, default);
+        await processor.ProcessAsync(returned.ReturnId, "PurchaseReturn", fixture.BusinessId, default);
+        Assert.Equal(35_700m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+        Assert.Equal(1, await CountAsync("PayableTransactions", "SourceDocumentId", returned.ReturnId));
+        Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", returned.ReturnId));
+        await PortfolioOriginalAccountScenario.AssertReturnOriginalLineAsync(fixture, false,
+            receipt.Acceptance.DocumentId, returned.ReturnId, 23_800m);
+    }
+
+    [Fact]
+    public async Task Return_uses_the_original_payable_auxiliary_after_the_mapping_changes()
+    {
+        var receipt = await CreateReceiptAsync(10m);
+        using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreatePurchaseReturns,
+            PurchasingPermissionCodes.ConfirmPurchaseReturns, Auraly.Commerce.Accounting.Contracts.AccountingPermissionCodes.Configure);
+        var alternate = await PortfolioOriginalAccountScenario.RemapAsync(fixture, client, false);
+        try
+        {
+            var returned = CreateReturn(receipt.Acceptance.DocumentId, 4m);
+            using var response = await SendAsync(client, returned, returned.ReturnId.ToString("N"));
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+            await PortfolioOriginalAccountScenario.AssertReturnOriginalLineAsync(fixture, false,
+                receipt.Acceptance.DocumentId, returned.ReturnId, 23_800m);
+            using var replay = await SendAsync(client, returned, returned.ReturnId.ToString("N"));
+            replay.EnsureSuccessStatusCode();
+            await PortfolioOriginalAccountScenario.AssertReturnOriginalLineAsync(fixture, false,
+                receipt.Acceptance.DocumentId, returned.ReturnId, 23_800m);
+        }
+        finally { await PortfolioOriginalAccountScenario.RestoreAsync(fixture, alternate); }
+    }
+
+    [Theory]
+    [InlineData(0, false, 59_500, 23_800, 19_500, 4_300)]
+    [InlineData(10, false, 59_500, 23_800, 19_500, 4_300)]
+    [InlineData(10, true, 54_500, 21_800, 14_500, 7_300)]
+    public async Task Return_preserves_an_accepted_payment_reservation_and_credits_only_the_available_debt(
+        int discountPercent, bool anticipateInCost, int originalPayable, int returnedSettlement,
+        int expectedPayableCredit, int expectedSupplierCredit)
+    {
+        var receipt = await CreateReceiptAsync(10m, financialDiscount: discountPercent == 0 ? null :
+            new GoodsReceiptFinancialDiscountRequest(discountPercent, null, anticipateInCost));
+        var payableId = await ScalarAsync<Guid>("SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id", receipt.Acceptance.DocumentId);
+        Assert.Equal(originalPayable, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+        await ExecuteAsync("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@Id AND DocumentType=N'PayablePayment' AND IsActive=1)
+              INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,
+                RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+              VALUES(NEWID(),@Id,NULL,N'PayablePayment',N'PGP',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
+            """, fixture.BusinessId);
+        using var scope = fixture.CreateScope();
+        var paymentId = Guid.NewGuid();
+        var user = new PayablesUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { PayablesPermissionCodes.RegisterPayment });
+        var payment = new ConfirmSupplierPaymentRequest(paymentId, fixture.BusinessId, fixture.SupplierId,
+            new(2026, 8, 2, 10, 0, 0, TimeSpan.FromHours(-5)), "COP", "Abono aceptado antes de la devolución",
+            [new(payableId, 40_000m)], [new("Cash", 40_000m, 40_000m)]);
+        // Exercise the real native acceptance owner without dispatching posting yet.
+        var accepted = await scope.ServiceProvider.GetRequiredService<IPayablesStore>().AcceptPaymentAsync(user,
+            paymentId.ToString("N"), payment, PayableSettlement.Create([new(payableId, 40_000m)]),
+            PaymentTenderBreakdown.Create([new("Cash", 40_000m, 40_000m)], 40_000m, 1, PortfolioPaymentMethods.Supported), default);
+        Assert.Equal("Accepted", accepted.Status);
+        Assert.Equal(originalPayable, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+
+        var returned = CreateReturn(receipt.Acceptance.DocumentId, 4m);
+        using var client = CreateReturnClient();
+        using (var response = await SendAsync(client, returned, returned.ReturnId.ToString("N")))
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        Assert.Equal(expectedPayableCredit, await ScalarAsync<decimal>(
+            "SELECT PayableCreditAmount FROM dbo.PurchaseReturnFinancialEffects WHERE PurchaseReturnId=@Id", returned.ReturnId));
+        Assert.Equal(expectedSupplierCredit, await ScalarAsync<decimal>(
+            "SELECT SupplierCreditAmount FROM dbo.PurchaseReturnFinancialEffects WHERE PurchaseReturnId=@Id", returned.ReturnId));
+        Assert.Equal(returnedSettlement, await ScalarAsync<decimal>(
+            "SELECT PayableCreditAmount+SupplierCreditAmount FROM dbo.PurchaseReturnFinancialEffects WHERE PurchaseReturnId=@Id", returned.ReturnId));
+        Assert.Equal(40_000m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+        await scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>().ProcessAsync(paymentId, "PayablePayment", fixture.BusinessId, default);
+        Assert.Equal(0m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+        Assert.Equal("Processed", await ScalarAsync<string>("SELECT Status FROM dbo.SupplierPayments WHERE PaymentId=@Id", paymentId));
+        Assert.Equal(expectedSupplierCredit, await ScalarAsync<decimal>("SELECT AvailableAmount FROM dbo.SupplierCredits WHERE SourcePurchaseReturnId=@Id", returned.ReturnId));
+        using (var replay = await SendAsync(client, returned, returned.ReturnId.ToString("N"))) replay.EnsureSuccessStatusCode();
+        await scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>().ProcessAsync(paymentId, "PayablePayment", fixture.BusinessId, default);
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PayableTransactions WHERE SourceDocumentId=@Id AND TransactionType=N'Payment'", paymentId));
+        await PortfolioOriginalAccountScenario.AssertSupplierCreditOpeningAsync(fixture, returned.ReturnId, "PurchaseReturn");
+    }
+
     [Fact]
     public async Task Return_flows_once_through_inventory_payable_accounting_job_and_outbox()
     {
@@ -58,11 +317,11 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(1,await CountAsync("PayableTransactions","SourceDocumentId",request.ReturnId));
         Assert.Equal(1,await CountAsync("ServerOutboxMessages","DocumentId",request.ReturnId));
 
-        using var list=await client.GetAsync("/api/commerce/v1/purchase-returns/receipts?page=1&pageSize=25");
+        using var list=await client.GetAsync($"/api/commerce/v1/purchase-returns/receipts?page=1&pageSize=25&search={Uri.EscapeDataString(receipt.Acceptance.DocumentNumber)}");
         Assert.Equal(HttpStatusCode.OK,list.StatusCode);
         var page=await list.Content.ReadFromJsonAsync<ReturnableGoodsReceiptPage>();
-        Assert.NotNull(page);Assert.Contains(page.Items,
-            item=>item.GoodsReceiptId==receipt.Acceptance.DocumentId);
+        Assert.NotNull(page);Assert.Equal(1,page.TotalCount);
+        Assert.Equal(receipt.Acceptance.DocumentId,Assert.Single(page.Items).GoodsReceiptId);
         using var detail=await client.GetAsync(
             $"/api/commerce/v1/purchase-returns/receipts/{receipt.Acceptance.DocumentId:D}");
         Assert.Equal(HttpStatusCode.OK,detail.StatusCode);
@@ -85,6 +344,10 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(11_900m,await ScalarAsync<decimal>(
             "SELECT AvailableAmount FROM dbo.SupplierCredits WHERE SourcePurchaseReturnId=@Id",
             request.ReturnId));
+        await PortfolioOriginalAccountScenario.AssertSupplierCreditOpeningAsync(fixture, request.ReturnId, "PurchaseReturn");
+        using (var replay = await SendAsync(client, request, $"credit-{request.ReturnId:N}"))
+            Assert.Equal(HttpStatusCode.Accepted, replay.StatusCode);
+        await PortfolioOriginalAccountScenario.AssertSupplierCreditOpeningAsync(fixture, request.ReturnId, "PurchaseReturn");
         Assert.Equal(await ScalarAsync<Guid>(
                 "SELECT PartySiteId FROM dbo.Payables WHERE SourceDocumentId=@Id", receipt.Acceptance.DocumentId),
             await ScalarAsync<Guid>(
@@ -122,16 +385,18 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
         PurchasingPermissionCodes.CreatePurchaseReturns,
         PurchasingPermissionCodes.ConfirmPurchaseReturns);
 
-    private async Task<ReceiptContext> CreateReceiptAsync(decimal quantity)
+    private async Task<ReceiptContext> CreateReceiptAsync(decimal quantity, int lineCount = 1,
+        GoodsReceiptFinancialDiscountRequest? financialDiscount = null)
     {
         var productId=Guid.NewGuid();await CreateProductAsync(productId);
         var now=new DateTimeOffset(2026,8,1,10,0,0,TimeSpan.FromHours(-5));
         var request=new ConfirmGoodsReceiptRequest(Guid.NewGuid(),fixture.BusinessId,
             fixture.WarehouseId,fixture.SupplierId,$"FC-{Guid.NewGuid():N}",now.AddDays(-1),
             now,true,now.AddDays(30),"COP","Entrada para devolución",
-            [new GoodsReceiptLineRequest(1,productId,"Producto devolución",quantity,
+            Enumerable.Range(1, lineCount).Select(number => new GoodsReceiptLineRequest(number,productId,"Producto devolución",quantity,
                 6_000m,quantity*1_000m,"01",19m,
-                PurchasingTaxTreatments.DeductibleInputVat)]);
+                PurchasingTaxTreatments.DeductibleInputVat)).ToArray()) with
+        { FinancialDiscount = financialDiscount };
         using var client=fixture.CreateAdminClient(
             PurchasingPermissionCodes.CreateGoodsReceipts,
             PurchasingPermissionCodes.ConfirmGoodsReceipts);

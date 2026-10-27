@@ -7,6 +7,139 @@ public sealed class ArchitectureDebtRatchetTests
     private static readonly string RepositoryRoot = FindRepositoryRoot();
 
     [Fact]
+    public void Document_tax_snapshots_share_one_transactional_writer()
+    {
+        var insert = new Regex(@"\bINSERT(?:\s+INTO)?\s+\[?dbo\]?\.\[?DocumentWithholding(?:Snapshots|Lines)\]?\b",
+            RegexOptions.IgnoreCase);
+        var procedures = Directory.GetFiles(Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"), "*.sql");
+        var owner = Assert.Single(CSharpFiles("src").Concat(procedures)
+            .Where(file => insert.IsMatch(File.ReadAllText(file))));
+        Assert.Equal("SqlWithholdingRuleStore.DocumentSnapshots.cs", Path.GetFileName(owner));
+        Assert.Equal(2, insert.Matches(File.ReadAllText(owner)).Count);
+        foreach (var producer in new[] { "SqlExpenseStore.Withholding.cs", "SqlGoodsReceiptDocumentHandler.cs", "SqlPosSaleDocumentHandler.cs" })
+            Assert.Contains("SqlWithholdingRuleStore.InsertDocumentSnapshotsAsync", File.ReadAllText(
+                Path.Combine(RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence", producer)));
+    }
+
+    [Fact]
+    public void Portfolio_payment_numbering_reuses_the_existing_document_allocator()
+    {
+        foreach (var store in new[] { "SqlPayablesStore.cs", "SqlReceivablesStore.cs", "SqlPurchaseReturnStore.cs", "SqlSalesReturnStore.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(RepositoryRoot, "src", "Infrastructure",
+                "Auraly.Infrastructure.Persistence", store));
+            Assert.Contains("SqlOperationalDocumentAllocator.AllocateExistingNumberAsync", source);
+            Assert.DoesNotContain("DocumentSeriesCursors", source);
+            Assert.DoesNotContain("FROM dbo.DocumentSeries", source);
+        }
+    }
+
+    [Fact]
+    public void Portfolio_payment_headers_tenders_and_reservations_have_one_acceptance_owner()
+    {
+        var insert = new Regex(@"\bINSERT(?:\s+INTO)?\s+\[?dbo\]?\.\[?(?:SupplierPayments|CustomerPayments|SupplierPaymentTenders|CustomerPaymentTenders|SupplierPaymentApplications|CustomerPaymentApplications)\]?\b",
+            RegexOptions.IgnoreCase);
+        var procedures = Directory.GetFiles(Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"), "*.sql");
+        var owner = Assert.Single(CSharpFiles("src").Concat(procedures)
+            .Where(file => insert.IsMatch(File.ReadAllText(file))));
+        Assert.Equal("PortfolioPaymentAccept.sql", Path.GetFileName(owner));
+    }
+
+    [Theory]
+    [InlineData("SourcePartyIndex", "ManualVoucherPartyReferences")]
+    [InlineData("SourcePositionIndex", "ManualVoucherCreditTargets")]
+    public void Source_read_indexes_have_only_the_acceptance_writer_and_their_derived_backfill(string table, string parser)
+    {
+        var write = new Regex($@"\b(?:INSERT(?:\s+INTO)?|UPDATE|DELETE(?:\s+FROM)?)\s+\[?accounting\]?\.\[?{table}\]?\b", RegexOptions.IgnoreCase);
+        var schemaRoot = Path.Combine(RepositoryRoot, "database", "Auraly.Database");
+        var sqlFiles = Directory.GetFiles(schemaRoot, "*.sql", SearchOption.AllDirectories).Where(file => {
+            var relative = Path.GetRelativePath(schemaRoot, file);
+            return !relative.StartsWith($"bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) &&
+                !relative.StartsWith($"obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
+        });
+        var files = CSharpFiles("src").Concat(sqlFiles);
+        var writers = files.Where(file => write.IsMatch(File.ReadAllText(file)))
+            .Select(Path.GetFileName).Order().ToArray();
+        Assert.Equal(new[] { "20261021_IndexManualVoucherParties.sql", "AccountingSourcesAccept.sql" }, writers);
+        Assert.Contains("accounting." + parser, File.ReadAllText(Path.Combine(schemaRoot, "StoredProcedures", "AccountingSourcesAccept.sql")));
+        Assert.Contains("accounting." + parser, File.ReadAllText(Path.Combine(schemaRoot, "Scripts", "Migrations", "20261021_IndexManualVoucherParties.sql")));
+    }
+
+    [Fact]
+    public void Portfolio_obligations_transactions_and_credits_are_written_only_by_the_accounting_processor()
+    {
+        const string tables = @"(?:Payables|Receivables|PayableTransactions|ReceivableTransactions|SupplierCredits|CustomerCredits|SupplierCreditTransactions|CustomerCreditTransactions)";
+        var directWrite = new Regex($@"\b(?:INSERT(?:\s+INTO)?|UPDATE|DELETE(?:\s+FROM)?)\s+\[?dbo\]?\.\[?{tables}\]?\b",
+            RegexOptions.IgnoreCase);
+        var aliasWrite = new Regex($@"\bUPDATE\s+(?<alias>\w+)\s+SET(?:(?!;).)*?\b(?:FROM|JOIN)\s+\[?dbo\]?\.\[?{tables}\]?\s+\k<alias>\b",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var processorDirectory = Path.Combine(RepositoryRoot, "src", "Modules", "Accounting", "Auraly.Commerce.Accounting.Infrastructure");
+        var runtimeFiles = CSharpFiles("src").Concat(Directory.GetFiles(
+            Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"), "*.sql"));
+        var violations = runtimeFiles.Select(file => (Path: file, Text: File.ReadAllText(file)))
+            .Where(file => (directWrite.IsMatch(file.Text) || aliasWrite.IsMatch(file.Text)) &&
+                (Path.GetDirectoryName(file.Path) != processorDirectory || !Path.GetFileName(file.Path).StartsWith("SqlAccountingPostingProcessor", StringComparison.Ordinal)))
+            .Select(file => Path.GetRelativePath(RepositoryRoot, file.Path));
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void Native_and_manual_obligations_share_one_opening_insert_per_subledger()
+    {
+        var opening = new Regex(@"\bINSERT(?:\s+INTO)?\s+\[?dbo\]?\.\[?(?<kind>Payables|Receivables)\]?\b", RegexOptions.IgnoreCase);
+        var procedures = Directory.GetFiles(Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"), "*.sql");
+        var writes = CSharpFiles("src").Concat(procedures).SelectMany(file =>
+            opening.Matches(File.ReadAllText(file)).Select(match => (File: Path.GetFileName(file), Kind: match.Groups["kind"].Value))).ToArray();
+        Assert.Equal(2, writes.Length);
+        Assert.Single(writes.Where(write => write.Kind.Equals("Payables", StringComparison.OrdinalIgnoreCase)));
+        Assert.Single(writes.Where(write => write.Kind.Equals("Receivables", StringComparison.OrdinalIgnoreCase)));
+        Assert.All(writes, write => Assert.Equal("SqlAccountingPostingProcessor.FinancialEffects.cs", write.File));
+    }
+
+    [Theory]
+    [InlineData("SupplierCredits")]
+    [InlineData("CustomerCredits")]
+    public void Credit_openings_have_one_insert_owner(string table)
+    {
+        var insert = new Regex($@"\bINSERT(?:\s+INTO)?\s+\[?dbo\]?\.\[?{table}\]?\b", RegexOptions.IgnoreCase);
+        var procedures = Directory.GetFiles(Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"), "*.sql");
+        var owner = Assert.Single(CSharpFiles("src").Concat(procedures).Where(file => insert.IsMatch(File.ReadAllText(file))));
+        Assert.Equal("SqlAccountingPostingProcessor.FinancialEffects.cs", Path.GetFileName(owner));
+        Assert.Single(insert.Matches(File.ReadAllText(owner)));
+    }
+
+    [Fact]
+    public void Financial_customer_and_configuration_notices_have_one_outbox_writer()
+    {
+        var directory = Path.Combine(RepositoryRoot, "src", "Modules", "Accounting", "Auraly.Commerce.Accounting.Infrastructure");
+        var insert = new Regex(@"\bINSERT(?:\s+INTO)?\s+\[?dbo\]?\.\[?PosSynchronizationOutboxMessages\]?\b", RegexOptions.IgnoreCase);
+        var owner = Assert.Single(Directory.GetFiles(directory, "*.cs")
+            .Where(file => insert.IsMatch(File.ReadAllText(file))));
+        Assert.Equal("SqlAccountingPosSynchronizationOutbox.cs", Path.GetFileName(owner));
+        Assert.Single(insert.Matches(File.ReadAllText(owner)));
+    }
+
+    [Fact]
+    public void Accounting_acceptance_has_one_SQL_owner_for_sources_and_jobs()
+    {
+        var sourceInsert = new Regex(@"\bINSERT(?:\s+INTO)?\s+\[?dbo\]?\.\[?AccountingSourceDocuments\]?\b", RegexOptions.IgnoreCase);
+        var jobInsert = new Regex(@"\bINSERT(?:\s+INTO)?\s+\[?dbo\]?\.\[?AccountingPostingJobs\]?\b", RegexOptions.IgnoreCase);
+        var procedures = Directory.GetFiles(Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"), "*.sql");
+        var owners = CSharpFiles("src").Concat(procedures).ToArray();
+        var acceptance = Assert.Single(owners.Where(file => sourceInsert.IsMatch(File.ReadAllText(file))));
+        Assert.Equal("AccountingSourcesAccept.sql", Path.GetFileName(acceptance));
+        Assert.Single(sourceInsert.Matches(File.ReadAllText(acceptance)));
+        Assert.Single(jobInsert.Matches(File.ReadAllText(acceptance)));
+
+        // Explicit retry already supports proven legacy sources without a job.
+        // Acceptance and command replay cannot invoke or duplicate that recovery.
+        var recovery = Assert.Single(owners.Where(file => file != acceptance && jobInsert.IsMatch(File.ReadAllText(file))));
+        Assert.Equal("SqlAccountingStore.cs", Path.GetFileName(recovery));
+        Assert.Single(jobInsert.Matches(File.ReadAllText(recovery)));
+        Assert.Contains("RecoverMissingPostingJobAsync", File.ReadAllText(recovery));
+    }
+
+    [Fact]
     public void InventoryLedger_HasOneMovementWriter_AndBalanceProvisioningIsBounded()
     {
         var files = CSharpFiles("src");
@@ -40,6 +173,18 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void Purchase_support_sources_have_one_transactional_snapshot_writer()
+    {
+        var insert = new Regex(@"\bINSERT(?:\s+INTO)?\s+\[?fiscal\]?\.\[?PurchaseSupportFiscalSnapshots\]?\b",
+            RegexOptions.IgnoreCase);
+        var owner = Assert.Single(CSharpFiles("src").Where(file => insert.IsMatch(File.ReadAllText(file))));
+        Assert.Equal("SqlFiscalDocumentStore.PurchaseSupport.cs", Path.GetFileName(owner));
+        Assert.Single(insert.Matches(File.ReadAllText(owner)));
+        Assert.DoesNotMatch(@"\bBeginTransaction(?:Async)?\s*\(", File.ReadAllText(owner));
+        Assert.DoesNotMatch(@"\.Commit(?:Async)?\s*\(", File.ReadAllText(owner));
+    }
+
+    [Fact]
     public void Operational_stock_is_never_reconstructed_by_summing_inventory_movements()
     {
         var runtimeFiles = CSharpFiles("src").Concat(
@@ -47,17 +192,34 @@ public sealed class ArchitectureDebtRatchetTests
                 Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"),
                 "*.sql",
                 SearchOption.AllDirectories));
-        var forbidden = new Regex(
-            @"SUM\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?QuantityChange\s*\)",
-            RegexOptions.IgnoreCase);
-
         var violations = runtimeFiles
-            .Where(file => forbidden.IsMatch(File.ReadAllText(file)))
+            .Where(file => ReconstructsOperationalStock(File.ReadAllText(file)))
             .Select(file => Path.GetRelativePath(RepositoryRoot, file))
             .ToArray();
 
         Assert.Empty(violations);
     }
+
+    [Theory]
+    [InlineData("SELECT SUM(QuantityChange) FROM dbo.InventoryMovements",true)]
+    [InlineData("SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m",true)]
+    [InlineData("WITH movements AS(SELECT QuantityChange FROM dbo.InventoryMovements) SELECT SUM(m.QuantityChange) FROM movements m",true)]
+    [InlineData("SELECT SUM(o.QuantityChange) Quantity FROM inventory.MovementOrigins o",true)]
+    [InlineData("SELECT SUM(o.QuantityChange) Quantity FROM inventory.MovementOrigins o WHERE o.ReferencedMovementId=@MovementId AND o.OriginId=@OriginId AND o.QuantityChange>0",false)]
+    [InlineData("SELECT SUM(o.QuantityChange) Quantity FROM inventory.MovementOrigins o WHERE o.ReferencedMovementId=@MovementId AND o.OriginId=@OriginId AND o.QuantityChange>0; SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m",true)]
+    public void Stock_reconstruction_guard_only_exempts_reference_bound_positive_origin_restorations(string sql,bool forbidden)
+        => Assert.Equal(forbidden,ReconstructsOperationalStock(sql));
+
+    private static readonly Regex OperationalStockSumPattern=new(
+        @"SUM\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?QuantityChange\s*\)",RegexOptions.IgnoreCase);
+    // This aggregate counts portions already restored to one referenced issue,
+    // not operational stock. Everything else retains the original prohibition,
+    // including a second stock sum elsewhere in the same source file.
+    private static readonly Regex ReferencedOriginRestorationPattern=new(
+        @"SUM\s*\(\s*(?<originAlias>[A-Za-z_][A-Za-z0-9_]*)\.QuantityChange\s*\)\s+[A-Za-z_][A-Za-z0-9_]*\s+FROM\s+inventory\.MovementOrigins\s+\k<originAlias>\s+(?:WITH\s*\([^)]*\)\s*)?WHERE\s+\k<originAlias>\.ReferencedMovementId\s*=\s*[@A-Za-z_][@A-Za-z0-9_.]*\s+AND\s+\k<originAlias>\.OriginId\s*=\s*[@A-Za-z_][@A-Za-z0-9_.]*\s+AND\s+\k<originAlias>\.QuantityChange\s*>\s*0\b",
+        RegexOptions.IgnoreCase);
+    private static bool ReconstructsOperationalStock(string text) =>
+        OperationalStockSumPattern.IsMatch(ReferencedOriginRestorationPattern.Replace(text,string.Empty));
 
     [Fact]
     public void Sales_and_orders_share_the_canonical_inventory_demand_resolver()

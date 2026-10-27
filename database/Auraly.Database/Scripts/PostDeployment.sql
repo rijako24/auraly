@@ -156,7 +156,6 @@ GO
 :r .\Migrations\20260922_AddExpensePurchaseEvidenceType.sql
 GO
 
-PRINT 'Post-deployment scripts executed successfully.';
 
 :r .\Seeds\SeedInventoryPermissions.sql
 :r .\Seeds\SeedInventoryTransitWarehouses.sql
@@ -184,4 +183,11 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Migrations\BackfillCanonicalInventoryBalances.sql
 :r .\Migrations\BackfillGoodsReceiptFunctionalCurrency.sql
 :r .\Migrations\20261002_BackfillPayableSupplierSites.sql
+:r .\Migrations\20261022_LinkAccountingSourcesToJobs.sql
+:r .\Migrations\20261021_IndexManualVoucherParties.sql
+:r .\Migrations\20261021_ProtectUsedAccountConfiguration.sql
+:r .\Migrations\20261023_BankAuxiliariesAndAcceptedAccounts.sql
+:r .\Migrations\20261023_ManualPaymentSites.sql
 :r .\Migrations\ClassifySystemWarehouses.sql
+GO
+PRINT 'Post-deployment scripts executed successfully.';

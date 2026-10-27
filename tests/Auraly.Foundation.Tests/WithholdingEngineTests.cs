@@ -190,6 +190,28 @@ public sealed class WithholdingEngineTests
             WithholdingKind.Vat, WithholdingBaseKind.TaxExclusiveAmount, 15m));
     }
 
+    [Theory]
+    [InlineData(100, 0)]
+    [InlineData(500, 12_500)]
+    public void Document_review_keeps_a_single_accumulated_base_up_to_five_hundred_lines(int count, decimal expected)
+    {
+        var rule = Rule(WithholdingKind.IncomeTax, WithholdingBaseKind.TaxExclusiveAmount, 2.5m, minimum: 250_000m);
+        var contexts = Enumerable.Repeat(Context(1_000m, 190m, "11001"), count).ToArray();
+        var (calculation, _) = new WithholdingEngine().CalculateDocument(contexts, [rule]);
+        Assert.Equal(expected, calculation.WithholdingTotal);
+        Assert.Equal(count == 500 ? 595_000m : 119_000m, calculation.GrossAmount);
+        if (count == 500) Assert.Equal(500_000m, Assert.Single(calculation.Lines).TaxableBase);
+        else Assert.Empty(calculation.Lines);
+        calculation.EnsureBalanced();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(501)]
+    public void Document_review_rejects_an_empty_or_unbounded_capture(int count) =>
+        Assert.Throws<WithholdingRuleException>(() => new WithholdingEngine().CalculateDocument(
+            Enumerable.Repeat(Context(1m, 0, "11001"), count).ToArray(), []));
+
     private static WithholdingRule Rule(
         WithholdingKind kind, WithholdingBaseKind basis, decimal rate,
         string? jurisdiction = null, decimal minimum = 0, string[]? responsibilities = null,

@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
+import type { GoodsReceiptOptions } from "../src/services/api/goods-receipts";
 
 test("recepción totaliza documentos asociados y conserva costo total separado en pantalla y reporte", async ({ page, baseURL }) => {
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
   const documentId = "33333333-3333-3333-3333-333333333333";
   const supplierId = "55555555-5555-5555-5555-555555555555";
-  const permissions = ["dashboard.read", "purchasing.goods-receipts.read", "purchasing.goods-receipts.create"];
+  const permissions = ["dashboard.read", "purchasing.goods-receipts.read", "purchasing.goods-receipts.create", "accounting.read", "accounting.postings.retry"];
+  let entryReads = 0;
   const user = { userId: "44444444-4444-4444-4444-444444444444", tenantId,
     tenantKey: "TEST", username: "test", firstName: "Prueba", lastName: "Compras",
     roles: ["ACCOUNTANT"], permissions };
@@ -35,7 +37,8 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
       { costDocumentId: "customs", documentNumber: "ADUANA-1", currencyCode: "COP",
         purchaseEvidenceType: "ImportDeclaration", functionalGrandTotal: 2000,
         functionalTaxAmount: 0, lines: [{ lineNumber: 1, description: "Arancel y otro gasto", functionalAmount: 2000 }] },
-    ], accountingStatuses: [],
+    ], accountingStatuses: [{ sourceDocumentId: documentId, sourceDocumentType: "GoodsReceipt",
+      status: "CommercialEffectsApplied", errorCode: null, errorMessage: null }],
   };
   await page.context().addCookies([{ name: "auth_token", value: "e2e",
     url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
@@ -52,25 +55,33 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
     else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Prueba" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: user.roles, permissions };
     else if (path.endsWith(`/goods-receipts/${documentId}`)) body = detail;
+    else if (path.endsWith(`/accounting/postings/by-document/${documentId}`)) body = {
+      sourceDocumentId: documentId, sourceDocumentType: "GoodsReceipt", status: "CommercialEffectsApplied",
+      errorCode: null, errorMessage: null, entryId: null,
+    };
+    else if (path.endsWith(`/accounting/entries/by-document/${documentId}`)) { entryReads += 1; body = null; }
     else if (path.endsWith("/goods-receipts")) body = { items: [detail], page: 1, pageSize: 25, totalCount: 1, totalPages: 1 };
     else if (path.endsWith("/goods-receipts/options")) body = {
       warehouses: [], suppliers: [], purchaseEvidenceTypes: [], withholdingConcepts: [], withholdingJurisdictions: [],
       purchaseCostEvidenceTypes: [], purchaseCostKinds: [], purchaseCostTreatments: [], purchaseCostAllocationMethods: [],
       purchaseTaxRates: [], purchaseTaxTreatments: [], purchaseCurrencies: [], exchangeRateSources: [],
-    };
-    else if (path.endsWith("/parties/role-options")) body = { items: [
-      { partyId: supplierId, roleId: supplierId, role: "Supplier", displayName: "Proveedor de prueba", identification: "900100200", supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 0 },
+    } satisfies GoodsReceiptOptions;
+    else if (path.endsWith("/purchase-orders")) body = { items: [], page: 1, pageSize: 100, totalCount: 0, totalPages: 0 };
+    else if (path.endsWith("/tenant-commercial/subscription")) body = null;
+    else if (path.endsWith("/portfolio/parties/site-options")) body = { items: [
+      { partyId: supplierId, roleId: supplierId, partySiteId: "66666666-6666-6666-6666-666666666666",
+        siteName: "Principal", isPrimary: true, displayName: "Proveedor de prueba", identification: "900100200", supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 0 },
     ], page: 1, pageSize: 10, totalCount: 1, totalPages: 1 };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
   await page.goto("/dashboard/purchasing/goods-receipts");
   await page.getByRole("button", { name: "Nueva entrada" }).click();
   const editor = page.getByRole("dialog", { name: "Recepción de compra" });
-  await editor.getByRole("combobox", { name: "Seleccionar supplier" }).first().click();
+  await editor.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).first().click();
   await page.getByRole("option", { name: /Proveedor de prueba/ }).click();
-  await expect(editor.getByRole("combobox", { name: "Seleccionar supplier" }).first()).toContainText("Proveedor de prueba");
-  await editor.getByRole("button", { name: "Quitar selección de Seleccionar supplier" }).first().click();
-  await expect(editor.getByRole("combobox", { name: "Seleccionar supplier" }).first()).toContainText("Buscar proveedor");
+  await expect(editor.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).first()).toContainText("Proveedor de prueba");
+  await editor.getByRole("button", { name: "Quitar selección de Seleccionar proveedor y sede" }).first().click();
+  await expect(editor.getByRole("combobox", { name: "Seleccionar proveedor y sede" }).first()).toContainText("Buscar proveedor");
   await expect(editor.getByRole("columnheader", { name: "Costo unitario" })).toBeVisible();
   await expect(editor.getByRole("columnheader", { name: /Costo total/ })).toHaveCount(0);
   await expect(editor.getByRole("columnheader", { name: "Total factura · COP" })).toBeVisible();
@@ -82,7 +93,7 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
   const dialog = page.getByRole("dialog", { name: "EMC-RESUMEN" });
   await expect(dialog.getByText("Total bruto de documentos", { exact: true }).locator("..")).toContainText("7.950");
   await expect(dialog.getByText("IVA descontable separado", { exact: true }).locator("..")).toContainText("0");
-  await expect(dialog.getByText("Valor que entra al inventario", { exact: true }).locator("..")).toContainText("6.000");
+  await expect(dialog.getByText("Costo total de los productos", { exact: true }).locator("..")).toContainText("6.000");
   await expect(dialog.getByRole("columnheader", { name: "Total factura · COP" })).toBeVisible();
   await expect(dialog.getByRole("columnheader", { name: "Costo unitario" })).toBeVisible();
   await expect(dialog.getByRole("columnheader", { name: "Descuento" })).toBeVisible();
@@ -91,10 +102,17 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
   const firstProduct = dialog.getByRole("row").filter({ hasText: "Producto 1" });
   await expect(firstProduct).toContainText("$ 0");
   await expect(firstProduct).toContainText("$ 3.570");
+  await dialog.getByRole("button", { name: /EMC-RESUMEN.*Efecto comercial sin asiento/ }).click();
+  const accounting = page.getByRole("dialog", { name: /Comprobante contable/ });
+  await expect(accounting.getByText("El documento terminó su procesamiento sin generar un asiento contable.", { exact: false })).toBeVisible();
+  await expect(accounting.getByRole("button", { name: "Reintentar contabilización" })).toHaveCount(0);
+  await expect(accounting.getByText("Esta inconsistencia requiere revisión.", { exact: false })).toHaveCount(0);
+  expect(entryReads).toBe(0);
+  await accounting.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.screenshot({ path: "test-results/goods-receipt-line-costs.png", fullPage: true });
   await dialog.getByRole("button", { name: "Abrir reporte" }).click();
   await expect(page.getByRole("row").filter({ hasText: "Total bruto de documentos" })).toContainText("7.950");
-  await expect(page.getByRole("row").filter({ hasText: "Valor que entra al inventario" })).toContainText("6.000");
+  await expect(page.getByRole("row").filter({ hasText: "Costo total de los productos" })).toContainText("6.000");
   await expect(page.getByRole("row").filter({ hasText: "Total retenciones" })).not.toContainText(/-\s*\$\s*0/);
   await expect(page.getByText(/NaN/)).toHaveCount(0);
   await page.screenshot({ path: "test-results/goods-receipt-totals.png", fullPage: true });

@@ -11,6 +11,8 @@ USING (VALUES
   (N'Bank',N'Bancos',N'111005',N'Bancos nacionales',N'Asset',0,2),
   (N'DebitCardClearing',N'Tarjeta débito por conciliar',N'13809501',N'Tarjetas débito por conciliar',N'Asset',0,3),
   (N'CreditCardClearing',N'Tarjeta crédito por conciliar',N'13809502',N'Tarjetas crédito por conciliar',N'Asset',0,4),
+  (N'SupplierDebitCard',N'Pagos a proveedores con tarjeta débito',NULL,NULL,N'Asset',0,62),
+  (N'SupplierCreditCard',N'Pagos a proveedores con tarjeta de crédito corporativa',NULL,NULL,N'Liability',0,63),
   (N'TransferClearing',N'Transferencias por conciliar',N'13809503',N'Transferencias por conciliar',N'Asset',0,5),
   (N'CardClearing',N'Tarjetas por conciliar',N'13809504',N'Tarjetas por conciliar',N'Asset',0,50),
   (N'CashClosureDifferencesPending',N'Diferencias de cierre pendientes',N'13809505',N'Diferencias de cierre pendientes de conciliación',N'Asset',0,51),
@@ -35,6 +37,8 @@ USING (VALUES
   (N'RoundingLoss',N'Ajuste al peso en contra',N'53959503',N'Gastos por aproximaciones',N'Expense',0,59),
   (N'SalesReturns',N'Devoluciones en ventas',N'417595',N'Devoluciones en ventas',N'ContraRevenue',0,21),
   (N'OtherIncome',N'Otros ingresos de caja',N'429595',N'Otros ingresos',N'Revenue',0,22),
+  (N'SupplierFinancialDiscountEarned',N'Descuento financiero obtenido de proveedor',N'421040',N'Descuentos comerciales condicionados',N'Revenue',1,64),
+  (N'SupplierFinancialDiscountLost',N'Descuento financiero anticipado no obtenido',N'53959504',N'Descuento financiero anticipado no obtenido',N'Expense',1,65),
   (N'CashOverageIncome',N'Sobrantes de caja',N'429553',N'Sobrantes de caja',N'Revenue',0,23),
   (N'OperatingExpense',N'Gastos operativos',N'51959502',N'Otros gastos operativos',N'Expense',0,24),
   (N'PurchasesExpense',N'Compras no inventariables',N'519595',N'Compras no inventariables',N'Expense',0,25),
@@ -76,6 +80,11 @@ WHEN MATCHED THEN UPDATE SET DisplayName=source.DisplayName,AccountCode=source.A
 WHEN NOT MATCHED THEN INSERT(ProfileCode,Category,DisplayName,AccountCode,AccountName,AccountType,AllowsPosting,RequiresParty,IsRequired,DisplayOrder)
   VALUES(N'AURALY_CO',source.Category,source.DisplayName,source.AccountCode,source.AccountName,source.AccountType,1,source.RequiresParty,1,source.DisplayOrder);
 
+-- These purposes need the tenant's actual bank/card auxiliary. No invented
+-- bank number, automatic acquiring receivable or generic corporate-card debt.
+UPDATE dbo.AccountingConfigurationProfileAccounts SET IsRequired=0
+WHERE ProfileCode=N'AURALY_CO' AND Category IN(N'SupplierDebitCard',N'SupplierCreditCard');
+
 MERGE dbo.AccountingConfigurationProfileExpenseConcepts AS target
 USING (VALUES
   (N'PEAJE',N'Peajes',N'OperatingExpense',10),
@@ -103,8 +112,8 @@ USING (VALUES
   (N'ClosurePaymentMethod',N'Transfer',N'TransferClearing'),
   (N'SupplierPaymentMethod',N'Cash',N'Cash'),
   (N'SupplierPaymentMethod',N'Transfer',N'Bank'),
-  (N'SupplierPaymentMethod',N'DebitCard',N'DebitCardClearing'),
-  (N'SupplierPaymentMethod',N'CreditCard',N'CreditCardClearing'),
+  (N'SupplierPaymentMethod',N'DebitCard',N'SupplierDebitCard'),
+  (N'SupplierPaymentMethod',N'CreditCard',N'SupplierCreditCard'),
   (N'CustomerPaymentMethod',N'Cash',N'Cash'),
   (N'CustomerPaymentMethod',N'Transfer',N'Bank'),
   (N'CustomerPaymentMethod',N'DebitCard',N'DebitCardClearing'),
@@ -191,22 +200,28 @@ WHEN MATCHED THEN UPDATE SET Name=source.Name,Direction=source.Direction,
 WHEN NOT MATCHED THEN INSERT(ProfileCode,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,RequiresReference,DisplayOrder,IsActive)
   VALUES(N'AURALY_CO',source.ReasonType,source.Code,source.Name,source.Direction,source.CounterpartCategory,source.RequiresReference,source.DisplayOrder,1);
 
+;WITH DefaultAccounts AS(
+  SELECT t.TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,
+    ROW_NUMBER() OVER(PARTITION BY t.TenantId,d.AccountCode
+      ORDER BY CASE WHEN d.Category=N'OtherExpense' THEN 0 ELSE 1 END,d.Category) AccountRank
+  FROM dbo.Tenants t
+  CROSS JOIN dbo.AccountingConfigurationProfiles p
+  CROSS APPLY accounting.DefaultAccountDefinitions(p.ProfileCode) d
+  WHERE t.IsActive=1 AND p.IsDefault=1 AND p.IsActive=1
+)
 INSERT dbo.AccountingAccounts(
   AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
-SELECT NEWID(),t.TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,1,@AccountingNow
-FROM dbo.Tenants t
-CROSS JOIN dbo.AccountingConfigurationProfiles p
-INNER JOIN dbo.AccountingConfigurationProfileAccounts d ON d.ProfileCode=p.ProfileCode
-WHERE t.IsActive=1 AND NOT EXISTS(
-  SELECT 1 FROM dbo.AccountingAccounts a WHERE a.TenantId=t.TenantId AND a.Code=d.AccountCode)
-  AND p.IsDefault=1 AND p.IsActive=1;
+SELECT NEWID(),d.TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,1,@AccountingNow
+FROM DefaultAccounts d
+WHERE d.AccountRank=1 AND NOT EXISTS(
+  SELECT 1 FROM dbo.AccountingAccounts a WHERE a.TenantId=d.TenantId AND a.Code=d.AccountCode);
 
 INSERT dbo.AccountingAccountMappings(
   MappingId,TenantId,BusinessId,Category,AccountId,EffectiveFrom,EffectiveTo,CreatedAt)
 SELECT NEWID(),t.TenantId,NULL,d.Category,a.AccountId,CONVERT(date,'20000101'),NULL,@AccountingNow
 FROM dbo.Tenants t
 CROSS JOIN dbo.AccountingConfigurationProfiles p
-INNER JOIN dbo.AccountingConfigurationProfileAccounts d ON d.ProfileCode=p.ProfileCode
+CROSS APPLY accounting.DefaultAccountDefinitions(p.ProfileCode) d
 INNER JOIN dbo.AccountingAccounts a ON a.TenantId=t.TenantId AND a.Code=d.AccountCode
   AND a.Name=d.AccountName AND a.AccountType=d.AccountType
 WHERE t.IsActive=1 AND a.IsActive=1 AND a.AllowsPosting=1 AND NOT EXISTS(

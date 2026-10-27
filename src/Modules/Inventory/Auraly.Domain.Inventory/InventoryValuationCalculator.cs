@@ -4,7 +4,8 @@ public enum InventoryValuationMode
 {
     AverageCost,
     WeightedAverageReceipt,
-    SpecifiedCostIssue
+    SpecifiedCostIssue,
+    ValueAdjustment
 }
 
 public sealed record InventoryValuationState(
@@ -32,8 +33,20 @@ public static class InventoryValuationCalculator
         InventoryValuationState state,
         decimal quantityChange,
         decimal? specifiedUnitCost,
-        InventoryValuationMode mode)
+        InventoryValuationMode mode) =>
+        Calculate(state, quantityChange, specifiedUnitCost, mode, null);
+
+    public static InventoryValuationResult Calculate(
+        InventoryValuationState state,
+        decimal quantityChange,
+        decimal? specifiedUnitCost,
+        InventoryValuationMode mode,
+        decimal? valueAdjustmentAmount)
     {
+        if (mode == InventoryValuationMode.ValueAdjustment)
+            return AdjustValue(state, quantityChange, specifiedUnitCost, valueAdjustmentAmount);
+        if (valueAdjustmentAmount is not null)
+            throw new ArgumentException("Only a value adjustment can specify an inventory value change.", nameof(valueAdjustmentAmount));
         var quantityBefore = Quantity(state.QuantityOnHand);
         var quantityAfter = Quantity(quantityBefore + quantityChange);
         var poolQuantityBefore = Quantity(state.PoolQuantityOnHand);
@@ -101,6 +114,30 @@ public static class InventoryValuationCalculator
             Money(quantityAfter * averageAfter),
             recognizedUnitCost,
             valueChange);
+    }
+
+    private static InventoryValuationResult AdjustValue(
+        InventoryValuationState state, decimal quantityChange, decimal? specifiedUnitCost, decimal? amount)
+    {
+        if (quantityChange != 0m || specifiedUnitCost is not null)
+            throw new ArgumentException("A value adjustment cannot change quantity or specify an acquisition unit cost.");
+        if (amount is null || Money(amount.Value) == 0m)
+            throw new ArgumentOutOfRangeException(nameof(amount), "A value adjustment requires a non-zero monetary amount.");
+        var poolQuantity = Quantity(state.PoolQuantityOnHand);
+        if (poolQuantity <= 0m)
+            throw new InvalidOperationException("A value adjustment requires positive remaining inventory in its cost pool.");
+        var poolValue = Money(state.PoolInventoryValue);
+        var adjustedValue = poolValue + Money(amount.Value);
+        if (poolValue < 0m || adjustedValue < 0m)
+            throw new InvalidOperationException("A value adjustment cannot produce a negative inventory value.");
+        var averageBefore = PoolAverage(poolQuantity, poolValue, state.AverageUnitCost);
+        var averageAfter = UnitCost(adjustedValue / poolQuantity);
+        var quantity = Quantity(state.QuantityOnHand);
+        // The same quantity/unit-cost scales as physical movements apply. The
+        // writer returns the exact aggregate delta of the rounded stored values;
+        // callers must use that book delta for the accounting counterpart.
+        return new(quantity, averageBefore, averageAfter, Money(quantity * averageAfter),
+            0m, Money(poolQuantity * averageAfter) - poolValue);
     }
 
     private static decimal RequiredSpecifiedCost(decimal? value)

@@ -25,6 +25,7 @@ public sealed partial class SqlPartyWorkspaceStore
             WHERE party.TenantId=@TenantId AND party.IsActive=1
               AND (@RoleId IS NULL OR partyRole.{role.Id}=@RoleId)
               AND (@PartySiteId IS NULL OR site.PartySiteId=@PartySiteId)
+              AND (@PartyId IS NULL OR party.PartyId=@PartyId)
               AND (@Search IS NULL OR party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
                 OR party.LegalName COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
                 OR CONCAT(party.FirstName,N' ',party.LastName) COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
@@ -41,6 +42,7 @@ public sealed partial class SqlPartyWorkspaceStore
             WHERE party.TenantId=@TenantId AND party.IsActive=1
               AND (@RoleId IS NULL OR partyRole.{role.Id}=@RoleId)
               AND (@PartySiteId IS NULL OR site.PartySiteId=@PartySiteId)
+              AND (@PartyId IS NULL OR party.PartyId=@PartyId)
               AND (@Search IS NULL OR party.DisplayName COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
                 OR party.LegalName COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
                 OR CONCAT(party.FirstName,N' ',party.LastName) COLLATE Latin1_General_100_CI_AI LIKE N'%'+@Search+N'%'
@@ -53,6 +55,7 @@ public sealed partial class SqlPartyWorkspaceStore
             new SqlParameter("@TenantId", actor.TenantId),
             new SqlParameter("@RoleId", (object?)query.RoleId ?? DBNull.Value),
             new SqlParameter("@PartySiteId", (object?)query.PartySiteId ?? DBNull.Value),
+            new SqlParameter("@PartyId", (object?)query.PartyId ?? DBNull.Value),
             new SqlParameter("@Search", (object?)Empty(query.Search) ?? DBNull.Value),
             new SqlParameter("@Offset", (page - 1) * query.PageSize),
             new SqlParameter("@PageSize", query.PageSize)

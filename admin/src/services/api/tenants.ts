@@ -86,6 +86,7 @@ export interface TenantCommercialSubscription {
   status: string; currentPeriodStart: string; currentPeriodEnd: string;
   fullUserLimit: number; sellerUserLimit: number; posDeviceLimit: number;
   dianDocumentMonthlyLimit: number; dianDocumentsUsed: number; payrollEmployeeLimit: number;
+  hasDianDocumentQuota?: boolean;
 }
 export interface TenantSubscriptionUsage {
   fullUsers: number; sellerUsers: number; posDevices: number; payrollEmployees: number;

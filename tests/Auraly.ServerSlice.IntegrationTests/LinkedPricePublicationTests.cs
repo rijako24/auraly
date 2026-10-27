@@ -10,6 +10,60 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Linked_cost_batch_owner_preserves_the_legacy_scalar_call_contract()
+    {
+        var parentId = Guid.NewGuid();
+        var childId = Guid.NewGuid();
+        await SeedProductAsync(parentId, 4_000m, "Principal contrato anterior");
+        await SeedProductAsync(childId, 1_000m, "Hijo contrato anterior");
+        await LinkCostAsync(parentId, childId, 2m);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using (var transaction = (SqlTransaction)await connection.BeginTransactionAsync())
+        {
+            await using var legacy = new SqlCommand("dbo.ProductLinkedCostsPrepare", connection, transaction)
+            { CommandType = System.Data.CommandType.StoredProcedure };
+            legacy.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            legacy.Parameters.AddWithValue("@ParentProductId", parentId);
+            legacy.Parameters.AddWithValue("@ParentCost", 4_000m);
+            legacy.Parameters.AddWithValue("@UserId", fixture.UserId);
+            legacy.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
+            await legacy.ExecuteNonQueryAsync();
+            await using var verify = new SqlCommand("""
+                SELECT preparation.CostBasisAmount,preparation.PreparedAmount,price.Amount
+                FROM dbo.ProductPricePreparations preparation
+                JOIN dbo.ProductPrices price ON price.BusinessId=preparation.BusinessId
+                  AND price.ProductId=preparation.ProductId AND price.IsActive=1
+                WHERE preparation.BusinessId=@Business AND preparation.ProductId=@Child AND preparation.Status=N'Pending';
+                """, connection, transaction);
+            verify.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            verify.Parameters.AddWithValue("@Child", childId);
+            await using (var reader = await verify.ExecuteReaderAsync())
+            {
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal((8_000m, 10_000m, 1_000m), (reader.GetDecimal(0), reader.GetDecimal(1), reader.GetDecimal(2)));
+                Assert.False(await reader.ReadAsync());
+            }
+            await transaction.RollbackAsync();
+        }
+        await using (var invalidSource = new SqlCommand("dbo.ProductLinkedCostsPrepare", connection)
+                     { CommandType = System.Data.CommandType.StoredProcedure })
+        {
+            invalidSource.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            invalidSource.Parameters.AddWithValue("@UserId", fixture.UserId);
+            invalidSource.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
+            invalidSource.Parameters.AddWithValue("@FamiliesJson", JsonSerializer.Serialize(new[] { new
+            {
+                ParentProductId = parentId, ParentCost = 4_000m, ChildProductId = childId,
+                SourceDocumentId = Guid.NewGuid(), SourceLineNumber = 1
+            } }));
+            var error = await Assert.ThrowsAsync<SqlException>(async () => await invalidSource.ExecuteNonQueryAsync());
+            Assert.Equal(51020, error.Number);
+        }
+        Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.ProductPricePreparations WHERE ProductId=@Product", childId));
+    }
+
+    [Fact]
     public async Task Cost_link_parent_and_child_are_listed_and_published_independently()
     {
         fixture.DrainSynchronizationMessages();

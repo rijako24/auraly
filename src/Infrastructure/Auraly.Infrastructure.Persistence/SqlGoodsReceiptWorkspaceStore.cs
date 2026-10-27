@@ -9,7 +9,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlGoodsReceiptWorkspaceStore(
+public sealed partial class SqlGoodsReceiptWorkspaceStore(
     SqlServerConnectionFactory connections,
     TimeProvider timeProvider,
     IAuralyIdGenerator ids) : IGoodsReceiptWorkspaceStore
@@ -79,7 +79,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             WHERE CatalogCode IN(N'purchase-cost-evidence-type',N'purchase-cost-kind',
               N'purchase-cost-treatment',N'purchase-cost-allocation-method',
               N'purchase-tax-rate',N'purchase-tax-treatment',N'purchase-currency',
-              N'exchange-rate-source') AND IsActive=1
+              N'exchange-rate-source',N'purchase-cost-association-mode') AND IsActive=1
             ORDER BY CatalogCode,SortOrder,Label;
             """;
         await using var command = new SqlCommand(sql, connection);
@@ -126,7 +126,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             Options("purchase-cost-treatment"), Options("purchase-cost-allocation-method"),
             Options("purchase-tax-rate"), Options("purchase-tax-treatment"),
             Options("purchase-currency"),
-            Options("exchange-rate-source"));
+            Options("exchange-rate-source"), Options("purchase-cost-association-mode"));
     }
 
     public async Task<GoodsReceiptProductPage> FindProductsAsync(
@@ -462,18 +462,26 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             SELECT r.DocumentNumber,r.Status,r.WarehouseId,w.Name,r.SupplierId,s.Name,
                    r.SupplierInvoiceNumber,r.SupplierInvoiceDate,r.ReceivedAt,r.CreatesPayable,
                    r.DueDate,r.CurrencyCode,r.Notes,r.NetAmount,r.TaxAmount,r.GrandTotal,
-                   r.AcceptedAt,r.ProcessedAt,r.PurchaseEvidenceType,r.PurchaseOrderId
+                   r.AcceptedAt,r.ProcessedAt,r.PurchaseEvidenceType,r.PurchaseOrderId,
+                   payable.PayableId,payable.Status,payable.OutstandingAmount,payable.CurrencyCode,
+                   payable.PartySiteId,site.Name,payable.DueDate
             FROM dbo.GoodsReceipts r
             INNER JOIN dbo.Businesses b
               ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
             INNER JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
+            -- The source-line constraint and unique source key give a native
+            -- receipt at most one obligation. This reads its owner's balance.
+            LEFT JOIN dbo.Payables payable ON payable.SourceDocumentId=r.GoodsReceiptId
+              AND payable.SourceDocumentType=N'GoodsReceipt' AND payable.SourceLineId IS NULL
+              AND payable.BusinessId=r.BusinessId AND payable.SupplierId=r.SupplierId
+            LEFT JOIN dbo.PartySites site ON site.PartySiteId=payable.PartySiteId AND site.PartyId=s.PartyId
             WHERE r.GoodsReceiptId=@DocumentId AND r.BusinessId=@BusinessId;
 
             SELECT l.LineNumber,l.ProductId,l.DescriptionSnapshot,l.Quantity,l.UnitCost,
                    l.DiscountAmount,l.TaxCode,l.TaxRate,l.TaxTreatment,l.NetAmount,
                    l.TaxAmount,l.LineTotal,l.PresentationNameSnapshot,
-                   l.PresentationQuantity,l.UnitsPerPresentation,l.PurchaseOrderLineId,l.OverReceiptReason,l.OverReceiptAuthorized
+                   l.PresentationQuantity,l.UnitsPerPresentation,l.PurchaseOrderLineId,l.OverReceiptReason,l.OverReceiptAuthorized,l.CommercialDiscountPercent
             FROM dbo.GoodsReceiptLines l
             WHERE l.GoodsReceiptId=@DocumentId
             ORDER BY l.LineNumber;
@@ -519,6 +527,10 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         DateTimeOffset? processedAt = reader.IsDBNull(17) ? null : reader.GetDateTimeOffset(17);
         var purchaseEvidenceType = reader.GetString(18);
         var purchaseOrderId = reader.IsDBNull(19) ? (Guid?)null : reader.GetGuid(19);
+        var payable = reader.IsDBNull(20) ? null : new GoodsReceiptPayableView(
+            reader.GetGuid(20), reader.GetString(21), reader.GetDecimal(22), reader.GetString(23),
+            reader.IsDBNull(24) ? null : reader.GetGuid(24), reader.IsDBNull(25) ? null : reader.GetString(25),
+            reader.GetDateTimeOffset(26));
 
         await reader.NextResultAsync(cancellationToken);
         var lines = new List<GoodsReceiptLineSnapshot>();
@@ -530,7 +542,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
                 reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14),
                 reader.IsDBNull(15) ? null : reader.GetGuid(15),
-                reader.IsDBNull(16) ? null : reader.GetString(16), reader.GetBoolean(17)));
+                reader.IsDBNull(16) ? null : reader.GetString(16), reader.GetBoolean(17),
+                CommercialDiscountPercent: reader.IsDBNull(18) ? null : reader.GetDecimal(18)));
 
         WithholdingCalculationSnapshot? withholding = null;
         if (await reader.NextResultAsync(cancellationToken) &&
@@ -570,13 +583,50 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             if (payloadJson is not null) immutable = GoodsReceiptContractSerializer.Deserialize(payloadJson);
         }
         var accountingStatuses = new List<GoodsReceiptAccountingStatus>();
+        var laterCosts = new List<GoodsReceiptVoucherCostSnapshot>();
         await using (var accountingCommand = new SqlCommand("""
             SELECT j.SourceDocumentId,j.SourceDocumentType,j.Status,j.LastErrorCode,j.LastErrorMessage
             FROM dbo.AccountingPostingJobs j
             WHERE j.BusinessId=@BusinessId AND
               (j.SourceDocumentId=@DocumentId OR j.SourceDocumentId IN
-                (SELECT CostDocumentId FROM purchasing.GoodsReceiptCostDocuments WHERE GoodsReceiptId=@DocumentId))
+                (SELECT CostDocumentId FROM purchasing.GoodsReceiptCostDocuments WHERE GoodsReceiptId=@DocumentId AND SourceEntryId IS NULL)
+                OR j.SourceDocumentId IN (SELECT RevisionId FROM purchasing.GoodsReceiptCostRevisions
+                  WHERE GoodsReceiptId=@DocumentId AND BusinessId=@BusinessId))
             ORDER BY CASE WHEN j.SourceDocumentId=@DocumentId THEN 0 ELSE 1 END,j.OccurredAt,j.SourceDocumentId;
+            SELECT job.DocumentId,job.DocumentType,job.Status,job.LastError
+            FROM dbo.DocumentProcessingJobs job
+            JOIN purchasing.GoodsReceiptCostRevisions revision
+              ON revision.RevisionId=job.DocumentId AND revision.BusinessId=job.BusinessId
+            WHERE revision.GoodsReceiptId=@DocumentId AND revision.BusinessId=@BusinessId
+              AND job.DocumentType=N'GoodsReceiptCostRevision'
+              AND job.Status<>N'Completed'
+              AND NOT EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs posting
+                WHERE posting.SourceDocumentId=job.DocumentId
+                  AND posting.SourceDocumentType=job.DocumentType
+                  AND posting.BusinessId=job.BusinessId)
+            ORDER BY revision.RevisionNumber;
+            SELECT revision.RevisionNumber,revision.Status,cost.CostDocumentId,entry.EntryId,
+              entry.SourceDocumentId,entry.SourceDocumentType,entry.EntryNumber,cost.AssociationMode,
+              (SELECT line.LineNumber AS EntryLineNumber,original.AccountId,
+                  original.PartyId,original.CostCenterId,line.FunctionalAmount,line.AllocationMethod,
+                  JSON_QUERY((SELECT allocation.ReceiptLineNumber,
+                    allocation.AllocationFactor AS Factor,allocation.FunctionalAmount
+                    FROM purchasing.GoodsReceiptCostAllocations allocation
+                    WHERE allocation.CostDocumentId=line.CostDocumentId
+                      AND allocation.CostLineNumber=line.LineNumber
+                    ORDER BY allocation.ReceiptLineNumber FOR JSON PATH)) AS Allocations
+                FROM purchasing.GoodsReceiptCostLines line
+                JOIN dbo.AccountingEntryLines original ON original.EntryId=line.SourceEntryId
+                  AND original.LineNumber=line.SourceEntryLineNumber
+                WHERE line.CostDocumentId=cost.CostDocumentId
+                ORDER BY line.LineNumber FOR JSON PATH) LinesJson
+            FROM purchasing.GoodsReceiptCostRevisions revision
+            JOIN purchasing.GoodsReceiptCostDocuments cost
+              ON cost.CostRevisionId=revision.RevisionId
+            JOIN dbo.AccountingEntries entry ON entry.EntryId=cost.SourceEntryId
+              AND entry.BusinessId=revision.BusinessId
+            WHERE revision.GoodsReceiptId=@DocumentId AND revision.BusinessId=@BusinessId
+            ORDER BY revision.RevisionNumber,cost.CostDocumentId;
             """, connection))
         {
             accountingCommand.Parameters.AddWithValue("@DocumentId", documentId);
@@ -586,20 +636,54 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 accountingStatuses.Add(new(accountingReader.GetGuid(0), accountingReader.GetString(1),
                     accountingReader.GetString(2), accountingReader.IsDBNull(3) ? null : accountingReader.GetString(3),
                     accountingReader.IsDBNull(4) ? null : accountingReader.GetString(4)));
+            await accountingReader.NextResultAsync(cancellationToken);
+            while (await accountingReader.ReadAsync(cancellationToken))
+                accountingStatuses.Add(new(accountingReader.GetGuid(0), accountingReader.GetString(1),
+                    accountingReader.GetString(2), "DocumentProcessing",
+                    accountingReader.IsDBNull(3) ? null : accountingReader.GetString(3)));
+            await accountingReader.NextResultAsync(cancellationToken);
+            while (await accountingReader.ReadAsync(cancellationToken))
+            {
+                var costLines = JsonSerializer.Deserialize<List<GoodsReceiptVoucherCostLineSnapshot>>(
+                    accountingReader.GetString(8), new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                    ?? throw new InvalidOperationException("La revisión no conserva sus partidas de costo.");
+                laterCosts.Add(new(accountingReader.GetGuid(2), accountingReader.GetGuid(3),
+                    accountingReader.GetGuid(4), accountingReader.GetString(5),
+                    accountingReader.GetString(6), accountingReader.GetString(7),
+                    costLines, accountingReader.GetInt32(0), accountingReader.GetString(1)));
+            }
         }
 
+        var laterByLine = laterCosts
+            .Where(document => document.Mode == GoodsReceiptCostAssociationModes.Distribute &&
+                document.CostRevisionStatus == "Processed")
+            .SelectMany(document => document.Lines)
+            .SelectMany(line => line.Allocations)
+            .GroupBy(allocation => allocation.ReceiptLineNumber)
+            .ToDictionary(group => group.Key, group => group.Sum(allocation => allocation.FunctionalAmount));
+        var currentLines = (immutable?.Lines ?? lines).Select(line =>
+        {
+            var laterAmount = laterByLine.GetValueOrDefault(line.LineNumber);
+            return laterAmount == 0m ? line : line with
+            {
+                AllocatedLandedCostAmount = line.AllocatedLandedCostAmount + laterAmount,
+                RecognizedInventoryCostAmount = line.RecognizedInventoryCostAmount + laterAmount
+            };
+        }).ToArray();
         return new GoodsReceiptDetail(
             documentId, number, status, warehouseId, warehouseName, supplierId,
             supplierName, supplierInvoiceNumber, supplierInvoiceDate, receivedAt,
             createsPayable, dueDate, currencyCode, notes, netAmount, taxAmount,
-            grandTotal, acceptedAt, processedAt, immutable?.Lines ?? lines, purchaseEvidenceType,
+            grandTotal, acceptedAt, processedAt, currentLines, purchaseEvidenceType,
             purchaseOrderId, withholding ?? immutable?.Withholding,
             immutable?.ExchangeRate ?? 1, immutable?.ExchangeRateDate,
             immutable?.ExchangeRateSource ?? "FunctionalCurrency",
             immutable?.FunctionalNetAmount ?? netAmount,
             immutable?.FunctionalTaxAmount ?? taxAmount,
             immutable?.FunctionalGrandTotal ?? grandTotal,
-            immutable?.AdditionalCostDocuments, accountingStatuses);
+            immutable?.AdditionalCostDocuments, accountingStatuses,
+            (immutable?.ReferencedCostDocuments ?? []).Concat(laterCosts).ToArray(), payable,
+            immutable?.FinancialDiscount);
     }
     public async Task<GoodsReceiptDraft?> GetDraftAsync(
         PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken)
@@ -643,7 +727,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (transaction.Connection is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
     }
@@ -681,6 +766,10 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         const string sql = """
             IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51121,'La sede no pertenece a la empresa autenticada.',1;
+            IF EXISTS(SELECT 1 FROM OPENJSON(@ReferencedCostsJson) WITH(EntryId uniqueidentifier) requested
+              WHERE NOT EXISTS(SELECT 1 FROM dbo.AccountingEntries entry WHERE entry.EntryId=requested.EntryId
+                AND entry.BusinessId=@BusinessId AND entry.TenantId=@TenantId))
+              THROW 51130,'Un comprobante no está contabilizado o no pertenece a esta sede.',1;
             IF @WarehouseId IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
                 AND IsActive=1 AND IsSystem=0 AND UseForGoodsReceipts=1)
@@ -751,6 +840,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@CurrencyCode", request.CurrencyCode);
         command.Parameters.AddWithValue("@ExchangeRateSource", request.ExchangeRateSource);
         command.Parameters.AddWithValue("@ProductsJson", JsonSerializer.Serialize(request.Lines.Select(x => x.ProductId).Distinct()));
+        command.Parameters.Add("@ReferencedCostsJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(request.ReferencedCostDocuments ?? []);
         command.Parameters.AddWithValue("@CostDocumentsJson",
             JsonSerializer.Serialize(request.AdditionalCostDocuments ?? []));
         try { await command.ExecuteNonQueryAsync(cancellationToken); }
@@ -785,11 +875,11 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             INSERT dbo.GoodsReceiptDrafts
               (GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,PartySiteId,PurchaseOrderId,PurchaseEvidenceType,SupplierInvoiceNumber,
                SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,ExchangeRate,
-               ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson,WithholdingConceptCode,WithholdingAdjustmentsJson,Notes,
+               ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson,ReferencedCostsJson,FinancialDiscountJson,WithholdingConceptCode,WithholdingAdjustmentsJson,Notes,
                NetAmount,TaxAmount,GrandTotal,CreatedByUserId,UpdatedByUserId,CreatedAt,UpdatedAt)
             VALUES(@Id,@BusinessId,@WarehouseId,@SupplierId,@PartySiteId,@PurchaseOrderId,@PurchaseEvidenceType,@InvoiceNumber,@InvoiceDate,@ReceivedAt,
                    @CreatesPayable,@DueDate,@Currency,@ExchangeRate,@ExchangeRateDate,@ExchangeRateSource,
-                   @AdditionalCostsJson,@WithholdingConceptCode,@WithholdingAdjustmentsJson,@Notes,@Net,@Tax,@Total,@UserId,@UserId,@Now,@Now);
+                   @AdditionalCostsJson,@ReferencedCostsJson,@FinancialDiscountJson,@WithholdingConceptCode,@WithholdingAdjustmentsJson,@Notes,@Net,@Tax,@Total,@UserId,@UserId,@Now,@Now);
             """;
         await using var command = DraftCommand(sql, connection, transaction, user, request, calculation, now);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -806,7 +896,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 SupplierInvoiceDate=@InvoiceDate,ReceivedAt=@ReceivedAt,CreatesPayable=@CreatesPayable,
                 DueDate=@DueDate,CurrencyCode=@Currency,ExchangeRate=@ExchangeRate,
                 ExchangeRateDate=@ExchangeRateDate,ExchangeRateSource=@ExchangeRateSource,
-                AdditionalCostsJson=@AdditionalCostsJson,WithholdingConceptCode=@WithholdingConceptCode,
+                AdditionalCostsJson=@AdditionalCostsJson,ReferencedCostsJson=@ReferencedCostsJson,FinancialDiscountJson=@FinancialDiscountJson,WithholdingConceptCode=@WithholdingConceptCode,
                 WithholdingAdjustmentsJson=@WithholdingAdjustmentsJson,Notes=@Notes,NetAmount=@Net,TaxAmount=@Tax,
                 GrandTotal=@Total,UpdatedByUserId=@UserId,UpdatedAt=@Now
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId AND RowVersion=@RowVersion;
@@ -845,6 +935,14 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             request.AdditionalCostDocuments is { Count: > 0 }
                 ? JsonSerializer.Serialize(request.AdditionalCostDocuments,
                     new JsonSerializerOptions(JsonSerializerDefaults.Web)) : DBNull.Value);
+        command.Parameters.Add("@ReferencedCostsJson", SqlDbType.NVarChar, -1).Value =
+            request.ReferencedCostDocuments is { Count: > 0 }
+                ? JsonSerializer.Serialize(request.ReferencedCostDocuments,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)) : DBNull.Value;
+        command.Parameters.Add("@FinancialDiscountJson", SqlDbType.NVarChar, -1).Value =
+            request.FinancialDiscount is { } financialDiscount
+                ? JsonSerializer.Serialize(financialDiscount,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)) : DBNull.Value;
         command.Parameters.AddWithValue("@WithholdingConceptCode",
             (object?)request.WithholdingConceptCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@WithholdingAdjustmentsJson",
@@ -875,41 +973,25 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         GoodsReceiptCalculation? calculation, CancellationToken cancellationToken)
     {
         if (calculation is null) return;
-        const string sql = """
-            INSERT dbo.GoodsReceiptDraftLines
-              (GoodsReceiptDraftId,LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,
-               DiscountAmount,TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,
-               PurchaseOrderLineId,OverReceiptReason,TotalGrossWeightKg,TotalVolumeM3)
-            VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,
-                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation,
-                   @PurchaseOrderLineId,@OverReceiptReason,@Weight,@Volume);
-            """;
-        foreach (var line in calculation.Lines)
+        var sources = requestLines.ToDictionary(line => line.LineNumber);
+        var lines = calculation.Lines.Select(line =>
         {
-            var source = requestLines.Single(item => item.LineNumber == line.LineNumber);
-            await using var command = new SqlCommand(sql, connection, transaction);
-            command.Parameters.AddWithValue("@Id", draftId);
-            command.Parameters.AddWithValue("@Line", line.LineNumber);
-            command.Parameters.AddWithValue("@ProductId", line.ProductId);
-            command.Parameters.AddWithValue("@Description", line.Description);
-            AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
-            AddDecimal(command, "@UnitCost", line.UnitCost, 19, 6);
-            AddDecimal(command, "@Discount", line.DiscountAmount, 19, 4);
-            command.Parameters.AddWithValue("@TaxCode", line.TaxCode);
-            AddDecimal(command, "@TaxRate", line.TaxRate, 9, 6);
-            command.Parameters.AddWithValue("@TaxTreatment", line.TaxTreatment.ToString());
-            AddDecimal(command, "@Net", line.NetAmount, 19, 4);
-            AddDecimal(command, "@Tax", line.TaxAmount, 19, 4);
-            AddDecimal(command, "@Total", line.LineTotal, 19, 4);
-            command.Parameters.AddWithValue("@PresentationName", source.PresentationName);
-            AddDecimal(command, "@PresentationQuantity", source.PresentationQuantity, 19, 6);
-            AddDecimal(command, "@UnitsPerPresentation", source.UnitsPerPresentation, 19, 6);
-            command.Parameters.AddWithValue("@PurchaseOrderLineId", (object?)source.PurchaseOrderLineId ?? DBNull.Value);
-            command.Parameters.AddWithValue("@OverReceiptReason", (object?)source.OverReceiptReason ?? DBNull.Value);
-            AddNullableDecimal(command, "@Weight", source.TotalGrossWeightKg, 19, 6);
-            AddNullableDecimal(command, "@Volume", source.TotalVolumeM3, 19, 6);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
+            var source = sources[line.LineNumber];
+            return new {
+                line.LineNumber, line.ProductId, line.Description, line.Quantity,
+                line.UnitCost, line.DiscountAmount, line.CommercialDiscountPercent,
+                line.TaxCode, line.TaxRate, TaxTreatment = line.TaxTreatment.ToString(),
+                line.NetAmount, line.TaxAmount, line.LineTotal, source.PresentationName,
+                source.PresentationQuantity, source.UnitsPerPresentation,
+                source.PurchaseOrderLineId, source.OverReceiptReason,
+                source.TotalGrossWeightKg, source.TotalVolumeM3
+            };
+        }).ToArray();
+        await using var command = new SqlCommand("purchasing.GoodsReceiptDraftLinesInsert", connection, transaction)
+        { CommandType = CommandType.StoredProcedure };
+        command.Parameters.Add("@DocumentId", SqlDbType.UniqueIdentifier).Value = draftId;
+        command.Parameters.Add("@LinesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(lines);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<GoodsReceiptDraft?> LoadDraftAsync(
@@ -921,13 +1003,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                    SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,Notes,
                    NetAmount,TaxAmount,GrandTotal,UpdatedAt,RowVersion,PurchaseEvidenceType,PurchaseOrderId,
                    ExchangeRate,ExchangeRateDate,ExchangeRateSource,AdditionalCostsJson,PartySiteId,
-                   WithholdingConceptCode,WithholdingAdjustmentsJson
+                   WithholdingConceptCode,WithholdingAdjustmentsJson,ReferencedCostsJson,FinancialDiscountJson
             FROM dbo.GoodsReceiptDrafts
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId;
             SELECT receiptLine.LineNumber,receiptLine.ProductId,receiptLine.DescriptionSnapshot,receiptLine.Quantity,receiptLine.UnitCost,receiptLine.DiscountAmount,
                    receiptLine.TaxCode,receiptLine.TaxRate,receiptLine.TaxTreatment,receiptLine.NetAmount,receiptLine.TaxAmount,receiptLine.LineTotal,
                    receiptLine.PresentationNameSnapshot,receiptLine.PresentationQuantity,receiptLine.UnitsPerPresentation,receiptLine.PurchaseOrderLineId,receiptLine.OverReceiptReason,
-                   receiptLine.TotalGrossWeightKg,receiptLine.TotalVolumeM3,product.UnitGrossWeightKg
+                   receiptLine.TotalGrossWeightKg,receiptLine.TotalVolumeM3,product.UnitGrossWeightKg,receiptLine.CommercialDiscountPercent
             FROM dbo.GoodsReceiptDraftLines receiptLine
             JOIN dbo.Products product ON product.ProductId=receiptLine.ProductId
             WHERE receiptLine.GoodsReceiptDraftId=@Id ORDER BY receiptLine.LineNumber;
@@ -957,8 +1039,14 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             AdditionalCosts = reader.IsDBNull(21) ? null :
                 JsonSerializer.Deserialize<IReadOnlyList<GoodsReceiptCostDocumentRequest>>(
                     reader.GetString(21), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            ReferencedCosts = reader.IsDBNull(25) ? null :
+                JsonSerializer.Deserialize<IReadOnlyList<GoodsReceiptVoucherCostRequest>>(
+                    reader.GetString(25), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
             PartySiteId = reader.IsDBNull(22) ? (Guid?)null : reader.GetGuid(22),
             WithholdingConceptCode = reader.IsDBNull(23) ? null : reader.GetString(23),
+            FinancialDiscount = reader.IsDBNull(26) ? null :
+                JsonSerializer.Deserialize<GoodsReceiptFinancialDiscountRequest>(
+                    reader.GetString(26), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
             WithholdingAdjustments = reader.IsDBNull(24) ? null :
                 JsonSerializer.Deserialize<IReadOnlyList<Auraly.Commerce.Taxation.Contracts.WithholdingAdjustmentRequest>>(
                     reader.GetString(24), new JsonSerializerOptions(JsonSerializerDefaults.Web))
@@ -975,13 +1063,15 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.IsDBNull(16) ? null : reader.GetString(16), false,
                 reader.IsDBNull(17) ? null : reader.GetDecimal(17),
                 reader.IsDBNull(18) ? null : reader.GetDecimal(18),
-                UnitGrossWeightKg: reader.IsDBNull(19) ? null : reader.GetDecimal(19)));
+                UnitGrossWeightKg: reader.IsDBNull(19) ? null : reader.GetDecimal(19),
+                CommercialDiscountPercent: reader.IsDBNull(20) ? null : reader.GetDecimal(20)));
         return new(header.Id, header.Business, header.Warehouse, header.Supplier, header.Invoice,
             header.InvoiceDate, header.Received, header.Payable, header.Due, header.Currency,
             header.Notes, header.Net, header.Tax, header.Total, lines, header.Updated, header.Token,
             header.EvidenceType, header.OrderId, header.ExchangeRate, header.ExchangeDate,
             header.ExchangeSource, header.AdditionalCosts, header.PartySiteId,
-            header.WithholdingConceptCode, header.WithholdingAdjustments);
+            header.WithholdingConceptCode, header.WithholdingAdjustments, header.ReferencedCosts,
+            header.FinancialDiscount);
     }
 
     private static byte[] ParseToken(string value)
@@ -999,11 +1089,4 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         parameter.Value = value;
     }
 
-    private static void AddNullableDecimal(SqlCommand command, string name, decimal? value, byte precision, byte scale)
-    {
-        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
-        parameter.Precision = precision;
-        parameter.Scale = scale;
-        parameter.Value = (object?)value ?? DBNull.Value;
-    }
 }

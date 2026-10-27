@@ -4,7 +4,6 @@ import { useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
-import { AccountSelect } from "@/components/accounting/account-select";
 import { SupplierSiteSelect, type SupplierSiteSelection } from "@/components/parties/supplier-site-select";
 import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -21,12 +20,12 @@ import { WithholdingAdjustmentEditor } from "@/components/taxation/withholding-a
 import { taxationApi } from "@/services/api/taxation";
 import { useAuthStore } from "@/stores/auth-store";
 
-type EditableLine = ExpenseLineInput & { key: string; accountCode: string; accountName: string };
+type EditableLine = ExpenseLineInput & { key: string };
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 4 });
 const issuedAt = (date: string) => date ? `${date}T12:00:00-05:00` : "";
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 function newLine(options: ExpenseOptions): EditableLine {
-  return { key: crypto.randomUUID(), expenseAccountId: "", accountCode: "", accountName: "", conceptId: null,
+  return { key: crypto.randomUUID(), expenseAccountId: null, conceptId: null,
     costCenterId: options.costCenters.find(center => center.isDefault)?.costCenterId ?? null,
     description: "", taxExclusiveAmount: 0, taxProfileId: null,
     taxTreatment: options.taxTreatments?.[0]?.code ?? "", withholdingConceptCode: null };
@@ -54,8 +53,6 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   const evidence = options.purchaseEvidenceTypes.filter(option => allowedPurchaseEvidenceTypes(party?.supplierPurchaseEvidencePolicy ?? null).includes(option.code));
   const supplierInvoice = form.purchaseEvidenceType === "SupplierElectronicInvoice";
   const support = form.purchaseEvidenceType === "BuyerElectronicSupportDocument";
-  const knownAccounts = [...options.concepts.map(concept => ({ accountId: concept.expenseAccountId, code: concept.expenseAccountCode, name: concept.expenseAccountName })),
-    ...lines.map(line => ({ accountId: line.expenseAccountId, code: line.accountCode, name: line.accountName }))];
   function invalidate() { calculationVersion.current++; setPreview(null); setError(null); }
   function change(patch: Partial<ConfirmExpense>) {
     const next = { ...form, ...patch };
@@ -66,7 +63,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
     } else setError(null);
   }
   function changeLine(patch: Partial<EditableLine>) { setEditingLine(current => current ? { ...current, ...patch } : null); }
-  const validLine = (line: EditableLine) => !!line.expenseAccountId && !!line.description.trim() &&
+  const validLine = (line: EditableLine) => !!line.conceptId && !!line.description.trim() &&
     line.taxExclusiveAmount > 0 && line.taxExclusiveAmount <= 999999999999 && !!line.taxTreatment;
   const existingLine = !!editingLine && lines.some(line => line.key === editingLine.key);
   function saveLine(event: React.FormEvent) {
@@ -84,7 +81,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   const valid = canPreview(lines) && !!form.partySiteId && evidence.some(option => option.code === form.purchaseEvidenceType) &&
     (!supplierInvoice || !!form.supplierDocumentNumber?.trim()) && !editingLine;
   function request(value: EditableLine[], hash: string | null, header: ConfirmExpense = form): ConfirmExpense {
-    return { ...header, lines: value.map(line => ({ expenseAccountId:line.expenseAccountId,conceptId:line.conceptId,costCenterId:line.costCenterId,description:line.description,taxExclusiveAmount:line.taxExclusiveAmount,taxProfileId:line.taxProfileId,taxTreatment:line.taxTreatment,withholdingConceptCode:line.withholdingConceptCode })), calculationHash: hash };
+    return { ...header, lines: value.map(line => ({ expenseAccountId:null,conceptId:line.conceptId,costCenterId:line.costCenterId,description:line.description,taxExclusiveAmount:line.taxExclusiveAmount,taxProfileId:line.taxProfileId,taxTreatment:line.taxTreatment,withholdingConceptCode:line.withholdingConceptCode })), calculationHash: hash };
   }
   async function calculate(value: EditableLine[], header: ConfirmExpense = form) {
     const version = ++calculationVersion.current;
@@ -146,12 +143,12 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
         <div className="overflow-x-auto rounded-xl border">
           <table className="block w-full text-sm md:table md:min-w-[760px]">
             <caption className="sr-only">Gastos agregados</caption>
-            <thead className="hidden bg-muted/50 text-left md:table-header-group"><tr><th className="p-3">Cuenta / descripción</th><th className="p-3">Centro de costo</th><th className="p-3 text-right">Base</th><th className="p-3">IVA</th><th className="p-3">Concepto tributario</th><th className="p-3 text-right">Acciones</th></tr></thead>
+            <thead className="hidden bg-muted/50 text-left md:table-header-group"><tr><th className="p-3">Concepto / descripción</th><th className="p-3">Centro de costo</th><th className="p-3 text-right">Base</th><th className="p-3">IVA</th><th className="p-3">Concepto tributario</th><th className="p-3 text-right">Acciones</th></tr></thead>
             <tbody className="block md:table-row-group">{lines.map((line, index) => {
               const tax = options.taxes?.find(item => item.taxProfileId === line.taxProfileId);
               const calculated = preview?.lines[index];
               return <tr key={line.key} className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 border-t p-3 md:table-row md:p-0">
-                <td className="col-span-2 min-w-0 break-words md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Cuenta / descripción</span><b>{line.accountCode} · {line.accountName}</b><p>{line.description}</p></td>
+                <td className="col-span-2 min-w-0 break-words md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Concepto / descripción</span><b>{options.concepts.find(concept => concept.conceptId === line.conceptId)?.name}</b><p>{line.description}</p></td>
                 <td className="col-span-2 min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Centro de costo</span>{options.costCenters.find(center => center.costCenterId === line.costCenterId)?.name ?? "Predeterminado"}</td>
                 <td className="min-w-0 font-medium md:whitespace-nowrap md:p-3 md:text-right"><span className="mb-1 block text-xs font-normal text-muted-foreground md:hidden">Base</span>{money.format(line.taxExclusiveAmount)}</td>
                 <td className="min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">IVA</span>{tax ? `${tax.name} · ${tax.rate}%` : "Sin IVA"}{tax && <small className="block text-muted-foreground">{options.taxTreatments?.find(item => item.code === line.taxTreatment)?.label}</small>}{calculated && <span className="block md:whitespace-nowrap">{money.format(calculated.vatAmount)}</span>}</td>
@@ -182,17 +179,16 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   </form>
     <Dialog open={!!editingLine} onOpenChange={open => { if (!open) setEditingLine(null); }}>
       <DialogContent className="max-h-[90dvh] w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-visible p-4 sm:max-w-3xl sm:p-6">
-        <DialogHeader><DialogTitle>{existingLine ? "Editar gasto" : "Agregar gasto"}</DialogTitle><DialogDescription>Completa la cuenta y los valores de la línea. Si usas un gasto frecuente, se cargarán sus datos.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{existingLine ? "Editar gasto" : "Agregar gasto"}</DialogTitle><DialogDescription>Selecciona el concepto y registra sus valores. La cuenta contable se obtiene automáticamente de su configuración.</DialogDescription></DialogHeader>
         {editingLine && <form onSubmit={saveLine} className="max-h-[calc(90dvh-8rem)] space-y-5 overflow-y-auto pr-1">
           <div className="rounded-xl border bg-muted/20 p-3">
-            <Field label="Usar gasto frecuente (opcional)">{id => <div className="relative"><Select value={editingLine.conceptId ?? "none"} onValueChange={value => {
+            <Field label="Concepto de gasto">{id => <div className="relative"><Select value={editingLine.conceptId ?? "none"} onValueChange={value => {
               const concept = options.concepts.find(item => item.conceptId === value);
-              if (concept) changeLine({ conceptId: concept.conceptId, expenseAccountId: concept.expenseAccountId, accountCode: concept.expenseAccountCode, accountName: concept.expenseAccountName,
+              if (concept) changeLine({ conceptId: concept.conceptId, expenseAccountId: null,
                 description: concept.name, costCenterId: concept.defaultCostCenterId, withholdingConceptCode: concept.withholdingConceptCode });
-            }}><SelectTrigger id={id} className={editingLine.conceptId ? "pr-16" : undefined}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Seleccionar gasto frecuente</SelectItem>{options.concepts.filter(item => item.isActive).map(item => <SelectItem key={item.conceptId} value={item.conceptId}>{item.name}</SelectItem>)}</SelectContent></Select>{editingLine.conceptId && <button type="button" aria-label="Quitar selección de gasto frecuente" className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => changeLine({ conceptId: null, expenseAccountId: "", accountCode: "", accountName: "", description: "", costCenterId: options.costCenters.find(center => center.isDefault)?.costCenterId ?? null, withholdingConceptCode: null })}><X className="h-4 w-4"/></button>}</div>}</Field>
+            }}><SelectTrigger id={id} className={editingLine.conceptId ? "pr-16" : undefined}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Seleccionar concepto</SelectItem>{options.concepts.filter(item => item.isActive).map(item => <SelectItem key={item.conceptId} value={item.conceptId}>{item.name}</SelectItem>)}</SelectContent></Select>{editingLine.conceptId && <button type="button" aria-label="Quitar selección de concepto" className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => changeLine({ conceptId: null, expenseAccountId: null, description: "", costCenterId: options.costCenters.find(center => center.isDefault)?.costCenterId ?? null, withholdingConceptCode: null })}><X className="h-4 w-4"/></button>}</div>}</Field>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
-            <Field label="Cuenta de gasto">{id => <div id={id}><AccountSelect expenseOnly accounts={knownAccounts} value={editingLine.expenseAccountId} onChange={(expenseAccountId, account) => changeLine({ expenseAccountId, accountCode: account?.code ?? "", accountName: account?.name ?? "", conceptId: null })}/></div>}</Field>
             <Field label="Centro de costo">{id => <Select value={editingLine.costCenterId ?? "none"} onValueChange={value => changeLine({ costCenterId: value === "none" ? null : value })}><SelectTrigger id={id}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Predeterminado de contabilidad</SelectItem>{options.costCenters.map(item => <SelectItem key={item.costCenterId} value={item.costCenterId}>{item.code} · {item.name}</SelectItem>)}</SelectContent></Select>}</Field>
             <Field label="Descripción de la línea">{id => <Input id={id} required maxLength={300} value={editingLine.description} onChange={event => changeLine({ description: event.target.value })}/>}</Field>
             <Field label="Base antes de IVA">{id => <FormattedNumberInput id={id} kind="currency" value={editingLine.taxExclusiveAmount} onValueChange={value => changeLine({ taxExclusiveAmount: value ?? 0 })}/>}</Field>

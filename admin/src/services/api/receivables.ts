@@ -54,6 +54,7 @@ export interface ReceivableDetail {
     transactionId: string;
     type: string;
     amount: number;
+    balanceChange: number;
     sourceDocumentId: string;
     occurredAt: string;
   }>;
@@ -80,7 +81,7 @@ export interface CustomerPaymentAcceptance {
   idempotentReplay: boolean;
 }
 export interface CustomerPaymentHistoryPage {
-  items:Array<{paymentId:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:CustomerPaymentTender[];applications:Array<{receivableId:string;documentNumber:string;amount:number}>;customerId:string|null;customerName:string|null}>;
+  items:Array<{paymentId:string;sourceDocumentId?:string;sourceDocumentType?:string;sourceGroupId?:string;documentNumber:string;paidAt:string;currencyCode:string;totalAmount:number;status:string;appliedDocumentCount:number;payments:CustomerPaymentTender[];applications:Array<{receivableId:string;documentNumber:string;amount:number}>;customerId:string|null;customerName:string|null}>;
   page:number;pageSize:number;totalCount:number;totalPages:number;totalAmount:number;
 }
 export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;partySiteId:string|null;partySiteName:string|null}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalOriginal:number;totalPaid:number}

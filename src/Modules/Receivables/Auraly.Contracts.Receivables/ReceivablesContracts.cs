@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Documents;
+using Auraly.BuildingBlocks.Domain.Payments;
 
 namespace Auraly.Contracts.Receivables;
 
@@ -19,11 +20,11 @@ public static class ReceivablesDocumentTypes
 
 public static class CustomerPaymentMethods
 {
-    public const string Cash = "Cash";
-    public const string Transfer = "Transfer";
-    public const string DebitCard = "DebitCard";
-    public const string CreditCard = "CreditCard";
-    public static bool IsSupported(string value) => value is Cash or Transfer or DebitCard or CreditCard;
+    public const string Cash = PortfolioPaymentMethods.Cash;
+    public const string Transfer = PortfolioPaymentMethods.Transfer;
+    public const string DebitCard = PortfolioPaymentMethods.DebitCard;
+    public const string CreditCard = PortfolioPaymentMethods.CreditCard;
+    public static bool IsSupported(string value) => PortfolioPaymentMethods.IsSupported(value);
 }
 
 public sealed record ReceivablesUserIdentity(Guid UserId, Guid TenantId, Guid BusinessId,
@@ -43,7 +44,7 @@ public sealed record ReceivablePage(IReadOnlyList<ReceivableListItem> Items, int
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
 public sealed record ReceivableTransactionView(Guid TransactionId, string Type, decimal Amount,
-    Guid SourceDocumentId, DateTimeOffset OccurredAt);
+    Guid SourceDocumentId, DateTimeOffset OccurredAt, decimal? BalanceChange = null);
 public sealed record ReceivableDetail(Guid ReceivableId, Guid? CustomerId, string CustomerName,
     string CustomerIdentification, Guid SourceDocumentId, string SourceDocumentType,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
@@ -78,7 +79,13 @@ public sealed record CustomerPaymentHistoryItem(Guid PaymentId, string DocumentN
     DateTimeOffset PaidAt, string CurrencyCode, decimal TotalAmount, string Status,
     int AppliedDocumentCount, IReadOnlyList<CustomerPaymentTenderSnapshot> Payments,
     IReadOnlyList<CustomerPaymentHistoryApplication> Applications,
-    Guid? CustomerId = null, string? CustomerName = null);
+    Guid? CustomerId = null, string? CustomerName = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? SourceDocumentId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? SourceDocumentType = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? SourceGroupId = null);
 public sealed record CustomerPaymentHistoryApplication(Guid ReceivableId,string DocumentNumber,decimal Amount);
 public sealed record CustomerPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? CustomerId,
     string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null,

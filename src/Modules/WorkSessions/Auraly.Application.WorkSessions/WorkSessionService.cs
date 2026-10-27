@@ -65,6 +65,9 @@ public interface IWorkSessionStore
     Task<WorkSessionPaymentVerificationPage> ListClosurePaymentVerificationPageAsync(
         WorkSessionIdentity identity, Guid closureId, string? paymentMethodCode,
         string? movementType, int page, int pageSize, CancellationToken cancellationToken);
+    Task<WorkSessionInvoiceChargePage> ListClosureInvoiceChargesAsync(
+        WorkSessionIdentity identity, Guid closureId, string? paymentMethodCode,
+        int page, int pageSize, CancellationToken cancellationToken);
     Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
         WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken);
@@ -365,6 +368,19 @@ public sealed class WorkSessionService(
             paymentMethodCode, movementType, page, pageSize, cancellationToken);
     }
 
+    public Task<WorkSessionInvoiceChargePage> ListClosureInvoiceChargesAsync(
+        WorkSessionIdentity identity, Guid closureId, string? paymentMethodCode,
+        int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.ReadCashDifferences);
+        if (closureId == Guid.Empty || page < 1 || pageSize is < 1 or > 100 ||
+            page > int.MaxValue / pageSize || paymentMethodCode is not null &&
+            (paymentMethodCode.Length is < 1 or > 32 || paymentMethodCode.Any(character => !char.IsLetterOrDigit(character))))
+            throw new WorkSessionValidationException("El cierre, medio o paginación de cargos no es válido.");
+        return store.ListClosureInvoiceChargesAsync(identity, closureId, paymentMethodCode,
+            page, pageSize, cancellationToken);
+    }
+
     public async Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
         WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken = default)
@@ -379,6 +395,7 @@ public sealed class WorkSessionService(
         if (request.ChargeCashShortageToEmployee && string.IsNullOrWhiteSpace(request.Note))
             throw new WorkSessionValidationException("Describe el faltante antes de registrarlo a cargo del empleado.");
         if (request.PaymentVerifications?.Any(item => string.IsNullOrWhiteSpace(item.VerificationKey) ||
+                item.VerificationKey.Length > 200 ||
                 item.Status is not ("Verified" or "Missing")) == true)
             throw new WorkSessionValidationException("La verificación individual de pagos no es válida.");
         var manual = request.ManualMovements ?? [];
@@ -388,7 +405,6 @@ public sealed class WorkSessionService(
                 item.PaymentMethodCode.Any(character => !char.IsLetterOrDigit(character)) ||
                 item.MovementType is not ("Sale" or "Refund" or "ReceivablePayment" or
                     "PayablePayment" or "CashIn" or "CashOut") ||
-                (item.MovementType is "CashIn" or "CashOut" && item.PaymentMethodCode != "Cash") ||
                 item.Amount <= 0 || item.Amount >= 1_000_000_000_000_000m ||
                 decimal.Round(item.Amount, 4) != item.Amount ||
                 string.IsNullOrWhiteSpace(item.Observation) || item.Observation.Trim().Length > 500))

@@ -128,15 +128,16 @@ Capacidad efectiva = incluida en plan + ampliaciones pagadas + ajustes vigentes.
 - `PayrollEmployee`: se reserva al activar un empleo, no al crear una Party.
 - `DianDocument`: bolsa mensual compartida por facturas electrónicas, documentos soporte y documentos electrónicos de nómina emitidos.
 
-`DianDocument` se renueva en cada fecha de corte de la suscripción: el consumo del nuevo periodo empieza en cero y la capacidad contratada se conserva; el saldo no usado no se acumula. Cada emisión reserva una unidad antes de numerar o enviar a DIAN y confirma el consumo con el resultado autoritativo. Borradores, consultas, reintentos técnicos y reenvíos del mismo documento conservan la misma reserva y no consumen otra unidad. Cuando no hay saldo, factura electrónica, documento soporte y nómina electrónica quedan bloqueados antes de emitir.
+`DianDocument` se renueva en cada fecha de corte dentro de un término pagado de la suscripción: el consumo del nuevo periodo empieza en cero y la capacidad contratada se conserva; el saldo no usado no se acumula. Cada emisión reserva una unidad antes de numerar o enviar a DIAN y confirma el consumo con el resultado autoritativo. Borradores, consultas, reintentos técnicos y reenvíos del mismo documento conservan la misma reserva y no consumen otra unidad. Cuando no hay saldo, factura electrónica, documento soporte y nómina electrónica quedan bloqueados antes de emitir.
 
 Durante el corte incremental, el tenant facturador de plataforma Auraly y los tenants
 creados antes del modelo comercial pueden no tener todavía una fila en
 `TenantSubscriptions`. La ausencia total de suscripción significa temporalmente
 **cupo no administrado** y no equivale a límite cero; el preflight y la reserva permiten
 emitir sin crear consumos ficticios. Esta compatibilidad solo aplica cuando la fila no
-existe. Si existe una suscripción, sus estados, periodo mensual y límite se aplican de
-forma estricta: `Suspended`, `Cancelled`, periodo ausente o saldo agotado bloquean. La
+existe. Si existe una suscripción, su periodo mensual y límite se aplican de
+forma estricta: un periodo ausente fuera del término pagado o un saldo agotado bloquean
+únicamente nuevas emisiones electrónicas. El estado comercial no bloquea la operación. La
 condición de retiro es completar la migración de límites actuales indicada en Rollout;
 entonces todos los tenants comerciales tendrán suscripción y la excepción quedará sin
 usuarios, sin cambiar el contrato de reserva.
@@ -170,7 +171,7 @@ Todas las reservas bloquean por tenant para impedir que dos solicitudes consuman
 
 Al cruzar 70 %, 85 %, 95 % y 100 %, una política idempotente publica aviso in-app y correo al administrador; Web Push se usa si hay suscripción válida. La deduplicación incluye tenant, periodo, entitlement y umbral. El aviso muestra uso/límite, renovación y “Ampliar capacidad”. La ampliación solo se aplica después del pago verificado.
 
-## Ciclo de suscripción, órdenes de renovación, facturas y suspensión
+## Ciclo de suscripción, órdenes de renovación y continuidad operativa
 
 El pago inicial cubre el periodo elegido desde el instante de aprovisionamiento: un mes para `Monthly` o doce meses para `Annual`. Esa fecha queda como `BillingAnchor`; no se deriva del día en que después se pague tarde. Para anclas 29, 30 o 31, los meses cortos usan su último día y el siguiente ciclo vuelve al día original. La zona horaria de facturación es configurable por plataforma y por defecto `America/Bogota`.
 
@@ -190,21 +191,59 @@ El administrador autorizado de plataforma también puede registrar desde Auraly 
 
 Wompi y recaudo manual convergen después de validar el medio en un único comando idempotente de liquidación de la orden. Ese comando marca una sola revisión como pagada, registra/reutiliza el pago, actualiza la proyección de Suscripción, activa o renueva el periodo y sus entitlements, y publica la creación de la única factura electrónica correspondiente. La clave de idempotencia incluye `RenewalOrderId`, revisión y transacción/referencia externa. No existe un botón que cambie directamente el estado de la suscripción; revertir un recaudo exige el flujo contable de anulación/devolución y su impacto fiscal, con motivo y auditoría.
 
-El periodo de gracia es configuración de plataforma, 10 días por defecto. En la ancla, una orden vigente sin pago pasa a vencida y la suscripción a `PastDue`. El tenant conserva operación durante los días 1 a 9 y la capacidad mensual se abre como crédito de gracia trazable. Los avisos previos son configurables (por defecto 5 días antes). La frecuencia vencida también es configurable (por defecto cada 3 días): con gracia 10 se avisa los días 3, 6 y 9 de mora; el día 9 anuncia la fecha de suspensión. Al inicio local del día 10 la suscripción pasa a `Suspended`, se envía aviso final y se bloquea la operación.
+Decisión aprobada el 20 de octubre de 2026: la mora nunca desactiva el tenant ni bloquea comprobantes, ventas ordinarias o entradas de mercancía. Solo la desactivación administrativa explícita (`Tenant.IsActive=0`) bloquea la operación. `PastDue` informa deuda; el valor histórico `Suspended` no produce bloqueo y deja de generarse automáticamente. Los avisos previos y la frecuencia de mora siguen siendo configurables, sin fecha automática de suspensión.
 
-La reserva DIAN abre de forma atómica el subperiodo mensual faltante en la primera emisión del nuevo mes, incluido el crédito de gracia. La lectura previa de disponibilidad reconoce esa capacidad antes de que exista la fila de consumo. Un límite agotado se distingue de una suscripción o empresa inactiva; solo el primero se comunica como falta de cupo. La factura de pedido reserva cupo antes de asignar números; una recepción fallida elimina la preparación y libera la reserva si no existe un documento emitido.
+Las órdenes continúan generándose aunque las anteriores estén pendientes: una por periodo contractual, mensual o anual. `CurrentPeriodStart/End` conserva el término pagado; el calendario de cobro avanza sobre las órdenes existentes sin otorgar capacidad. Una orden anulada conserva su lugar en el calendario. El scheduler procesa como máximo 200 suscripciones por lote y una transacción independiente por candidato; recupera cortes atrasados en sucesivas ejecuciones. Consulta el catálogo una vez por lote. La orden pendiente más antigua es la selección predeterminada; la tabla permite consultar/pagar las demás. No se cambia el plan ni la duración de un cobro si ya existen periodos posteriores, para evitar superposiciones.
+
+**Cupos nuevos solo al pagar.** Los cupos todavía vigentes se consumen aun con deuda. No se abre crédito documental por gracia ni se acumulan cupos vencidos. La reserva abre atómicamente un subperiodo mensual faltante solo dentro del término pagado; un plan anual pagado conserva sus subperiodos mensuales. Pagar un cobro antiguo no desplaza fechas, ancla ni límites de un término más reciente; tampoco convierte un periodo vencido en cupo vigente. La deuda se conserva aunque se pague otro cobro.
+
+Si una renovación pagada anticipadamente va a reemplazar las fechas del término
+pagado actual, su settlement conserva primero los subperiodos mensuales faltantes
+de ese término en `TenantSubscriptionUsagePeriods`. Es una inserción por conjunto
+de hasta doce meses dentro del mismo comando y transacción; reutiliza
+`TenantSubscriptionPeriodBoundary`, sin cambiar consumos ni identidades ya
+existentes. Así un mes anual todavía no consumido conserva su cupo aunque el
+puntero de la suscripción pase al próximo término. Los meses vencidos siguen sin
+acumularse y una orden impagada no crea estos periodos. El replay del cobro sigue
+siendo una lectura; no reconstruye periodos perdidos por un binario anterior.
+
+Preflight, Suscripción y reserva reutilizan `billing.TenantDianQuotaSnapshot`: mismo periodo vigente, consumo y disponibilidad, sin inferir acceso desde el estado comercial. La reserva conserva el bloqueo por suscripción, lote de hasta 100 documentos e idempotencia por documento; el preflight no sustituye esa reserva. La función `billing.TenantSubscriptionPeriodBoundary` conserva el día de ancla al atravesar meses cortos. Un cupo agotado se comunica como falta de documentos DIAN; una desactivación administrativa se informa separadamente. La interfaz permite volver al comprobante conservando lo digitado y exige escoger explícitamente cualquier documento no electrónico.
+
+El listado de suscripciones de plataforma consulta el consumo mediante esa
+misma función. Filtra y pagina primero las identidades de tenants, con desempate
+estable por ID, y después carga cupo y cobro de esa página. Conteo y página
+comparten filtros y se devuelven en un comando SQL; no existe una consulta de
+consumo por tenant desde la aplicación.
+
+`GracePeriodDays` permanece en esquema y contratos para compatibilidad de despliegue, sin efecto sobre acceso ni concesión de cupos y sin campo editable en la interfaz. No se agrega tabla de cartera, scheduler ni writer. Las órdenes siguen siendo preliquidaciones comerciales; la factura y sus efectos nacen mediante la liquidación canónica al pagar.
 
 Cada evento genera notificación in-app visible en la campanita únicamente para cuentas activas con el rol administrador del tenant; vendedores, cajeros, empleados y demás roles no son destinatarios. El correo es un canal global opcional: habilitado significa que todos los tenants reciben los recordatorios; deshabilitado significa que ninguno los recibe, mientras la campanita permanece obligatoria. No existen excepciones ni interruptores por tenant. Cada entrega tiene clave única `RenewalOrderId + Revision + RecipientUserId + Channel + NotificationKind + DelinquencyDay`, de modo que múltiples administradores reciban su propio aviso y los reintentos no creen duplicados. El outbox registra programado, entregado y error seguro sin guardar contenido sensible innecesario.
 
-En el módulo transversal `Tenants` se agrega una pestaña global `Política de cobranza`, protegida por el permiso de plataforma no delegable `tenants.billing.policy.manage`. Solo el administrador general de Auraly lo recibe. Configura `EmailRemindersEnabled` (`true` por defecto), días previos, días de gracia, frecuencia de mora, zona horaria y versiones de plantilla para todos los tenants. `InAppEnabled` no se expone porque la campanita siempre se entrega. El administrador de un tenant ve en Suscripción el calendario efectivo y sus facturas, pero nunca esta pestaña ni sus endpoints. Cada cambio exige motivo y registra actor, valor anterior/nuevo y vigencia; apagar correo no borra avisos ya entregados ni altera campanita o suspensión.
+En el módulo transversal `Tenants` se agrega una pestaña global `Política de cobranza`, protegida por el permiso de plataforma no delegable `tenants.billing.policy.manage`. Solo el administrador general de Auraly lo recibe. Configura `EmailRemindersEnabled` (`true` por defecto), días previos, frecuencia de mora, zona horaria y versiones de plantilla para todos los tenants. `InAppEnabled` no se expone porque la campanita siempre se entrega. El administrador de un tenant ve en Suscripción el calendario efectivo y sus facturas, pero nunca esta pestaña ni sus endpoints. Cada cambio exige motivo y registra actor, valor anterior/nuevo y vigencia; apagar correo no borra avisos ya entregados ni altera campanita o acceso.
 
 La campanita y el botón “Pagar ahora” del correo abren una ruta opaca de Auraly que, después de autenticar, lleva a `/dashboard/subscription?order={RenewalOrderId}` y enfoca la revisión autorizada. No se incrusta en el correo una URL estática de checkout Wompi: podría ser reenviada, expirar, pertenecer a una revisión anterior o estar ya pagada. Al abrir Auraly se comprueban tenant, rol, total y estado actuales y recién entonces el backend crea un intento de pago de uso único.
 
 Suscripción contiene una tabla paginada en servidor, ordenada por creación descendente, con filtros por `Todas`, `Pendientes`, `Vencidas`, `Pagadas`, estado, rango y periodo cobrado. Cada fila muestra número de cobro, periodo, creación, vencimiento, estado, total, saldo, fecha de pago y, cuando exista, número de factura electrónica; el detalle ofrece factura/contenedor descargable, líneas y trazabilidad de pagos. “Pagar” solo aparece para saldo abierto. Tanto el CTA del correo como el botón de la tabla abren el mismo componente de pago: el Widget oficial de Wompi como modal dentro de Auraly, con verificación inmediata y recuperación por webhook/conciliador. No se crea una segunda integración, iframe propio ni pestaña obligatoria.
 
-La suspensión se aplica por una política transversal de estado de tenant, no desactivando filas de empresa o usuario. Solo permanecen habilitados autenticación mínima, recuperación de contraseña, Suscripción, consulta/pago de cobros y facturas, soporte y administración de plataforma. Se rechazan nuevas operaciones API y enrolamientos, se revocan sesiones operativas y se publican invalidaciones `Security`/`FiscalProvisioning` a equipos conectados. Un equipo físicamente desconectado no puede recibir una suspensión instantánea y su preparación local no vence por el paso del tiempo; al primer contacto la sincronización persiste el bloqueo y deja de admitir nuevas operaciones. Esta ventana offline deliberada debe mostrarse en plataforma y medirse.
+La consulta transversal de acceso conserva su contrato (`TenantSubscriptionSuspensionGet`) y consulta exclusivamente la desactivación administrativa. La cobranza no modifica empresas, usuarios ni `Tenant.IsActive`. Los equipos desconectados conservan las reglas existentes de sincronización y concesión fiscal; este cambio no inventa cupo offline ni convierte automáticamente facturas en comprobantes.
 
-Un pago total confirmado, por Wompi o por recaudo manual autorizado, mueve la orden a `PaymentConfirmed`, crea/reutiliza su factura fiscal de contado, cambia la suscripción a `Active`, abre o confirma el periodo correspondiente y publica las mismas invalidaciones. La reactivación es idempotente. Si había documentos `PendingCapacity`, el motor fiscal los reclama contra la nueva capacidad en orden. Pagar tarde no desplaza `BillingAnchor` ni genera dos periodos. La vista del tenant refleja el mismo resultado y medio de pago sin exponer comprobantes internos ni datos contables de otros tenants.
+Un pago total confirmado, por Wompi o recaudo manual autorizado, mueve la orden a `PaymentConfirmed`, crea/reutiliza su única factura fiscal y activa el periodo correspondiente mediante la liquidación existente. La suscripción conserva `PastDue` cuando aún hay otros cobros vencidos. Pagar no revierte una desactivación manual. Los procesos `PendingCapacity` continúan por el motor fiscal canónico cuando exista capacidad válida. Reintentos devuelven el resultado ya producido.
+
+El settlement valida primero identidad, orden, importe y referencia del pago y
+busca su resultado en un solo viaje SQL. Un cobro ya liquidado devuelve la misma
+factura sin consultar resolución vigente, clave fiscal ni reescribir periodos.
+Si es nuevo, ese mismo comando obtiene la referencia fiscal; la clave se resuelve
+fuera de la transacción. Al entrar en la transacción serializable existente se
+reutiliza la misma consulta de resultado para cubrir una liquidación concurrente.
+El camino nuevo no agrega viajes y el replay usa uno, sin I/O a secretos. La fecha
+de validez fiscal y la emisión usan el mismo instante del reloj inyectado.
+
+El medio fiscal se resuelve desde el medio congelado del pago mediante
+`PosSaleFiscalMappings.PaymentMeansCode`, la equivalencia técnica canónica de
+ventas. No se fija transferencia para recaudos en efectivo o tarjeta. Una
+referencia distinta (incluidos mayúsculas o espacios añadidos), un importe
+distinto o una referencia que exceda su contrato no puede reutilizar una factura
+existente ni provocar una nueva consulta de claves.
 
 Ampliaciones durante un periodo se cobran de inmediato prorrateadas por los días restantes y solo se activan tras el pago; el siguiente cobro de renovación incluye su precio recurrente completo según la periodicidad vigente. En anual, el prorrateo usa los días restantes del término anual y conserva el descuento anual solo cuando la política comercial versionada lo declare elegible. Disminuciones y cancelaciones se programan para la siguiente ancla y no borran capacidad ya pagada. Cambios de plan o periodicidad entran en la siguiente renovación, salvo una ampliación inmediata pagada; conservan snapshots y trazabilidad. Créditos o devoluciones requieren documento y aplicación contable, no edición de la factura.
 
@@ -244,9 +283,9 @@ Pruebas adicionales obligatorias: cada tenant aprovisionado por pago o exención
 
 Estados de cartera: se conservan exactamente los existentes `Open`, `PartiallyPaid`, `Paid`, `Cancelled`; “Vencida” es `Open` o `PartiallyPaid` con saldo y `DueDate` anterior a la fecha efectiva. Los pagos parciales no habilitan renovación. La factura fiscal usa los estados del motor documental/DIAN existente. Estados de suscripción: `Active`, `PastDue`, `Suspended`, `Cancelled`. `Tenant.IsActive` no se usa para mora porque impediría el portal de pago y mezclaría baja administrativa con cobranza.
 
-El programador canónico es `TimedProcessScheduler`: agrega tipos de proceso para generar renovación, emitir recordatorios y evaluar suspensión. Cada próximo hito vive en la tabla durable existente `ScheduledAutomationJobs`, generalizada con el propietario opcional `TenantSubscriptionId` y el tipo `TenantSubscriptionLifecycle`; la orden de renovación no guarda una segunda fecha de scheduler. La clave única por suscripción, el reclamo con lease, el reintento y la reprogramación se conservan en ese único calendario. No se crea otro timer, tabla de jobs ni worker propietario. El outbox publica correo, fiscal, contabilidad, capacidad y sincronización después de cada commit.
+El programador canónico es `TimedProcessScheduler`: agrega tipos de proceso para generar renovación y emitir recordatorios. Cada próximo hito vive en la tabla durable existente `ScheduledAutomationJobs`, generalizada con el propietario opcional `TenantSubscriptionId` y el tipo `TenantSubscriptionLifecycle`; la orden de renovación no guarda una segunda fecha de scheduler. La clave única por suscripción, el reclamo con lease, el reintento y la reprogramación se conservan en ese único calendario. No se crea otro timer, tabla de jobs ni worker propietario. El outbox publica correo, fiscal, contabilidad, capacidad y sincronización después de cada commit.
 
-Antes de activar cobros reales en cada ambiente debe estar creada y fiscalmente configurada la empresa facturadora Auraly, incluido su NIT, resolución, impuestos y cuenta Wompi. También debe aprobarse el texto contractual de prorrateo, gracia, suspensión y no acumulación de documentos. Estas decisiones son datos versionados de catálogo/configuración; no se hardcodean.
+Antes de activar cobros reales en cada ambiente debe estar creada y fiscalmente configurada la empresa facturadora Auraly, incluido su NIT, resolución, impuestos y cuenta Wompi. También debe aprobarse el texto contractual de prorrateo, continuidad en mora, desactivación manual y no acumulación de documentos. Estas decisiones son datos versionados de catálogo/configuración; no se hardcodean.
 
 ## Experiencia
 
@@ -255,7 +294,7 @@ Antes de activar cobros reales en cada ambiente debe estar creada y fiscalmente 
 - Plan: cards Esencial, Negocio, Empresa y Corporativo; “Ver detalles” abre modal accesible con tags de POS, facturación, contabilidad, nómina, soporte y capacidades.
 - Adicionales: controles de cantidad y subtotal por concepto.
 - Administrador: correo de invitación.
-- Pago: selector anual/mensual con anual predeterminado; ahorro anual del 15 % destacado en porcentaje y COP, comparación transparente, resumen, impuestos, Wompi y estado; exención solo con permiso.
+- Pago: selector anual/mensual con anual predeterminado; ahorro anual configurado en catálogo, destacado en porcentaje y COP, comparación transparente, resumen, impuestos, Wompi y estado; exención solo con permiso.
 
 El borrador sobrevive recargas. El tenant ve capacidad propia y compra más; plataforma puede ver todas las sedes y editar contratos.
 
@@ -275,4 +314,13 @@ Todos los índices y consultas posteriores al alta incluyen `TenantId`; acceso t
 
 El despliegue es incremental con feature flag: esquema/catálogos, cotización, sandbox de plataforma, wizard pagado en dev, producción, migración de límites actuales, luego cupos vendedor/nómina/DIAN y alertas. El rollback desactiva el flag y conserva pagos, cotizaciones y ledger.
 
-Pruebas obligatorias: cálculo servidor y manipulación rechazada; anual predeterminado, fórmula del 15 %, ahorro mostrado y total Wompi exacto; cambio mensual/anual y redondeos; renovación mensual frente a aniversario anual sin cobros intermedios; cupos mensuales reiniciados dentro de un anual sin factura adicional; factura anual única y factura mensual por pago; recaudo manual y Wompi convergen en el mismo settlement; permiso de plataforma, referencia manual duplicada, importe parcial y cobro ya pagado rechazados; concurrencia entre webhook y confirmación manual produce un pago aplicado, una suscripción y una factura; anulación no edita estados directamente; paquetes DIAN distintos de múltiplos de 1.000 rechazados; webhook/poller concurrentes; retorno sin aprovisionar; importe/moneda/referencia/cuenta incorrectos; exención; último cupo concurrente en cada recurso; factura, soporte y nómina bloqueados sin saldo; concesiones offline sin sobreasignación y bloqueo persistente al reconectar; reintento fiscal idempotente; aislamiento; avisos deduplicados; ampliación posterior al pago; rol vendedor limitado; recuperación de contraseña de un solo uso; landing/wizard en escritorio, teléfono y movimiento reducido.
+Pruebas obligatorias: cálculo servidor y manipulación rechazada; anual predeterminado, fórmula del porcentaje configurado, ahorro mostrado y total Wompi exacto; cambio mensual/anual y redondeos; renovación mensual frente a aniversario anual sin cobros intermedios; cupos mensuales reiniciados dentro de un anual sin factura adicional; factura anual única y factura mensual por pago; recaudo manual y Wompi convergen en el mismo settlement; permiso de plataforma, referencia manual duplicada, importe parcial y cobro ya pagado rechazados; concurrencia entre webhook y confirmación manual produce un pago aplicado, una suscripción y una factura; anulación no edita estados directamente; capacidad DIAN coherente con el tamaño de paquete vigente del catálogo; webhook/poller concurrentes; retorno sin aprovisionar; importe/moneda/referencia/cuenta incorrectos; exención; último cupo concurrente en cada recurso; factura, soporte y nómina bloqueados sin saldo; concesiones offline sin sobreasignación y bloqueo persistente al reconectar; reintento fiscal idempotente; aislamiento; avisos deduplicados; ampliación posterior al pago; rol vendedor limitado; recuperación de contraseña de un solo uso; landing/wizard en escritorio, teléfono y movimiento reducido.
+
+### Verificación y despliegue de continuidad (20 de octubre de 2026)
+
+- Desplegar las funciones y procedimientos SQL junto al backend y frontend compatibles. No requiere tablas nuevas ni reescritura de saldos. El proceso canónico reabre los calendarios cerrados por la antigua suspensión comercial, únicamente para tenants administrativamente activos.
+- Aceptación: mora mensual/anual sin bloqueo, reserva con cupo vigente, agotamiento y ausencia de renovación pagada, idempotencia, desactivación manual, cobros consecutivos sin capacidad gratuita y calendario con ancla 31. El aviso no modifica venta, impresión ni recepción.
+- Camino crítico: acceso y preflight una consulta; reserva una llamada SQL con bloqueo por tenant. La lectura de servicios de liquidación se resuelve por conjunto, sin una consulta por línea. No se agrega polling de frontend ni lecturas en el modal.
+- Compras, nómina y suscripciones consultan el mismo recurso comercial mediante `useTenantCommercialSubscription`, con una caché por tenant. La orden de renovación también se identifica por tenant; su guardado reutiliza la orden y la cotización devueltas, sin reconstruirlas con otro GET.
+- Al confirmar el pago se releen una vez la suscripción y la orden mediante esos propietarios: el ticket devuelto no contiene el cupo vigente ni determina qué orden quedó actual, especialmente al pagar períodos antiguos. No se infieren límites desde el ticket ni se agrega un intervalo de consulta.
+- Rollback: los cambios son aditivos en esquema y conservan contratos. Volver al código/procedimientos anteriores restablecería la suspensión y el crédito de gracia: no es un rollback funcional aceptable para esta política; una reversión debe conservar los nuevos predicados de acceso/cupo. Los cobros ya creados se preservan.

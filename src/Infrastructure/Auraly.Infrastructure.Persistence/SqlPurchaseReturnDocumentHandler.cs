@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using System.Data;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
@@ -24,37 +25,21 @@ public sealed class SqlPurchaseReturnDocumentHandler(
             throw new InvalidOperationException(
                 "The purchase return envelope does not match its payload.");
         var session=sessions.Current;
-        foreach(var line in value.Lines.OrderBy(line=>line.LineNumber))
-            await ApplyInventoryAsync(session,value,line,cancellationToken);
+        _ = await inventoryWriter.PostBatchAsync(session,
+            value.Lines.OrderBy(line => line.LineNumber).Select(line => new InventoryLedgerPosting(
+                value.BusinessId, value.WarehouseId, line.ProductId, value.ReturnId,
+                PurchasingDocumentTypes.PurchaseReturn, line.LineNumber, "PurchaseReturn",
+                -line.Quantity, line.RecognizedUnitCost, InventoryValuationMode.SpecifiedCostIssue,
+                value.ReturnedAt, OriginReference: new(value.OriginalGoodsReceiptId,
+                    PurchasingDocumentTypes.GoodsReceipt,line.OriginalLineNumber,"GoodsReceipt"))).ToArray(), cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
-            session,document,value.ReturnedAt,ids,timeProvider,cancellationToken,
+            session.Connection, session.Transaction,document,value.ReturnedAt,ids,timeProvider,cancellationToken,
             AccountingJobRequirement.PreserveCommercialEffects);
         await SqlSalesReportingJobWriter.InsertAsync(
             session,document,ids,timeProvider,cancellationToken);
         await InsertOutboxAsync(session,value,document.Payload,cancellationToken);
         await MarkProcessedAsync(session,value,cancellationToken);
     }
-
-    private async Task ApplyInventoryAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        PurchaseReturnDocumentPayload value,
-        PurchaseReturnLineSnapshot line,
-        CancellationToken cancellationToken) =>
-        _ = await inventoryWriter.PostAsync(
-            session,
-            new InventoryLedgerPosting(
-                value.BusinessId,
-                value.WarehouseId,
-                line.ProductId,
-                value.ReturnId,
-                PurchasingDocumentTypes.PurchaseReturn,
-                line.LineNumber,
-                "PurchaseReturn",
-                -line.Quantity,
-                line.RecognizedUnitCost,
-                InventoryValuationMode.SpecifiedCostIssue,
-                value.ReturnedAt),
-            cancellationToken);
 
     private async Task InsertOutboxAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
@@ -88,10 +73,5 @@ public sealed class SqlPurchaseReturnDocumentHandler(
         if(await command.ExecuteNonQueryAsync(cancellationToken)!=1)
             throw new DBConcurrencyException(
                 "The purchase return could not be marked as processed.");
-    }
-    private static void AddDecimal(SqlCommand command,string name,decimal value,byte precision,byte scale)
-    {
-        var parameter=command.Parameters.Add(name,SqlDbType.Decimal);
-        parameter.Precision=precision;parameter.Scale=scale;parameter.Value=value;
     }
 }

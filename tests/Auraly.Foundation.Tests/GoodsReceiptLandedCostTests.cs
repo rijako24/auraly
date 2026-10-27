@@ -6,6 +6,135 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class GoodsReceiptLandedCostTests
 {
+    [Theory]
+    [InlineData(true, 95, 285)]
+    [InlineData(false, 100, 300)]
+    public void Financial_discount_is_allocated_after_commercial_discount_without_changing_invoice_or_tax(
+        bool anticipate, decimal firstCost, decimal secondCost)
+    {
+        var request = Request([
+            Line(1, 1m, 100m), Line(2, 1m, 300m)
+        ], []) with
+        {
+            FinancialDiscount = new(5m, new DateOnly(2026, 9, 20), anticipate)
+        };
+
+        var result = GoodsReceiptCostCalculator.Calculate(request, Merchandise(request));
+
+        Assert.Equal(400m, result.FunctionalGrandTotal);
+        Assert.Equal(20m, result.FinancialDiscount!.Amount);
+        Assert.Equal([5m, 15m], result.FinancialDiscount.Lines.Select(line => line.Amount));
+        Assert.Equal([firstCost, secondCost],
+            result.ReceiptLines.Select(line => line.RecognizedInventoryCostAmount));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100.000001)]
+    [InlineData(1.1234567)]
+    public void Financial_discount_rejects_invalid_percentage(decimal percentage)
+    {
+        var request = Request([Line(1, 1m, 100m)], []) with
+        {
+            FinancialDiscount = new(percentage, null, false)
+        };
+
+        Assert.Throws<PurchasingValidationException>(() =>
+            GoodsReceiptCostCalculator.Calculate(request, Merchandise(request)));
+    }
+
+    [Theory]
+    [InlineData(PurchaseCostAllocationMethods.Value, 7.5, 22.5)]
+    [InlineData(PurchaseCostAllocationMethods.Weight, 20, 10)]
+    public void Existing_voucher_partial_cost_uses_the_same_allocation_and_does_not_change_the_invoice(
+        string method, decimal first, decimal second)
+    {
+        var request = Request([Line(1, 1m, 100m) with { TotalGrossWeightKg = 2m },
+            Line(2, 1m, 300m) with { TotalGrossWeightKg = 1m }], []) with
+        {
+            ReferencedCostDocuments = [new(Guid.NewGuid(), Guid.NewGuid(),
+                GoodsReceiptCostAssociationModes.Distribute, [new(1, 30m, method)])]
+        };
+        var result = GoodsReceiptCostCalculator.Calculate(request, Merchandise(request));
+        Assert.Equal(400m, result.FunctionalGrandTotal);
+        Assert.Empty(result.AdditionalDocuments);
+        Assert.Equal(first, result.ReceiptLines[0].AllocatedLandedCostAmount);
+        Assert.Equal(second, result.ReceiptLines[1].AllocatedLandedCostAmount);
+        Assert.Equal(30m, result.ReferencedDocuments!.Single().Allocations.Sum(line => line.FunctionalAmount));
+    }
+
+    [Fact]
+    public void Later_voucher_allocation_uses_the_frozen_receipt_weights_and_preserves_the_original_invoice()
+    {
+        var request = Request([Line(1, 1m, 100m) with { TotalGrossWeightKg = 2m },
+            Line(2, 1m, 300m) with { TotalGrossWeightKg = 1m }], []);
+        var original = GoodsReceiptCostCalculator.Calculate(request, Merchandise(request));
+        var voucher = new GoodsReceiptVoucherCostRequest(Guid.NewGuid(), Guid.NewGuid(),
+            GoodsReceiptCostAssociationModes.Distribute,
+            [new(1, 30m, PurchaseCostAllocationMethods.Weight)]);
+
+        var allocation = GoodsReceiptCostCalculator.CalculateReferenced([voucher], original.ReceiptLines);
+
+        Assert.Equal([20m, 10m], allocation.Single().Allocations
+            .OrderBy(line => line.ReceiptLineNumber).Select(line => line.FunctionalAmount));
+        Assert.Equal(400m, original.FunctionalGrandTotal);
+        Assert.All(original.ReceiptLines, line => Assert.Equal(0m, line.AllocatedLandedCostAmount));
+    }
+
+    [Fact]
+    public void Informative_association_does_not_distribute_and_cannot_hide_a_cost_amount()
+    {
+        var association = new GoodsReceiptVoucherCostRequest(Guid.NewGuid(), Guid.NewGuid(),
+            GoodsReceiptCostAssociationModes.Associate, []);
+        var request = Request([Line(1, 1m, 100m)], []) with { ReferencedCostDocuments = [association] };
+        var result = GoodsReceiptCostCalculator.Calculate(request, Merchandise(request));
+        Assert.Equal(100m, result.ReceiptLines.Single().RecognizedInventoryCostAmount);
+        Assert.Empty(result.ReferencedDocuments!.Single().Allocations);
+        var invalid = request with { ReferencedCostDocuments = [association with { Lines = [new(1, 30m, "Value")] }] };
+        Assert.Throws<PurchasingValidationException>(() => GoodsReceiptCostCalculator.Calculate(invalid, Merchandise(invalid)));
+    }
+
+    [Fact]
+    public void Captured_invoice_and_reference_cannot_share_the_same_cost_header_identity()
+    {
+        var invoice = CostDocument([new(1, PurchaseCostKinds.Freight, "Flete", 10m,
+            0m, "00", 0m, 0m, PurchasingTaxTreatments.NotApplicable,
+            PurchaseCostTreatments.Capitalize, PurchaseCostAllocationMethods.Value)]);
+        var request = Request([Line(1, 1m, 100m)], [invoice]) with
+        {
+            ReferencedCostDocuments = [new(invoice.CostDocumentId, Guid.NewGuid(),
+                GoodsReceiptCostAssociationModes.Associate, [])]
+        };
+        Assert.Throws<PurchasingValidationException>(() => GoodsReceiptCostCalculator.Calculate(request, Merchandise(request)));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Manual_reference_allocation_rejects_missing_items_or_unpersistable_precision(bool missingItem)
+    {
+        var request = Request([Line(1, 1m, 100m), Line(2, 1m, 100m)], []) with
+        {
+            ReferencedCostDocuments = [new(Guid.NewGuid(), Guid.NewGuid(),
+                GoodsReceiptCostAssociationModes.Distribute, [new(1, 1m, PurchaseCostAllocationMethods.Manual,
+                    missingItem ? [null!, new(2, 1m)] : [new(1, .50001m), new(2, .49999m)])])]
+        };
+        Assert.Throws<PurchasingValidationException>(() => GoodsReceiptCostCalculator.Calculate(request, Merchandise(request)));
+    }
+
+    [Fact]
+    public void Referenced_cost_rounding_conserves_the_chosen_amount_across_all_products()
+    {
+        var request = Request([Line(1, 1m, 100m), Line(2, 1m, 100m), Line(3, 1m, 100m)], []) with
+        {
+            ReferencedCostDocuments = [new(Guid.NewGuid(), Guid.NewGuid(),
+                GoodsReceiptCostAssociationModes.Distribute, [new(1, 1m, "Equal")])]
+        };
+        var result = GoodsReceiptCostCalculator.Calculate(request, Merchandise(request));
+        Assert.Equal(1m, result.ReceiptLines.Sum(line => line.AllocatedLandedCostAmount));
+        Assert.All(result.ReceiptLines, line => Assert.InRange(line.AllocatedLandedCostAmount, .3333m, .3334m));
+    }
+
     [Fact]
     public void Freight_is_allocated_by_value_and_its_deductible_vat_is_not_capitalized()
     {

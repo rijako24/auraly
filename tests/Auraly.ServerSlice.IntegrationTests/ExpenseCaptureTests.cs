@@ -12,7 +12,7 @@ using Xunit.Abstractions;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputHelper output)
+public sealed partial class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
     [Fact]
     public async Task Direct_accounts_preview_post_replay_and_cancel_without_a_hidden_concept()
@@ -78,13 +78,58 @@ public sealed class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputH
             var service = scope.ServiceProvider.GetRequiredService<ExpenseService>();
             var identity = new ExpenseUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
                 new HashSet<string> { ExpensePermissionCodes.Create, ExpensePermissionCodes.Read });
+            var configuredConcept = new SaveExpenseConceptRequest(Guid.NewGuid(), fixture.BusinessId,
+                "Concepto automático de prueba", account.AccountId, null, classification, true);
+            var configurator = identity with { Permissions = new HashSet<string> { ExpensePermissionCodes.Configure } };
+            await service.SaveConceptAsync(configurator, configuredConcept);
+            var automaticLine = lines[0] with { ExpenseAccountId = null, ConceptId = configuredConcept.ConceptId };
+            var automaticRequest = request with { ExpenseId = Guid.NewGuid(),
+                SupplierDocumentNumber = Guid.NewGuid().ToString("N"), Lines = [automaticLine] };
+            var automaticPreview = await service.PreviewAsync(identity, automaticRequest);
+            Assert.Equal(account.AccountId, Assert.Single(automaticPreview.Lines).ExpenseAccountId);
+            await Assert.ThrowsAsync<ExpenseValidationException>(() => service.PreviewAsync(identity,
+                automaticRequest with { Lines = [automaticLine with { ExpenseAccountId = Guid.NewGuid() }] }));
+            await Assert.ThrowsAsync<ExpenseValidationException>(() => service.PreviewAsync(identity,
+                automaticRequest with { Lines = [automaticLine with { ConceptId = Guid.NewGuid() }] }));
+            await Assert.ThrowsAsync<ExpenseValidationException>(() => service.PreviewAsync(identity,
+                automaticRequest with { Lines = [automaticLine with { ConceptId = null }] }));
+            var alternateAccount = options.ExpenseAccounts.First(item => item.AccountId != account.AccountId);
+            await service.SaveConceptAsync(configurator, configuredConcept with { ExpenseAccountId = alternateAccount.AccountId });
+            await Assert.ThrowsAsync<ExpenseConflictException>(() => service.ConfirmAsync(identity,
+                automaticRequest.ExpenseId.ToString("N"), automaticRequest with { CalculationHash = automaticPreview.CalculationHash }));
+            await service.SaveConceptAsync(configurator, configuredConcept);
+            automaticRequest = automaticRequest with { CalculationHash = automaticPreview.CalculationHash };
+            await service.ConfirmAsync(identity, automaticRequest.ExpenseId.ToString("N"), automaticRequest);
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var frozen = new SqlCommand("""
+                    SELECT account.ConfigurationLockedAt FROM dbo.AccountingAccounts account
+                    JOIN dbo.AccountingSourceDocuments source ON source.TenantId=account.TenantId
+                    WHERE account.AccountId=@AccountId AND source.SourceDocumentId=@ExpenseId
+                      AND source.SourceDocumentType=N'Expense' AND source.AccountingEntryRequired=1;
+                    """, connection);
+                frozen.Parameters.AddWithValue("@AccountId", account.AccountId);
+                frozen.Parameters.AddWithValue("@ExpenseId", automaticRequest.ExpenseId);
+                Assert.IsType<DateTimeOffset>(await frozen.ExecuteScalarAsync());
+            }
+            var automaticDetail = (await service.GetAsync(identity, automaticRequest.ExpenseId))!;
+            Assert.Equal(account.AccountId, Assert.Single(automaticDetail.Lines!).ExpenseAccountId);
+            Assert.Equal("Processed", automaticDetail.Status);
+            Assert.Equal(automaticPreview.Withholding.NetAmount, automaticDetail.Payable!.OriginalAmount);
+            await service.SaveConceptAsync(configurator, configuredConcept with { IsActive = false });
+            await Assert.ThrowsAsync<ExpenseValidationException>(() => service.PreviewAsync(identity, automaticRequest));
+            Assert.True((await service.ConfirmAsync(identity, automaticRequest.ExpenseId.ToString("N"), automaticRequest)).IdempotentReplay);
+            await service.SaveConceptAsync(configurator, configuredConcept);
             await service.PreviewAsync(identity, request);
             int? acceptanceCommands = null;
             foreach (var size in new[] { 1, 20, 100 })
             {
                 var batch = request with { ExpenseId = Guid.NewGuid(), SupplierDocumentNumber = Guid.NewGuid().ToString("N"),
-                    Lines = Enumerable.Range(0, size).Select(_ => lines[0] with { TaxExclusiveAmount = 120_000m / size }).ToArray() };
-                using var counter = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog);
+                    Lines = Enumerable.Range(0, size).Select(_ => automaticLine with { TaxExclusiveAmount = 120_000m / size }).ToArray() };
+                using var measuredOperation = new Activity("ExpenseCapture.AcceptanceBudget").Start();
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                    traceId: measuredOperation.TraceId);
                 var watch = Stopwatch.StartNew();
                 var calculated = await service.PreviewAsync(identity, batch);
                 watch.Stop();

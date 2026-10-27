@@ -31,7 +31,8 @@ import { isChangeDocumentShortcut, nextPaymentAmountIndex, PAYMENT_PRINT_SHORTCU
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 4,
 });
 
 type PaymentRow = PosPaymentInput & { id: string };
@@ -57,6 +58,7 @@ export function PosPaymentDialog({
   portfolioDirection,
   onBack,
   maxPaymentMethods,
+  submissionError,
 }: {
   client: PaymentCaptureClient;
   total: number;
@@ -74,10 +76,12 @@ export function PosPaymentDialog({
     payments: PosPaymentInput[],
     settlement: PosPaymentSettlement,
     printChoice: PosPrintTemplateFormat | "none" | null,
+    methodLabels: Readonly<Record<string, string>>,
   ) => Promise<void>;
   portfolioDirection?: "receivable" | "payable";
   onBack?: () => void;
   maxPaymentMethods?: number;
+  submissionError?: { title: string; message: string } | null;
 }) {
   const paymentMethods = usePosReferenceOptions(client, "payment-method");
   const cardFranchises = usePosReferenceOptions(client, "card-franchise");
@@ -276,8 +280,14 @@ export function PosPaymentDialog({
     setPendingFocusId(null);
   }, [focusAmount, pendingFocusId, payments]);
 
+  const canSubmit = settlement.isValid && !busy && documentTypeReady &&
+    !payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) &&
+    !payments.some(payment => payment.methodCode === "Transfer" &&
+      (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) &&
+    !paymentMethods.isLoading && !paymentMethods.isError;
+
   const choosePrint = useCallback((choice: PosPrintTemplateFormat | "none" | null) => {
-    if (busy) return;
+    if (!canSubmit) return;
     if (choice !== "none") {
       if (!printConfiguration) {
         printChoiceRef.current = null;
@@ -301,7 +311,7 @@ export function PosPaymentDialog({
     setPrintError(null);
     printChoiceRef.current = choice;
     modal.current?.requestSubmit();
-  }, [busy, printConfiguration]);
+  }, [canSubmit, printConfiguration]);
 
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
@@ -338,6 +348,10 @@ export function PosPaymentDialog({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (!canSubmit) {
+      printChoiceRef.current = null;
+      return;
+    }
     if (printChoiceRef.current !== "none" && !printConfiguration) {
       printChoiceRef.current = null;
       setPrintError("Espera a que cargue la configuración de impresión.");
@@ -351,14 +365,6 @@ export function PosPaymentDialog({
         setPrintError("La impresión predeterminada no está configurada en Periféricos.");
         return;
       }
-    }
-    if (!settlement.isValid || busy || !documentTypeReady ||
-        payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) ||
-        payments.some(payment => payment.methodCode === "Transfer" &&
-          (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) ||
-        paymentMethods.isLoading || paymentMethods.isError) {
-      printChoiceRef.current = null;
-      return;
     }
     const printChoice = printChoiceRef.current;
     printChoiceRef.current = null;
@@ -378,6 +384,7 @@ export function PosPaymentDialog({
       portfolioDirection && printChoice === null
         ? printConfiguration?.configuration.posOutputFormat ?? null
         : printChoice,
+      Object.fromEntries(methods.map(method => [method.code, method.label])),
     );
   }
 
@@ -614,11 +621,12 @@ export function PosPaymentDialog({
         )}
         </div>
 
+        {submissionError && <div role="alert" className="shrink-0 border-t border-red-200 bg-red-50 px-5 py-3 text-sm text-red-900"><p className="font-semibold">{submissionError.title}</p><p className="mt-1">{submissionError.message}</p></div>}
         {printError && <p role="alert" className="shrink-0 border-t border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{printError}</p>}
         <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:items-center sm:justify-between sm:px-5 sm:pb-4 sm:pt-4">
           <div className="col-span-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:col-auto" aria-label="Opciones de impresión">
             {PAYMENT_PRINT_SHORTCUTS.map(({ key, label, choice }) =>
-              <button key={key} type="button" aria-keyshortcuts={key} aria-label={label} disabled={busy} onClick={() => choosePrint(choice)} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 font-medium transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/30 disabled:opacity-50"><span className="font-bold text-teal-700 underline decoration-teal-500/60 decoration-2 underline-offset-4">{key}</span>{label.slice(1)}</button>)}
+              <button key={key} type="button" aria-keyshortcuts={key} aria-label={label} disabled={!canSubmit} onClick={() => choosePrint(choice)} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 font-medium transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/30 disabled:opacity-50"><span className="font-bold text-teal-700 underline decoration-teal-500/60 decoration-2 underline-offset-4">{key}</span>{label.slice(1)}</button>)}
           </div>
           <div className="col-span-2 flex justify-end gap-2 sm:col-auto">
           {portfolioDirection && <button type="button" onClick={onBack} disabled={busy} className="h-11 rounded-lg border border-slate-300 px-3 font-medium sm:px-5">Atrás</button>}
@@ -632,11 +640,7 @@ export function PosPaymentDialog({
           </button>
           <button
             type="submit"
-            disabled={!settlement.isValid || busy || !documentTypeReady ||
-              payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) ||
-              payments.some(payment => payment.methodCode === "Transfer" &&
-                (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) ||
-              paymentMethods.isLoading || paymentMethods.isError}
+            disabled={!canSubmit}
             className="flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45 sm:min-w-48 sm:px-5"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}

@@ -3,6 +3,7 @@ using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
+using Auraly.Commerce.Accounting.Contracts;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,15 +12,27 @@ namespace Auraly.Application.Purchasing;
 
 public interface IGoodsReceiptStore
 {
+    Task<GoodsReceiptAcceptance?> FindReplayAsync(
+        PurchasingUserIdentity user,
+        string idempotencyKey,
+        Guid documentId,
+        byte[] commandHash,
+        CancellationToken cancellationToken);
+
     Task<GoodsReceiptAcceptance> AcceptAsync(
         PurchasingUserIdentity user,
         string idempotencyKey,
+        byte[] commandHash,
         ConfirmGoodsReceiptRequest request,
         GoodsReceiptCalculation calculation,
         GoodsReceiptCostCalculation costCalculation,
         WithholdingCalculationSnapshot withholding,
         IReadOnlyDictionary<Guid, WithholdingCalculationSnapshot> additionalWithholdings,
         CancellationToken cancellationToken);
+
+    Task<GoodsReceiptCostRevisionAcceptance> AcceptCostRevisionAsync(
+        PurchasingUserIdentity user, string idempotencyKey, byte[] commandHash,
+        ReviseGoodsReceiptCostsRequest request, CancellationToken cancellationToken);
 }
 
 public sealed class GoodsReceiptService(
@@ -28,6 +41,39 @@ public sealed class GoodsReceiptService(
     IDocumentProcessingSignalPublisher signalPublisher,
     WithholdingService withholdingService)
 {
+    public async Task<GoodsReceiptCostRevisionAcceptance> ReviseCostsAsync(
+        PurchasingUserIdentity user, string idempotencyKey,
+        ReviseGoodsReceiptCostsRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(request);
+        if (user.BusinessId != request.BusinessId)
+            throw new PurchasingForbiddenException("La recepción pertenece a otra sede.");
+        Require(user, PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        Require(user, AccountingPermissionCodes.Read);
+        if (request.RevisionId == Guid.Empty || request.GoodsReceiptId == Guid.Empty)
+            throw new PurchasingValidationException("Selecciona una recepción y una revisión únicas.");
+        if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
+            throw new PurchasingValidationException("Indica una clave de revisión válida.");
+        if (request.ReferencedCostDocuments is not { Count: > 0 })
+            throw new PurchasingValidationException("Selecciona al menos un comprobante para la revisión.");
+        GoodsReceiptCostCalculator.ValidateReferencedDocuments(request.ReferencedCostDocuments);
+        var normalized = request with
+        {
+            ReferencedCostDocuments = request.ReferencedCostDocuments.Select(document =>
+                document with { EntryNumber = null }).ToArray()
+        };
+        var hash = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(normalized));
+        var accepted = await store.AcceptCostRevisionAsync(user, idempotencyKey.Trim(), hash,
+            normalized, cancellationToken);
+        if (accepted.JobId is { } jobId &&
+            !(accepted.IdempotentReplay && accepted.Status == "Processed"))
+            await signalPublisher.PublishAsync(new DocumentProcessingSignal(jobId,
+                user.BusinessId, accepted.RevisionId,
+                PurchasingDocumentTypes.GoodsReceiptCostRevision), cancellationToken);
+        return accepted;
+    }
+
     public async Task<WithholdingCalculationSnapshot> PreviewWithholdingAsync(
         PurchasingUserIdentity user,
         PreviewGoodsReceiptWithholdingRequest request,
@@ -118,6 +164,8 @@ public sealed class GoodsReceiptService(
             throw new PurchasingForbiddenException("La recepción pertenece a otra sede.");
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
         Require(user, PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        if (request.ReferencedCostDocuments is { Count: > 0 })
+            Require(user, AccountingPermissionCodes.Read);
         if (request.DocumentId == Guid.Empty) throw new PurchasingValidationException("Falta el identificador de la recepción.");
         if (request.WarehouseId == Guid.Empty) throw new PurchasingValidationException("Selecciona una bodega.");
         if (request.SupplierId == Guid.Empty) throw new PurchasingValidationException("Selecciona un proveedor.");
@@ -150,6 +198,27 @@ public sealed class GoodsReceiptService(
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
         if (currency.Length != 3) throw new PurchasingValidationException("El código de moneda debe tener tres caracteres.");
 
+        // Normalize only submitted facts before looking for the accepted command.
+        // Master weights and withholding configuration can change after acceptance.
+        request = request with
+        {
+            CurrencyCode = currency,
+            SupplierInvoiceNumber = Normalize(request.SupplierInvoiceNumber, 80),
+            Notes = Normalize(request.Notes, 1000),
+            ExchangeRateSource = Normalize(request.ExchangeRateSource, 64) ?? "FunctionalCurrency",
+            Lines = request.Lines.Select(line => line with
+            { OverReceiptReason = Normalize(line.OverReceiptReason, 500) }).ToArray(),
+            AdditionalCostDocuments = NormalizeAdditionalDocuments(request.AdditionalCostDocuments)
+        };
+        RequireWithholdingAdjustmentPermission(user, request.WithholdingAdjustments);
+        foreach (var document in request.AdditionalCostDocuments ?? [])
+            RequireWithholdingAdjustmentPermission(user, document.WithholdingAdjustments);
+        var commandHash = HashCommand(request);
+        var replay = await store.FindReplayAsync(user, idempotencyKey.Trim(), request.DocumentId,
+            commandHash, cancellationToken);
+        if (replay is not null)
+            return await SignalAcceptedAsync(replay, request.BusinessId, cancellationToken);
+
         var productWeights = await workspaceStore.GetUnitGrossWeightsAsync(
             user, request.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
         var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines.Select(line => line with
@@ -164,19 +233,7 @@ public sealed class GoodsReceiptService(
             throw new PurchasingValidationException("El motivo del exceso recibido no puede superar 500 caracteres.");
         ValidateEvidenceTaxTreatment(request.PurchaseEvidenceType, normalizedLines);
         var calculation = Calculate(normalizedLines);
-        var normalizedRequest = request with
-        {
-            CurrencyCode = currency,
-            SupplierInvoiceNumber = Normalize(request.SupplierInvoiceNumber, 80),
-            Notes = Normalize(request.Notes, 1000),
-            ExchangeRateSource = Normalize(request.ExchangeRateSource, 64) ?? "FunctionalCurrency",
-            Lines = normalizedLines.Select(line => line with
-            { OverReceiptReason = Normalize(line.OverReceiptReason, 500) }).ToArray(),
-            AdditionalCostDocuments = NormalizeAdditionalDocuments(request.AdditionalCostDocuments)
-        };
-        RequireWithholdingAdjustmentPermission(user, normalizedRequest.WithholdingAdjustments);
-        foreach (var document in normalizedRequest.AdditionalCostDocuments ?? [])
-            RequireWithholdingAdjustmentPermission(user, document.WithholdingAdjustments);
+        var normalizedRequest = request with { Lines = normalizedLines };
         if ((normalizedRequest.AdditionalCostDocuments ?? []).Select(value => value.CostDocumentId)
             .Append(request.DocumentId).Distinct().Count() !=
             (normalizedRequest.AdditionalCostDocuments?.Count ?? 0) + 1)
@@ -215,17 +272,42 @@ public sealed class GoodsReceiptService(
                 additionalWithholdings[document.Request.CostDocumentId].ReviewHash);
         }
 
-        var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), normalizedRequest,
+        var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), commandHash, normalizedRequest,
             calculation, costCalculation, withholding, additionalWithholdings, cancellationToken);
+        return await SignalAcceptedAsync(acceptance, request.BusinessId, cancellationToken);
+    }
+
+    private async Task<GoodsReceiptAcceptance> SignalAcceptedAsync(
+        GoodsReceiptAcceptance acceptance, Guid businessId, CancellationToken cancellationToken)
+    {
+        if (acceptance.IdempotentReplay && acceptance.Status == "Processed") return acceptance;
+        // A pending acceptance can still need its original wake-up when the
+        // previous publish failed after commit. Completed receipts have no effects.
         await signalPublisher.PublishAsync(
             new DocumentProcessingSignal(
                 acceptance.MovementId,
-                request.BusinessId,
-                request.DocumentId,
+                businessId,
+                acceptance.DocumentId,
                 "GoodsReceipt"),
             cancellationToken);
         return acceptance;
     }
+
+    private static byte[] HashCommand(ConfirmGoodsReceiptRequest request) =>
+        SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Version = 2,
+            Request = request with
+            {
+                DraftConcurrencyToken = null,
+                WithholdingReviewHash = null,
+                Lines = request.Lines.Select(line => line with { UnitGrossWeightKg = null }).ToArray(),
+                AdditionalCostDocuments = request.AdditionalCostDocuments?.Select(document => document with
+                { WithholdingReviewHash = null }).ToArray(),
+                ReferencedCostDocuments = request.ReferencedCostDocuments?.Select(document => document with
+                { EntryNumber = null }).ToArray()
+            }
+        }));
 
     private WithholdingCalculationSnapshot CalculateWithholding(
         WithholdingCalculationPlan plan,
@@ -292,10 +374,10 @@ public sealed class GoodsReceiptService(
     {
         try
         {
-            return GoodsReceiptCalculator.Calculate(normalizedLines.Select(line => (
+            return GoodsReceiptCalculator.Calculate(normalizedLines.Select(line => new GoodsReceiptLineInput(
                 line.LineNumber, line.ProductId, line.Description, line.Quantity,
                 line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
-                ParseTaxTreatment(line.TaxTreatment))));
+                ParseTaxTreatment(line.TaxTreatment), line.CommercialDiscountPercent)));
         }
         catch (ArgumentException exception)
         {
@@ -371,4 +453,8 @@ public sealed class PurchasingValidationException : Exception
     public PurchasingValidationException(string message) : base(message) { }
     public PurchasingValidationException(string message, Exception innerException) : base(message, innerException) { }
 }
-public sealed class PurchasingConflictException(string message) : Exception(message);
+public sealed class PurchasingConflictException : Exception
+{
+    public PurchasingConflictException(string message) : base(message) { }
+    public PurchasingConflictException(string message, Exception innerException) : base(message, innerException) { }
+}

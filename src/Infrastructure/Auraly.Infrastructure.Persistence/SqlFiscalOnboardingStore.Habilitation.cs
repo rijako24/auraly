@@ -52,12 +52,11 @@ public sealed partial class SqlFiscalOnboardingStore
         {
             var snapshot = BuildSupportSnapshot(
                 tenantId, businessId, userId, documentId, fiscalNumber, now, context);
-            await InsertFiscalRootAsync(
-                connection, transaction, documentId, businessId, documentType,
-                fiscalNumber, "CUDS", context.IssuerId, context.TestSetId, now,
-                PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot), support: true,
-                uniqueCode: null, qrPayload: null,
-                cancellationToken);
+            await SqlFiscalDocumentStore.InsertPurchaseSupportSourcesAsync(connection, transaction, tenantId,
+                [new(documentId, businessId, "FiscalHabilitation", documentType, $"HAB-{fiscalNumber}",
+                    fiscalNumber, now, context.IssuerId, 2,
+                    PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot), context.TestSetId)],
+                now, cancellationToken);
         }
         else
         {
@@ -66,7 +65,7 @@ public sealed partial class SqlFiscalOnboardingStore
             await InsertFiscalRootAsync(
                 connection, transaction, documentId, businessId, documentType,
                 fiscalNumber, "CUFE", context.IssuerId, context.TestSetId, now,
-                PosSaleContractSerializer.Serialize(snapshot), support: false,
+                PosSaleContractSerializer.Serialize(snapshot),
                 snapshot.FiscalSnapshot!.Cufe, snapshot.FiscalSnapshot.QrPayload,
                 cancellationToken);
         }
@@ -367,7 +366,6 @@ public sealed partial class SqlFiscalOnboardingStore
         Guid testSetId,
         DateTimeOffset now,
         string snapshotJson,
-        bool support,
         string? uniqueCode,
         string? qrPayload,
         CancellationToken cancellationToken)
@@ -379,12 +377,7 @@ public sealed partial class SqlFiscalOnboardingStore
               CreatedAt,UpdatedAt)
             VALUES(@DocumentId,@BusinessId,N'FiscalHabilitation',@DocumentType,
               @AuralyNumber,@FiscalNumber,@UniqueCodeType,@Now,N'PendingGeneration',@Now,@Now);
-            IF @Support=1
-              INSERT fiscal.PurchaseSupportFiscalSnapshots(
-                DocumentId,SnapshotJson,Environment,CreatedAt)
-              VALUES(@DocumentId,@SnapshotJson,2,@Now);
-            ELSE
-              INSERT dbo.FiscalSnapshots(
+            INSERT dbo.FiscalSnapshots(
                 DocumentId,SnapshotJson,PayloadHash,TechnicalKeyVersion,Environment,
                 CufeReceived,CufeCalculated,QrPayload,IntegrityStatus,VerifiedAt,CreatedAt)
               VALUES(@DocumentId,@SnapshotJson,@PayloadHash,@TechnicalKeyVersion,2,
@@ -409,7 +402,6 @@ public sealed partial class SqlFiscalOnboardingStore
         command.Parameters.AddWithValue("@PayloadHash", SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(snapshotJson)));
         command.Parameters.AddWithValue("@TechnicalKeyVersion", DianFiscalDefaults.HabilitationTechnicalKeyVersion);
-        command.Parameters.AddWithValue("@Support", support);
         command.Parameters.AddWithValue("@UniqueCode", (object?)uniqueCode ?? string.Empty);
         command.Parameters.AddWithValue("@QrPayload", (object?)qrPayload ?? string.Empty);
         await command.ExecuteNonQueryAsync(cancellationToken);

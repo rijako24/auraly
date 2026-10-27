@@ -17,6 +17,7 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     [ExchangeRateDate] DATE NULL,
     [ExchangeRateSource] NVARCHAR(64) NOT NULL CONSTRAINT [DF_GoodsReceiptDrafts_ExchangeRateSource] DEFAULT N'FunctionalCurrency',
     [AdditionalCostsJson] NVARCHAR(MAX) NULL,
+    [FinancialDiscountJson] NVARCHAR(MAX) NULL,
     [WithholdingConceptCode] NVARCHAR(32) NULL,
     [WithholdingAdjustmentsJson] NVARCHAR(MAX) NULL,
     [Notes] NVARCHAR(1000) NULL,
@@ -28,6 +29,7 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    [ReferencedCostsJson] NVARCHAR(MAX) NULL,
     CONSTRAINT [PK_GoodsReceiptDrafts] PRIMARY KEY CLUSTERED ([GoodsReceiptDraftId]),
     CONSTRAINT [FK_GoodsReceiptDrafts_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_GoodsReceiptDrafts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
@@ -38,7 +40,9 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     CONSTRAINT [CK_GoodsReceiptDrafts_Payable] CHECK (([CreatesPayable] = 0) OR ([DueDate] IS NOT NULL)),
     CONSTRAINT [CK_GoodsReceiptDrafts_PurchaseEvidenceType] CHECK ([PurchaseEvidenceType] IS NULL OR [PurchaseEvidenceType] IN
       (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher',N'ForeignCommercialInvoice')),
+    CONSTRAINT [CK_GoodsReceiptDrafts_ReferencedCostsJson] CHECK ([ReferencedCostsJson] IS NULL OR ISJSON([ReferencedCostsJson])=1),
     CONSTRAINT [CK_GoodsReceiptDrafts_AdditionalCostsJson] CHECK ([AdditionalCostsJson] IS NULL OR ISJSON([AdditionalCostsJson])=1),
+    CONSTRAINT [CK_GoodsReceiptDrafts_FinancialDiscountJson] CHECK ([FinancialDiscountJson] IS NULL OR ISJSON([FinancialDiscountJson])=1),
     CONSTRAINT [CK_GoodsReceiptDrafts_WithholdingAdjustmentsJson] CHECK ([WithholdingAdjustmentsJson] IS NULL OR ISJSON([WithholdingAdjustmentsJson])=1)
 );
 GO
@@ -69,12 +73,14 @@ CREATE TABLE [dbo].[GoodsReceiptDraftLines]
     [LineTotal] DECIMAL(19,4) NOT NULL,
     [TotalGrossWeightKg] DECIMAL(19,6) NULL,
     [TotalVolumeM3] DECIMAL(19,6) NULL,
+    [CommercialDiscountPercent] DECIMAL(9,6) NULL,
     CONSTRAINT [PK_GoodsReceiptDraftLines] PRIMARY KEY CLUSTERED ([GoodsReceiptDraftId], [LineNumber]),
     CONSTRAINT [FK_GoodsReceiptDraftLines_Drafts] FOREIGN KEY ([GoodsReceiptDraftId]) REFERENCES [dbo].[GoodsReceiptDrafts] ([GoodsReceiptDraftId]) ON DELETE CASCADE,
     CONSTRAINT [FK_GoodsReceiptDraftLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [FK_GoodsReceiptDraftLines_PurchaseOrderLine] FOREIGN KEY ([PurchaseOrderLineId]) REFERENCES [purchasing].[PurchaseOrderLines] ([LineId]),
     CONSTRAINT [CK_GoodsReceiptDraftLines_Quantity] CHECK ([Quantity] > 0),
     CONSTRAINT [CK_GoodsReceiptDraftLines_Costs] CHECK ([UnitCost] >= 0 AND [DiscountAmount] >= 0),
+    CONSTRAINT [CK_GoodsReceiptDraftLines_CommercialDiscount] CHECK ([CommercialDiscountPercent] IS NULL OR [CommercialDiscountPercent] BETWEEN 0 AND 100),
     CONSTRAINT [CK_GoodsReceiptDraftLines_Tax] CHECK ([TaxRate] BETWEEN 0 AND 100),
     CONSTRAINT [CK_GoodsReceiptDraftLines_Treatment] CHECK ([TaxTreatment] IN (N'DeductibleInputVat',N'CapitalizedCost',N'NotApplicable')),
     CONSTRAINT [CK_GoodsReceiptDraftLines_Presentation] CHECK ([PresentationQuantity] > 0 AND [UnitsPerPresentation] > 0 AND [Quantity] = [PresentationQuantity] * [UnitsPerPresentation]),

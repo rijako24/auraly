@@ -15,6 +15,47 @@ export type PurchaseCostTreatment = "Capitalize" | "Expense";
 export type PurchaseCostAllocationMethod = "Value" | "Quantity" | "Weight" |
   "Volume" | "Equal" | "Manual" | "None";
 
+export interface GoodsReceiptVoucherCostLine {
+  entryLineNumber: number; functionalAmount: number; allocationMethod: PurchaseCostAllocationMethod;
+  manualAllocations?: Array<{ receiptLineNumber: number; functionalAmount: number }> | null;
+}
+export interface GoodsReceiptVoucherCost {
+  associationId: string; entryId: string; mode: "Associate" | "Distribute";
+  lines: GoodsReceiptVoucherCostLine[]; entryNumber?: string | null;
+}
+export interface GoodsReceiptFinancialDiscount {
+  percent: number; expectedOn: string | null; anticipateInCost: boolean;
+}
+export interface GoodsReceiptFinancialDiscountSnapshot {
+  percent: number; eligibleBase: number; amount: number; functionalAmount: number;
+  expectedOn: string | null; anticipatedInCost: boolean;
+  lines: Array<{ receiptLineNumber: number; amount: number; functionalAmount: number }>;
+}
+export interface GoodsReceiptVoucherCostSnapshot extends Omit<GoodsReceiptVoucherCost, "lines"> {
+  sourceDocumentId: string; sourceDocumentType: string;
+  costRevisionNumber?: number | null; costRevisionStatus?: "Accepted" | "Processed" | null;
+  lines: Array<GoodsReceiptVoucherCostLine & {
+    accountId: string; partyId: string | null; costCenterId: string | null;
+    allocations: Array<{ receiptLineNumber: number; factor: number; functionalAmount: number }>;
+  }>;
+}
+export interface GoodsReceiptCostVoucher {
+  entryId: string; entryNumber: string; sourceDocumentId: string; sourceDocumentType: string;
+  lines: Array<{ lineNumber: number; accountId: string; accountCode: string; accountName: string;
+    partyId: string | null; partyName: string | null; description: string; debit: number; credit: number;
+    eligibleFunctionalAmount: number; assignedFunctionalAmount: number }>;
+}
+export interface GoodsReceiptCostVoucherCandidate {
+  entryId: string; entryNumber: string; documentNumber: string; occurredAt: string;
+  partyName: string; description: string; accountCode: string; accountName: string;
+  concept: string; eligibleLineCount: number; eligibleFunctionalAmount: number;
+  assignedFunctionalAmount: number;
+}
+export interface GoodsReceiptCostVoucherCandidatePage {
+  items: GoodsReceiptCostVoucherCandidate[]; page: number; pageSize: number;
+  totalCount: number; totalPages: number;
+}
+
 export interface GoodsReceiptCostDocument {
   costDocumentId: string; supplierId: string; partySiteId?: string|null; purchaseEvidenceType: PurchaseEvidenceType;
   documentNumber: string; issuedAt: string; createsPayable: boolean; dueDate: string | null;
@@ -44,6 +85,7 @@ export interface GoodsReceiptLine {
   quantity: number;
   unitCost: number;
   discountAmount: number;
+  commercialDiscountPercent?: number | null;
   taxCode: string;
   taxRate: number;
   taxTreatment: PurchaseTaxTreatment;
@@ -76,6 +118,8 @@ export interface GoodsReceiptLineSnapshot extends GoodsReceiptLine {
 }
 
 export interface GoodsReceiptDraft {
+  financialDiscount?: GoodsReceiptFinancialDiscount | null;
+  referencedCostDocuments?: GoodsReceiptVoucherCost[] | null;
   draftId: string;
   businessId: string;
   warehouseId: string | null;
@@ -103,6 +147,10 @@ export interface GoodsReceiptDraft {
 }
 
 export interface GoodsReceiptDetail {
+  financialDiscount?: GoodsReceiptFinancialDiscountSnapshot | null;
+  payable?: { payableId: string; status: string; outstandingAmount: number; currencyCode: string;
+    partySiteId: string | null; partySiteName: string | null; dueDate: string } | null;
+  referencedCostDocuments?: GoodsReceiptVoucherCostSnapshot[] | null;
   documentId: string;
   documentNumber: string;
   status: Exclude<GoodsReceiptStatus, "Draft">;
@@ -143,6 +191,8 @@ export interface GoodsReceiptDetail {
 }
 
 export interface SaveGoodsReceiptDraftRequest {
+  financialDiscount?: GoodsReceiptFinancialDiscount | null;
+  referencedCostDocuments?: GoodsReceiptVoucherCost[] | null;
   draftId: string;
   businessId: string;
   warehouseId: string | null;
@@ -189,6 +239,7 @@ export interface GoodsReceiptPage {
 }
 
 export interface GoodsReceiptOptions {
+  purchaseCostAssociationModes?: Array<{ code: "Associate" | "Distribute"; label: string; description: string | null }>;
   warehouses: Array<{ warehouseId: string; code: string; name: string }>;
   suppliers: Array<{
     supplierId: string; identification: string; name: string;
@@ -245,11 +296,20 @@ export interface GoodsReceiptAcceptance {
   idempotentReplay: boolean;
 }
 
+export interface GoodsReceiptCostRevisionAcceptance {
+  revisionId: string; goodsReceiptId: string; revisionNumber: number;
+  status: string; idempotentReplay: boolean;
+}
+
 export interface GoodsReceiptWithholdingCalculation extends WithholdingCalculation {
   reviewHash?: string | null;
 }
 
 export const goodsReceiptsApi = {
+  costVouchers: (partyId: string, search: string, page: number, pageSize = 10) =>
+    apiClient.get<GoodsReceiptCostVoucherCandidatePage>("/commerce/v1/goods-receipts/cost-vouchers",
+      { partyId, search: search || undefined, page, pageSize }),
+  costVoucher: (entryId: string) => apiClient.get<GoodsReceiptCostVoucher | null>(`/commerce/v1/goods-receipts/cost-vouchers/${entryId}`),
   options: () => apiClient.get<GoodsReceiptOptions>("/commerce/v1/goods-receipts/options"),
   products: (supplierId: string, search?: string, includeUnassociated = false, page = 1, pageSize = 10) =>
     apiClient.get<GoodsReceiptProductPage>("/commerce/v1/goods-receipts/products", {
@@ -288,6 +348,8 @@ export const goodsReceiptsApi = {
     "/commerce/v1/goods-receipts/cost-withholding-preview", request,
   ),
   confirm: (request: {
+    financialDiscount?: GoodsReceiptFinancialDiscount | null;
+    referencedCostDocuments?: GoodsReceiptVoucherCost[] | null;
     documentId: string; businessId: string; warehouseId: string; supplierId: string; partySiteId: string|null;
     supplierInvoiceNumber: string | null; supplierInvoiceDate: string | null;
     receivedAt: string; createsPayable: boolean; dueDate: string | null;
@@ -303,4 +365,10 @@ export const goodsReceiptsApi = {
   }) => apiClient.postIdempotent<GoodsReceiptAcceptance>(
     "/commerce/v1/goods-receipts/confirm", request, `goods-receipt-${request.documentId}`,
   ),
+  reviseCosts: (request: { revisionId: string; businessId: string; goodsReceiptId: string;
+    referencedCostDocuments: GoodsReceiptVoucherCost[] }) =>
+    apiClient.postIdempotent<GoodsReceiptCostRevisionAcceptance>(
+      `/commerce/v1/goods-receipts/${request.goodsReceiptId}/cost-revisions`, request,
+      `goods-receipt-cost-revision-${request.revisionId}`,
+    ),
 };

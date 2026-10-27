@@ -118,33 +118,15 @@ public sealed class SqlFiscalConfigurationStore(
     {
         await using var command = new SqlCommand("""
               DECLARE @Now datetimeoffset(7)=SYSDATETIMEOFFSET();
-              SELECT subscription.DianDocumentMonthlyLimit,periodValue.DianDocumentsUsed,
-                CASE WHEN tenant.IsActive=1 AND subscription.Status IN(N'Active',N'PastDue')
-                       AND @Now>=subscription.CurrentPeriodStart
-                       AND @Now<DATEADD(day,settings.GracePeriodDays,
-                                            subscription.CurrentPeriodEnd)
-                     THEN 1 ELSE 0 END
-              FROM billing.TenantSubscriptions subscription
-              JOIN dbo.Tenants tenant ON tenant.TenantId=subscription.TenantId
-              LEFT JOIN billing.PlatformBillingSettings settings
-                ON settings.PlatformBillingSettingId=1
-              OUTER APPLY
-              (
-                SELECT TOP(1) usageValue.DianDocumentsUsed
-                FROM billing.TenantSubscriptionUsagePeriods usageValue
-                WHERE usageValue.TenantSubscriptionId=subscription.TenantSubscriptionId
-                  AND usageValue.PeriodStart<=@Now AND usageValue.PeriodEnd>@Now
-                ORDER BY usageValue.PeriodStart DESC
-              ) periodValue
-              WHERE subscription.TenantId=@TenantId;
+              SELECT DocumentLimit,DocumentsUsed,HasQuota
+              FROM billing.TenantDianQuotaSnapshot(@TenantId,@Now);
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-            return (0, 0, true);
+            return (0, 0, false);
         var limit = reader.GetInt32(0);
         var used = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
-        var enabled = reader.GetInt32(2) == 1;
-        return (limit, used, enabled && used < limit);
+        return (limit, used, reader.GetBoolean(2));
     }
 }

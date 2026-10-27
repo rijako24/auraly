@@ -2,6 +2,69 @@
 
 Fecha: 2026-08-03
 
+## Preparación de trazabilidad de costos — 2026-10-24, verificada en local
+
+El cargo posterior aprobado en compras requiere conservar el origen también al
+devolver una venta. Antes de incorporar esa atribución al ledger, el handler
+existente debe enviar sus partidas vendibles ordenadas al `PostBatchAsync` del
+mismo `SqlInventoryLedgerWriter`. No cambia la política `WeightedAverageReceipt`,
+el costo histórico, la disposición física, el reembolso ni el snapshot fiscal.
+La aceptación ya carga y guarda líneas/cargos por conjunto. La numeración y la
+secuencia deben compartir el allocator existente, conservando el rechazo de una
+serie ausente o agotada; no se aprovisiona una serie desde esta captura.
+
+Presupuesto de este paso: hasta 500 partidas por el contrato existente, una
+lectura y una escritura de ledger por devolución, sin I/O por partida; comparar
+una y veinte partidas con el mismo total y verificar que los comandos no crezcan.
+La medición del procesamiento documental debe permanecer bajo dos segundos, sin
+diagnósticos concurrentes. Se deben conservar cuadre, valor, cantidades, nota
+crédito, reembolso único y replay sin efectos. Este paso no crea asignaciones
+FIFO, tablas, procesos o estados nuevos, ni modifica vistas o impresión.
+
+La regresión primero reprodujo 56/113 comandos para una/veinte partidas. El
+handler y la proyección de líneas de Reporting dejaron el I/O por partida: la
+primera repetición hizo 55/55 y la suite ampliada 56/56; la configuración de cada
+fixture agrega el mismo comando a ambos tamaños. El procesamiento documental
+midió 61,2/60,3 ms en la primera y 28,7/32,3 ms en la segunda, bajo el gate de dos
+segundos. Son muestras locales, no un p95 productivo. Se comprueban la cantidad
+física, valoración final, evidencia del pool, reembolso único de COP 5.950,
+snapshot de nota crédito y coincidencia de las líneas de Reporting con las
+partidas operativas, incluidos signos, costo, disposición y motivo. Un replay
+no inserta kardex ni hechos. Un replay ya `Processed` tampoco publica otra señal;
+uno pendiente conserva la activación del trabajo existente. Tres casos de
+aplicación prueban esos estados; el terminado falló antes del guard.
+
+El fallo inyectado en el último de veinte hechos del ledger viola el CHECK
+original después de preparar los balances. La transacción completa se revierte:
+cantidad/valor intactos, sin kardex, snapshot fiscal, fuente contable, reembolso
+ni trabajo de Reporting. La aceptación queda pendiente y el mismo worker la
+procesa una vez al llegar su fecha de retry; la siguiente entrega es inerte.
+No se escriben estados, cursores ni fechas de retry por SQL para recuperar.
+
+Pasaron 11 casos iniciales y 55 en la regresión ampliada de devoluciones de venta
+y compra, recepciones, ledger y Reporting, incluido ese fallo. Pasaron las 875
+pruebas Foundation y las compilaciones backend/integración; siguen los cuatro
+avisos NuGet preexistentes de la dependencia fiscal. Evidencia local en TEMP:
+`auraly-sales-return-batch-red`, `auraly-sales-return-batch-green`,
+`auraly-sales-return-batch-audit-green`, `auraly-sales-return-signal-red` y
+`auraly-sales-return-foundation`, con sus TRX/logs. No hubo cambio de frontend en
+este incremento; la regresión SQL de devolución conserva la impresión por los
+renderers existentes. La regresión visual integral sigue siendo un gate global.
+
+Auditoría posterior: revisados handler, store, servicio, writer de Reporting,
+pruebas y sus consumidores. Inventario, finanzas, fiscal y Reporting conservan
+sus motores, transacciones y tablas. El lote mantiene el orden de valoración y
+la disposición `NotReturned` sin movimiento físico; costo y redondeo siguen en
+sus propietarios. La aceptación conserva hash, scopes/permisos, bloqueo y clave
+de idempotencia. Solo delega número/secuencia al allocator existente y traduce
+sus errores conservando la causa; la compuerta arquitectónica cubre esta ruta.
+No hay lecturas ni escrituras por partida añadidas, API paralela, catálogo,
+abstracción, estado, job, reintento o proceso de recuperación nuevo. El cambio es
+compatible con los payloads/tablas anteriores, no exige migración ni backfill y
+puede revertirse sin modificar documentos aceptados. El diff pasó su comprobación
+de espacios. Esto cierra este incremento; FIFO, cargos posteriores y la auditoría
+completa del diseño contable permanecen pendientes, sin despliegue.
+
 ## Diagnóstico
 
 Auraly ya confirma una devolución como documento durable. El motor operacional

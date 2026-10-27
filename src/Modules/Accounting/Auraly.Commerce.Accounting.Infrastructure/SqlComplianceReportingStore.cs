@@ -274,7 +274,7 @@ public sealed class SqlComplianceReportingStore(
     {
         await using var command = new SqlCommand("""
             SELECT l.PartyId,m.ConceptCode,m.TargetField,
-              CASE WHEN a.AccountType IN(N'Asset',N'Expense',N'ContraRevenue')
+              CASE WHEN a.AccountType IN(N'Asset',N'Expense',N'ContraRevenue',N'OrderDebit')
                    THEN l.Debit-l.Credit ELSE l.Credit-l.Debit END AS Amount,
               p.IdentificationTypeCode,p.NormalizedIdentification,p.VerificationDigit,
               p.FirstName,p.LastName,p.LegalName,p.DisplayName,p.CompletionStatus,

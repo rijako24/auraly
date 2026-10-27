@@ -180,6 +180,7 @@
     "src/components/fiscal/fiscal-device-resolution-state.test.ts",
     "src/lib/report-viewer.ts",
     "src/lib/report-viewer.test.ts",
+    "src/lib/accounting-auxiliary-report.test.ts",
     "src/lib/dispatch-report.ts",
     "src/lib/dispatch-report.test.ts",
     "src/lib/dispatch-settlement-navigation.ts",

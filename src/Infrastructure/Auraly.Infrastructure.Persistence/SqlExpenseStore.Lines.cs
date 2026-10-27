@@ -33,12 +33,14 @@ public sealed partial class SqlExpenseStore
               ConceptId uniqueidentifier,CostCenterId uniqueidentifier,Description nvarchar(300),
               TaxExclusiveAmount decimal(19,4),TaxProfileId uniqueidentifier,
               TaxTreatment nvarchar(32),WithholdingConceptCode nvarchar(32)) l
-            JOIN dbo.AccountingAccounts a ON a.AccountId=l.ExpenseAccountId AND a.TenantId=@TenantId
-              AND a.IsActive=1 AND a.AllowsPosting=1 AND a.AccountType=N'Expense'
             LEFT JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=l.ConceptId AND c.BusinessId=@BusinessId AND c.IsActive=1
+            JOIN dbo.AccountingAccounts a ON a.AccountId=COALESCE(c.ExpenseAccountId,l.ExpenseAccountId) AND a.TenantId=@TenantId
+              AND a.IsActive=1 AND a.AllowsPosting=1 AND a.AccountType=N'Expense'
+              AND (a.BusinessId IS NULL OR a.BusinessId=@BusinessId)
             LEFT JOIN dbo.AccountingCostCenters cc ON cc.CostCenterId=l.CostCenterId AND cc.BusinessId=@BusinessId AND cc.IsActive=1
             LEFT JOIN dbo.TaxProfiles t ON t.TaxProfileId=l.TaxProfileId AND t.TenantId=@TenantId AND t.IsActive=1 AND t.DianTaxCode=N'01'
             WHERE (l.ConceptId IS NULL OR c.ExpenseConceptId IS NOT NULL)
+              AND (l.ConceptId IS NULL OR l.ExpenseAccountId IS NULL OR l.ExpenseAccountId=c.ExpenseAccountId)
               AND (l.CostCenterId IS NULL OR cc.CostCenterId IS NOT NULL)
               AND (l.TaxProfileId IS NULL OR t.TaxProfileId IS NOT NULL)
               AND (l.WithholdingConceptCode IS NULL OR EXISTS(
@@ -72,7 +74,7 @@ public sealed partial class SqlExpenseStore
         {
             var basis = reader.GetDecimal(8);
             var rate = reader.IsDBNull(11) ? 0 : reader.GetDecimal(11);
-            var vat = decimal.Round(basis * rate / 100m, 4, MidpointRounding.AwayFromZero);
+            var vat = Auraly.Commerce.Taxation.Domain.AcquisitionTaxAmounts.InputVat(basis, rate);
             var treatment = reader.GetString(12);
             if (vat > 0 && request.PurchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher &&
                 treatment == PurchasingTaxTreatments.DeductibleInputVat)

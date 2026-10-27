@@ -7,12 +7,12 @@ import {
 } from "@/services/api/goods-receipts";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-export function useGoodsReceiptOptions() {
+export function useGoodsReceiptOptions(enabled = true) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
     queryKey: ["goods-receipt-options", businessId],
     queryFn: goodsReceiptsApi.options,
-    enabled: !!businessId,
+    enabled: enabled && !!businessId,
   });
 }
 

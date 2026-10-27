@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
@@ -31,42 +32,22 @@ public sealed class SqlSalesReturnDocumentHandler(
             throw new InvalidOperationException(
                 "The sales return envelope does not match its payload.");
         var session = sessions.Current;
-        foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
-            await ApplyInventoryAsync(session, value, line, cancellationToken);
+        _ = await inventoryWriter.PostBatchAsync(session,
+            value.Lines.Where(line => line.InventoryDisposition == ReturnInventoryDispositions.Sellable)
+                .OrderBy(line => line.LineNumber).Select(line => new InventoryLedgerPosting(
+                    value.BusinessId, value.WarehouseId, line.ProductId, value.ReturnId,
+                    SalesReturnDocumentTypes.SalesReturn, line.LineNumber, "SalesReturn",
+                    line.Quantity, line.RecognizedUnitCost, InventoryValuationMode.WeightedAverageReceipt,
+                    value.ReturnedAt, OriginReference: new(value.OriginalDocumentId,null,line.OriginalLineNumber,"Sale")))
+                .ToArray(), cancellationToken);
         await InsertFiscalWorkAsync(session, value, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
-            session, document, value.ReturnedAt, ids, timeProvider, cancellationToken,
+            session.Connection, session.Transaction, document, value.ReturnedAt, ids, timeProvider, cancellationToken,
             AccountingJobRequirement.PreserveCommercialEffects);
         await SqlSalesReportingJobWriter.InsertAsync(
             session, document, ids, timeProvider, cancellationToken);
         await InsertOutboxAsync(session, value, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, value, cancellationToken);
-    }
-
-    private async Task ApplyInventoryAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        SalesReturnDocumentPayload value,
-        SalesReturnLineSnapshot line,
-        CancellationToken cancellationToken)
-    {
-        if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable)
-            return;
-
-        _ = await inventoryWriter.PostAsync(
-            session,
-            new InventoryLedgerPosting(
-                value.BusinessId,
-                value.WarehouseId,
-                line.ProductId,
-                value.ReturnId,
-                SalesReturnDocumentTypes.SalesReturn,
-                line.LineNumber,
-                "SalesReturn",
-                line.Quantity,
-                line.RecognizedUnitCost,
-                InventoryValuationMode.WeightedAverageReceipt,
-                value.ReturnedAt),
-            cancellationToken);
     }
 
     private static async Task InsertFiscalWorkAsync(
@@ -212,12 +193,4 @@ public sealed class SqlSalesReturnDocumentHandler(
             throw new DBConcurrencyException("The sales return could not be marked as processed.");
     }
 
-    private static void AddDecimal(
-        SqlCommand command, string name, decimal value, byte precision, byte scale)
-    {
-        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
-        parameter.Precision = precision;
-        parameter.Scale = scale;
-        parameter.Value = value;
-    }
 }

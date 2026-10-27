@@ -76,11 +76,11 @@ export function useBusinessUsage(enabled = true) {
   });
 }
 
-export function useSubscriptionDetails() {
+export function useSubscriptionDetails(enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
     queryKey: dashboardKeys.subscription(businessId),
     queryFn: () => dashboardApi.getSubscription(businessId!),
-    enabled: !!businessId,
+    enabled: enabled && !!businessId,
   });
 }

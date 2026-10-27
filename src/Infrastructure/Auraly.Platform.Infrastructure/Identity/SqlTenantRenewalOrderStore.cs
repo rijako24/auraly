@@ -18,7 +18,12 @@ public sealed class SqlTenantRenewalOrderStore(ApplicationDbContext db) : ITenan
     {
         var connection = (SqlConnection)db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open) await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(ReadSql + " WHERE subscription.TenantId=@TenantId AND renewal.IsCurrent=1;", connection);
+        await using var command = new SqlCommand(ReadSql + """
+             WHERE subscription.TenantId=@TenantId AND renewal.IsCurrent=1
+             ORDER BY CASE WHEN renewal.Status IN(N'Draft',N'PendingPayment',N'PaymentFailed',N'Expired') THEN 0 ELSE 1 END,
+               CASE WHEN renewal.Status IN(N'Draft',N'PendingPayment',N'PaymentFailed',N'Expired') THEN renewal.TargetPeriodStart END,
+               renewal.TargetPeriodStart DESC;
+            """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         return await ReadAsync(command, cancellationToken);
     }
@@ -36,11 +41,20 @@ public sealed class SqlTenantRenewalOrderStore(ApplicationDbContext db) : ITenan
         {
             await using var command = new SqlCommand("""
                 DECLARE @SubscriptionId uniqueidentifier,@CurrentEnd datetimeoffset(7),@PlanId uniqueidentifier,
-                        @Revision int,@FullUsed int,@SellerUsed int,@PosUsed int,@PayrollUsed int;
-                SELECT @SubscriptionId=TenantSubscriptionId,@CurrentEnd=CurrentPeriodEnd
+                        @AnchorDay int,@Revision int,@FullUsed int,@SellerUsed int,@PosUsed int,@PayrollUsed int;
+                SELECT @SubscriptionId=TenantSubscriptionId,@CurrentEnd=CurrentPeriodEnd,@AnchorDay=BillingAnchorDay
                 FROM billing.TenantSubscriptions WITH(UPDLOCK,HOLDLOCK)
                 WHERE TenantId=@TenantId AND Status IN(N'Active',N'PastDue',N'Suspended');
                 IF @SubscriptionId IS NULL THROW 51080,N'El tenant no tiene una suscripción renovable.',1;
+                SELECT TOP(1) @CurrentEnd=TargetPeriodStart
+                FROM billing.TenantSubscriptionRenewalOrders WITH(UPDLOCK,HOLDLOCK)
+                WHERE TenantSubscriptionId=@SubscriptionId AND IsCurrent=1
+                  AND Status IN(N'Draft',N'PendingPayment',N'PaymentFailed',N'Expired')
+                ORDER BY TargetPeriodStart;
+                IF EXISTS(SELECT 1 FROM billing.TenantSubscriptionRenewalOrders WITH(UPDLOCK,HOLDLOCK)
+                          WHERE TenantSubscriptionId=@SubscriptionId AND IsCurrent=1
+                            AND TargetPeriodStart>@CurrentEnd AND Status<>N'Cancelled')
+                    THROW 51087,N'Este cobro ya tiene períodos posteriores. Puedes pagarlo, pero no cambiar su plan ni su duración.',1;
                 SELECT @PlanId=planValue.TenantCommercialPlanId
                 FROM billing.TenantCommercialPlans planValue
                 JOIN billing.BillableServices serviceValue ON serviceValue.BillableServiceId=planValue.BillableServiceId
@@ -63,7 +77,7 @@ public sealed class SqlTenantRenewalOrderStore(ApplicationDbContext db) : ITenan
                 IF @PayrollEmployees<@PayrollUsed THROW 51085,N'La nueva capacidad de empleados de nómina es menor que el uso activo.',1;
                 IF EXISTS(SELECT 1 FROM billing.TenantSubscriptionRenewalOrders WITH(UPDLOCK,HOLDLOCK)
                           WHERE TenantSubscriptionId=@SubscriptionId AND IsCurrent=1
-                            AND PaymentTransactionId IS NOT NULL AND Status=N'PendingPayment')
+                            AND TargetPeriodStart=@CurrentEnd AND PaymentTransactionId IS NOT NULL AND Status=N'PendingPayment')
                     THROW 51086,N'El pago ya fue iniciado; cancélalo antes de modificar la orden.',1;
 
                 UPDATE billing.TenantSubscriptionRenewalOrders
@@ -80,7 +94,7 @@ public sealed class SqlTenantRenewalOrderStore(ApplicationDbContext db) : ITenan
                    MonthlySubtotal,Periods,DiscountRate,DiscountAmount,TaxAmount,PayableAmount,
                    FullUserLimit,SellerUserLimit,PosDeviceLimit,DianDocumentMonthlyLimit,PayrollEmployeeLimit,
                    LinesJson,OrderHash,CreatedByUserId,CreatedAt,UpdatedAt)
-                VALUES(@OrderId,@SubscriptionId,@Revision,1,N'Draft',@CurrentEnd,DATEADD(month,@Periods,@CurrentEnd),
+                VALUES(@OrderId,@SubscriptionId,@Revision,1,N'Draft',@CurrentEnd,billing.TenantSubscriptionPeriodBoundary(@CurrentEnd,@Periods,@AnchorDay),
                    @CurrentEnd,@PlanId,@BillingPeriod,N'COP',@MonthlySubtotal,@Periods,@DiscountRate,
                    @DiscountAmount,@TaxAmount,@PayableAmount,@FullUsers,@SellerUsers,@PosDevices,@DianDocuments,
                    @PayrollEmployees,@LinesJson,@OrderHash,@UserId,@Now,@Now);
@@ -123,7 +137,7 @@ public sealed class SqlTenantRenewalOrderStore(ApplicationDbContext db) : ITenan
     }
 
     private const string ReadSql = """
-        SELECT renewal.TenantSubscriptionRenewalOrderId,renewal.Revision,renewal.Status,renewal.IsCurrent,
+        SELECT TOP(1) renewal.TenantSubscriptionRenewalOrderId,renewal.Revision,renewal.Status,renewal.IsCurrent,
                renewal.TargetPeriodStart,renewal.TargetPeriodEnd,renewal.DueAt,
                serviceValue.Code,serviceValue.Name,renewal.BillingPeriod,renewal.MonthlySubtotal,
                renewal.Periods,(renewal.MonthlySubtotal*renewal.Periods),renewal.DiscountRate,

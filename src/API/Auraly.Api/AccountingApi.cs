@@ -8,19 +8,28 @@ public static class AccountingApi
 {
     public static IEndpointRouteBuilder MapAccountingApi(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/commerce/v1/accounting/open-positions", async (HttpContext context,
+            string? subledgerKind, int? page, int? pageSize, Guid? partyId, Guid? accountId,
+            string? search, DateOnly? dueFrom, DateOnly? dueTo, Guid? subledgerId, Guid? counterpartyRoleId, bool? manualSupportOnly, DateOnly? effectiveOn,
+            AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.OpenPositionsAsync(context.User.ToAccountingIdentity(),
+                new(subledgerKind ?? AccountingSubledgerKinds.Payable, page ?? 1, pageSize ?? 25,
+                    partyId, accountId, search, dueFrom, dueTo, subledgerId, counterpartyRoleId, manualSupportOnly == true, effectiveOn), token), Results.Ok))
+            .RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/account-options", async (HttpContext context,
-            int? page, int? pageSize, string? search, bool? expenseOnly, Guid? accountId, bool? liabilityOnly,
+            int? page, int? pageSize, string? search, bool? expenseOnly, Guid? accountId, bool? liabilityOnly, bool? groupingOnly,
             AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.AccountOptionsAsync(context.User.ToAccountingIdentity(),
                 new(page ?? 1, pageSize ?? 10, search, expenseOnly == true, accountId,
-                    LiabilityOnly: liabilityOnly == true), token), Results.Ok))
+                    IncludeStructural: groupingOnly == true, LiabilityOnly: liabilityOnly == true, GroupingOnly: groupingOnly == true), token), Results.Ok))
             .RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/readiness", async (HttpContext context, DateOnly? effectiveFrom, string? openingBalanceMode, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetReadinessAsync(context.User.ToAccountingIdentity(), effectiveFrom, openingBalanceMode, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/activate", async (HttpContext context, ActivateAccountingRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ActivateAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/opening-balances", async (HttpContext context, DateOnly effectiveOn, AccountingService service, CancellationToken token) =>
-            await ExecuteAsync(() => service.GetOpeningBalanceAsync(context.User.ToAccountingIdentity(), effectiveOn, token), Results.Ok)).RequireAuthorization("accounting.user");
+            await ExecuteAsync(() => service.GetOpeningBalanceAsync(context.User.ToAccountingIdentity(), effectiveOn, token),
+                value => value is null ? Results.Text("null", "application/json") : Results.Ok(value))).RequireAuthorization("accounting.user");
         endpoints.MapPut("/api/commerce/v1/accounting/opening-balances", async (HttpContext context, SaveAccountingOpeningBalanceRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.SaveOpeningBalanceAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/opening-balances/{batchId:guid}/approve", async (HttpContext context, Guid batchId, AccountingService service, CancellationToken token) =>
@@ -29,6 +38,19 @@ public static class AccountingApi
             await ExecuteAsync(() => service.ConfirmAccountAdjustmentAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Accepted($"/api/commerce/v1/accounting/entries/by-document/{value.DocumentId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/manual/vouchers", async (HttpContext context, ConfirmManualAccountingVoucherRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ConfirmManualVoucherAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Accepted($"/api/commerce/v1/accounting/entries/by-document/{value.DocumentId:D}", value))).RequireAuthorization("accounting.user");
+        endpoints.MapPost("/api/commerce/v1/accounting/manual/fiscal-preview", async (HttpContext context, ConfirmManualAccountingVoucherRequest request, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.PreviewFiscalVoucherAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/support-cancellation-capture", async (HttpContext context,
+            Guid payableId, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetSupportCancellationCaptureAsync(context.User.ToAccountingIdentity(), payableId, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapPost("/api/commerce/v1/accounting/documents/{documentId:guid}/clone", async (HttpContext context, Guid documentId, CloneVoucherDraftRequest request, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.CloneVoucherDraftAsync(context.User.ToAccountingIdentity(), documentId, request, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/unapplication-capture", async (HttpContext context, string subledgerKind,
+            Guid subledgerId, Guid transactionId, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(async () => {
+                var value = await service.GetUnapplicationCaptureAsync(context.User.ToAccountingIdentity(), subledgerKind, subledgerId, transactionId, token);
+                return value is null ? Results.Problem("No se preparó la desaplicación: el movimiento no está aplicado o no pertenece a esta obligación y sede. Su historial original se conserva.", statusCode: 404) : Results.Ok(value);
+            })).RequireAuthorization("accounting.user");
         endpoints.MapPut("/api/commerce/v1/accounting/manual/drafts/{documentId:guid}", async (HttpContext context, Guid documentId, SaveVoucherDraftRequest request, AccountingService service, CancellationToken token) =>
             documentId != request.DocumentId ? Results.BadRequest() :
                 await ExecuteAsync(() => service.SaveVoucherDraftAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
@@ -56,12 +78,12 @@ public static class AccountingApi
             bankAccountId != request.BankAccountId
                 ? Results.Problem("La cuenta bancaria de la ruta no coincide con la solicitud.", statusCode: 400)
                 : await ExecuteAsync(() => service.SaveBankAccountAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
-        endpoints.MapGet("/api/commerce/v1/accounting/bank-reconciliations", async (HttpContext context, AccountingService service, CancellationToken token) =>
-            await ExecuteAsync(() => service.ListBankReconciliationsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
-        endpoints.MapGet("/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:guid}", async (HttpContext context, Guid reconciliationId, AccountingService service, CancellationToken token) =>
+        endpoints.MapGet("/api/commerce/v1/accounting/bank-reconciliations", async (HttpContext context, [AsParameters] BankReconciliationQuery query, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListBankReconciliationsAsync(context.User.ToAccountingIdentity(), query, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:guid}", async (HttpContext context, Guid reconciliationId, [AsParameters] BankReconciliationDetailQuery query, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(async () =>
             {
-                var value = await service.GetBankReconciliationAsync(context.User.ToAccountingIdentity(), reconciliationId, token);
+                var value = await service.GetBankReconciliationAsync(context.User.ToAccountingIdentity(), reconciliationId, query, token);
                 return value is null ? Results.NotFound() : Results.Ok(value);
             })).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/bank-reconciliations", async (HttpContext context, ImportBankReconciliationRequest request, AccountingService service, CancellationToken token) =>
@@ -126,10 +148,23 @@ public static class AccountingApi
             })).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/reports/trial-balance", async (HttpContext context, DateOnly from, DateOnly to, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetTrialBalanceAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
-        endpoints.MapGet("/api/commerce/v1/accounting/reports/account-movements", async (HttpContext context, string accountCode, DateOnly from, DateOnly to, Guid? costCenterId, AccountingService service, CancellationToken token) =>
-            await ExecuteAsync(() => service.GetAccountMovementsAsync(context.User.ToAccountingIdentity(), accountCode, from, to, token, costCenterId), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/reports/account-movements", async (HttpContext context,
+            string? accountCode, DateOnly from, DateOnly to, Guid? costCenterId, Guid? partyId,
+            string? accountFrom, string? accountTo, string? accountRootCode, int? page, int? pageSize,
+            AccountingService service, CancellationToken token) =>
+            page.HasValue || pageSize.HasValue || partyId.HasValue || accountFrom is not null || accountTo is not null || accountRootCode is not null
+                ? await ExecuteAsync(() => service.GetAccountMovementsPageAsync(context.User.ToAccountingIdentity(),
+                    new(from,to,page??1,pageSize??50,accountFrom,accountTo,partyId,costCenterId,accountRootCode??accountCode),token),Results.Ok)
+                : await ExecuteAsync(() => service.GetAccountMovementsAsync(context.User.ToAccountingIdentity(),
+                    accountCode??string.Empty,from,to,token,costCenterId),Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/reports/journal", async (HttpContext context, DateOnly from, DateOnly to, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetJournalAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/reports/account-movements/print", async (HttpContext context,
+            DateOnly from, DateOnly to, Guid? costCenterId, Guid? partyId, string? accountFrom, string? accountTo, string? accountRootCode,
+            AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetAccountMovementReportAsync(context.User.ToAccountingIdentity(),
+                new(from,to,AccountFrom:accountFrom,AccountTo:accountTo,PartyId:partyId,CostCenterId:costCenterId,AccountRootCode:accountRootCode),token),Results.Ok))
+            .RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/reports/general-ledger", async (HttpContext context, DateOnly from, DateOnly to, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetGeneralLedgerAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/reports/balance-sheet", async (HttpContext context, DateOnly asOf, AccountingService service, CancellationToken token) =>

@@ -5,6 +5,7 @@ export interface ReportColumn {
   key: string;
   label: string;
   align?: "left" | "right";
+  numberFormat?: string;
   format?: (value: ReportCell, row: ReportRow) => string;
 }
 

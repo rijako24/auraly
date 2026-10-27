@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
@@ -64,11 +65,11 @@ public sealed partial class SqlPayablesStore(
         await using var connection=connections.Create();await connection.OpenAsync(token);
         await using var command=new SqlCommand($"""
             WITH Paid AS(
-              SELECT application.PayableId,SUM(application.Amount) PaidAmount
-              FROM dbo.SupplierPaymentApplications application
-              JOIN dbo.Payables scoped ON scoped.PayableId=application.PayableId
-              WHERE scoped.BusinessId=@BusinessId AND application.AppliedAt IS NOT NULL
-              GROUP BY application.PayableId),
+              SELECT application.PositionId PayableId,SUM(application.Amount) PaidAmount
+              FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Payable') application
+              JOIN dbo.Payables scoped ON scoped.PayableId=application.PositionId
+              WHERE scoped.BusinessId=@BusinessId
+              GROUP BY application.PositionId),
             Credits AS(
               SELECT SupplierId,PartySiteId,SUM(AvailableAmount) CreditAmount
               FROM dbo.SupplierCredits WHERE BusinessId=@BusinessId AND AvailableAmount>0
@@ -226,7 +227,7 @@ public sealed partial class SqlPayablesStore(
                    p.OriginalAmount,p.OutstandingAmount,p.DueDate,p.Status,p.CreatedAt,
                    CASE WHEN p.OutstandingAmount>0 AND p.DueDate<@Now THEN CAST(1 AS BIT)
                         ELSE CAST(0 AS BIT) END IsOverdue,concept.Name ExpenseConceptName,
-                   p.PartySiteId,site.Name PartySiteName
+                   p.PartySiteId,site.Name PartySiteName,p.SourceDocumentId,p.SourceDocumentType
             INTO #Page
             FROM dbo.Payables p
             INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
@@ -242,13 +243,23 @@ public sealed partial class SqlPayablesStore(
             SELECT page.PayableId,page.SupplierId,page.SupplierName,page.DocumentNumber,
               page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
               page.Status,page.CreatedAt,page.IsOverdue,page.ExpenseConceptName,
-              COALESCE(paid.PaidAmount,0),page.PartySiteId,page.PartySiteName
+              COALESCE(paid.PaidAmount,0),page.PartySiteId,page.PartySiteName,
+              CASE WHEN page.SourceDocumentType=N'GoodsReceipt' AND discount.EligibleAmount>0
+                AND decided.PayableId IS NULL THEN discount.EligibleAmount END FinancialDiscountEligibleAmount,
+              CASE WHEN page.SourceDocumentType=N'GoodsReceipt' AND discount.EligibleAmount>0
+                AND decided.PayableId IS NULL THEN discount.Anticipated END FinancialDiscountAnticipated,
+              CASE WHEN pending.PurchaseReturnId IS NULL THEN CONVERT(bit,0) ELSE CONVERT(bit,1) END FinancialDiscountPendingReturn
             FROM #Page page
-            LEFT JOIN (SELECT application.PayableId,SUM(application.Amount) PaidAmount
-              FROM dbo.SupplierPaymentApplications application
-              JOIN #Page selected ON selected.PayableId=application.PayableId
-              WHERE application.AppliedAt IS NOT NULL
-              GROUP BY application.PayableId) paid ON paid.PayableId=page.PayableId
+            LEFT JOIN (SELECT application.PositionId PayableId,SUM(application.Amount) PaidAmount
+              FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Payable') application
+              JOIN #Page selected ON selected.PayableId=application.PositionId
+              GROUP BY application.PositionId) paid ON paid.PayableId=page.PayableId
+            OUTER APPLY accounting.GoodsReceiptFinancialDiscount(@BusinessId,page.SourceDocumentId) discount
+            OUTER APPLY(SELECT TOP(1) application.PayableId FROM dbo.SupplierPaymentApplications application
+              WHERE application.PayableId=page.PayableId AND application.FinancialDiscountEarned IS NOT NULL) decided
+            OUTER APPLY(SELECT TOP(1) purchaseReturn.PurchaseReturnId FROM dbo.PurchaseReturns purchaseReturn
+              WHERE purchaseReturn.BusinessId=@BusinessId AND purchaseReturn.OriginalGoodsReceiptId=page.SourceDocumentId
+                AND purchaseReturn.Status=N'Accepted') pending
             ORDER BY {pageOrder};
             """;
         var items = new List<PayableListItem>();
@@ -265,7 +276,9 @@ public sealed partial class SqlPayablesStore(
                     reader.GetDecimal(6), reader.GetDateTimeOffset(7), reader.GetString(8),
                     reader.GetBoolean(10), reader.GetDateTimeOffset(9),
                     reader.IsDBNull(11) ? null : reader.GetString(11),reader.GetDecimal(12),
-                    reader.IsDBNull(13)?null:reader.GetGuid(13),reader.IsDBNull(14)?null:reader.GetString(14)));
+                    reader.IsDBNull(13)?null:reader.GetGuid(13),reader.IsDBNull(14)?null:reader.GetString(14),
+                    reader.IsDBNull(15)?null:reader.GetDecimal(15),reader.IsDBNull(16)?null:reader.GetBoolean(16),
+                    reader.GetBoolean(17)));
         }
         var cop = currencyTotals.FirstOrDefault(item => item.CurrencyCode == "COP");
         return new PayablePage(items, query.Page, query.PageSize, totalCount,
@@ -284,16 +297,19 @@ public sealed partial class SqlPayablesStore(
             new Dictionary<string, string>
             {
                 ["paidAt"] = "payment.PaidAt", ["partyName"] = "supplier.Name",
-                ["documentNumber"] = "payment.DocumentNumber", ["totalAmount"] = "payment.TotalAmount"
+                ["documentNumber"] = "origin.DocumentNumber", ["totalAmount"] = "payment.TotalAmount"
             }, "paidAt", "desc", "payment.PaymentId DESC");
         await using var connection=connections.Create(); await connection.OpenAsync(cancellationToken);
         await using var command=new SqlCommand($"""
-            SELECT COUNT(*) FROM dbo.SupplierPayments payment
+            CREATE TABLE #FilteredPayments(PaymentId uniqueidentifier PRIMARY KEY);
+            INSERT #FilteredPayments SELECT payment.PaymentId FROM dbo.SupplierPayments payment
+            INNER JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
+              AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=payment.BusinessId
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND (@SupplierId IS NULL OR payment.SupplierId=@SupplierId)
-              AND (@PartySiteId IS NULL OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentApplications siteApplication
+              AND (@PartySiteId IS NULL OR payment.PartySiteId=@PartySiteId OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentApplications siteApplication
                 JOIN dbo.Payables sitePayable ON sitePayable.PayableId=siteApplication.PayableId
                 WHERE siteApplication.PaymentId=payment.PaymentId AND sitePayable.PartySiteId=@PartySiteId))
               AND (@From IS NULL OR payment.PaidAt>=@From)
@@ -305,51 +321,39 @@ public sealed partial class SqlPayablesStore(
                   AND (@Status IS NULL OR invoice.Status=@Status)
                   AND (@Overdue IS NULL OR (@Overdue=1 AND invoice.OutstandingAmount>0 AND invoice.DueDate<@Now)
                     OR (@Overdue=0 AND (invoice.OutstandingAmount=0 OR invoice.DueDate>=@Now)))))
-              AND (@Search IS NULL OR payment.DocumentNumber LIKE N'%' + @Search + N'%'
+              AND (@Search IS NULL OR origin.DocumentNumber LIKE N'%' + @Search + N'%'
                 OR supplier.Name LIKE N'%' + @Search + N'%' OR supplier.Identification LIKE N'%' + @Search + N'%'
                 OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentApplications application
                   JOIN dbo.Payables invoice ON invoice.PayableId=application.PayableId
                   WHERE application.PaymentId=payment.PaymentId
                     AND invoice.DocumentNumber LIKE N'%' + @Search + N'%'));
+            SELECT COUNT(*) FROM #FilteredPayments;
             DECLARE @Page TABLE(PaymentId uniqueidentifier PRIMARY KEY);
             INSERT @Page(PaymentId)
-            SELECT payment.PaymentId FROM dbo.SupplierPayments payment
+            SELECT payment.PaymentId FROM #FilteredPayments filtered
+            JOIN dbo.SupplierPayments payment ON payment.PaymentId=filtered.PaymentId
+            INNER JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
+              AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=payment.BusinessId
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
-            WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
-              AND (@SupplierId IS NULL OR payment.SupplierId=@SupplierId)
-              AND (@PartySiteId IS NULL OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentApplications siteApplication
-                JOIN dbo.Payables sitePayable ON sitePayable.PayableId=siteApplication.PayableId
-                WHERE siteApplication.PaymentId=payment.PaymentId AND sitePayable.PartySiteId=@PartySiteId))
-              AND (@From IS NULL OR payment.PaidAt>=@From)
-              AND (@To IS NULL OR payment.PaidAt<@To)
-              AND (@Status IS NULL AND @Overdue IS NULL OR EXISTS(
-                SELECT 1 FROM dbo.SupplierPaymentApplications application
-                JOIN dbo.Payables invoice ON invoice.PayableId=application.PayableId
-                WHERE application.PaymentId=payment.PaymentId
-                  AND (@Status IS NULL OR invoice.Status=@Status)
-                  AND (@Overdue IS NULL OR (@Overdue=1 AND invoice.OutstandingAmount>0 AND invoice.DueDate<@Now)
-                    OR (@Overdue=0 AND (invoice.OutstandingAmount=0 OR invoice.DueDate>=@Now)))))
-              AND (@Search IS NULL OR payment.DocumentNumber LIKE N'%' + @Search + N'%'
-                OR supplier.Name LIKE N'%' + @Search + N'%' OR supplier.Identification LIKE N'%' + @Search + N'%'
-                OR EXISTS(SELECT 1 FROM dbo.SupplierPaymentApplications application
-                  JOIN dbo.Payables invoice ON invoice.PayableId=application.PayableId
-                  WHERE application.PaymentId=payment.PaymentId
-                    AND invoice.DocumentNumber LIKE N'%' + @Search + N'%'))
             ORDER BY {paymentOrder}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
-            SELECT payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
+            SELECT payment.PaymentId,origin.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
               payment.TotalAmount,payment.Status,
-              COUNT(application.PayableId) AppliedDocumentCount,payment.SupplierId,supplier.Name
+              COUNT(application.PayableId) AppliedDocumentCount,payment.SupplierId,supplier.Name,
+              origin.SourceDocumentId,origin.SourceDocumentType,origin.SourceGroupId
             FROM @Page page INNER JOIN dbo.SupplierPayments payment ON payment.PaymentId=page.PaymentId
+            INNER JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
+              AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=payment.BusinessId
             INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
             LEFT JOIN dbo.SupplierPaymentApplications application ON application.PaymentId=payment.PaymentId
               AND (@PartySiteId IS NULL OR EXISTS(SELECT 1 FROM dbo.Payables sitePayable
                 WHERE sitePayable.PayableId=application.PayableId AND sitePayable.PartySiteId=@PartySiteId))
             WHERE payment.BusinessId=@BusinessId AND business.TenantId=@TenantId
-            GROUP BY payment.PaymentId,payment.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
-              payment.TotalAmount,payment.Status,payment.SupplierId,supplier.Name
+            GROUP BY payment.PaymentId,origin.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
+              payment.TotalAmount,payment.Status,payment.SupplierId,supplier.Name,
+              origin.SourceDocumentId,origin.SourceDocumentType,origin.SourceGroupId
             ORDER BY {paymentOrder};
             SELECT tender.PaymentId,tender.LineNumber,tender.MethodCode,tender.Amount,tender.TenderedAmount,
               tender.BankAccountId,tender.Reference,tender.Notes,tender.CardFranchiseCode,tender.ApprovalNumber
@@ -378,7 +382,8 @@ public sealed partial class SqlPayablesStore(
         var items=new List<SupplierPaymentHistoryItem>();
         while(await reader.ReadAsync(cancellationToken)) items.Add(new(reader.GetGuid(0),reader.GetString(1),
             reader.GetDateTimeOffset(2),reader.GetString(3),reader.GetDecimal(4),reader.GetString(5),reader.GetInt32(6),
-            [],[],reader.GetGuid(7),reader.GetString(8)));
+            [],[],reader.GetGuid(7),reader.GetString(8),reader.IsDBNull(11)?null:reader.GetGuid(9),
+            reader.IsDBNull(11)?null:reader.GetString(10),reader.IsDBNull(11)?null:reader.GetGuid(11)));
         var byPayment=items.ToDictionary(item=>item.PaymentId,_=>new List<SupplierPaymentTenderSnapshot>());
         var applications=items.ToDictionary(item=>item.PaymentId,_=>new List<SupplierPaymentHistoryApplication>());
         await reader.NextResultAsync(cancellationToken);
@@ -464,17 +469,23 @@ public sealed partial class SqlPayablesStore(
         }
         var transactions = new List<PayableTransactionView>();
         await using (var command = new SqlCommand("""
-            SELECT PayableTransactionId,TransactionType,Amount,SourceDocumentId,OccurredAt
-            FROM dbo.PayableTransactions
-            WHERE PayableId=@PayableId ORDER BY OccurredAt,PayableTransactionId;
+            SELECT tx.PayableTransactionId,tx.TransactionType,tx.Amount,COALESCE(origin.SourceDocumentId,tx.SourceDocumentId),tx.OccurredAt,effect.BalanceChange
+            FROM dbo.PayableTransactions tx
+            CROSS APPLY accounting.PortfolioTransactionEffect(tx.TransactionType,tx.Amount) effect
+            LEFT JOIN accounting.PortfolioPaymentOrigins origin ON tx.TransactionType=N'Payment'
+              AND origin.PaymentId=tx.SourceDocumentId AND origin.SubledgerKind=N'Payable'
+              AND origin.BusinessId=@BusinessId AND origin.TenantId=@TenantId
+            WHERE tx.PayableId=@PayableId ORDER BY tx.OccurredAt,tx.PayableTransactionId;
             """, connection))
         {
             command.Parameters.AddWithValue("@PayableId", payableId);
+            command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
                 transactions.Add(new PayableTransactionView(
                     reader.GetGuid(0), reader.GetString(1), reader.GetDecimal(2),
-                    reader.GetGuid(3), reader.GetDateTimeOffset(4)));
+                    reader.GetGuid(3), reader.GetDateTimeOffset(4), reader.GetDecimal(5)));
         }
         return new PayableDetail(
             payableId, supplierId, supplierName, supplierIdentification,
@@ -525,36 +536,43 @@ public sealed partial class SqlPayablesStore(
         try
         {
             var replay = await FindReplayAsync(
-                connection, transaction, user.BusinessId, request.PaymentId,
-                idempotencyKey, requestHash, cancellationToken);
+                connection, transaction, user.TenantId, user.BusinessId, request.PaymentId,
+                idempotencyKey, requestHash, settlement, cancellationToken);
             if (replay is not null)
             {
                 await transaction.CommitAsync(cancellationToken);
                 return replay;
             }
-            await ValidateScopeAndAvailabilityAsync(
-                connection, transaction, user, request, settlement, tenders, cancellationToken);
-            var number = await AllocateNumberAsync(
-                connection, transaction, user.BusinessId, cancellationToken);
             var now = timeProvider.GetUtcNow();
+            AuralyDocumentNumberAssignment number;
+            try
+            {
+                number = await SqlOperationalDocumentAllocator.AllocateExistingNumberAsync(
+                    connection, transaction, user.TenantId, user.BusinessId,
+                    AuralyDocumentTypes.PayablePayment, now, cancellationToken);
+            }
+            catch (SqlException error) when (error.Number is 51730 or 51731)
+            {
+                throw new PayablesValidationException(error.Message, error);
+            }
             var movementId = ids.NewId();
             var paymentSnapshots=tenders.Tenders.Select((item,index)=>new SupplierPaymentTenderSnapshot(
                 index+1,item.MethodCode,item.Amount,item.TenderedAmount,item.BankAccountId,
                 item.Reference,item.Notes,item.CardFranchiseCode,item.ApprovalNumber)).ToArray();
+            var discountDecisions = request.Allocations.ToDictionary(item => item.PayableId,
+                item => item.FinancialDiscountEarned);
             var payload = new SupplierPaymentDocumentPayload(
                 user.TenantId, user.BusinessId, request.PaymentId, request.SupplierId,
                 user.UserId, number.FullNumber, number.SeriesId, number.Prefix,
                 number.SeriesCode, number.Consecutive, request.PaidAt, request.CurrencyCode, request.Notes,
                 settlement.TotalAmount,
                 settlement.Allocations.Select((item, index) =>
-                    new SupplierPaymentAllocationSnapshot(index + 1, item.PayableId, item.Amount))
+                    new SupplierPaymentAllocationSnapshot(index + 1, item.PayableId, item.Amount,
+                        discountDecisions[item.PayableId]))
                     .ToArray(), paymentSnapshots, request.WorkSessionId);
             var payloadJson = SupplierPaymentContractSerializer.Serialize(payload);
-            await InsertPaymentAsync(
-                connection, transaction, user, request, settlement, number,
-                idempotencyKey, requestHash, JsonSerializer.Serialize(paymentSnapshots), now, cancellationToken);
-            await InsertApplicationsAsync(
-                connection, transaction, request.PaymentId, settlement, cancellationToken);
+            await AcceptPaymentRecordAsync(connection, transaction, user, payloadJson,
+                idempotencyKey, requestHash, now, cancellationToken);
             await SqlAccountingPostingJobWriter.InsertSourceAsync(connection,transaction,user.TenantId,
                 user.BusinessId,request.PaymentId,PayablesDocumentTypes.Payment,payloadJson,request.PaidAt,
                 ids,timeProvider,cancellationToken,AccountingJobRequirement.PreserveCommercialEffects,movementId);
@@ -564,7 +582,8 @@ public sealed partial class SqlPayablesStore(
         }
         catch
         {
-            await transaction.RollbackAsync(CancellationToken.None);
+            if (transaction.Connection is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
     }
@@ -592,234 +611,100 @@ public sealed partial class SqlPayablesStore(
     }
 
     private static async Task<SupplierPaymentAcceptance?> FindReplayAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId, Guid businessId,
         Guid paymentId, string idempotencyKey, byte[] requestHash,
+        PayableSettlement settlement,
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT p.PaymentId,p.DocumentNumber,p.Status,j.AccountingPostingJobId,p.PayloadHash
+            -- Lock the bounded allocation set before replay can hold payment/job key ranges.
+            -- Availability is evaluated later, with these position locks already held.
+            DECLARE @Positions TABLE(PayableId uniqueidentifier PRIMARY KEY);
+            INSERT @Positions SELECT PayableId FROM OPENJSON(@Allocations)
+              WITH(PayableId uniqueidentifier);
+            DECLARE @LockedPosition uniqueidentifier;
+            SELECT @LockedPosition=p.PayableId FROM @Positions input
+            JOIN dbo.Payables p WITH(UPDLOCK,HOLDLOCK) ON p.PayableId=input.PayableId
+              AND p.BusinessId=@BusinessId
+            JOIN dbo.Businesses business ON business.BusinessId=p.BusinessId AND business.TenantId=@TenantId
+            ORDER BY input.PayableId OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1);
+            SELECT p.PaymentId,origin.DocumentNumber,p.Status,j.AccountingPostingJobId,p.PayloadHash,s.SourceDocumentId,origin.SourceGroupId
             FROM dbo.SupplierPayments p
-            INNER JOIN dbo.AccountingPostingJobs j
-              ON j.SourceDocumentId=p.PaymentId AND j.SourceDocumentType=N'PayablePayment'
+            INNER JOIN dbo.Businesses business ON business.BusinessId=p.BusinessId AND business.TenantId=@TenantId
+            INNER JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=p.PaymentId
+              AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=p.BusinessId
+            LEFT JOIN dbo.AccountingPostingJobs j
+              ON j.SourceDocumentId=origin.SourceDocumentId AND j.SourceDocumentType=origin.SourceDocumentType
+                AND j.TenantId=@TenantId AND j.BusinessId=@BusinessId
+            LEFT JOIN dbo.AccountingSourceDocuments s
+              ON s.SourceDocumentId=origin.SourceDocumentId AND s.SourceDocumentType=origin.SourceDocumentType
+                AND s.TenantId=@TenantId AND s.BusinessId=@BusinessId
             WHERE p.BusinessId=@BusinessId
               AND (p.PaymentId=@PaymentId OR p.IdempotencyKey=@IdempotencyKey);
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@PaymentId", paymentId);
         command.Parameters.AddWithValue("@IdempotencyKey", idempotencyKey);
+        command.Parameters.Add("@Allocations",SqlDbType.NVarChar,-1).Value=JsonSerializer.Serialize(settlement.Allocations);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
+        if (!reader.IsDBNull(6))
+            throw new PayablesConflictException("El pago pertenece a un comprobante. Consulta o reintenta ese comprobante; no se aceptó un pago independiente.");
         if (!reader.GetFieldValue<byte[]>(4).AsSpan().SequenceEqual(requestHash))
             throw new PayablesConflictException(
                 "The idempotency key or PaymentId was reused with another payload.");
-        return new SupplierPaymentAcceptance(
+        if (reader.IsDBNull(3) || reader.IsDBNull(5))
+            throw new PayablesConflictException("El pago ya está registrado, pero su fuente o trabajo financiero requieren revisión. No se aceptó otro pago.");
+        var acceptance = new SupplierPaymentAcceptance(
             reader.GetGuid(0), reader.GetGuid(3), reader.GetString(1), reader.GetString(2), true);
-    }
-
-    private static async Task ValidateScopeAndAvailabilityAsync(
-        SqlConnection connection, SqlTransaction transaction, PayablesUserIdentity user,
-        ConfirmSupplierPaymentRequest request, PayableSettlement settlement,
-        PaymentTenderBreakdown tenders,
-        CancellationToken cancellationToken)
-    {
-        await using (var scope = new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
-              THROW 51200,'The business is outside the authenticated tenant.',1;
-            IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND TenantId=@TenantId AND IsActive=1)
-              THROW 51201,'The supplier is outside the authenticated business.',1;
-            IF @WorkSessionId IS NOT NULL AND NOT EXISTS(
-              SELECT 1 FROM dbo.WorkSessions
-              WHERE WorkSessionId=@WorkSessionId AND BusinessId=@BusinessId
-                AND TenantId=@TenantId AND UserId=@UserId AND Status=N'Open')
-              THROW 51202,'The work session is not open for the authenticated user.',1;
-            """, connection, transaction))
-        {
-            scope.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-            scope.Parameters.AddWithValue("@TenantId", user.TenantId);
-            scope.Parameters.AddWithValue("@SupplierId", request.SupplierId);
-            scope.Parameters.AddWithValue("@UserId", user.UserId);
-            scope.Parameters.AddWithValue("@WorkSessionId", (object?)request.WorkSessionId ?? DBNull.Value);
-            try { await scope.ExecuteNonQueryAsync(cancellationToken); }
-            catch (SqlException exception) when (exception.Number is 51200 or 51201 or 51202)
-            { throw new PayablesValidationException(exception.Message); }
-        }
-        await using var batch = new SqlCommand("""
-            DECLARE @Input TABLE(PayableId uniqueidentifier PRIMARY KEY,Amount decimal(19,4));
-            INSERT @Input SELECT PayableId,Amount FROM OPENJSON(@Allocations)
-              WITH(PayableId uniqueidentifier,Amount decimal(19,4));
-            IF (SELECT COUNT(*) FROM @Input)<>@Count THROW 51210,'The allocation batch is invalid.',1;
-            IF EXISTS(
-              SELECT 1 FROM @Input input
-              LEFT JOIN dbo.Payables p WITH(UPDLOCK,HOLDLOCK) ON p.PayableId=input.PayableId
-                AND p.BusinessId=@BusinessId
-              OUTER APPLY(SELECT COALESCE(SUM(a.Amount),0) Reserved
-                FROM dbo.SupplierPaymentApplications a WITH(UPDLOCK,HOLDLOCK)
-                JOIN dbo.SupplierPayments payment WITH(UPDLOCK,HOLDLOCK) ON payment.PaymentId=a.PaymentId
-                WHERE a.PayableId=input.PayableId AND a.AppliedAt IS NULL AND payment.Status=N'Accepted') pending
-              WHERE p.PayableId IS NULL OR p.SupplierId<>@SupplierId OR p.CurrencyCode<>@Currency
-                OR p.Status IN(N'Paid',N'Cancelled') OR input.Amount>p.OutstandingAmount-pending.Reserved-COALESCE((SELECT SUM(d.AdjustmentAmount)
-                  FROM accounting.VoucherDrafts d WITH(INDEX(IX_VoucherDrafts_Obligation))
-                  WHERE d.BusinessId=@BusinessId AND d.SubledgerKind=N'Payable' AND d.SubledgerId=input.PayableId
-                    AND d.Direction=N'Decrease' AND d.SentAt IS NOT NULL
-                    AND NOT EXISTS(SELECT 1 FROM dbo.PayableTransactions t WHERE t.PayableId=input.PayableId AND t.TransactionType=N'Adjustment' AND t.SourceDocumentId=d.DocumentId)),0)
-                OR (p.SourceDocumentType=N'Expense' AND NOT EXISTS(
-                  SELECT 1 FROM dbo.Expenses e WITH(UPDLOCK,HOLDLOCK)
-                  WHERE e.ExpenseId=p.SourceDocumentId AND e.BusinessId=p.BusinessId
-                    AND e.Status=N'Processed')))
-              THROW 51211,'An allocation is unavailable or outside the selected supplier.',1;
-            IF EXISTS(SELECT 1
-                FROM OPENJSON(@Allocations) WITH(PayableId uniqueidentifier) input
-                JOIN dbo.Payables payable ON payable.PayableId=input.PayableId AND payable.BusinessId=@BusinessId
-                HAVING COUNT(DISTINCT payable.PartySiteId)<>1
-                  OR COUNT(*)<>COUNT(payable.PartySiteId))
-              THROW 51214,'Selecciona obligaciones de una sola sede del proveedor.',1;
-            DECLARE @AccountingReady bit=CONVERT(bit,CASE WHEN EXISTS(
-              SELECT 1 FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId AND Status=N'Ready'
-                AND EffectiveFrom<=CONVERT(date,@PaidAt)) THEN 1 ELSE 0 END);
-            IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(
-                MethodCode nvarchar(32),BankAccountId uniqueidentifier)
-              WHERE MethodCode=N'Transfer' AND @AccountingReady=1 AND BankAccountId IS NULL)
-              THROW 51212,'Select a bank account for every transfer.',1;
-            IF EXISTS(SELECT 1 FROM OPENJSON(@Payments) WITH(BankAccountId uniqueidentifier) input
-              WHERE input.BankAccountId IS NOT NULL AND NOT EXISTS(
-                SELECT 1 FROM accounting.BankAccounts bank
-                WHERE bank.BankAccountId=input.BankAccountId AND bank.TenantId=@TenantId AND bank.IsActive=1))
-              THROW 51213,'A selected bank account is not active for this tenant.',1;
-            """, connection, transaction);
-        batch.Parameters.AddWithValue("@Allocations",JsonSerializer.Serialize(settlement.Allocations));
-        batch.Parameters.AddWithValue("@Payments",JsonSerializer.Serialize(tenders.Tenders));
-        batch.Parameters.AddWithValue("@Count",settlement.Allocations.Count);
-        batch.Parameters.AddWithValue("@BusinessId",user.BusinessId);
-        batch.Parameters.AddWithValue("@TenantId",user.TenantId);
-        batch.Parameters.AddWithValue("@SupplierId",request.SupplierId);
-        batch.Parameters.AddWithValue("@Currency",request.CurrencyCode);
-        batch.Parameters.AddWithValue("@PaidAt",request.PaidAt);
-        try { await batch.ExecuteNonQueryAsync(cancellationToken); }
-        catch(SqlException ex) when(ex.Number is >=51210 and <=51214)
-        { if(ex.Number==51211) throw new PayablesConflictException(ex.Message); throw new PayablesValidationException(ex.Message); }
-    }
-
-    private static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId,
-        CancellationToken cancellationToken)
-    {
-        await using var select = new SqlCommand("""
-            SELECT TOP(1) ds.DocumentSeriesId,ds.Prefix,ds.SeriesCode,ds.Padding,
-                   ds.RangeEnd,COALESCE(c.NextConsecutive,ds.RangeStart)
-            FROM dbo.DocumentSeries ds WITH(UPDLOCK,HOLDLOCK)
-            LEFT JOIN dbo.DocumentSeriesCursors c WITH(UPDLOCK,HOLDLOCK)
-              ON c.DocumentSeriesId=ds.DocumentSeriesId
-            WHERE ds.BusinessId=@BusinessId AND ds.DocumentType=N'PayablePayment'
-              AND ds.DeviceId IS NULL AND ds.IsActive=1
-            ORDER BY ds.DocumentSeriesId;
-            """, connection, transaction);
-        select.Parameters.AddWithValue("@BusinessId", businessId);
-        Guid seriesId; string prefix; string seriesCode; byte padding; long rangeEnd; long consecutive;
-        await using (var reader = await select.ExecuteReaderAsync(cancellationToken))
-        {
-            if (!await reader.ReadAsync(cancellationToken))
-                throw new PayablesValidationException(
-                    "No active PayablePayment document series is configured for the business.");
-            seriesId = reader.GetGuid(0); prefix = reader.GetString(1);
-            seriesCode = reader.GetString(2); padding = reader.GetByte(3);
-            rangeEnd = reader.GetInt64(4); consecutive = reader.GetInt64(5);
-        }
-        if (consecutive > rangeEnd)
-            throw new PayablesValidationException("The PayablePayment document series is exhausted.");
-        await using var update = new SqlCommand("""
-            IF EXISTS(SELECT 1 FROM dbo.DocumentSeriesCursors WHERE DocumentSeriesId=@SeriesId)
-              UPDATE dbo.DocumentSeriesCursors SET NextConsecutive=@Next,UpdatedAt=@Now WHERE DocumentSeriesId=@SeriesId;
-            ELSE INSERT dbo.DocumentSeriesCursors(DocumentSeriesId,NextConsecutive,UpdatedAt)
-              VALUES(@SeriesId,@Next,@Now);
-            """, connection, transaction);
-        update.Parameters.AddWithValue("@SeriesId", seriesId);
-        update.Parameters.AddWithValue("@Next", consecutive + 1);
-        update.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
-        await update.ExecuteNonQueryAsync(cancellationToken);
-        return AuralyDocumentNumberAssignment.Create(
-            seriesId, AuralyDocumentTypes.PayablePayment, prefix, seriesCode, consecutive, padding);
-    }
-
-    private static async Task InsertPaymentAsync(
-        SqlConnection connection, SqlTransaction transaction, PayablesUserIdentity user,
-        ConfirmSupplierPaymentRequest request, PayableSettlement settlement,
-        AuralyDocumentNumberAssignment number, string idempotencyKey, byte[] requestHash,
-        string tendersJson, DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            INSERT dbo.SupplierPayments
-              (PaymentId,BusinessId,SupplierId,WorkSessionId,DocumentSeriesId,DocumentNumber,
-               DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,
-               PayloadHash,PaidAt,CurrencyCode,Notes,TotalAmount,
-               Status,ConfirmedByUserId,AcceptedAt)
-            VALUES(@Id,@BusinessId,@SupplierId,@WorkSessionId,@SeriesId,@Number,@Prefix,@SeriesCode,
-               @Consecutive,@Key,@Hash,@PaidAt,@Currency,@Notes,@Total,
-               N'Accepted',@UserId,@Now);
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@Id", request.PaymentId);
-        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-        command.Parameters.AddWithValue("@SupplierId", request.SupplierId);
-        command.Parameters.AddWithValue("@SeriesId", number.SeriesId);
-        command.Parameters.AddWithValue("@WorkSessionId", (object?)request.WorkSessionId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@Number", number.FullNumber);
-        command.Parameters.AddWithValue("@Prefix", number.Prefix);
-        command.Parameters.AddWithValue("@SeriesCode", number.SeriesCode);
-        command.Parameters.AddWithValue("@Consecutive", number.Consecutive);
-        command.Parameters.AddWithValue("@Key", idempotencyKey);
-        command.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = requestHash;
-        command.Parameters.AddWithValue("@PaidAt", request.PaidAt);
-        command.Parameters.AddWithValue("@Currency", request.CurrencyCode);
-        command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
-        AddMoney(command, "@Total", settlement.TotalAmount);
-        command.Parameters.AddWithValue("@UserId", user.UserId);
-        command.Parameters.AddWithValue("@Now", now);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await using var tenders=new SqlCommand("""
-            INSERT dbo.SupplierPaymentTenders(PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,
-              BankAccountId,Reference,Notes,CardFranchiseCode,ApprovalNumber)
-            SELECT @PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,BankAccountId,Reference,Notes,
-              CardFranchiseCode,ApprovalNumber
-            FROM OPENJSON(@Tenders) WITH(LineNumber int,MethodCode nvarchar(32),Amount decimal(19,4),
-              TenderedAmount decimal(19,4),BankAccountId uniqueidentifier,Reference nvarchar(160),
-              Notes nvarchar(500),CardFranchiseCode nvarchar(64),ApprovalNumber nvarchar(100));
-            IF @@ROWCOUNT<>@Count THROW 51215,'The payment methods were not inserted atomically.',1;
-            """,connection,transaction);
-        tenders.Parameters.AddWithValue("@PaymentId",request.PaymentId);
-        tenders.Parameters.AddWithValue("@Tenders",tendersJson);
-        tenders.Parameters.AddWithValue("@Count",request.Payments.Count);
-        await tenders.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private static async Task InsertApplicationsAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid paymentId,
-        PayableSettlement settlement, CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            INSERT dbo.SupplierPaymentApplications(PaymentId,LineNumber,PayableId,Amount)
-            SELECT @PaymentId,input.[key]+1,value.PayableId,value.Amount
-            FROM OPENJSON(@Allocations) input CROSS APPLY OPENJSON(input.value)
-              WITH(PayableId uniqueidentifier,Amount decimal(19,4)) value;
-            IF @@ROWCOUNT<>@Count THROW 51214,'The applications were not inserted atomically.',1;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@PaymentId", paymentId);
-        command.Parameters.AddWithValue("@Allocations", JsonSerializer.Serialize(settlement.Allocations));
-        command.Parameters.AddWithValue("@Count", settlement.Allocations.Count);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken))
+            throw new PayablesConflictException("El identificador del pago y la clave de reintento pertenecen a pagos diferentes.");
+        return acceptance;
     }
 
     private static byte[] HashRequest(
         ConfirmSupplierPaymentRequest request, PayableSettlement settlement,
-        PaymentTenderBreakdown tenders) =>
-        SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        PaymentTenderBreakdown tenders)
+    {
+        if (request.Allocations.All(item => item.FinancialDiscountEarned is null))
+            return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                request.PaymentId, request.BusinessId, request.SupplierId, request.PaidAt,
+                Currency = request.CurrencyCode, request.Notes, request.WorkSessionId,
+                settlement.TotalAmount, settlement.Allocations, tenders.Tenders
+            }));
+        return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
             request.PaymentId, request.BusinessId, request.SupplierId, request.PaidAt,
             Currency = request.CurrencyCode, request.Notes, request.WorkSessionId,
-            settlement.TotalAmount, settlement.Allocations, tenders.Tenders
+            settlement.TotalAmount, settlement.Allocations,
+            DiscountDecisions = request.Allocations.Select(item => new { item.PayableId, item.FinancialDiscountEarned }),
+            tenders.Tenders
         }));
-
-    private static void AddMoney(SqlCommand command, string name, decimal value)
-    {
-        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
-        parameter.Precision = 19; parameter.Scale = 4; parameter.Value = value;
     }
+
+    private static async Task AcceptPaymentRecordAsync(
+        SqlConnection connection, SqlTransaction transaction, PayablesUserIdentity user,
+        string payloadJson, string idempotencyKey, byte[] requestHash,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("accounting.PortfolioPaymentAccept", connection, transaction)
+        { CommandType = CommandType.StoredProcedure };
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@UserId", user.UserId);
+        command.Parameters.AddWithValue("@SubledgerKind", "Payable");
+        command.Parameters.Add("@Payload", SqlDbType.NVarChar, -1).Value = payloadJson;
+        command.Parameters.AddWithValue("@IdempotencyKey", idempotencyKey);
+        command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = requestHash;
+        command.Parameters.AddWithValue("@AcceptedAt", now);
+        try { await command.ExecuteNonQueryAsync(cancellationToken); }
+        catch (SqlException error) when (error.Number is >= 51400 and <= 51402)
+        {
+            if (error.Number == 51402) throw new PayablesConflictException(error.Message, error);
+            throw new PayablesValidationException(error.Message, error);
+        }
+    }
+
 }

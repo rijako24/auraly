@@ -60,17 +60,13 @@ export function isCashClosureMethodConfirmed(
 
 export function cashClosurePaymentGroups<T extends CashClosureVerification>(
   items: readonly T[],
-  includeCashMovements: boolean,
 ) {
-  const groups = [
+  return [
     { key: "Sale", label: "Facturas y comprobantes", items: items.filter(item => item.movementType === "Sale") },
     { key: "Refund", label: "Devoluciones", items: items.filter(item => item.movementType === "Refund") },
     { key: "ReceivablePayment", label: "Abonos a cartera", items: items.filter(item => item.movementType === "ReceivablePayment") },
     { key: "PayablePayment", label: "Pagos a proveedores", items: items.filter(item => item.movementType === "PayablePayment") },
-  ];
-  return includeCashMovements ? [
-    ...groups,
     { key: "CashIn", label: "Entradas de dinero", items: items.filter(item => item.movementType === "CashIn") },
     { key: "CashOut", label: "Salidas de dinero", items: items.filter(item => item.movementType === "CashOut") },
-  ] : groups;
+  ];
 }

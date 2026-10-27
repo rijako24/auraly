@@ -39,11 +39,11 @@ public sealed partial class SqlPayablesStore
                 "La sede no pertenece a la empresa autenticada.");
         await using var command = new SqlCommand($"""
             SET NOCOUNT ON;
-            WITH Scoped AS (
               SELECT p.PayableId,p.SupplierId,p.PartySiteId,p.DocumentNumber,
                 p.CurrencyCode,p.OriginalAmount,p.DueDate,p.Status,
                 source.OccurredAt IssuedAt,s.Name SupplierName,
                 COALESCE(s.Identification,N'') Identification,site.Name PartySiteName
+              INTO #Scoped
               FROM dbo.Payables p
               JOIN dbo.Businesses business ON business.BusinessId=p.BusinessId
               JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
@@ -70,23 +70,24 @@ public sealed partial class SqlPayablesStore
                   OR s.Name LIKE N'%' + @Search + N'%'
                   OR s.Identification LIKE N'%' + @Search + N'%')
                 AND (@From IS NULL OR p.CreatedAt>=@From)
-                AND (@To IS NULL OR p.CreatedAt<@To)
-            ), Movement AS (
+                AND (@To IS NULL OR p.CreatedAt<@To);
+            -- Materialize the authorized filter once for both aggregates, keeping
+            -- their plans independent of estimates from repeated search joins.
+            CREATE UNIQUE CLUSTERED INDEX IX_Scoped ON #Scoped(PayableId);
+            WITH Movement AS (
               SELECT tx.PayableId,
-                SUM(CASE WHEN tx.TransactionType IN(N'Opening',N'Adjustment') THEN tx.Amount
-                  ELSE -tx.Amount END) Balance
+                SUM(effect.BalanceChange) Balance
               FROM dbo.PayableTransactions tx
-              JOIN Scoped scoped ON scoped.PayableId=tx.PayableId
+              CROSS APPLY accounting.PortfolioTransactionEffect(tx.TransactionType,tx.Amount) effect
+              JOIN #Scoped scoped ON scoped.PayableId=tx.PayableId
               WHERE tx.CreatedAt<@Cutoff AND tx.OccurredAt<@Cutoff
               GROUP BY tx.PayableId
             ), Paid AS (
-              SELECT application.PayableId,SUM(application.Amount) PaidAmount
-              FROM dbo.SupplierPaymentApplications application
-              JOIN Scoped scoped ON scoped.PayableId=application.PayableId
-              JOIN dbo.SupplierPayments payment ON payment.PaymentId=application.PaymentId
-                AND payment.BusinessId=@BusinessId
-              WHERE application.AppliedAt<@Cutoff AND payment.PaidAt<@Cutoff
-              GROUP BY application.PayableId
+              SELECT application.PositionId PayableId,SUM(application.Amount) PaidAmount
+              FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Payable') application
+              JOIN #Scoped scoped ON scoped.PayableId=application.PositionId
+              WHERE application.AppliedAt<@Cutoff AND application.OccurredAt<@Cutoff
+              GROUP BY application.PositionId
             )
             SELECT scoped.*,COALESCE(movement.Balance,0) OutstandingAmount,
               COALESCE(paid.PaidAmount,0) PaidAmount,
@@ -95,7 +96,7 @@ public sealed partial class SqlPayablesStore
                 WHEN movement.Balance>=scoped.OriginalAmount THEN N'Open'
                 ELSE N'PartiallyPaid' END HistoricalStatus
             INTO #Ledger
-            FROM Scoped scoped
+            FROM #Scoped scoped
             JOIN Movement movement ON movement.PayableId=scoped.PayableId
             LEFT JOIN Paid paid ON paid.PayableId=scoped.PayableId;
 
@@ -144,14 +145,15 @@ public sealed partial class SqlPayablesStore
               OverdueAmount,PayableId,DocumentNumber,IssuedAt,DueDate,
               NotDueAmount,Overdue1To30Amount,Overdue31To60Amount,Overdue61To90Amount,OverdueOver90Amount
             FROM #Page ORDER BY {order};
-            SELECT application.PayableId,payment.DocumentNumber,application.AppliedAt,
+            SELECT application.PositionId,
+              CASE WHEN application.Amount<0 THEN CONCAT(N'Desaplicación de ',origin.DocumentNumber) ELSE origin.DocumentNumber END,application.AppliedAt,
               application.Amount
-            FROM dbo.SupplierPaymentApplications application
-            JOIN #Page page ON page.PayableId=application.PayableId
-            JOIN dbo.SupplierPayments payment ON payment.PaymentId=application.PaymentId
-              AND payment.BusinessId=@BusinessId
-            WHERE application.AppliedAt<@Cutoff AND payment.PaidAt<@Cutoff
-            ORDER BY application.PayableId,application.AppliedAt,application.LineNumber;
+            FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Payable') application
+            JOIN #Page page ON page.PayableId=application.PositionId
+            JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=application.PaymentId
+              AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=@BusinessId
+            WHERE application.AppliedAt<@Cutoff AND application.OccurredAt<@Cutoff
+            ORDER BY application.PositionId,application.AppliedAt,application.PaymentId,application.UnapplicationTransactionId;
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);

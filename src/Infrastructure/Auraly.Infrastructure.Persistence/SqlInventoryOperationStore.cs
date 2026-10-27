@@ -104,13 +104,17 @@ public sealed class SqlInventoryOperationStore(
             var acceptance = await AcceptDraftAsync(connection, transaction, user, documentId, InventoryDocumentTypes.StockCount,
                 draft.WarehouseId, null, draft.OccurredAt, draft.ReasonCode, null, null, draft.BaseSequence, draft.Notes,
                 idempotencyKey, requestHash, lines, null, null, cancellationToken);
-            foreach (var line in lines)
+            await using (var command = new SqlCommand("""
+                UPDATE line SET Quantity=input.Quantity
+                FROM dbo.InventoryOperationLines line
+                JOIN OPENJSON(@Lines) WITH(ProductId uniqueidentifier,Quantity decimal(19,6)) input
+                  ON input.ProductId=line.ProductId WHERE line.InventoryOperationId=@Id;
+                IF @@ROWCOUNT<>@Count THROW 51606,'The stock count lines changed during confirmation.',1;
+                """, connection, transaction))
             {
-                const string update = "UPDATE dbo.InventoryOperationLines SET Quantity=@Quantity WHERE InventoryOperationId=@Id AND ProductId=@ProductId;";
-                await using var command = new SqlCommand(update, connection, transaction);
                 command.Parameters.AddWithValue("@Id", documentId);
-                command.Parameters.AddWithValue("@ProductId", line.ProductId);
-                AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
+                command.Parameters.AddWithValue("@Count", lines.Length);
+                command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(lines);
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }
             await transaction.CommitAsync(cancellationToken);
@@ -288,23 +292,26 @@ public sealed class SqlInventoryOperationStore(
                 var received = requested[line.LineNumber].ReceivedQuantity;
                 var lost = resolvesDifference ? line.PendingQuantity - received : 0m;
                 if (received == 0 && lost == 0) continue;
-                const string insertLine = """
-                    INSERT dbo.InventoryTransferReceiptLines
-                      (InventoryTransferReceiptId,LineNumber,ProductId,ReceivedQuantity,LostQuantity)
-                    VALUES(@ReceiptId,@Line,@ProductId,@Quantity,@LostQuantity);
-                    """;
-                await using var command = new SqlCommand(insertLine, connection, transaction);
-                command.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
-                command.Parameters.AddWithValue("@Line", line.LineNumber);
-                command.Parameters.AddWithValue("@ProductId", line.ProductId);
-                AddDecimal(command, "@Quantity", received, 19, 6);
-                AddDecimal(command, "@LostQuantity", lost, 19, 6);
-                await command.ExecuteNonQueryAsync(cancellationToken);
                 payloadLines.Add(new InventoryOperationLineSnapshot(line.LineNumber, "TRANSFER", line.ProductId,
                     line.ProductCode, line.ProductName, received, null, null, null, null,
                     DispatchedQuantity: line.DispatchedQuantity, ReceivedQuantity: received,
                     DispatchUnitCost: line.DispatchUnitCost, TransferId: transferId,
                     TransferLossQuantity: lost));
+            }
+            if (payloadLines.Count > 0)
+            {
+                await using var command = new SqlCommand("""
+                    INSERT dbo.InventoryTransferReceiptLines
+                      (InventoryTransferReceiptId,LineNumber,ProductId,ReceivedQuantity,LostQuantity)
+                    SELECT @ReceiptId,LineNumber,ProductId,Quantity,TransferLossQuantity
+                    FROM OPENJSON(@Lines) WITH(LineNumber int,ProductId uniqueidentifier,
+                      Quantity decimal(19,6),TransferLossQuantity decimal(19,6));
+                    IF @@ROWCOUNT<>@Count THROW 51606,'The transfer receipt lines were not persisted completely.',1;
+                    """, connection, transaction);
+                command.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                command.Parameters.AddWithValue("@Count", payloadLines.Count);
+                command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(payloadLines);
+                await command.ExecuteNonQueryAsync(cancellationToken);
             }
             var acceptance = await AcceptTransferReceiptAsync(connection, transaction, user, request, transfer,
                 payloadLines, accountingReason, cancellationToken);
@@ -1178,36 +1185,35 @@ public sealed class SqlInventoryOperationStore(
     private static async Task InsertLinesAsync(SqlConnection connection, SqlTransaction transaction, Guid documentId,
         IEnumerable<InventoryOperationLineSnapshot> lines, CancellationToken cancellationToken)
     {
+        var batch = lines.Select(line => new
+        {
+            line.LineNumber, line.Direction, line.ProductId, line.ProductCode, line.Description,
+            Quantity = line.Direction == "COUNT" ? (decimal?)null : line.Quantity,
+            line.PreCountQuantity, line.SystemQuantityAtBase, line.ExplicitUnitCost, line.AllocationWeight,
+            line.ConversionFactor, line.ConversionEquivalentQuantity, line.DispatchedQuantity,
+            line.ReceivedQuantity, line.TransferLossQuantity, line.DispatchUnitCost
+        }).ToArray();
+        if (batch.Length == 0) return;
         const string sql = """
             INSERT dbo.InventoryOperationLines
               (InventoryOperationId,LineNumber,Direction,ProductId,ProductCodeSnapshot,DescriptionSnapshot,
                Quantity,PreCountQuantity,SystemQuantityAtBase,ExplicitUnitCost,AllocationWeight,
                ConversionFactor,ConversionEquivalentQuantity,DispatchedQuantity,ReceivedQuantity,LostQuantity,DispatchUnitCost)
-            VALUES(@Id,@Line,@Direction,@ProductId,@Code,@Description,@Quantity,@PreCount,@SystemAtBase,@UnitCost,@Weight,
-               @ConversionFactor,@ConversionEquivalentQuantity,@DispatchedQuantity,@ReceivedQuantity,@LostQuantity,@DispatchUnitCost);
+            SELECT @Id,LineNumber,Direction,ProductId,ProductCode,Description,
+               Quantity,PreCountQuantity,SystemQuantityAtBase,ExplicitUnitCost,AllocationWeight,
+               ConversionFactor,ConversionEquivalentQuantity,DispatchedQuantity,ReceivedQuantity,TransferLossQuantity,DispatchUnitCost
+            FROM OPENJSON(@Lines) WITH(LineNumber int,Direction nvarchar(max),ProductId uniqueidentifier,
+               ProductCode nvarchar(max),Description nvarchar(max),Quantity decimal(19,6),PreCountQuantity decimal(19,6),
+               SystemQuantityAtBase decimal(19,6),ExplicitUnitCost decimal(19,6),AllocationWeight decimal(9,6),
+               ConversionFactor decimal(19,6),ConversionEquivalentQuantity decimal(19,6),DispatchedQuantity decimal(19,6),
+               ReceivedQuantity decimal(19,6),TransferLossQuantity decimal(19,6),DispatchUnitCost decimal(19,6));
+            IF @@ROWCOUNT<>@Count THROW 51606,'The inventory operation lines were not persisted completely.',1;
             """;
-        foreach (var line in lines)
-        {
-            await using var command = new SqlCommand(sql, connection, transaction);
-            command.Parameters.AddWithValue("@Id", documentId);
-            command.Parameters.AddWithValue("@Line", line.LineNumber);
-            command.Parameters.AddWithValue("@Direction", line.Direction);
-            command.Parameters.AddWithValue("@ProductId", line.ProductId);
-            command.Parameters.AddWithValue("@Code", line.ProductCode);
-            command.Parameters.AddWithValue("@Description", line.Description);
-            AddNullableDecimal(command, "@Quantity", line.Direction == "COUNT" ? null : line.Quantity, 19, 6);
-            AddNullableDecimal(command, "@PreCount", line.PreCountQuantity, 19, 6);
-            AddNullableDecimal(command, "@SystemAtBase", line.SystemQuantityAtBase, 19, 6);
-            AddNullableDecimal(command, "@UnitCost", line.ExplicitUnitCost, 19, 6);
-            AddNullableDecimal(command, "@Weight", line.AllocationWeight, 9, 6);
-            AddNullableDecimal(command, "@ConversionFactor", line.ConversionFactor, 19, 6);
-            AddNullableDecimal(command, "@ConversionEquivalentQuantity", line.ConversionEquivalentQuantity, 19, 6);
-            AddNullableDecimal(command, "@DispatchedQuantity", line.DispatchedQuantity, 19, 6);
-            AddNullableDecimal(command, "@ReceivedQuantity", line.ReceivedQuantity, 19, 6);
-            AddNullableDecimal(command, "@LostQuantity", line.TransferLossQuantity, 19, 6);
-            AddNullableDecimal(command, "@DispatchUnitCost", line.DispatchUnitCost, 19, 6);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@Id", documentId);
+        command.Parameters.AddWithValue("@Count", batch.Length);
+        command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(batch);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<CountDraftState> LoadCountDraftAsync(SqlConnection connection, SqlTransaction transaction,

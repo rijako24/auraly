@@ -18,15 +18,18 @@ public sealed class TenantSubscriptionLifecycleProcess(
         var now = time.GetUtcNow();
         await store.ReconcileSchedulesAsync(now, ct);
         var candidates = await store.GetDueAsync(now, ct);
+        if (candidates.Count == 0) return;
+        var catalog = await quotes.GetCatalogAsync(ct);
         foreach (var candidate in candidates)
         {
             try
             {
                 var request = BuildQuoteRequest(candidate);
-                var quote = await quotes.QuoteAsync(request, ct);
+                var quote = TenantCommercialQuoteService.Quote(request, catalog);
                 var decision = Evaluate(candidate, now);
                 await store.ApplyAsync(candidate, quote, decision, now, ct);
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception exception)
             {
                 logger.LogError(exception,
@@ -71,34 +74,30 @@ public sealed class TenantSubscriptionLifecycleProcess(
     {
         var zone = TimeZoneInfo.FindSystemTimeZoneById(value.BillingTimeZoneId);
         var localNow = TimeZoneInfo.ConvertTime(now, zone).Date;
-        var localDue = TimeZoneInfo.ConvertTime(value.CurrentPeriodEnd, zone).Date;
+        var dueAt = value.RenewalPeriodStart ?? value.CurrentPeriodEnd;
+        var localDue = TimeZoneInfo.ConvertTime(dueAt, zone).Date;
         var daysOverdue = (localNow - localDue).Days;
-        if (daysOverdue >= value.GracePeriodDays)
-            return new("Suspended", $"Suspended:{value.GracePeriodDays}",
-                "Suscripción suspendida",
-                "El periodo de gracia terminó. Paga la renovación para reactivar Auraly.",
-                value.EmailRemindersEnabled, null);
+        DateTimeOffset Next(DateTimeOffset reminder) => value.NextRenewalEvaluationAt is { } next && next < reminder
+            ? next : reminder;
         if (daysOverdue > 0)
         {
             var reminderDay = daysOverdue / value.OverdueReminderIntervalDays
                 * value.OverdueReminderIntervalDays;
             return reminderDay > 0
                 ? new("PastDue", $"Overdue:{reminderDay}", "Pago de suscripción vencido",
-                    $"Tu renovación lleva {daysOverdue} días vencida. Auraly se suspenderá al día {value.GracePeriodDays} si continúa pendiente.",
+                    $"Tu renovación lleva {daysOverdue} días vencida. Puedes seguir operando. Los nuevos cupos DIAN se habilitan al confirmar el pago.",
                     value.EmailRemindersEnabled,
-                    value.CurrentPeriodEnd.AddDays(Math.Min(
-                        reminderDay + value.OverdueReminderIntervalDays,
-                        value.GracePeriodDays)))
+                    Next(dueAt.AddDays(reminderDay + value.OverdueReminderIntervalDays)))
                 : new("PastDue", null, null, null, false,
-                    value.CurrentPeriodEnd.AddDays(value.OverdueReminderIntervalDays));
+                    Next(dueAt.AddDays(value.OverdueReminderIntervalDays)));
         }
         if (daysOverdue == 0) return new("PastDue", null, null, null, false,
-            value.CurrentPeriodEnd.AddDays(value.OverdueReminderIntervalDays));
+            Next(dueAt.AddDays(value.OverdueReminderIntervalDays)));
         if (daysOverdue >= -value.PreDueReminderDays)
             return new(null, $"PreDue:{value.PreDueReminderDays}", "Próxima renovación de Auraly",
                 $"Tu suscripción vence en {Math.Abs(daysOverdue)} días. Revisa el detalle y paga la renovación.",
-                value.EmailRemindersEnabled, value.CurrentPeriodEnd);
+                value.EmailRemindersEnabled, Next(dueAt));
         return new(null, null, null, null, false,
-            value.CurrentPeriodEnd.AddDays(-value.PreDueReminderDays));
+            Next(dueAt.AddDays(-value.PreDueReminderDays)));
     }
 }

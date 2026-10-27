@@ -31,7 +31,7 @@ public sealed class TenantSubscriptionAccessMiddleware(RequestDelegate next)
             type = "https://auralyapp.co/problems/subscription-suspended",
             title = "La operación no está activa",
             status = StatusCodes.Status402PaymentRequired,
-            detail = "La empresa o su suscripción no está activa. Puedes consultar Auraly y entrar a Suscripción para revisar el estado y reactivar la operación.",
+            detail = "La empresa fue desactivada administrativamente. Contacta al administrador de Auraly para revisar su activación.",
             actionUrl = "/dashboard/subscription"
         }, cancellationToken);
     }

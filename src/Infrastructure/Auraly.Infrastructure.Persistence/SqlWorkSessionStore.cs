@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Auraly.Application.WorkSessions;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -321,8 +322,6 @@ public sealed partial class SqlWorkSessionStore(
                 throw new WorkSessionForbiddenException(
                     $"Permission '{WorkSessionPermissionCodes.CloseWithPausedSales}' is required.");
 
-            var expectedTotals = await ReadTotalsAsync(
-                connection, transaction, identity, workSessionId, cancellationToken);
             var metrics = await ReadSalesMetricsAsync(
                 connection, transaction, identity, workSessionId, cancellationToken);
             var restaurantReport = await ReadRestaurantWaiterSalesAsync(
@@ -331,8 +330,8 @@ public sealed partial class SqlWorkSessionStore(
                 metrics.CreditSales.Sum(value => value.Amount) != metrics.CreditSalesAmount)
                 throw new InvalidDataException(
                     "The work-session credit-sale detail does not reconcile with its frozen total.");
-            expectedTotals = ApplyCashMovementDetailTotals(
-                expectedTotals, metrics.CashMovements);
+            var expectedTotals = ApplyCashMovementDetailTotals(
+                metrics.PaymentTotals, metrics.CashMovements);
             var totals = ReconcileTotals(expectedTotals, request);
             var totalSales = totals.Sum(value => value.SalesAmount);
             var totalRefunds = totals.Sum(value => value.RefundAmount);
@@ -459,11 +458,9 @@ public sealed partial class SqlWorkSessionStore(
                 "The work session does not exist in the authenticated tenant.");
         if (!string.Equals(session.Status, "Open", StringComparison.Ordinal))
             throw new WorkSessionConflictException("The work session is not open.");
-        var totals = await ReadTotalsAsync(
-            connection, transaction, identity, workSessionId, cancellationToken);
         var metrics = await ReadSalesMetricsAsync(
             connection, transaction, identity, workSessionId, cancellationToken);
-        totals = ApplyCashMovementDetailTotals(totals, metrics.CashMovements);
+        var totals = ApplyCashMovementDetailTotals(metrics.PaymentTotals, metrics.CashMovements);
         await transaction.CommitAsync(cancellationToken);
         var totalSales = totals.Sum(value => value.SalesAmount);
         var totalRefunds = totals.Sum(value => value.RefundAmount);
@@ -729,15 +726,7 @@ public sealed partial class SqlWorkSessionStore(
         reader.GetFieldValue<DateTimeOffset>(9), reader.GetString(10),
         reader.GetGuid(11));
 
-    private static async Task<IReadOnlyList<WorkSessionPaymentTotal>> ReadTotalsAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        WorkSessionIdentity identity,
-        Guid workSessionId,
-        CancellationToken cancellationToken)
-    {
-        var values = new List<WorkSessionPaymentTotal>();
-        await using var command = new SqlCommand("""
+    private const string ClosurePaymentTotalsSql = """
             WITH SessionScope AS
             (
                 SELECT WorkSessionId,BusinessId
@@ -843,6 +832,11 @@ public sealed partial class SqlWorkSessionStore(
                   ON mapping.PaymentMethodCode=tender.MethodCode
                 WHERE payment.Status IN(N'Accepted',N'Processed')
                 UNION ALL
+                SELECT COALESCE(mapping.ClosureMethodCode,movement.MethodCode),
+                       CASE WHEN movement.Amount>0 THEN N'CashIn' ELSE N'CashOut' END,movement.Amount
+                FROM @ManualDirect movement
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=movement.MethodCode
+                UNION ALL
                 SELECT COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode),movement.MovementType,movement.Amount
                 FROM dbo.WorkSessionMovements movement
                 INNER JOIN SessionScope session
@@ -850,6 +844,7 @@ public sealed partial class SqlWorkSessionStore(
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
                   ON mapping.PaymentMethodCode=movement.PaymentMethodCode
                 WHERE movement.MovementType NOT IN(N'SalePayment',N'Refund',N'PayablePayment',N'ReceivablePayment')
+                  AND NOT EXISTS(SELECT 1 FROM @ManualDirect direct WHERE direct.MovementId=movement.WorkSessionMovementId)
                   AND NOT EXISTS
                   (
                     SELECT 1 FROM dbo.CashMovementDocuments document
@@ -906,11 +901,12 @@ public sealed partial class SqlWorkSessionStore(
             LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
               AND closureOption.Code=total.PaymentMethodCode AND closureOption.IsActive=1
             ORDER BY COALESCE(closureOption.SortOrder,1000),total.PaymentMethodCode;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
-        command.Parameters.AddWithValue("@TenantId", identity.TenantId);
-        command.Parameters.AddWithValue("@UserId", identity.UserId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            """;
+
+    private static async Task<IReadOnlyList<WorkSessionPaymentTotal>> ReadPaymentTotalsAsync(
+        SqlDataReader reader, CancellationToken cancellationToken)
+    {
+        var values = new List<WorkSessionPaymentTotal>();
         while (await reader.ReadAsync(cancellationToken))
             values.Add(new WorkSessionPaymentTotal(
                 reader.GetString(0), reader.GetDecimal(1), reader.GetDecimal(2),
@@ -926,6 +922,16 @@ public sealed partial class SqlWorkSessionStore(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
+            DECLARE @ManualDirect TABLE(SourceDocumentId uniqueidentifier,MovementId uniqueidentifier PRIMARY KEY,
+              MethodCode nvarchar(32),Amount decimal(19,4),Reference nvarchar(160),OccurredAt datetimeoffset(7),
+              AcceptedByUserId uniqueidentifier,DocumentNumber nvarchar(100),Description nvarchar(500));
+            INSERT @ManualDirect
+            SELECT movement.SourceDocumentId,movement.MovementId,movement.MethodCode,movement.Amount,movement.Reference,
+              movement.OccurredAt,movement.AcceptedByUserId,movement.DocumentNumber,movement.Description
+            FROM dbo.WorkSessions session
+            CROSS APPLY worksessions.ManualTreasuryMovements(@TenantId,session.BusinessId,session.WorkSessionId) movement
+            WHERE session.WorkSessionId=@WorkSessionId AND session.TenantId=@TenantId AND session.UserId=@UserId;
+            """ + ClosurePaymentTotalsSql + """
             SELECT COUNT_BIG(d.DocumentId),
                    COALESCE(SUM(CASE WHEN d.CreditAmount>0 THEN 1 ELSE 0 END),0),
                    COALESCE(SUM(d.CreditAmount),0),
@@ -980,9 +986,21 @@ public sealed partial class SqlWorkSessionStore(
 
                 UNION ALL
 
+                SELECT movement.SourceDocumentId,CASE WHEN movement.Amount>0 THEN N'In' ELSE N'Out' END,
+                       movement.DocumentNumber,documentType.Label,ABS(movement.Amount),movement.OccurredAt,
+                       LTRIM(RTRIM(CONCAT(users.FirstName,N' ',users.LastName))),movement.Reference,movement.Description,
+                       movement.MovementId,CASE WHEN movement.Amount>0 THEN N'CashIn' ELSE N'CashOut' END
+                FROM @ManualDirect movement
+                JOIN dbo.AppUsers users ON users.UserId=movement.AcceptedByUserId AND users.TenantId=@TenantId
+                JOIN reference.Options documentType ON documentType.CatalogCode=N'accounting-document-type'
+                  AND documentType.Code=N'ManualAccountingVoucher'
+                WHERE movement.MethodCode=N'Cash'
+
+                UNION ALL
+
                 SELECT COALESCE(supplierPayment.PaymentId,customerPayment.PaymentId,movement.WorkSessionMovementId),
                        CASE WHEN movement.Amount>0 THEN N'In' ELSE N'Out' END,
-                       COALESCE(supplierPayment.DocumentNumber,customerPayment.DocumentNumber,movement.SourceKey),
+                       COALESCE(supplierOrigin.DocumentNumber,customerOrigin.DocumentNumber,movement.SourceKey),
                        COALESCE(documentType.Label,CASE WHEN movement.MovementType=N'CashIn'
                             THEN N'Entrada de dinero' ELSE N'Salida de dinero' END),
                        ABS(movement.Amount),movement.OccurredAt,
@@ -997,9 +1015,13 @@ public sealed partial class SqlWorkSessionStore(
                  AND users.TenantId=session.TenantId
                 LEFT JOIN dbo.SupplierPayments supplierPayment ON supplierPayment.PaymentId=movement.DocumentId
                   AND movement.MovementType=N'PayablePayment' AND supplierPayment.BusinessId=session.BusinessId
+                LEFT JOIN accounting.PortfolioPaymentOrigins supplierOrigin ON supplierOrigin.PaymentId=supplierPayment.PaymentId
+                  AND supplierOrigin.SubledgerKind=N'Payable' AND supplierOrigin.BusinessId=session.BusinessId
                 LEFT JOIN dbo.CustomerPayments customerPayment ON customerPayment.PaymentId=
                     COALESCE(movement.DocumentId,TRY_CONVERT(uniqueidentifier,RIGHT(movement.SourceKey,36)))
                   AND movement.MovementType=N'ReceivablePayment' AND customerPayment.BusinessId=session.BusinessId
+                LEFT JOIN accounting.PortfolioPaymentOrigins customerOrigin ON customerOrigin.PaymentId=customerPayment.PaymentId
+                  AND customerOrigin.SubledgerKind=N'Receivable' AND customerOrigin.BusinessId=session.BusinessId
                 LEFT JOIN reference.Options documentType ON documentType.CatalogCode=N'accounting-document-type'
                   AND documentType.Code=movement.MovementType
                 LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
@@ -1007,6 +1029,7 @@ public sealed partial class SqlWorkSessionStore(
                 WHERE movement.WorkSessionId=@WorkSessionId
                   AND session.TenantId=@TenantId AND session.UserId=@UserId
                   AND movement.MovementType IN(N'CashIn',N'CashOut',N'PayablePayment',N'ReceivablePayment')
+                  AND NOT EXISTS(SELECT 1 FROM @ManualDirect direct WHERE direct.MovementId=movement.WorkSessionMovementId)
                   AND COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode)=N'Cash'
                   AND NOT EXISTS
                   (
@@ -1023,22 +1046,26 @@ public sealed partial class SqlWorkSessionStore(
               AND JSON_QUERY(payload.PayloadJson,'$.charges') IS NOT NULL
             ORDER BY d.IssuedAt,d.DocumentId;
             SELECT PaymentMethodCode,ClosureMethodCode FROM worksessions.CashClosurePaymentMethodMappings;
-            SELECT payment.PaymentId,payment.DocumentNumber,
+            SELECT payment.PaymentId,origin.DocumentNumber,
               COALESCE(party.DisplayName,party.LegalName,party.Identification,N'Cliente'),
               payment.TotalAmount,payment.PaidAt,receivable.DocumentNumber,application.Amount
             FROM dbo.CustomerPayments payment
+            JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
+              AND origin.SubledgerKind=N'Receivable' AND origin.BusinessId=payment.BusinessId
             JOIN dbo.WorkSessions session ON session.WorkSessionId=payment.WorkSessionId
               AND session.BusinessId=payment.BusinessId
-            JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId
-            JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+            LEFT JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId
+            JOIN dbo.Parties party ON party.PartyId=COALESCE(payment.PartyId,customer.PartyId) AND party.TenantId=@TenantId
             JOIN dbo.CustomerPaymentApplications application ON application.PaymentId=payment.PaymentId
             JOIN dbo.Receivables receivable ON receivable.ReceivableId=application.ReceivableId
             WHERE payment.WorkSessionId=@WorkSessionId AND session.TenantId=@TenantId
               AND session.UserId=@UserId AND payment.Status IN(N'Accepted',N'Processed')
             ORDER BY payment.PaidAt,payment.PaymentId,application.LineNumber;
-            SELECT payment.PaymentId,payment.DocumentNumber,supplier.Name,payment.TotalAmount,
+            SELECT payment.PaymentId,origin.DocumentNumber,supplier.Name,payment.TotalAmount,
               payment.PaidAt,payable.DocumentNumber,application.Amount
             FROM dbo.SupplierPayments payment
+            JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
+              AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=payment.BusinessId
             JOIN dbo.WorkSessions session ON session.WorkSessionId=payment.WorkSessionId
               AND session.BusinessId=payment.BusinessId
             JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId
@@ -1052,10 +1079,12 @@ public sealed partial class SqlWorkSessionStore(
         command.Parameters.AddWithValue("@TenantId", identity.TenantId);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        var totals = await ReadPaymentTotalsAsync(reader, cancellationToken);
+        await reader.NextResultAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
         var metrics = new SalesMetrics(
             reader.GetInt64(0), reader.GetInt32(1), reader.GetDecimal(2),
-            reader.GetInt64(3), [], [], [], [], []);
+            reader.GetInt64(3), [], [], [], [], [], totals);
         await reader.NextResultAsync(cancellationToken);
         var creditSales = new List<WorkSessionCreditSale>();
         while (await reader.ReadAsync(cancellationToken))
@@ -1275,54 +1304,17 @@ public sealed partial class SqlWorkSessionStore(
         return result;
     }
 
-    private async Task InsertCashDifferenceAccountingJobAsync(
+    private Task InsertCashDifferenceAccountingJobAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid tenantId,
         WorkSessionClosureView closure,
         string payload,
         CancellationToken cancellationToken)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
-        await using var command = new SqlCommand("""
-            IF EXISTS
-            (
-                SELECT 1 FROM dbo.AccountingTenantSettings settings
-                WHERE settings.TenantId=@TenantId AND settings.Status=N'Ready'
-                  AND settings.EffectiveFrom<=CONVERT(date,@OccurredAt)
-            )
-            AND NOT EXISTS
-            (
-                SELECT 1 FROM dbo.AccountingSourceDocuments WITH(UPDLOCK,HOLDLOCK)
-                WHERE SourceDocumentId=@DocumentId
-                  AND SourceDocumentType=N'WorkSessionCashDifference'
-            )
-            BEGIN
-                INSERT dbo.AccountingSourceDocuments
-                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-                VALUES
-                  (@DocumentId,N'WorkSessionCashDifference',@TenantId,@BusinessId,
-                   @Payload,@Hash,@OccurredAt,@OccurredAt,1);
-
-                INSERT dbo.AccountingPostingJobs
-                  (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-                   SourceDocumentType,SourcePayloadHash,OccurredAt,Status,
-                   AttemptCount,CreatedAt)
-                VALUES
-                  (@JobId,@TenantId,@BusinessId,@DocumentId,
-                   N'WorkSessionCashDifference',@Hash,@OccurredAt,N'Pending',0,@OccurredAt);
-            END;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@JobId", ids.NewId());
-        command.Parameters.AddWithValue("@TenantId", tenantId);
-        command.Parameters.AddWithValue("@BusinessId", closure.BusinessId);
-        command.Parameters.AddWithValue("@DocumentId", closure.WorkSessionClosureId);
-        command.Parameters.AddWithValue("@Payload", payload);
-        command.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = hash;
-        command.Parameters.AddWithValue("@OccurredAt", closure.ClosedAt);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+        => SqlAccountingPostingJobWriter.InsertSourcesAsync(connection, transaction,
+            [new(tenantId, closure.BusinessId, closure.WorkSessionClosureId, "WorkSessionCashDifference",
+                payload, closure.ClosedAt, ids.NewId())], closure.ClosedAt,
+            AccountingJobRequirement.AccountingEntryOnly, cancellationToken);
 
     private static IReadOnlyList<WorkSessionPaymentTotal> ReconcileTotals(
         IReadOnlyList<WorkSessionPaymentTotal> expected,
@@ -1370,7 +1362,8 @@ public sealed partial class SqlWorkSessionStore(
         IReadOnlyList<WorkSessionCashMovementDetail> CashMovements,
         IReadOnlyList<WorkSessionInvoiceCharge> InvoiceCharges,
         IReadOnlyList<WorkSessionPortfolioPayment> ReceivablePayments,
-        IReadOnlyList<WorkSessionPortfolioPayment> PayablePayments);
+        IReadOnlyList<WorkSessionPortfolioPayment> PayablePayments,
+        IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals);
 
     private static async Task<IReadOnlyList<WorkSessionPortfolioPayment>> ReadPortfolioPaymentsAsync(
         SqlDataReader reader,CancellationToken cancellationToken)

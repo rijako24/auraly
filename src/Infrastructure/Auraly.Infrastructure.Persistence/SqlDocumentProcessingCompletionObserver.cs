@@ -91,6 +91,7 @@ public sealed class SqlDocumentProcessingCompletionObserver(
             JOIN dbo.FiscalDocumentProcesses process ON process.DocumentId=cost.CostDocumentId
               AND process.BusinessId=receipt.BusinessId
             WHERE cost.GoodsReceiptId=@DocumentId
+              AND cost.SourceEntryId IS NULL
               AND process.Status=N'PendingGeneration'
             ORDER BY cost.CostDocumentId;
             """, connection);

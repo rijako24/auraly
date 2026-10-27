@@ -6,12 +6,13 @@ using Auraly.Contracts.Payables;
 using Auraly.Contracts.Parties;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 [Trait("EngineCertification", "Accounting")]
-public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
+public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
     public async Task Supplier_sites_are_independent_in_directory_obligations_and_portfolio()
@@ -183,6 +184,38 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/settlement-configuration");
         var bankAccount = Assert.Single(settlement!.BankAccounts.Where(item => item.IsPrimary));
 
+        // Assisted card payments use configured treasury purposes rather than
+        // the acquiring-operator receivables used for customer collections.
+        using var configuration = fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
+        var options = new Dictionary<string, Guid>();
+        await using (var setup = new SqlConnection(fixture.ConnectionString))
+        {
+            await setup.OpenAsync();
+            await using var query = new SqlCommand("""
+                SELECT Code,OptionId FROM reference.Options WHERE IsActive=1 AND
+                  (CatalogCode=N'payment-method' AND Code IN(N'DebitCard',N'CreditCard')
+                   OR CatalogCode=N'bank-account-type' AND Code=N'Checking');
+                """, setup);
+            await using var reader = await query.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) options.Add(reader.GetString(0), reader.GetGuid(1));
+        }
+        Assert.Equal(3, options.Count);
+        var cardBank = Guid.NewGuid();
+        using (var bank = await configuration.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{cardBank}",
+            new SaveBankAccountRequest(cardBank, null, options["Checking"], "Banco de tarjetas de prueba", cardBank.ToString("N"),
+                "Tesorería de tarjetas de prueba", false, true, null))) bank.EnsureSuccessStatusCode();
+        var debitCard = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, configuration,
+            "1197", "Asset", "Bank", "Debit", cardBank, options["DebitCard"]);
+        var creditCard = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, configuration,
+            "2197", "Liability", "CreditCardLiability", "Credit", cardBank, options["CreditCard"]);
+        foreach (var mapping in new[] { (AccountingCategories.SupplierDebitCard, debitCard.AccountId),
+                     (AccountingCategories.SupplierCreditCard, creditCard.AccountId) })
+        {
+            using var save = await configuration.PutAsJsonAsync("/api/commerce/v1/accounting/account-mappings",
+                new SetAccountMappingRequest(fixture.TenantId, fixture.BusinessId, mapping.Item1, mapping.AccountId, new(2026, 1, 1), null));
+            Assert.True(save.IsSuccessStatusCode, await save.Content.ReadAsStringAsync());
+        }
+
         var payment = new ConfirmSupplierPaymentRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId,
             occurredAt.AddHours(1), "COP", "Abono por transferencia",
@@ -195,6 +228,11 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
              new SupplierPaymentTenderRequest(SupplierPaymentMethods.CreditCard,10_000m,
                 CardFranchiseCode:"Mastercard",ApprovalNumber:"CREDIT-9001")]);
         var key = $"payables-payment-{payment.PaymentId:N}";
+        string paymentNumber;
+        await fixture.AssertPaymentAcceptanceRollbackAsync("Payable", payment.PaymentId,
+            () => SendAsync(client, "/api/commerce/v1/payable-payments/confirm", payment, key));
+        Assert.Equal(100_000m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
         using (var response = await SendAsync(
                    client, "/api/commerce/v1/payable-payments/confirm", payment, key))
         {
@@ -203,12 +241,28 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             Assert.NotNull(acceptance);
             Assert.StartsWith("PGP", acceptance.DocumentNumber);
             Assert.False(acceptance.IdempotentReplay);
+            paymentNumber = acceptance.DocumentNumber;
         }
 
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.SupplierPayments WHERE PaymentId=@Id", payment.PaymentId));
+        await fixture.AssertPaymentReplayRequiresItsSourceAsync(payment.PaymentId,
+            () => SendAsync(client, "/api/commerce/v1/payable-payments/confirm", payment, key));
+        using (var scope = fixture.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<Auraly.Application.Payables.PayablesService>();
+            var wrongTenant = new PayablesUserIdentity(fixture.UserId, Guid.NewGuid(), fixture.BusinessId,
+                new HashSet<string> { PayablesPermissionCodes.RegisterPayment });
+            await fixture.AssertPaymentDoesNotWriteNumberingAsync("PayablePayment", async () =>
+                await Assert.ThrowsAsync<Auraly.Application.Payables.PayablesValidationException>(
+                    () => service.ConfirmPaymentAsync(wrongTenant, key, payment)));
+        }
         Assert.Equal(60_000m, await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT CASE WHEN FunctionalOutstandingAmount IS NULL THEN 1 ELSE 0 END FROM dbo.Payables WHERE PayableId=@Id", payableId));
+        Assert.Equal(100_000m, await ScalarAsync<decimal>(
+            "SELECT FunctionalOriginalAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
         Assert.Equal("PartiallyPaid", await ScalarAsync<string>(
             "SELECT Status FROM dbo.Payables WHERE PayableId=@Id", payableId));
         Assert.Equal(1, await CountAsync(
@@ -223,7 +277,10 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/suppliers/{fixture.SupplierId:D}/payments?page=1&pageSize=5");
         Assert.NotNull(paymentHistory);
         Assert.Equal(5, paymentHistory.PageSize);
-        Assert.Contains(paymentHistory.Items, item => item.PaymentId == payment.PaymentId
+        var selectedPayment = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
+            $"/api/commerce/v1/payable-payments?page=1&pageSize=5&supplierId={fixture.SupplierId:D}&search={Uri.EscapeDataString(paymentNumber)}");
+        Assert.NotNull(selectedPayment);
+        Assert.Contains(selectedPayment.Items, item => item.PaymentId == payment.PaymentId
             && item.AppliedDocumentCount == 1
             && item.Payments.Count == 4
             && item.Payments[0].MethodCode == SupplierPaymentMethods.Cash
@@ -243,9 +300,11 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(40_000m, await AccountAmountAsync(payment.PaymentId, "220505", true));
         Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "110505", false));
         Assert.Equal(10_000m, await AccountAmountAsync(
-            payment.PaymentId, bankAccount.AccountingAccountCode, false));
-        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "13809501", false));
-        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, "13809502", false));
+            payment.PaymentId, bankAccount.AccountingAccountCode ?? throw new InvalidOperationException("The fixture bank must have exactly one auxiliary."), false));
+        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, debitCard.Code, false));
+        Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, creditCard.Code, false));
+        Assert.Equal(0m, await AccountAmountAsync(payment.PaymentId, "13809501", false));
+        Assert.Equal(0m, await AccountAmountAsync(payment.PaymentId, "13809502", false));
 
         var paymentDate = DateOnly.FromDateTime(payment.PaidAt.UtcDateTime).ToString("yyyy-MM-dd");
         var createdDate = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
@@ -290,6 +349,17 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
         {
             Assert.Equal(new[] { HttpStatusCode.Accepted, HttpStatusCode.Conflict },
                 concurrentResponses.Select(response => response.StatusCode).OrderBy(status => status));
+            var rejectedIndex = Array.FindIndex(concurrentResponses, response => response.StatusCode == HttpStatusCode.Conflict);
+            var rejectedId = rejectedIndex == 0 ? concurrentA.PaymentId : concurrentB.PaymentId;
+            var problem = await concurrentResponses[rejectedIndex].Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+            Assert.Contains("saldo disponible", problem!.Detail);
+            Assert.Contains(payableNumber, problem.Detail);
+            Assert.Equal(0, await CountAsync("SupplierPayments", "PaymentId", rejectedId));
+            Assert.Equal(0, await CountAsync("SupplierPaymentApplications", "PaymentId", rejectedId));
+            Assert.Equal(0, await CountAsync("PayableTransactions", "SourceDocumentId", rejectedId));
+            Assert.Equal(0, await CountAsync("AccountingSourceDocuments", "SourceDocumentId", rejectedId));
+            Assert.Equal(0, await CountAsync("AccountingPostingJobs", "SourceDocumentId", rejectedId));
+            Assert.Equal(0, await CountAsync("AccountingEntries", "SourceDocumentId", rejectedId));
         }
         finally
         {
@@ -444,6 +514,10 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
                   SELECT NEWID(),@TenantId,AccountId,@OptionId,N'Banco pruebas',N'0001',N'Cuenta principal',N'COP',1,1,
                     @UserId,SYSDATETIMEOFFSET(),@UserId,SYSDATETIMEOFFSET()
                   FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'111020';
+                  UPDATE account SET BankAccountId=bank.BankAccountId,FinancialFunction=N'Bank',BalanceSide=N'Debit'
+                  FROM dbo.AccountingAccounts account JOIN accounting.BankAccounts bank
+                    ON bank.AccountingAccountId=account.AccountId AND bank.TenantId=account.TenantId
+                  WHERE account.TenantId=@TenantId AND account.Code=N'111020';
                 END
                 """, connection, transaction))
             {
@@ -537,6 +611,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             "SupplierPaymentApplications:PaymentId",
             "SupplierPaymentTenders:PaymentId",
             "PayableTransactions:SourceDocumentId",
+            "AccountingSourceDocuments:SourceDocumentId",
+            "AccountingPostingJobs:SourceDocumentId",
             "AccountingEntries:SourceDocumentId",
             "SupplierPayments:PaymentId"
         });

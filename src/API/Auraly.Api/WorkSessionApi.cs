@@ -163,6 +163,13 @@ public static class WorkSessionApi
                 context.User.ToWorkSessionIdentity(), closureId, paymentMethodCode,
                 movementType, page ?? 1, pageSize ?? 100, cancellationToken))));
 
+        group.MapGet("/closures/{closureId:guid}/invoice-charges/page", async (
+            HttpContext context, Guid closureId, string? paymentMethodCode,
+            int? page, int? pageSize, WorkSessionService service, CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.ListClosureInvoiceChargesAsync(
+                context.User.ToWorkSessionIdentity(), closureId, paymentMethodCode,
+                page ?? 1, pageSize ?? 50, cancellationToken))));
+
         group.MapPost("/closures/{closureId:guid}/payment-corrections/validate", async (
             HttpContext context, Guid closureId, WorkSessionPaymentCorrection[] corrections,
             WorkSessionService service, CancellationToken cancellationToken) =>

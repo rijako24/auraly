@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Net.Http.Json;
 using Auraly.Api;
 using Auraly.Application.Authorization;
@@ -114,6 +115,151 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public IServiceScope CreateScope() =>
         (_factory ?? throw new InvalidOperationException("The test host is not initialized."))
         .Services.CreateScope();
+
+    internal static async Task WaitUntilAvailableAsync(DateTimeOffset availableAt)
+    {
+        // Task.Delay truncates fractional milliseconds. Wait against the actual
+        // durable deadline so a retry test cannot wake just before it is due.
+        var remaining = availableAt - DateTimeOffset.UtcNow;
+        while (remaining > TimeSpan.Zero)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Ceiling(remaining.TotalMilliseconds)));
+            remaining = availableAt - DateTimeOffset.UtcNow;
+        }
+    }
+
+    public async Task AssertPaymentAcceptanceRollbackAsync(string subledgerKind, Guid paymentId,
+        Func<Task<HttpResponseMessage>> send)
+    {
+        var prefix = subledgerKind switch
+        {
+            "Payable" => "Supplier",
+            "Receivable" => "Customer",
+            _ => throw new ArgumentOutOfRangeException(nameof(subledgerKind))
+        };
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        var trigger = $"TestRejectPaymentApplication_{Guid.NewGuid():N}";
+        await using (var create = new SqlCommand($"""
+            CREATE TRIGGER dbo.[{trigger}] ON dbo.[{prefix}PaymentApplications] AFTER INSERT AS
+            BEGIN
+              IF EXISTS(SELECT 1 FROM inserted WHERE PaymentId='{paymentId:D}')
+                THROW 51998,'Injected payment application failure.',1;
+            END;
+            """, connection))
+            await create.ExecuteNonQueryAsync();
+        try
+        {
+            using var response = await send();
+            Assert.Equal(System.Net.HttpStatusCode.InternalServerError, response.StatusCode);
+            await using var state = new SqlCommand($"""
+                SELECT (SELECT COUNT(*) FROM dbo.[{prefix}Payments] WHERE PaymentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.[{prefix}PaymentTenders] WHERE PaymentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.[{prefix}PaymentApplications] WHERE PaymentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.PayableTransactions WHERE SourceDocumentId=@Id)
+                  +(SELECT COUNT(*) FROM dbo.ReceivableTransactions WHERE SourceDocumentId=@Id);
+                """, connection);
+            state.Parameters.AddWithValue("@Id", paymentId);
+            Assert.Equal(0, (int)(await state.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await using var drop = new SqlCommand($"DROP TRIGGER dbo.[{trigger}];", connection);
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+    public async Task AssertPaymentDoesNotWriteNumberingAsync(string documentType, Func<Task> action)
+    {
+        if (documentType is not ("PayablePayment" or "ReceivablePayment"))
+            throw new ArgumentOutOfRangeException(nameof(documentType));
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        var trigger = $"TestRejectPaymentNumbering_{Guid.NewGuid():N}";
+        await using (var create = new SqlCommand($"""
+            CREATE TRIGGER dbo.[{trigger}] ON dbo.DocumentSeriesCursors AFTER INSERT,UPDATE AS
+            BEGIN
+              IF EXISTS(SELECT 1 FROM inserted changed JOIN dbo.DocumentSeries series
+                  ON series.DocumentSeriesId=changed.DocumentSeriesId
+                  WHERE series.BusinessId='{BusinessId:D}' AND series.DocumentType=N'{documentType}')
+                THROW 51997,'An out-of-scope payment attempted to write document numbering.',1;
+            END;
+            """, connection))
+            await create.ExecuteNonQueryAsync();
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            await using var drop = new SqlCommand($"DROP TRIGGER dbo.[{trigger}];", connection);
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    public async Task AssertPaymentReplayRequiresItsSourceAsync(Guid paymentId, Func<Task<HttpResponseMessage>> send)
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        (Guid Id, string Type, Guid TenantId, Guid BusinessId, string Payload, byte[] Hash,
+            DateTimeOffset OccurredAt, DateTimeOffset AcceptedAt, bool? EntryRequired) saved;
+        await using (var read = new SqlCommand("""
+            SELECT SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,
+              OccurredAt,AcceptedAt,AccountingEntryRequired
+            FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id
+              AND SourceDocumentType IN(N'PayablePayment',N'ReceivablePayment');
+            """, connection))
+        {
+            read.Parameters.AddWithValue("@Id", paymentId);
+            await using var reader = await read.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            saved = (reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetGuid(3),
+                reader.GetString(4), (byte[])reader[5], reader.GetDateTimeOffset(6), reader.GetDateTimeOffset(7),
+                reader.IsDBNull(8) ? null : reader.GetBoolean(8));
+            Assert.False(await reader.ReadAsync());
+        }
+        await using (var remove = new SqlCommand("""
+            DELETE dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=@Type;
+            """, connection))
+        {
+            remove.Parameters.AddWithValue("@Id", paymentId);
+            remove.Parameters.AddWithValue("@Type", saved.Type);
+            Assert.Equal(1, await remove.ExecuteNonQueryAsync());
+        }
+        try
+        {
+            using var response = await send();
+            Assert.Equal(System.Net.HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Contains("requieren revisión", await response.Content.ReadAsStringAsync());
+            await using var state = new SqlCommand("SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id;", connection);
+            state.Parameters.AddWithValue("@Id", paymentId);
+            Assert.Equal(0, (int)(await state.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await using var restore = new SqlCommand("""
+                INSERT dbo.AccountingSourceDocuments(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
+                  PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
+                VALUES(@Id,@Type,@TenantId,@BusinessId,@Payload,@Hash,@OccurredAt,@AcceptedAt,@EntryRequired);
+                """, connection);
+            restore.Parameters.AddWithValue("@Id", saved.Id);
+            restore.Parameters.AddWithValue("@Type", saved.Type);
+            restore.Parameters.AddWithValue("@TenantId", saved.TenantId);
+            restore.Parameters.AddWithValue("@BusinessId", saved.BusinessId);
+            restore.Parameters.Add("@Payload", System.Data.SqlDbType.NVarChar, -1).Value = saved.Payload;
+            restore.Parameters.Add("@Hash", System.Data.SqlDbType.Binary, 32).Value = saved.Hash;
+            restore.Parameters.AddWithValue("@OccurredAt", saved.OccurredAt);
+            restore.Parameters.AddWithValue("@AcceptedAt", saved.AcceptedAt);
+            restore.Parameters.Add("@EntryRequired", System.Data.SqlDbType.Bit).Value = (object?)saved.EntryRequired ?? DBNull.Value;
+            Assert.Equal(1, await restore.ExecuteNonQueryAsync());
+        }
+    }
+
     public string SqlServer { get; } =
         Environment.GetEnvironmentVariable("AURALY_TEST_SQLSERVER") ?? @".\LOCAL";
     public string ConnectionString { get; private set; } = string.Empty;
@@ -227,7 +373,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             AccountingPermissionCodes.Activate);
         using (var defaults = await client.PutAsync(
                    "/api/commerce/v1/accounting/defaults", null))
-            defaults.EnsureSuccessStatusCode();
+            Assert.True(defaults.IsSuccessStatusCode,
+                $"Accounting defaults failed: {(int)defaults.StatusCode} {await defaults.Content.ReadAsStringAsync()}");
         using var activation = await client.PostAsJsonAsync(
             "/api/commerce/v1/accounting/activate",
             new ActivateAccountingRequest(
@@ -269,6 +416,25 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         .GetRequiredService<TestPosSynchronizationPushGateway>()
         .FailNext();
 
+    internal async Task GrantReconciliationRolePermissionsAsync()
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+            SELECT NEWID(),@RoleId,permission.PermissionId,SYSUTCDATETIME()
+            FROM dbo.Permissions permission
+            WHERE permission.Resource IN
+              (N'accounting.bank-reconciliation.read',
+               N'accounting.bank-reconciliation.manage',
+               N'accounting.bank-reconciliation.close')
+              AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing
+                WHERE existing.RoleId=@RoleId AND existing.PermissionId=permission.PermissionId);
+            """, connection);
+        command.Parameters.AddWithValue("@RoleId", RoleId);
+        await command.ExecuteNonQueryAsync();
+    }
+
     public HttpClient CreateAdminClient(params string[] permissions)
         => CreateAdminClient(TenantId, permissions);
 
@@ -302,6 +468,32 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             AuthenticationDefaults.ClientIdHeader, session.ClientId.ToString("D"));
         client.DefaultRequestHeaders.Add("X-Business-Id", BusinessId.ToString("D"));
         return client;
+    }
+
+    internal async Task<Guid> CreateWorkSessionUserAsync(string prefix)
+    {
+        var userId = Guid.NewGuid();
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT dbo.AppUsers
+              (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+               FirstName,LastName,IsActive,CreatedAt)
+            VALUES
+              (@UserId,@TenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
+               N'Operador',N'Auraly',1,SYSUTCDATETIME());
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            VALUES(NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
+            """;
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@TenantId", TenantId);
+        command.Parameters.AddWithValue("@RoleId", RoleId);
+        command.Parameters.AddWithValue("@BusinessId", BusinessId);
+        command.Parameters.AddWithValue("@Username", $"{prefix}-{userId:N}");
+        command.Parameters.AddWithValue("@Email", $"{prefix}-{userId:N}@test.local");
+        await command.ExecuteNonQueryAsync();
+        return userId;
     }
 
     public async Task<Guid> OpenWebWorkSessionAsync()
@@ -566,6 +758,30 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                     6_000m)
             ],
             [new PosSalePaymentContract(1, "Cash", payable, null)]);
+    }
+
+    internal PosSaleUploadRequest WithHistoricalSaleUblSnapshot(PosSaleUploadRequest request)
+    {
+        var address = new PosSaleUblAddressContract(
+            "11001", "Bogotá", "Bogotá D.C.", "11", "CL 1 2 3");
+        var supplier = new PosSaleUblPartyContract(
+            SupplierTaxId, "0", "31", "1",
+            "EMISOR HISTORICO", "EMISOR HISTORICO", "R-99-PN", "01", "IVA", address);
+        var customer = new PosSaleUblPartyContract(
+            "222222222", "0", "13", "2", "CLIENTE HISTORICO", "CLIENTE HISTORICO",
+            "R-99-PN", "ZZ", "No aplica", address);
+        return request with
+        {
+            UblSnapshot = new PosSaleUblSnapshotContract(
+                FiscalIssuerConfigurationId, "COP", "01", supplier, customer,
+                new PosSaleUblAuthorizationContract(
+                    AuthorizationNumber,
+                    new DateOnly(2026, 1, 1), new DateOnly(2028, 12, 31),
+                    Prefix, 1, 10000),
+                "auraly-test-software",
+                [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)],
+                "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot!.IssuedAt.Date), null)
+        };
     }
 
     public PosSaleUploadRequest CreateMultiRateRequest(long consecutive)
@@ -1111,7 +1327,13 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         await command.ExecuteNonQueryAsync();
     }
 
-    private async Task DeployDacpacAsync()
+    internal Task ReapplySchemaAsync()
+    {
+        Assert.StartsWith("AuralyServerSlice_", new SqlConnectionStringBuilder(ConnectionString).InitialCatalog);
+        return DeployDacpacAsync(createNewDatabase: false);
+    }
+
+    private async Task DeployDacpacAsync(bool createNewDatabase = true)
     {
         var root = FindRepositoryRoot();
         var dacpac = Path.Combine(
@@ -1151,7 +1373,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         process.StartInfo.ArgumentList.Add("/v:DeploymentEnvironment=dev");
         process.StartInfo.ArgumentList.Add(
             "/v:BootstrapAdminPasswordHash=integration-test-placeholder-not-for-authentication");
-        process.StartInfo.ArgumentList.Add("/p:CreateNewDatabase=True");
+        process.StartInfo.ArgumentList.Add($"/p:CreateNewDatabase={createNewDatabase}");
         process.StartInfo.ArgumentList.Add("/p:DropObjectsNotInSource=False");
         process.StartInfo.ArgumentList.Add("/p:BlockOnPossibleDataLoss=True");
         process.Start();
@@ -1215,6 +1437,20 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         return candidates.FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
             ?? throw new FileNotFoundException(
                 "SqlPackage was not found. Set SQLPACKAGE_PATH before running SQL integration tests.");
+    }
+
+    internal async Task ApplyMigrationAsync(string fileName, SqlConnection connection, SqlTransaction? transaction = null)
+    {
+        if (Path.GetFileName(fileName) != fileName ||
+            connection.Database != new SqlConnectionStringBuilder(ConnectionString).InitialCatalog)
+            throw new InvalidOperationException("Migration tests require this fixture's isolated database.");
+        var script = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(), "database", "Auraly.Database", "Scripts", "Migrations", fileName));
+        foreach (var batch in Regex.Split(script, @"^GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(batch)) continue;
+            await using var command = new SqlCommand(batch, connection, transaction) { CommandTimeout = 120 };
+            await command.ExecuteNonQueryAsync();
+        }
     }
 
     private static string FindRepositoryRoot()

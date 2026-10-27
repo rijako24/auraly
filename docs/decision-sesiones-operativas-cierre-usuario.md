@@ -42,6 +42,45 @@ Al cerrar la sesión operativa se genera un cierre por usuario con:
 
 El cierre puede imprimir una tirilla denominada **Cierre de sesión**. Nunca se muestra “cierre de caja”.
 
+El rango de fechas del listado central se interpreta en el calendario de cada
+sede, con inicio inclusivo y fin exclusivo del día siguiente según su
+`Businesses.TimeZone`. No usa medianoche UTC ni un desplazamiento fijo. El
+listado por tenant carga las zonas una vez por conjunto mediante
+`SqlBusinessLocalDates` y usa los mismos límites en conteo y página antes de
+enriquecer su detalle. La lectura adicional de configuración es necesaria para
+esa autoridad de calendario; no es un refetch del listado. La primera página
+con datos conserva cuatro comandos SQL en total, independientemente del número
+de cierres; una página vacía conserva tres. No se modifican instantes del cierre,
+snapshots históricos, pagos, asientos ni reglas de conciliación por esta consulta.
+
+La regresión de navegador del 25 de octubre detectó el corte incorrecto después
+de las 19:00 de Colombia: un cierre local del día quedaba fuera por pertenecer
+al siguiente día UTC. Los casos aislados de Bogotá, Berlín, límites de día y
+cambio de horario reprodujeron cinco fallos con el lector anterior. La prueba
+visual identifica el cierre recién creado por su instante, en vez de abrir el
+primer cierre histórico disponible. Los seis casos nuevos pasan, incluido el
+conteo y la página en dos zonas distintas, con cuatro comandos en una página
+con datos y tres en una vacía. API/infraestructura/tests compilan y el test de
+navegador pasa lint. La corrida ampliada de sesiones aprobó 36/37 casos;
+el lector de 10.000 cargos agotó su espera y la instancia registró 104 segundos
+acumulados en `RESOURCE_SEMAPHORE`. Después de liberar memoria de la interfaz
+propia, su repetición aislada aprobó los dos volúmenes, con p95 de 1.366,4 ms
+para 10.000 cargos, veinte muestras y los mismos dos comandos. No se cambió esa
+consulta, su timeout ni el gate de dos segundos. Se conservan la corrida fallida
+`auraly-closure-local-dates-green.trx` y la repetición
+`auraly-closure-charges-isolated-repeat.trx` como evidencias separadas. La
+repetición visual bancaria pasó después (44,4 segundos): publica el egreso,
+cierra la sesión, encuentra ese cierre en su fecha local, verifica la partida
+bancaria y valida su corrección de referencia desde el mismo diálogo. Los otros
+ocho recorridos reales de contabilidad, gastos, compras, cartera, pedidos y POS
+habían pasado en la corrida anterior de nueve; esa corrida se conserva como
+8/9 y la repetición como 1/1, no como una corrida completa verde inventada.
+Evidencia: `auraly-warehouse-correction-real-ui.log` y
+`auraly-closure-local-dates-real-ui.log`. API y web se dejan en local, sin
+despliegue remoto. La auditoría de este arreglo comprobó el helper de fechas,
+los dos filtros SQL, permisos/tenant, comandos acotados, paginación anterior al
+enriquecimiento y ausencia de escritores, estados o cargas frontend adicionales.
+
 La vista central de cierres consulta esa misma sesión canónica. Si está abierta,
 muestra sede, usuario, apertura y duración, y abre el mismo diálogo de conteo y
 cierre utilizado por el POS. Cerrar desde esa vista no cierra la autenticación: el
@@ -109,6 +148,10 @@ La confirmación coteja las claves y suma los importes en SQL en un solo viaje; 
 materializa todas las filas de la sesión en memoria del servidor.
 Las devoluciones y salidas conservan su signo en medios distintos de efectivo;
 su neto verificado puede ser negativo. El efectivo físico contado permanece no negativo.
+Las devoluciones se seleccionan por su `WorkSessionId` y `BusinessId`, igual que
+los totales del cierre. Usuario y rango horario no sustituyen esa identidad:
+un usuario puede tener sesiones simultáneas y registrar una devolución con fecha
+anterior. La consulta no atribuye devoluciones históricas sin sesión por inferencia.
 
 ## Correcciones durante la conciliación
 
@@ -136,6 +179,16 @@ filtrar. Las ventas con estado operativo `Completed` se reconocen como procesada
 para esta validación. La aplicación final conserva sus bloqueos y comprobaciones
 transaccionales sobre el conjunto completo de la sesión.
 
+Los cargos de facturación de un cierre se leen desde su array congelado,
+mediante `IWorkSessionStore`, con filtro de medio y páginas de hasta 100 cargos.
+El servidor cuenta y suma el conjunto filtrado antes de paginar; devuelve por
+separado el resumen de todo el cierre para sus tarjetas por medio. La pantalla
+conserva un solo propietario de página/filtro y usa 50 cargos por página. Abrir
+un medio cambia esa misma selección; volver reutiliza la caché inmutable. No
+descarga el snapshot completo para extraer cargos ni consulta por cada fila.
+Objetivo local: dos comandos SQL por petición y p95 menor de dos segundos con
+10.000 cargos, sin builds ni diagnósticos concurrentes durante la medición.
+
 Los movimientos omitidos en el reporte de la cajera se agregan dentro de su grupo
 con importe y observación obligatoria. Son evidencia de conciliación del conteo,
 guardada en la instantánea inmutable; no crean otra venta, devolución, abono,
@@ -144,9 +197,15 @@ cerrar, el importe agregado durante conciliación y la diferencia resultante. El
 historial presenta la diferencia final por medio, incluidos ambos lados de una
 corrección entre medios, y conserva el dato declarado original para auditoría.
 
-Tarjeta y transferencia muestran los mismos cuatro grupos de comprobantes,
-devoluciones, abonos y pagos a proveedores; entradas y salidas son exclusivos
-de efectivo. Cada grupo verificable indica total registrado, total revisado,
+Ampliación aprobada por el usuario el **2026-10-24**: tarjeta y transferencia
+muestran también entradas y salidas de dinero, junto a comprobantes,
+devoluciones, abonos y pagos a proveedores. Los movimientos directos de un
+comprobante manual se verifican por partida de tesorería e identidad estable,
+en este mismo cierre y conciliación. La fuente aceptada aporta cuenta, tercero,
+medio, signo y evidencia; su proyección procesada no se vuelve a sumar.
+Esto incluye aceptados pendientes de contabilizar y conserva el aislamiento de
+tenant, sede, usuario y sesión web. No crea pagos, obligaciones ni otra sesión.
+Cada grupo verificable indica total registrado, total revisado,
 cantidad revisada y si la revisión está completa, con su sobrante o faltante.
 Los totales confirmados comparten la misma presentación en móvil. Cuando lo
 verificado difiere del valor reportado al cerrar, la vista señala esa diferencia
@@ -177,6 +236,25 @@ no escriben ni tienen motores distintos. Se retira la lectura
 anterior cuando no haya clientes instalados que consuman ese contrato. No debe
 utilizarse en pantallas nuevas por su costo para sesiones grandes.
 
+La página enriquece únicamente las identidades seleccionadas. Las etiquetas de
+venta a crédito y pagos CxP/CxC se resuelven por conjunto antes de unirlas con la
+evidencia, dentro del mismo comando SQL y con una clave única por movimiento.
+Los números proceden de `PortfolioPaymentOrigins` y los nombres de Parties del
+tenant autorizado. No se encadenan todos los joins opcionales de los tres tipos
+sobre cada fila: ese plan había estimado 156.448 filas para una sola y solicitado
+19.056 KB para ordenamientos, provocando esperas de memoria de 14–30 segundos
+en el navegador local. La proyección acotada elimina esos ordenamientos del
+enriquecimiento; no cambia los hechos, saldos, permisos ni la conciliación.
+
+Verificación local del 25 de octubre: 32/32 casos de sesiones y tesorería,
+incluyendo el benchmark con 10.500 movimientos y páginas inicial/siguiente de
+1/50 filas (p95 988,2/1.163,6/906,5 ms), siempre dos comandos. La repetición con
+los filtros explícitos de tenant pasó 31/31. Las páginas de pagos nativos CxP/CxC,
+con veinte muestras, dieron p95 de 166,0 a 304,8 ms. No se elevó el timeout ni
+se cambió la configuración de memoria del servidor. La corrección conserva
+su única consulta propietaria; las tablas temporales no son otra proyección
+persistente ni un saldo editable.
+
 La corrección de un medio conserva el comprobante original y su snapshot; registra
 el movimiento corregido asociado a su identificador y aplica el ajuste por
 la fuente contable `WorkSessionClosureReconciliation` existente. Corregir un importe
@@ -201,15 +279,45 @@ cartera, caja ni comprobantes; un fallo posterior del procesamiento contable que
 visible y reintentable por el motor existente. Tras confirmar, el cierre y sus correcciones quedan
 inmutables. Las diferencias genuinas que subsistan se muestran como sobrante o
 faltante con observación y motivo. Si se marca la opción del faltante en efectivo,
-se abre una única cuenta por cobrar al empleado activo vinculado con el usuario
-de la sesión, en el ledger de cartera y en la misma transacción. El sobrante no
+se congela el reclamo al empleado activo vinculado con el usuario de la sesión.
+La decisión prevalente de motor financiero único del 20 de octubre concentra
+la apertura de esa cuenta por cobrar en `SqlAccountingPostingProcessor`, en la
+misma transacción que su asiento cuando la fuente requiere contabilidad.
+La aceptación del cierre conserva únicamente el reclamo y su fuente/trabajo;
+un reclamo pendiente no es otra obligación de cartera. El sobrante no
 genera cuenta por cobrar ni se descuenta automáticamente de nómina.
+
+Cuando corregir el recaudo de una venta de contado abre CxC, la navegación
+conserva la venta original y la transacción `Opening` identifica la conciliación
+que realmente abrió la deuda. Su `OpeningEntryId`/`OpeningEntryLineNumber`
+enlaza la partida de esa conciliación, no una partida de la venta de contado.
+El processor proyecta una sola partida de apertura por venta por el neto de
+todos sus medios corregidos. La identidad del documento distingue varias
+ventas del mismo cliente; no se atribuye una deuda solo por tercero o importe.
+Este vínculo se guarda en el comando de partidas y la misma transacción que
+crea la obligación. El modo histórico sin contabilidad conserva la deuda sin
+inventar un asiento ni su cuenta. No se reparan cierres históricos en replay.
+La regresión local usa dos ventas de un cliente, una con dos medios que se
+compensan parcialmente, y exige un único comando de partidas, ninguno en replay
+y menos de dos segundos para procesar esa conciliación, sin carga concurrente.
+
+## Comprobante manual y cierre — decisión del 26 de octubre de 2026
+
+El comprobante manual no vincula una sesión operativa al capturar ni al
+contabilizar. Sus partidas y cruces siguen en el motor financiero único, pero
+no forman parte del cierre de la sesión de un usuario. La captura asistida de
+pagos en cartera y cuentas por pagar conserva su asociación a sesión según
+el flujo operativo correspondiente. Los comprobantes manuales ya contabilizados
+que tengan una sesión histórica conservan esa relación y su trazabilidad;
+no se reescriben cierres anteriores. El campo opcional del contrato persiste
+para compatibilidad histórica, sin control de sesión en la vista manual.
 
 ## Pruebas obligatorias
 
 1. Dos usuarios consecutivos en el mismo Edge crean sesiones diferentes.
 2. Una caída y reinicio recupera la sesión abierta.
-3. Toda venta y pago queda asociado al usuario y sesión correctos.
+3. Toda venta y pago asistido operativo queda asociado al usuario y sesión correctos;
+   un comprobante manual nuevo se contabiliza sin sesión.
 4. El cierre totaliza por medio de pago sin mezclar sesiones.
 5. La tirilla identifica usuario, sede y dispositivo opcional, y no contiene “caja”.
 6. No existen tablas, APIs ni componentes canónicos de arqueo o cierre de caja.

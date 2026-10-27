@@ -230,22 +230,10 @@ public sealed partial class SqlRestaurantCollectionStore
                 request.PaymentMethodCode, request.BankAccountId, total));
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
             await using (var accounting = new SqlCommand("""
-                IF EXISTS(SELECT 1 FROM dbo.AccountingTenantSettings settings
-                          WHERE settings.TenantId=@TenantId AND settings.Status=N'Ready'
-                            AND settings.EffectiveFrom<=CONVERT(date,@Now))
-                BEGIN
-                    INSERT dbo.AccountingSourceDocuments
-                      (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                       PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-                    VALUES(@SettlementId,N'RestaurantTipSettlement',@TenantId,@BusinessId,
-                           @Payload,@Hash,@Now,@Now,1);
-                    INSERT dbo.AccountingPostingJobs
-                      (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-                       SourceDocumentType,SourcePayloadHash,OccurredAt,Status,
-                       AttemptCount,CreatedAt)
-                    VALUES(NEWID(),@TenantId,@BusinessId,@SettlementId,
-                           N'RestaurantTipSettlement',@Hash,@Now,N'Pending',0,@Now);
-                END;
+                DECLARE @Sources nvarchar(max)=(SELECT @SettlementId DocumentId,N'RestaurantTipSettlement' DocumentType,
+                  @BusinessId BusinessId,@Payload Payload,CONVERT(varchar(64),@Hash,2) Hash,
+                  @Now OccurredAt,NEWID() JobId FOR JSON PATH);
+                EXEC dbo.AccountingSourcesAccept @TenantId,@Sources,@Now,0;
                 """, connection, transaction))
             {
                 accounting.Parameters.AddWithValue("@TenantId", actor.TenantId);

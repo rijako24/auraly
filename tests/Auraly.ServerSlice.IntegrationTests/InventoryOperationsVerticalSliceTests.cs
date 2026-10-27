@@ -2,9 +2,13 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Auraly.Application.DocumentProcessing;
+using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -12,6 +16,194 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Operational")]
 public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task One_and_twenty_transfer_lines_use_constant_round_trips_for_dispatch_and_partial_receipt()
+    {
+        using var client = fixture.CreateAdminClient(InventoryPermissionCodes.Adjust, InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.DispatchTransfer, InventoryPermissionCodes.ReceiveTransfer);
+        var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        var dispatchCommands = new List<int>();
+        var receiptCommands = new List<int>();
+        var adjustmentCommands = new List<int>();
+        foreach (var count in new[] { 1, 20 })
+        {
+            var products = Enumerable.Range(0, count).Select(_ => Guid.NewGuid()).ToArray();
+            var destination = Guid.NewGuid();
+            await SeedAsync(products[0], Guid.NewGuid(), Guid.NewGuid(), destination);
+            if (products.Length > 1)
+            {
+                await using var connection = new SqlConnection(fixture.ConnectionString);
+                await connection.OpenAsync();
+                await using var seed = new SqlCommand("""
+                    INSERT dbo.Products(ProductId,TenantId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
+                      Source,Sku,Name,Currency,ManageStock,IsActive,CreatedAt)
+                    SELECT input.ProductId,original.TenantId,CONCAT(N'BT-',input.ProductId),NULL,N'EA',original.TaxProfileId,
+                      0,CONCAT(N'BT-',input.ProductId),N'Producto del lote de traslado',N'COP',1,1,SYSUTCDATETIME()
+                    FROM OPENJSON(@Products) WITH(ProductId uniqueidentifier '$') input
+                    CROSS JOIN dbo.Products original WHERE original.ProductId=@Original;
+                    INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
+                      InventoryValue,LastProcessingSequence,UpdatedAt)
+                    SELECT warehouse.BusinessId,warehouse.WarehouseId,input.ProductId,0,0,0,0,SYSUTCDATETIME()
+                    FROM OPENJSON(@Products) WITH(ProductId uniqueidentifier '$') input
+                    CROSS JOIN dbo.Warehouses warehouse WHERE warehouse.BusinessId=@BusinessId;
+                    """, connection);
+                seed.Parameters.AddWithValue("@Original", products[0]);
+                seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                seed.Parameters.Add("@Products", System.Data.SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(products.Skip(1));
+                await seed.ExecuteNonQueryAsync();
+            }
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            using (var ledger = InventoryLedgerCounter(database))
+            {
+                await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+                    DateTimeOffset.UtcNow, "INITIAL_BALANCE", null, null,
+                    products.Select((id, index) => new InventoryAdjustmentLineRequest(index + 1, id, 10m, 5m)).ToArray()));
+                adjustmentCommands.Add(counter.Count);
+                Assert.Equal(2, ledger.Count);
+            }
+            var transferId = Guid.NewGuid();
+            var request = new DispatchWarehouseTransferRequest(transferId, fixture.BusinessId,
+                fixture.WarehouseId, destination, DateTimeOffset.UtcNow, "WAREHOUSE_TRANSFER", null,
+                products.Select((id, index) => new WarehouseTransferLineRequest(index + 1, id, 3m)).ToArray());
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            using (var ledger = InventoryLedgerCounter(database))
+            {
+                await SendAsync(client, "/api/commerce/v1/warehouse-transfers/dispatch", request, transferId.ToString("D"));
+                dispatchCommands.Add(counter.Count);
+                Assert.Equal(2, ledger.Count);
+            }
+            Assert.Equal(2 * count, await CountAsync("InventoryMovements", transferId));
+            var detail = (await client.GetFromJsonAsync<WarehouseTransferDetail>(
+                $"/api/commerce/v1/warehouse-transfers/{transferId}"))!;
+            var receiptId = Guid.NewGuid();
+            var receipt = new ReceiveWarehouseTransferRequest(receiptId, fixture.BusinessId, DateTimeOffset.UtcNow,
+                null, null, detail.RowVersion,
+                products.Select((id, index) => new WarehouseTransferReceiptLineRequest(index + 1, id, 2m)).ToArray());
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            using (var ledger = InventoryLedgerCounter(database))
+            {
+                await SendAsync(client, $"/api/commerce/v1/warehouse-transfers/{transferId}/receipts", receipt, receiptId.ToString("D"));
+                receiptCommands.Add(counter.Count);
+                Assert.Equal(2, ledger.Count);
+            }
+            foreach (var document in new[] { transferId, receiptId })
+            {
+                var elapsed = await ScalarAsync<long>(
+                    "SELECT DATEDIFF_BIG(microsecond,StartedAt,CompletedAt) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id", document);
+                Assert.InRange(elapsed, 0L, 2_000_000L);
+                Console.WriteLine($"Traslado {count} partidas, motor {document}: {elapsed / 1000m:F1} ms.");
+            }
+            Assert.Equal(2 * count, await CountAsync("InventoryMovements", receiptId));
+            Assert.Equal("PartiallyReceived", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", transferId));
+            await AssertTransferBalancesAsync(transferId, 7m, 2m, 1m);
+            Assert.True((await SendAsync(client, "/api/commerce/v1/warehouse-transfers/dispatch", request, transferId.ToString("D"))).IdempotentReplay);
+            Assert.True((await SendAsync(client, $"/api/commerce/v1/warehouse-transfers/{transferId}/receipts", receipt, receiptId.ToString("D"))).IdempotentReplay);
+            Assert.Equal(2 * count, await CountAsync("InventoryMovements", transferId));
+            Assert.Equal(2 * count, await CountAsync("InventoryMovements", receiptId));
+        }
+        Console.WriteLine($"Traslado 1/20: despacho {dispatchCommands[0]}/{dispatchCommands[1]} SQL; recepción {receiptCommands[0]}/{receiptCommands[1]} SQL.");
+        Console.WriteLine($"Entrada inicial 1/20: {adjustmentCommands[0]}/{adjustmentCommands[1]} SQL.");
+        Assert.True(adjustmentCommands[0] > 0 && adjustmentCommands[1] <= adjustmentCommands[0],
+            $"Entrada inicial 1/20: {adjustmentCommands[0]}/{adjustmentCommands[1]} SQL.");
+        Assert.True(dispatchCommands[0] > 0 && dispatchCommands[1] <= dispatchCommands[0],
+            $"Despacho 1/20: {dispatchCommands[0]}/{dispatchCommands[1]} SQL.");
+        Assert.True(receiptCommands[0] > 0 && receiptCommands[1] <= receiptCommands[0],
+            $"Recepción 1/20: {receiptCommands[0]}/{receiptCommands[1]} SQL.");
+    }
+
+    [Fact]
+    public async Task Incomplete_dispatch_results_roll_back_both_warehouses_and_retry_the_same_transfer_once()
+    {
+        var products = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        var destination = Guid.NewGuid();
+        await SeedAsync(products[0], products[1], products[2], destination);
+        using var client = fixture.CreateAdminClient(InventoryPermissionCodes.Adjust, InventoryPermissionCodes.DispatchTransfer);
+        await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            DateTimeOffset.UtcNow, "INITIAL_BALANCE", null, null,
+            products.Select((id, index) => new InventoryAdjustmentLineRequest(index + 1, id, 10m, 5m)).ToArray()));
+        var transferId = Guid.NewGuid();
+        var request = new DispatchWarehouseTransferRequest(transferId, fixture.BusinessId, fixture.WarehouseId,
+            destination, DateTimeOffset.UtcNow, "WAREHOUSE_TRANSFER", null,
+            products.Select((id, index) => new WarehouseTransferLineRequest(index + 1, id, 3m)).ToArray());
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            await SendAsync(client, "/api/commerce/v1/warehouse-transfers/dispatch", request, transferId.ToString("D"));
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            Assert.Equal(transferId, signal.DocumentId);
+            using var scope = fixture.CreateScope();
+            var worker = scope.ServiceProvider.GetRequiredService<DocumentProcessingWorker>();
+            using (var fault = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter: command => command.CommandText.Contains("SET DispatchUnitCost=input.Cost", StringComparison.Ordinal),
+                beforeExecute: command =>
+                {
+                    var lines = JsonNode.Parse((string)command.Parameters["@Lines"].Value)!.AsArray();
+                    Assert.Equal(3, lines.Count);
+                    lines[^1]!["LineNumber"] = 0;
+                    command.Parameters["@Lines"].Value = lines.ToJsonString();
+                }))
+            {
+                var error = await Assert.ThrowsAsync<SqlException>(() => worker.ProcessOneAsync(signal));
+                Assert.Contains(error.Errors.Cast<SqlError>(), item => item.Number == 51606);
+                Assert.Equal(1, fault.Count);
+            }
+            await AssertTransferBalancesAsync(transferId, 10m, 0m, 0m);
+            Assert.Equal(0, await CountAsync("InventoryMovements", transferId));
+            Assert.Equal(0, await CountAsync("ServerOutboxMessages", transferId));
+            Assert.Equal(0, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.InventoryOperationLines WHERE InventoryOperationId=@Id AND DispatchUnitCost IS NOT NULL", transferId));
+            Assert.Equal("DispatchPending", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", transferId));
+            Assert.Equal("RetryScheduled", await JobStatusAsync(transferId));
+            var availableAt = await ScalarAsync<DateTimeOffset>(
+                "SELECT AvailableAt FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id", transferId);
+            await ServerSliceFixture.WaitUntilAvailableAsync(availableAt);
+            Assert.Equal(DocumentProcessingResult.Processed, await worker.ProcessOneAsync(signal));
+            Assert.Equal(DocumentProcessingResult.AlreadyProcessed, await worker.ProcessOneAsync(signal));
+            await AssertTransferBalancesAsync(transferId, 7m, 0m, 3m);
+            Assert.Equal(6, await CountAsync("InventoryMovements", transferId));
+            Assert.Equal(1, await CountAsync("ServerOutboxMessages", transferId));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            fixture.DrainDocumentSignals();
+        }
+    }
+
+    private static InventoryBalanceProcessingTests.CommandCounter InventoryLedgerCounter(string database) =>
+        new(database, commandFilter: command => command.CommandText.Contains("DECLARE @Targets TABLE", StringComparison.Ordinal) ||
+            command.CommandText.Contains("INSERT dbo.InventoryMovements(", StringComparison.Ordinal));
+
+    private async Task AssertTransferBalancesAsync(Guid transferId, decimal sourceQuantity,
+        decimal destinationQuantity, decimal transitQuantity)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.InventoryOperationLines line
+            JOIN dbo.InventoryOperations operation ON operation.InventoryOperationId=line.InventoryOperationId
+            LEFT JOIN dbo.InventoryBalances source ON source.BusinessId=operation.BusinessId
+              AND source.WarehouseId=operation.WarehouseId AND source.ProductId=line.ProductId
+            LEFT JOIN dbo.InventoryBalances destination ON destination.BusinessId=operation.BusinessId
+              AND destination.WarehouseId=operation.DestinationWarehouseId AND destination.ProductId=line.ProductId
+            LEFT JOIN dbo.InventoryBalances transit ON transit.BusinessId=operation.BusinessId
+              AND transit.WarehouseId=operation.TransitWarehouseId AND transit.ProductId=line.ProductId
+            WHERE operation.InventoryOperationId=@Id AND (source.ProductId IS NULL OR destination.ProductId IS NULL
+              OR transit.ProductId IS NULL OR source.QuantityOnHand<>@Source OR destination.QuantityOnHand<>@Destination
+              OR transit.QuantityOnHand<>@Transit OR source.AverageUnitCost<>5 OR source.InventoryValue<>@Source*5
+              OR destination.AverageUnitCost<>5 OR destination.InventoryValue<>@Destination*5
+              OR transit.AverageUnitCost<>5 OR transit.InventoryValue<>@Transit*5);
+            """, connection);
+        command.Parameters.AddWithValue("@Id", transferId);
+        command.Parameters.AddWithValue("@Source", sourceQuantity);
+        command.Parameters.AddWithValue("@Destination", destinationQuantity);
+        command.Parameters.AddWithValue("@Transit", transitQuantity);
+        Assert.Equal(0, (int)(await command.ExecuteScalarAsync())!);
+    }
+
     [Fact]
     public async Task Count_adjustment_transfer_and_conversion_preserve_order_quantity_value_and_idempotency()
     {
@@ -779,7 +971,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
             "INITIAL_BALANCE", null, null,
             [new(1, countedProduct, 5m, 2m), new(2, uncountedProduct, 6m, 2m)]));
-        await ExecuteAsync("UPDATE dbo.InventoryBalances SET QuantityOnHand=-2,InventoryValue=-4 WHERE ProductId=@Id", uncountedProduct);
+        await ExecuteAsync("UPDATE dbo.InventoryBalances SET QuantityOnHand=-2,InventoryValue=-4,OriginContextId=NULL,OriginSnapshotSequence=NULL WHERE ProductId=@Id", uncountedProduct);
 
         var countId = Guid.NewGuid();
         InventoryPhysicalCountDetail created;
@@ -913,6 +1105,12 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal((3m,0m,0m), await BalanceAsync(damagedWarehouseId, product));
         Assert.Equal(-3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'InventoryDamage'", damageId));
         Assert.Equal(3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'DamageWarehouseIn'", damageId));
+        Assert.Equal("DamageWarehouse", await ScalarAsync<string>(
+            "SELECT CostPoolScope FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'DamageWarehouseIn'", damageId));
+        Assert.Equal(0m, await ScalarAsync<decimal>(
+            "SELECT PoolInventoryValueAfter FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'DamageWarehouseIn'", damageId));
+        Assert.Equal("WeightedAverageReceipt", await ScalarAsync<string>(
+            "SELECT ValuationMode FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'DamageWarehouseIn'", damageId));
         Assert.Equal(2, await CountAsync("InventoryMovements", damageId)); Assert.Equal(1, await CountAsync("ServerOutboxMessages", damageId));
         Assert.Equal("Posted", await ScalarAsync<string>(
             "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'Damage'", damageId));
@@ -1013,7 +1211,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                 UPDATE dbo.InventoryBalances
                 SET QuantityOnHand=CASE WHEN WarehouseId=@SaleWarehouse THEN -4.95 ELSE 8 END,
                     AverageUnitCost=5,
-                    InventoryValue=CASE WHEN WarehouseId=@SaleWarehouse THEN -24.75 ELSE 40 END
+                    InventoryValue=CASE WHEN WarehouseId=@SaleWarehouse THEN -24.75 ELSE 40 END,
+                    OriginContextId=NULL,OriginSnapshotSequence=NULL
                 WHERE BusinessId=@BusinessId AND ProductId=@ProductId
                   AND WarehouseId IN(@SaleWarehouse,@OrdersWarehouse);
                 """, connection);

@@ -185,8 +185,7 @@ public sealed class ReceivablesService(
         try
         {
             breakdown = PaymentTenderBreakdown.Create(payments.Select(ToDomain), settlement.TotalAmount,
-                settlement.Allocations.Count, SupportedMethods);
-            ValidateTenderEvidence(breakdown);
+                settlement.Allocations.Count, PortfolioPaymentMethods.Supported);
         }
         catch (ArgumentException ex) { throw new ReceivablesValidationException(ex.Message, ex); }
         var normalized = request with { CurrencyCode = currency,
@@ -213,36 +212,18 @@ public sealed class ReceivablesService(
         return result;
     }
 
-    private static readonly IReadOnlySet<string> SupportedMethods = new HashSet<string>(
-        [CustomerPaymentMethods.Cash, CustomerPaymentMethods.Transfer,
-         CustomerPaymentMethods.DebitCard, CustomerPaymentMethods.CreditCard], StringComparer.Ordinal);
+
 
     private static CustomerPaymentTenderRequest NormalizeTender(CustomerPaymentTenderRequest value) => value with
     {
-        MethodCode = value.MethodCode?.Trim() ?? string.Empty, Reference = Normalize(value.Reference, 120),
-        Notes = Normalize(value.Notes, 500), CardFranchiseCode = Normalize(value.CardFranchiseCode, 40),
-        ApprovalNumber = Normalize(value.ApprovalNumber, 80)
+        MethodCode = value.MethodCode?.Trim() ?? string.Empty, Reference = Normalize(value.Reference, PaymentTenderBreakdown.MaximumReferenceLength),
+        Notes = Normalize(value.Notes, PaymentTenderBreakdown.MaximumNotesLength), CardFranchiseCode = Normalize(value.CardFranchiseCode, PaymentTenderBreakdown.MaximumCardFranchiseLength),
+        ApprovalNumber = Normalize(value.ApprovalNumber, PaymentTenderBreakdown.MaximumApprovalLength)
     };
 
     private static PaymentTender ToDomain(CustomerPaymentTenderRequest value) => new(
         value.MethodCode, value.Amount, value.TenderedAmount, value.BankAccountId,
         value.Reference, value.Notes, value.CardFranchiseCode, value.ApprovalNumber);
-
-    private static void ValidateTenderEvidence(PaymentTenderBreakdown breakdown)
-    {
-        foreach (var tender in breakdown.Tenders)
-        {
-            if (tender.MethodCode == CustomerPaymentMethods.Transfer &&
-                string.IsNullOrWhiteSpace(tender.Reference))
-                throw new ArgumentException("A bank transfer requires a reference.");
-            if (tender.MethodCode is CustomerPaymentMethods.DebitCard or CustomerPaymentMethods.CreditCard &&
-                (string.IsNullOrWhiteSpace(tender.CardFranchiseCode) ||
-                 string.IsNullOrWhiteSpace(tender.ApprovalNumber)))
-                throw new ArgumentException("A card payment requires franchise and approval number.");
-            if (tender.MethodCode != CustomerPaymentMethods.Transfer && tender.BankAccountId is not null)
-                throw new ArgumentException("Only a bank transfer can select a bank account.");
-        }
-    }
 
     private static string? Normalize(string? value, int max)
     {
@@ -258,7 +239,11 @@ public sealed class ReceivablesService(
 }
 
 public sealed class ReceivablesForbiddenException(string message) : Exception(message);
-public sealed class ReceivablesConflictException(string message) : Exception(message);
+public sealed class ReceivablesConflictException : Exception
+{
+    public ReceivablesConflictException(string message) : base(message) { }
+    public ReceivablesConflictException(string message, Exception inner) : base(message, inner) { }
+}
 public sealed class ReceivablesValidationException : Exception
 {
     public ReceivablesValidationException(string message) : base(message) { }

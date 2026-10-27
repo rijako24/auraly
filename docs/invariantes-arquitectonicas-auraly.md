@@ -105,6 +105,12 @@ facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscale
   de esos movimientos.
 - Un nuevo documento contabilizable agrega su regla de posting al motor existente y reutiliza `AccountingPostingJobs` y la unicidad por documento fuente.
 - Su fuente inmutable pertenece a `AccountingSourceDocuments`; el job contable no depende por FK de `DocumentProcessingJobs`.
+- `accounting.SourcePartyIndex` es un índice de lectura derivado de las fuentes manuales inmutables, sin importes ni edición independiente. Lo alimenta `AccountingSourcesAccept` en la misma aceptación; el backfill de esquema usa la misma función `accounting.ManualVoucherPartyReferences`. No tiene worker, cola, estado ni reparación en replay. Los nuevos lectores requieren completar ese backfill antes del corte.
+- `accounting.SourcePositionIndex` deriva exclusivamente los destinos e importes
+  de los cruces sin dinero y anulaciones de soporte aceptados. No es otro saldo ni captura: aceptación y
+  backfill usan `ManualVoucherCreditTargets`, y `ObligationAvailability` calcula
+  una sola reserva compartida con pagos/ajustes hasta identificar su transacción
+  aplicada. No se escribe desde borradores, endpoints, replay o un job separado.
 - No se crea un posting service por modulo, un asiento directo desde un endpoint ni una segunda tabla de trabajos contables.
 - La contabilidad corre en su transaccion durable e idempotente. Un fallo o configuracion pendiente no reaplica los efectos operativos ya confirmados.
 - Los transportes SaaS, on-premise e in-process ejecutan el mismo processor y no contienen reglas contables.

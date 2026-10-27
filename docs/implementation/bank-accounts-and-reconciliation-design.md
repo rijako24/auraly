@@ -1,17 +1,24 @@
 # Cuentas bancarias y conciliación mínima
 
+> **Ampliación de diseño 2026-10-20, en implementación local, sin autorizar despliegue:**
+> la sección final sustituye el vínculo de un banco a un solo auxiliar por varios
+> auxiliares configurados. Las autorizaciones y evidencias siguientes pertenecen
+> al alcance histórico de septiembre; no autorizan publicar esta ampliación.
+
 **Estado:** mínimo funcional implementado y validado localmente; publicación
 autorizada mediante el release inmutable del repositorio.
 Diseño mínimo unificado y cerrado el 2026-09-08 para cobros, bancos y conciliación.
 **Fecha de cierre del diseño:** 2026-09-08
 
-**Instrucción de entrega:** implementación, pruebas locales y publicación en
-DEV y PROD autorizadas por el usuario.
+**Instrucción histórica de septiembre:** implementación y publicación del mínimo
+de ese corte. **Instrucción vigente para la ampliación:** implementar, probar,
+auditar y levantar local; no desplegar en DEV ni PROD.
 
 ## Decisión
 
-La cuenta bancaria es un maestro contable del tenant. Cada cuenta enlaza un
-único auxiliar activo y contabilizable del PUC. La cuenta principal sirve solo
+La cuenta bancaria es un maestro contable del tenant. La relación inicial de un
+solo auxiliar queda sustituida por la ampliación final: los auxiliares se vinculan
+desde el PUC a una cuenta bancaria real. La cuenta principal sirve solo
 como valor inicial en la captura: el usuario puede cambiarla en cada operación.
 
 Una venta por transferencia conserva cuenta, referencia, nota y valor. Una
@@ -129,7 +136,8 @@ La configuración se organiza en Contabilidad con las categorías y maestros
 existentes. No crear un segundo catálogo de cuentas de tesorería ni volver a
 pedir el PUC en cada venta. `AccountingAccounts` es el PUC; los mappings de
 `Cash`, `DebitCardClearing` y `CreditCardClearing` resuelven los medios;
-`accounting.BankAccounts.AccountingAccountId` resuelve cada cuenta bancaria.
+`AccountingAccounts.BankAccountId` vincula los auxiliares de cada banco. El campo
+inverso anterior se vacía al completar la migración y no se edita desde runtime.
 El catálogo fiscal de medios de pago conserva su función distinta del auxiliar
 PUC: un código DIAN no es el número de una cuenta bancaria ni un auxiliar contable.
 
@@ -305,3 +313,192 @@ La organización por forma de pago y cuenta contable coincide con
 [Siigo Nube, crear formas de pago](https://siigonube.portaldeclientes.siigo.com/crear-formas-de-pago/).
 Este contraste orienta la usabilidad; la fuente de verdad de Auraly sigue siendo
 su módulo contable y las reglas fiscales aplicables a cada soporte.
+
+## Ampliación 2026-10-20: banco con auxiliares por sede y medio
+
+Este diseño sustituye para operaciones futuras la cardinalidad banco → un
+auxiliar. Una cuenta bancaria real conserva un único `BankAccountId` y puede
+vincular varios auxiliares por sede/medio. Cada auxiliar pertenece como máximo a
+una cuenta bancaria. No duplicar el maestro del mismo banco/número para representar
+tres sedes. La cuenta principal sigue siendo un default de captura, no un selector
+automático de auxiliar cuando existan varias combinaciones.
+
+El vínculo canónico nuevo reside en `AccountingAccounts.BankAccountId`, junto a
+las dimensiones de sede/medio del auxiliar. La numeración es libre y no exige código contable en el banco ni en la sede;
+las propiedades son independientes del código, según la sección 13 de [comprobantes](accounting-open-vouchers-design.md). No crear
+además una tabla de vínculos con otra relación editable. El FK actual inverso
+`BankAccounts.AccountingAccountId` se conserva solo durante migración compatible:
+
+1. Agregar el vínculo nuevo, poblarlo desde relaciones inequívocas existentes y
+   detectar bancos que comparten auxiliar. No asignarles historia arbitrariamente.
+2. Migrar resolución de pagos, confirmaciones, POS/configuración y conciliación
+   al vínculo nuevo; los consumidores antiguos que exigen un único auxiliar deben
+   actualizarse antes de habilitar bancos con más de uno.
+3. Congelar banco y auxiliar en cada fuente aceptada y partida contabilizada.
+   Validar que la sede/medio de captura coincida con esa cuenta. Reintentos y
+   reversos usan el snapshot, aunque cambie la configuración para nuevos documentos.
+4. Retirar escritura y después columna/FK inversos cuando no haya consumidores
+   antiguos. La transición no admite dos relaciones editables. Después de usar
+   la cardinalidad nueva no es seguro volver a un worker que solo entienda un
+   auxiliar por banco.
+
+La conciliación selecciona movimientos de **todos** los auxiliares del banco,
+con las sedes autorizadas y el mismo corte. Cambiar el filtro de sede no convierte
+un saldo parcial en saldo bancario total. Extracto y asignaciones siguen
+referenciando `EntryId + LineNumber`; ningún asiento se copia al añadir un vínculo.
+Operaciones pendientes del mismo banco se identifican por el snapshot aceptado.
+
+Las cuentas de efectivo no requieren banco. El cobro con tarjeta pendiente del
+adquirente conserva su cuenta de compensación; solo el abono real mueve el banco.
+Una deuda con tarjeta de crédito requiere función de pasivo diferenciada: la
+validación actual de banco como activo no se debe ampliar a cualquier cuenta
+por el nombre «tarjeta». La configuración de cada función y sus cuentas permitidas
+se valida en Accounting y se presenta mediante catálogos persistidos.
+
+Aceptación: un banco con auxiliares en tres sedes concilia el mismo extracto sin
+duplicar saldo; un pago conserva su auxiliar original; configuración ambigua,
+cuenta de otro tenant, remapeo de auxiliar usado y acceso parcial se rechazan.
+La lectura de movimientos agrega/pagina en SQL; ninguna consulta por auxiliar.
+Los casos de cierre ya implementados conservan su regresión. La ampliación sigue
+en validación local; no se extiende la autorización histórica de release.
+
+### Adaptación técnica local del 23 de octubre
+
+Los medios de tarjeta en egresos de proveedores usan propósitos de configuración
+`SupplierDebitCard` y `SupplierCreditCard`, independientes de las cuentas por
+cobrar al adquirente de tarjetas de clientes. Débito requiere el auxiliar bancario
+configurado; crédito corporativo, el auxiliar de pasivo con su banco real. Son
+defaults de captura asistida del mismo motor, no medios, bancos ni flujos nuevos.
+No tienen cuenta sugerida universal: el tenant selecciona sus auxiliares del PUC.
+El perfil conserva esas categorías opcionales sin código/nombre de cuenta
+sugerida; `accounting.DefaultAccountDefinitions` proyecta solo sugerencias
+concretas para los tres accesos existentes de aprovisionamiento, defaults y seed.
+No se crean bancos o cuentas ficticios para completar la configuración. El
+resolver canónico valida la función, sede, banco y medio de la cuenta ganadora;
+una excepción por sede inválida no elige a escondidas la cuenta compartida.
+Falta de configuración conserva el pago pendiente y su reserva, explica que no
+se realizó y revierte efectos financieros hasta corregir y reintentar el mismo
+trabajo. El cambio requiere revisar estas dos configuraciones antes del corte y
+drenar trabajos contables anteriores según la transición de comprobantes.
+El número de consultas del camino se conserva; la validación usa el mismo lote
+de categorías y el aplicador nativo existente. Pasaron los cuatro casos de
+tarjetas manuales; los dos de proveedor también prueban el pago nativo contra el
+mismo auxiliar, falta de configuración, override inválido sin fallback, mensaje
+de pago no realizado, cero efecto parcial, corrección y reintento, y replay con
+una sola aplicación. Los intentos intermedios detectaron dos datos faltantes del
+fixture —serie nativa y alcance compartido del auxiliar—; se completaron mediante
+el aprovisionamiento canónico y el builder, sin relajar las validaciones productivas.
+La compilación SQL pasó sin advertencias y backend sin errores, con las cuatro
+advertencias previas de la dependencia fiscal. La regresión amplia posterior
+aprobó 135 casos SQL/API y la base 862 casos, antes del slice de comprobantes
+asociados a compras. Incluye la preservación de mapeos elegidos por el contador
+al aprovisionar otro año, y el pago mixto con tarjetas del proveedor sin usar
+las cuentas de cobro al adquirente. El rollback del corte debe conservar binarios que comprendan
+propósitos sin sugerencia de cuenta; un `EnsureDefaults` antiguo que intente crear
+cuentas desde todas las definiciones no es compatible con esas filas opcionales.
+
+- El banco se crea sin exigir auxiliar. Cada auxiliar configura su vínculo desde
+  el PUC; el maestro devuelve su cantidad real. Los campos singulares de la API
+  compatible solo tienen valor cuando existe exactamente un vínculo.
+- El parámetro antiguo `AccountingAccountId` se admite al crear un banco como
+  traducción al participante transaccional de edición del PUC. No se escribe el
+  FK inverso. Al editar un banco, ese parámetro solo puede confirmar un vínculo
+  ya existente; no reasigna cuentas. La compatibilidad de auxiliares antiguos sin
+  propiedades conserva su código y su ausencia de padre, sin inventar una
+  agrupación. Esta excepción solo admite un auxiliar antiguo sin uso; el PUC
+  ordinario conserva sus validaciones y la protección de cuentas utilizadas.
+- `accounting.BankPostingAccount` resuelve una transferencia por banco y sede:
+  primero sede específica frente a compartida y luego medio específico frente
+  a no especificado. Dos candidatos con igual prioridad son una ambigüedad, no
+  un `TOP(1)` arbitrario. No se interpreta el código ni el nombre del auxiliar.
+- La aceptación canónica llama a `accounting.BankAccountsFreeze` dentro de su
+  transacción. Se conserva la selección en el trabajo contable ya existente
+  (`ResolvedBankAccountsJson`), sin importes, saldos, cola ni proceso adicional.
+  También se protege la configuración de los auxiliares seleccionados.
+- Si todavía falta configuración o es ambigua, se conserva la referencia sin
+  auxiliar resuelto. El motor deja pendiente el documento con motivo explícito;
+  un pago/recaudo no aplica saldo, transacción ni asiento. El reintento existente
+  puede completar únicamente referencias sin resolver, antes de aplicar efectos;
+  nunca sustituye una cuenta ya fijada. Las fuentes comerciales sin contabilidad
+  mantienen su modo original. Las reversiones de propina invierten las partidas
+  del asiento original, incluidos banco, pasivo y centro de costo. No dependen
+  de un snapshot bancario anterior ni resuelven un auxiliar nuevo: el processor
+  y el participante de fijación excluyen esa nueva selección. Esto también
+  conserva los asientos históricos previos al snapshot; sin asiento original
+  completo, la anulación contable queda pendiente con causa visible.
+- `accounting.BankBookAccounts` es la proyección común de auxiliares bancarios
+  para lectura, permisos, cruces y cierre. Incluye auxiliares históricos inactivos
+  y excluye compensación de tarjetas y pasivos de tarjeta. No copia asientos.
+- La migración conserva únicamente vínculos anteriores inequívocos y prueba el
+  auxiliar de documentos históricos contabilizados contra su asiento. Un banco
+  compartido o una historia no demostrable bloquean la transición con un motivo;
+  no se reparten ni reclasifican saldos automáticamente.
+  Todo el paso es transaccional. Después de fijar la historia se vacían los
+  valores inversos: conservarlos bloquearía una futura reasignación permitida
+  de un auxiliar todavía sin uso. El esquema conserva la columna nullable para
+  compatibilidad del despliegue; no conserva otra relación editable ni usada.
+- La importación del extracto conserva el encabezado y sus líneas en la misma
+  transacción, con una sola inserción por conjunto para las líneas. La pantalla
+  reutiliza los resultados de los comandos para detalle y resumen, con caché
+  acotada por tenant/sede. Cambiar la cuenta principal requiere una lectura del
+  catálogo bancario porque cambia también la versión de la cuenta principal
+  anterior; no invalida el resto de Contabilidad.
+
+El listado y las cuatro colecciones del detalle ya se paginan en SQL, antes de
+enriquecer descripciones. El listado acepta búsqueda por archivo/banco, filtro de
+banco y orden estable; extracto y libro aceptan búsqueda sobre el conjunto completo.
+Los conteos usan los mismos filtros y los totales de cierre conservan el banco
+completo. Los cruces e historial tienen páginas independientes. Tamaño máximo:
+100 filas; respuesta de comando: primeras 50 filas de cada colección.
+
+El contrato del listado pasa de arreglo a `items/page/pageSize/totalCount`;
+API y admin requieren corte coordinado. No se crea un endpoint paralelo. La
+pantalla conserva un propietario por recurso y reutiliza el detalle de cada
+comando. Al importar se relee solamente la página activa de períodos: la respuesta
+del comando no incluye la pertenencia ni el orden de ese listado filtrado. Los
+cruces y el cierre actualizan sus resúmenes ya visibles sin GET adicional. Las
+páginas de detalle anteriores se marcan obsoletas sin consultarlas en segundo
+plano. No hay polling.
+
+La comodidad de cruces exactos solo se ofrece si ambos conjuntos completos caben
+en la respuesta sin filtros (máximo 100). Una coincidencia única en una página no
+prueba unicidad en el banco. Cada cruce es una transacción independiente explícita
+del comando existente; si falla uno posterior, se conserva en pantalla el último
+resultado confirmado. La muestra previa del CSV presenta como máximo 50 filas y
+explica que se validan/importan todas. La importación admite hasta 10 MB/100.000
+movimientos; rechaza referencias largas e importes fuera de decimal(19,4), sin
+truncarlos ni redondearlos silenciosamente.
+
+La comprobación de permisos usa `accounting.BankInaccessibleBusinesses`, con los
+mismos roles, tenant y sedes del contrato anterior. Importación, mutaciones y
+lectura reutilizan esa proyección. El conjunto de bancos se reduce antes de
+revisar sus sedes: la prueba de volumen reprodujo un timeout de 30 s cuando se
+repetía el mismo historial por cada período. La versión corregida revisa cada
+banco una vez. Las lecturas usan una transacción serializable; un comando obtiene
+su respuesta autorizada antes del commit. Una regresión reprodujo antes HTTP 403
+con un extracto ya guardado; ahora comprueba cero encabezados y líneas al rechazar.
+
+Evidencia local adicional del 23 de octubre: cuatro casos SQL/API aprobaron el
+banco en tres sedes, acceso parcial, cierres/retroactividad, liquidación de tarjetas
+y volumen. Con 10.000 partidas y 1.001 períodos, 20 muestras por caso en SQL local
+exclusivo, sin compiladores ni diagnósticos concurrentes: p95 503,5 ms primera
+página de detalle, 423,2 ms siguiente, 600,1 ms filtrada; 377,7 ms primera página
+del listado y 133,2 ms siguiente. Se verifican seis comandos SQL por detalle y dos
+por listado, respuestas menores de 120.000 caracteres, páginas sin duplicados,
+conteos globales y búsqueda de la fila 10.000. Presupuesto: p95 menor de 2 s.
+Dos escenarios de navegador sobre el build real de Next con API simulada pasan,
+incluida navegación, unicidad global de candidatos y ausencia de GET tras cruce
+y cierre. Schema, API, TypeScript y ESLint pasan. Esto no sustituye la regresión
+global ni declara terminados los grupos financieros manuales y cargos de compra.
+
+Evidencia local del slice: schema Release sin errores; seis escenarios SQL/API
+dirigidos aprobaron banco en tres sedes, pagos mixtos y reintegro, conservación de
+auxiliar tras una nueva regla y desactivación del banco, rechazo explicable de
+ambigüedad, reintento sin doble pago y migración inequívoca/repetida frente a una
+relación histórica ambigua. También aprobaron seis casos de navegador con API
+simulada sobre la compilación real de Next, incluido crear el banco sin auxiliar
+y reutilizar las respuestas de los comandos. El contrato paginado posterior
+requiere la única lectura de listado tras importar explicada arriba. La corrida
+SQL/API dirigida final aprobó siete casos, incluidos los tres rechazos monetarios
+sin escrituras, el auxiliar conservado y los cierres existentes. No se presentan
+como la regresión completa ni como prueba de navegador con API real.

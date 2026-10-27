@@ -1,3 +1,4 @@
+using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
@@ -19,7 +20,7 @@ public sealed class SqlExpenseDocumentHandler(SqlDocumentProcessingSessionAccess
         // direct financial cutover. New expenses never enter this handler.
         var session = sessions.Current;
         await SqlExpenseStore.PersistWithholdingAsync(session.Connection, session.Transaction, [expense], ct);
-        await SqlAccountingPostingJobWriter.InsertAsync(session, document, expense.IssuedAt,
+        await SqlAccountingPostingJobWriter.InsertAsync(session.Connection, session.Transaction, document, expense.IssuedAt,
             ids, timeProvider, ct, AccountingJobRequirement.PreserveCommercialEffects);
     }
 }

@@ -35,6 +35,7 @@ export function PagedEntitySelect<T>({
   emptyMessage = "No hay resultados.",
   disabled = false,
   preload = false,
+  openOnTyping = false,
   pageSize = 10,
   className,
   onClear,
@@ -52,6 +53,7 @@ export function PagedEntitySelect<T>({
   emptyMessage?: string;
   disabled?: boolean;
   preload?: boolean;
+  openOnTyping?: boolean;
   pageSize?: number;
   className?: string;
   onClear?: () => void;
@@ -60,6 +62,7 @@ export function PagedEntitySelect<T>({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const waitingForSearch = search.trim() !== debouncedSearch;
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(search.trim()), 100);
     return () => window.clearTimeout(timeout);
@@ -70,9 +73,10 @@ export function PagedEntitySelect<T>({
     queryFn: ({ pageParam }) => loadPage(debouncedSearch, pageParam, pageSize),
     initialPageParam: 1,
     getNextPageParam: page => page.page < page.totalPages ? page.page + 1 : undefined,
-    enabled: (open || preload) && !disabled,
+    enabled: (open || preload) && !disabled && (!openOnTyping || !waitingForSearch),
     staleTime: 5 * 60 * 1000,
   });
+  const loading = query.isLoading || (openOnTyping && waitingForSearch);
   const entries = useMemo(() => {
     const values = new Map<string, { option: PagedEntityOption; item?: T }>();
     for (const item of query.data?.pages.flatMap(page => page.items) ?? []) {
@@ -80,13 +84,15 @@ export function PagedEntitySelect<T>({
       if (option) values.set(option.value, { option, item });
     }
     for (const option of leadingOptions) values.set(option.value, { option });
-    if (selectedOption && !values.has(selectedOption.value)) values.set(selectedOption.value, { option: selectedOption });
+    if (selectedOption && !(openOnTyping && search.trim()) && !values.has(selectedOption.value))
+      values.set(selectedOption.value, { option: selectedOption });
     return [...values.values()];
-  }, [getOption, leadingOptions, query.data, selectedOption]);
+  }, [getOption, leadingOptions, openOnTyping, query.data, search, selectedOption]);
   const selected = entries.find(entry => entry.option.value === value)?.option ?? selectedOption;
   const total = query.data?.pages[0]?.totalCount ?? 0;
 
   function onScroll(event: UIEvent<HTMLDivElement>) {
+    if (openOnTyping && (loading || query.isError)) return;
     const element = event.currentTarget;
     if (element.scrollHeight - element.scrollTop - element.clientHeight < 80 && query.hasNextPage && !query.isFetchingNextPage)
       void query.fetchNextPage();
@@ -95,7 +101,15 @@ export function PagedEntitySelect<T>({
   return <Popover modal open={open} onOpenChange={setOpen}>
     <div className="relative">
     <PopoverTrigger asChild>
-      <Button ref={triggerRef} type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("relative w-full justify-start font-normal", onClear ? "pr-16" : "pr-10", className)}>
+      <Button ref={triggerRef} type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled}
+        onKeyDown={event => {
+          if (!openOnTyping || open || event.ctrlKey || event.metaKey || event.altKey ||
+            event.nativeEvent.isComposing || event.key.length !== 1 || event.key === " ") return;
+          event.preventDefault();
+          setSearch(event.key);
+          setOpen(true);
+        }}
+        className={cn("relative w-full justify-start font-normal", onClear ? "pr-16" : "pr-10", className)}>
         <span className="min-w-0 truncate text-left">{selected?.label ?? placeholder}</span>
         <ChevronsUpDown className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50"/>
       </Button>
@@ -108,18 +122,18 @@ export function PagedEntitySelect<T>({
           value={search}
           onValueChange={setSearch}
           placeholder={searchPlaceholder}
-          isLoading={search.trim() !== debouncedSearch || query.isFetching}
+          isLoading={waitingForSearch || query.isFetching}
         />
         <CommandList onScroll={onScroll}>
-          {query.isLoading && <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Buscando…</div>}
+          {loading && <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Buscando…</div>}
           {query.isError && <div className="p-4 text-sm text-destructive">No fue posible consultar. <button className="underline" onClick={() => void query.refetch()}>Reintentar</button></div>}
-          {!query.isLoading && !query.isError && entries.length === 0 && <CommandEmpty>{emptyMessage}</CommandEmpty>}
-          {!query.isLoading && !query.isError && entries.length > 0 && <div className="px-3 py-2 text-xs text-muted-foreground">{Math.min(entries.length, total).toLocaleString("es-CO")} de {total.toLocaleString("es-CO")}</div>}
-          {entries.map(({ option, item }) => <CommandItem key={option.value} value={option.value} onSelect={() => { if(item||option.value!==value)onChange(option.value, option, item); setOpen(false); }} className="items-start">
+          {!loading && !query.isError && entries.length === 0 && <CommandEmpty>{emptyMessage}</CommandEmpty>}
+          {!loading && !query.isError && entries.length > 0 && <div className="px-3 py-2 text-xs text-muted-foreground">{Math.min(entries.length, total).toLocaleString("es-CO")} de {total.toLocaleString("es-CO")}</div>}
+          {!(openOnTyping && (loading || query.isError)) && entries.map(({ option, item }) => <CommandItem key={option.value} value={option.value} onSelect={() => { if(item||option.value!==value)onChange(option.value, option, item); setOpen(false); }} className="items-start">
             <Check className={cn("mr-2 mt-0.5 h-4 w-4 shrink-0", value === option.value ? "opacity-100" : "opacity-0")}/>
             <span className="min-w-0"><span className="block truncate">{option.label}</span>{option.description && <small className="block truncate text-muted-foreground">{option.description}</small>}</span>
           </CommandItem>)}
-          {query.hasNextPage && <Button type="button" variant="ghost" className="w-full" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Cargar {pageSize} más</Button>}
+          {query.hasNextPage && !(openOnTyping && (loading || query.isError)) && <Button type="button" variant="ghost" className="w-full" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Cargar {pageSize} más</Button>}
         </CommandList>
       </Command>
     </PopoverContent>

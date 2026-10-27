@@ -20,6 +20,15 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
         var connection = (SqlConnection)db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open) await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
+            -- Reactiva solamente el calendario cerrado por la política antigua de mora.
+            UPDATE scheduled SET Status=0,ScheduledAtUtc=@Now,LockedUntilUtc=NULL,
+                SentAtUtc=NULL,UpdatedAt=@Now
+            FROM dbo.ScheduledAutomationJobs scheduled
+            JOIN billing.TenantSubscriptions subscription
+              ON subscription.TenantSubscriptionId=scheduled.TenantSubscriptionId
+            JOIN dbo.Tenants tenant ON tenant.TenantId=subscription.TenantId AND tenant.IsActive=1
+            WHERE scheduled.JobType=2 AND scheduled.Status=2 AND subscription.Status=N'Suspended';
+
             INSERT dbo.ScheduledAutomationJobs
               (ScheduledAutomationJobId,BusinessId,ReservationId,AgentId,TenantSubscriptionId,
                JobType,ScheduledAtUtc,Status,DeduplicationKey,Attempts,PayloadJson,CreatedAt)
@@ -29,6 +38,7 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
                    0,CONCAT(N'tenant-subscription-lifecycle:',
                      LOWER(CONVERT(nvarchar(36),subscription.TenantSubscriptionId))),0,N'{}',@Now
             FROM billing.TenantSubscriptions subscription
+            JOIN dbo.Tenants tenant ON tenant.TenantId=subscription.TenantId AND tenant.IsActive=1
             CROSS JOIN billing.PlatformBillingSettings settings
             WHERE settings.PlatformBillingSettingId=1
               AND subscription.Status IN(N'Active',N'PastDue',N'Suspended')
@@ -55,6 +65,7 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
               FROM dbo.ScheduledAutomationJobs scheduled WITH(UPDLOCK,READPAST,ROWLOCK)
               JOIN billing.TenantSubscriptions eligible
                 ON eligible.TenantSubscriptionId=scheduled.TenantSubscriptionId
+              JOIN dbo.Tenants tenant ON tenant.TenantId=eligible.TenantId AND tenant.IsActive=1
               WHERE scheduled.JobType=2 AND scheduled.ScheduledAtUtc<=@Now
                 AND eligible.Status IN(N'Active',N'PastDue',N'Suspended')
                 AND (scheduled.Status=0 OR
@@ -77,7 +88,14 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
                    dianPack.UnitSize,payrollPack.UnitSize,
                    settings.EmailRemindersEnabled,settings.PreDueReminderDays,
                    settings.OverdueReminderIntervalDays,settings.GracePeriodDays,
-                   settings.BillingTimeZoneId
+                   settings.BillingTimeZoneId,
+                   CASE WHEN nextPeriod.StartAt<=DATEADD(day,settings.PreDueReminderDays,@Now)
+                        THEN nextPeriod.StartAt ELSE COALESCE(unpaid.TargetPeriodStart,nextPeriod.StartAt) END,
+                   DATEADD(day,-settings.PreDueReminderDays,
+                     CASE WHEN nextPeriod.StartAt<=DATEADD(day,settings.PreDueReminderDays,@Now)
+                          THEN billing.TenantSubscriptionPeriodBoundary(nextPeriod.StartAt,
+                            CASE WHEN subscription.BillingPeriod=N'Annual' THEN 12 ELSE 1 END,subscription.BillingAnchorDay)
+                          ELSE nextPeriod.StartAt END)
             FROM @Claimed claimed
             JOIN billing.TenantSubscriptions subscription
               ON subscription.TenantSubscriptionId=claimed.TenantSubscriptionId
@@ -101,6 +119,20 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
               JOIN billing.BillableServices serviceValue ON serviceValue.BillableServiceId=addOn.BillableServiceId
               WHERE serviceValue.Code=N'payroll_employee_pack' AND serviceValue.IsActive=1 AND addOn.IsActive=1) payrollPack
             CROSS JOIN billing.PlatformBillingSettings settings
+            OUTER APPLY(
+              SELECT TOP(1) renewal.TargetPeriodEnd
+              FROM billing.TenantSubscriptionRenewalOrders renewal
+              WHERE renewal.TenantSubscriptionId=subscription.TenantSubscriptionId
+                AND renewal.IsCurrent=1
+              ORDER BY renewal.TargetPeriodStart DESC) latest
+            CROSS APPLY(SELECT CASE WHEN latest.TargetPeriodEnd>subscription.CurrentPeriodEnd
+                THEN latest.TargetPeriodEnd ELSE subscription.CurrentPeriodEnd END AS StartAt) nextPeriod
+            OUTER APPLY(
+              SELECT TOP(1) renewal.TargetPeriodStart
+              FROM billing.TenantSubscriptionRenewalOrders renewal
+              WHERE renewal.TenantSubscriptionId=subscription.TenantSubscriptionId AND renewal.IsCurrent=1
+                AND renewal.Status IN(N'Draft',N'PendingPayment',N'PaymentFailed',N'Expired')
+              ORDER BY renewal.TargetPeriodStart) unpaid
             WHERE settings.PlatformBillingSettingId=1
               AND subscription.Status IN(N'Active',N'PastDue',N'Suspended');
             """, connection, transaction);
@@ -117,7 +149,8 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
                     reader.GetInt32(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11),
                     reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15),
                     reader.GetInt32(16), reader.GetInt32(17), reader.GetBoolean(18),
-                    reader.GetInt32(19), reader.GetInt32(20), reader.GetInt32(21), reader.GetString(22)));
+                    reader.GetInt32(19), reader.GetInt32(20), reader.GetInt32(21), reader.GetString(22),
+                    reader.GetFieldValue<DateTimeOffset>(23),reader.GetFieldValue<DateTimeOffset>(24)));
             }
             await reader.DisposeAsync();
             await transaction.CommitAsync(cancellationToken);
@@ -148,20 +181,21 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
         {
             await using var command = new SqlCommand("""
                 DECLARE @CurrentEnd datetimeoffset(7),@Status nvarchar(24),@PlanId uniqueidentifier,
-                        @ExistingOrderId uniqueidentifier,@DueAt datetimeoffset(7),@DaysOverdue int,
+                        @ExistingOrderId uniqueidentifier,@OrderStatus nvarchar(24),@DueAt datetimeoffset(7),
                         @ConfiguredPreDue int,@ConfiguredInterval int,@ConfiguredGrace int,
                         @ConfiguredEmail bit,@ConfiguredTimeZone nvarchar(100),
-                        @JobSubscriptionId uniqueidentifier;
+                        @JobSubscriptionId uniqueidentifier,@AnchorDay int;
 
                 SELECT @JobSubscriptionId=TenantSubscriptionId
                 FROM dbo.ScheduledAutomationJobs WITH(UPDLOCK,HOLDLOCK)
                 WHERE ScheduledAutomationJobId=@ScheduledJobId AND JobType=2 AND Status=1;
-                IF @JobSubscriptionId<>@SubscriptionId RETURN;
+                IF @JobSubscriptionId IS NULL OR @JobSubscriptionId<>@SubscriptionId RETURN;
 
-                SELECT @CurrentEnd=CurrentPeriodEnd,@Status=Status
+                SELECT @CurrentEnd=CurrentPeriodEnd,@Status=Status,@AnchorDay=BillingAnchorDay
                 FROM billing.TenantSubscriptions WITH(UPDLOCK,HOLDLOCK)
                 WHERE TenantSubscriptionId=@SubscriptionId AND TenantId=@TenantId
-                  AND Status IN(N'Active',N'PastDue',N'Suspended');
+                  AND Status IN(N'Active',N'PastDue',N'Suspended')
+                  AND EXISTS(SELECT 1 FROM dbo.Tenants WHERE TenantId=@TenantId AND IsActive=1);
                 SELECT @ConfiguredPreDue=PreDueReminderDays,@ConfiguredInterval=OverdueReminderIntervalDays,
                        @ConfiguredGrace=GracePeriodDays,@ConfiguredEmail=EmailRemindersEnabled,
                        @ConfiguredTimeZone=BillingTimeZoneId
@@ -170,8 +204,14 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
                 IF @ConfiguredGrace IS NULL THROW 51090,N'La política global de cobranza no está configurada.',1;
                 IF @CurrentEnd IS NULL
                 BEGIN
+                    DECLARE @ManuallyInactive bit=CONVERT(bit,CASE WHEN EXISTS(
+                      SELECT 1 FROM billing.TenantSubscriptions subscription
+                      JOIN dbo.Tenants tenant ON tenant.TenantId=subscription.TenantId AND tenant.IsActive=0
+                      WHERE subscription.TenantSubscriptionId=@SubscriptionId AND subscription.TenantId=@TenantId
+                        AND subscription.Status IN(N'Active',N'PastDue',N'Suspended')) THEN 1 ELSE 0 END);
                     UPDATE dbo.ScheduledAutomationJobs
-                    SET Status=3,LockedUntilUtc=NULL,LastError=N'La suscripción ya no es evaluable',UpdatedAt=@Now
+                    SET Status=CASE WHEN @ManuallyInactive=1 THEN 0 ELSE 3 END,LockedUntilUtc=NULL,
+                      LastError=CASE WHEN @ManuallyInactive=1 THEN NULL ELSE N'La suscripción ya no es evaluable' END,UpdatedAt=@Now
                     WHERE ScheduledAutomationJobId=@ScheduledJobId;
                     RETURN;
                 END;
@@ -195,9 +235,16 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
                     RETURN;
                 END;
 
-                SELECT @ExistingOrderId=TenantSubscriptionRenewalOrderId,@DueAt=DueAt
+                SELECT @ExistingOrderId=TenantSubscriptionRenewalOrderId,@DueAt=DueAt,@OrderStatus=Status
                 FROM billing.TenantSubscriptionRenewalOrders WITH(UPDLOCK,HOLDLOCK)
-                WHERE TenantSubscriptionId=@SubscriptionId AND TargetPeriodStart=@CurrentEnd AND IsCurrent=1;
+                WHERE TenantSubscriptionId=@SubscriptionId AND TargetPeriodStart=@RenewalStart AND IsCurrent=1;
+
+                IF @OrderStatus IN(N'PaymentConfirmed',N'Invoicing',N'Activated',N'Cancelled')
+                BEGIN
+                    UPDATE dbo.ScheduledAutomationJobs SET Status=0,ScheduledAtUtc=@Now,
+                        LockedUntilUtc=NULL,UpdatedAt=@Now WHERE ScheduledAutomationJobId=@ScheduledJobId;
+                    RETURN;
+                END;
 
                 IF @ExistingOrderId IS NULL
                 BEGIN
@@ -213,12 +260,13 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
                        MonthlySubtotal,Periods,DiscountRate,DiscountAmount,TaxAmount,PayableAmount,
                        FullUserLimit,SellerUserLimit,PosDeviceLimit,DianDocumentMonthlyLimit,PayrollEmployeeLimit,
                        LinesJson,OrderHash,CreatedByUserId,CreatedAt,UpdatedAt)
-                    VALUES(@OrderId,@SubscriptionId,1,1,N'Draft',@CurrentEnd,DATEADD(month,@Periods,@CurrentEnd),
-                       @CurrentEnd,@PlanId,@BillingPeriod,N'COP',@MonthlySubtotal,@Periods,@DiscountRate,
+                    VALUES(@OrderId,@SubscriptionId,1,1,N'Draft',@RenewalStart,
+                       billing.TenantSubscriptionPeriodBoundary(@RenewalStart,@Periods,@AnchorDay),
+                       @RenewalStart,@PlanId,@BillingPeriod,N'COP',@MonthlySubtotal,@Periods,@DiscountRate,
                        @DiscountAmount,@TaxAmount,@PayableAmount,@FullUsers,@SellerUsers,@PosDevices,
                        @DianDocuments,@PayrollEmployees,@LinesJson,@OrderHash,NULL,@Now,@Now);
                     SET @ExistingOrderId=@OrderId;
-                    SET @DueAt=@CurrentEnd;
+                    SET @DueAt=@RenewalStart;
                 END;
 
                 IF @TargetStatus IS NOT NULL
@@ -277,6 +325,7 @@ public sealed class SqlTenantSubscriptionLifecycleStore(ApplicationDbContext db)
             Add(command, "@SubscriptionId", candidate.SubscriptionId);
             Add(command, "@TenantId", candidate.TenantId);
             Add(command, "@ExpectedPeriodEnd", candidate.CurrentPeriodEnd);
+            Add(command, "@RenewalStart", candidate.RenewalPeriodStart ?? candidate.CurrentPeriodEnd);
             Add(command, "@ExpectedPreDue", candidate.PreDueReminderDays);
             Add(command, "@ExpectedInterval", candidate.OverdueReminderIntervalDays);
             Add(command, "@ExpectedGrace", candidate.GracePeriodDays);

@@ -1,15 +1,8 @@
 import { expect, test } from "@playwright/test";
+import { realAccountingWorkspace } from "./support/real-accounting-workspace";
 
 test("el soporte de cada factura adicional sigue la configuración de su proveedor", async ({ page }) => {
-  const username = process.env.AURALY_E2E_USERNAME ?? "admin";
-  const password = process.env.AURALY_E2E_PASSWORD ?? "";
-  test.skip(!password, "Configura AURALY_E2E_PASSWORD para probar la interfaz contra DEV.");
-  await page.goto("/login");
-  await page.locator("#tenantKey").fill(process.env.AURALY_E2E_TENANT_KEY ?? "@auraly");
-  await page.locator("#username").fill(username);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /Iniciar sesi.n/ }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\/|$)/, { timeout: 60_000 });
+  await realAccountingWorkspace(page);
 
   const supplier = {
     partyId: "11111111-1111-1111-1111-111111111111",

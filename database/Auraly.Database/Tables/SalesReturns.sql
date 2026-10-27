@@ -82,6 +82,11 @@ CREATE INDEX [IX_SalesReturns_Business_Returned]
   ON [dbo].[SalesReturns] ([BusinessId],[ReturnedAt],[ReturnId]);
 GO
 
+CREATE INDEX [IX_SalesReturns_WorkSession_Business]
+  ON [dbo].[SalesReturns] ([WorkSessionId],[BusinessId])
+  INCLUDE ([Status],[DocumentNumber],[RefundMethodCode],[TotalAmount]);
+GO
+
 CREATE TABLE [dbo].[SalesReturnLines]
 (
     [ReturnId] UNIQUEIDENTIFIER NOT NULL,
@@ -236,18 +241,39 @@ CREATE TABLE [dbo].[CustomerCredits]
 (
     [CustomerCreditId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [CustomerId] UNIQUEIDENTIFIER NOT NULL,
-    [SourceReturnId] UNIQUEIDENTIFIER NOT NULL,
+    [CustomerId] UNIQUEIDENTIFIER NULL,
+    [SourceReturnId] UNIQUEIDENTIFIER NULL,
     [OriginalAmount] DECIMAL(19,4) NOT NULL,
     [AvailableAmount] DECIMAL(19,4) NOT NULL,
     [Status] NVARCHAR(16) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
+    [PartyId] UNIQUEIDENTIFIER NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NULL,
+    [SourceDocumentId] UNIQUEIDENTIFIER NULL,
+    [SourceDocumentType] NVARCHAR(64) NULL,
+    [SourceLineId] UNIQUEIDENTIFIER NULL,
+    [CreditNature] NVARCHAR(16) NULL,
+    [CurrencyCode] CHAR(3) NULL,
+    [OpeningEntryId] UNIQUEIDENTIFIER NULL,
+    [OpeningEntryLineNumber] INT NULL,
     CONSTRAINT [PK_CustomerCredits] PRIMARY KEY CLUSTERED ([CustomerCreditId]),
     CONSTRAINT [FK_CustomerCredits_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_CustomerCredits_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
     CONSTRAINT [FK_CustomerCredits_Return] FOREIGN KEY ([SourceReturnId]) REFERENCES [dbo].[SalesReturns] ([ReturnId]),
-    CONSTRAINT [UQ_CustomerCredits_SourceReturn] UNIQUE ([SourceReturnId]),
+    CONSTRAINT [FK_CustomerCredits_Party] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties]([PartyId]),
+    CONSTRAINT [FK_CustomerCredits_Site] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites]([PartySiteId]),
+    CONSTRAINT [FK_CustomerCredits_OpeningEntryLine] FOREIGN KEY ([OpeningEntryId],[OpeningEntryLineNumber]) REFERENCES [dbo].[AccountingEntryLines]([EntryId],[LineNumber]),
+    CONSTRAINT [CK_CustomerCredits_OpeningEntryLine] CHECK (([OpeningEntryId] IS NULL AND [OpeningEntryLineNumber] IS NULL)
+      OR ([OpeningEntryId] IS NOT NULL AND [OpeningEntryLineNumber] IS NOT NULL)),
+    CONSTRAINT [CK_CustomerCredits_Nature] CHECK ([CreditNature] IN(N'Credit',N'Advance')),
+    CONSTRAINT [CK_CustomerCredits_Party] CHECK (([CustomerId] IS NOT NULL AND [PartyId] IS NULL)
+      OR ([CustomerId] IS NULL AND [PartyId] IS NOT NULL AND [PartySiteId] IS NULL AND [SourceReturnId] IS NULL)),
+    CONSTRAINT [CK_CustomerCredits_Source] CHECK (
+      ([SourceReturnId] IS NOT NULL AND [SourceDocumentId] IS NULL AND [SourceDocumentType] IS NULL AND [SourceLineId] IS NULL)
+      OR ([SourceReturnId] IS NULL AND [SourceDocumentId] IS NOT NULL AND [SourceDocumentType] IS NOT NULL
+        AND [SourceDocumentType]=N'ManualAccountingVoucher' AND [SourceLineId] IS NOT NULL
+        AND [SourceLineId]<>'00000000-0000-0000-0000-000000000000')),
     CONSTRAINT [CK_CustomerCredits_Amounts] CHECK
       ([OriginalAmount]>0 AND [AvailableAmount]>=0 AND [AvailableAmount]<=[OriginalAmount]),
     CONSTRAINT [CK_CustomerCredits_Status] CHECK ([Status] IN (N'Open',N'Applied',N'Exhausted'))
@@ -255,4 +281,40 @@ CREATE TABLE [dbo].[CustomerCredits]
 GO
 CREATE INDEX [IX_CustomerCredits_Business_Customer_Status]
   ON [dbo].[CustomerCredits] ([BusinessId],[CustomerId],[Status]);
+GO
+CREATE UNIQUE INDEX [UQ_CustomerCredits_SourceReturn] ON [dbo].[CustomerCredits]([SourceReturnId]) WHERE [SourceReturnId] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_CustomerCredits_SourceDocument] ON [dbo].[CustomerCredits]([SourceDocumentId],[SourceDocumentType],[SourceLineId]) WHERE [SourceDocumentId] IS NOT NULL;
+GO
+CREATE INDEX [IX_CustomerCredits_Business_Party] ON [dbo].[CustomerCredits]([BusinessId],[PartyId],[Status]) WHERE [PartyId] IS NOT NULL;
+GO
+
+CREATE TABLE [dbo].[CustomerCreditTransactions]
+(
+    [CustomerCreditTransactionId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+    [CustomerCreditId] UNIQUEIDENTIFIER NOT NULL REFERENCES [dbo].[CustomerCredits]([CustomerCreditId]),
+    [TransactionType] NVARCHAR(24) NOT NULL,
+    [Amount] DECIMAL(19,4) NOT NULL,
+    [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [SourceDocumentType] NVARCHAR(64) NOT NULL,
+    [SourceLineId] UNIQUEIDENTIFIER NULL,
+    [AppliedPositionTransactionId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[ReceivableTransactions]([ReceivableTransactionId]),
+    [ReversesTransactionId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[CustomerCreditTransactions]([CustomerCreditTransactionId]),
+    [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [FK_CustomerCreditTransactions_SourceJob] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType])
+      REFERENCES [dbo].[AccountingPostingJobs]([SourceDocumentId],[SourceDocumentType]),
+    CONSTRAINT [UQ_CustomerCreditTransactions_Source] UNIQUE ([CustomerCreditId],[SourceDocumentId],[SourceDocumentType],[SourceLineId],[TransactionType],[AppliedPositionTransactionId]),
+    CONSTRAINT [CK_CustomerCreditTransactions_Type] CHECK (([TransactionType]=N'Opening' AND [AppliedPositionTransactionId] IS NULL AND [ReversesTransactionId] IS NULL)
+      OR ([TransactionType]=N'Application' AND [AppliedPositionTransactionId] IS NOT NULL AND [ReversesTransactionId] IS NULL AND [SourceLineId] IS NOT NULL AND [SourceDocumentType]=N'ManualAccountingVoucher')
+      OR ([TransactionType]=N'Unapplication' AND [AppliedPositionTransactionId] IS NOT NULL AND [ReversesTransactionId] IS NOT NULL AND [SourceLineId] IS NOT NULL AND [SourceDocumentType]=N'ManualAccountingVoucher')),
+    CONSTRAINT [CK_CustomerCreditTransactions_Amount] CHECK ([Amount]>0),
+    CONSTRAINT [CK_CustomerCreditTransactions_Line] CHECK ([SourceLineId] IS NULL OR [SourceLineId]<>'00000000-0000-0000-0000-000000000000')
+);
+GO
+CREATE UNIQUE INDEX [UX_CustomerCreditTransactions_Opening] ON [dbo].[CustomerCreditTransactions]([CustomerCreditId]) WHERE [TransactionType]=N'Opening';
+GO
+CREATE UNIQUE INDEX [UX_CustomerCreditTransactions_PositionTransaction] ON [dbo].[CustomerCreditTransactions]([AppliedPositionTransactionId]) WHERE [AppliedPositionTransactionId] IS NOT NULL;
+GO
+CREATE INDEX [IX_CustomerCreditTransactions_Source] ON [dbo].[CustomerCreditTransactions]([SourceDocumentId],[SourceDocumentType]) INCLUDE([CustomerCreditId],[Amount],[SourceLineId]);
 GO

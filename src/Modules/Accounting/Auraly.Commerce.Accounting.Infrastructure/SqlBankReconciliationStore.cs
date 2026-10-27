@@ -1,6 +1,8 @@
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Globalization;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
@@ -11,26 +13,34 @@ public sealed class SqlBankReconciliationStore(
     AccountingSqlConnectionFactory connections,
     TimeProvider timeProvider) : IBankReconciliationStore
 {
-    public async Task<IReadOnlyList<BankReconciliationSummaryView>> ListAsync(
-        AccountingUserIdentity user, CancellationToken cancellationToken)
+    public async Task<BankReconciliationPage> ListAsync(
+        AccountingUserIdentity user, BankReconciliationQuery query, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        if (!await HasCompleteBusinessScopeAsync(connection, user, null,
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        if (!await HasCompleteBusinessScopeAsync(connection, transaction, user, null,
                 AccountingPermissionCodes.BankReconciliationRead, cancellationToken))
             throw new AccountingForbiddenException("No tienes permiso de conciliación sobre todas las sedes que usan las cuentas bancarias conciliadas.");
-        return await ReadSummariesAsync(connection, null, user, cancellationToken);
+        var result = await ReadSummariesAsync(connection, transaction, user, cancellationToken, query: query);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     public async Task<BankReconciliationDetailView?> GetAsync(
-        AccountingUserIdentity user, Guid reconciliationId, CancellationToken cancellationToken)
+        AccountingUserIdentity user, Guid reconciliationId, BankReconciliationDetailQuery query, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        if (!await HasCompleteBusinessScopeAsync(connection, user, reconciliationId,
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        if (!await HasCompleteBusinessScopeAsync(connection, transaction, user, reconciliationId,
                 AccountingPermissionCodes.BankReconciliationRead, cancellationToken))
             throw new AccountingForbiddenException("No tienes permiso de conciliación sobre todas las sedes que usan esta cuenta bancaria.");
-        return await ReadDetailAsync(connection, null, user, reconciliationId, cancellationToken);
+        var result = await ReadDetailAsync(connection, transaction, user, reconciliationId, cancellationToken, query);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     public async Task<BankReconciliationDetailView> ImportAsync(
@@ -62,20 +72,10 @@ public sealed class SqlBankReconciliationStore(
                 IF NOT EXISTS(SELECT 1 FROM accounting.BankAccounts b WITH(UPDLOCK,HOLDLOCK)
                   WHERE b.BankAccountId=@BankAccountId AND b.TenantId=@TenantId AND b.IsActive=1)
                   THROW 51501,N'La cuenta bancaria no existe o está inactiva.',1;
-                IF EXISTS(SELECT 1 FROM accounting.BankAccounts currentBank
-                  JOIN accounting.BankAccounts otherBank ON otherBank.TenantId=currentBank.TenantId
-                    AND otherBank.AccountingAccountId=currentBank.AccountingAccountId
-                    AND otherBank.BankAccountId<>currentBank.BankAccountId
-                  WHERE currentBank.BankAccountId=@BankAccountId)
-                  THROW 51501,N'El auxiliar PUC está compartido por varias cuentas bancarias. Asigna un auxiliar exclusivo antes de conciliar.',1;
-                IF EXISTS(SELECT 1 FROM accounting.BankAccounts currentBank
-                  JOIN dbo.AccountingEntryLines bankLine ON bankLine.AccountId=currentBank.AccountingAccountId
-                  JOIN dbo.AccountingEntries bankEntry ON bankEntry.EntryId=bankLine.EntryId AND bankEntry.TenantId=currentBank.TenantId
-                  WHERE currentBank.BankAccountId=@BankAccountId AND NOT EXISTS(
-                    SELECT 1 FROM dbo.UserRoles ur JOIN dbo.AppRoles role ON role.RoleId=ur.RoleId AND role.IsActive=1
-                    JOIN dbo.RolePermissions rp ON rp.RoleId=role.RoleId JOIN dbo.Permissions permission ON permission.PermissionId=rp.PermissionId
-                    WHERE ur.UserId=@UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=bankEntry.BusinessId)
-                      AND (role.TenantId IS NULL OR role.TenantId=@TenantId) AND permission.Resource=@ScopePermission))
+                IF NOT EXISTS(SELECT 1 FROM accounting.BankBookAccounts(@TenantId,@BankAccountId))
+                  THROW 51501,N'Vincula al banco al menos un auxiliar bancario desde el PUC antes de conciliar.',1;
+                IF EXISTS(SELECT 1 FROM accounting.BankInaccessibleBusinesses(
+                    @TenantId,@BankAccountId,@UserId,@ScopePermission))
                   THROW 51506,N'No tienes permiso de conciliación sobre todas las sedes que usan esta cuenta bancaria.',1;
                 IF EXISTS(SELECT 1 FROM accounting.BankReconciliations WITH(UPDLOCK,HOLDLOCK)
                   WHERE TenantId=@TenantId AND BankAccountId=@BankAccountId
@@ -97,7 +97,8 @@ public sealed class SqlBankReconciliationStore(
                   JOIN accounting.BankAccounts priorBank ON priorBank.BankAccountId=prior.BankAccountId
                   JOIN dbo.AccountingEntries e ON e.TenantId=prior.TenantId
                     AND CAST(e.OccurredAt AS date)<=prior.PeriodTo AND e.PostedAt>lastClose.OccurredAt
-                  JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId AND l.AccountId=priorBank.AccountingAccountId
+                  JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId AND l.AccountId IN(
+                    SELECT AccountId FROM accounting.BankBookAccounts(priorBank.TenantId,priorBank.BankAccountId))
                   WHERE prior.TenantId=@TenantId AND prior.BankAccountId=@BankAccountId AND prior.Status=N'Closed')
                   THROW 51502,N'Una conciliación anterior recibió movimientos contables retroactivos. Reábrela y revísala antes de continuar.',1;
                 INSERT accounting.BankReconciliations
@@ -113,27 +114,34 @@ public sealed class SqlBankReconciliationStore(
                 header.Parameters.AddWithValue("@ScopePermission", AccountingPermissionCodes.BankReconciliationManage);
                 await header.ExecuteNonQueryAsync(cancellationToken);
             }
-            foreach (var line in request.Lines.OrderBy(value => value.LineNumber))
+            var lines = request.Lines.Select(line => new
             {
-                var fingerprint = SHA256.HashData(Encoding.UTF8.GetBytes(
-                    $"{line.LineNumber}|{line.TransactionDate:yyyy-MM-dd}|{line.Amount:0.0000}|{line.Reference?.Trim()}|{line.Description.Trim()}"));
-                await using var insert = new SqlCommand("""
+                StatementLineId = Guid.NewGuid(), line.LineNumber,
+                TransactionDate = line.TransactionDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                Description = line.Description.Trim(), Reference = line.Reference?.Trim(), line.Amount, line.Balance,
+                Fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(FormattableString.Invariant(
+                    $"{line.LineNumber}|{line.TransactionDate:yyyy-MM-dd}|{line.Amount:0.0000}|{line.Reference?.Trim()}|{line.Description.Trim()}"))))
+            }).ToArray();
+            await using (var insert = new SqlCommand("""
                     INSERT accounting.BankStatementLines
                     (StatementLineId,ReconciliationId,LineNumber,TransactionDate,Description,Reference,Amount,Balance,Fingerprint)
-                    VALUES(@StatementLineId,@ReconciliationId,@LineNumber,@TransactionDate,@Description,@Reference,@Amount,@Balance,@Fingerprint);
-                    """, connection, transaction);
-                insert.Parameters.AddWithValue("@StatementLineId", Guid.NewGuid());
+                    SELECT StatementLineId,@ReconciliationId,LineNumber,TransactionDate,Description,Reference,Amount,Balance,
+                      CONVERT(binary(32),Fingerprint,2)
+                    FROM OPENJSON(@Lines) WITH(StatementLineId uniqueidentifier,LineNumber int,
+                      TransactionDate date,Description nvarchar(1000),Reference nvarchar(200),
+                      Amount decimal(19,4),Balance decimal(19,4),Fingerprint varchar(64));
+                    IF @@ROWCOUNT<>@ExpectedCount THROW 51501,N'No se importaron todas las líneas del extracto.',1;
+                    """, connection, transaction))
+            {
                 insert.Parameters.AddWithValue("@ReconciliationId", request.ReconciliationId);
-                insert.Parameters.AddWithValue("@LineNumber", line.LineNumber);
-                insert.Parameters.AddWithValue("@TransactionDate", line.TransactionDate.ToDateTime(TimeOnly.MinValue));
-                insert.Parameters.AddWithValue("@Description", line.Description.Trim());
-                insert.Parameters.AddWithValue("@Reference", (object?)line.Reference?.Trim() ?? DBNull.Value);
-                AddMoney(insert, "@Amount", line.Amount);
-                AddNullableMoney(insert, "@Balance", line.Balance);
-                insert.Parameters.Add("@Fingerprint", SqlDbType.Binary, 32).Value = fingerprint;
+                insert.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(lines);
+                insert.Parameters.AddWithValue("@ExpectedCount", lines.Length);
                 await insert.ExecuteNonQueryAsync(cancellationToken);
             }
+            var result = await ReadDetailAsync(connection, transaction, user, request.ReconciliationId, cancellationToken)
+                ?? throw new AccountingForbiddenException("No tienes permiso de consulta sobre todas las sedes de la conciliación importada.");
             await transaction.CommitAsync(cancellationToken);
+            return result;
         }
         catch (SqlException exception) when (exception.Number is 51501 or 51502 or 51506 or 2601 or 2627)
         {
@@ -142,8 +150,6 @@ public sealed class SqlBankReconciliationStore(
                 throw new AccountingForbiddenException(exception.Message);
             throw new AccountingConflictException(exception.Message);
         }
-        var result = await GetAsync(user, request.ReconciliationId, cancellationToken);
-        return result ?? throw new AccountingConflictException("No fue posible recuperar la conciliación importada.");
     }
 
     public Task<BankReconciliationDetailView> AllocateAsync(
@@ -152,16 +158,14 @@ public sealed class SqlBankReconciliationStore(
         MutateAsync(user, reconciliationId, request.RowVersion, async (connection, transaction) =>
         {
             await using var command = new SqlCommand("""
-                DECLARE @StatementAmount decimal(19,4),@BookAmount decimal(19,4),@AccountId uniqueidentifier;
+                DECLARE @StatementAmount decimal(19,4),@BookAmount decimal(19,4);
                 SELECT @StatementAmount=s.Amount FROM accounting.BankStatementLines s WITH(UPDLOCK,HOLDLOCK)
                 WHERE s.StatementLineId=@StatementLineId AND s.ReconciliationId=@ReconciliationId;
-                SELECT @AccountId=b.AccountingAccountId FROM accounting.BankReconciliations r
-                  JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId
-                WHERE r.ReconciliationId=@ReconciliationId;
                 SELECT @BookAmount=l.Debit-l.Credit FROM dbo.AccountingEntryLines l WITH(UPDLOCK,HOLDLOCK)
                   JOIN dbo.AccountingEntries e ON e.EntryId=l.EntryId
                   JOIN accounting.BankReconciliations r ON r.ReconciliationId=@ReconciliationId
-                WHERE l.EntryId=@EntryId AND l.LineNumber=@EntryLineNumber AND l.AccountId=@AccountId
+                WHERE l.EntryId=@EntryId AND l.LineNumber=@EntryLineNumber AND l.AccountId IN(
+                    SELECT AccountId FROM accounting.BankBookAccounts(r.TenantId,r.BankAccountId))
                   AND e.TenantId=r.TenantId AND CAST(e.OccurredAt AS date)<=r.PeriodTo;
                 IF @StatementAmount IS NULL OR @BookAmount IS NULL
                   THROW 51503,N'La línea bancaria o contable no pertenece a esta conciliación.',1;
@@ -210,9 +214,9 @@ public sealed class SqlBankReconciliationStore(
         MutateAsync(user, reconciliationId, request.RowVersion, async (connection, transaction) =>
         {
             await using var command = new SqlCommand("""
-                DECLARE @BankAccountId uniqueidentifier,@AccountId uniqueidentifier,@From date,@To date,@Opening decimal(19,4),@Closing decimal(19,4),
+                DECLARE @BankAccountId uniqueidentifier,@From date,@To date,@Opening decimal(19,4),@Closing decimal(19,4),
                         @BookClosing decimal(19,4),@Cutoff datetimeoffset(7);
-                SELECT @BankAccountId=b.BankAccountId,@AccountId=b.AccountingAccountId,@From=r.PeriodFrom,@To=r.PeriodTo,
+                SELECT @BankAccountId=b.BankAccountId,@From=r.PeriodFrom,@To=r.PeriodTo,
                        @Opening=r.OpeningBalance,@Closing=r.ClosingBalance
                 FROM accounting.BankReconciliations r JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId
                 WHERE r.ReconciliationId=@ReconciliationId;
@@ -222,7 +226,8 @@ public sealed class SqlBankReconciliationStore(
                   WHERE job.TenantId=@TenantId AND job.AccountingEntryRequired=1
                     AND CAST(job.OccurredAt AS date)<=@To AND job.Status<>N'Posted'
                     AND (CHARINDEX(CONVERT(nvarchar(36),@BankAccountId),source.PayloadJson)>0
-                      OR CHARINDEX(CONVERT(nvarchar(36),@AccountId),source.PayloadJson)>0))
+                      OR EXISTS(SELECT 1 FROM accounting.BankBookAccounts(@TenantId,@BankAccountId) account
+                        WHERE CHARINDEX(CONVERT(nvarchar(36),account.AccountId),source.PayloadJson)>0)))
                   THROW 51505,N'Hay documentos contables pendientes que podrían afectar el corte.',1;
                 IF ABS(@Opening+COALESCE((SELECT SUM(Amount) FROM accounting.BankStatementLines WHERE ReconciliationId=@ReconciliationId),0)-@Closing)>.0001
                   THROW 51505,N'El saldo inicial, los movimientos del extracto y el saldo final no cuadran.',1;
@@ -232,16 +237,16 @@ public sealed class SqlBankReconciliationStore(
                   THROW 51505,N'Quedan movimientos del extracto sin conciliar.',1;
                 IF EXISTS(SELECT 1 FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
                   OUTER APPLY(SELECT SUM(a.Amount) Allocated FROM accounting.BankReconciliationAllocations a WHERE a.EntryId=l.EntryId AND a.EntryLineNumber=l.LineNumber AND a.ReversedAt IS NULL) x
-                  WHERE e.TenantId=@TenantId AND l.AccountId=@AccountId
+                  WHERE e.TenantId=@TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(@TenantId,@BankAccountId))
                     AND CAST(e.OccurredAt AS date)<=@To AND ABS(l.Debit-l.Credit)<>COALESCE(x.Allocated,0))
                   THROW 51505,N'Quedan movimientos contables de la cuenta bancaria sin conciliar.',1;
                 SET @BookClosing=COALESCE((SELECT SUM(l.Debit-l.Credit)
                   FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
-                  WHERE e.TenantId=@TenantId AND l.AccountId=@AccountId AND CAST(e.OccurredAt AS date)<=@To),0);
+                  WHERE e.TenantId=@TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(@TenantId,@BankAccountId)) AND CAST(e.OccurredAt AS date)<=@To),0);
                 IF ABS(@BookClosing-@Closing)>.0001 THROW 51505,N'El saldo del banco y el saldo contable no cuadran.',1;
                 SET @Cutoff=(SELECT MAX(e.PostedAt) FROM dbo.AccountingEntries e
                   JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
-                  WHERE e.TenantId=@TenantId AND l.AccountId=@AccountId AND CAST(e.OccurredAt AS date)<=@To);
+                  WHERE e.TenantId=@TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(@TenantId,@BankAccountId)) AND CAST(e.OccurredAt AS date)<=@To);
                 UPDATE accounting.BankReconciliations SET Status=N'Closed',ClosedByUserId=@UserId,ClosedAt=@Now,
                   UpdatedByUserId=@UserId,UpdatedAt=@Now WHERE ReconciliationId=@ReconciliationId;
                 INSERT accounting.BankReconciliationStatusEvents
@@ -292,14 +297,9 @@ public sealed class SqlBankReconciliationStore(
                     AND RowVersion=@RowVersion {(allowClosed ? "" : "AND Status IN(N'Preparation',N'Reopened')")})
                   THROW 51500,N'La conciliación cambió, no pertenece a la sede o no admite cambios.',1;
                 IF EXISTS(SELECT 1 FROM accounting.BankReconciliations reconciliation
-                  JOIN accounting.BankAccounts bank ON bank.BankAccountId=reconciliation.BankAccountId
-                  JOIN dbo.AccountingEntryLines bankLine ON bankLine.AccountId=bank.AccountingAccountId
-                  JOIN dbo.AccountingEntries bankEntry ON bankEntry.EntryId=bankLine.EntryId AND bankEntry.TenantId=reconciliation.TenantId
-                  WHERE reconciliation.ReconciliationId=@ReconciliationId AND NOT EXISTS(
-                    SELECT 1 FROM dbo.UserRoles ur JOIN dbo.AppRoles role ON role.RoleId=ur.RoleId AND role.IsActive=1
-                    JOIN dbo.RolePermissions rp ON rp.RoleId=role.RoleId JOIN dbo.Permissions permission ON permission.PermissionId=rp.PermissionId
-                    WHERE ur.UserId=@UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=bankEntry.BusinessId)
-                      AND (role.TenantId IS NULL OR role.TenantId=@TenantId) AND permission.Resource=@ScopePermission))
+                  CROSS APPLY accounting.BankInaccessibleBusinesses(
+                    @TenantId,reconciliation.BankAccountId,@UserId,@ScopePermission) denied
+                  WHERE reconciliation.ReconciliationId=@ReconciliationId AND reconciliation.TenantId=@TenantId)
                   THROW 51506,N'No tienes permiso de conciliación sobre todas las sedes que usan esta cuenta bancaria.',1;
                 """, connection, transaction))
             {
@@ -317,7 +317,10 @@ public sealed class SqlBankReconciliationStore(
                 WHERE ReconciliationId=@ReconciliationId;
                 """, connection, transaction))
             { AddMutationParameters(touch, user, reconciliationId); await touch.ExecuteNonQueryAsync(cancellationToken); }
+            var result = await ReadDetailAsync(connection, transaction, user, reconciliationId, cancellationToken)
+                ?? throw new AccountingForbiddenException("No tienes permiso de consulta sobre todas las sedes de esta conciliación.");
             await transaction.CommitAsync(cancellationToken);
+            return result;
         }
         catch (SqlException exception) when (exception.Number is >= 51500 and <= 51506 or 2601 or 2627)
         {
@@ -326,103 +329,249 @@ public sealed class SqlBankReconciliationStore(
                 : exception.Number == 51506 ? new AccountingForbiddenException(exception.Message)
                 : new AccountingValidationException(exception.Message);
         }
-        return await GetAsync(user, reconciliationId, cancellationToken)
-            ?? throw new AccountingConflictException("La conciliación ya no está disponible.");
     }
 
     private async Task<BankReconciliationDetailView?> ReadDetailAsync(
         SqlConnection connection, SqlTransaction? transaction, AccountingUserIdentity user,
-        Guid reconciliationId, CancellationToken cancellationToken)
+        Guid reconciliationId, CancellationToken cancellationToken, BankReconciliationDetailQuery? query = null)
     {
-        var summaries = await ReadSummariesAsync(connection, transaction, user, cancellationToken, reconciliationId);
-        var summary = summaries.SingleOrDefault(); if (summary is null) return null;
+        query ??= new();
+        var summaries = await ReadSummariesAsync(connection, transaction, user, cancellationToken, reconciliationId,
+            new(PageSize: 1));
+        var summary = summaries.Items.SingleOrDefault();
+        if (summary is null) return null;
         var statement = new List<BankStatementLineView>();
+        int statementCount;
         await using (var command = new SqlCommand("""
+            SELECT COUNT(*) FROM accounting.BankStatementLines
+            WHERE ReconciliationId=@Id AND (@StatementSearch IS NULL OR Description LIKE @StatementSearch ESCAPE N'~'
+              OR Reference LIKE @StatementSearch ESCAPE N'~');
+            WITH SelectedLines AS(
+              SELECT StatementLineId FROM accounting.BankStatementLines
+              WHERE ReconciliationId=@Id AND (@StatementSearch IS NULL OR Description LIKE @StatementSearch ESCAPE N'~'
+                OR Reference LIKE @StatementSearch ESCAPE N'~')
+              ORDER BY LineNumber,StatementLineId OFFSET @StatementOffset ROWS FETCH NEXT @PageSize ROWS ONLY
+            )
             SELECT s.StatementLineId,s.LineNumber,s.TransactionDate,s.Description,s.Reference,s.Amount,s.Balance,
-                   COALESCE(SUM(CASE WHEN a.ReversedAt IS NULL THEN a.Amount ELSE 0 END),0) Allocated
-            FROM accounting.BankStatementLines s LEFT JOIN accounting.BankReconciliationAllocations a ON a.StatementLineId=s.StatementLineId
-            WHERE s.ReconciliationId=@Id GROUP BY s.StatementLineId,s.LineNumber,s.TransactionDate,s.Description,s.Reference,s.Amount,s.Balance
-            ORDER BY s.LineNumber;
+                   COALESCE(a.Allocated,0)
+            FROM SelectedLines selected JOIN accounting.BankStatementLines s ON s.StatementLineId=selected.StatementLineId
+            OUTER APPLY(SELECT SUM(Amount) Allocated FROM accounting.BankReconciliationAllocations
+              WHERE StatementLineId=s.StatementLineId AND ReversedAt IS NULL) a
+            ORDER BY s.LineNumber,s.StatementLineId;
             """, connection, transaction))
         {
-            command.Parameters.AddWithValue("@Id", reconciliationId);
+            AddDetailParameters(command, reconciliationId, query);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            statementCount = reader.GetInt32(0);
+            await reader.NextResultAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
-            { var allocated=reader.GetDecimal(7); statement.Add(new(reader.GetGuid(0),reader.GetInt32(1),DateOnly.FromDateTime(reader.GetDateTime(2)),reader.GetString(3),reader.IsDBNull(4)?null:reader.GetString(4),reader.GetDecimal(5),reader.IsDBNull(6)?null:reader.GetDecimal(6),allocated,allocated==Math.Abs(reader.GetDecimal(5)))); }
+            {
+                var allocated = reader.GetDecimal(7);
+                statement.Add(new(reader.GetGuid(0),reader.GetInt32(1),DateOnly.FromDateTime(reader.GetDateTime(2)),
+                    reader.GetString(3),reader.IsDBNull(4)?null:reader.GetString(4),reader.GetDecimal(5),
+                    reader.IsDBNull(6)?null:reader.GetDecimal(6),allocated,allocated==Math.Abs(reader.GetDecimal(5))));
+            }
         }
         var books = new List<BankBookLineView>();
+        int bookCount, unmatchedBookCount;
         await using (var command = new SqlCommand("""
-            SELECT e.EntryId,l.LineNumber,e.EntryNumber,e.OccurredAt,e.BusinessId,business.Name,e.SourceDocumentType,e.SourceDocumentId,l.Description,l.Debit-l.Credit,
-                   COALESCE(SUM(CASE WHEN a.ReversedAt IS NULL THEN a.Amount ELSE 0 END),0)
-            FROM accounting.BankReconciliations r JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId
-            JOIN dbo.AccountingEntries e ON e.TenantId=r.TenantId AND CAST(e.OccurredAt AS date)<=r.PeriodTo
+            -- Only keys and reconciliation amounts are materialized, scoped to this bank and cutoff.
+            -- Descriptive details are joined after the page is selected.
+            SELECT e.EntryId,l.LineNumber,e.OccurredAt,e.EntryNumber,l.Debit-l.Credit Amount,
+              COALESCE(a.Allocated,0) Allocated
+            INTO #BankBookKeys
+            FROM accounting.BankReconciliations r
+            JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId AND b.TenantId=r.TenantId
+            JOIN dbo.AccountingEntryLines l ON l.AccountId IN(
+              SELECT AccountId FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId))
+            JOIN dbo.AccountingEntries e ON e.EntryId=l.EntryId AND e.TenantId=r.TenantId
+              AND CAST(e.OccurredAt AS date)<=r.PeriodTo
+            OUTER APPLY(SELECT SUM(Amount) Allocated,
+                SUM(CASE WHEN ReconciliationId=@Id THEN 1 ELSE 0 END) InCurrent
+              FROM accounting.BankReconciliationAllocations
+              WHERE EntryId=l.EntryId AND EntryLineNumber=l.LineNumber AND ReversedAt IS NULL) a
+            WHERE r.ReconciliationId=@Id AND
+              (ABS(l.Debit-l.Credit)>COALESCE(a.Allocated,0) OR a.InCurrent>0);
+            SELECT COUNT(*) FROM #BankBookKeys WHERE ABS(Amount)>Allocated;
+            IF @BookSearch IS NOT NULL
+              DELETE k FROM #BankBookKeys k WHERE NOT EXISTS(
+                SELECT 1 FROM dbo.AccountingEntries e
+                JOIN dbo.Businesses business ON business.BusinessId=e.BusinessId AND business.TenantId=e.TenantId
+                JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId AND l.LineNumber=k.LineNumber
+                WHERE e.EntryId=k.EntryId AND (e.EntryNumber LIKE @BookSearch ESCAPE N'~'
+                  OR business.Name LIKE @BookSearch ESCAPE N'~' OR l.Description LIKE @BookSearch ESCAPE N'~'));
+            SELECT COUNT(*) FROM #BankBookKeys;
+            WITH SelectedKeys AS(
+              SELECT EntryId,LineNumber,Amount,Allocated FROM #BankBookKeys
+              ORDER BY OccurredAt,EntryNumber,EntryId,LineNumber
+              OFFSET @BookOffset ROWS FETCH NEXT @PageSize ROWS ONLY
+            )
+            SELECT e.EntryId,l.LineNumber,e.EntryNumber,e.OccurredAt,e.BusinessId,business.Name,
+              e.SourceDocumentType,e.SourceDocumentId,l.Description,k.Amount,k.Allocated
+            FROM SelectedKeys k JOIN dbo.AccountingEntries e ON e.EntryId=k.EntryId
             JOIN dbo.Businesses business ON business.BusinessId=e.BusinessId AND business.TenantId=e.TenantId
-            JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId AND l.AccountId=b.AccountingAccountId
-            LEFT JOIN accounting.BankReconciliationAllocations a ON a.EntryId=l.EntryId AND a.EntryLineNumber=l.LineNumber
-            WHERE r.ReconciliationId=@Id
-            GROUP BY e.EntryId,l.LineNumber,e.EntryNumber,e.OccurredAt,e.BusinessId,business.Name,e.SourceDocumentType,e.SourceDocumentId,l.Description,l.Debit,l.Credit
-            HAVING ABS(l.Debit-l.Credit)>COALESCE(SUM(CASE WHEN a.ReversedAt IS NULL THEN a.Amount ELSE 0 END),0)
-                OR SUM(CASE WHEN a.ReconciliationId=@Id AND a.ReversedAt IS NULL THEN 1 ELSE 0 END)>0
-            ORDER BY e.OccurredAt,e.EntryNumber,l.LineNumber;
+            JOIN dbo.AccountingEntryLines l ON l.EntryId=k.EntryId AND l.LineNumber=k.LineNumber
+            ORDER BY e.OccurredAt,e.EntryNumber,e.EntryId,l.LineNumber;
             """, connection, transaction))
         {
-            command.Parameters.AddWithValue("@Id", reconciliationId);
+            AddDetailParameters(command, reconciliationId, query);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while(await reader.ReadAsync(cancellationToken)) { var amount=reader.GetDecimal(9);var allocated=reader.GetDecimal(10);books.Add(new(reader.GetGuid(0),reader.GetInt32(1),reader.GetString(2),reader.GetDateTimeOffset(3),reader.GetGuid(4),reader.GetString(5),reader.GetString(6),reader.GetGuid(7),reader.GetString(8),amount,allocated,Math.Max(0,Math.Abs(amount)-allocated))); }
+            await reader.ReadAsync(cancellationToken);
+            unmatchedBookCount = reader.GetInt32(0);
+            await reader.NextResultAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            bookCount = reader.GetInt32(0);
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var amount = reader.GetDecimal(9);
+                var allocated = reader.GetDecimal(10);
+                books.Add(new(reader.GetGuid(0),reader.GetInt32(1),reader.GetString(2),reader.GetDateTimeOffset(3),
+                    reader.GetGuid(4),reader.GetString(5),reader.GetString(6),reader.GetGuid(7),reader.GetString(8),
+                    amount,allocated,Math.Max(0,Math.Abs(amount)-allocated)));
+            }
         }
         var allocations = new List<BankReconciliationAllocationView>();
-        await using (var command = new SqlCommand("SELECT MatchId,StatementLineId,EntryId,EntryLineNumber,Amount,CreatedAt FROM accounting.BankReconciliationAllocations WHERE ReconciliationId=@Id AND ReversedAt IS NULL ORDER BY CreatedAt,MatchId",connection,transaction))
-        { command.Parameters.AddWithValue("@Id",reconciliationId);await using var reader=await command.ExecuteReaderAsync(cancellationToken);while(await reader.ReadAsync(cancellationToken))allocations.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDateTimeOffset(5))); }
-        var events = new List<BankReconciliationStatusEventView>();
+        int allocationCount;
         await using (var command = new SqlCommand("""
+            SELECT COUNT(*) FROM accounting.BankReconciliationAllocations WHERE ReconciliationId=@Id AND ReversedAt IS NULL;
+            SELECT MatchId,StatementLineId,EntryId,EntryLineNumber,Amount,CreatedAt
+            FROM accounting.BankReconciliationAllocations WHERE ReconciliationId=@Id AND ReversedAt IS NULL
+            ORDER BY CreatedAt,MatchId OFFSET @AllocationOffset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """, connection, transaction))
+        {
+            AddDetailParameters(command, reconciliationId, query);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            allocationCount = reader.GetInt32(0);
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                allocations.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),reader.GetInt32(3),reader.GetDecimal(4),reader.GetDateTimeOffset(5)));
+        }
+        var events = new List<BankReconciliationStatusEventView>();
+        int eventCount;
+        await using (var command = new SqlCommand("""
+            SELECT COUNT(*) FROM accounting.BankReconciliationStatusEvents WHERE ReconciliationId=@Id;
+            WITH SelectedEvents AS(
+              SELECT StatusEventId FROM accounting.BankReconciliationStatusEvents WHERE ReconciliationId=@Id
+              ORDER BY OccurredAt,StatusEventId OFFSET @EventOffset ROWS FETCH NEXT @PageSize ROWS ONLY
+            )
             SELECT ev.StatusEventId,ev.Status,ev.Reason,ev.ActorUserId,
               CONCAT(u.FirstName,N' ',u.LastName),ev.OccurredAt,ev.StatementClosingBalance,
               ev.BookClosingBalance,ev.AccountingCutoffPostedAt
-            FROM accounting.BankReconciliationStatusEvents ev
+            FROM SelectedEvents selected
+            JOIN accounting.BankReconciliationStatusEvents ev ON ev.StatusEventId=selected.StatusEventId
             JOIN dbo.AppUsers u ON u.UserId=ev.ActorUserId
-            WHERE ev.ReconciliationId=@Id ORDER BY ev.OccurredAt,ev.StatusEventId;
-            """,connection,transaction))
-        { command.Parameters.AddWithValue("@Id",reconciliationId);await using var reader=await command.ExecuteReaderAsync(cancellationToken);while(await reader.ReadAsync(cancellationToken))events.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.GetDateTimeOffset(5),reader.IsDBNull(6)?null:reader.GetDecimal(6),reader.IsDBNull(7)?null:reader.GetDecimal(7),reader.IsDBNull(8)?null:reader.GetDateTimeOffset(8))); }
-        return new(summary,statement,books,allocations,events);
+            ORDER BY ev.OccurredAt,ev.StatusEventId;
+            """, connection, transaction))
+        {
+            AddDetailParameters(command, reconciliationId, query);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            eventCount = reader.GetInt32(0);
+            await reader.NextResultAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                events.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetGuid(3),
+                    reader.GetString(4),reader.GetDateTimeOffset(5),reader.IsDBNull(6)?null:reader.GetDecimal(6),
+                    reader.IsDBNull(7)?null:reader.GetDecimal(7),reader.IsDBNull(8)?null:reader.GetDateTimeOffset(8)));
+        }
+        return new(summary,statement,books,allocations,events,
+            new(query,statementCount,bookCount,allocationCount,eventCount,unmatchedBookCount));
     }
 
-    private static async Task<IReadOnlyList<BankReconciliationSummaryView>> ReadSummariesAsync(
-        SqlConnection connection, SqlTransaction? transaction, AccountingUserIdentity user,
-        CancellationToken cancellationToken, Guid? reconciliationId = null)
+    private static void AddDetailParameters(SqlCommand command, Guid reconciliationId, BankReconciliationDetailQuery query)
     {
-        var result = new List<BankReconciliationSummaryView>();
-        await using var command = new SqlCommand("""
+        command.Parameters.AddWithValue("@Id", reconciliationId);
+        command.Parameters.AddWithValue("@PageSize", query.PageSize);
+        command.Parameters.AddWithValue("@StatementOffset", (query.StatementPage - 1) * query.PageSize);
+        command.Parameters.AddWithValue("@BookOffset", (query.BookPage - 1) * query.PageSize);
+        command.Parameters.AddWithValue("@AllocationOffset", (query.AllocationPage - 1) * query.PageSize);
+        command.Parameters.AddWithValue("@EventOffset", (query.EventPage - 1) * query.PageSize);
+        command.Parameters.Add("@StatementSearch", SqlDbType.NVarChar, 325).Value = SearchPattern(query.StatementSearch);
+        command.Parameters.Add("@BookSearch", SqlDbType.NVarChar, 325).Value = SearchPattern(query.BookSearch);
+    }
+
+    private static async Task<BankReconciliationPage> ReadSummariesAsync(
+        SqlConnection connection, SqlTransaction? transaction, AccountingUserIdentity user,
+        CancellationToken cancellationToken, Guid? reconciliationId = null, BankReconciliationQuery? query = null)
+    {
+        query ??= new();
+        var sortColumn = query.SortBy switch
+        {
+            "periodTo" => "r.PeriodTo",
+            "updatedAt" => "r.UpdatedAt",
+            "bankDisplayName" => "b.DisplayName",
+            _ => throw new AccountingValidationException("El orden de conciliación no es válido.")
+        };
+        var direction = query.SortDirection == "asc" ? "ASC" : "DESC";
+        const string scope = """
+            FROM accounting.BankReconciliations r
+            JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId AND b.TenantId=r.TenantId
+            WHERE r.TenantId=@TenantId AND (@Id IS NULL OR r.ReconciliationId=@Id)
+              AND (@BankAccountId IS NULL OR r.BankAccountId=@BankAccountId)
+              AND (@Search IS NULL OR r.FileName LIKE @Search ESCAPE N'~' OR b.DisplayName LIKE @Search ESCAPE N'~')
+              AND EXISTS(SELECT 1 FROM #ReadableBanks visible WHERE visible.BankAccountId=r.BankAccountId)
+            """;
+        await using var command = new SqlCommand($"""
+            SELECT DISTINCT r.BankAccountId INTO #ReadableBanks
+            FROM accounting.BankReconciliations r JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId AND b.TenantId=r.TenantId
+            WHERE r.TenantId=@TenantId AND (@Id IS NULL OR r.ReconciliationId=@Id)
+              AND (@BankAccountId IS NULL OR r.BankAccountId=@BankAccountId)
+              AND (@Search IS NULL OR r.FileName LIKE @Search ESCAPE N'~' OR b.DisplayName LIKE @Search ESCAPE N'~');
+            DELETE visible FROM #ReadableBanks visible
+            WHERE EXISTS(SELECT 1 FROM accounting.BankInaccessibleBusinesses(
+              @TenantId,visible.BankAccountId,@UserId,@ReadPermission));
+            SELECT COUNT(*) {scope};
+            WITH SelectedHeaders AS(
+              SELECT r.ReconciliationId {scope}
+              ORDER BY {sortColumn} {direction},r.ReconciliationId
+              OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
+            )
             SELECT r.ReconciliationId,r.BankAccountId,b.DisplayName,a.Code,a.Name,r.PeriodFrom,r.PeriodTo,
               r.OpeningBalance,r.ClosingBalance,r.FileName,CONVERT(varchar(64),r.FileSha256,2),r.Status,
               COUNT(DISTINCT s.StatementLineId),COUNT(DISTINCT CASE WHEN ABS(s.Amount)=COALESCE(x.Allocated,0) THEN s.StatementLineId END),
               COALESCE(SUM(s.Amount),0),
-              COALESCE((SELECT SUM(l.Debit-l.Credit) FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId WHERE e.TenantId=r.TenantId AND l.AccountId=b.AccountingAccountId AND CAST(e.OccurredAt AS date) BETWEEN r.PeriodFrom AND r.PeriodTo),0),
-              r.ClosingBalance-COALESCE((SELECT SUM(l.Debit-l.Credit) FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId WHERE e.TenantId=r.TenantId AND l.AccountId=b.AccountingAccountId AND CAST(e.OccurredAt AS date)<=r.PeriodTo),0),
+              COALESCE((SELECT SUM(l.Debit-l.Credit) FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId WHERE e.TenantId=r.TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId)) AND CAST(e.OccurredAt AS date) BETWEEN r.PeriodFrom AND r.PeriodTo),0),
+              r.ClosingBalance-COALESCE((SELECT SUM(l.Debit-l.Credit) FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId WHERE e.TenantId=r.TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId)) AND CAST(e.OccurredAt AS date)<=r.PeriodTo),0),
               CONVERT(bit,CASE WHEN r.Status=N'Closed' AND EXISTS(
                 SELECT 1 FROM dbo.AccountingEntries changed
-                JOIN dbo.AccountingEntryLines changedLine ON changedLine.EntryId=changed.EntryId AND changedLine.AccountId=b.AccountingAccountId
+                JOIN dbo.AccountingEntryLines changedLine ON changedLine.EntryId=changed.EntryId AND changedLine.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId))
                 WHERE changed.TenantId=r.TenantId AND CAST(changed.OccurredAt AS date)<=r.PeriodTo
                   AND changed.PostedAt>(SELECT MAX(ev.OccurredAt) FROM accounting.BankReconciliationStatusEvents ev WHERE ev.ReconciliationId=r.ReconciliationId AND ev.Status=N'Closed')) THEN 1 ELSE 0 END),
               r.RowVersion,r.UpdatedAt
-            FROM accounting.BankReconciliations r JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId
-            JOIN dbo.AccountingAccounts a ON a.AccountId=b.AccountingAccountId
+            FROM SelectedHeaders selected JOIN accounting.BankReconciliations r ON r.ReconciliationId=selected.ReconciliationId
+            JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId
+            OUTER APPLY(SELECT CASE WHEN COUNT(*)=1 THEN MAX(account.Code) END Code,
+              CASE WHEN COUNT(*)=1 THEN MAX(account.Name) END Name
+              FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId) linked
+              JOIN dbo.AccountingAccounts account ON account.AccountId=linked.AccountId) a
             LEFT JOIN accounting.BankStatementLines s ON s.ReconciliationId=r.ReconciliationId
             OUTER APPLY(SELECT SUM(ra.Amount) Allocated FROM accounting.BankReconciliationAllocations ra WHERE ra.StatementLineId=s.StatementLineId AND ra.ReversedAt IS NULL)x
-            WHERE r.TenantId=@TenantId AND (@Id IS NULL OR r.ReconciliationId=@Id)
-              AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntries scopedEntry
-                JOIN dbo.AccountingEntryLines scopedLine ON scopedLine.EntryId=scopedEntry.EntryId AND scopedLine.AccountId=b.AccountingAccountId
-                WHERE scopedEntry.TenantId=r.TenantId AND NOT EXISTS(
-                  SELECT 1 FROM dbo.UserRoles ur JOIN dbo.AppRoles role ON role.RoleId=ur.RoleId AND role.IsActive=1
-                  JOIN dbo.RolePermissions rp ON rp.RoleId=role.RoleId JOIN dbo.Permissions permission ON permission.PermissionId=rp.PermissionId
-                  WHERE ur.UserId=@UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=scopedEntry.BusinessId)
-                    AND (role.TenantId IS NULL OR role.TenantId=@TenantId) AND permission.Resource=@ReadPermission))
-            GROUP BY r.ReconciliationId,r.BankAccountId,b.DisplayName,b.AccountingAccountId,a.Code,a.Name,r.PeriodFrom,r.PeriodTo,r.OpeningBalance,r.ClosingBalance,r.FileName,r.FileSha256,r.Status,r.RowVersion,r.UpdatedAt,r.TenantId,r.BusinessId ORDER BY r.PeriodTo DESC,r.UpdatedAt DESC;
+            GROUP BY r.ReconciliationId,r.BankAccountId,b.BankAccountId,b.TenantId,b.DisplayName,a.Code,a.Name,r.PeriodFrom,r.PeriodTo,r.OpeningBalance,r.ClosingBalance,r.FileName,r.FileSha256,r.Status,r.RowVersion,r.UpdatedAt,r.TenantId,r.BusinessId
+            ORDER BY {sortColumn} {direction},r.ReconciliationId;
             """, connection, transaction);
-        command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@ReadPermission",AccountingPermissionCodes.BankReconciliationRead);command.Parameters.AddWithValue("@Id",(object?)reconciliationId??DBNull.Value);
-        await using var reader=await command.ExecuteReaderAsync(cancellationToken);
-        while(await reader.ReadAsync(cancellationToken))result.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetString(3),reader.GetString(4),DateOnly.FromDateTime(reader.GetDateTime(5)),DateOnly.FromDateTime(reader.GetDateTime(6)),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetString(9),reader.GetString(10),reader.GetString(11),reader.GetInt32(12),reader.GetInt32(13),reader.GetDecimal(14),reader.GetDecimal(15),reader.GetDecimal(16),reader.GetBoolean(17),Convert.ToBase64String((byte[])reader[18]),reader.GetDateTimeOffset(19)));
-        return result;
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@UserId", user.UserId);
+        command.Parameters.AddWithValue("@ReadPermission", AccountingPermissionCodes.BankReconciliationRead);
+        command.Parameters.AddWithValue("@Id", (object?)reconciliationId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@BankAccountId", (object?)query.BankAccountId ?? DBNull.Value);
+        command.Parameters.Add("@Search", SqlDbType.NVarChar, 325).Value = SearchPattern(query.Search);
+        command.Parameters.AddWithValue("@Offset", (query.Page - 1) * query.PageSize);
+        command.Parameters.AddWithValue("@PageSize", query.PageSize);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        var count = reader.GetInt32(0);
+        await reader.NextResultAsync(cancellationToken);
+        var result = new List<BankReconciliationSummaryView>();
+        while (await reader.ReadAsync(cancellationToken))
+            result.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.IsDBNull(4)?null:reader.GetString(4),DateOnly.FromDateTime(reader.GetDateTime(5)),DateOnly.FromDateTime(reader.GetDateTime(6)),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetString(9),reader.GetString(10),reader.GetString(11),reader.GetInt32(12),reader.GetInt32(13),reader.GetDecimal(14),reader.GetDecimal(15),reader.GetDecimal(16),reader.GetBoolean(17),Convert.ToBase64String((byte[])reader[18]),reader.GetDateTimeOffset(19)));
+        return new(result, query.Page, query.PageSize, count);
     }
+
+    private static object SearchPattern(string? search) => string.IsNullOrWhiteSpace(search)
+        ? DBNull.Value
+        : "%" + search.Replace("~", "~~").Replace("%", "~%").Replace("_", "~_").Replace("[", "~[") + "%";
 
     private static void AddHeaderParameters(SqlCommand command, AccountingUserIdentity user,
         ImportBankReconciliationRequest request, byte[] file, byte[] hash, DateTimeOffset now)
@@ -430,24 +579,19 @@ public sealed class SqlBankReconciliationStore(
     private void AddMutationParameters(SqlCommand command, AccountingUserIdentity user, Guid id)
     {command.Parameters.AddWithValue("@ReconciliationId",id);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());}
     private static void AddMoney(SqlCommand command,string name,decimal value){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=19;p.Scale=4;p.Value=value;}
-    private static void AddNullableMoney(SqlCommand command,string name,decimal? value){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=19;p.Scale=4;p.Value=(object?)value??DBNull.Value;}
 
-    private static async Task<bool> HasCompleteBusinessScopeAsync(SqlConnection connection,
+    private static async Task<bool> HasCompleteBusinessScopeAsync(SqlConnection connection, SqlTransaction transaction,
         AccountingUserIdentity user, Guid? reconciliationId, string permission, CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
+            SELECT DISTINCT BankAccountId INTO #ScopeBanks
+            FROM accounting.BankReconciliations
+            WHERE TenantId=@TenantId AND (@ReconciliationId IS NULL OR ReconciliationId=@ReconciliationId);
             SELECT CONVERT(bit,CASE WHEN EXISTS(
-              SELECT 1 FROM accounting.BankReconciliations reconciliation
-              JOIN accounting.BankAccounts bank ON bank.BankAccountId=reconciliation.BankAccountId
-              JOIN dbo.AccountingEntryLines bankLine ON bankLine.AccountId=bank.AccountingAccountId
-              JOIN dbo.AccountingEntries bankEntry ON bankEntry.EntryId=bankLine.EntryId AND bankEntry.TenantId=reconciliation.TenantId
-              WHERE (@ReconciliationId IS NULL OR reconciliation.ReconciliationId=@ReconciliationId)
-                AND reconciliation.TenantId=@TenantId AND NOT EXISTS(
-                SELECT 1 FROM dbo.UserRoles ur JOIN dbo.AppRoles role ON role.RoleId=ur.RoleId AND role.IsActive=1
-                JOIN dbo.RolePermissions rp ON rp.RoleId=role.RoleId JOIN dbo.Permissions granted ON granted.PermissionId=rp.PermissionId
-                WHERE ur.UserId=@UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=bankEntry.BusinessId)
-                  AND (role.TenantId IS NULL OR role.TenantId=@TenantId) AND granted.Resource=@Permission)) THEN 0 ELSE 1 END);
-            """, connection);
+              SELECT 1 FROM #ScopeBanks bank
+              CROSS APPLY accounting.BankInaccessibleBusinesses(@TenantId,bank.BankAccountId,@UserId,@Permission) denied
+            ) THEN 0 ELSE 1 END);
+            """, connection, transaction);
         command.Parameters.AddWithValue("@ReconciliationId", (object?)reconciliationId ?? DBNull.Value);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@UserId", user.UserId);

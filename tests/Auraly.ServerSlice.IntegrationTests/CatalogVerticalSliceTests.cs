@@ -13,6 +13,27 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Manual_voucher_creator_can_read_only_active_tax_profiles_without_product_or_configuration_access()
+    {
+        using var creator = fixture.CreateAdminClient("accounting.manual.create");
+        using var active = await creator.GetAsync("/api/commerce/v1/tax-profiles?includeInactive=false");
+        Assert.True(active.IsSuccessStatusCode, await active.Content.ReadAsStringAsync());
+        var profiles = (await active.Content.ReadFromJsonAsync<TaxProfileSummary[]>())!;
+        Assert.NotEmpty(profiles);
+        Assert.All(profiles, profile => { Assert.True(profile.IsActive); Assert.Equal(fixture.TenantId, profile.TenantId); });
+        using var inactive = await creator.GetAsync("/api/commerce/v1/tax-profiles?includeInactive=true");
+        Assert.Equal(HttpStatusCode.Forbidden, inactive.StatusCode);
+        using var products = await creator.GetAsync($"/api/commerce/v1/products/{fixture.ProductId}");
+        Assert.Equal(HttpStatusCode.Forbidden, products.StatusCode);
+        using var mutation = await creator.PostAsJsonAsync("/api/commerce/v1/tax-profiles",
+            new SaveTaxProfileRequest(fixture.BusinessId, "DENIED", "No autorizado", 19, true));
+        Assert.Equal(HttpStatusCode.Forbidden, mutation.StatusCode);
+        using var unrelated = fixture.CreateAdminClient("accounting.read");
+        using var denied = await unrelated.GetAsync("/api/commerce/v1/tax-profiles?includeInactive=false");
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
+
+    [Fact]
     public async Task Local_sale_captured_before_ingredient_change_still_uploads()
     {
         var sale = fixture.CreateValidRequest(9_884);

@@ -43,15 +43,25 @@ export type GoodsReceiptCalculationLine = {
   quantity: number;
   unitCost: number;
   discountAmount: number;
+  commercialDiscountPercent?: number | null;
   taxRate: number;
 };
 
 export function calculateGoodsReceiptLine(line: GoodsReceiptCalculationLine) {
-  const gross = line.quantity * line.unitCost;
-  const net = Math.max(0, gross - line.discountAmount);
-  const tax = net * line.taxRate / 100;
+  const hasPercent = line.commercialDiscountPercent != null;
+  const gross = hasPercent ? previewMoney(line.quantity * line.unitCost) : line.quantity * line.unitCost;
+  const net = Math.max(0, gross - calculateGoodsReceiptDiscount(line));
+  const tax = hasPercent ? previewMoney(net * line.taxRate / 100) : net * line.taxRate / 100;
   return { net, tax, total: net + tax };
 }
+
+// Editing preview only. Confirmation freezes the server's decimal calculation.
+export function calculateGoodsReceiptDiscount(line: GoodsReceiptCalculationLine) {
+  return line.commercialDiscountPercent == null ? line.discountAmount :
+    previewMoney(previewMoney(line.quantity * line.unitCost) * line.commercialDiscountPercent / 100);
+}
+
+const previewMoney = (value: number) => Math.round((value + Number.EPSILON) * 10_000) / 10_000;
 
 export function calculateGoodsReceiptTotals(lines: GoodsReceiptCalculationLine[]) {
   return lines.reduce((result, line) => {
@@ -146,9 +156,24 @@ type PurchaseCostPreviewDocument = {
 export type GoodsReceiptPurchaseCostPreview = {
   lineNumber: number;
   allocatedAdditionalCost: number;
+  anticipatedFinancialDiscountAmount?: number;
   recognizedInventoryCost: number;
   purchaseUnitCost: number | null;
 };
+
+function allocateRoundedAmount(amount: number, lineNumbers: number[], weights: number[]) {
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+  const raw = weights.map(value => amount * value / totalWeight);
+  const rounded = raw.map(money);
+  const residual = money(amount - rounded.reduce((sum, value) => sum + value, 0));
+  if (residual !== 0) {
+    const candidates = raw.map((value, index) => ({ index, fraction: residual > 0
+      ? value - rounded[index] : rounded[index] - value, lineNumber: lineNumbers[index] }));
+    candidates.sort((left, right) => right.fraction - left.fraction || left.lineNumber - right.lineNumber);
+    rounded[candidates[0].index] = money(rounded[candidates[0].index] + residual);
+  }
+  return rounded;
+}
 
 export function shouldShowLandedUnitCost(
   unitCost: number,
@@ -169,11 +194,25 @@ export function previewGoodsReceiptPurchaseCosts(
   receiptCurrencyCode: string,
   receiptExchangeRate: number,
   documents: PurchaseCostPreviewDocument[],
+  references: Array<{ lines: Array<{ entryLineNumber: number; functionalAmount: number; allocationMethod: string;
+    manualAllocations?: Array<{ receiptLineNumber: number; functionalAmount: number }> | null }> }> = [],
+  financialDiscount?: { percent: number; anticipateInCost: boolean } | null,
 ): GoodsReceiptPurchaseCostPreview[] {
+  // A draft may keep its invoices while no merchandise has been added yet.
+  // There are no product allocations to preview until that capture is complete.
+  if (receiptLines.length === 0) return [];
   const receiptRate = receiptCurrencyCode === "COP" ? 1 : receiptExchangeRate;
   const allocated = new Map(receiptLines.map(line => [line.lineNumber, 0]));
 
-  for (const document of documents) {
+  // Existing vouchers already express the chosen cost in functional currency.
+  // Feed that amount into the same preview, without changing their tax data.
+  const allocations: PurchaseCostPreviewDocument[] = [...documents, ...references.map(document => ({
+    currencyCode: "COP", exchangeRate: 1,
+    lines: document.lines.map(line => ({ lineNumber: line.entryLineNumber, amount: line.functionalAmount,
+      taxAmount: 0, taxTreatment: "NotApplicable", costTreatment: "Capitalize",
+      allocationMethod: line.allocationMethod, manualAllocations: line.manualAllocations })),
+  }))];
+  for (const document of allocations) {
     const rate = document.currencyCode === "COP" ? 1 : document.exchangeRate;
     for (const costLine of document.lines) {
       if (costLine.costTreatment !== "Capitalize") continue;
@@ -211,19 +250,21 @@ export function previewGoodsReceiptPurchaseCosts(
         }
       });
       if (weights.some(value => value <= 0)) continue;
-      const totalWeight = weights.reduce((sum, value) => sum + value, 0);
-      const raw = weights.map(value => amount * value / totalWeight);
-      const rounded = raw.map(money);
-      const residual = money(amount - rounded.reduce((sum, value) => sum + value, 0));
-      if (residual !== 0) {
-        const candidates = raw.map((value, index) => ({ index, fraction: residual > 0
-          ? value - rounded[index] : rounded[index] - value, lineNumber: eligibleNumbers[index] }));
-        candidates.sort((left, right) => right.fraction - left.fraction || left.lineNumber - right.lineNumber);
-        rounded[candidates[0].index] = money(rounded[candidates[0].index] + residual);
-      }
+      const rounded = allocateRoundedAmount(amount, eligibleNumbers, weights);
       eligibleNumbers.forEach((lineNumber, index) => allocated.set(
         lineNumber, money((allocated.get(lineNumber) ?? 0) + rounded[index]),
       ));
+    }
+  }
+
+  const discountByLine = new Map<number, number>();
+  if (financialDiscount?.anticipateInCost && financialDiscount.percent > 0) {
+    const eligible = receiptLines.map(line => ({ line, net: calculateGoodsReceiptLine(line).net }))
+      .filter(item => item.net > 0).sort((left, right) => left.line.lineNumber - right.line.lineNumber);
+    if (eligible.length > 0) {
+      const amount = money(money(eligible.reduce((sum, item) => sum + item.net, 0) * financialDiscount.percent / 100) * receiptRate);
+      const shares = allocateRoundedAmount(amount, eligible.map(item => item.line.lineNumber), eligible.map(item => item.net));
+      eligible.forEach((item, index) => discountByLine.set(item.line.lineNumber, shares[index]));
     }
   }
 
@@ -234,10 +275,12 @@ export function previewGoodsReceiptPurchaseCosts(
       (line.taxTreatment === "CapitalizedCost" ? money(calculated.tax * receiptRate) : 0),
     );
     const additional = money(allocated.get(line.lineNumber) ?? 0);
-    const recognized = money(base + additional);
+    const discount = discountByLine.get(line.lineNumber) ?? 0;
+    const recognized = money(base + additional - discount);
     return {
       lineNumber: line.lineNumber,
       allocatedAdditionalCost: additional,
+      ...(discount > 0 ? { anticipatedFinancialDiscountAmount: discount } : {}),
       recognizedInventoryCost: recognized,
       purchaseUnitCost: line.quantity > 0 ? money(recognized / line.quantity) : null,
     };

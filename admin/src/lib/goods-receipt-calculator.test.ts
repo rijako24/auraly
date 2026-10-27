@@ -13,6 +13,40 @@ import {
 } from "./goods-receipt-calculator";
 
 describe("goods receipt calculator", () => {
+  it("previews only the chosen part of an existing voucher without adding another payable", () => {
+    const lines = [1000, 3000].map((unitCost, index) => ({ lineNumber: index + 1, quantity: 1,
+      unitCost, discountAmount: 0, taxRate: 0, taxTreatment: "NotApplicable" }));
+    const result = previewGoodsReceiptPurchaseCosts(lines, "COP", 1, [], [{ lines: [
+      { entryLineNumber: 1, functionalAmount: 3000, allocationMethod: "Value" },
+    ] }]);
+    assert.equal(result[0].allocatedAdditionalCost, 750);
+    assert.equal(result[1].allocatedAdditionalCost, 2250);
+    const summary = summarizeGoodsReceipt({ currencyCode: "COP", grandTotal: 4000, taxAmount: 0,
+      lines: result.map(line => ({ allocatedLandedCostAmount: line.allocatedAdditionalCost,
+        recognizedInventoryCostAmount: line.recognizedInventoryCost })) });
+    assert.equal(summary.inventory, 7000);
+    assert.equal(summary.net, 4000);
+    assert.equal(summary.additional, 0);
+  });
+  it("shows anticipated financial discount in each product cost before confirmation", () => {
+    const lines = [10_000, 5_000].map((unitCost, index) => ({ lineNumber: index + 1,
+      quantity: 1, unitCost, discountAmount: 0, taxRate: 0, taxTreatment: "NotApplicable" }));
+    const preview = previewGoodsReceiptPurchaseCosts(lines, "COP", 1, [], [],
+      { percent: 10, anticipateInCost: true });
+    assert.deepEqual(preview.map(line => line.anticipatedFinancialDiscountAmount), [1_000, 500]);
+    assert.deepEqual(preview.map(line => line.purchaseUnitCost), [9_000, 4_500]);
+    const unanticipated = previewGoodsReceiptPurchaseCosts(lines, "COP", 1, [], [],
+      { percent: 10, anticipateInCost: false });
+    assert.deepEqual(unanticipated.map(line => line.purchaseUnitCost), [10_000, 5_000]);
+  });
+  it("previews commercial percentages against merchandise before tax", () => {
+    const line = { quantity: 10, unitCost: 6000, discountAmount: 0,
+      commercialDiscountPercent: 10, taxRate: 19 };
+    assert.deepEqual(calculateGoodsReceiptLine(line), { net: 54000, tax: 10260, total: 64260 });
+    assert.deepEqual(calculateGoodsReceiptLine({ ...line, quantity: 20 }),
+      { net: 108000, tax: 20520, total: 128520 });
+  });
+
   it("separates all supplier documents from landed inventory cost without taxing freight twice", () => {
     assert.deepEqual(summarizeGoodsReceipt({
       currencyCode: "COP", grandTotal: 4760, taxAmount: 760,
@@ -108,6 +142,14 @@ describe("goods receipt calculator", () => {
       { kind: "product-search" });
     assert.deepEqual(nextGoodsReceiptEditorTarget(1, "discount", "Enter", 3),
       { kind: "product-search" });
+  });
+
+  it("keeps an unfinished draft with capitalizable costs and no products editable", () => {
+    assert.deepEqual(previewGoodsReceiptPurchaseCosts([], "COP", 1, [{
+      currencyCode: "COP", exchangeRate: 1,
+      lines: [{ lineNumber: 1, amount: 5000, taxAmount: 0,
+        taxTreatment: "NotApplicable", costTreatment: "Capitalize", allocationMethod: "Value" }],
+    }]), []);
   });
 
   it("shows purchase cost with value-prorated invoices before confirmation", () => {

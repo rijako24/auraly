@@ -8,6 +8,46 @@ namespace Auraly.Foundation.Tests;
 public sealed class GoodsReceiptDomainTests
 {
     [Fact]
+    public void Receipt_rejects_text_that_cannot_be_persisted_without_truncation()
+    {
+        var line = new GoodsReceiptLineInput(1, Guid.NewGuid(), "Producto", 1m, 10m, 0m,
+            "01", 19m, PurchaseTaxTreatment.DeductibleInputVat);
+        Assert.Throws<ArgumentException>(() => GoodsReceiptCalculator.Calculate(new[] {
+            line with { Description = new string('X', 251) }
+        }));
+        Assert.Throws<ArgumentException>(() => GoodsReceiptCalculator.Calculate(new[] {
+            line with { TaxCode = new string('X', 33) }
+        }));
+    }
+
+    [Fact]
+    public void Commercial_percentage_reduces_the_product_and_tax_base_and_preserves_its_rate()
+    {
+        var result = GoodsReceiptCalculator.Calculate(new[] {
+            new GoodsReceiptLineInput(1, Guid.NewGuid(), "Producto", 10m, 6_000m,
+                0m, "01", 19m, PurchaseTaxTreatment.DeductibleInputVat, 10m)
+        });
+        var line = Assert.Single(result.Lines);
+        Assert.Equal(10m, line.CommercialDiscountPercent);
+        Assert.Equal(6_000m, line.DiscountAmount);
+        Assert.Equal(54_000m, line.NetAmount);
+        Assert.Equal(10_260m, line.TaxAmount);
+        Assert.Equal(64_260m, result.GrandTotal);
+    }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(101, 0)]
+    [InlineData(10, 123)]
+    public void Commercial_percentage_rejects_invalid_rates_and_conflicting_amounts(decimal percent, decimal amount)
+    {
+        Assert.ThrowsAny<ArgumentException>(() => GoodsReceiptCalculator.Calculate(new[] {
+            new GoodsReceiptLineInput(1, Guid.NewGuid(), "Producto", 1m, 1_000m,
+                amount, "01", 19m, PurchaseTaxTreatment.DeductibleInputVat, percent)
+        }));
+    }
+
+    [Fact]
     public void Receipt_calculates_discount_tax_and_totals_deterministically()
     {
         var productId = Guid.NewGuid();

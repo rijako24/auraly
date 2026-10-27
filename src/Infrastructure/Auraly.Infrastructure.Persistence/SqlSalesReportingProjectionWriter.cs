@@ -84,16 +84,8 @@ public sealed class SqlSalesReportingProjectionWriter(
         var original = await ReadOriginalSaleDimensionsAsync(
             session, value.BusinessId, value.OriginalDocumentId, cancellationToken);
         var now = timeProvider.GetUtcNow();
-        var returnedCost = 0m;
-
-        foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
-        {
-            var lineCost = decimal.Round(
-                line.Quantity * line.RecognizedUnitCost, 4, MidpointRounding.AwayFromZero);
-            returnedCost += lineCost;
-            await InsertReturnLineFactAsync(
-                session, value, original, line, lineCost, localDate.Date, now, cancellationToken);
-        }
+        var returnedCost = await InsertReturnLineFactsAsync(
+            session, value, original, localDate.Date, now, cancellationToken);
 
         await UpdateReturnedDocumentAsync(
             session, value, returnedCost, now, cancellationToken);
@@ -218,45 +210,44 @@ public sealed class SqlSalesReportingProjectionWriter(
             await document.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        foreach (var line in lines)
+        await using (var items = new SqlCommand("""
+            INSERT reporting.PurchaseReportLineFacts
+              (PurchaseFactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+               SourceLineNumber,OriginalGoodsReceiptId,OriginalLineNumber,OccurredAt,
+               BusinessLocalDate,SupplierId,SupplierName,WarehouseId,WarehouseName,
+               ProductId,ProductName,Quantity,UnitCost,DiscountAmount,NetAmount,TaxAmount,
+               TotalAmount,CurrencyCode,ProjectionVersion,ProjectedAt)
+            SELECT line.FactId,@Tenant,@Business,@Document,@Type,line.LineNumber,@Original,
+               line.OriginalLineNumber,@At,@Date,@Supplier,@SupplierName,@Warehouse,@WarehouseName,
+               line.ProductId,line.ProductName,line.Quantity,line.UnitCost,line.Discount,line.Net,line.Tax,line.Total,
+               @Currency,@Version,SYSDATETIMEOFFSET()
+            FROM OPENJSON(@LinesJson) WITH(FactId uniqueidentifier,LineNumber int,OriginalLineNumber int,
+              ProductId uniqueidentifier,ProductName nvarchar(max),Quantity decimal(19,6),UnitCost decimal(19,6),
+              Discount decimal(19,4),Net decimal(19,4),Tax decimal(19,4),Total decimal(19,4)) line;
+            IF @@ROWCOUNT<>@LineCount THROW 51606,'The complete purchase reporting batch was not persisted.',1;
+            """, session.Connection, session.Transaction))
         {
-            await using var item = new SqlCommand("""
-                INSERT reporting.PurchaseReportLineFacts
-                  (PurchaseFactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
-                   SourceLineNumber,OriginalGoodsReceiptId,OriginalLineNumber,OccurredAt,
-                   BusinessLocalDate,SupplierId,SupplierName,WarehouseId,WarehouseName,
-                   ProductId,ProductName,Quantity,UnitCost,DiscountAmount,NetAmount,TaxAmount,
-                   TotalAmount,CurrencyCode,ProjectionVersion,ProjectedAt)
-                VALUES(@Fact,@Tenant,@Business,@Document,@Type,@Line,@Original,@OriginalLine,
-                   @At,@Date,@Supplier,@SupplierName,@Warehouse,@WarehouseName,@Product,
-                   @ProductName,@Quantity,@UnitCost,@Discount,@Net,@Tax,@Total,@Currency,
-                   @Version,SYSDATETIMEOFFSET());
-                """, session.Connection, session.Transaction);
-            item.Parameters.AddWithValue("@Fact", ids.NewId());
-            item.Parameters.AddWithValue("@Tenant", tenantId);
-            item.Parameters.AddWithValue("@Business", businessId);
-            item.Parameters.AddWithValue("@Document", documentId);
-            item.Parameters.AddWithValue("@Type", documentType);
-            item.Parameters.AddWithValue("@Line", line.LineNumber);
-            item.Parameters.AddWithValue("@Original", (object?)originalReceiptId ?? DBNull.Value);
-            item.Parameters.AddWithValue("@OriginalLine", (object?)line.OriginalLineNumber ?? DBNull.Value);
-            item.Parameters.AddWithValue("@At", occurredAt);
-            item.Parameters.Add("@Date", SqlDbType.Date).Value = local.Date.ToDateTime(TimeOnly.MinValue);
-            item.Parameters.AddWithValue("@Supplier", supplierId);
-            item.Parameters.AddWithValue("@SupplierName", names.Supplier);
-            item.Parameters.AddWithValue("@Warehouse", warehouseId);
-            item.Parameters.AddWithValue("@WarehouseName", names.Warehouse);
-            item.Parameters.AddWithValue("@Product", line.ProductId);
-            item.Parameters.AddWithValue("@ProductName", line.ProductName);
-            AddDecimal(item, "@Quantity", sign * line.Quantity, 19, 6);
-            AddDecimal(item, "@UnitCost", line.UnitCost, 19, 6);
-            AddDecimal(item, "@Discount", sign * line.Discount, 19, 4);
-            AddDecimal(item, "@Net", sign * line.Net, 19, 4);
-            AddDecimal(item, "@Tax", sign * line.Tax, 19, 4);
-            AddDecimal(item, "@Total", sign * line.Total, 19, 4);
-            item.Parameters.AddWithValue("@Currency", currencyCode);
-            item.Parameters.AddWithValue("@Version", ProjectionVersion);
-            await item.ExecuteNonQueryAsync(cancellationToken);
+            items.Parameters.AddWithValue("@Tenant", tenantId);
+            items.Parameters.AddWithValue("@Business", businessId);
+            items.Parameters.AddWithValue("@Document", documentId);
+            items.Parameters.AddWithValue("@Type", documentType);
+            items.Parameters.AddWithValue("@Original", (object?)originalReceiptId ?? DBNull.Value);
+            items.Parameters.AddWithValue("@At", occurredAt);
+            items.Parameters.Add("@Date", SqlDbType.Date).Value = local.Date.ToDateTime(TimeOnly.MinValue);
+            items.Parameters.AddWithValue("@Supplier", supplierId);
+            items.Parameters.AddWithValue("@SupplierName", names.Supplier);
+            items.Parameters.AddWithValue("@Warehouse", warehouseId);
+            items.Parameters.AddWithValue("@WarehouseName", names.Warehouse);
+            items.Parameters.AddWithValue("@Currency", currencyCode);
+            items.Parameters.AddWithValue("@Version", ProjectionVersion);
+            items.Parameters.AddWithValue("@LineCount", lines.Count);
+            items.Parameters.Add("@LinesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(lines.Select(line => new
+            {
+                FactId = ids.NewId(), line.LineNumber, line.OriginalLineNumber, line.ProductId, line.ProductName,
+                Quantity = sign * line.Quantity, line.UnitCost, Discount = sign * line.Discount,
+                Net = sign * line.Net, Tax = sign * line.Tax, Total = sign * line.Total
+            }));
+            await items.ExecuteNonQueryAsync(cancellationToken);
         }
         await UpdateCheckpointAsync(
             session, businessId, documentId, documentType,
@@ -630,9 +621,9 @@ public sealed class SqlSalesReportingProjectionWriter(
             reader.IsDBNull(4) ? null : reader.GetGuid(4));
     }
 
-    private async Task InsertReturnLineFactAsync(
+    private async Task<decimal> InsertReturnLineFactsAsync(
         SalesReportingSqlSession session, SalesReturnDocumentPayload value,
-        OriginalSaleDimensions original, SalesReturnLineSnapshot line, decimal cost,
+        OriginalSaleDimensions original,
         DateOnly localDate, DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
@@ -645,29 +636,39 @@ public sealed class SqlSalesReportingProjectionWriter(
               TotalAmount,RecognizedCostAmount,ReturnReasonCode,ReturnDisposition,
               ProjectionVersion,ProjectedAt
             )
-            SELECT @FactId,@TenantId,@BusinessId,@ReturnId,N'SalesReturn',@LineNumber,
-                   @OriginalId,@OriginalLine,N'Return',@OccurredAt,@LocalDate,@WarehouseId,
+            SELECT batch.FactId,@TenantId,@BusinessId,@ReturnId,N'SalesReturn',batch.LineNumber,
+                   @OriginalId,batch.OriginalLineNumber,N'Return',@OccurredAt,@LocalDate,@WarehouseId,
                    @WorkSessionId,@SellerId,@CustomerId,@PartySiteId,p.ProductId,
                    COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,p.ProductCategoryId,
                    COALESCE(pc.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
-                   -@Quantity,-@Gross,-@Discount,-@Untaxed,-@Tax,
-                   -@Total,-@Cost,@Reason,@Disposition,@Version,@ProjectedAt
-            FROM dbo.Products p
+                   -batch.Quantity,-batch.Gross,-batch.Discount,-batch.Untaxed,-batch.Tax,
+                   -batch.Total,-batch.Cost,@Reason,batch.InventoryDisposition,@Version,@ProjectedAt
+            FROM OPENJSON(@Lines) WITH(FactId uniqueidentifier,LineNumber int,OriginalLineNumber int,
+              ProductId uniqueidentifier,Quantity decimal(19,6),Gross decimal(19,4),Discount decimal(19,4),
+              Untaxed decimal(19,4),Tax decimal(19,4),Total decimal(19,4),Cost decimal(19,4),
+              InventoryDisposition nvarchar(24)) batch
+            JOIN dbo.Products p ON p.ProductId=batch.ProductId AND p.TenantId=@TenantId
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
               INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.TenantId=@TenantId
               WHERE sp.ProductId=p.ProductId AND sp.TenantId=@TenantId AND sp.IsActive=1 AND s.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId) supplier
-            WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId;
+            ;
             """;
+        var lines = value.Lines.OrderBy(line => line.LineNumber).Select(line => new
+        {
+            FactId = ids.NewId(), line.LineNumber, line.OriginalLineNumber, line.ProductId, line.Quantity,
+            Gross = line.UntaxedAmount + line.DiscountAmount, Discount = line.DiscountAmount,
+            Untaxed = line.UntaxedAmount, Tax = line.TaxAmount, Total = line.LineTotal,
+            Cost = decimal.Round(line.Quantity * line.RecognizedUnitCost, 4, MidpointRounding.AwayFromZero),
+            line.InventoryDisposition
+        }).ToArray();
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@FactId", ids.NewId());
+        command.Parameters.Add("@Lines", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(lines);
         command.Parameters.AddWithValue("@TenantId", value.TenantId);
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
         command.Parameters.AddWithValue("@ReturnId", value.ReturnId);
-        command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         command.Parameters.AddWithValue("@OriginalId", value.OriginalDocumentId);
-        command.Parameters.AddWithValue("@OriginalLine", line.OriginalLineNumber);
         command.Parameters.AddWithValue("@OccurredAt", value.ReturnedAt);
         command.Parameters.AddWithValue("@LocalDate", localDate.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@WarehouseId", value.WarehouseId);
@@ -675,21 +676,13 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@SellerId", (object?)original.SellerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@CustomerId", (object?)(value.CustomerId ?? original.CustomerId) ?? DBNull.Value);
         command.Parameters.AddWithValue("@PartySiteId", (object?)original.PartySiteId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
-        AddDecimal(command, "@Gross", line.UntaxedAmount + line.DiscountAmount, 19, 4);
-        AddDecimal(command, "@Discount", line.DiscountAmount, 19, 4);
-        AddDecimal(command, "@Untaxed", line.UntaxedAmount, 19, 4);
-        AddDecimal(command, "@Tax", line.TaxAmount, 19, 4);
-        AddDecimal(command, "@Total", line.LineTotal, 19, 4);
-        AddDecimal(command, "@Cost", cost, 19, 4);
         command.Parameters.AddWithValue("@Reason", string.IsNullOrWhiteSpace(value.ReasonCode)
             ? value.CorrectionCode : value.ReasonCode);
-        command.Parameters.AddWithValue("@Disposition", line.InventoryDisposition);
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@ProjectedAt", now);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new InvalidOperationException($"Return line {line.LineNumber} could not be projected.");
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != lines.Length)
+            throw new InvalidOperationException("The return lines could not be projected completely.");
+        return lines.Sum(line => line.Cost);
     }
 
     private static async Task UpdateReturnedDocumentAsync(

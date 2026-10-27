@@ -46,13 +46,13 @@ public static class PosPrintTemplateCatalog
     public static readonly PosPrintTemplateVersion CreditSaleAcknowledgement =
         new("credit-sale-acknowledgement", 1);
     public static readonly PosPrintTemplateVersion ReceivablePayment =
-        new("receivable-payment", 1);
+        new("receivable-payment", 3);
     public static readonly PosPrintTemplateVersion PayablePayment =
-        new("payable-payment", 1);
+        new("payable-payment", 3);
     public static readonly PosPrintTemplateVersion ReceivablePaymentSheet =
-        new("receivable-payment", 2);
+        new("receivable-payment", 4);
     public static readonly PosPrintTemplateVersion PayablePaymentSheet =
-        new("payable-payment", 2);
+        new("payable-payment", 4);
 
     public static PosPrintTemplateVersion ForSale(string documentType) =>
         PosSaleDocumentTypes.IsFiscal(documentType) ? SalesInvoice : SalesReceipt;

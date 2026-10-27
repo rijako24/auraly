@@ -1,10 +1,14 @@
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
+using Auraly.Commerce.Accounting.Contracts;
 
 namespace Auraly.Application.Purchasing;
 
 public interface IGoodsReceiptWorkspaceStore
 {
+    Task<GoodsReceiptCostVoucher?> GetCostVoucherAsync(PurchasingUserIdentity user, Guid entryId, CancellationToken cancellationToken);
+    Task<GoodsReceiptCostVoucherCandidatePage> ListCostVouchersAsync(PurchasingUserIdentity user, Guid partyId,
+        string? search, int page, int pageSize, CancellationToken cancellationToken);
     Task<GoodsReceiptWorkspaceOptions> GetOptionsAsync(PurchasingUserIdentity user, CancellationToken cancellationToken);
     Task<GoodsReceiptProductPage> FindProductsAsync(PurchasingUserIdentity user, Guid supplierId, string? search, bool includeUnassociated, int page, int pageSize, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<Guid, decimal?>> GetUnitGrossWeightsAsync(PurchasingUserIdentity user, IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken);
@@ -18,6 +22,24 @@ public interface IGoodsReceiptWorkspaceStore
 
 public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore store)
 {
+    public Task<GoodsReceiptCostVoucherCandidatePage> ListCostVouchersAsync(PurchasingUserIdentity user,
+        Guid partyId, string? search, int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        Require(user, PurchasingPermissionCodes.ReadGoodsReceipts);
+        Require(user, AccountingPermissionCodes.Read);
+        if (partyId == Guid.Empty) throw new PurchasingValidationException("Selecciona un tercero.");
+        ValidatePage(page, pageSize);
+        return store.ListCostVouchersAsync(user, partyId, Normalize(search, 160), page, pageSize, cancellationToken);
+    }
+
+    public Task<GoodsReceiptCostVoucher?> GetCostVoucherAsync(PurchasingUserIdentity user, Guid entryId,
+        CancellationToken cancellationToken = default)
+    {
+        Require(user, PurchasingPermissionCodes.ReadGoodsReceipts);
+        Require(user, AccountingPermissionCodes.Read);
+        if (entryId == Guid.Empty) throw new PurchasingValidationException("Selecciona un comprobante contabilizado.");
+        return store.GetCostVoucherAsync(user, entryId, cancellationToken);
+    }
     public Task<GoodsReceiptWorkspaceOptions> GetOptionsAsync(
         PurchasingUserIdentity user, CancellationToken cancellationToken = default)
     {
@@ -136,10 +158,10 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
                 throw new PurchasingValidationException("Selecciona un proveedor antes de agregar productos.");
             try
             {
-                calculation = GoodsReceiptCalculator.Calculate(normalizedLines.Select(line => (
+                calculation = GoodsReceiptCalculator.Calculate(normalizedLines.Select(line => new GoodsReceiptLineInput(
                     line.LineNumber, line.ProductId, line.Description, line.Quantity,
                     line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
-                    ParseTaxTreatment(line.TaxTreatment))));
+                    ParseTaxTreatment(line.TaxTreatment), line.CommercialDiscountPercent)));
             }
             catch (ArgumentException exception)
             {
@@ -158,7 +180,11 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
                 TaxCode = Normalize(line.TaxCode, 32)!.ToUpperInvariant()
             }).ToArray()
         }).ToArray();
-        if (normalizedDocuments is { Length: > 0 })
+        GoodsReceiptCostCalculator.ValidateReferencedDocuments(request.ReferencedCostDocuments);
+        if (request.ReferencedCostDocuments is { Count: > 0 })
+            Require(user, AccountingPermissionCodes.Read);
+        if (normalizedDocuments is { Length: > 0 } ||
+            request.ReferencedCostDocuments?.Any(document => document.Mode == GoodsReceiptCostAssociationModes.Distribute) == true)
         {
             if (calculation is null || request.SupplierId is null)
                 throw new PurchasingValidationException("Agrega productos antes de distribuir costos adicionales.");
@@ -171,7 +197,8 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
                 PurchaseOrderId: request.PurchaseOrderId, ExchangeRate: request.ExchangeRate,
                 ExchangeRateDate: request.ExchangeRateDate,
                 ExchangeRateSource: request.ExchangeRateSource,
-                AdditionalCostDocuments: normalizedDocuments), calculation);
+                AdditionalCostDocuments: normalizedDocuments,
+                ReferencedCostDocuments: request.ReferencedCostDocuments), calculation);
         }
 
         return await store.SaveDraftAsync(user, request with

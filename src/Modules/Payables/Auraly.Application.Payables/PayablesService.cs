@@ -223,19 +223,7 @@ public sealed class PayablesService(
         try
         {
             breakdown = PaymentTenderBreakdown.Create(payments.Select(ToDomain), settlement.TotalAmount,
-                settlement.Allocations.Count, SupportedMethods);
-            foreach (var tender in breakdown.Tenders)
-            {
-                if (tender.MethodCode == SupplierPaymentMethods.Transfer &&
-                    string.IsNullOrWhiteSpace(tender.Reference))
-                    throw new ArgumentException("A bank transfer requires a reference.");
-                if (tender.MethodCode is SupplierPaymentMethods.DebitCard or SupplierPaymentMethods.CreditCard &&
-                    (string.IsNullOrWhiteSpace(tender.CardFranchiseCode) ||
-                     string.IsNullOrWhiteSpace(tender.ApprovalNumber)))
-                    throw new ArgumentException("A card payment requires franchise and approval number.");
-                if (tender.MethodCode != SupplierPaymentMethods.Transfer && tender.BankAccountId is not null)
-                    throw new ArgumentException("Only a bank transfer can select a bank account.");
-            }
+                settlement.Allocations.Count, PortfolioPaymentMethods.Supported);
         }
         catch (ArgumentException exception)
         {
@@ -251,15 +239,13 @@ public sealed class PayablesService(
         return acceptance;
     }
 
-    private static readonly IReadOnlySet<string> SupportedMethods = new HashSet<string>(
-        [SupplierPaymentMethods.Cash, SupplierPaymentMethods.Transfer,
-         SupplierPaymentMethods.DebitCard, SupplierPaymentMethods.CreditCard], StringComparer.Ordinal);
+
 
     private static SupplierPaymentTenderRequest NormalizeTender(SupplierPaymentTenderRequest value) => value with
     {
-        MethodCode = value.MethodCode?.Trim() ?? string.Empty, Reference = Normalize(value.Reference, 120),
-        Notes = Normalize(value.Notes, 500), CardFranchiseCode = Normalize(value.CardFranchiseCode, 40),
-        ApprovalNumber = Normalize(value.ApprovalNumber, 80)
+        MethodCode = value.MethodCode?.Trim() ?? string.Empty, Reference = Normalize(value.Reference, PaymentTenderBreakdown.MaximumReferenceLength),
+        Notes = Normalize(value.Notes, PaymentTenderBreakdown.MaximumNotesLength), CardFranchiseCode = Normalize(value.CardFranchiseCode, PaymentTenderBreakdown.MaximumCardFranchiseLength),
+        ApprovalNumber = Normalize(value.ApprovalNumber, PaymentTenderBreakdown.MaximumApprovalLength)
     };
 
     private static PaymentTender ToDomain(SupplierPaymentTenderRequest value) => new(
@@ -283,7 +269,11 @@ public sealed class PayablesService(
 }
 
 public sealed class PayablesForbiddenException(string message) : Exception(message);
-public sealed class PayablesConflictException(string message) : Exception(message);
+public sealed class PayablesConflictException : Exception
+{
+    public PayablesConflictException(string message) : base(message) { }
+    public PayablesConflictException(string message, Exception inner) : base(message, inner) { }
+}
 public sealed class PayablesValidationException : Exception
 {
     public PayablesValidationException(string message) : base(message) { }

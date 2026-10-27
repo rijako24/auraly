@@ -464,23 +464,10 @@ public sealed partial class SqlRestaurantCollectionStore(SqlServerConnectionFact
             workSessionId, payment, isReversal));
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
         await using var command = new SqlCommand("""
-            IF EXISTS(SELECT 1 FROM dbo.AccountingTenantSettings settings
-                      WHERE settings.TenantId=@TenantId
-                        AND settings.Status=N'Ready'
-                        AND settings.EffectiveFrom<=CONVERT(date,@Now))
-            BEGIN
-                INSERT dbo.AccountingSourceDocuments
-                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
-                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt,AccountingEntryRequired)
-                VALUES(@CollectionId,@DocumentType,@TenantId,@BusinessId,
-                       @Payload,@Hash,@Now,@Now,1);
-                INSERT dbo.AccountingPostingJobs
-                  (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-                   SourceDocumentType,SourcePayloadHash,OccurredAt,Status,
-                   AttemptCount,CreatedAt)
-                VALUES(NEWID(),@TenantId,@BusinessId,@CollectionId,
-                       @DocumentType,@Hash,@Now,N'Pending',0,@Now);
-            END;
+            DECLARE @Sources nvarchar(max)=(SELECT @CollectionId DocumentId,@DocumentType DocumentType,
+              @BusinessId BusinessId,@Payload Payload,CONVERT(varchar(64),@Hash,2) Hash,
+              @Now OccurredAt,NEWID() JobId FOR JSON PATH);
+            EXEC dbo.AccountingSourcesAccept @TenantId,@Sources,@Now,0;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", actor.TenantId);
         command.Parameters.AddWithValue("@BusinessId", actor.BusinessId);

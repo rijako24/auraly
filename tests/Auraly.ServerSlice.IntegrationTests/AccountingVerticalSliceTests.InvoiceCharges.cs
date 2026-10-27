@@ -261,6 +261,7 @@ public sealed partial class AccountingVerticalSliceTests
             SELECT OriginalAmount FROM dbo.SupplierCredits
             WHERE SourceDocumentId=@Id AND SourceDocumentType=N'SalesReturnCharge';
             """, firstCharge.AppliedChargeId));
+        await PortfolioOriginalAccountScenario.AssertSupplierCreditOpeningAsync(fixture, returnId, "SalesReturn");
         Assert.Equal(0, await ScalarAsync<decimal>("""
             SELECT PayableCreditAmount FROM dbo.SalesReturnChargeFinancialEffects
             WHERE ReturnId=@Id;
@@ -489,6 +490,7 @@ public sealed partial class AccountingVerticalSliceTests
         Assert.Equal(billedCharge.Amount, await ScalarAsync<decimal>(
             "SELECT AvailableAmount FROM dbo.SupplierCredits WHERE SourceDocumentId=@Id AND SourceDocumentType=N'ExpenseCancellation'",
             billedCancellation.CancellationId));
+        await PortfolioOriginalAccountScenario.AssertSupplierCreditOpeningAsync(fixture, billedCancellation.CancellationId, "ExpenseCancellation");
         var billedReturnable = await admin.GetFromJsonAsync<ReturnableSale>(
             $"/api/commerce/v1/sales-returns/sales/{billedSale.DocumentId:D}");
         Assert.Equal("Cancelled", Assert.Single(billedReturnable!.Charges).ExpenseStatus);

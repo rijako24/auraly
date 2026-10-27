@@ -20,6 +20,8 @@ public static class AccountingCategories
     public const string Bank = "Bank";
     public const string DebitCardClearing = "DebitCardClearing";
     public const string CreditCardClearing = "CreditCardClearing";
+    public const string SupplierDebitCard = "SupplierDebitCard";
+    public const string SupplierCreditCard = "SupplierCreditCard";
     public const string TransferClearing = "TransferClearing";
     public const string CardClearing = "CardClearing";
     public const string CashClosureDifferencesPending = "CashClosureDifferencesPending";
@@ -50,6 +52,8 @@ public static class AccountingCategories
     public const string WithholdingVatReceivable = "WithholdingVatReceivable";
     public const string WithholdingIcaReceivable = "WithholdingIcaReceivable";
     public const string OtherIncome = "OtherIncome";
+    public const string SupplierFinancialDiscountEarned = "SupplierFinancialDiscountEarned";
+    public const string SupplierFinancialDiscountLost = "SupplierFinancialDiscountLost";
     public const string OwnerContributions = "OwnerContributions";
     public const string OperatingExpense = "OperatingExpense";
     public const string OtherExpense = "OtherExpense";
@@ -86,7 +90,8 @@ public sealed record CreateAccountingAccountRequest(
     string Name,
     string AccountType,
     bool AllowsPosting,
-    bool RequiresParty);
+    bool RequiresParty,
+    AccountingAccountSemantics? Semantics = null);
 
 public sealed record AccountingAccountView(
     Guid AccountId,
@@ -97,13 +102,16 @@ public sealed record AccountingAccountView(
     bool RequiresParty,
     bool IsActive,
     string Level,
-    string? RowVersion = null);
+    string? RowVersion = null,
+    AccountingAccountSemantics? Semantics = null,
+    bool ConfigurationLocked = false);
 
-public sealed record UpdateAccountingAccountRequest(string Name, bool RequiresParty, string RowVersion);
+public sealed record UpdateAccountingAccountRequest(string Name, bool RequiresParty, string RowVersion,
+    AccountingAccountSemantics? Semantics = null);
 
 public sealed record SaveBankAccountRequest(
     Guid BankAccountId,
-    Guid AccountingAccountId,
+    Guid? AccountingAccountId,
     Guid AccountTypeOptionId,
     string BankName,
     string AccountNumber,
@@ -114,9 +122,9 @@ public sealed record SaveBankAccountRequest(
 
 public sealed record BankAccountView(
     Guid BankAccountId,
-    Guid AccountingAccountId,
-    string AccountingAccountCode,
-    string AccountingAccountName,
+    Guid? AccountingAccountId,
+    string? AccountingAccountCode,
+    string? AccountingAccountName,
     Guid AccountTypeOptionId,
     string AccountTypeCode,
     string AccountTypeName,
@@ -126,7 +134,8 @@ public sealed record BankAccountView(
     string CurrencyCode,
     bool IsPrimary,
     bool IsActive,
-    string RowVersion);
+    string RowVersion,
+    int AuxiliaryCount = 0);
 
 public static class BankReconciliationStatuses
 {
@@ -145,9 +154,24 @@ public sealed record ImportBankReconciliationRequest(
     string FileSha256, string OriginalFileBase64,
     IReadOnlyList<BankStatementLineImport> Lines);
 
+public sealed record BankReconciliationQuery(
+    int Page = 1, int PageSize = 20, Guid? BankAccountId = null,
+    string? Search = null, string SortBy = "periodTo", string SortDirection = "desc");
+
+public sealed record BankReconciliationPage(
+    IReadOnlyList<BankReconciliationSummaryView> Items, int Page, int PageSize, int TotalCount);
+
+public sealed record BankReconciliationDetailQuery(
+    int StatementPage = 1, int BookPage = 1, int AllocationPage = 1, int EventPage = 1,
+    int PageSize = 50, string? StatementSearch = null, string? BookSearch = null);
+
+public sealed record BankReconciliationPaging(
+    BankReconciliationDetailQuery Query, int StatementCount, int BookCount,
+    int AllocationCount, int EventCount, int UnmatchedBookCount);
+
 public sealed record BankReconciliationSummaryView(
     Guid ReconciliationId, Guid BankAccountId, string BankDisplayName,
-    string AccountingAccountCode, string AccountingAccountName,
+    string? AccountingAccountCode, string? AccountingAccountName,
     DateOnly PeriodFrom, DateOnly PeriodTo, decimal OpeningBalance,
     decimal ClosingBalance, string FileName, string FileSha256, string Status,
     int StatementLineCount, int MatchedLineCount, decimal StatementMovementTotal,
@@ -178,7 +202,8 @@ public sealed record BankReconciliationDetailView(
     IReadOnlyList<BankStatementLineView> StatementLines,
     IReadOnlyList<BankBookLineView> BookLines,
     IReadOnlyList<BankReconciliationAllocationView> Allocations,
-    IReadOnlyList<BankReconciliationStatusEventView> StatusEvents);
+    IReadOnlyList<BankReconciliationStatusEventView> StatusEvents,
+    BankReconciliationPaging Paging);
 
 public sealed record CreateBankReconciliationAllocationRequest(
     Guid MatchId, Guid StatementLineId, Guid EntryId,
@@ -305,7 +330,12 @@ public static class AccountingOpeningBalanceStatuses
 
 public sealed record AccountingOpeningBalanceLineRequest(
     Guid AccountId, Guid? PartyId, Guid? CostCenterId, string Description,
-    decimal Debit, decimal Credit);
+    decimal Debit, decimal Credit,
+    Guid? LineId = null, AccountingOpeningPositionReference? ExistingPosition = null);
+
+public sealed record AccountingOpeningPositionReference(string SubledgerKind, Guid SubledgerId,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? ReversesTransactionId = null);
 
 public sealed record SaveAccountingOpeningBalanceRequest(
     Guid BatchId, Guid BusinessId, DateOnly EffectiveOn, string CurrencyCode,
@@ -314,7 +344,20 @@ public sealed record SaveAccountingOpeningBalanceRequest(
 
 public sealed record AccountingOpeningBalanceLineView(
     int LineNumber, Guid AccountId, Guid? PartyId, Guid? CostCenterId,
-    string Description, decimal Debit, decimal Credit);
+    string Description, decimal Debit, decimal Credit,
+    Guid? LineId = null, AccountingOpeningPositionReference? ExistingPosition = null,
+    string? ExistingPositionDocumentNumber = null);
+
+// Version 3 is specific to reconciled openings. Older workers reject it instead
+// of posting an opening while silently ignoring its links to existing balances.
+public sealed record AccountingReconciledOpeningPayload(
+    Guid VoucherId, Guid BusinessId, DateTimeOffset OccurredAt, string ConceptCode,
+    string Description, IReadOnlyList<AccountingReconciledOpeningLine> Lines, int PayloadVersion = 3);
+
+public sealed record AccountingReconciledOpeningLine(
+    int LineNumber, Guid AccountId, Guid? PartyId, Guid? CostCenterId,
+    string Description, decimal Debit, decimal Credit, Guid? LineId,
+    AccountingOpeningPositionReference? ExistingPosition);
 
 public sealed record AccountingOpeningBalanceView(
     Guid BatchId, Guid BusinessId, DateOnly EffectiveOn, string CurrencyCode,
@@ -336,6 +379,8 @@ public static class AccountingSubledgerKinds
 {
     public const string Receivable = "Receivable";
     public const string Payable = "Payable";
+    public const string SupplierCredit = "SupplierCredit";
+    public const string CustomerCredit = "CustomerCredit";
 }
 
 public static class AccountingAdjustmentDirections
@@ -348,16 +393,52 @@ public sealed record ConfirmAccountAdjustmentRequest(
     Guid AdjustmentId, Guid BusinessId, string SubledgerKind, Guid SubledgerId,
     string Direction, decimal Amount, Guid CounterpartAccountId,
     Guid? CostCenterId, DateTimeOffset OccurredAt, string ConceptCode,
-    string Description);
+    string Description,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? Reference = null);
 
 public sealed record ManualVoucherLineRequest(
     Guid AccountId, Guid? PartyId, Guid? CostCenterId, string Description,
-    decimal Debit, decimal Credit);
+    decimal Debit, decimal Credit,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? LineId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    decimal? BaseAmount = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    AccountingOpeningPositionReference? ExistingPosition = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? FinancialGroupId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    DateTimeOffset? DueDate = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? PartySiteId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    VoucherPaymentEvidence? PaymentEvidence = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? Reference = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    bool? FinancialDiscountEarned = null);
 
 public sealed record ConfirmManualAccountingVoucherRequest(
     Guid VoucherId, Guid BusinessId, DateTimeOffset OccurredAt,
     string ConceptCode, string Description,
-    IReadOnlyList<ManualVoucherLineRequest> Lines);
+    IReadOnlyList<ManualVoucherLineRequest> Lines,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? MainPartyId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    int? PayloadVersion = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? Reference = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? VoucherTypeCode = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? WorkSessionId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? CurrencyCode = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    VoucherFinancialEffects? FinancialEffects = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    VoucherFiscalCapture? FiscalCapture = null);
 
 public sealed record AccountingManualDocumentAcceptance(
     Guid DocumentId, string DocumentType, string Status, bool IsDuplicate);
@@ -381,7 +462,8 @@ public sealed record AccountingEntryLineView(
     Guid? CostCenterId,
     string? CostCenterCode,
     string? CostCenterName,
-    string Description);
+    string Description,
+    Guid AccountId = default, Guid? SourceLineId = null, decimal? BaseAmount = null);
 
 public sealed record AccountingEntryView(
     Guid EntryId,
@@ -393,7 +475,8 @@ public sealed record AccountingEntryView(
     string Description,
     decimal DebitTotal,
     decimal CreditTotal,
-    IReadOnlyList<AccountingEntryLineView> Lines);
+    IReadOnlyList<AccountingEntryLineView> Lines,
+    Guid? MainPartyId = null);
 
 public sealed record TrialBalanceRow(
     string AccountCode,
@@ -417,7 +500,27 @@ public sealed record AccountMovementRow(
     decimal Credit,
     decimal Balance,
     int LineNumber = 0, Guid? CostCenterId = null,
-    string? CostCenterCode = null, string? CostCenterName = null);
+    string? CostCenterCode = null, string? CostCenterName = null,
+    string? AccountCode = null, string? AccountName = null,
+    Guid? PartyId = null, string? PartyIdentification = null, string? PartyName = null,
+    string? SourceDocumentNumber = null, string? Reference = null, decimal? BaseAmount = null);
+
+public sealed record AccountMovementQuery(
+    DateOnly From, DateOnly To, int Page = 1, int PageSize = 50,
+    string? AccountFrom = null, string? AccountTo = null,
+    Guid? PartyId = null, Guid? CostCenterId = null, string? AccountRootCode = null);
+
+public sealed record AccountMovementTotal(
+    string AccountCode, string AccountName, decimal OpeningBalance,
+    decimal Debit, decimal Credit, decimal ClosingBalance, int MovementCount,
+    decimal? BaseAmount = null);
+
+public sealed record AccountMovementPage(
+    IReadOnlyList<AccountMovementRow> Items, IReadOnlyList<AccountMovementTotal> Accounts,
+    int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
+}
 
 public sealed record AccountingJournalRow(
     Guid EntryId, string EntryNumber, DateTimeOffset OccurredAt,
@@ -443,7 +546,8 @@ public sealed record AccountingDocumentRow(
     string? ErrorCode, string? ErrorMessage, Guid? EntryId, string? EntryNumber,
     decimal? DebitTotal, decimal? CreditTotal, DateTimeOffset? PostedAt,
     string? FiscalDocumentType, string? DianNumber, string? UniqueCodeType,
-    string? UniqueCode, string? FiscalStatus, bool HasManualDraft = false);
+    string? UniqueCode, string? FiscalStatus, bool HasManualDraft = false,
+    Guid? MainPartyId = null, string? MainPartyName = null, string? MainPartyIdentification = null);
 
 public sealed record AccountingDocumentPage(
     IReadOnlyList<AccountingDocumentRow> Items, int Page, int PageSize, int TotalCount)
@@ -478,7 +582,7 @@ public sealed record AccountingPostingView(
     Guid? EntryId);
 
 public sealed record AccountingAccountOptionQuery(int Page, int PageSize, string? Search, bool ExpenseOnly = false, Guid? AccountId = null,
-    bool IncludeStructural = false, bool IncludeInactive = false, bool LiabilityOnly = false);
+    bool IncludeStructural = false, bool IncludeInactive = false, bool LiabilityOnly = false, bool GroupingOnly = false);
 public sealed record AccountingAccountOptionPage(IReadOnlyList<AccountingAccountView> Items, int Page, int PageSize, int TotalCount)
 {
     public int TotalPages => (int)Math.Ceiling(TotalCount / (decimal)PageSize);

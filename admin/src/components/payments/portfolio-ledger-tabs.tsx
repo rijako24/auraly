@@ -14,10 +14,14 @@ import type { PayableStatus } from "@/services/api/payables";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { usePosReferenceOptions } from "@/app/(pos)/pos/use-pos-reference-options";
+import { referenceOptionsApi } from "@/services/api/reference-options";
+
+const onlineCatalogClient = { mode: "online" as const, referenceOptions: referenceOptionsApi.list };
 
 export type PortfolioLedgerTab = "parties" | "invoices" | "payments";
 export type PartyRow={id:string;name:string;identification:string;partySiteId?:string|null;partySiteName?:string|null;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string};
-type PaymentRow={paymentId:string;paidAt:string;partyName:string|null;documentNumber:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string};
+type PaymentRow={paymentId:string;sourceDocumentId?:string;paidAt:string;partyName:string|null;documentNumber:string;status:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string};
 type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding?:number;totalOverdue?:number;totalInvoiceCount?:number;totalSupplierCredit?:number;currencyTotals?:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>};
 type LedgerSort = { by: string; direction: "asc" | "desc" };
 
@@ -35,6 +39,8 @@ export function PortfolioLedgerTabs({
   onRefreshInvoices,
   onPartyClick,
   onInvoiceClick,
+  invoiceSummary,
+  invoiceLoading = false,
   filters,
   children,
 }: {
@@ -51,11 +57,16 @@ export function PortfolioLedgerTabs({
   onRefreshInvoices: () => void;
   onPartyClick: (party: PartyRow) => void;
   onInvoiceClick: (invoiceId: string) => void;
+  invoiceSummary?: { totalCount: number; totalOutstanding: number; totalOverdue: number;
+    currencyTotals?: Array<{ currencyCode: string; outstandingAmount: number; overdueAmount: number }> };
+  invoiceLoading?: boolean;
   filters: ReactNode;
   children: ReactNode;
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
   const canViewVoucher=useAuthStore(state=>state.user?.permissions.includes("accounting.read")??false);
+  const paymentMethods=usePosReferenceOptions(onlineCatalogClient,"payment-method",value==="payments");
+  const paymentLabels=new Map((paymentMethods.data??[]).map(method=>[method.code,method.label]));
   const [selectedPaymentId,setSelectedPaymentId]=useState<string>();
   const [partySort,setPartySort]=useState<LedgerSort>({by:"name",direction:"asc"});
   const [paymentSort,setPaymentSort]=useState<LedgerSort>({by:"paidAt",direction:"desc"});
@@ -75,7 +86,7 @@ export function PortfolioLedgerTabs({
   const parties = useQuery<Page<PartyRow>>({
     queryKey: [...partiesKey, partyPage, search, partyId, partySiteId, status, overdue, from, to, partySort],
     queryFn: () => loadParties(partyPage),
-    enabled: !!businessId,
+    enabled: !!businessId && value === "parties",
     staleTime: 5 * 60 * 1000,
   });
   const payments = useQuery<Page<PaymentRow>>({
@@ -97,44 +108,47 @@ export function PortfolioLedgerTabs({
   });
 
   const partyItems = parties.data?.items ?? [];
-  const summary={totalOutstanding:parties.data?.totalOutstanding??0,
-    totalOverdue:parties.data?.totalOverdue??0,totalInvoiceCount:parties.data?.totalInvoiceCount??0,
-    totalSupplierCredit:parties.data?.totalSupplierCredit??0};
-  const currencyTotals=direction==="payable"?parties.data?.currencyTotals:undefined;
+  // Invoice totals belong to its already filtered page response. A hidden
+  // party directory must neither fetch nor reinterpret an invoice-number filter.
+  const summary = value === "invoices"
+    ? invoiceSummary && { ...invoiceSummary, totalInvoiceCount: invoiceSummary.totalCount, totalSupplierCredit: undefined }
+    : parties.isError ? undefined : parties.data;
+  const currencyTotals=direction==="payable"?summary?.currencyTotals:undefined;
   const paymentItems = payments.data?.items ?? [];
   const current = value === "parties" ? parties.data : payments.data;
   const loading = value === "parties" ? parties.isLoading : payments.isLoading;
   const failed = value === "parties" ? parties.isError : payments.isError;
 
   return <Tabs value={value} onValueChange={next => onValueChange(next as PortfolioLedgerTab)} className="space-y-4">
-    <section className={`grid gap-3 ${direction === "payable" ? "md:grid-cols-4" : "md:grid-cols-3"}`} aria-label="Resumen de cartera" aria-busy={parties.isLoading}>
-      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo pendiente</p>{currencyTotals?.length?currencyTotals.map(item=><p key={item.currencyCode} className="mt-1 text-xl font-semibold">{item.currencyCode} {formatCurrency(item.outstandingAmount,item.currencyCode)}</p>):<p className="mt-1 text-2xl font-semibold">{formatCurrency(summary.totalOutstanding)}</p>}</CardContent></Card>
-      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo vencido</p>{currencyTotals?.length?currencyTotals.map(item=><p key={item.currencyCode} className="mt-1 text-xl font-semibold text-destructive">{item.currencyCode} {formatCurrency(item.overdueAmount,item.currencyCode)}</p>):<p className="mt-1 text-2xl font-semibold text-destructive">{formatCurrency(summary.totalOverdue)}</p>}</CardContent></Card>
-      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">{direction === "receivable" ? "Facturas encontradas" : "Obligaciones encontradas"}</p><p className="mt-1 text-2xl font-semibold">{summary.totalInvoiceCount}</p></CardContent></Card>
-      {direction === "payable" && <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo a favor con proveedores</p><p className="mt-1 text-2xl font-semibold">{formatCurrency(summary.totalSupplierCredit)}</p></CardContent></Card>}
-    </section>
+    {value !== "payments" && <section className={`grid gap-3 ${direction === "payable" && value === "parties" ? "md:grid-cols-4" : "md:grid-cols-3"}`} aria-label="Resumen de cartera" aria-busy={value === "invoices" ? invoiceLoading : parties.isLoading}>
+      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo pendiente</p>{currencyTotals?.length?currencyTotals.map(item=><p key={item.currencyCode} className="mt-1 text-xl font-semibold">{item.currencyCode} {formatCurrency(item.outstandingAmount,item.currencyCode,4)}</p>):<p className="mt-1 text-2xl font-semibold">{summary?.totalOutstanding == null ? "—" : formatCurrency(summary.totalOutstanding,"COP",4)}</p>}</CardContent></Card>
+      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo vencido</p>{currencyTotals?.length?currencyTotals.map(item=><p key={item.currencyCode} className="mt-1 text-xl font-semibold text-destructive">{item.currencyCode} {formatCurrency(item.overdueAmount,item.currencyCode,4)}</p>):<p className="mt-1 text-2xl font-semibold text-destructive">{summary?.totalOverdue == null ? "—" : formatCurrency(summary.totalOverdue,"COP",4)}</p>}</CardContent></Card>
+      <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">{direction === "receivable" ? "Facturas encontradas" : "Obligaciones encontradas"}</p><p className="mt-1 text-2xl font-semibold">{summary?.totalInvoiceCount ?? "—"}</p></CardContent></Card>
+      {direction === "payable" && value === "parties" && <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase text-muted-foreground">Saldo a favor con proveedores</p><p className="mt-1 text-2xl font-semibold">{summary?.totalSupplierCredit == null ? "—" : formatCurrency(summary.totalSupplierCredit,"COP",4)}</p></CardContent></Card>}
+    </section>}
     {filters}
     <TabsList className="grid h-auto w-full grid-cols-3">
       <TabsTrigger value="parties">{direction === "receivable" ? "Clientes" : "Proveedores"}</TabsTrigger>
       <TabsTrigger value="invoices">Facturas</TabsTrigger>
       <TabsTrigger value="payments">{direction === "receivable" ? "Recaudos" : "Pagos"}</TabsTrigger>
     </TabsList>
-    <div className="flex justify-end"><Button type="button" variant="outline" size="sm" disabled={value === "parties" ? parties.isFetching : value === "payments" ? payments.isFetching : false} onClick={() => { if (value === "invoices") onRefreshInvoices(); else void (value === "parties" ? parties.refetch() : payments.refetch()); }}><RefreshCw className="mr-2 h-4 w-4"/>Actualizar</Button></div>
+    <div className="flex justify-end"><Button type="button" variant="outline" size="sm" disabled={value === "parties" ? parties.isFetching : value === "payments" ? payments.isFetching : invoiceLoading} onClick={() => { if (value === "invoices") onRefreshInvoices(); else void (value === "parties" ? parties.refetch() : payments.refetch()); }}><RefreshCw className="mr-2 h-4 w-4"/>Actualizar</Button></div>
     <TabsContent value="invoices" className="mt-0">{children}</TabsContent>
     <TabsContent value="parties" className="mt-0">
       <LedgerTable loading={loading} failed={failed} isEmpty={partyItems.length === 0} empty="No hay terceros con cartera para estos filtros.">
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr>
           {[["name",direction === "receivable" ? "Cliente" : "Proveedor"],["invoiceCount","Facturas"],["originalAmount","Valor original"],["paidAmount","Pagado"],["outstandingAmount","Saldo"],["overdueAmount","Vencido"],...(direction === "payable" ? [["supplierCreditAmount","A favor"]] : [])].map(([by,label])=><SortableLedgerHeader key={by} by={by} label={label} sort={partySort} onClick={()=>toggleSort(partySort,setPartySort,by)}/>)}</tr></thead>
-        <tbody>{partyItems.map(item => <tr key={`${item.id}-${item.partySiteId??"none"}-${item.currencyCode}`} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}{item.partySiteName?` · ${item.partySiteName}`:""}{direction==="payable"?` · ${item.currencyCode}`:""}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount,item.currencyCode)}</td><td>{formatCurrency(item.paidAmount,item.currencyCode)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount,item.currencyCode)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount,item.currencyCode)}</td>{direction === "payable" && <td className="pr-3 font-semibold">{formatCurrency(item.supplierCreditAmount,"COP")}</td>}</tr>)}</tbody>
+        <tbody>{partyItems.map(item => <tr key={`${item.id}-${item.partySiteId??"none"}-${item.currencyCode}`} className="cursor-pointer border-t hover:bg-muted/40" onClick={() => onPartyClick(item)}><td className="p-3"><b>{item.name}</b><p className="text-xs text-muted-foreground">{item.identification}{item.partySiteName?` · ${item.partySiteName}`:""}{direction==="payable"?` · ${item.currencyCode}`:""}</p></td><td>{item.invoiceCount}</td><td>{formatCurrency(item.originalAmount,item.currencyCode,4)}</td><td>{formatCurrency(item.paidAmount,item.currencyCode,4)}</td><td className="font-semibold">{formatCurrency(item.outstandingAmount,item.currencyCode,4)}</td><td className="pr-3 text-destructive">{formatCurrency(item.overdueAmount,item.currencyCode,4)}</td>{direction === "payable" && <td className="pr-3 font-semibold">{formatCurrency(item.supplierCreditAmount,"COP",4)}</td>}</tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>
     <TabsContent value="payments" className="mt-0">
+      {paymentMethods.isError&&<div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-destructive/30 p-3 text-sm text-destructive"><span>No fue posible cargar los nombres de los medios de pago. Se muestran sus códigos.</span><Button type="button" variant="outline" size="sm" disabled={paymentMethods.isFetching} onClick={()=>void paymentMethods.refetch()}>Reintentar medios</Button></div>}
       <LedgerTable loading={loading} failed={failed} isEmpty={paymentItems.length === 0} empty={`No hay ${direction === "receivable" ? "recaudos" : "pagos"} para estos filtros.`}>
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr>
           {[["paidAt","Fecha"],["partyName",direction === "receivable" ? "Cliente" : "Proveedor"],["documentNumber","Comprobante"]].map(([by,label])=><SortableLedgerHeader key={by} by={by} label={label} sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,by)}/>)}
-          <th>Facturas</th><th>Medios</th><SortableLedgerHeader by="totalAmount" label="Total" sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,"totalAmount")}/></tr></thead>
-        <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="py-2"><span className="block font-mono text-xs">{item.documentNumber}</span>{canViewVoucher&&<Button type="button" variant="ghost" size="sm" className="mt-1 -ml-2" onClick={()=>setSelectedPaymentId(item.paymentId)}><FileText className="mr-1 h-4 w-4"/>Ver e imprimir</Button>}</td><td><details><summary className="cursor-pointer">{item.appliedDocumentCount} factura{item.appliedDocumentCount===1?"":"s"}</summary><div className="mt-2 space-y-1">{item.applications.map(application=><div key={application.invoiceId} className="flex items-center gap-2 whitespace-nowrap"><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={()=>onInvoiceClick(application.invoiceId)}>{application.documentNumber}</button><span>{formatCurrency(application.amount,item.currencyCode)}</span></div>)}</div></details></td><td>{item.payments.map(payment => paymentLabel(payment.methodCode)).join(" + ")}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode)}</td></tr>)}</tbody>
+          <th>Facturas</th><th>Medios</th><th>Estado del pago</th><SortableLedgerHeader by="totalAmount" label="Total" sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,"totalAmount")}/></tr></thead>
+        <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="py-2"><span className="block font-mono text-xs">{item.documentNumber}</span>{canViewVoucher&&<Button type="button" variant="ghost" size="sm" className="mt-1 -ml-2" onClick={()=>setSelectedPaymentId(item.sourceDocumentId??item.paymentId)}><FileText className="mr-1 h-4 w-4"/>Ver e imprimir</Button>}</td><td><details><summary className="cursor-pointer">{item.appliedDocumentCount} factura{item.appliedDocumentCount===1?"":"s"}</summary><div className="mt-2 space-y-1">{item.applications.map(application=><div key={application.invoiceId} className="flex items-center gap-2 whitespace-nowrap"><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={()=>onInvoiceClick(application.invoiceId)}>{application.documentNumber}</button><span>{formatCurrency(application.amount,item.currencyCode,4)}</span></div>)}</div></details></td><td>{item.payments.map(payment => paymentLabels.get(payment.methodCode)??payment.methodCode).join(" + ")}</td><td className="px-3 py-2">{item.status==="Processed"?<span className="font-medium text-emerald-700">Aplicado</span>:item.status==="Accepted"?<span className="font-medium text-amber-800">Pendiente de aplicar · abono no aplicado</span>:<span>Estado sin confirmar</span>}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode,4)}</td></tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>
@@ -154,9 +168,7 @@ function Pager({page,pages,total,onPage}:{page:number;pages:number;total:number;
   return <div className="mt-3 flex items-center justify-between text-sm text-muted-foreground"><span>{total} registro{total === 1 ? "" : "s"}</span><div className="flex items-center gap-2"><Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>Anterior</Button><span>{pages ? `${page} de ${pages}` : "0 páginas"}</span><Button variant="outline" size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)}>Siguiente</Button></div></div>;
 }
 
-function paymentLabel(code: string) {
-  return ({ Cash: "Efectivo", Transfer: "Transferencia", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito" } as Record<string, string>)[code] ?? code;
-}
+
 
 function SortableLedgerHeader({by,label,sort,onClick}:{by:string;label:string;sort:LedgerSort;onClick:()=>void}) {
   const Icon=sort.by===by?(sort.direction==="asc"?ArrowUp:ArrowDown):ArrowUpDown;
