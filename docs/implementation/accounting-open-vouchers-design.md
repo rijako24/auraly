@@ -3048,8 +3048,10 @@ compras, gastos y comprobantes por pagar aparecen junto con cartera y anticipos
 del tercero en la vista inicial, sin tipo preseleccionado. El tipo se puede
 filtrar y limpiar; la consulta conjunta exige tercero y pagina el conjunto
 antes de enriquecer sus partidas. Un bloque «Filtros» cerrado por defecto reúne
-tipo de saldo, documento, cuenta y
-vencimiento desde/hasta. El tipo distingue obligaciones, cartera y anticipos,
+tipo de saldo, documento, cuenta y vencimiento desde/hasta. La lectura de CxP
+abiertas usa un índice de cobertura por empresa y vencimiento para que la consulta
+conjunta conserve el presupuesto de la primera página con historial voluminoso.
+El tipo distingue obligaciones, cartera y anticipos,
 no el origen del comprobante. El encabezado muestra fecha y descripción en la
 misma fila, sin campo de referencia; se conserva la referencia por partida y la
 referencia histórica del contrato. El concepto interno requerido por el contrato

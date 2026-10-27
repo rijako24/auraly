@@ -363,6 +363,11 @@ CREATE INDEX [IX_Payables_Business_Due] ON [dbo].[Payables] ([BusinessId], [Stat
 GO
 CREATE INDEX [IX_Payables_Business_Supplier_Site] ON [dbo].[Payables] ([BusinessId], [SupplierId], [PartySiteId], [Status], [DueDate]);
 GO
+CREATE INDEX [IX_Payables_OpenPositionPage] ON [dbo].[Payables] ([BusinessId], [DueDate], [PayableId])
+    INCLUDE ([SupplierId], [SourceDocumentId], [SourceDocumentType], [DocumentNumber],
+        [OriginalAmount], [OutstandingAmount], [OpeningEntryId], [OpeningEntryLineNumber], [PartySiteId], [Status])
+    WHERE [CurrencyCode] = 'COP' AND [OutstandingAmount] > 0 AND [Status] IN (N'Open', N'PartiallyPaid');
+GO
 
 CREATE TABLE [dbo].[PayableTransactions]
 (
