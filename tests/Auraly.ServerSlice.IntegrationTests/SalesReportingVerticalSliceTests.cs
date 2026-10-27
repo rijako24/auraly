@@ -68,7 +68,7 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Confirmed_sale_is_projected_and_reported_without_operational_joins()
     {
-        var sale = fixture.CreateValidRequest(9_901);
+        var sale = fixture.CreateValidRequest(9_582);
         using (var upload = fixture.CreateUploadMessage(sale))
         using (var response = await fixture.CreateClient().SendAsync(upload))
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);

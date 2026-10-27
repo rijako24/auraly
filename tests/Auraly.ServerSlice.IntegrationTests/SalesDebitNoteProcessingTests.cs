@@ -14,7 +14,7 @@ public sealed class SalesDebitNoteProcessingTests(ServerSliceFixture fixture)
     public async Task Debit_note_references_invoice_and_creates_fiscal_accounting_and_receivable_work_once()
     {
         var (customerId, partySiteId) = await CreateCustomerAsync();
-        var original = WithUblSnapshot(fixture.CreateValidRequest(9_701) with
+        var original = WithUblSnapshot(fixture.CreateValidRequest(9_581) with
         {
             CustomerId = customerId,
             CustomerPartySiteId = partySiteId

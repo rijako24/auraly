@@ -4,8 +4,6 @@ using System.Text.Json.Nodes;
 using Auraly.Application.DocumentProcessing;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Xunit.Sdk;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -172,11 +170,9 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
     [Fact]
     public async Task A_legacy_writer_gap_starts_a_new_cost_context_without_repairing_the_completed_replay()
     {
-        var errors = new ErrorCaptureLoggerProvider();
-        fixture.Services.GetRequiredService<ILoggerFactory>().AddProvider(errors);
-        var first = fixture.CreateValidRequest(8_899);
-        var legacy = fixture.CreateValidRequest(8_900);
-        var next = fixture.CreateValidRequest(8_901);
+        var first = fixture.CreateValidRequest(9_601);
+        var legacy = fixture.CreateValidRequest(9_602);
+        var next = fixture.CreateValidRequest(9_603);
         using var client = fixture.CreateClient();
         try
         {
@@ -203,14 +199,7 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
             await UploadAsync(client, legacy);
             Assert.Equal(snapshot, await ReadBalanceSnapshotAsync());
             Assert.Null(await ReadCostPoolEpochAsync(legacy.DocumentId));
-            try
-            {
-                await UploadAsync(client, next);
-            }
-            catch (XunitException failure)
-            {
-                throw new XunitException($"{failure.Message}\nRecent server errors:\n{errors.Recent}");
-            }
+            await UploadAsync(client, next);
             var nextEpoch = await ReadCostPoolEpochAsync(next.DocumentId);
             Assert.NotNull(nextEpoch);
             Assert.NotEqual(firstEpoch, nextEpoch);
@@ -230,32 +219,6 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
         {
             await RemoveFromPendingFiscalListingAsync(first.DocumentId, legacy.DocumentId);
             await RemoveFromPendingFiscalListingAsync(next.DocumentId, next.DocumentId);
-        }
-    }
-
-    private sealed class ErrorCaptureLoggerProvider : ILoggerProvider
-    {
-        private readonly System.Collections.Concurrent.ConcurrentQueue<string> errors = new();
-        public string Recent => string.Join("\n", errors.Reverse().Take(5).Reverse());
-        public ILogger CreateLogger(string categoryName) => new ErrorCaptureLogger(this, categoryName);
-        public void Dispose() { }
-
-        private sealed class ErrorCaptureLogger(ErrorCaptureLoggerProvider owner, string categoryName) : ILogger
-        {
-            public IDisposable BeginScope<TState>(TState state) where TState : notnull => EmptyScope.Instance;
-            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
-                Exception? exception, Func<TState, Exception?, string> formatter)
-            {
-                if (IsEnabled(logLevel))
-                    owner.errors.Enqueue($"{categoryName}: {formatter(state, exception)} {exception}");
-            }
-        }
-
-        private sealed class EmptyScope : IDisposable
-        {
-            public static readonly EmptyScope Instance = new();
-            public void Dispose() { }
         }
     }
 
