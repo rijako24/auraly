@@ -352,7 +352,9 @@ public sealed record AccountingOpeningBalanceLineView(
 // of posting an opening while silently ignoring its links to existing balances.
 public sealed record AccountingReconciledOpeningPayload(
     Guid VoucherId, Guid BusinessId, DateTimeOffset OccurredAt, string ConceptCode,
-    string Description, IReadOnlyList<AccountingReconciledOpeningLine> Lines, int PayloadVersion = 3);
+    string Description, IReadOnlyList<AccountingReconciledOpeningLine> Lines, int PayloadVersion = 3,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    bool? HistoricalCatchup = null);
 
 public sealed record AccountingReconciledOpeningLine(
     int LineNumber, Guid AccountId, Guid? PartyId, Guid? CostCenterId,

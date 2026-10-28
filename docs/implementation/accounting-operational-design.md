@@ -122,6 +122,19 @@ Their pending reservations and source date prevent the current opening-balance
 validator from reconciling it. Replaying those jobs before reconciliation would
 not apply the collections.
 
+For that specific historical case, a version-3 reconciled opening can carry
+`HistoricalCatchup=true`. The accountant selects the receivable control account
+already proven by every posted collection and an explicit counterpart account.
+The same opening validator then requires one original commercial-only opening,
+exact transaction arithmetic, a matching posted journal line for each earlier
+collection, the original amount on the new opening line, no previous original
+journal and no pending adjustment. It checks the original portfolio transaction
+date rather than the import job's technical acceptance date. Accepted but
+unapplied collections stay reserved; after the original line is linked, the
+existing accounting retry processes them once. The ordinary opening path and
+its stricter cut remain unchanged. No payment or balance is written by this
+reconciliation outside `SqlAccountingPostingProcessor`.
+
 The production cutover must quiesce old API and worker writers before publishing
 the DACPAC, verify that every posted position is linked, and start only the new
 workers/API afterward. Releasing the schema while an old writer continues to

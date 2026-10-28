@@ -2071,6 +2071,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         validate.Parameters.AddWithValue("@TenantId", source.TenantId);
         validate.Parameters.AddWithValue("@BusinessId", source.BusinessId);
         validate.Parameters.AddWithValue("@EffectiveOn", source.OccurredAt.Date);
+        validate.Parameters.AddWithValue("@HistoricalCatchup", opening.HistoricalCatchup == true);
         validate.Parameters.Add("@LinesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(opening.Lines.Select(line => new
         {
             line.LineNumber, line.AccountId, line.PartyId, line.Debit, line.Credit, line.LineId,
