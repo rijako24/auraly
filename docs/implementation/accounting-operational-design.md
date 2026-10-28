@@ -120,15 +120,23 @@ this migration cannot make a missing journal appear. DEV's two accepted,
 unapplied collections target a separate migrated commercial-only receivable.
 Their pending reservations and source date prevent the current opening-balance
 validator from reconciling it. Replaying those jobs before reconciliation would
-not apply the collections.
+not apply the collections. A later DEV audit found 80 open migrated
+commercial-only receivables in that business: four with six posted collection
+movements and 76 without prior collections. The two pending collections target
+one of the four. A posted collection covering two invoices may have one shared
+control-account credit, so reconciliation proves the full payment credit rather
+than requiring one journal line per application.
 
 For that specific historical case, a version-3 reconciled opening can carry
 `HistoricalCatchup=true`. The accountant selects the receivable control account
 already proven by every posted collection and an explicit counterpart account.
+Positions without posted collections require an active receivable auxiliary
+configured with debtor, debit nature and posting enabled.
 The same opening validator then requires one original commercial-only opening,
-exact transaction arithmetic, a matching posted journal line for each earlier
-collection, the original amount on the new opening line, no previous original
-journal and no pending adjustment. It checks the original portfolio transaction
+exact transaction arithmetic, a matching posted journal credit for each earlier
+collection's full payment (including a payment split across invoices), the
+original amount on the new opening line, no previous original journal and no
+pending adjustment. It checks the original portfolio transaction
 date rather than the import job's technical acceptance date. Accepted but
 unapplied collections stay reserved; after the original line is linked, the
 existing accounting retry processes them once. The ordinary opening path and

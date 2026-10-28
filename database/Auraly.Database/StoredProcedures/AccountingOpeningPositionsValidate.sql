@@ -128,7 +128,7 @@ BEGIN
         AND payment.BusinessId=@BusinessId AND payment.Status=N'Processed'
       LEFT JOIN dbo.CustomerPaymentApplications application ON application.PaymentId=payment.PaymentId
         AND application.ReceivableId=movement.PositionId AND application.Amount=movement.Amount
-      LEFT JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=payment.PaymentId
+      LEFT JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=application.PaymentId
         AND job.SourceDocumentType=N'ReceivablePayment' AND job.TenantId=@TenantId
         AND job.BusinessId=@BusinessId AND job.Status=N'Posted' AND job.AccountingEntryRequired=1
       LEFT JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=job.SourceDocumentId
@@ -136,10 +136,11 @@ BEGIN
         AND entry.BusinessId=@BusinessId AND entry.SourcePayloadHash=job.SourcePayloadHash
       LEFT JOIN dbo.AccountingEntryLines journal ON journal.EntryId=entry.EntryId
         AND journal.AccountId=selected.AccountId AND journal.PartyId=position.PartyId
-        AND journal.Debit=0 AND journal.Credit=movement.Amount
+        AND journal.Debit=0 AND journal.Credit>0
       WHERE movement.TransactionType=N'Payment'
       GROUP BY movement.PositionId,movement.SourceDocumentId,movement.Amount
-      HAVING COUNT_BIG(journal.EntryId)<>1)
+      HAVING COUNT_BIG(application.PaymentId)=0
+        OR ISNULL(SUM(journal.Credit),0)<>ISNULL(MAX(payment.TotalAmount),0))
       OR EXISTS(SELECT 1 FROM @Lines selected JOIN dbo.AccountingAccounts account
         ON account.AccountId=selected.AccountId AND account.TenantId=@TenantId
         WHERE selected.ExistingReceivableId IS NOT NULL AND account.FinancialFunction IS NULL
