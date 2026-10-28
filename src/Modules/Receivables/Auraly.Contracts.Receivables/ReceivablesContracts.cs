@@ -85,7 +85,8 @@ public sealed record CustomerPaymentHistoryItem(Guid PaymentId, string DocumentN
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     string? SourceDocumentType = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    Guid? SourceGroupId = null);
+    Guid? SourceGroupId = null,
+    decimal? NetAppliedAmount = null);
 public sealed record CustomerPaymentHistoryApplication(Guid ReceivableId,string DocumentNumber,decimal Amount);
 public sealed record CustomerPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? CustomerId,
     string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null,

@@ -14,6 +14,8 @@ public interface IAccountingStore
         CancellationToken cancellationToken);
     Task<UnapplicationCandidate?> GetUnapplicationAsync(AccountingUserIdentity user, string kind,
         Guid positionId, Guid transactionId, CancellationToken cancellationToken);
+    Task<PaymentCorrectionCandidate?> GetPaymentCorrectionAsync(AccountingUserIdentity user,
+        string kind, Guid paymentId, CancellationToken cancellationToken);
     Task<AccountingOpenPositionPage> OpenPositionsAsync(AccountingUserIdentity user, AccountingOpenPositionQuery query, CancellationToken cancellationToken);
     Task<AccountingAccountOptionPage> AccountOptionsAsync(AccountingUserIdentity user, AccountingAccountOptionQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);

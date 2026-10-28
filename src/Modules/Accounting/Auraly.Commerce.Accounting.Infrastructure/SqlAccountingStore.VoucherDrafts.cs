@@ -248,11 +248,14 @@ public sealed partial class SqlAccountingStore
     {
         await using var command = new SqlCommand("""
             DECLARE @RequestedLines TABLE(AccountId uniqueidentifier,PartyId uniqueidentifier,CostCenterId uniqueidentifier,
-              PartySiteId uniqueidentifier,TargetKind nvarchar(16),TargetId uniqueidentifier);
+              PartySiteId uniqueidentifier,TargetKind nvarchar(16),TargetId uniqueidentifier,
+              GroupId uniqueidentifier,ReversesTransactionId uniqueidentifier);
             INSERT @RequestedLines
-            SELECT AccountId,PartyId,CostCenterId,PartySiteId,TargetKind,TargetId FROM OPENJSON(@Lines)
+            SELECT AccountId,PartyId,CostCenterId,PartySiteId,TargetKind,TargetId,GroupId,ReversesTransactionId FROM OPENJSON(@Lines)
               WITH(AccountId uniqueidentifier,PartyId uniqueidentifier,CostCenterId uniqueidentifier,PartySiteId uniqueidentifier,
-                TargetKind nvarchar(16) '$.ExistingPosition.SubledgerKind',TargetId uniqueidentifier '$.ExistingPosition.SubledgerId');
+                TargetKind nvarchar(16) '$.ExistingPosition.SubledgerKind',TargetId uniqueidentifier '$.ExistingPosition.SubledgerId',
+                GroupId uniqueidentifier '$.FinancialGroupId',
+                ReversesTransactionId uniqueidentifier '$.ExistingPosition.ReversesTransactionId');
             DECLARE @ControlAccounts TABLE(AccountId uniqueidentifier,Kind nvarchar(16));
             IF @Final=1
               INSERT @ControlAccounts SELECT effective.AccountId,category.Kind
@@ -304,9 +307,61 @@ public sealed partial class SqlAccountingStore
               ELSE NULL END OPTION(RECOMPILE);
             IF @FinancialCapture=1
             BEGIN
+              -- A posted native cash payment can predate PUC financial semantics.
+              -- Its immutable tender is sufficient evidence only to reverse that
+              -- same payment, in the same financial group and account.
+              DECLARE @LegacyCashReturns TABLE(AccountId uniqueidentifier,GroupId uniqueidentifier,
+                PRIMARY KEY(AccountId,GroupId));
+              INSERT @LegacyCashReturns
+              SELECT DISTINCT tenderLine.AccountId,tenderLine.GroupId
+              FROM @RequestedLines tenderLine JOIN @RequestedLines target
+                ON target.GroupId=tenderLine.GroupId AND target.ReversesTransactionId IS NOT NULL
+              JOIN dbo.ReceivableTransactions movement
+                ON movement.ReceivableTransactionId=target.ReversesTransactionId
+                  AND movement.ReceivableId=target.TargetId AND target.TargetKind=N'Receivable'
+                  AND movement.TransactionType=N'Payment'
+              JOIN dbo.CustomerPayments payment ON payment.PaymentId=movement.SourceDocumentId
+                AND payment.BusinessId=@BusinessId AND payment.Status=N'Processed'
+              JOIN dbo.CustomerPaymentTenders tender ON tender.PaymentId=payment.PaymentId
+                AND tender.AccountId=tenderLine.AccountId AND tender.MethodCode=N'Cash'
+              JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=payment.PaymentId
+                AND job.SourceDocumentType=N'ReceivablePayment' AND job.BusinessId=@BusinessId
+                AND job.TenantId=@TenantId AND job.Status=N'Posted'
+              JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=job.SourceDocumentId
+                AND entry.SourceDocumentType=job.SourceDocumentType AND entry.BusinessId=@BusinessId
+                AND entry.TenantId=@TenantId AND entry.SourcePayloadHash=job.SourcePayloadHash
+              JOIN dbo.AccountingEntryLines journal ON journal.EntryId=entry.EntryId
+                AND journal.AccountId=tender.AccountId AND journal.Debit>0 AND journal.Credit=0
+              WHERE tenderLine.TargetId IS NULL AND tenderLine.GroupId IS NOT NULL
+              UNION
+              SELECT DISTINCT tenderLine.AccountId,tenderLine.GroupId
+              FROM @RequestedLines tenderLine JOIN @RequestedLines target
+                ON target.GroupId=tenderLine.GroupId AND target.ReversesTransactionId IS NOT NULL
+              JOIN dbo.PayableTransactions movement
+                ON movement.PayableTransactionId=target.ReversesTransactionId
+                  AND movement.PayableId=target.TargetId AND target.TargetKind=N'Payable'
+                  AND movement.TransactionType=N'Payment'
+              JOIN dbo.SupplierPayments payment ON payment.PaymentId=movement.SourceDocumentId
+                AND payment.BusinessId=@BusinessId AND payment.Status=N'Processed'
+              JOIN dbo.SupplierPaymentTenders tender ON tender.PaymentId=payment.PaymentId
+                AND tender.AccountId=tenderLine.AccountId AND tender.MethodCode=N'Cash'
+              JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=payment.PaymentId
+                AND job.SourceDocumentType=N'PayablePayment' AND job.BusinessId=@BusinessId
+                AND job.TenantId=@TenantId AND job.Status=N'Posted'
+              JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=job.SourceDocumentId
+                AND entry.SourceDocumentType=job.SourceDocumentType AND entry.BusinessId=@BusinessId
+                AND entry.TenantId=@TenantId AND entry.SourcePayloadHash=job.SourcePayloadHash
+              JOIN dbo.AccountingEntryLines journal ON journal.EntryId=entry.EntryId
+                AND journal.AccountId=tender.AccountId AND journal.Debit=0 AND journal.Credit>0
+              WHERE tenderLine.TargetId IS NULL AND tenderLine.GroupId IS NOT NULL;
               SELECT a.AccountId,CASE WHEN controls.KindCount>1 OR controls.KindCount=1 AND
                   a.FinancialFunction IS NOT NULL AND a.FinancialFunction<>controls.Kind THEN N'Ambiguous'
-                ELSE COALESCE(controls.Kind,a.FinancialFunction,N'Unclassified') END,method.Code,a.BankAccountId,
+                ELSE COALESCE(controls.Kind,a.FinancialFunction,
+                  CASE WHEN EXISTS(SELECT 1 FROM @LegacyCashReturns legacy WHERE legacy.AccountId=a.AccountId)
+                    AND NOT EXISTS(SELECT 1 FROM @RequestedLines requested WHERE requested.AccountId=a.AccountId
+                      AND NOT EXISTS(SELECT 1 FROM @LegacyCashReturns legacy
+                        WHERE legacy.AccountId=requested.AccountId AND legacy.GroupId=requested.GroupId))
+                    THEN N'Cash' END,N'Unclassified') END,method.Code,a.BankAccountId,
                 CASE WHEN a.PaymentMethodOptionId IS NOT NULL AND method.OptionId IS NULL THEN 1 ELSE 0 END,a.AccountType,a.Code
               FROM (SELECT DISTINCT AccountId FROM @RequestedLines) input
               JOIN dbo.AccountingAccounts a ON a.AccountId=input.AccountId AND a.TenantId=@TenantId

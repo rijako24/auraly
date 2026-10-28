@@ -868,7 +868,23 @@ período permitido, conservando fechas y vínculos históricos.
 La devolución real del abono usa la misma captura de desaplicación: la partida
 de obligación identifica su transacción original y la contrapartida elegida
 determina el destino. Un auxiliar de anticipo conserva el dinero; un auxiliar
-de tesorería registra su devolución efectiva. No existe otro selector de operación.
+de tesorería registra su devolución efectiva. En la lista de pagos y recaudos,
+las acciones asistidas **Anular registro** y **Registrar devolución** preparan
+un único comprobante con todas las aplicaciones del pago: ambas revierten las
+cuentas y reabren las obligaciones mediante `PaymentReturn`. La primera corrige
+un registro equivocado sin afirmar una nueva salida física; la segunda vincula
+la sesión actual para registrar el dinero realmente devuelto. La cuenta de
+tesorería proviene de la línea original cuando fue conservada; si falta, el
+contador la elige. Un auxiliar antiguo sin función financiera solo se admite
+como efectivo en su reverso cuando el recaudo o pago nativo, su tender y su
+trabajo contable publicado prueban esa misma cuenta y el mismo grupo; no se
+infieren funciones por código o nombre. El
+historial conserva el pago bruto y proyecta el neto aplicado desde
+`PortfolioAppliedAmounts`, sin otro saldo almacenado. Una aplicación parcial,
+un descuento financiero decidido o un pago de más de cien obligaciones se
+corrige por las obligaciones existentes; la captura global no crea un flujo
+alterno. Un cierre ya emitido no se reescribe: su corrección se concilia de
+forma trazable.
 La devolución requiere Comprobante contable, tercero/sede coincidentes, importe
 balanceado y evidencia del medio por `PaymentTenderBreakdown`. Reutiliza los
 permisos de pago/recaudo; cuando se asocia una sesión exige también su permiso

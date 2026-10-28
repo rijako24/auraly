@@ -11,16 +11,19 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class PortfolioManualAdvanceTests
 {
     [Theory]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(false, false)]
-    public async Task Real_payment_return_shares_original_budget_rollback_and_replay_without_opening_an_advance(
-        bool supplier, bool manualPayment)
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]
+    public async Task Payment_correction_shares_original_budget_rollback_and_replay_without_opening_an_advance(
+        bool supplier, bool manualPayment, bool annulRegistration)
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
-            AccountingPermissionCodes.Retry, PayablesPermissionCodes.RegisterPayment, ReceivablesPermissionCodes.RegisterPayment,
+            AccountingPermissionCodes.Retry, PayablesPermissionCodes.Read, ReceivablesPermissionCodes.Read,
+            PayablesPermissionCodes.RegisterPayment, ReceivablesPermissionCodes.RegisterPayment,
             WorkSessionPermissionCodes.ManageCash);
         using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
         using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
@@ -88,6 +91,16 @@ public sealed partial class PortfolioManualAdvanceTests
         var preparation = (await client.GetFromJsonAsync<VoucherDraftPreparation>(capturePath))!;
         Assert.Null(preparation.Lines[1].Value.AccountId);
         Assert.Equal(original, preparation.Lines[0].Value.ExistingPosition!.ReversesTransactionId);
+        var paymentCorrectionPath = $"/api/commerce/v1/accounting/payment-correction-capture?subledgerKind={kind}&paymentId={paymentId}&correctionKind=";
+        var returnPreparation = (await client.GetFromJsonAsync<VoucherDraftPreparation>(paymentCorrectionPath + "ReturnMoney"))!;
+        var annulPreparation = (await client.GetFromJsonAsync<VoucherDraftPreparation>(paymentCorrectionPath + "AnnulRegistration"))!;
+        Assert.Equal(2, returnPreparation.Lines.Count);
+        Assert.Equal(2, annulPreparation.Lines.Count);
+        Assert.Contains("Devolución", returnPreparation.Description);
+        Assert.Contains("Anulación", annulPreparation.Description);
+        Assert.Equal(original, returnPreparation.Lines[0].Value.ExistingPosition!.ReversesTransactionId);
+        Assert.NotNull(returnPreparation.Lines[1].Value.AccountId);
+        if (manualPayment) Assert.Equal(cash.AccountId, returnPreparation.Lines[1].Value.AccountId);
         var returned = await SaveReturnAsync(100.0001m);
         var returnPath = $"/api/commerce/v1/accounting/manual/drafts/{returned.DocumentId}";
         using (var fault = new InventoryBalanceProcessingTests.CommandCounter(
@@ -96,7 +109,8 @@ public sealed partial class PortfolioManualAdvanceTests
             beforeExecute: command => command.CommandText = "THROW 51999,'Injected payment return posting fault.',1;\n" + command.CommandText))
         using (var response = await client.PostAsJsonAsync(returnPath + "/send", new SendVoucherDraftRequest(returned.RowVersion)))
         {
-            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+            Assert.True(response.StatusCode == HttpStatusCode.InternalServerError,
+                $"Expected injected fault; got {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
             Assert.Equal(1, fault.Count);
         }
         await AssertBalanceAsync(500m);
@@ -127,21 +141,34 @@ public sealed partial class PortfolioManualAdvanceTests
         await AssertBalanceAsync(1000m);
         await AssertReturnAsync(rest.DocumentId, 1);
         using (var response = await client.GetAsync(capturePath)) Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using (var response = await client.GetAsync(paymentCorrectionPath + "ReturnMoney")) Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Equal(500m, await ScalarAsync<decimal>($"SELECT SUM(Amount) FROM dbo.{role}PaymentApplications WHERE PaymentId=@Id", paymentId));
         Assert.Equal(supplier ? -500m : 500m, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id", paymentId));
         Assert.Equal(0m, await ScalarAsync<decimal>($"SELECT SUM(Amount) FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'{kind}') WHERE PositionId=@Id", debt.PositionId));
+        if (supplier)
+        {
+            var history = (await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
+                "/api/commerce/v1/payable-payments?page=1&pageSize=100"))!;
+            Assert.Equal(0m, Assert.Single(history.Items, item => item.PaymentId == paymentId).NetAppliedAmount);
+        }
+        else
+        {
+            var history = (await client.GetFromJsonAsync<CustomerPaymentHistoryPage>(
+                "/api/commerce/v1/receivable-payments?page=1&pageSize=100"))!;
+            Assert.Equal(0m, Assert.Single(history.Items, item => item.PaymentId == paymentId).NetAppliedAmount);
+        }
 
         async Task<VoucherDraftView> SaveReturnAsync(decimal amount)
         {
-            var lines = preparation.Lines.Select(item => item.Value).ToArray();
+            var lines = (annulRegistration ? annulPreparation : returnPreparation).Lines.Select(item => item.Value).ToArray();
             lines[0] = lines[0] with { Debit = supplier ? 0m : amount, Credit = supplier ? amount : 0m, LineId = Guid.NewGuid() };
-            lines[1] = lines[1] with { AccountId = cash.AccountId, Debit = supplier ? amount : 0m,
+            lines[1] = lines[1] with { AccountId = annulRegistration ? lines[1].AccountId : cash.AccountId, Debit = supplier ? amount : 0m,
                 Credit = supplier ? 0m : amount, LineId = Guid.NewGuid() };
             var id = Guid.NewGuid();
             using var response = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/manual/drafts/{id}",
                 new SaveVoucherDraftRequest(id, AccountingManualDocumentTypes.ManualVoucher, at.AddMinutes(2), "MANUAL_VOUCHER",
-                    "Dinero realmente devuelto", "DEVOLUCION-PAGO", lines, null, null, MainPartyId: partyId,
-                    PayloadVersion: 4, VoucherTypeCode: "Accounting", WorkSessionId: session));
+                    annulRegistration ? "Anulación de registro equivocado" : "Dinero realmente devuelto", "DEVOLUCION-PAGO", lines, null, null, MainPartyId: partyId,
+                    PayloadVersion: 4, VoucherTypeCode: "Accounting", WorkSessionId: annulRegistration ? null : session));
             Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
             return (await response.Content.ReadFromJsonAsync<VoucherDraftView>())!;
         }
@@ -160,14 +187,15 @@ public sealed partial class PortfolioManualAdvanceTests
         async Task AssertReturnAsync(Guid id, int count)
         {
             Assert.Equal(count, await CountAsync($"SELECT COUNT(*) FROM dbo.{kind}Transactions WHERE SourceDocumentId=@Id AND TransactionType=N'Unapplication' AND ReversesTransactionId IS NOT NULL", id));
-            Assert.Equal(count, await CountAsync("SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id", id));
+            Assert.Equal(annulRegistration ? 0 : count, await CountAsync("SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id", id));
             Assert.Equal(count, await CountAsync("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id", id));
             Assert.Equal(0, await CountAsync($"SELECT COUNT(*) FROM dbo.{role}Credits WHERE SourceDocumentId=@Id", id));
             Assert.Equal(0, await CountAsync($"SELECT COUNT(*) FROM dbo.{role}Payments WHERE ParentSourceDocumentId=@Id", id));
             if (count > 0)
             {
                 var amount = await ScalarAsync<decimal>($"SELECT SUM(Amount) FROM dbo.{kind}Transactions WHERE SourceDocumentId=@Id AND TransactionType=N'Unapplication'", id);
-                Assert.Equal(supplier ? amount : -amount, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id", id));
+                if (!annulRegistration)
+                    Assert.Equal(supplier ? amount : -amount, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id", id));
                 Assert.Equal(amount, await ScalarAsync<decimal>("SELECT SUM(line.Debit) FROM dbo.AccountingEntries entry JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId WHERE entry.SourceDocumentId=@Id", id));
             }
         }

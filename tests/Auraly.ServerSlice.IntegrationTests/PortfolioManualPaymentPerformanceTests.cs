@@ -529,6 +529,23 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
             Budget("aceptación", acceptTimes, acceptanceCommands!.Value);
             Budget("posting", postTimes, postingCommands!.Value);
 
+            using (var activity = StageActivity("payment-correction-capture"))
+            using (var count = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId))
+            {
+                var timer = Stopwatch.StartNew();
+                var fullCorrection = await unapplications.GetPaymentCorrectionCaptureAsync(user,
+                    "Payable", lastPaymentId, "AnnulRegistration");
+                timer.Stop();
+                Assert.NotNull(fullCorrection);
+                Assert.Equal(size + 1, fullCorrection.Lines.Count);
+                Assert.Equal(size, fullCorrection.Lines.Count(line => line.Value.ExistingPosition is not null));
+                Assert.Equal(1, count.Count);
+                output.WriteLine("Corrección de pago, {0} obligaciones: {1:F1} ms, {2} consulta SQL.",
+                    size, timer.Elapsed.TotalMilliseconds, count.Count);
+                Assert.True(timer.ElapsedMilliseconds < 2000,
+                    $"Preparar corrección de {size} obligaciones tardó {timer.ElapsedMilliseconds} ms.");
+            }
+
             var paidPositions = new List<(Guid PositionId, Guid TransactionId)>();
             await using (var paid = new SqlCommand("""
                 SELECT PayableId,PayableTransactionId FROM dbo.PayableTransactions

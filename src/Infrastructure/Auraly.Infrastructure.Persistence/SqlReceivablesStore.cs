@@ -292,6 +292,12 @@ public sealed partial class SqlReceivablesStore(
             INNER JOIN dbo.Receivables receivable ON receivable.ReceivableId=application.ReceivableId
             WHERE @PartySiteId IS NULL OR receivable.PartySiteId=@PartySiteId
             ORDER BY application.PaymentId,application.LineNumber;
+            SELECT applied.PaymentId,SUM(applied.Amount) NetAppliedAmount
+            FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Receivable') applied
+            JOIN @Page page ON page.PaymentId=applied.PaymentId
+            JOIN dbo.Receivables position ON position.ReceivableId=applied.PositionId AND position.BusinessId=@BusinessId
+              AND (@PartySiteId IS NULL OR position.PartySiteId=@PartySiteId)
+            GROUP BY applied.PaymentId;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
         command.Parameters.AddWithValue("@TenantId",user.TenantId);
@@ -322,7 +328,11 @@ public sealed partial class SqlReceivablesStore(
         await reader.NextResultAsync(token);
         while(await reader.ReadAsync(token)) applications[reader.GetGuid(0)].Add(new(
             reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3)));
-        return new(items.Select(item=>item with { Payments=byPayment[item.PaymentId],Applications=applications[item.PaymentId] }).ToArray(),
+        var netApplied=new Dictionary<Guid,decimal>();
+        await reader.NextResultAsync(token);
+        while(await reader.ReadAsync(token)) netApplied.Add(reader.GetGuid(0),reader.GetDecimal(1));
+        return new(items.Select(item=>item with { Payments=byPayment[item.PaymentId],Applications=applications[item.PaymentId],
+                NetAppliedAmount=netApplied.GetValueOrDefault(item.PaymentId) }).ToArray(),
             query.Page,query.PageSize,total,totalAmount);
     }
 

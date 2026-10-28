@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, FileText, RefreshCw } from "lucide-react";
 import { AccountingDocumentDialog } from "@/components/accounting/accounting-document-dialog";
+import { PortfolioPaymentCorrectionDialog, type PaymentCorrectionTarget } from "@/components/payments/portfolio-payment-correction-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,7 +22,7 @@ const onlineCatalogClient = { mode: "online" as const, referenceOptions: referen
 
 export type PortfolioLedgerTab = "parties" | "invoices" | "payments";
 export type PartyRow={id:string;name:string;identification:string;partySiteId?:string|null;partySiteName?:string|null;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;supplierCreditAmount:number;currencyCode:string};
-type PaymentRow={paymentId:string;sourceDocumentId?:string;paidAt:string;partyName:string|null;documentNumber:string;status:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string};
+type PaymentRow={paymentId:string;sourceDocumentId?:string;paidAt:string;partyName:string|null;documentNumber:string;status:string;appliedDocumentCount:number;payments:Array<{methodCode:string}>;applications:Array<{invoiceId:string;documentNumber:string;amount:number}>;totalAmount:number;currencyCode:string;netAppliedAmount?:number|null};
 type Page<T>={items:T[];page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding?:number;totalOverdue?:number;totalInvoiceCount?:number;totalSupplierCredit?:number;currencyTotals?:Array<{currencyCode:string;outstandingAmount:number;overdueAmount:number}>};
 type LedgerSort = { by: string; direction: "asc" | "desc" };
 
@@ -65,9 +66,16 @@ export function PortfolioLedgerTabs({
 }) {
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
   const canViewVoucher=useAuthStore(state=>state.user?.permissions.includes("accounting.read")??false);
+  const canCorrect=useAuthStore(state=>{
+    const permissions=state.user?.permissions??[];
+    return permissions.includes("accounting.read")&&permissions.includes("accounting.manual.create")&&permissions.includes("accounting.manual.send")&&
+      permissions.includes(direction==="receivable"?"receivables.payments.create":"payables.payments.create");
+  });
+  const canReturnMoney=useAuthStore(state=>state.user?.permissions.includes("work-sessions.cash.manage")??false);
   const paymentMethods=usePosReferenceOptions(onlineCatalogClient,"payment-method",value==="payments");
   const paymentLabels=new Map((paymentMethods.data??[]).map(method=>[method.code,method.label]));
   const [selectedPaymentId,setSelectedPaymentId]=useState<string>();
+  const [correction,setCorrection]=useState<PaymentCorrectionTarget>();
   const [partySort,setPartySort]=useState<LedgerSort>({by:"name",direction:"asc"});
   const [paymentSort,setPaymentSort]=useState<LedgerSort>({by:"paidAt",direction:"desc"});
   const toggleSort=(current:LedgerSort,setSort:(next:LedgerSort)=>void,by:string)=>
@@ -147,15 +155,21 @@ export function PortfolioLedgerTabs({
       <LedgerTable loading={loading} failed={failed} isEmpty={paymentItems.length === 0} empty={`No hay ${direction === "receivable" ? "recaudos" : "pagos"} para estos filtros.`}>
         <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr>
           {[["paidAt","Fecha"],["partyName",direction === "receivable" ? "Cliente" : "Proveedor"],["documentNumber","Comprobante"]].map(([by,label])=><SortableLedgerHeader key={by} by={by} label={label} sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,by)}/>)}
-          <th>Facturas</th><th>Medios</th><th>Estado del pago</th><SortableLedgerHeader by="totalAmount" label="Total" sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,"totalAmount")}/></tr></thead>
-        <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="py-2"><span className="block font-mono text-xs">{item.documentNumber}</span>{canViewVoucher&&<Button type="button" variant="ghost" size="sm" className="mt-1 -ml-2" onClick={()=>setSelectedPaymentId(item.sourceDocumentId??item.paymentId)}><FileText className="mr-1 h-4 w-4"/>Ver e imprimir</Button>}</td><td><details><summary className="cursor-pointer">{item.appliedDocumentCount} factura{item.appliedDocumentCount===1?"":"s"}</summary><div className="mt-2 space-y-1">{item.applications.map(application=><div key={application.invoiceId} className="flex items-center gap-2 whitespace-nowrap"><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={()=>onInvoiceClick(application.invoiceId)}>{application.documentNumber}</button><span>{formatCurrency(application.amount,item.currencyCode,4)}</span></div>)}</div></details></td><td>{item.payments.map(payment => paymentLabels.get(payment.methodCode)??payment.methodCode).join(" + ")}</td><td className="px-3 py-2">{item.status==="Processed"?<span className="font-medium text-emerald-700">Aplicado</span>:item.status==="Accepted"?<span className="font-medium text-amber-800">Pendiente de aplicar · abono no aplicado</span>:<span>Estado sin confirmar</span>}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode,4)}</td></tr>)}</tbody>
+          <th>Facturas</th><th>Medios</th><th>Estado del pago</th><SortableLedgerHeader by="totalAmount" label="Total" sort={paymentSort} onClick={()=>toggleSort(paymentSort,setPaymentSort,"totalAmount")}/>{canCorrect&&<th>Corrección</th>}</tr></thead>
+        <tbody>{paymentItems.map(item => <tr key={item.paymentId} className="border-t"><td className="p-3">{formatDate(item.paidAt)}</td><td>{item.partyName ?? "—"}</td><td className="py-2"><span className="block font-mono text-xs">{item.documentNumber}</span>{canViewVoucher&&<Button type="button" variant="ghost" size="sm" className="mt-1 -ml-2" onClick={()=>setSelectedPaymentId(item.sourceDocumentId??item.paymentId)}><FileText className="mr-1 h-4 w-4"/>Ver e imprimir</Button>}</td><td><details><summary className="cursor-pointer">{item.appliedDocumentCount} factura{item.appliedDocumentCount===1?"":"s"}</summary><div className="mt-2 space-y-1">{item.applications.map(application=><div key={application.invoiceId} className="flex items-center gap-2 whitespace-nowrap"><button type="button" className="text-primary underline-offset-4 hover:underline" onClick={()=>onInvoiceClick(application.invoiceId)}>{application.documentNumber}</button><span>{formatCurrency(application.amount,item.currencyCode,4)}</span></div>)}</div></details></td><td>{item.payments.map(payment => paymentLabels.get(payment.methodCode)??payment.methodCode).join(" + ")}</td><td className="px-3 py-2">{item.status==="Processed"?paymentGrossApplied(item)>0&&item.netAppliedAmount===0?<span className="font-medium text-amber-800">Aplicación revertida</span>:item.netAppliedAmount!=null&&item.netAppliedAmount<paymentGrossApplied(item)?<span className="font-medium text-amber-800">Aplicación corregida parcialmente</span>:<span className="font-medium text-emerald-700">Aplicado</span>:item.status==="Accepted"?<span className="font-medium text-amber-800">Pendiente de aplicar · abono no aplicado</span>:<span>Estado sin confirmar</span>}</td><td className="pr-3 text-right font-semibold">{formatCurrency(item.totalAmount, item.currencyCode,4)}</td>{canCorrect&&<td className="min-w-40 p-2">{item.status==="Processed"&&paymentGrossApplied(item)>0&&item.netAppliedAmount===paymentGrossApplied(item)&&<div className="flex flex-col gap-1"><Button type="button" variant="outline" size="sm" onClick={()=>setCorrection({paymentId:item.paymentId,documentNumber:item.documentNumber,direction,kind:"AnnulRegistration"})}>Anular registro</Button>{canReturnMoney&&<Button type="button" variant="outline" size="sm" onClick={()=>setCorrection({paymentId:item.paymentId,documentNumber:item.documentNumber,direction,kind:"ReturnMoney"})}>Registrar devolución</Button>}</div>}</td>}</tr>)}</tbody>
       </LedgerTable>
       <Pager page={current?.page ?? page} pages={current?.totalPages ?? 0} total={current?.totalCount ?? 0} onPage={setPage}/>
     </TabsContent>
     {selectedPaymentId&&<AccountingDocumentDialog documentId={selectedPaymentId} hasFiscalDocument={false}
       sourceLabel={direction==="receivable"?"Recaudo de cartera":"Pago a proveedor"}
       onClose={()=>setSelectedPaymentId(undefined)}/>}
+    {correction&&businessId&&<PortfolioPaymentCorrectionDialog businessId={businessId} target={correction}
+      onClose={()=>setCorrection(undefined)} onCorrected={()=>void payments.refetch()}/>}
   </Tabs>;
+}
+
+function paymentGrossApplied(item: PaymentRow) {
+  return Math.round(item.applications.reduce((total, application) => total + application.amount, 0) * 10_000) / 10_000;
 }
 
 function LedgerTable({loading,failed,isEmpty,empty,children}:{loading:boolean;failed:boolean;isEmpty:boolean;empty:string;children:ReactNode}) {

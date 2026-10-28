@@ -34,8 +34,9 @@ const identifyLines = (lines: VoucherDraftLineView[]) => lines.map(line => line.
 const editablePayloadVersion = (draft: VoucherDraft) => draft.documentType === "ManualAccountingVoucher"
   ? draft.payloadVersion === 4 ? 4 : 2 : null;
 
-export function VoucherDraftEditor({ businessId, initial, adjustment, preparation, onSaved, onCloned, onClose, onBusyChange, modal = false, closeLabel = "Volver a trazabilidad" }: {
+export function VoucherDraftEditor({ businessId, initial, adjustment, preparation, correctionWorkSessionId, onSaved, onCloned, onClose, onBusyChange, modal = false, closeLabel = "Volver a trazabilidad" }: {
   businessId: string; initial?: VoucherDraft; adjustment?: VoucherDraftAdjustment; preparation?: VoucherDraftPreparation;
+  correctionWorkSessionId?: string;
   onSaved?: (value: VoucherDraft) => void; onClose: () => void; onBusyChange?: (busy: boolean) => void;
   onCloned?: (value: VoucherDraft) => void;
   modal?: boolean; closeLabel?: string;
@@ -44,18 +45,19 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const queryClient = useQueryClient();
   const [saved, setSaved] = useState(initial);
   const [form, setForm] = useState<SaveVoucherDraft>(() => initial ? { ...initial,
-    workSessionId: initial.sentAt ? initial.workSessionId : null,
+    workSessionId: initial.sentAt ? initial.workSessionId : correctionWorkSessionId ?? null,
     payloadVersion: editablePayloadVersion(initial), lines: initial.lines.map(line => line.value) } : {
     documentId: crypto.randomUUID(), documentType: adjustment ? "AccountAdjustment" : "ManualAccountingVoucher",
     occurredAt: proposedAccountingDate(),
     conceptCode: adjustment ? "ACCOUNT_ADJUSTMENT" : "MANUAL_VOUCHER", description: preparation?.description ?? "", reference: preparation?.reference ?? null,
     mainPartyId: preparation?.mainPartyId ?? null, voucherTypeCode: adjustment ? null : "Accounting",
     lines: [], adjustment: adjustment ?? null, rowVersion: null, payloadVersion: adjustment ? null : 4,
+    workSessionId: correctionWorkSessionId ?? null,
   });
   const [lines, setLines] = useState<VoucherDraftLineView[]>(() => initial ? identifyLines(initial.lines) : preparation ? identifyLines(preparation.lines) : (adjustment ? [] : [newLine(), newLine()]));
   const [scrollTop, setScrollTop] = useState(0);
   const [dirty, setDirty] = useState(!initial || !initial.sentAt && initial.documentType === "ManualAccountingVoucher" &&
-    (initial.payloadVersion !== editablePayloadVersion(initial) || !!initial.workSessionId));
+    (initial.payloadVersion !== editablePayloadVersion(initial) || !!initial.workSessionId && initial.workSessionId !== correctionWorkSessionId));
   const [phase, setPhase] = useState<"save" | "send" | "refresh" | "retry" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [entryOpen, setEntryOpen] = useState(false);
@@ -129,12 +131,12 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     markChanged();
   }
   function accept(value: VoucherDraft) {
-    setSaved(value); setForm({ ...value, workSessionId: value.sentAt ? value.workSessionId : null,
+    setSaved(value); setForm({ ...value, workSessionId: value.sentAt ? value.workSessionId : correctionWorkSessionId ?? null,
       payloadVersion: editablePayloadVersion(value),
       lines: value.lines.map(line => line.value) }); setLines(identifyLines(value.lines));
     setMainParty({ name: value.mainPartyName ?? null, identification: value.mainPartyIdentification ?? null });
     setDirty(!value.sentAt && value.documentType === "ManualAccountingVoucher" &&
-      (value.payloadVersion !== editablePayloadVersion(value) || !!value.workSessionId)); onSaved?.(value);
+      (value.payloadVersion !== editablePayloadVersion(value) || !!value.workSessionId && value.workSessionId !== correctionWorkSessionId)); onSaved?.(value);
   }
   async function save() {
     if (busy) return;
@@ -143,7 +145,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     const missingDescription = lines.findIndex(line => !line.value.description.trim() || line.value.description.length > 500);
     if (missingDescription !== -1) { setError(`La descripción de la partida ${missingDescription + 1} es obligatoria y admite máximo 500 caracteres.`); return; }
     setPhase("save"); setError(null);
-    try { accept(await accountingApi.saveVoucherDraft({ ...form, workSessionId: null, lines: lines.map(line => line.value) })); }
+    try { accept(await accountingApi.saveVoucherDraft({ ...form, workSessionId: correctionWorkSessionId ?? null, lines: lines.map(line => line.value) })); }
     catch (value) { setError(value instanceof Error ? value.message : "No se pudo guardar el comprobante."); }
     finally { setPhase(null); }
   }

@@ -365,6 +365,12 @@ public sealed partial class SqlPayablesStore(
             INNER JOIN dbo.Payables payable ON payable.PayableId=application.PayableId
             WHERE @PartySiteId IS NULL OR payable.PartySiteId=@PartySiteId
             ORDER BY application.PaymentId,application.LineNumber;
+            SELECT applied.PaymentId,SUM(applied.Amount) NetAppliedAmount
+            FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Payable') applied
+            JOIN @Page page ON page.PaymentId=applied.PaymentId
+            JOIN dbo.Payables position ON position.PayableId=applied.PositionId AND position.BusinessId=@BusinessId
+              AND (@PartySiteId IS NULL OR position.PartySiteId=@PartySiteId)
+            GROUP BY applied.PaymentId;
             """,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
         command.Parameters.AddWithValue("@TenantId",user.TenantId);
@@ -395,7 +401,11 @@ public sealed partial class SqlPayablesStore(
         await reader.NextResultAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken)) applications[reader.GetGuid(0)].Add(new(
             reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3)));
-        return new(items.Select(item=>item with { Payments=byPayment[item.PaymentId],Applications=applications[item.PaymentId] }).ToArray(),
+        var netApplied=new Dictionary<Guid,decimal>();
+        await reader.NextResultAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken)) netApplied.Add(reader.GetGuid(0),reader.GetDecimal(1));
+        return new(items.Select(item=>item with { Payments=byPayment[item.PaymentId],Applications=applications[item.PaymentId],
+                NetAppliedAmount=netApplied.GetValueOrDefault(item.PaymentId) }).ToArray(),
             query.Page,query.PageSize,total);
     }
 

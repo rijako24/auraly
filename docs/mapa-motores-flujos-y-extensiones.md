@@ -217,7 +217,11 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
   deuda, registra el dinero devuelto y el asiento en su misma transacción, sin
   otro pago ni anticipo. El puente de soporte manual y su anulación
   extienden los participantes fiscal/contable y el editor existentes; su contrato
-  y evidencia local están en `accounting-open-vouchers-design.md`.
+  y evidencia local están en `accounting-open-vouchers-design.md`. Las acciones
+  del historial de CxP/CxC preparan juntas las aplicaciones originales en ese
+  editor: anular registro no vincula una sesión nueva; devolver dinero usa la
+  sesión actual. Ambas usan `PaymentReturn` y el mismo processor. El historial
+  proyecta el neto desde `PortfolioAppliedAmounts` después de paginar.
 - Las aperturas nativas de saldo a favor del proveedor convergen en
   `SqlAccountingPostingProcessor.OpenSupplierCreditsSql`. El detalle Opening
   de `SupplierCreditTransactions` conserva el trabajo padre real y permite
