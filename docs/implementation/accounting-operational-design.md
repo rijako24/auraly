@@ -98,6 +98,41 @@ No historical posted closure is repaired on replay. Existing schema and immutabl
 payloads remain compatible; rolling the code back would restore the original
 missing-link defect for later closures, so the older worker is not a repair tool.
 
+### Historical posted portfolio links at deployment (2026-10-27)
+
+`20261027_LinkPostedPortfolioOpenings.sql` runs after the additive opening-link
+columns exist and before the new API/worker release. It links only receivables and
+payables whose original job was `Posted` with an accounting entry. The candidate
+must be the one immutable line of that source with the same tenant, business,
+party, opening amount, side, account nature and source hash; the account must
+remain postable. Ambiguous or missing candidates abort the whole transaction.
+The script is idempotent and writes only the two opening-line references. It
+does not change the journal, amount, application, accepted payment or source
+mode. Commercial-only positions still require explicit accounting reconciliation
+and are never assigned today's mapping by this migration.
+
+Production read-only preflight before this change found 676 posted receivables
+and 946 posted payables, each with exactly one matching journal line. The same
+snapshot contained 33 open commercial-only receivables: 32 in a business whose
+accounting is still configuring, and one in an active accounting business. The
+last position must be reviewed explicitly before claiming full portfolio cutover;
+this migration cannot make a missing journal appear. DEV's two accepted,
+unapplied collections target a separate migrated commercial-only receivable.
+Their pending reservations and source date prevent the current opening-balance
+validator from reconciling it. Replaying those jobs before reconciliation would
+not apply the collections.
+
+The production cutover must quiesce old API and worker writers before publishing
+the DACPAC, verify that every posted position is linked, and start only the new
+workers/API afterward. Releasing the schema while an old writer continues to
+create unlinked posted obligations would reopen the gap. Rollback of only the
+binary to an old writer is likewise unsafe after the cutover. The three focused
+SQL/API regressions cover posted receivable and payable settlement through the
+existing processor, repeat migration, and transactional rejection of an invalid
+historical account. The SQL project builds with no diagnostics. This evidence
+does not certify commercial-only reconciliation or authorize a production
+deployment.
+
 ### Portfolio payments and manual vouchers share their acceptance
 
 Source/job persistence now converges in `dbo.AccountingSourcesAccept`, called in

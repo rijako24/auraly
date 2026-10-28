@@ -188,6 +188,7 @@ GO
 :r .\Migrations\20261021_ProtectUsedAccountConfiguration.sql
 :r .\Migrations\20261023_BankAuxiliariesAndAcceptedAccounts.sql
 :r .\Migrations\20261023_ManualPaymentSites.sql
+:r .\Migrations\20261027_LinkPostedPortfolioOpenings.sql
 :r .\Migrations\ClassifySystemWarehouses.sql
 GO
 PRINT 'Post-deployment scripts executed successfully.';

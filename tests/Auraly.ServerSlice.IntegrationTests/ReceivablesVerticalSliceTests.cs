@@ -32,6 +32,8 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
                 [new(id, customerId, null, null, $"PARTY-{id:N}", date, date.AddDays(30), 1000m,
                     await AccountIdByCodeAsync("413595"), null)])))
             Assert.True(imported.IsSuccessStatusCode, await imported.Content.ReadAsStringAsync());
+        var originalPartySiteId = await ScalarAsync<Guid>(
+            "SELECT PartySiteId FROM dbo.Receivables WHERE ReceivableId=@Id", id);
 
         // Represents an employee/other-party position, which has no customer role.
         await using (var connection = new SqlConnection(fixture.ConnectionString))
@@ -42,17 +44,30 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
                 WHERE ReceivableId=@Id;
                 """, new("@Id", id), new("@PartyId", fixture.SupplierPartyId));
         }
-        var payment = new ConfirmCustomerPaymentRequest(Guid.NewGuid(), fixture.BusinessId, customerId,
-            null, date.AddDays(1), "COP", null, [new(id, 100m)], [new("Cash", 100m, 100m)]);
-        using var rejected = await SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", payment,
-            payment.PaymentId.ToString("N"));
-        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
-        Assert.Contains("no corresponde al cliente", await rejected.Content.ReadAsStringAsync());
-        Assert.Equal(1000m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", id));
-        foreach (var table in new[] { "CustomerPayments", "CustomerPaymentTenders", "CustomerPaymentApplications" })
-            Assert.Equal(0, await CountAsync(table, "PaymentId", payment.PaymentId));
-        foreach (var table in new[] { "AccountingSourceDocuments", "AccountingPostingJobs", "AccountingEntries", "ReceivableTransactions" })
-            Assert.Equal(0, await CountAsync(table, "SourceDocumentId", payment.PaymentId));
+        try
+        {
+            var payment = new ConfirmCustomerPaymentRequest(Guid.NewGuid(), fixture.BusinessId, customerId,
+                null, date.AddDays(1), "COP", null, [new(id, 100m)], [new("Cash", 100m, 100m)]);
+            using var rejected = await SendAsync(client, "/api/commerce/v1/receivable-payments/confirm", payment,
+                payment.PaymentId.ToString("N"));
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+            Assert.Contains("no corresponde al cliente", await rejected.Content.ReadAsStringAsync());
+            Assert.Equal(1000m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", id));
+            foreach (var table in new[] { "CustomerPayments", "CustomerPaymentTenders", "CustomerPaymentApplications" })
+                Assert.Equal(0, await CountAsync(table, "PaymentId", payment.PaymentId));
+            foreach (var table in new[] { "AccountingSourceDocuments", "AccountingPostingJobs", "AccountingEntries", "ReceivableTransactions" })
+                Assert.Equal(0, await CountAsync(table, "SourceDocumentId", payment.PaymentId));
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await ExecuteAsync(connection, null, """
+                UPDATE dbo.Receivables SET CustomerId=@CustomerId,PartySiteId=@PartySiteId,PartyId=NULL
+                WHERE ReceivableId=@Id;
+                """, new("@Id", id), new("@CustomerId", customerId),
+                new("@PartySiteId", originalPartySiteId));
+        }
     }
 
     [Fact]
