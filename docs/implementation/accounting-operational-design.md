@@ -134,9 +134,10 @@ Positions without posted collections require an active receivable auxiliary
 configured with debtor, debit nature and posting enabled.
 The same opening validator then requires one original commercial-only opening,
 exact transaction arithmetic, a matching posted journal credit for each earlier
-collection's full payment (including a payment split across invoices), the
-original amount on the new opening line, no previous original journal and no
-pending adjustment. It checks the original portfolio transaction
+collection's full payment (including a payment split across invoices), and a
+matching posted debit or credit for each signed portfolio adjustment. The new
+opening line carries the original amount, not the net balance; no previous
+original journal or pending adjustment is allowed. It checks the original portfolio transaction
 date rather than the import job's technical acceptance date. Accepted but
 unapplied collections stay reserved; after the original line is linked, the
 existing accounting retry processes them once. The ordinary opening path and

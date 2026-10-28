@@ -107,19 +107,21 @@ BEGIN
     -- A late, commercial-only imported sale can have posted collections before
     -- its missing original journal is recognized. Those collections prove the
     -- control account; they are not replayed or subtracted a second time.
-    IF EXISTS(SELECT 1 FROM @Transactions movement WHERE movement.TransactionType NOT IN(N'Opening',N'Payment')
+    IF EXISTS(SELECT 1 FROM @Transactions movement WHERE movement.TransactionType NOT IN(N'Opening',N'Payment',N'Adjustment')
         OR movement.TransactionType=N'Opening' AND CONVERT(date,movement.OccurredAt)>=@EffectiveOn
-        OR movement.TransactionType=N'Payment' AND (movement.Amount<=0 OR CONVERT(date,movement.OccurredAt)<@EffectiveOn))
+        OR movement.TransactionType=N'Payment' AND (movement.Amount<=0 OR CONVERT(date,movement.OccurredAt)<@EffectiveOn)
+        OR movement.TransactionType=N'Adjustment' AND (movement.Amount=0 OR CONVERT(date,movement.OccurredAt)<@EffectiveOn))
       OR EXISTS(SELECT 1 FROM @Positions position LEFT JOIN
         (SELECT movement.PositionId,
-          SUM(CASE movement.TransactionType WHEN N'Opening' THEN movement.Amount ELSE -movement.Amount END) Balance,
+          SUM(CASE movement.TransactionType WHEN N'Opening' THEN movement.Amount
+            WHEN N'Adjustment' THEN movement.Amount ELSE -movement.Amount END) Balance,
           SUM(CASE WHEN movement.TransactionType=N'Opening' THEN 1 ELSE 0 END) OpeningCount,
           SUM(CASE WHEN movement.TransactionType=N'Opening' THEN movement.Amount ELSE 0 END) OpeningAmount
          FROM @Transactions movement GROUP BY movement.PositionId) history ON history.PositionId=position.PositionId
         WHERE ISNULL(history.OpeningCount,0)<>1 OR history.OpeningAmount IS NULL
           OR history.OpeningAmount<>position.OriginalAmount OR history.Balance IS NULL
           OR history.Balance<>position.Amount)
-      THROW 51408,N'La cartera histórica requiere una sola apertura y recaudos posteriores que expliquen exactamente su saldo.',1;
+      THROW 51408,N'La cartera histórica requiere una sola apertura y movimientos posteriores que expliquen exactamente su saldo.',1;
     IF EXISTS(SELECT 1 FROM @Transactions movement JOIN @Lines selected
         ON selected.ExistingReceivableId=movement.PositionId
       JOIN @Positions position ON position.PositionId=movement.PositionId
@@ -141,10 +143,27 @@ BEGIN
       GROUP BY movement.PositionId,movement.SourceDocumentId,movement.Amount
       HAVING COUNT_BIG(application.PaymentId)=0
         OR ISNULL(SUM(journal.Credit),0)<>ISNULL(MAX(payment.TotalAmount),0))
+      OR EXISTS(SELECT 1 FROM @Transactions movement JOIN @Lines selected
+          ON selected.ExistingReceivableId=movement.PositionId
+        JOIN @Positions position ON position.PositionId=movement.PositionId
+          AND position.Kind=N'Receivable'
+        LEFT JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=movement.SourceDocumentId
+          AND job.SourceDocumentType=N'AccountAdjustment' AND job.TenantId=@TenantId
+          AND job.BusinessId=@BusinessId AND job.Status=N'Posted' AND job.AccountingEntryRequired=1
+        LEFT JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=job.SourceDocumentId
+          AND entry.SourceDocumentType=job.SourceDocumentType AND entry.TenantId=@TenantId
+          AND entry.BusinessId=@BusinessId AND entry.SourcePayloadHash=job.SourcePayloadHash
+        LEFT JOIN dbo.AccountingEntryLines journal ON journal.EntryId=entry.EntryId
+          AND journal.AccountId=selected.AccountId AND journal.PartyId=position.PartyId
+        WHERE movement.TransactionType=N'Adjustment'
+        GROUP BY movement.PositionId,movement.SourceDocumentId,movement.Amount
+        HAVING COUNT_BIG(entry.EntryId)=0
+          OR ISNULL(SUM(journal.Debit-journal.Credit),0)<>MAX(movement.Amount))
       OR EXISTS(SELECT 1 FROM @Lines selected JOIN dbo.AccountingAccounts account
         ON account.AccountId=selected.AccountId AND account.TenantId=@TenantId
         WHERE selected.ExistingReceivableId IS NOT NULL AND account.FinancialFunction IS NULL
           AND NOT EXISTS(SELECT 1 FROM @Transactions movement
-            WHERE movement.PositionId=selected.ExistingReceivableId AND movement.TransactionType=N'Payment'))
-      THROW 51408,N'Los recaudos previos no prueban una única cuenta de cartera y asiento por su valor. Revisa la conciliación histórica.',1;
+            WHERE movement.PositionId=selected.ExistingReceivableId
+              AND movement.TransactionType IN(N'Payment',N'Adjustment')))
+      THROW 51408,N'Los recaudos o ajustes previos no prueban una única cuenta de cartera y asiento por su valor. Revisa la conciliación histórica.',1;
 END;

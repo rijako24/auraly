@@ -17,7 +17,8 @@ public sealed partial class ReceivablesVerticalSliceTests
     {
         var (customerId, userId, _) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId, ReceivablesPermissionCodes.ManageCredit,
-            ReceivablesPermissionCodes.RegisterPayment, AccountingPermissionCodes.Retry);
+            ReceivablesPermissionCodes.RegisterPayment, AccountingPermissionCodes.Retry,
+            AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend);
         var positionId = Guid.NewGuid();
         var otherPositionId = Guid.NewGuid();
         var uncollectedPositionId = Guid.NewGuid();
@@ -62,6 +63,25 @@ public sealed partial class ReceivablesVerticalSliceTests
         Assert.Equal(89_999.51m, await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", positionId));
         Assert.Equal(100_000m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", otherPositionId));
+        foreach (var (direction, amount) in new[]
+                 {
+                     (AccountingAdjustmentDirections.Increase, 1_000m),
+                     (AccountingAdjustmentDirections.Decrease, 500m)
+                 })
+        {
+            var adjustment = new ConfirmAccountAdjustmentRequest(Guid.NewGuid(), fixture.BusinessId,
+                AccountingSubledgerKinds.Receivable, otherPositionId, direction, amount,
+                revenueAccountId, null, paymentAt.AddDays(1), "ACCOUNT_ADJUSTMENT",
+                "Ajuste previo de cartera migrada");
+            using var response = await client.PostAsJsonAsync(
+                "/api/commerce/v1/accounting/manual/account-adjustments", adjustment);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            Assert.Equal("Posted", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                adjustment.AdjustmentId));
+        }
+        Assert.Equal(100_500m, await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", otherPositionId));
 
         await using (var connection = new SqlConnection(fixture.ConnectionString))
@@ -114,6 +134,8 @@ public sealed partial class ReceivablesVerticalSliceTests
         }
         Assert.Equal(89_999.51m, await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", positionId));
+        Assert.Equal(100_500m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id", otherPositionId));
 
         var batchId = Guid.NewGuid();
         var lineId = Guid.NewGuid();
