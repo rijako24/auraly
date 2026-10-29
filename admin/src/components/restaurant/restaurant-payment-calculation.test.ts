@@ -74,3 +74,24 @@ test("la propina en efectivo no altera un cobro de consumo por tarjeta", () => {
     cashApplied: 0, due: 0, change: 0,
   });
 });
+
+test("dos medios cubren el consumo y el efectivo incluye propina sin aumentar la factura", () => {
+  assert.deepEqual(settleRestaurantPayment(100_000, [
+    { methodCode: "Cash", amount: "60000" },
+    { methodCode: "DebitCard", amount: "50000" },
+  ], 10_000), { cashTendered: 60_000, cashSaleTendered: 50_000,
+    cashApplied: 50_000, due: 0, change: 0 });
+  assert.deepEqual(settleRestaurantPayment(100_000, [
+    { methodCode: "Cash", amount: "70000" },
+    { methodCode: "DebitCard", amount: "50000" },
+  ], 20_000), { cashTendered: 70_000, cashSaleTendered: 50_000,
+    cashApplied: 50_000, due: 0, change: 0 });
+});
+
+test("el efectivo puede cubrir solo la propina mientras la tarjeta cubre el consumo", () => {
+  assert.deepEqual(settleRestaurantPayment(100_000, [
+    { methodCode: "Cash", amount: "10000" },
+    { methodCode: "DebitCard", amount: "100000" },
+  ], 10_000), { cashTendered: 10_000, cashSaleTendered: 0,
+    cashApplied: 0, due: 0, change: 0 });
+});

@@ -319,7 +319,7 @@ El alta de Mesero extiende `CommercialPartyRoleService`/`SqlCommercialPartyRoleS
 
 ## Diseño gastronómico
 
-La extensión de restaurante, todavía no implementada, se rige por
+La extensión de restaurante se rige por
 [POS para restaurantes y bares](implementation/restaurant-pos-design.md).
 Ese documento concentra captura gastronómica independiente bajo Sales, rol
 Mesero bajo Parties, recetas/menú público bajo Catalog y pérdidas mediante

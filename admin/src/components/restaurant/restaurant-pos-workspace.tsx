@@ -113,7 +113,6 @@ export function RestaurantPosWorkspace({ option }: {
   const [checkoutKey, setCheckoutKey] = useState<string | null>(null);
   const [collectionSummary, setCollectionSummary] =
     useState<RestaurantCollectionSummary | null>(null);
-  const [prebillPreview, setPrebillPreview] = useState<RestaurantPrebill | null>(null);
   const captureAttempt = useRef<{ signature: string; id: string } | null>(null);
   const [checkoutDocumentType, setCheckoutDocumentType] =
     useState<PosSaleDocumentType>(option.fiscalReadyForOnlineSales === true &&
@@ -624,28 +623,29 @@ export function RestaurantPosWorkspace({ option }: {
         activeCancellations.length > 0 ||
         cancellations.isLoading || cancellations.isError ||
         draft.account.status !== "Open") return;
-    setBusy(true);
-    try {
-      const bill = await restaurantAccountApi.prebill(
-        draft.account.accountId, draft.account.version, attention?.token);
-      setPrebillPreview(bill);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message :
-        "No se pudo preparar la precuenta.");
-    } finally { setBusy(false); }
-  }
-
-  function printPrebill(bill: RestaurantPrebill, includeTip: boolean) {
     const printWindow = window.open("", "_blank", "width=440,height=720");
     if (!printWindow) {
       toast.error("Habilita la ventana de impresión para esta página.");
       return;
     }
+    printWindow.document.body.textContent = "Preparando precuenta…";
+    setBusy(true);
+    try {
+      const bill = await restaurantAccountApi.prebill(
+        draft.account.accountId, draft.account.version, attention?.token);
+      printPrebill(bill, printWindow);
+    } catch (error) {
+      printWindow.close();
+      toast.error(error instanceof Error ? error.message :
+        "No se pudo preparar la precuenta.");
+    } finally { setBusy(false); }
+  }
+
+  function printPrebill(bill: RestaurantPrebill, printWindow: Window) {
     try {
       const rows = bill.lines.map((line) => `<tr><td>${escapePrebillText(line.description)}
         <small>${escapePrebillText(line.addedByName)}</small></td>
         <td>${line.quantity}</td><td>${money.format(line.total)}</td></tr>`).join("");
-      const tip = includeTip && bill.suggestedTipAmount > 0;
       printWindow.document.open();
       printWindow.document.write(`<!doctype html><html lang="es"><head>
         <meta charset="utf-8"><title>Precuenta · Mesa ${escapePrebillText(bill.tableCode)}</title>
@@ -665,14 +665,13 @@ export function RestaurantPosWorkspace({ option }: {
         <div class="notice">Precuenta · No es factura</div>
         <table><tbody>${rows}</tbody></table>
         <div class="total"><span>Consumo</span><span>${money.format(bill.total)}</span></div>
-        ${tip ? `<div class="total"><span>Propina voluntaria sugerida (${bill.suggestedTipPercent} %)</span><span>${money.format(bill.suggestedTipAmount)}</span></div>
+        <div class="total"><span>Propina voluntaria sugerida (${bill.suggestedTipPercent} %)</span><span>${money.format(bill.suggestedTipAmount)}</span></div>
         <div class="total"><span>Total sugerido</span><span>${money.format(bill.total + bill.suggestedTipAmount)}</span></div>
-        <p class="meta">La propina es voluntaria. Puedes aceptarla, cambiarla o no pagarla.</p>` : ""}
+        <p class="meta">La propina es voluntaria. Puedes aceptarla, cambiarla o no pagarla.</p>
         <p class="meta">Confirma el pago en caja. La factura se emite al cobrar.</p>
         <button onclick="window.print()">Imprimir precuenta</button></body></html>`);
       printWindow.document.close();
       printWindow.focus();
-      setPrebillPreview(null);
     } catch (error) {
       printWindow.close();
       toast.error(error instanceof Error ? error.message :
@@ -919,19 +918,6 @@ export function RestaurantPosWorkspace({ option }: {
       onClose={() => { if (!busy) { setCheckoutPreview(null); setCheckoutKey(null); setCollectionSummary(null); } }}
       onCapture={captureCollection} onReverse={reverseCollection}
       onFinalize={completeCheckout}/>}
-    {prebillPreview && <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Preparar precuenta">
-      <div className="w-full max-w-md rounded-3xl bg-card p-6 shadow-2xl">
-        <p className="text-xs font-bold uppercase tracking-widest text-primary">Mesa {prebillPreview.tableCode}</p>
-        <h2 className="mt-1 text-2xl font-bold">Precuenta</h2>
-        <p className="mt-2 text-sm text-muted-foreground">El cliente decide si deja propina. La factura registra solamente el consumo.</p>
-        <div className="mt-5 rounded-2xl border p-4"><div className="flex justify-between font-semibold"><span>Consumo</span><span>{money.format(prebillPreview.total)}</span></div>
-          {prebillPreview.suggestedTipPercent > 0 && <><div className="mt-3 flex justify-between text-sm"><span>Propina sugerida · {prebillPreview.suggestedTipPercent} %</span><span>{money.format(prebillPreview.suggestedTipAmount)}</span></div><div className="mt-3 flex justify-between border-t pt-3 text-lg font-bold"><span>Total sugerido</span><span>{money.format(prebillPreview.total + prebillPreview.suggestedTipAmount)}</span></div></>}
-        </div>
-        <div className="mt-5 grid gap-2 sm:grid-cols-2"><Button variant="outline" className="min-h-12" onClick={() => printPrebill(prebillPreview, false)}>Sin propina</Button>
-          {prebillPreview.suggestedTipPercent > 0 && <Button className="min-h-12" onClick={() => printPrebill(prebillPreview, true)}>Incluir {prebillPreview.suggestedTipPercent} %</Button>}</div>
-        <Button variant="ghost" className="mt-2 w-full" onClick={() => setPrebillPreview(null)}>Cerrar</Button>
-      </div>
-    </div>}
     {printerOpen && <PosPrinterDialog client={null} browserOnly onClose={() => setPrinterOpen(false)}/>}
     {pendingTable && <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Identificar mesero">
       <div className="w-full max-w-lg rounded-[2rem] border bg-card p-5 shadow-2xl sm:p-7">
