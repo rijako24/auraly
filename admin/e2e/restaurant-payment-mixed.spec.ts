@@ -30,7 +30,7 @@ test("muestra lo pagado, cobra solo el saldo y combina tarjeta, efectivo y propi
     responsibleUserId: userId, status: "Open", version: 1,
     openedAt: "2026-10-29T12:00:00Z", updatedAt: "2026-10-29T12:00:00Z" };
   const additions = [
-    { additionId: firstId, description: "Sopa", quantity: 1,
+    { additionId: firstId, description: "Sopa", quantity: 2,
       publicUnitPrice: 10_000, promotionDiscountPerUnit: 0 },
     { additionId: secondId, description: "Pasta", quantity: 1,
       publicUnitPrice: 20_000, promotionDiscountPerUnit: 0 },
@@ -50,8 +50,8 @@ test("muestra lo pagado, cobra solo el saldo y combina tarjeta, efectivo y propi
   const summary = () => {
     const coveredQuantities = collections.flatMap((entry) => entry.allocations);
     const collected = collections.reduce((sum, entry) => sum + entry.amount, 0);
-    return { accountId, accountVersion: 1, total: 30_000, collected,
-      remaining: 30_000 - collected, collections, coveredQuantities,
+    return { accountId, accountVersion: 1, total: 40_000, collected,
+      remaining: 40_000 - collected, collections, coveredQuantities,
       tipsCollected: collections.reduce((sum, entry) =>
         sum + (entry.tipPayment?.amount ?? 0), 0), suggestedTipPercent: 10 };
   };
@@ -99,15 +99,15 @@ test("muestra lo pagado, cobra solo el saldo y combina tarjeta, efectivo y propi
     if (path.endsWith("/products"))
       return respond(route, { items: [], hasMore: false, nextOffset: null });
     if (path.endsWith("/settlement-preview"))
-      return respond(route, { grossAmount: 30_000, withholdingTotal: 0,
-        netAmount: 30_000 });
+      return respond(route, { grossAmount: 40_000, withholdingTotal: 0,
+        netAmount: 40_000 });
     if (path.endsWith("/prebill"))
       return respond(route, { accountId, tableCode: "M-01", accountVersion: 1,
-        printedAt: "2026-10-29T12:00:00Z", total: 30_000,
-        suggestedTipPercent, suggestedTipAmount: 30_000 * suggestedTipPercent / 100,
+        printedAt: "2026-10-29T12:00:00Z", total: 40_000,
+        suggestedTipPercent, suggestedTipAmount: 40_000 * suggestedTipPercent / 100,
         lines: additions.map((item) => ({ description: item.description,
-          quantity: 1, unitPrice: item.publicUnitPrice,
-          total: item.publicUnitPrice, addedByName: "Caja" })) });
+          quantity: item.quantity, unitPrice: item.publicUnitPrice,
+          total: item.quantity * item.publicUnitPrice, addedByName: "Caja" })) });
     if (path.endsWith("/collections") && method === "GET") {
       collectionReads++;
       return respond(route, summary());
@@ -128,7 +128,7 @@ test("muestra lo pagado, cobra solo el saldo y combina tarjeta, efectivo y propi
     if (path.endsWith("/complete") && method === "POST") {
       const request = route.request().postDataJSON();
       expect(request.checkout.payments.reduce((sum: number,
-        item: { amount: number }) => sum + item.amount, 0)).toBe(30_000);
+        item: { amount: number }) => sum + item.amount, 0)).toBe(40_000);
       return respond(route, { receipt: { documentNumber: "R-1" }, isReplay: false });
     }
     if (path.endsWith("/commerce/v1/reference-options/payment-method"))
@@ -161,21 +161,28 @@ test("muestra lo pagado, cobra solo el saldo y combina tarjeta, efectivo y propi
   await zeroTipPrebill.close();
   await page.getByRole("button", { name: "Facturar mesa" }).click();
   const payment = page.getByRole("dialog", { name: "Cobrar mesa" });
-  await expect(payment.getByText("Por cobrar").locator("..")).toContainText("30.000");
+  await expect(payment.getByText("Por cobrar").locator("..")).toContainText("40.000");
   await payment.getByRole("button", { name: "Elegir productos" }).click();
   await payment.getByRole("button", { name: "Marcar Sopa" }).click();
+  await payment.getByRole("button", { name: "Quitar Sopa" }).click();
   await payment.getByRole("button", { name: "Guardar este pago" }).click();
   await expect(payment.getByRole("button", { name: "Sopa pagado" })).toBeDisabled();
-  await expect(payment.getByText("Por cobrar").locator("..")).toContainText("20.000");
-  await expect(payment.getByText("Pago de esta persona · consumo").locator("..")).toContainText("20.000");
+  await expect(payment.getByText("Sopa", { exact: true })).toHaveCount(2);
+  await expect(payment.getByText("Pendientes de pago")).toBeVisible();
+  await expect(payment.getByText("Ya pagados")).toBeVisible();
+  const pendingPosition = await payment.getByRole("button", { name: "Desmarcar Pasta" }).boundingBox();
+  const paidPosition = await payment.getByRole("button", { name: "Sopa pagado" }).boundingBox();
+  expect(pendingPosition && paidPosition && paidPosition.y > pendingPosition.y).toBe(true);
+  await expect(payment.getByText("Por cobrar").locator("..")).toContainText("30.000");
+  await expect(payment.getByText("Pago de esta persona · consumo").locator("..")).toContainText("30.000");
   await payment.getByLabel("Propina voluntaria recibida").fill("2000");
-  await expect(payment.getByRole("textbox", { name: /Efectivo entregado/ })).toHaveValue("22000");
+  await expect(payment.getByRole("textbox", { name: /Efectivo entregado/ })).toHaveValue("32000");
   await payment.getByRole("combobox", { name: "Medio de pago" }).click();
   await page.getByRole("option", { name: "Tarjeta débito" }).click();
-  await expect(payment.getByRole("textbox", { name: "Valor cobrado por consumo" })).toHaveValue("20000");
+  await expect(payment.getByRole("textbox", { name: "Valor cobrado por consumo" })).toHaveValue("30000");
   await payment.getByRole("combobox", { name: "Medio de pago" }).click();
   await page.getByRole("option", { name: "Efectivo" }).click();
-  await expect(payment.getByRole("textbox", { name: /Efectivo entregado/ })).toHaveValue("22000");
+  await expect(payment.getByRole("textbox", { name: /Efectivo entregado/ })).toHaveValue("32000");
   await payment.getByRole("button", { name: "Agregar otro medio" }).click();
   await expect(payment.getByRole("button", { name: "Cobrar y emitir documento" })).toBeDisabled();
   await payment.getByRole("combobox", { name: "Franquicia" }).click();

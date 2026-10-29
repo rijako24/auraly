@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Banknote, Check, CheckCircle2, CreditCard,
   FileText, Plus, ReceiptText, RotateCcw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -72,12 +72,15 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   const disabled = busy || working;
   const covered = useMemo(() => new Map(summary.coveredQuantities.map(
     (line) => [line.additionId, line.quantity])), [summary.coveredQuantities]);
-  const available = useMemo(() => draft.additions.filter((line) =>
-    line.status === "Sent" || line.status === "Direct")
-    .map((line) => ({ ...line,
+  const { available, paidLines } = useMemo(() => {
+    const lines = draft.additions.filter((line) =>
+      line.status === "Sent" || line.status === "Direct")
+      .map((line) => ({ ...line,
       coveredQuantity: covered.get(line.additionId) ?? 0,
-      remainingQuantity: Math.max(0, round(line.quantity - (covered.get(line.additionId) ?? 0))) })),
-  [draft.additions, covered]);
+      remainingQuantity: Math.max(0, round(line.quantity - (covered.get(line.additionId) ?? 0))) }));
+    return { available: lines.filter((line) => line.remainingQuantity > 0),
+      paidLines: lines.filter((line) => line.coveredQuantity > 0) };
+  }, [draft.additions, covered]);
   const selection = useMemo(() => available.map((line) => ({
     additionId: line.additionId,
     quantity: selectionMode === "all" ? line.remainingQuantity :
@@ -370,16 +373,22 @@ export function RestaurantPaymentDialog({ draft, summary, client,
               <ModeButton active={selectionMode === "all"} onClick={() => setSelectionMode("all")} label="Todo lo pendiente"/>
               <ModeButton active={selectionMode === "choose"} onClick={() => { setSelectionMode("choose"); setQuantities({}); }} label="Elegir productos"/>
             </div>
-            <div className="mt-4 space-y-2">{available.map((line) => {
-              const paid = line.remainingQuantity === 0;
-              const chosen = selectionMode === "all" ? line.remainingQuantity :
+            <div className="mt-4 space-y-2">{[
+              ...available.map((line) => ({ line, paid: false })),
+              ...paidLines.map((line) => ({ line, paid: true })),
+            ].map(({ line, paid }, index) => {
+              const chosen = paid ? 0 : selectionMode === "all" ? line.remainingQuantity :
                 quantities[line.additionId] ?? 0;
               const unit = line.publicUnitPrice - line.promotionDiscountPerUnit;
-              return <div key={line.additionId} className={`flex min-h-20 items-center gap-3 rounded-2xl border px-4 py-3 transition ${paid ? "border-teal-200 bg-teal-50/60 dark:border-teal-900 dark:bg-teal-950/20" : chosen ? "border-teal-500 bg-teal-50 dark:bg-teal-950/40" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+              return <Fragment key={`${line.additionId}:${paid}`}>
+                {index === 0 && <h4 className="text-sm font-bold text-slate-600 dark:text-slate-300">Pendientes de pago</h4>}
+                {paid && index === available.length && <h4 className="pt-3 text-sm font-bold text-teal-700 dark:text-teal-300">Ya pagados</h4>}
+                <div className={`flex min-h-20 items-center gap-3 rounded-2xl border px-4 py-3 transition ${paid ? "border-teal-200 bg-teal-50/60 dark:border-teal-900 dark:bg-teal-950/20" : chosen ? "border-teal-500 bg-teal-50 dark:bg-teal-950/40" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
                 <button type="button" disabled={disabled || selectionMode === "all" || paid} onClick={() => changeSelection(line.additionId, chosen ? 0 : line.remainingQuantity, line.remainingQuantity)} className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border-2 ${paid || chosen ? "border-teal-600 bg-teal-600 text-white" : "border-slate-300"}`} aria-label={paid ? `${line.description} pagado` : `${chosen ? "Desmarcar" : "Marcar"} ${line.description}`}>{(paid || chosen > 0) && <Check className="h-5 w-5"/>}</button>
-                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{line.description}</p><p className="text-xs text-slate-500 dark:text-slate-400">{paid ? "Pagado" : `${line.remainingQuantity} pendiente${line.remainingQuantity !== 1 ? "s" : ""}`} · {money.format(unit)} c/u{line.coveredQuantity > 0 && !paid ? ` · ${line.coveredQuantity} pagado${line.coveredQuantity !== 1 ? "s" : ""}` : ""}</p></div>
-                {selectionMode === "choose" && line.remainingQuantity > 1 && !line.allowsFractionalSale ? <div className="flex items-center gap-1"><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen - 1, line.remainingQuantity)} disabled={disabled} aria-label={`Quitar ${line.description}`}>−</Button><span className="min-w-7 text-center font-bold">{chosen}</span><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen + 1, line.remainingQuantity)} disabled={disabled} aria-label={`Agregar ${line.description}`}>+</Button></div> : <strong className="whitespace-nowrap">{paid ? "Pagado" : money.format(chosen * unit)}</strong>}
-              </div>;
+                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{line.description}</p><p className="text-xs text-slate-500 dark:text-slate-400">{paid ? `${line.coveredQuantity} pagado${line.coveredQuantity !== 1 ? "s" : ""}` : `${line.remainingQuantity} pendiente${line.remainingQuantity !== 1 ? "s" : ""}`} · {money.format(unit)} c/u</p></div>
+                {!paid && selectionMode === "choose" && line.remainingQuantity > 1 && !line.allowsFractionalSale ? <div className="flex items-center gap-1"><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen - 1, line.remainingQuantity)} disabled={disabled} aria-label={`Quitar ${line.description}`}>−</Button><span className="min-w-7 text-center font-bold">{chosen}</span><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen + 1, line.remainingQuantity)} disabled={disabled} aria-label={`Agregar ${line.description}`}>+</Button></div> : <strong className="whitespace-nowrap">{paid ? money.format(line.coveredQuantity * unit) : money.format(chosen * unit)}</strong>}
+                </div>
+              </Fragment>;
             })}</div></>}
           {summary.collections.length > 0 && <section className="mt-8"><h3 className="text-lg font-bold">Cobros recibidos</h3><div className="mt-3 space-y-2">{summary.collections.map((entry) => <div key={entry.collectionId} className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 dark:border-teal-900 dark:bg-slate-900"><CheckCircle2 className="h-6 w-6 shrink-0 text-teal-600"/><div className="min-w-0 flex-1"><p className="font-semibold">{money.format(entry.amount + entry.payments.reduce((sum, payment) => sum + (payment.roundingAdjustment ?? 0), 0))} · {entry.payments.map((payment) => paymentLabels.get(payment.methodCode) ?? payment.methodCode).join(" + ")}</p>{entry.tipPayment && <p className="text-sm font-medium text-teal-700">Propina: {money.format(entry.tipPayment.amount)} · {paymentLabels.get(entry.tipPayment.methodCode) ?? entry.tipPayment.methodCode}</p>}<p className="text-xs text-slate-500">{new Date(entry.capturedAt).toLocaleString("es-CO")} · {entry.allocations.length} producto(s)</p></div><Button variant="ghost" size="sm" className="min-h-11 text-red-700" disabled={disabled} onClick={() => setConfirmReverse(entry.collectionId)}><RotateCcw className="mr-1 h-4 w-4"/>Anular</Button></div>)}</div></section>}
         </div>
