@@ -52,10 +52,12 @@ public static class AccountingApi
                 return value is null ? Results.Problem("No se preparó la desaplicación: el movimiento no está aplicado o no pertenece a esta obligación y sede. Su historial original se conserva.", statusCode: 404) : Results.Ok(value);
             })).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/payment-correction-capture", async (HttpContext context,
-            string subledgerKind, Guid paymentId, string correctionKind, AccountingService service, CancellationToken token) =>
-            await ExecuteAsync(async () => {
+            string subledgerKind, Guid paymentId, string? correctionKind, AccountingService service, CancellationToken token) =>
+            correctionKind is not (null or "AnnulRegistration")
+            ? Results.Problem("La devolución separada ya no está disponible. Anula el pago o recaudo desde su historial.", statusCode: 400)
+            : await ExecuteAsync(async () => {
                 var value = await service.GetPaymentCorrectionCaptureAsync(context.User.ToAccountingIdentity(),
-                    subledgerKind, paymentId, correctionKind, token);
+                    subledgerKind, paymentId, token);
                 return value is null ? Results.Problem("El pago no tiene aplicaciones contabilizadas en esta empresa.", statusCode: 404) : Results.Ok(value);
             })).RequireAuthorization("accounting.user");
         endpoints.MapPut("/api/commerce/v1/accounting/manual/drafts/{documentId:guid}", async (HttpContext context, Guid documentId, SaveVoucherDraftRequest request, AccountingService service, CancellationToken token) =>

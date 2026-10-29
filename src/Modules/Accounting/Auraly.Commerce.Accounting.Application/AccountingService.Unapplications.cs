@@ -21,13 +21,13 @@ public sealed record PaymentCorrectionCandidate(Guid PaymentId, string DocumentN
 public sealed partial class AccountingService
 {
     public async Task<VoucherDraftPreparation?> GetPaymentCorrectionCaptureAsync(AccountingUserIdentity user,
-        string kind, Guid paymentId, string correctionKind, CancellationToken token = default)
+        string kind, Guid paymentId, CancellationToken token = default)
     {
         Demand(user, AccountingPermissionCodes.Read);
         Demand(user, AccountingPermissionCodes.ManualCreate);
         if (kind is not (AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable) ||
-            paymentId == Guid.Empty || correctionKind is not ("AnnulRegistration" or "ReturnMoney"))
-            throw new AccountingValidationException("Selecciona el pago y la corrección que vas a registrar.");
+            paymentId == Guid.Empty)
+            throw new AccountingValidationException("Selecciona el pago o recaudo que vas a anular.");
         var payable = kind == AccountingSubledgerKinds.Payable;
         AccountingVoucherFinancialValidation.DemandPaymentPermission(user, payable);
         var payment = await store.GetPaymentCorrectionAsync(user, kind, paymentId, token);
@@ -63,7 +63,7 @@ public sealed partial class AccountingService
                 if (amount == 0) continue;
                 var tender = payment.Tenders[index];
                 var line = new VoucherDraftLine(tender.AccountId, first.PartyId, null,
-                    correctionKind == "AnnulRegistration" ? $"Reversar {tender.MethodCode} registrado" : $"Devolver por {tender.MethodCode}",
+                    $"Reversar {tender.MethodCode} registrado",
                     payable ? amount : 0m, payable ? 0m : amount,
                     FinancialGroupId: groupId, PartySiteId: siteGroup.Key);
                 lines.Add(new(line, tender.AccountCode, tender.AccountName,
@@ -73,8 +73,7 @@ public sealed partial class AccountingService
             }
             if (groupAmount != 0) throw new AccountingConflictException("Los medios del pago no cubren todas las obligaciones.");
         }
-        return new(correctionKind == "AnnulRegistration" ? $"Anulación del registro {payment.DocumentNumber}" :
-                $"Devolución de dinero de {payment.DocumentNumber}", payment.DocumentNumber,
+        return new($"Anulación de {payment.DocumentNumber}", payment.DocumentNumber,
             first.PartyId, first.PartyName, first.PartyIdentification, lines);
     }
 

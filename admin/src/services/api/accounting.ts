@@ -138,9 +138,8 @@ export const accountingApi = {
   voucherDraft: (id: string) => apiClient.get<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${id}`),
   unapplicationCapture: (subledgerKind: "Payable" | "Receivable", subledgerId: string, transactionId: string) =>
     apiClient.get<VoucherDraftPreparation>(`/commerce/v1/accounting/unapplication-capture?${new URLSearchParams({ subledgerKind, subledgerId, transactionId })}`),
-  paymentCorrectionCapture: (subledgerKind: "Payable" | "Receivable", paymentId: string,
-    correctionKind: "AnnulRegistration" | "ReturnMoney") =>
-    apiClient.get<VoucherDraftPreparation>(`/commerce/v1/accounting/payment-correction-capture?${new URLSearchParams({ subledgerKind, paymentId, correctionKind })}`),
+  paymentCorrectionCapture: (subledgerKind: "Payable" | "Receivable", paymentId: string) =>
+    apiClient.get<VoucherDraftPreparation>(`/commerce/v1/accounting/payment-correction-capture?${new URLSearchParams({ subledgerKind, paymentId })}`),
   supportCancellationCapture: (payableId: string) => apiClient.get<VoucherDraftPreparation>("/commerce/v1/accounting/support-cancellation-capture", { payableId }),
   saveVoucherDraft: (request: SaveVoucherDraft) => apiClient.put<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${request.documentId}`, request),
   previewVoucherFiscal: (businessId: string, request: SaveVoucherDraft) => apiClient.post<VoucherFiscalPreview>("/commerce/v1/accounting/manual/fiscal-preview", {

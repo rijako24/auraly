@@ -865,15 +865,16 @@ revertido. Nunca borrar un pago real para desbloquear edición ni modificar
 cantidades recibidas para corregir una factura. Períodos cerrados se corrigen en
 período permitido, conservando fechas y vínculos históricos.
 
-La devolución real del abono usa la misma captura de desaplicación: la partida
-de obligación identifica su transacción original y la contrapartida elegida
-determina el destino. Un auxiliar de anticipo conserva el dinero; un auxiliar
-de tesorería registra su devolución efectiva. En la lista de pagos y recaudos,
-las acciones asistidas **Anular registro** y **Registrar devolución** preparan
-un único comprobante con todas las aplicaciones del pago: ambas revierten las
-cuentas y reabren las obligaciones mediante `PaymentReturn`. La primera corrige
-un registro equivocado sin afirmar una nueva salida física; la segunda vincula
-la sesión actual para registrar el dinero realmente devuelto. La cuenta de
+La desaplicación individual permite conservar el dinero como anticipo cuando
+corresponda. En el historial de pagos y recaudos hay una sola acción asistida,
+**Anular pago** o **Anular recaudo**: prepara un comprobante con todas las
+aplicaciones vigentes del documento, revierte sus cuentas de tesorería y reabre
+las obligaciones en una transacción del motor contable. Después se puede pagar
+o recaudar nuevamente por el flujo normal. El documento original permanece
+trazable y el historial muestra **Aplicación revertida** cuando su aplicación neta
+llega a cero; ese saldo por sí solo no identifica si el dinero se devolvió o se
+conservó como anticipo. La captura no abre una sesión nueva; los cierres emitidos conservan su
+historial y cualquier diferencia se concilia de forma trazable. La cuenta de
 tesorería proviene de la línea original cuando fue conservada; si falta, el
 contador la elige. Un auxiliar antiguo sin función financiera solo se admite
 como efectivo en su reverso cuando el recaudo o pago nativo, su tender y su
@@ -883,20 +884,19 @@ historial conserva el pago bruto y proyecta el neto aplicado desde
 `PortfolioAppliedAmounts`, sin otro saldo almacenado. Una aplicación parcial,
 un descuento financiero decidido o un pago de más de cien obligaciones se
 corrige por las obligaciones existentes; la captura global no crea un flujo
-alterno. Un cierre ya emitido no se reescribe: su corrección se concilia de
-forma trazable.
-La devolución requiere Comprobante contable, tercero/sede coincidentes, importe
-balanceado y evidencia del medio por `PaymentTenderBreakdown`. Reutiliza los
-permisos de pago/recaudo; cuando se asocia una sesión exige también su permiso
-de movimiento. No abre un anticipo ni registra otro pago ficticio.
+alterno. La anulación requiere Comprobante contable, tercero/sede coincidentes,
+importe balanceado y evidencia del medio por `PaymentTenderBreakdown`. Reutiliza
+los permisos de pago/recaudo. No abre un anticipo ni registra otro pago ficticio.
 
-La normalización identifica el efecto como `PaymentReturn`, sin IDs de anticipo.
+La normalización conserva el código interno `PaymentReturn` para compatibilidad
+con comprobantes ya aceptados; no hay otra acción de devolución en el historial.
+El efecto no lleva IDs de anticipo.
 `ManualVoucherCreditTargets` lo proyecta como la misma `Unapplication` del abono
 original. Comparte su presupuesto y reservas con las desaplicaciones que conservan
 dinero. El processor valida la pareja, reabre la deuda con el mismo aplicador,
-registra el movimiento por el writer de sesión existente y genera el asiento en
-esa transacción. El importe bruto del pago y la recepción física son inmutables;
-`PortfolioAppliedAmounts` descuenta lo devuelto del importe aplicado.
+genera el asiento inverso en esa transacción. El importe bruto del pago y la
+recepción física son inmutables;
+`PortfolioAppliedAmounts` descuenta lo anulado del importe aplicado.
 
 Verificación SQL/API local del 25 de octubre: 22/22 en
 `auraly-payment-return-shared-regression.trx`, con pago nativo y manual de CxP/CxC,

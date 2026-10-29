@@ -534,7 +534,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
             {
                 var timer = Stopwatch.StartNew();
                 var fullCorrection = await unapplications.GetPaymentCorrectionCaptureAsync(user,
-                    "Payable", lastPaymentId, "AnnulRegistration");
+                    "Payable", lastPaymentId);
                 timer.Stop();
                 Assert.NotNull(fullCorrection);
                 Assert.Equal(size + 1, fullCorrection.Lines.Count);

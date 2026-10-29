@@ -211,16 +211,17 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
   prueba el original y su crédito, `CreditBalanceChangesSql` comparte la escritura
   de disponible con las aplicaciones y `CreditUnapplication` conserva ambos
     vínculos. Está verificada localmente en SQL/API y vistas; no abre otro crédito
-    ni mueve caja. La devolución real extiende esa misma desaplicación y los
-  movimientos directos de tesorería: `PaymentReturn` se normaliza por la cuenta
-  elegida y comparte presupuesto con el abono original. El processor reabre la
-  deuda, registra el dinero devuelto y el asiento en su misma transacción, sin
-  otro pago ni anticipo. El puente de soporte manual y su anulación
+    ni mueve caja. La anulación de un pago o recaudo extiende esa misma
+  desaplicación y los movimientos directos de tesorería: el código interno
+  `PaymentReturn` conserva compatibilidad con comprobantes ya aceptados y
+  comparte presupuesto con el abono original. El processor reabre la deuda,
+  revierte el dinero y registra el asiento en su misma transacción, sin otro
+  pago ni anticipo. El puente de soporte manual y su anulación
   extienden los participantes fiscal/contable y el editor existentes; su contrato
   y evidencia local están en `accounting-open-vouchers-design.md`. Las acciones
   del historial de CxP/CxC preparan juntas las aplicaciones originales en ese
-  editor: anular registro no vincula una sesión nueva; devolver dinero usa la
-  sesión actual. Ambas usan `PaymentReturn` y el mismo processor. El historial
+  editor: la única acción de anulación no vincula una sesión nueva y usa el
+  mismo processor. El historial
   proyecta el neto desde `PortfolioAppliedAmounts` después de paginar.
 - Las aperturas nativas de saldo a favor del proveedor convergen en
   `SqlAccountingPostingProcessor.OpenSupplierCreditsSql`. El detalle Opening
@@ -236,7 +237,7 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
   v4 está en verificación. Los historiales incluyen anticipos por la sede
   explícita del grupo aceptado; el corte copia solo esa dimensión del snapshot
   y no repara metadatos durante replay. La captura fiscal manual usa el participante
-  anterior; la devolución de pagos usa el aplicador anterior. No se rellenan saldos históricos
+  anterior; la anulación de pagos usa el aplicador anterior. No se rellenan saldos históricos
   por inferencia.
 - La búsqueda de terceros manuales reutiliza `accounting.SourcePartyIndex`,
   derivado por esa aceptación mediante `accounting.ManualVoucherPartyReferences`.
