@@ -252,8 +252,10 @@ public sealed partial class SqlGoodsReceiptDocumentHandler
             SELECT DISTINCT source.ProductId
             FROM dbo.InventoryMovements source
             JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId
+              AND balance.WarehouseId=source.WarehouseId
               AND balance.ProductId=source.ProductId AND balance.QuantityOnHand>0
-            WHERE source.DocumentId=@ReceiptId AND source.DocumentType=N'GoodsReceipt'
+            WHERE source.BusinessId=@BusinessId AND source.DocumentId=@ReceiptId
+              AND source.DocumentType=N'GoodsReceipt'
               AND source.LineNumber IN(SELECT LineNumber FROM @Affected)
               AND (balance.OriginContextId IS NULL OR
                    balance.OriginSnapshotSequence<>balance.LastProcessingSequence);

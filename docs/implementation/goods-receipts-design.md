@@ -1870,6 +1870,8 @@ otras recepciones siguen viendo la reserva hasta que se contabilice el retiro.
 Una nueva edición espera a que la recepción, su revisión anterior y las
 facturas asociadas terminen de contabilizarse; así no consume saldos a medio
 procesar.
+La comprobación del origen de inventario se limita a la bodega de la recepción;
+un saldo histórico del mismo producto en otra bodega no bloquea la edición.
 La medición local aislada de la solicitud completa de una edición de una
 partida registró 42 comandos SQL y 938 ms; el presupuesto de regresión es no
 superar los 55 comandos de la confirmación original medida con el mismo

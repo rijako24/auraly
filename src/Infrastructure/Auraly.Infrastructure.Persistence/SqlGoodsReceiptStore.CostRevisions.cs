@@ -539,6 +539,7 @@ public sealed partial class SqlGoodsReceiptStore
                 AND movement.DocumentType=N'GoodsReceipt' AND movement.BusinessId=@BusinessId
                 AND movement.LineNumber=affected.LineNumber AND movement.MovementType=N'GoodsReceipt'
               JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId
+                AND balance.WarehouseId=movement.WarehouseId
                 AND balance.ProductId=movement.ProductId AND balance.QuantityOnHand>0
               WHERE balance.OriginContextId IS NULL OR
                 balance.OriginSnapshotSequence<>balance.LastProcessingSequence

@@ -403,6 +403,25 @@ public sealed partial class GoodsReceiptProcessingTests
         Assert.Equal("Completed", (await ReadJobAsync(original.DocumentId)).Status);
         var before = (await client.GetFromJsonAsync<GoodsReceiptDetail>(
             $"/api/commerce/v1/goods-receipts/{original.DocumentId:D}"))!;
+        // A historical balance in another warehouse must not block this receipt's origin.
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = new SqlCommand("""
+                DECLARE @OtherWarehouseId uniqueidentifier=NEWID();
+                INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
+                    IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,
+                    PriceFormationCostBasis,IsActive,CreatedAt)
+                VALUES(@OtherWarehouseId,@BusinessId,CONCAT(N'COST-',LEFT(CONVERT(nvarchar(36),@OtherWarehouseId),8)),
+                    N'Bodega histórica de otra recepción',0,0,1,1,1,N'WeightedAverageCost',1,SYSUTCDATETIME());
+                INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,
+                    AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+                VALUES(@BusinessId,@OtherWarehouseId,@ProductId,1,1000,1000,1,SYSUTCDATETIME());
+                """, connection);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@ProductId", line.ProductId);
+            await command.ExecuteNonQueryAsync();
+        }
         var originalPayable = await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND SourceDocumentType=N'GoodsReceipt'",
             original.DocumentId);
