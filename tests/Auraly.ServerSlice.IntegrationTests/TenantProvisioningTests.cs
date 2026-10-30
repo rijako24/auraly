@@ -504,6 +504,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         foreach (var permission in new[]
                  {
                      "accounting.configure", "accounting.manual.create",
+                     "fiscal.manual-support.send",
                      "payroll.approve", "payroll.pay", "payables.payments.create",
                      "receivables.payments.create", "expenses.create",
                      "commerce.taxation.withholdings.manage",
@@ -1548,6 +1549,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                  OR Resource LIKE N'expenses.%'
                  OR Resource LIKE N'commerce.taxation.%'
                  OR Resource LIKE N'fiscal.configuration.%'
+                 OR Resource=N'fiscal.manual-support.send'
                  OR Resource IN(
                    N'businesses.read',N'dashboard.read',N'audit_logs.read',N'payments.read',N'payments.confirm_manual',
                    N'parties.read',N'customers.read',N'suppliers.read',N'catalog.read',N'catalog.costs.read',N'products.read',
