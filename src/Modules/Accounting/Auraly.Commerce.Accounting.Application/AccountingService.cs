@@ -271,9 +271,44 @@ public sealed partial class AccountingService(
         return result;
     }
 
+    public async Task<AccountingManualDocumentAcceptance> CancelJournalVoucherAsync(
+        AccountingUserIdentity user, Guid originalDocumentId, CancelManualAccountingVoucherRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        Demand(user, AccountingPermissionCodes.ManualCreate);
+        Demand(user, AccountingPermissionCodes.ManualSend);
+        if (originalDocumentId == Guid.Empty || request.CancellationId == Guid.Empty ||
+            originalDocumentId == request.CancellationId || request.OccurredAt == default)
+            throw new AccountingValidationException("Selecciona un comprobante y una fecha válidos para anular.");
+        var original = await store.GetVoucherDraftAsync(user, originalDocumentId, cancellationToken);
+        var entry = await store.GetEntryAsync(user, originalDocumentId, cancellationToken);
+        var effects = original?.FinancialEffects;
+        if (original is not { Status: "Posted", VoucherTypeCode: "Accounting", PayloadVersion: 4,
+                FiscalCapture: null } || original.SentAt is null || entry is null ||
+            original.Row.EntryId != entry.EntryId || entry.MainPartyId is null ||
+            effects is null || effects.Positions.Count != 0 || effects.Payments.Count != 0 ||
+            effects.CreditApplications.Count != 0 || effects.DirectMovements.Count != 0 ||
+            effects.Unapplications?.Count > 0)
+            throw new AccountingConflictException("Este comprobante tiene efectos de cartera, tesorería o DIAN; requiere la anulación propia de ese tipo.");
+        if (entry.Lines.Count is < 2 or > 500 || request.OccurredAt < entry.OccurredAt)
+            throw new AccountingValidationException("La anulación requiere las partidas originales y una fecha no anterior al comprobante.");
+        var cancellation = new ConfirmManualAccountingVoucherRequest(request.CancellationId,
+            user.BusinessId, request.OccurredAt, "MANUAL_VOUCHER",
+            $"Anulación de {entry.EntryNumber}", entry.Lines.Select(line =>
+                new ManualVoucherLineRequest(line.AccountId, line.PartyId, line.CostCenterId,
+                    line.Description, line.Credit, line.Debit)).ToArray(),
+            entry.MainPartyId, Reference: entry.EntryNumber, ReversesDocumentId: originalDocumentId);
+        return await ConfirmManualVoucherAsync(user, cancellation, cancellationToken);
+    }
+
     private static void ValidateManualVoucher(AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request,
         bool requireFiscalReview = true)
     {
+        if (request.ReversesDocumentId is not null && (request.ReversesDocumentId == Guid.Empty ||
+            request.ReversesDocumentId == request.VoucherId || request.PayloadVersion is not null ||
+            request.FinancialEffects is not null || request.FiscalCapture is not null || request.VoucherTypeCode is not null))
+            throw new AccountingValidationException("La anulación contable debe ser un asiento inverso sin efectos auxiliares nuevos.");
         if (request.PayloadVersion != 4 && (request.VoucherTypeCode is not null || request.WorkSessionId is not null ||
             request.CurrencyCode is not null || request.FinancialEffects is not null || request.FiscalCapture is not null ||
             request.Lines?.Any(line => line is not null && (line.ExistingPosition is not null || line.FinancialGroupId is not null ||

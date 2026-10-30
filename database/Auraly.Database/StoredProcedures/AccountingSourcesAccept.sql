@@ -241,10 +241,12 @@ BEGIN
       PRIMARY KEY(DocumentId,DocumentType));
     INSERT dbo.AccountingSourceDocuments
       (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,
-       OccurredAt,AcceptedAt,AccountingEntryRequired)
+       OccurredAt,AcceptedAt,AccountingEntryRequired,ReversesDocumentId)
     OUTPUT inserted.SourceDocumentId,inserted.SourceDocumentType INTO @Accepted
     SELECT i.DocumentId,i.DocumentType,@TenantId,i.BusinessId,i.Payload,i.PayloadHash,
-      i.OccurredAt,@Now,i.EntryRequired
+      i.OccurredAt,@Now,i.EntryRequired,
+      CASE WHEN i.DocumentType=N'ManualAccountingVoucher'
+        THEN TRY_CONVERT(uniqueidentifier,JSON_VALUE(i.Payload,N'$.ReversesDocumentId')) END
     FROM @Sources i
     WHERE (i.EntryRequired=1 OR @Requirement=1)
       AND NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)

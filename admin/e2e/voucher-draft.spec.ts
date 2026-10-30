@@ -14,7 +14,7 @@ test("guardar borrador conserva la captura y guardar comprobante contabiliza", a
     { partyId: "66666666-6666-6666-6666-666666666666", roleId: "66666666-6666-6666-6666-666666666666", role: "Supplier", displayName: "Otro tercero", identification: "900333444" },
   ];
   let saved: VoucherDraft | undefined;
-  let writes = 0, sends = 0, discards = 0, draftReads = 0, listReads = 0, positionReads = 0, kindReads = 0, fail = true;
+  let writes = 0, sends = 0, cancellations = 0, discards = 0, draftReads = 0, listReads = 0, positionReads = 0, kindReads = 0, fail = true;
   const positionQueries: string[] = [];
   const cloneIds: string[] = [];
   const accountSearches: Array<string | null> = [];
@@ -56,11 +56,20 @@ test("guardar borrador conserva la captura y guardar comprobante contabiliza", a
       cloneIds.push(command.documentId);
       if (saved.documentId !== command.documentId) saved = { ...saved, documentId: command.documentId, occurredAt: command.occurredAt,
         clonedFromDocumentId: saved.documentId, reference: null, sentAt: null, status: "Created", canEdit: true, canSend: true,
+        reversalDocumentId: null, reversalStatus: null, financialEffects: null,
         lines: saved.lines.map(line => ({ ...line, value: { ...line.value, reference: null, lineId: randomUUID() } })), rowVersion: "AAAAAAAAAA8=",
         row: { ...saved.row, sourceDocumentId: command.documentId, sourceDocumentNumber: null, occurredAt: command.occurredAt,
-          status: "Created", entryId: null, entryNumber: null, postedAt: null } };
+          status: "Created", entryId: null, entryNumber: null, postedAt: null,
+          reversalDocumentId: null, reversalStatus: null } };
       if (cloneIds.length === 1) { status = 503; body = { detail: "No se recibió la respuesta de la copia." }; }
       else body = saved;
+    }
+    else if (path.endsWith("/cancel") && path.includes("/accounting/manual/vouchers/")) {
+      cancellations++;
+      expect(path).toContain(saved?.documentId);
+      const command = request.postDataJSON() as { cancellationId: string; occurredAt: string };
+      expect(command.occurredAt).toBeTruthy();
+      body = { documentId: command.cancellationId, documentType: "ManualAccountingVoucher", status: "Posted", isDuplicate: false };
     }
     else if (path.includes("/accounting/manual/drafts/")) {
       if (request.method() === "PUT") {
@@ -84,7 +93,10 @@ test("guardar borrador conserva la captura y guardar comprobante contabiliza", a
       } else if (path.endsWith("/send")) {
         sends++;
         if (fail) { status = 409; body = { detail: "No hay un período abierto para esta fecha." }; }
-        else if (saved) saved = { ...saved, status: "Pending", sentAt: new Date().toISOString(), canEdit: false, canSend: false, row: { ...saved.row, status: "Pending" } };
+        else if (saved) saved = { ...saved, status: "Posted", sentAt: new Date().toISOString(), canEdit: false, canSend: false,
+          financialEffects: { positions: [], payments: [], creditApplications: [], directMovements: [], unapplications: [] },
+          row: { ...saved.row, status: "Posted", entryId: randomUUID(), entryNumber: "ASI00-000001",
+            postedAt: new Date().toISOString() } };
       } else draftReads++;
       if (status === 200 && request.method() !== "DELETE") body = saved;
     }
@@ -242,6 +254,12 @@ test("guardar borrador conserva la captura y guardar comprobante contabiliza", a
   expect(sends).toBe(3); expect(writes).toBe(2); expect(listReads).toBe(1); expect(draftReads).toBe(0);
   const sourceId = saved!.documentId;
   const sourceLineIds = new Set(saved!.lines.map(line => line.value.lineId));
+  await page.getByRole("button", { name: "Anular comprobante", exact: true }).first().click();
+  const cancellation = page.getByRole("dialog", { name: "¿Anular este comprobante?" });
+  await expect(cancellation).toContainText("asiento inverso vinculado al original");
+  await cancellation.getByRole("button", { name: "Anular comprobante", exact: true }).click();
+  await expect(page.getByText("Comprobante anulado mediante asiento inverso.")).toBeVisible();
+  expect(cancellations).toBe(1);
   await page.getByRole("button", { name: "Clonar comprobante", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "No se recibió la respuesta de la copia." })).toBeVisible();
   await page.getByRole("button", { name: "Clonar comprobante", exact: true }).click();

@@ -14,6 +14,11 @@ CREATE TABLE [dbo].[AccountingSourceDocuments]
     -- Derived link to existing work, populated only by acceptance, explicit
     -- legacy recovery or the schema backfill. NULL also covers legacy sources.
     [AccountingPostingJobId] UNIQUEIDENTIFIER NULL,
+    -- A posted journal reversal remains a separate immutable source. The
+    -- filtered unique key prevents two reversals of the same original.
+    [ReversesDocumentId] UNIQUEIDENTIFIER NULL,
+    CONSTRAINT [CK_AccountingSourceDocuments_ManualReversal] CHECK ([ReversesDocumentId] IS NULL OR
+      ([SourceDocumentType]=N'ManualAccountingVoucher' AND [ReversesDocumentId]<>[SourceDocumentId])),
     -- Derived from the immutable request, including legacy direct adjustments
     -- that have no VoucherDraft. This is a lookup key, never another balance.
     [AdjustmentObligationId] AS (
@@ -31,6 +36,10 @@ CREATE TABLE [dbo].[AccountingSourceDocuments]
       REFERENCES [dbo].[AccountingPostingJobs]
       ([TenantId],[BusinessId],[SourceDocumentId],[SourceDocumentType],[AccountingPostingJobId])
 );
+GO
+CREATE UNIQUE INDEX [UX_AccountingSourceDocuments_ManualReversal]
+    ON [dbo].[AccountingSourceDocuments]([TenantId],[BusinessId],[ReversesDocumentId])
+    WHERE [ReversesDocumentId] IS NOT NULL;
 GO
 
 CREATE INDEX [IX_AccountingSourceDocuments_AdjustmentObligation]

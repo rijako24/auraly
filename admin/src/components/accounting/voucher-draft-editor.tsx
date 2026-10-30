@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowLeftRight, Copy, FileText, Plus, Save, Send, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Copy, FileText, Plus, RotateCcw, Save, Send, Trash2 } from "lucide-react";
 import { accountingApi, type AccountingOpenPosition, type SaveVoucherDraft, type VoucherDraft, type VoucherDraftAdjustment, type VoucherDraftLineView, type VoucherDraftPreparation } from "@/services/api/accounting";
 import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
 import { useAuthStore } from "@/stores/auth-store";
@@ -14,6 +14,7 @@ import { VoucherPositionDialog } from "./voucher-position-dialog";
 import { VoucherPendingDocuments } from "./voucher-pending-documents";
 import { VoucherFiscalDialog } from "./voucher-fiscal-dialog";
 import { proposedAccountingDate } from "@/lib/accounting-document-date";
+import { accountingReversalStatusLabel } from "@/lib/accounting-labels";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { PartySelect } from "@/components/parties/party-role-select";
 import { SupplierSiteSelect } from "@/components/parties/supplier-site-select";
@@ -59,12 +60,15 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const [scrollTop, setScrollTop] = useState(0);
   const [dirty, setDirty] = useState(!initial || !initial.sentAt && initial.documentType === "ManualAccountingVoucher" &&
     (initial.payloadVersion !== editablePayloadVersion(initial) || !!initial.workSessionId));
-  const [phase, setPhase] = useState<"save" | "send" | "fiscal" | "refresh" | "retry" | "discard" | null>(null);
+  const [phase, setPhase] = useState<"save" | "send" | "fiscal" | "refresh" | "retry" | "discard" | "cancel" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [entryOpen, setEntryOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [reversalOpen, setReversalOpen] = useState(false);
+  const cancellationId = useRef(crypto.randomUUID());
   const confirmUnsavedChanges = !modal || Boolean(preparation);
   const [positionOpen, setPositionOpen] = useState(false);
   const [showPendingDocuments, setShowPendingDocuments] = useState(false);
@@ -90,7 +94,8 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const selectedObligation = obligation.data && { value: obligationId, label: obligation.data.documentNumber,
     description: `${obligationPartyName} · Disponible ${money.format(obligation.data.availableAmount)}` };
   const readOnly = !!saved?.sentAt || !permissions.includes("accounting.manual.create");
-  const statusLabel = saved ? statuses.data?.find(item => item.code === saved.status)?.label ?? saved.status : "Nueva captura";
+  const statusLabel = accountingReversalStatusLabel(saved?.reversalDocumentId,saved?.reversalStatus)
+    ?? (saved ? statuses.data?.find(item => item.code === saved.status)?.label ?? saved.status : "Nueva captura");
   const postedEntryButton = saved?.row.entryId && <Button variant="secondary" onClick={() => setEntryOpen(true)}><FileText className="mr-2 h-4 w-4" />Ver comprobante contabilizado</Button>;
   const busy = phase !== null || fiscalBusy;
   const detailIndex = lines.findIndex(line => line.value.lineId === detailLineId);
@@ -100,6 +105,13 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     amount: line.value.debit + line.value.credit, financialDiscountEarned: line.value.financialDiscountEarned }] : []);
   const supportCancellation = form.voucherTypeCode === "SupportDocumentCancellation";
   const fiscalDocument = form.voucherTypeCode === "SupportDocument" || supportCancellation;
+  const effects = saved?.financialEffects;
+  const canCancelPlainJournal = !!saved && saved.status === "Posted" && !saved.reversalDocumentId &&
+    saved.voucherTypeCode === "Accounting" && saved.payloadVersion === 4 && !saved.fiscalCapture &&
+    !!effects && effects.positions.length === 0 && effects.payments.length === 0 &&
+    effects.creditApplications.length === 0 && effects.directMovements.length === 0 &&
+    (effects.unapplications?.length ?? 0) === 0 &&
+    permissions.includes("accounting.manual.create") && permissions.includes("accounting.manual.send");
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   const debit = lines.reduce((sum, line) => sum + line.value.debit, 0);
   const credit = lines.reduce((sum, line) => sum + line.value.credit, 0);
@@ -226,6 +238,19 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     } catch (value) { setError(value instanceof Error ? value.message : "No se pudo reintentar la contabilización."); }
     finally { setPhase(null); }
   }
+  async function cancelJournal() {
+    if (!saved || busy || !canCancelPlainJournal) return;
+    setPhase("cancel"); setError(null);
+    try {
+      const today = proposedAccountingDate();
+      const occurredAt = new Date(today) < new Date(saved.occurredAt) ? saved.occurredAt : today;
+      const result = await accountingApi.cancelJournalVoucher(saved.documentId, cancellationId.current, occurredAt);
+      const updated = { ...saved, reversalDocumentId: result.documentId, reversalStatus: result.status,
+        row: { ...saved.row, reversalDocumentId: result.documentId, reversalStatus: result.status } };
+      setSaved(updated); onSaved?.(updated); setCancelOpen(false);
+    } catch (value) { setError(value instanceof Error ? value.message : "No se pudo anular el comprobante."); }
+    finally { setPhase(null); }
+  }
   function close() {
     if (busy) return;
     if (dirty && confirmUnsavedChanges) setDiscardOpen(true);
@@ -308,6 +333,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     {form.adjustment && directions.isError && <p role="alert" className="text-sm text-destructive">No se pudieron cargar las direcciones del ajuste. <Button variant="link" onClick={() => void directions.refetch()}>Reintentar direcciones</Button></p>}
     {centers.isError && <p role="alert" className="text-sm text-destructive">No se pudieron cargar los centros de costo. <Button variant="link" onClick={() => void centers.refetch()}>Reintentar centros de costo</Button></p>}
     {saved?.row.errorMessage && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4">{saved.row.errorMessage}</div>}
+    {saved?.reversalDocumentId && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">{saved.reversalStatus === "Posted" ? "Comprobante anulado mediante asiento inverso." : `${statusLabel}. El asiento original sigue visible.`} <Button variant="link" onClick={() => setReversalOpen(true)}>Ver asiento de anulación</Button></div>}
     {form.clonedFromDocumentId && <p className="rounded-xl border bg-muted/30 p-4 text-sm">Copia nueva. Revisa la fecha, los valores y la referencia de la nueva operación antes de contabilizar.</p>}
     {lines.some(line => line.validationError) && <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm">Revisa las partidas marcadas: algunas cuentas o dimensiones dejaron de estar disponibles.</p>}
     {form.adjustment && <section className="space-y-4 rounded-2xl border bg-card p-5" aria-label="Obligación a ajustar">
@@ -413,11 +439,13 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       {saved?.sentAt && saved.status !== "Posted" && permissions.includes("accounting.postings.retry") && <Button disabled={busy} onClick={() => void retry()}>{phase === "retry" ? "Solicitando reintento…" : "Reintentar contabilización"}</Button>}
       {saved?.status === "Posted" && saved.row.fiscalStatus === "AwaitingManualSubmission" && permissions.includes("fiscal.manual-support.send") &&
         <Button disabled={busy} onClick={() => void sendFiscal()}><Send className="mr-2 h-4 w-4" />{phase === "fiscal" ? "Solicitando envío…" : "Enviar documento soporte a la DIAN"}</Button>}
+      {canCancelPlainJournal && <Button variant="destructive" disabled={busy} onClick={() => setCancelOpen(true)}><RotateCcw className="mr-2 h-4 w-4" />Anular comprobante</Button>}
       {saved && !saved.sentAt && !readOnly && <Button variant="destructive" disabled={busy} onClick={() => setDeleteOpen(true)}>{phase === "discard" ? "Descartando…" : "Descartar borrador"}</Button>}
       {!readOnly && <Button variant="outline" disabled={busy || !dirty} onClick={() => void save()}><Save className="mr-2 h-4 w-4" />{phase === "save" ? "Guardando…" : "Guardar borrador"}</Button>}
       {!readOnly && permissions.includes("accounting.manual.send") && <Button disabled={busy || fiscalDocument && !form.fiscalCapture?.calculationHash} onClick={() => void saveAndPost()}><Send className="mr-2 h-4 w-4" />{phase === "send" ? "Contabilizando…" : "Guardar comprobante"}</Button>}
     </footer>
     {entryOpen && <AccountingDocumentDialog documentId={saved?.documentId} hasFiscalDocument={!!saved?.row.fiscalDocumentType} onClose={() => setEntryOpen(false)} />}
+    {reversalOpen && saved?.reversalDocumentId && <AccountingDocumentDialog documentId={saved.reversalDocumentId} onClose={() => setReversalOpen(false)} />}
     {fiscalOpen && <VoucherFiscalDialog businessId={businessId} draft={form} lines={lines} onBusyChange={setFiscalBusy}
       onApply={fiscalCapture => { change({ fiscalCapture }); setFiscalOpen(false); }} onClose={() => setFiscalOpen(false)} />}
     {positionOpen && <VoucherPositionDialog businessId={businessId} documentId={form.documentId} occurredAt={form.occurredAt}
@@ -467,6 +495,13 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         <DialogDescription>Se eliminará la captura guardada de este comprobante. Esta acción no afecta la contabilidad porque aún no se ha contabilizado.</DialogDescription></DialogHeader>
         <DialogFooter><Button variant="outline" onClick={() => setDeleteOpen(false)}>Seguir editando</Button>
           <Button variant="destructive" disabled={busy} onClick={() => void discard()}>Descartar borrador</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={cancelOpen} onOpenChange={open => { if (!busy) setCancelOpen(open); }}>
+      <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>¿Anular este comprobante?</DialogTitle>
+        <DialogDescription>Se contabilizará un asiento inverso vinculado al original. El asiento original seguirá visible en la trazabilidad.</DialogDescription></DialogHeader>
+        <DialogFooter><Button variant="outline" disabled={busy} onClick={() => setCancelOpen(false)}>Volver</Button>
+          <Button variant="destructive" disabled={busy} onClick={() => void cancelJournal()}>{phase === "cancel" ? "Anulando…" : "Anular comprobante"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   </div>;

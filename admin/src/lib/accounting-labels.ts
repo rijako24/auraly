@@ -18,6 +18,13 @@ const businessStatuses:Record<string,string>={Draft:"Borrador",Pending:"Pendient
 
 export function accountingDocumentTypeLabel(value:string|null|undefined){return value?documentTypes[value]??humanize(value):"Documento"}
 export function accountingStatusLabel(value:string|null|undefined){return value?accountingStatuses[value]??humanize(value):"Sin estado"}
+export function accountingReversalStatusLabel(documentId:string|null|undefined,status:string|null|undefined){
+  if(!documentId)return null;
+  if(status==="Posted")return "Anulado";
+  if(status==="AccountingPendingConfiguration")return "Anulación pendiente de configuración";
+  if(status==="NeedsIntervention"||status==="DeadLettered"||status==="Failed")return "Anulación requiere revisión";
+  return "Anulación en proceso";
+}
 export function fiscalStatusLabel(value:string|null|undefined){return value?fiscalStatuses[value]??humanize(value):"Sin envío fiscal"}
 export function businessStatusLabel(value:string|null|undefined){return value?businessStatuses[value]??humanize(value):"Sin estado"}
 export function humanize(value:string){return value.replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g,"$1 $2").replace(/[_-]+/g," ").replace(/^./,letter=>letter.toLocaleUpperCase("es-CO"))}

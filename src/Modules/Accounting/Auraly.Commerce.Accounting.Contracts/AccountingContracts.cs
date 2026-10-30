@@ -440,7 +440,11 @@ public sealed record ConfirmManualAccountingVoucherRequest(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     VoucherFinancialEffects? FinancialEffects = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    VoucherFiscalCapture? FiscalCapture = null);
+    VoucherFiscalCapture? FiscalCapture = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? ReversesDocumentId = null);
+
+public sealed record CancelManualAccountingVoucherRequest(Guid CancellationId, DateTimeOffset OccurredAt);
 
 public sealed record AccountingManualDocumentAcceptance(
     Guid DocumentId, string DocumentType, string Status, bool IsDuplicate);
@@ -549,7 +553,8 @@ public sealed record AccountingDocumentRow(
     decimal? DebitTotal, decimal? CreditTotal, DateTimeOffset? PostedAt,
     string? FiscalDocumentType, string? DianNumber, string? UniqueCodeType,
     string? UniqueCode, string? FiscalStatus, bool HasManualDraft = false,
-    Guid? MainPartyId = null, string? MainPartyName = null, string? MainPartyIdentification = null);
+    Guid? MainPartyId = null, string? MainPartyName = null, string? MainPartyIdentification = null,
+    Guid? ReversalDocumentId = null, string? ReversalStatus = null);
 
 public sealed record AccountingDocumentPage(
     IReadOnlyList<AccountingDocumentRow> Items, int Page, int PageSize, int TotalCount)

@@ -1,5 +1,24 @@
 # Comprobantes abiertos en Trazabilidad financiera
 
+> **Decisiones del 2026-10-29 sobre correcciones:** fecha y partidas solo se
+> editan mientras la captura es borrador. «Guardar comprobante» acepta y congela
+> la fuente contable; la espera del envío DIAN no vuelve editable el asiento.
+> «Anular comprobante» debe seguir el efecto de su tipo y sus dependencias,
+> conservando el original y una corrección trazable: asiento inverso para el
+> diario sin efectos auxiliares; anulación de pago/recaudo en el aplicador
+> financiero existente para egresos; nota de ajuste por el proceso fiscal
+> existente para un soporte ya aceptado por la DIAN. Una nota fiscal ya aceptada
+> no se corrige mediante otra nota de ajuste. Si existen pagos, cruces, cargos
+> o cierres que impiden la reversión segura, la acción explica cuáles son y no
+> cambia saldos parcialmente. Ningún tipo borra asientos.
+
+> **Estado de implementación de esta corrección:** el botón en Trazabilidad
+> financiera anula por ahora los comprobantes contables puros, sin efectos de
+> cartera, tesorería ni DIAN, mediante una fuente inversa en el motor contable
+> existente. Los pagos y recaudos conservan su acción de anulación en cartera y
+> cuentas por pagar; la anulación del soporte conserva su captura fiscal propia.
+> Aún no hay una acción única desde el comprobante para todos esos tipos.
+
 > **Decisión posterior del usuario (2026-10-29):** «Guardar borrador» conserva una
 > captura editable y permite varios comprobantes en proceso; «Guardar comprobante»
 > guarda los cambios y solicita inmediatamente la contabilización mediante el

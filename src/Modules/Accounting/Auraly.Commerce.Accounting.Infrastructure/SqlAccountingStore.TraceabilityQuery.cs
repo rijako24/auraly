@@ -266,7 +266,8 @@ public sealed partial class SqlAccountingStore
               fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,fiscal.UniqueCode,fiscal.FiscalStatus,
               CONVERT(bit,CASE WHEN draft.DocumentId IS NOT NULL THEN 1 ELSE 0 END) HasManualDraft,
               mainParty.PartyId MainPartyId,
-              mainParty.DisplayName MainPartyName,mainParty.Identification MainPartyIdentification
+              mainParty.DisplayName MainPartyName,mainParty.Identification MainPartyIdentification,
+              reversal.SourceDocumentId ReversalDocumentId,reversalJob.Status ReversalStatus
             INTO #Documents
             FROM #DocumentPage job
             LEFT JOIN dbo.AccountingPostingJobs posting ON posting.SourceDocumentId=job.SourceDocumentId
@@ -278,6 +279,11 @@ public sealed partial class SqlAccountingStore
               FROM accounting.VoucherDraftLines WHERE DocumentId=draft.DocumentId) draftTotals
             LEFT JOIN dbo.AccountingEntries entry ON entry.EntryId=job.EntryId
             LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=job.SourceDocumentId AND fiscal.BusinessId=@BusinessId
+            LEFT JOIN dbo.AccountingSourceDocuments reversal ON reversal.ReversesDocumentId=job.SourceDocumentId
+              AND reversal.TenantId=@TenantId AND reversal.BusinessId=@BusinessId
+            LEFT JOIN dbo.AccountingPostingJobs reversalJob ON reversalJob.SourceDocumentId=reversal.SourceDocumentId
+              AND reversalJob.SourceDocumentType=reversal.SourceDocumentType
+              AND reversalJob.TenantId=@TenantId AND reversalJob.BusinessId=@BusinessId
             """ + ";";
 
     // One relational source map owns native number and counterparty lookup.

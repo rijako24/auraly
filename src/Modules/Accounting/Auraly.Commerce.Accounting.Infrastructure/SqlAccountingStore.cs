@@ -89,6 +89,8 @@ public sealed partial class SqlAccountingStore(
                         await fiscalParticipant.PersistAsync(connection, transaction, user, accepted, preparedFiscal, token);
                     return;
                 }
+                if (request.ReversesDocumentId is not null)
+                    await ValidateJournalCancellationAsync(connection, transaction, user, request, token);
                 await ValidateVoucherDimensionsAsync(connection, transaction, user,
                     request.Lines.Select(line => new VoucherDraftLine(line.AccountId, line.PartyId,
                         line.CostCenterId, line.Description, line.Debit, line.Credit)).ToArray(),
@@ -123,6 +125,11 @@ public sealed partial class SqlAccountingStore(
             catch (SqlException error) when (error.Number == 1205 && attempt < 4)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt), timeProvider, cancellationToken);
+            }
+            catch (SqlException error) when (request.ReversesDocumentId is not null && (error.Number is 2601 or 2627) &&
+                error.Message.Contains("UX_AccountingSourceDocuments_ManualReversal", StringComparison.Ordinal))
+            {
+                throw new AccountingConflictException("Este comprobante ya tiene una anulación aceptada. Consulta su asiento inverso.");
             }
         }
     }
@@ -1436,7 +1443,8 @@ public sealed partial class SqlAccountingStore(
                 reader.IsDBNull(15) ? null : reader.GetString(15),
                 reader.IsDBNull(16) ? null : reader.GetString(16),
                 reader.IsDBNull(17) ? null : reader.GetString(17), reader.GetBoolean(18),
-                NullableId(reader, 19), NullableText(reader, 20), NullableText(reader, 21)));
+                NullableId(reader, 19), NullableText(reader, 20), NullableText(reader, 21),
+                NullableId(reader, 22), NullableText(reader, 23)));
         }
         await reader.NextResultAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);

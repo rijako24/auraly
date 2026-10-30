@@ -196,7 +196,8 @@ public sealed partial class SqlAccountingStore
               d.SubledgerKind,d.SubledgerId,d.Direction,d.AdjustmentAmount,d.CounterpartAccountId,d.CostCenterId,
               COALESCE(j.Status,N'Created'),j.AttemptCount,j.LastErrorCode,j.LastErrorMessage,e.EntryId,e.EntryNumber,e.PostedAt,
               e.DebitTotal,e.CreditTotal,d.MainPartyId,mainParty.DisplayName,mainParty.Identification,d.ClonedFromDocumentId,d.PayloadVersion,JSON_VALUE(source.PayloadJson,'$.Reference'),d.VoucherTypeCode,d.WorkSessionId,JSON_QUERY(source.PayloadJson,'$.FinancialEffects'),d.FiscalCaptureJson,
-              fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,fiscal.UniqueCode,fiscal.FiscalStatus
+              fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,fiscal.UniqueCode,fiscal.FiscalStatus,
+              reversal.SourceDocumentId,reversalJob.Status
             FROM accounting.VoucherDrafts d
             LEFT JOIN dbo.Parties mainParty ON mainParty.PartyId=d.MainPartyId AND mainParty.TenantId=d.TenantId
             LEFT JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=d.DocumentId
@@ -205,6 +206,11 @@ public sealed partial class SqlAccountingStore
             LEFT JOIN dbo.AccountingEntries e ON e.SourceDocumentId=d.DocumentId AND e.SourceDocumentType=d.DocumentType AND e.TenantId=d.TenantId
             LEFT JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=d.DocumentId
               AND fiscal.BusinessId=d.BusinessId AND fiscal.SourceDocumentType=d.DocumentType
+            LEFT JOIN dbo.AccountingSourceDocuments reversal ON reversal.ReversesDocumentId=d.DocumentId
+              AND reversal.TenantId=d.TenantId AND reversal.BusinessId=d.BusinessId
+            LEFT JOIN dbo.AccountingPostingJobs reversalJob ON reversalJob.SourceDocumentId=reversal.SourceDocumentId
+              AND reversalJob.SourceDocumentType=reversal.SourceDocumentType
+              AND reversalJob.TenantId=d.TenantId AND reversalJob.BusinessId=d.BusinessId
             WHERE d.DocumentId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId;
             SELECT l.AccountId,l.PartyId,l.CostCenterId,l.Description,l.Debit,l.Credit,l.Reference,
               a.Code,a.Name,p.DisplayName,p.Identification,c.Name,
@@ -248,12 +254,14 @@ public sealed partial class SqlAccountingStore
         var fiscalJson = NullableText(reader, 32);
         var fiscalCapture = fiscalJson is null ? null : JsonSerializer.Deserialize<VoucherFiscalCapture>(fiscalJson)
             ?? throw new InvalidOperationException("The fiscal capture is invalid.");
+        var reversalDocumentId = NullableId(reader, 38);
+        var reversalStatus = NullableText(reader, 39);
         var row = new AccountingDocumentRow(documentId, type, reference, date, status, reader.IsDBNull(15) ? 0 : reader.GetInt32(15),
             NullableText(reader, 16), NullableText(reader, 17), NullableId(reader, 18), NullableText(reader, 19),
             reader.IsDBNull(21) ? null : reader.GetDecimal(21), reader.IsDBNull(22) ? null : reader.GetDecimal(22),
             reader.IsDBNull(20) ? null : reader.GetDateTimeOffset(20), NullableText(reader, 33), NullableText(reader, 34),
             NullableText(reader, 35), NullableText(reader, 36), NullableText(reader, 37), true,
-            mainPartyId, mainPartyName, mainPartyIdentification);
+            mainPartyId, mainPartyName, mainPartyIdentification, reversalDocumentId, reversalStatus);
         var lines = new List<VoucherDraftLineView>();
         await reader.NextResultAsync(token);
         while (await reader.ReadAsync(token))
@@ -270,7 +278,8 @@ public sealed partial class SqlAccountingStore
         return new(documentId, type, date, concept, description, reference, currency, lines, adjustment, version, sent, status,
             sent is null && user.Permissions.Contains(AccountingPermissionCodes.ManualCreate),
             sent is null && user.Permissions.Contains(AccountingPermissionCodes.ManualSend), row,
-            mainPartyId, mainPartyName, mainPartyIdentification, clonedFromDocumentId, payloadVersion, acceptedReference, voucherType, workSessionId, financialEffects, fiscalCapture);
+            mainPartyId, mainPartyName, mainPartyIdentification, clonedFromDocumentId, payloadVersion, acceptedReference, voucherType, workSessionId, financialEffects, fiscalCapture,
+            reversalDocumentId, reversalStatus);
     }
 
     private static string? NullableText(SqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);

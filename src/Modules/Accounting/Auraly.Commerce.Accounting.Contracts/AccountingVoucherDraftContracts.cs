@@ -69,4 +69,6 @@ public sealed record VoucherDraftView(
     string? AcceptedReference = null,
     string? VoucherTypeCode = null, Guid? WorkSessionId = null,
     VoucherFinancialEffects? FinancialEffects = null,
-    VoucherFiscalCapture? FiscalCapture = null);
+    VoucherFiscalCapture? FiscalCapture = null,
+    Guid? ReversalDocumentId = null,
+    string? ReversalStatus = null);

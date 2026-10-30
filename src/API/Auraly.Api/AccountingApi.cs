@@ -38,6 +38,10 @@ public static class AccountingApi
             await ExecuteAsync(() => service.ConfirmAccountAdjustmentAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Accepted($"/api/commerce/v1/accounting/entries/by-document/{value.DocumentId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/manual/vouchers", async (HttpContext context, ConfirmManualAccountingVoucherRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ConfirmManualVoucherAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Accepted($"/api/commerce/v1/accounting/entries/by-document/{value.DocumentId:D}", value))).RequireAuthorization("accounting.user");
+        endpoints.MapPost("/api/commerce/v1/accounting/manual/vouchers/{documentId:guid}/cancel", async (HttpContext context,
+            Guid documentId, CancelManualAccountingVoucherRequest request, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.CancelJournalVoucherAsync(context.User.ToAccountingIdentity(), documentId, request, token),
+                value => Results.Accepted($"/api/commerce/v1/accounting/entries/by-document/{value.DocumentId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/manual/fiscal-preview", async (HttpContext context, ConfirmManualAccountingVoucherRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.PreviewFiscalVoucherAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/support-cancellation-capture", async (HttpContext context,
