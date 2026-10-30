@@ -1,15 +1,23 @@
 # Órdenes y recepciones de compra
 
-Fecha de actualización: 2026-10-26
+> **Decisión final del usuario (2026-10-29):** costos, descuentos y comprobantes
+> asociados se editan exclusivamente en el borrador de recepción. Después de
+> confirmar, ninguna recepción admite cambiar esos valores ni agregar nuevos
+> comprobantes, cualquiera que sea su tipo de soporte fiscal. Los trabajos de
+> revisión ya aceptados conservan su procesamiento y lectura histórica; se
+> retira la creación de revisiones posteriores.
 
-> **Ampliación 2026-10-20:** la sección final define asociaciones de comprobantes
-> existentes, reparto parcial entre recepciones y cargos posteriores. Sustituye
+Fecha de actualización: 2026-10-29
+
+> **Ampliación histórica 2026-10-20:** la sección final define asociaciones de comprobantes
+> existentes, reparto parcial entre recepciones y cargos posteriores. Su opción
+> de crear cargos después de confirmar quedó sustituida por la decisión final anterior. Sustituye
 > para el destino los límites de cada cargo ligado a una sola recepción y de captura únicamente
 > antes de confirmar. El resto describe el alcance anterior. Esta ampliación es
 > diseño; la aclaración final admite el ajuste contable de valoración sin cambiar
 > la factura ni su deuda. El usuario aprobó el 22 de octubre atribuir salidas a
 > las entradas más antiguas primero; el writer ya registra esa atribución.
-> La revisión posterior de cargos distribuidos se acepta por el motor documental,
+> Los trabajos de revisión de cargos distribuidos ya aceptados se procesan por el motor documental,
 > ajusta el valor de las existencias trazables por el writer de inventario y
 > genera su reclasificación por el motor contable. Las recepciones antiguas sin
 > origen trazable no se revalorizan automáticamente; no se añade un proceso de
@@ -1839,7 +1847,12 @@ capacidades marcadas pendientes en sus secciones siguen abiertas.
 
 ### Revisiones de costo posteriores — verificación local del 2026-10-25
 
-`GoodsReceiptService.ReviseCostsAsync` acepta una asociación o reparto sobre
+> Registro histórico de una implementación anterior. La decisión final del
+> 2026-10-29 retira su aceptación pública: una recepción confirmada no admite
+> asociar comprobantes ni alterar costos o descuentos. Solo permanecen la
+> lectura y el procesamiento de revisiones aceptadas antes de ese corte.
+
+`GoodsReceiptService.ReviseCostsAsync` aceptaba una asociación o reparto sobre
 una recepción ya procesada, con identidad de revisión y clave idempotente.
 `SqlGoodsReceiptStore` reserva el importe disponible de la fuente en la misma
 transacción que acepta la revisión; el trabajo durable entra en

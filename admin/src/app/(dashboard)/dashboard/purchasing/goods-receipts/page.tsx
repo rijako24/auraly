@@ -309,9 +309,7 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
           toast.error("No fue posible guardar la recuperación local de esta recepción."));
         setEditor(undefined);
       }} onClear={clearLocalDraft} />
-    <ReceiptDetailDialog detail={detail} businessId={businessId}
-      canUseCostVouchers={canConfirm && permissions.has("accounting.read")}
-      onUpdated={setDetail} canPay={permissions.has("payables.payments.create")}
+    <ReceiptDetailDialog detail={detail} canPay={permissions.has("payables.payments.create")}
       onPay={() => { setPaymentTarget(detail); setDetail(undefined); }}
       onClose={() => {setDetail(undefined);if(new URLSearchParams(window.location.search).has("receiptId"))router.replace("/dashboard/purchasing/goods-receipts")}} />
     <PortfolioPaymentWizard direction="payable" open={!!paymentTarget} onOpenChange={open => { if (!open) setPaymentTarget(undefined); }}
@@ -329,25 +327,15 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
 }
 
 function ReceiptDetailDialog({
-  detail, businessId, canUseCostVouchers, onUpdated, onClose, canPay, onPay,
+  detail, onClose, canPay, onPay,
 }: {
   detail?: GoodsReceiptDetail;
-  businessId: string | null;
-  canUseCostVouchers: boolean;
-  onUpdated: (value: GoodsReceiptDetail) => void;
   onClose: () => void;
   canPay: boolean;
   onPay: () => void;
 }) {
   const [accountingDocumentId,setAccountingDocumentId]=useState<string>();
   const [reportOpen,setReportOpen]=useState(false);
-  const [voucherOpen,setVoucherOpen]=useState(false);
-  const [revisionId,setRevisionId]=useState("");
-  const [savingRevision,setSavingRevision]=useState(false);
-  const revisionRequest = useRef<{ revisionId: string; businessId: string;
-    goodsReceiptId: string; referencedCostDocuments: GoodsReceiptVoucherCost[] } | null>(null);
-  const revisionAccepted = useRef(false);
-  const voucherOptions = useGoodsReceiptOptions(voucherOpen);
   const associationModes = useReferenceOptions("purchase-cost-association-mode", Boolean(detail?.referencedCostDocuments?.length));
   const fiscal=useQuery({
     queryKey:["goods-receipt-fiscal-document",detail?.documentId],
@@ -356,26 +344,6 @@ function ReceiptDetailDialog({
     retry:false,
   });
   if (!detail) return null;
-  const addLaterCost = async (value: GoodsReceiptVoucherCost) => {
-    if (!businessId || !revisionId) return;
-    setSavingRevision(true);
-    try {
-      revisionRequest.current ??= { revisionId, businessId,
-        goodsReceiptId: detail.documentId, referencedCostDocuments: [value] };
-      if (!revisionAccepted.current) {
-        await goodsReceiptsApi.reviseCosts(revisionRequest.current);
-        revisionAccepted.current = true;
-      }
-      const updated = await goodsReceiptsApi.getDetail(detail.documentId);
-      onUpdated(updated);
-      setVoucherOpen(false);
-      toast.success("El comprobante se asoció. El ajuste de costo se procesa en el mismo motor contable.");
-    } catch (error) {
-      toast.error(apiErrorMessage(error, "No fue posible agregar el comprobante a esta recepción."));
-    } finally {
-      setSavingRevision(false);
-    }
-  };
   const totals = summarizeGoodsReceipt(detail);
   const hasAdditionalCosts = Boolean(detail.additionalCostDocuments?.length);
   const hasExtendedSummary = detail.currencyCode !== "COP" || hasAdditionalCosts || Boolean(detail.referencedCostDocuments?.length);
@@ -569,11 +537,6 @@ function ReceiptDetailDialog({
         </div>}
       </div>
       <DialogFooter className="border-t px-6 py-4">
-        {canUseCostVouchers && businessId && detail.status === "Processed" &&
-          <Button type="button" variant="outline" disabled={savingRevision} onClick={() => {
-            revisionRequest.current = null; revisionAccepted.current = false;
-            setRevisionId(crypto.randomUUID()); setVoucherOpen(true);
-          }}><Plus className="mr-2 h-4 w-4" />Agregar comprobante</Button>}
         {canPay && detail.status === "Processed" && detail.payable && detail.payable.status !== "Cancelled" && detail.payable.outstandingAmount > 0 &&
           <><Button type="button" disabled={detail.payable.currencyCode !== "COP"} onClick={onPay}>Registrar egreso</Button>
             {detail.payable.currencyCode !== "COP" && <p className="text-sm text-muted-foreground">Los egresos en moneda extranjera aún no están disponibles.</p>}</>}
@@ -581,12 +544,7 @@ function ReceiptDetailDialog({
         <Button type="button" onClick={onClose}>Cerrar</Button>
       </DialogFooter>
     </DialogContent>
-  </Dialog>{voucherOpen && businessId && voucherOptions.data &&
-    <GoodsReceiptVoucherDialog businessId={businessId}
-      receiptLines={detail.lines} options={voucherOptions.data}
-      associations={[]} phase="Processed" submitting={savingRevision}
-      onClose={() => { if (!savingRevision) setVoucherOpen(false); }}
-      onAdd={value => { if (!savingRevision) void addLaterCost(value); }} />}
+  </Dialog>
     <AccountingDocumentDialog documentId={accountingDocumentId}
     sourceLabel={detail.referencedCostDocuments?.find(item => item.sourceDocumentId === accountingDocumentId)?.entryNumber ?? `Recepción ${detail.documentNumber}`}
     onClose={()=>setAccountingDocumentId(undefined)}/></>;

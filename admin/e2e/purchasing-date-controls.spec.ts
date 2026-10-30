@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
-import type { GoodsReceiptOptions } from "../src/services/api/goods-receipts";
+import type { GoodsReceiptDetail, GoodsReceiptOptions } from "../src/services/api/goods-receipts";
 
 const tenantId = "11111111-1111-1111-1111-111111111111";
 const businessId = "22222222-2222-2222-2222-222222222222";
@@ -49,6 +49,34 @@ test.beforeEach(async ({ page }) => {
   }));
 
   await authenticate(page);
+});
+
+test("una recepción confirmada muestra el costo y no permite agregar facturas ni comprobantes", async ({ page }) => {
+  const documentId = "88888888-8888-8888-8888-888888888888";
+  const detail: GoodsReceiptDetail = {
+    documentId, documentNumber: "EMC00-00000088", status: "Processed",
+    warehouseId: receiptOptions.warehouses[0].warehouseId, warehouseName: "Principal",
+    supplierId, supplierName: "Proveedor Andino", supplierInvoiceNumber: null,
+    supplierInvoiceDate: "2026-10-28T10:00:00-05:00", receivedAt: "2026-10-28T10:00:00-05:00",
+    createsPayable: true, dueDate: "2026-11-28T10:00:00-05:00", currencyCode: "COP",
+    notes: null, netAmount: 10_000, taxAmount: 0, grandTotal: 10_000,
+    acceptedAt: "2026-10-28T10:00:00-05:00", processedAt: "2026-10-28T10:01:00-05:00",
+    lines: [{ lineNumber: 1, productId: "77777777-7777-7777-7777-777777777777",
+      description: "Producto recibido", quantity: 1, unitCost: 10_000,
+      discountAmount: 0, taxCode: "00", taxRate: 0, taxTreatment: "NotApplicable",
+      presentationName: "Unidad", presentationQuantity: 1, unitsPerPresentation: 1,
+      netAmount: 10_000, taxAmount: 0, lineTotal: 10_000, recognizedInventoryCostAmount: 10_000 }],
+    purchaseEvidenceType: "InternalReceiptVoucher", purchaseOrderId: null, withholding: null,
+    exchangeRate: 1, exchangeRateDate: null, exchangeRateSource: "FunctionalCurrency",
+    functionalNetAmount: 10_000, functionalTaxAmount: 0, functionalGrandTotal: 10_000,
+    additionalCostDocuments: null, referencedCostDocuments: null, accountingStatuses: null,
+  };
+  await page.route(`**/api/commerce/v1/goods-receipts/${documentId}`, route => json(route, detail));
+  await page.goto(`/dashboard/purchasing/goods-receipts?receiptId=${documentId}`);
+  const receipt = page.getByRole("dialog", { name: detail.documentNumber, exact: true });
+  await expect(receipt).toContainText("Producto recibido");
+  await expect(receipt.getByRole("button", { name: "Agregar comprobante", exact: true })).toHaveCount(0);
+  await expect(receipt.getByRole("button", { name: "Agregar factura", exact: true })).toHaveCount(0);
 });
 
 test("emisión y vencimiento se pueden seleccionar y conservan el vencimiento propuesto", async ({ page }) => {

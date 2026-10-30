@@ -30,9 +30,6 @@ public interface IGoodsReceiptStore
         IReadOnlyDictionary<Guid, WithholdingCalculationSnapshot> additionalWithholdings,
         CancellationToken cancellationToken);
 
-    Task<GoodsReceiptCostRevisionAcceptance> AcceptCostRevisionAsync(
-        PurchasingUserIdentity user, string idempotencyKey, byte[] commandHash,
-        ReviseGoodsReceiptCostsRequest request, CancellationToken cancellationToken);
 }
 
 public sealed class GoodsReceiptService(
@@ -41,39 +38,6 @@ public sealed class GoodsReceiptService(
     IDocumentProcessingSignalPublisher signalPublisher,
     WithholdingService withholdingService)
 {
-    public async Task<GoodsReceiptCostRevisionAcceptance> ReviseCostsAsync(
-        PurchasingUserIdentity user, string idempotencyKey,
-        ReviseGoodsReceiptCostsRequest request, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(user);
-        ArgumentNullException.ThrowIfNull(request);
-        if (user.BusinessId != request.BusinessId)
-            throw new PurchasingForbiddenException("La recepción pertenece a otra sede.");
-        Require(user, PurchasingPermissionCodes.ConfirmGoodsReceipts);
-        Require(user, AccountingPermissionCodes.Read);
-        if (request.RevisionId == Guid.Empty || request.GoodsReceiptId == Guid.Empty)
-            throw new PurchasingValidationException("Selecciona una recepción y una revisión únicas.");
-        if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
-            throw new PurchasingValidationException("Indica una clave de revisión válida.");
-        if (request.ReferencedCostDocuments is not { Count: > 0 })
-            throw new PurchasingValidationException("Selecciona al menos un comprobante para la revisión.");
-        GoodsReceiptCostCalculator.ValidateReferencedDocuments(request.ReferencedCostDocuments);
-        var normalized = request with
-        {
-            ReferencedCostDocuments = request.ReferencedCostDocuments.Select(document =>
-                document with { EntryNumber = null }).ToArray()
-        };
-        var hash = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(normalized));
-        var accepted = await store.AcceptCostRevisionAsync(user, idempotencyKey.Trim(), hash,
-            normalized, cancellationToken);
-        if (accepted.JobId is { } jobId &&
-            !(accepted.IdempotentReplay && accepted.Status == "Processed"))
-            await signalPublisher.PublishAsync(new DocumentProcessingSignal(jobId,
-                user.BusinessId, accepted.RevisionId,
-                PurchasingDocumentTypes.GoodsReceiptCostRevision), cancellationToken);
-        return accepted;
-    }
-
     public async Task<WithholdingCalculationSnapshot> PreviewWithholdingAsync(
         PurchasingUserIdentity user,
         PreviewGoodsReceiptWithholdingRequest request,

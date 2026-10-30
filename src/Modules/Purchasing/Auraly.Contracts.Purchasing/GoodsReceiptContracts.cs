@@ -124,20 +124,12 @@ public sealed record GoodsReceiptVoucherCostSnapshot(
     string EntryNumber, string Mode, IReadOnlyList<GoodsReceiptVoucherCostLineSnapshot> Lines,
     int? CostRevisionNumber = null, string? CostRevisionStatus = null);
 
-public sealed record ReviseGoodsReceiptCostsRequest(
-    Guid RevisionId, Guid BusinessId, Guid GoodsReceiptId,
-    IReadOnlyList<GoodsReceiptVoucherCostRequest> ReferencedCostDocuments);
-
 public sealed record GoodsReceiptCostRevisionPayload(
     Guid TenantId, Guid BusinessId, Guid RevisionId, Guid GoodsReceiptId,
     int RevisionNumber, Guid WarehouseId, Guid SupplierId, Guid AcceptedByUserId,
     string ReceiptNumber, DateTimeOffset OccurredAt,
     IReadOnlyList<GoodsReceiptLineSnapshot> ReceiptLines,
     IReadOnlyList<GoodsReceiptVoucherCostSnapshot> ReferencedCostDocuments);
-
-public sealed record GoodsReceiptCostRevisionAcceptance(
-    Guid RevisionId, Guid GoodsReceiptId, int RevisionNumber,
-    Guid? JobId, string Status, bool IdempotentReplay);
 
 public sealed record GoodsReceiptCostVoucherLine(
     int LineNumber, Guid AccountId, string AccountCode, string AccountName,

@@ -296,11 +296,6 @@ export interface GoodsReceiptAcceptance {
   idempotentReplay: boolean;
 }
 
-export interface GoodsReceiptCostRevisionAcceptance {
-  revisionId: string; goodsReceiptId: string; revisionNumber: number;
-  status: string; idempotentReplay: boolean;
-}
-
 export interface GoodsReceiptWithholdingCalculation extends WithholdingCalculation {
   reviewHash?: string | null;
 }
@@ -365,10 +360,4 @@ export const goodsReceiptsApi = {
   }) => apiClient.postIdempotent<GoodsReceiptAcceptance>(
     "/commerce/v1/goods-receipts/confirm", request, `goods-receipt-${request.documentId}`,
   ),
-  reviseCosts: (request: { revisionId: string; businessId: string; goodsReceiptId: string;
-    referencedCostDocuments: GoodsReceiptVoucherCost[] }) =>
-    apiClient.postIdempotent<GoodsReceiptCostRevisionAcceptance>(
-      `/commerce/v1/goods-receipts/${request.goodsReceiptId}/cost-revisions`, request,
-      `goods-receipt-cost-revision-${request.revisionId}`,
-    ),
 };

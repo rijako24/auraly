@@ -112,29 +112,6 @@ public static class PurchasingApi
                     }
                 })
             .RequireAuthorization("purchasing.user");
-        endpoints.MapPost(
-                "/api/commerce/v1/goods-receipts/{documentId:guid}/cost-revisions",
-                async (HttpContext context, Guid documentId, ReviseGoodsReceiptCostsRequest request,
-                    GoodsReceiptService service, CancellationToken cancellationToken) =>
-                {
-                    if (request.GoodsReceiptId != documentId)
-                        return Results.Problem("La revisión no corresponde a la recepción seleccionada.",
-                            statusCode: StatusCodes.Status400BadRequest);
-                    try
-                    {
-                        var result = await service.ReviseCostsAsync(context.User.ToPurchasingIdentity(),
-                            context.Request.Headers["Idempotency-Key"].ToString(), request, cancellationToken);
-                        return Results.Accepted(
-                            $"/api/commerce/v1/goods-receipts/{documentId:D}", result);
-                    }
-                    catch (PurchasingForbiddenException exception)
-                    { return Results.Problem(exception.Message, statusCode: StatusCodes.Status403Forbidden); }
-                    catch (PurchasingValidationException exception)
-                    { return Results.Problem(exception.Message, statusCode: StatusCodes.Status400BadRequest); }
-                    catch (PurchasingConflictException exception)
-                    { return Results.Problem(exception.Message, statusCode: StatusCodes.Status409Conflict); }
-                })
-            .RequireAuthorization("purchasing.user");
         endpoints.MapGet(
                 "/api/commerce/v1/goods-receipts/options",
                 (HttpContext context, GoodsReceiptWorkspaceService service,

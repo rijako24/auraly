@@ -14,11 +14,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { formatCurrency } from "@/lib/utils";
 
 export function GoodsReceiptVoucherDialog({ businessId, initialPartyId, existing,
-  associations, receiptLines, options, phase = "Draft", submitting = false, onAdd, onUpdateReceiptLine, onClose }: {
+  associations, receiptLines, options, onAdd, onUpdateReceiptLine, onClose }: {
   businessId: string; initialPartyId?: string;
   existing?: GoodsReceiptVoucherCost; associations: GoodsReceiptVoucherCost[];
   receiptLines: GoodsReceiptLine[]; options: GoodsReceiptOptions;
-  phase?: "Draft" | "Processed"; submitting?: boolean;
   onAdd: (value: GoodsReceiptVoucherCost) => void;
   onUpdateReceiptLine?: (lineNumber: number, values: Partial<GoodsReceiptLine>) => void;
   onClose: () => void;
@@ -142,12 +141,12 @@ export function GoodsReceiptVoucherDialog({ businessId, initialPartyId, existing
               {receiptLines.some(product => (product.totalGrossWeightKg ?? 0) <= 0) &&
                 <p role="alert" className="text-sm text-destructive">Para repartir por peso, cada producto necesita un peso positivo. El valor no se agregará hasta completarlo.</p>}
             </div>}
-          {mode === "Distribute" && <p className="text-sm">Se repartirán <b>{formatCurrency(chosen.reduce((sum, line) => sum + line.functionalAmount, 0), "COP", 4)}</b> entre los productos. Se validará nuevamente el disponible al {phase === "Draft" ? "confirmar la entrada" : "guardar este ajuste"}.</p>}
+          {mode === "Distribute" && <p className="text-sm">Se repartirán <b>{formatCurrency(chosen.reduce((sum, line) => sum + line.functionalAmount, 0), "COP", 4)}</b> entre los productos. Se validará nuevamente el disponible al confirmar la entrada.</p>}
           {mode === "Distribute" && !voucher.data.lines.some(line => line.eligibleFunctionalAmount > line.assignedFunctionalAmount) &&
             <p role="alert" className="text-sm text-muted-foreground">Este comprobante no tiene costos disponibles para repartir. Puedes asociarlo informativamente.</p>}
         </>}
       </div>
-      <DialogFooter><Button variant="outline" disabled={submitting} onClick={onClose}>Cancelar</Button><Button disabled={submitting || !voucher.data || voucher.isFetching || voucher.isError ||
+      <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button disabled={!voucher.data || voucher.isFetching || voucher.isError ||
         !options.purchaseCostAssociationModes?.some(item => item.code === mode) || (mode === "Distribute" && !validDistribution)}
         onClick={() => { if (voucher.data) onAdd({ associationId: selectedExisting?.associationId ?? existing?.associationId ?? crypto.randomUUID(), entryId,
           entryNumber: voucher.data.entryNumber, mode, lines: mode === "Distribute" ? chosen : [] }); }}>
