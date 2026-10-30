@@ -44,7 +44,24 @@ AS RETURN
                 AND NOT EXISTS(SELECT 1 FROM dbo.ReceivableTransactions t
                     WHERE @SubledgerKind=N'Receivable' AND t.ReceivableId=@SubledgerId
                         AND t.TransactionType=N'Adjustment' AND t.SourceDocumentId=s.SourceDocumentId)
-    ) adjustments
+    ) manualAdjustments
+    CROSS APPLY (SELECT COALESCE(SUM(revision.PendingPayableDecrease),CONVERT(decimal(19,4),0)) PendingAdjustmentAmount,
+        COUNT_BIG(*) PendingAdjustmentCount
+      FROM dbo.Payables payable
+      JOIN purchasing.GoodsReceiptCostRevisions revision
+        ON revision.GoodsReceiptId=payable.SourceDocumentId
+        AND revision.BusinessId=payable.BusinessId
+        AND revision.PendingPayableDecrease>0
+      WHERE @SubledgerKind=N'Payable' AND payable.PayableId=@SubledgerId
+        AND payable.BusinessId=@BusinessId AND payable.SourceDocumentType=N'GoodsReceipt'
+        AND NOT EXISTS(SELECT 1 FROM dbo.PayableTransactions effect
+          WHERE effect.PayableId=payable.PayableId AND effect.SourceDocumentId=revision.RevisionId
+            AND effect.TransactionType=N'Adjustment')
+    ) costAdjustments
+    CROSS APPLY (SELECT manualAdjustments.PendingAdjustmentAmount+
+        costAdjustments.PendingAdjustmentAmount PendingAdjustmentAmount,
+        manualAdjustments.PendingAdjustmentCount+
+        costAdjustments.PendingAdjustmentCount PendingAdjustmentCount) adjustments
     CROSS APPLY(SELECT COALESCE(SUM(target.Amount),CONVERT(decimal(19,4),0)) PendingApplicationAmount,
         COALESCE(MAX(CASE WHEN target.EffectKind=N'Cancellation' THEN 1 ELSE 0 END),0) PendingCancellationCount,
         CONVERT(bit,COALESCE(MAX(CASE WHEN target.EffectKind=N'Cancelled' THEN 1 ELSE 0 END),0)) SourceCancelled

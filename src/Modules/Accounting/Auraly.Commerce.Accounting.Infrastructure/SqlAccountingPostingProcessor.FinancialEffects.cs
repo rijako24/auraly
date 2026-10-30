@@ -296,6 +296,12 @@ public sealed partial class SqlAccountingPostingProcessor
                     connection, transaction,
                     GoodsReceiptContractSerializer.DeserializeCostDocument(source.PayloadJson), cancellationToken);
                 break;
+            case "GoodsReceiptCostRevision":
+                var costRevision = GoodsReceiptContractSerializer.DeserializeCostRevision(source.PayloadJson);
+                if (costRevision.CostEdit is not null)
+                    await ApplyGoodsReceiptCostEditFinancialEffectsAsync(
+                        connection, transaction, costRevision, cancellationToken);
+                break;
             case "Expense":
                 await ApplyExpenseFinancialEffectsAsync(
                     connection, transaction,
@@ -780,6 +786,54 @@ public sealed partial class SqlAccountingPostingProcessor
                 document.DueDate!.Value, document.IssuedAt, token,
                 document.Withholding.NetAmount, document.ExchangeRate, value.GoodsReceiptId, document.PartySiteId)
             : Task.CompletedTask;
+    }
+
+    private async Task ApplyGoodsReceiptCostEditFinancialEffectsAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        GoodsReceiptCostRevisionPayload revision, CancellationToken token)
+    {
+        var edit = revision.CostEdit!;
+        var functionalChange = edit.CurrentPayable - edit.PreviousPayable;
+        if (functionalChange == 0m) return;
+        var now = timeProvider.GetUtcNow();
+        await using var command = new SqlCommand("""
+            DECLARE @Rate decimal(19,8),@PayableId uniqueidentifier,@CurrencyChange decimal(19,4);
+            SELECT @Rate=receipt.ExchangeRate,@PayableId=payable.PayableId
+            FROM dbo.GoodsReceipts receipt
+            JOIN dbo.Payables payable WITH(UPDLOCK,HOLDLOCK)
+              ON payable.BusinessId=receipt.BusinessId
+             AND payable.SourceDocumentId=receipt.GoodsReceiptId
+             AND payable.SourceDocumentType=N'GoodsReceipt'
+             AND payable.SourceLineId IS NULL
+            WHERE receipt.GoodsReceiptId=@ReceiptId AND receipt.BusinessId=@BusinessId;
+            IF @PayableId IS NULL OR @Rate IS NULL
+              THROW 51681,N'La obligación original de la recepción no está disponible.',1;
+            SET @CurrencyChange=CONVERT(decimal(19,4),ROUND(@FunctionalChange/@Rate,4));
+            DECLARE @PortfolioChanges TABLE(PositionId uniqueidentifier PRIMARY KEY,
+              Delta decimal(19,4) NOT NULL);
+            INSERT @PortfolioChanges VALUES(@PayableId,@CurrencyChange);
+            UPDATE payable SET OriginalAmount=payable.OriginalAmount+@CurrencyChange,
+              FunctionalOriginalAmount=payable.FunctionalOriginalAmount+@FunctionalChange
+            FROM dbo.Payables payable
+            WHERE payable.PayableId=@PayableId AND payable.BusinessId=@BusinessId
+              AND payable.OriginalAmount+@CurrencyChange>0
+              AND payable.FunctionalOriginalAmount+@FunctionalChange>0;
+            IF @@ROWCOUNT<>1
+              THROW 51681,N'El ajuste no conserva una obligación válida.',1;
+            """ + PortfolioBalanceChangesSql("Payables", "PayableId",
+                PortfolioBalanceChangeKind.Adjustment) + """
+            INSERT dbo.PayableTransactions(PayableTransactionId,PayableId,
+              TransactionType,Amount,SourceDocumentId,SourceDocumentType,OccurredAt,CreatedAt)
+            VALUES(@TransactionId,@PayableId,N'Adjustment',@CurrencyChange,
+              @RevisionId,N'GoodsReceiptCostRevision',@Now,@Now);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", revision.BusinessId);
+        command.Parameters.AddWithValue("@ReceiptId", revision.GoodsReceiptId);
+        command.Parameters.AddWithValue("@RevisionId", revision.RevisionId);
+        command.Parameters.AddWithValue("@TransactionId", ids.NewId());
+        AddMoney(command, "@FunctionalChange", functionalChange);
+        command.Parameters.AddWithValue("@Now", now);
+        await command.ExecuteNonQueryAsync(token);
     }
 
     private async Task ApplyExpenseFinancialEffectsAsync(

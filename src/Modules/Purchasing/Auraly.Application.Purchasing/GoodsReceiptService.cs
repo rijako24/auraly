@@ -12,6 +12,15 @@ namespace Auraly.Application.Purchasing;
 
 public interface IGoodsReceiptStore
 {
+    Task<GoodsReceiptAcceptance?> FindCostRevisionReplayAsync(
+        PurchasingUserIdentity user, string idempotencyKey, byte[] commandHash,
+        ConfirmGoodsReceiptRequest request, CancellationToken cancellationToken);
+    Task<GoodsReceiptAcceptance> AcceptCostRevisionAsync(
+        PurchasingUserIdentity user, string idempotencyKey, byte[] commandHash,
+        ConfirmGoodsReceiptRequest request, GoodsReceiptCostCalculation calculation,
+        WithholdingCalculationSnapshot withholding,
+        IReadOnlyDictionary<Guid, WithholdingCalculationSnapshot> additionalWithholdings,
+        CancellationToken cancellationToken);
     Task<GoodsReceiptAcceptance?> FindReplayAsync(
         PurchasingUserIdentity user,
         string idempotencyKey,
@@ -128,6 +137,13 @@ public sealed class GoodsReceiptService(
             throw new PurchasingForbiddenException("La recepción pertenece a otra sede.");
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
         Require(user, PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        var costEdit = request.CostEditOfReceiptId is not null;
+        if (costEdit != (request.CostEditDraftId is not null) ||
+            costEdit != (request.BaseCostRevisionNumber is not null) ||
+            (costEdit && (request.CostEditOfReceiptId == Guid.Empty ||
+                request.CostEditDraftId == Guid.Empty || request.BaseCostRevisionNumber < 0 ||
+                request.CostEditOfReceiptId == request.DocumentId)))
+            throw new PurchasingValidationException("La edición de costos requiere la recepción, el borrador y su versión.");
         if (request.ReferencedCostDocuments is { Count: > 0 })
             Require(user, AccountingPermissionCodes.Read);
         if (request.DocumentId == Guid.Empty) throw new PurchasingValidationException("Falta el identificador de la recepción.");
@@ -178,16 +194,27 @@ public sealed class GoodsReceiptService(
         foreach (var document in request.AdditionalCostDocuments ?? [])
             RequireWithholdingAdjustmentPermission(user, document.WithholdingAdjustments);
         var commandHash = HashCommand(request);
-        var replay = await store.FindReplayAsync(user, idempotencyKey.Trim(), request.DocumentId,
-            commandHash, cancellationToken);
+        var replay = costEdit
+            ? await store.FindCostRevisionReplayAsync(user, idempotencyKey.Trim(), commandHash,
+                request, cancellationToken)
+            : await store.FindReplayAsync(user, idempotencyKey.Trim(), request.DocumentId,
+                commandHash, cancellationToken);
         if (replay is not null)
-            return await SignalAcceptedAsync(replay, request.BusinessId, cancellationToken);
+            return costEdit
+                ? await SignalCostRevisionAcceptedAsync(replay, request.BusinessId,
+                    request.DocumentId, cancellationToken)
+                : await SignalAcceptedAsync(replay, request.BusinessId, cancellationToken);
 
-        var productWeights = await workspaceStore.GetUnitGrossWeightsAsync(
-            user, request.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
+        // A cost edit keeps the receipt's frozen weight factors. Product master
+        // weights can change after the physical entry and must not redistribute it.
+        var productWeights = costEdit
+            ? null
+            : await workspaceStore.GetUnitGrossWeightsAsync(
+                user, request.Lines.Select(line => line.ProductId).Distinct().ToArray(), cancellationToken);
         var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines.Select(line => line with
         {
-            UnitGrossWeightKg = productWeights.GetValueOrDefault(line.ProductId)
+            UnitGrossWeightKg = costEdit ? line.UnitGrossWeightKg :
+                productWeights!.GetValueOrDefault(line.ProductId)
         }).ToArray());
         if (request.PurchaseOrderId is null && normalizedLines.Any(line => line.PurchaseOrderLineId is not null))
             throw new PurchasingValidationException("Selecciona la orden de compra referida por las líneas.");
@@ -236,6 +263,13 @@ public sealed class GoodsReceiptService(
                 additionalWithholdings[document.Request.CostDocumentId].ReviewHash);
         }
 
+        if (costEdit)
+        {
+            var revision = await store.AcceptCostRevisionAsync(user, idempotencyKey.Trim(), commandHash,
+                normalizedRequest, costCalculation, withholding, additionalWithholdings, cancellationToken);
+            return await SignalCostRevisionAcceptedAsync(revision, request.BusinessId,
+                request.DocumentId, cancellationToken);
+        }
         var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), commandHash, normalizedRequest,
             calculation, costCalculation, withholding, additionalWithholdings, cancellationToken);
         return await SignalAcceptedAsync(acceptance, request.BusinessId, cancellationToken);
@@ -254,6 +288,17 @@ public sealed class GoodsReceiptService(
                 acceptance.DocumentId,
                 "GoodsReceipt"),
             cancellationToken);
+        return acceptance;
+    }
+
+    private async Task<GoodsReceiptAcceptance> SignalCostRevisionAcceptedAsync(
+        GoodsReceiptAcceptance acceptance, Guid businessId, Guid revisionId,
+        CancellationToken cancellationToken)
+    {
+        if (!acceptance.IdempotentReplay || acceptance.Status != "Processed")
+            await signalPublisher.PublishAsync(new DocumentProcessingSignal(
+                acceptance.MovementId, businessId, revisionId,
+                PurchasingDocumentTypes.GoodsReceiptCostRevision), cancellationToken);
         return acceptance;
     }
 

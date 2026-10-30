@@ -129,7 +129,25 @@ public sealed record GoodsReceiptCostRevisionPayload(
     int RevisionNumber, Guid WarehouseId, Guid SupplierId, Guid AcceptedByUserId,
     string ReceiptNumber, DateTimeOffset OccurredAt,
     IReadOnlyList<GoodsReceiptLineSnapshot> ReceiptLines,
-    IReadOnlyList<GoodsReceiptVoucherCostSnapshot> ReferencedCostDocuments);
+    IReadOnlyList<GoodsReceiptVoucherCostSnapshot> ReferencedCostDocuments,
+    GoodsReceiptCostEditSnapshot? CostEdit = null,
+    IReadOnlyList<GoodsReceiptCostDocumentSnapshot>? NewAdditionalCostDocuments = null);
+
+public sealed record GoodsReceiptCostEditSnapshot(
+    IReadOnlyList<GoodsReceiptLineSnapshot> PreviousLines,
+    IReadOnlyList<GoodsReceiptLineSnapshot> CurrentLines,
+    decimal PreviousFunctionalGrandTotal,
+    decimal CurrentFunctionalGrandTotal,
+    WithholdingCalculationSnapshot PreviousWithholding,
+    WithholdingCalculationSnapshot CurrentWithholding,
+    decimal PreviousPayable,
+    decimal CurrentPayable,
+    GoodsReceiptFinancialDiscountSnapshot? PreviousFinancialDiscount,
+    GoodsReceiptFinancialDiscountSnapshot? CurrentFinancialDiscount,
+    IReadOnlyList<GoodsReceiptCostDocumentSnapshot> PreviousAdditionalDocuments,
+    IReadOnlyList<GoodsReceiptCostDocumentSnapshot> CurrentAdditionalDocuments,
+    IReadOnlyList<GoodsReceiptVoucherCostSnapshot> PreviousReferencedDocuments,
+    IReadOnlyList<GoodsReceiptVoucherCostSnapshot> CurrentReferencedDocuments);
 
 public sealed record GoodsReceiptCostVoucherLine(
     int LineNumber, Guid AccountId, string AccountCode, string AccountName,
@@ -234,7 +252,10 @@ public sealed record ConfirmGoodsReceiptRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<GoodsReceiptVoucherCostRequest>? ReferencedCostDocuments = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null);
+    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null,
+    Guid? CostEditOfReceiptId = null,
+    Guid? CostEditDraftId = null,
+    int? BaseCostRevisionNumber = null);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -331,7 +352,8 @@ public sealed record GoodsReceiptDocumentPayload(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<GoodsReceiptVoucherCostSnapshot>? ReferencedCostDocuments = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    GoodsReceiptFinancialDiscountSnapshot? FinancialDiscount = null);
+    GoodsReceiptFinancialDiscountSnapshot? FinancialDiscount = null,
+    string? WithholdingConceptCode = null);
 
 public sealed record GoodsReceiptAcceptance(
     Guid DocumentId,
@@ -382,7 +404,9 @@ public sealed record SaveGoodsReceiptDraftRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<GoodsReceiptVoucherCostRequest>? ReferencedCostDocuments = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null);
+    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null,
+    Guid? CostEditOfReceiptId = null,
+    int? BaseCostRevisionNumber = null);
 
 public sealed record GoodsReceiptDraft(
     Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
@@ -403,7 +427,12 @@ public sealed record GoodsReceiptDraft(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     IReadOnlyList<GoodsReceiptVoucherCostRequest>? ReferencedCostDocuments = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null);
+    GoodsReceiptFinancialDiscountRequest? FinancialDiscount = null,
+    Guid? CostEditOfReceiptId = null,
+    int? BaseCostRevisionNumber = null);
+
+public sealed record GoodsReceiptCostEditState(
+    Guid GoodsReceiptId, int BaseCostRevisionNumber, GoodsReceiptDraft? Draft);
 
 public sealed record GoodsReceiptDetail(
     Guid DocumentId, string DocumentNumber, string Status,
@@ -426,7 +455,9 @@ public sealed record GoodsReceiptDetail(
     IReadOnlyList<GoodsReceiptAccountingStatus>? AccountingStatuses = null,
     IReadOnlyList<GoodsReceiptVoucherCostSnapshot>? ReferencedCostDocuments = null,
     GoodsReceiptPayableView? Payable = null,
-    GoodsReceiptFinancialDiscountSnapshot? FinancialDiscount = null);
+    GoodsReceiptFinancialDiscountSnapshot? FinancialDiscount = null,
+    Guid? PartySiteId = null,
+    string? WithholdingConceptCode = null);
 
 public sealed record GoodsReceiptPayableView(
     Guid PayableId, string Status, decimal OutstandingAmount, string CurrencyCode,

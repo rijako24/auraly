@@ -66,11 +66,11 @@ BEGIN
         (CostDocumentId,GoodsReceiptId,SupplierId,PartySiteId,PurchaseEvidenceType,DocumentNumber,
          IssuedAt,CreatesPayable,DueDate,CurrencyCode,ExchangeRate,ExchangeRateDate,
          ExchangeRateSource,NetAmount,TaxAmount,GrandTotal,FunctionalNetAmount,
-         FunctionalTaxAmount,FunctionalGrandTotal,CreatedAt)
+         FunctionalTaxAmount,FunctionalGrandTotal,CostRevisionId,CreatedAt)
     SELECT CostDocumentId,@GoodsReceiptId,SupplierId,PartySiteId,PurchaseEvidenceType,DocumentNumber,
         IssuedAt,CreatesPayable,DueDate,CurrencyCode,ExchangeRate,ExchangeRateDate,
         ExchangeRateSource,NetAmount,TaxAmount,GrandTotal,FunctionalNetAmount,
-        FunctionalTaxAmount,FunctionalGrandTotal,@Now FROM @Documents;
+        FunctionalTaxAmount,FunctionalGrandTotal,@RevisionId,@Now FROM @Documents;
     IF @@ROWCOUNT<>(SELECT COUNT(*) FROM @Documents)
         THROW 51736,'The complete receipt cost documents were not persisted.',1;
 

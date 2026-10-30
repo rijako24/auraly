@@ -224,7 +224,8 @@ public sealed partial class SqlAccountingPostingProcessor(
             var proposedLines = facts.BuildLines(accountIds, costCenterId).ToArray();
             // A free receipt can move physical units without a monetary effect.
             // Complete its existing job; never fabricate zero-valued journal lines.
-            if (source.DocumentType == PurchasingDocumentTypes.GoodsReceipt &&
+            if ((source.DocumentType is PurchasingDocumentTypes.GoodsReceipt or
+                PurchasingDocumentTypes.GoodsReceiptCostRevision) &&
                 facts.Total == 0m && proposedLines.Length == 0)
             {
                 await CompletePostingAsync(connection, transaction, source,
@@ -1244,7 +1245,13 @@ public sealed partial class SqlAccountingPostingProcessor(
         }
 
         var stockReceiptLines = new HashSet<int>();
+        bool postConfirmation;
         await using (var command = new SqlCommand("""
+            SELECT CONVERT(bit,CASE WHEN cost.CostRevisionId IS NULL THEN 0 ELSE 1 END)
+            FROM purchasing.GoodsReceiptCostDocuments cost
+            JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=cost.GoodsReceiptId
+              AND receipt.BusinessId=@BusinessId
+            WHERE cost.CostDocumentId=@CostDocumentId AND cost.GoodsReceiptId=@ReceiptId;
             SELECT DISTINCT movement.LineNumber
             FROM dbo.InventoryMovements movement
             JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=movement.DocumentId
@@ -1254,7 +1261,12 @@ public sealed partial class SqlAccountingPostingProcessor(
         {
             command.Parameters.AddWithValue("@ReceiptId", payload.GoodsReceiptId);
             command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            command.Parameters.AddWithValue("@CostDocumentId", document.CostDocumentId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException("La factura de costo no pertenece a esta recepción.");
+            postConfirmation = reader.GetBoolean(0);
+            await reader.NextResultAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken)) stockReceiptLines.Add(reader.GetInt32(0));
         }
 
@@ -1262,7 +1274,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 line.CostTreatment == PurchaseCostTreatments.Expense
                     ? line.FunctionalAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
                         ? line.FunctionalTaxAmount : 0m) > 0
-                    : line.Allocations.Any(value => !stockReceiptLines.Contains(value.ReceiptLineNumber)
+                    : !postConfirmation && line.Allocations.Any(value => !stockReceiptLines.Contains(value.ReceiptLineNumber)
                         && value.FunctionalAmount > 0))
             .Select(line => line.CostKind).Distinct(StringComparer.Ordinal).ToArray();
         var expenseCategories = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1296,17 +1308,20 @@ public sealed partial class SqlAccountingPostingProcessor(
         }
         foreach (var line in document.Lines)
         {
-            var inventory = line.Allocations
+            var inventory = postConfirmation ? 0m : line.Allocations
                 .Where(value => stockReceiptLines.Contains(value.ReceiptLineNumber))
                 .Sum(value => value.FunctionalAmount);
             Add(debitByCategory, AccountingCategories.Inventory, inventory);
             var expensed = line.CostTreatment == PurchaseCostTreatments.Expense
                 ? line.FunctionalAmount + (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
                     ? line.FunctionalTaxAmount : 0m)
-                : line.Allocations.Where(value => !stockReceiptLines.Contains(value.ReceiptLineNumber))
+                : postConfirmation ? 0m : line.Allocations.Where(value => !stockReceiptLines.Contains(value.ReceiptLineNumber))
                     .Sum(value => value.FunctionalAmount);
             if (expensed > 0)
                 Add(debitByCategory, expenseCategories[line.CostKind], expensed);
+            if (postConfirmation)
+                Add(debitByCategory, AccountingCategories.PurchasesExpense,
+                    line.Allocations.Sum(value => value.FunctionalAmount));
             if (line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat)
                 Add(debitByCategory, AccountingCategories.InputVat, line.FunctionalTaxAmount);
         }
@@ -1360,6 +1375,9 @@ public sealed partial class SqlAccountingPostingProcessor(
             partyId = reader.GetGuid(0);
             inventoryChange = reader.GetDecimal(1);
         }
+        if (revision.CostEdit is { } edit)
+            return await LoadGoodsReceiptCostEditFactsAsync(connection, transaction,
+                revision, edit, partyId, inventoryChange, cancellationToken);
         var credits = revision.ReferencedCostDocuments.SelectMany(document =>
             document.Lines.Select(line => new ManualLineSpec(line.AccountId, 0,
                 line.FunctionalAmount, line.PartyId, line.CostCenterId,
@@ -1382,6 +1400,146 @@ public sealed partial class SqlAccountingPostingProcessor(
             throw new InvalidOperationException("The cost revision does not balance with its source voucher.");
         return FinancialFactsResult.Ready(FinancialFacts.PurchaseCostRevision(
             revision.ReceiptNumber, partyId, lines, credits));
+    }
+
+    private static async Task<FinancialFactsResult> LoadGoodsReceiptCostEditFactsAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        GoodsReceiptCostRevisionPayload revision, GoodsReceiptCostEditSnapshot edit,
+        Guid partyId, decimal inventoryChange, CancellationToken cancellationToken)
+    {
+        var activeIds = edit.CurrentReferencedDocuments.Select(item => item.AssociationId).ToHashSet();
+        var removed = edit.PreviousReferencedDocuments
+            .Where(item => !activeIds.Contains(item.AssociationId)).ToArray();
+        var activeAdditionalIds = edit.CurrentAdditionalDocuments
+            .Select(item => item.CostDocumentId).ToHashSet();
+        var removedAdditional = edit.PreviousAdditionalDocuments
+            .Where(item => !activeAdditionalIds.Contains(item.CostDocumentId)).ToArray();
+        var removedIds = removed.Select(item => item.AssociationId)
+            .Concat(removedAdditional.Select(item => item.CostDocumentId)).ToArray();
+        if (removedIds.Length > 0)
+        {
+            await using var removal = new SqlCommand("""
+                UPDATE assignment SET RemovedByRevisionId=@RevisionId
+                FROM purchasing.GoodsReceiptCostDocuments assignment
+                JOIN OPENJSON(@Removed) WITH(AssociationId uniqueidentifier '$') requested
+                  ON requested.AssociationId=assignment.CostDocumentId
+                JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=assignment.GoodsReceiptId
+                  AND receipt.BusinessId=@BusinessId
+                WHERE assignment.GoodsReceiptId=@ReceiptId
+                  AND assignment.RemovedByRevisionId IS NULL;
+                """, connection, transaction);
+            removal.Parameters.AddWithValue("@RevisionId", revision.RevisionId);
+            removal.Parameters.AddWithValue("@ReceiptId", revision.GoodsReceiptId);
+            removal.Parameters.AddWithValue("@BusinessId", revision.BusinessId);
+            removal.Parameters.Add("@Removed", SqlDbType.NVarChar, -1).Value =
+                JsonSerializer.Serialize(removedIds);
+            if (await removal.ExecuteNonQueryAsync(cancellationToken) != removedIds.Length)
+                throw new InvalidOperationException(
+                    "Una factura o comprobante de costo cambió antes de aplicar su retiro.");
+        }
+        var costChange = edit.CurrentLines.Sum(line => line.RecognizedInventoryCostAmount) -
+            edit.PreviousLines.Sum(line => line.RecognizedInventoryCostAmount);
+        var stockLines = new HashSet<int>();
+        await using (var stock = new SqlCommand("""
+            SELECT DISTINCT movement.LineNumber
+            FROM dbo.InventoryMovements movement
+            WHERE movement.DocumentId=@ReceiptId AND movement.DocumentType=N'GoodsReceipt'
+              AND movement.BusinessId=@BusinessId AND movement.MovementType=N'GoodsReceipt';
+            """, connection, transaction))
+        {
+            stock.Parameters.AddWithValue("@ReceiptId", revision.GoodsReceiptId);
+            stock.Parameters.AddWithValue("@BusinessId", revision.BusinessId);
+            await using var reader = await stock.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) stockLines.Add(reader.GetInt32(0));
+        }
+        var previousByLine = edit.PreviousLines.ToDictionary(line => line.LineNumber);
+        var managedChange = edit.CurrentLines.Where(line => stockLines.Contains(line.LineNumber))
+            .Sum(line => line.RecognizedInventoryCostAmount -
+                previousByLine[line.LineNumber].RecognizedInventoryCostAmount);
+        var vatChange = edit.CurrentLines.Where(line => line.TaxTreatment == "DeductibleInputVat")
+            .Sum(line => line.FunctionalTaxAmount) -
+            edit.PreviousLines.Where(line => line.TaxTreatment == "DeductibleInputVat")
+            .Sum(line => line.FunctionalTaxAmount);
+        var payableChange = edit.CurrentPayable - edit.PreviousPayable;
+        var categoryChanges = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        void AddCategory(string category, decimal amount)
+        {
+            if (amount != 0m)
+                categoryChanges[category] = categoryChanges.GetValueOrDefault(category) + amount;
+        }
+        AddCategory(AccountingCategories.Inventory, inventoryChange);
+        AddCategory(AccountingCategories.CostOfGoodsSold, managedChange - inventoryChange);
+        AddCategory(AccountingCategories.PurchasesExpense, costChange - managedChange);
+        AddCategory(AccountingCategories.PurchasesExpense,
+            removedAdditional.SelectMany(item => item.Lines)
+                .SelectMany(item => item.Allocations)
+                .Sum(item => item.FunctionalAmount) -
+            (revision.NewAdditionalCostDocuments ?? []).SelectMany(item => item.Lines)
+                .SelectMany(item => item.Allocations)
+                .Sum(item => item.FunctionalAmount));
+        AddCategory(AccountingCategories.InputVat, vatChange);
+        AddCategory(AccountingCategories.AccountsPayable, -payableChange);
+
+        var withheld = edit.CurrentWithholding.Lines
+            .GroupBy(line => (line.Kind, line.AccountId))
+            .ToDictionary(group => group.Key, group => group.Sum(line => line.Amount));
+        foreach (var old in edit.PreviousWithholding.Lines.GroupBy(line => (line.Kind, line.AccountId)))
+            withheld[old.Key] = withheld.GetValueOrDefault(old.Key) - old.Sum(line => line.Amount);
+        var kinds = withheld.Where(item => item.Key.AccountId is null && item.Value != 0m)
+            .Select(item => item.Key.Kind).Distinct().ToArray();
+        var mappings = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (kinds.Length > 0)
+        {
+            await using var lookup = new SqlCommand("""
+                SELECT optionValue.value,mapping.Category
+                FROM OPENJSON(@Kinds) optionValue
+                JOIN dbo.AccountingSourceCategoryMappings mapping
+                  ON mapping.SourceType=N'PurchaseWithholdingKind'
+                 AND mapping.SourceCode=optionValue.value
+                JOIN dbo.AccountingConfigurationProfiles profile
+                  ON profile.ProfileCode=mapping.ProfileCode
+                 AND profile.IsDefault=1 AND profile.IsActive=1;
+                """, connection, transaction);
+            lookup.Parameters.Add("@Kinds", SqlDbType.NVarChar, -1).Value =
+                JsonSerializer.Serialize(kinds);
+            await using var reader = await lookup.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                mappings.Add(reader.GetString(0), reader.GetString(1));
+            if (mappings.Count != kinds.Length)
+                return FinancialFactsResult.Pending("MissingAccountMapping",
+                    "Una retención de compra no tiene categoría contable configurada.");
+        }
+        var direct = new List<ManualLineSpec>();
+        foreach (var document in removed)
+            foreach (var line in document.Lines)
+                direct.Add(new(line.AccountId, line.FunctionalAmount, 0m,
+                    line.PartyId, line.CostCenterId,
+                    $"Costo de {document.EntryNumber} retirado de {revision.ReceiptNumber}"));
+        foreach (var document in revision.ReferencedCostDocuments)
+            foreach (var line in document.Lines)
+                direct.Add(new(line.AccountId, 0m, line.FunctionalAmount,
+                    line.PartyId, line.CostCenterId,
+                    $"Costo de {document.EntryNumber} aplicado a {revision.ReceiptNumber}"));
+        foreach (var change in withheld.Where(item => item.Value != 0m))
+        {
+            var signed = -change.Value;
+            if (change.Key.AccountId is { } accountId)
+                direct.Add(new(accountId, Math.Max(0m, signed), Math.Max(0m, -signed),
+                    partyId, null, $"Retención corregida de {revision.ReceiptNumber}"));
+            else
+                AddCategory(mappings[change.Key.Kind], signed);
+        }
+        var categories = categoryChanges.Where(item => item.Value != 0m)
+            .Select(item => new CategoryLineSpec(item.Key,
+                Math.Max(0m, item.Value), Math.Max(0m, -item.Value),
+                partyId, $"Costos corregidos de {revision.ReceiptNumber}"))
+            .ToArray();
+        if (decimal.Round(categories.Sum(item => item.Debit - item.Credit) +
+            direct.Sum(item => item.Debit - item.Credit), 4) != 0m)
+            throw new InvalidOperationException(
+                "El ajuste de costos y la cuenta por pagar no concilian.");
+        return FinancialFactsResult.Ready(FinancialFacts.PurchaseCostRevision(
+            revision.ReceiptNumber, partyId, categories, direct));
     }
 
     private sealed record PurchaseWithholdingSettlements(

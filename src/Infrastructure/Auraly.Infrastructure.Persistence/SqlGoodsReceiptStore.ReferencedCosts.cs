@@ -11,7 +11,8 @@ public sealed partial class SqlGoodsReceiptStore
     private static async Task<IReadOnlyList<GoodsReceiptVoucherCostSnapshot>?> ResolveReferencedCostsAsync(
         SqlConnection connection, SqlTransaction transaction, PurchasingUserIdentity user,
         IReadOnlyList<CalculatedGoodsReceiptVoucherCost>? documents, DateTimeOffset recognizedAt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<(Guid EntryId, int LineNumber), decimal>? releasedByThisRevision = null)
     {
         if (documents is not { Count: > 0 }) return null;
         // A source lock serializes all assignments of that voucher, including
@@ -100,7 +101,9 @@ public sealed partial class SqlGoodsReceiptStore
                 }
                 if (!original.MethodActive)
                     invalid.Add($"{header.Number}, partida {selected.EntryLineNumber}: el método de reparto elegido ya no está activo.");
-                if (selected.FunctionalAmount > original.Eligible - original.Assigned)
+                var released = releasedByThisRevision?.GetValueOrDefault(
+                    (document.Request.EntryId, selected.EntryLineNumber)) ?? 0m;
+                if (selected.FunctionalAmount > original.Eligible - original.Assigned + released)
                     conflicts.Add($"{header.Number}, partida {selected.EntryLineNumber}: el importe supera el costo disponible. Otro reparto pudo consumirlo; revisa el disponible.");
                 selectedLines.Add(new(selected.EntryLineNumber, original.AccountId,
                     original.PartyId, original.CostCenterId, selected.FunctionalAmount, selected.AllocationMethod,

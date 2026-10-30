@@ -80,6 +80,11 @@ type PendingSupplierChange = { supplier?: SupplierSiteSelection };
 type GoodsReceiptCostLine = GoodsReceiptCostDocument["lines"][number];
 
 type EditorDraft = {
+  costEditOfReceiptId?: string; baseCostRevisionNumber?: number;
+  originalReceivedAt?: string;
+  costEditRevisionId?: string;
+  costEditSupplierName?: string;
+  existingCostDocumentIds?: string[];
   draftId: string; warehouseId: string; supplierId: string; partySiteId: string;
   supplierInvoiceNumber: string; supplierInvoiceDate: string; receivedAt: string;
   purchaseEvidenceType: PurchaseEvidenceType | "";
@@ -169,9 +174,13 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
 
   const rememberLocalDraft = (next: EditorDraft) => {
     setEditor(next);
-    if (localDraftKey) localDrafts.update(localDraftKey, next);
+    if (localDraftKey && !next.costEditOfReceiptId) localDrafts.update(localDraftKey, next);
   };
   const clearLocalDraft = async () => {
+    if (editor?.costEditOfReceiptId) {
+      setEditor(undefined);
+      return;
+    }
     if (!localDraftKey) {
       setEditor(undefined);
       return;
@@ -261,6 +270,20 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
     }
   };
 
+  const openCostEdit = async () => {
+    if (!detail) return;
+    try {
+      const state = await goodsReceiptsApi.getCostEditState(detail.documentId);
+      rememberLocalDraft(state.draft
+        ? { ...fromDraft(state.draft), costEditSupplierName: detail.supplierName,
+            existingCostDocumentIds: (detail.additionalCostDocuments ?? []).map(document => document.costDocumentId) }
+        : fromDetailForCostEdit(detail, state.baseCostRevisionNumber));
+      setDetail(undefined);
+    } catch (error) {
+      toast.error(apiErrorMessage(error, "No fue posible abrir la edición de costos."));
+    }
+  };
+
   return <div className="space-y-6">
     <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
       <div>
@@ -305,11 +328,12 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
       canConfirm={canConfirm} canAssociateProducts={canAssociateProducts}
       canUseCostVouchers={permissions.has("accounting.read")} canAdjustWithholdings={canAdjustWithholdings} onChange={rememberLocalDraft}
       onClose={() => {
-        if (localDraftKey) void localDrafts.flush(localDraftKey).catch(() =>
+        if (localDraftKey && !editor?.costEditOfReceiptId) void localDrafts.flush(localDraftKey).catch(() =>
           toast.error("No fue posible guardar la recuperación local de esta recepción."));
         setEditor(undefined);
       }} onClear={clearLocalDraft} />
     <ReceiptDetailDialog detail={detail} canPay={permissions.has("payables.payments.create")}
+      canEditCosts={canCreate} onEditCosts={() => void openCostEdit()}
       onPay={() => { setPaymentTarget(detail); setDetail(undefined); }}
       onClose={() => {setDetail(undefined);if(new URLSearchParams(window.location.search).has("receiptId"))router.replace("/dashboard/purchasing/goods-receipts")}} />
     <PortfolioPaymentWizard direction="payable" open={!!paymentTarget} onOpenChange={open => { if (!open) setPaymentTarget(undefined); }}
@@ -327,12 +351,14 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
 }
 
 function ReceiptDetailDialog({
-  detail, onClose, canPay, onPay,
+  detail, onClose, canPay, onPay, canEditCosts, onEditCosts,
 }: {
   detail?: GoodsReceiptDetail;
   onClose: () => void;
   canPay: boolean;
   onPay: () => void;
+  canEditCosts: boolean;
+  onEditCosts: () => void;
 }) {
   const [accountingDocumentId,setAccountingDocumentId]=useState<string>();
   const [reportOpen,setReportOpen]=useState(false);
@@ -416,7 +442,7 @@ function ReceiptDetailDialog({
           <Truck className="h-5 w-5 text-primary" /> {detail.documentNumber}
         </DialogTitle>
         <DialogDescription>
-          Recepción de compra confirmada. Este documento es inmutable y conserva su trazabilidad completa.
+          Recepción confirmada. La entrada y sus cantidades no cambian; los ajustes de costo conservan su historial.
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-5 overflow-y-auto px-6 py-5">
@@ -537,6 +563,10 @@ function ReceiptDetailDialog({
         </div>}
       </div>
       <DialogFooter className="border-t px-6 py-4">
+        {canEditCosts && detail.status === "Processed" &&
+          detail.purchaseEvidenceType === "InternalReceiptVoucher" &&
+          detail.currencyCode === "COP" &&
+          <Button type="button" variant="outline" onClick={onEditCosts}>Editar costos</Button>}
         {canPay && detail.status === "Processed" && detail.payable && detail.payable.status !== "Cancelled" && detail.payable.outstandingAmount > 0 &&
           <><Button type="button" disabled={detail.payable.currencyCode !== "COP"} onClick={onPay}>Registrar egreso</Button>
             {detail.payable.currencyCode !== "COP" && <p className="text-sm text-muted-foreground">Los egresos en moneda extranjera aún no están disponibles.</p>}</>}
@@ -575,9 +605,9 @@ function ReceiptEditor({
       ]);
       return [...openOrders.items, ...partialOrders.items];
     },
-    enabled: open && !!businessId,
+    enabled: open && !!businessId && !draft?.costEditOfReceiptId,
   });
-  const subscription = useTenantCommercialSubscription(open);
+  const subscription = useTenantCommercialSubscription(open && !draft?.costEditOfReceiptId);
   const [quotaNoticeOpen, setQuotaNoticeOpen] = useState(false);
   const quotaUnavailable = !!subscription.data && (subscription.data.hasDianDocumentQuota === false
     || subscription.data.dianDocumentsUsed >= subscription.data.dianDocumentMonthlyLimit);
@@ -605,7 +635,7 @@ function ReceiptEditor({
   const [pendingSupplierChange, setPendingSupplierChange] = useState<PendingSupplierChange>();
   const [selectedSupplier, setSelectedSupplier] = useState<PartyRoleSelection | null>(null);
   const products = useGoodsReceiptProducts(
-    draft?.supplierId || undefined, productSearch, includeUnassociated,
+    draft?.costEditOfReceiptId ? undefined : draft?.supplierId || undefined, productSearch, includeUnassociated,
   );
   const associateProduct = useAssociateGoodsReceiptProduct();
   const save = useSaveGoodsReceiptDraft();
@@ -694,6 +724,7 @@ function ReceiptEditor({
     })),
   });
   if (!draft || !businessId) return null;
+  const costEdit = Boolean(draft.costEditOfReceiptId);
   const totals = calculateGoodsReceiptTotals(draft.lines);
   const mainRate = draft.currencyCode === "COP" ? 1 : draft.exchangeRate;
   const previewCostDocuments = editingCostDocument
@@ -802,6 +833,15 @@ function ReceiptEditor({
   });
   const saveCostDocument = () => {
     if (!editingCostDocument) return;
+    if (costEdit && draft.existingCostDocumentIds?.includes(editingCostDocument.costDocumentId)) {
+      toast.error("Esta factura ya está contabilizada. Puedes quitar su asociación con el costo y agregar otra factura.");
+      return;
+    }
+    if (costEdit && !(["SupplierElectronicInvoice", "InternalReceiptVoucher"] as string[])
+      .includes(editingCostDocument.purchaseEvidenceType)) {
+      toast.error("En una entrada confirmada agrega una factura electrónica del proveedor o un comprobante interno en COP.");
+      return;
+    }
     const supplierPolicy = costSupplierPolicies[editingCostDocument.supplierId] ??
       costSupplierQueries[costSupplierIds.indexOf(editingCostDocument.supplierId)]?.data?.supplierPurchaseEvidencePolicy ?? null;
     if (editingCostDocument.purchaseEvidenceType !== "ImportDeclaration" &&
@@ -857,12 +897,14 @@ function ReceiptEditor({
   };
   const request = (): SaveGoodsReceiptDraftRequest => ({
     draftId: draft.draftId, businessId,
+    costEditOfReceiptId: draft.costEditOfReceiptId ?? null,
+    baseCostRevisionNumber: draft.baseCostRevisionNumber ?? null,
     warehouseId: draft.warehouseId || null, supplierId: draft.supplierId || null,
     partySiteId: draft.partySiteId || null,
     supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
       ? draft.supplierInvoiceNumber.trim() || null : null,
     supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
-    receivedAt: goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: true,
+    receivedAt: draft.originalReceivedAt ?? goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: true,
     dueDate: toIsoOrNull(draft.dueDate),
     currencyCode: draft.currencyCode, notes: draft.notes.trim() || null,
     lines: draft.lines.map(withDerivedWeight), concurrencyToken: draft.concurrencyToken,
@@ -1042,9 +1084,10 @@ function ReceiptEditor({
   };
 
   const confirmEntry = async () => {
-    if (!allowEvidence(draft.purchaseEvidenceType as PurchaseEvidenceType)
-      || draft.additionalCostDocuments.some(document => !allowEvidence(document.purchaseEvidenceType))) return;
-    if (!draft.warehouseId || !draft.supplierId || !draft.partySiteId || !draft.purchaseEvidenceType || draft.lines.length === 0) {
+    if (!costEdit && (!allowEvidence(draft.purchaseEvidenceType as PurchaseEvidenceType)
+      || draft.additionalCostDocuments.some(document => !allowEvidence(document.purchaseEvidenceType)))) return;
+    if (!draft.warehouseId || !draft.supplierId || (!costEdit && !draft.partySiteId) ||
+        !draft.purchaseEvidenceType || draft.lines.length === 0) {
       toast.error("Selecciona proveedor, sede, bodega, tipo de soporte y agrega al menos un producto.");
       return;
     }
@@ -1061,6 +1104,8 @@ function ReceiptEditor({
       return;
     }
     try {
+      const savedEdit = costEdit ? await persist(false) : null;
+      if (costEdit && !savedEdit) return;
       if (draft.withholdingAdjustments?.length &&
           (!withholdingPreview.data || withholdingPreview.isFetching || withholdingPreview.isError)) {
         toast.error("Espera el cálculo actualizado de las retenciones antes de confirmar.");
@@ -1072,15 +1117,19 @@ function ReceiptEditor({
         return;
       }
       const accepted = await confirm.mutateAsync({
-        documentId: draft.draftId, businessId, warehouseId: draft.warehouseId,
+        documentId: costEdit ? draft.costEditRevisionId! : draft.draftId,
+        businessId, warehouseId: draft.warehouseId,
+        costEditOfReceiptId: draft.costEditOfReceiptId ?? null,
+        costEditDraftId: costEdit ? draft.draftId : null,
+        baseCostRevisionNumber: draft.baseCostRevisionNumber ?? null,
         supplierId: draft.supplierId, partySiteId: draft.partySiteId || null,
         supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
           ? draft.supplierInvoiceNumber.trim() || null : null,
         supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
-        receivedAt: goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: true,
+        receivedAt: draft.originalReceivedAt ?? goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: true,
         dueDate: toIsoOrNull(draft.dueDate),
         currencyCode: draft.currencyCode, notes: draft.notes.trim() || null, lines: draft.lines.map(withDerivedWeight),
-        draftConcurrencyToken: null,
+        draftConcurrencyToken: savedEdit?.concurrencyToken ?? null,
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: null,
         withholdingAdjustments: draft.withholdingAdjustments ?? null,
@@ -1100,7 +1149,9 @@ function ReceiptEditor({
       } catch {
         return;
       }
-      toast.success(`${accepted.documentNumber} fue confirmada y enviada al motor.`, {
+      toast.success(costEdit
+        ? `El ajuste de costos de ${accepted.documentNumber} fue enviado al motor.`
+        : `${accepted.documentNumber} fue confirmada y enviada al motor.`, {
         duration: 12000,
         action: {
           label: "Revisar precios",
@@ -1136,10 +1187,12 @@ function ReceiptEditor({
     <DialogContent onEscapeKeyDown={(event) => { if (productMenuOpen) { event.preventDefault(); setProductMenuOpen(false); } }} className="flex max-h-[94dvh] w-[94vw] max-w-6xl flex-col overflow-hidden p-0">
       <DialogHeader className="border-b px-6 py-5">
         <DialogTitle className="flex items-center gap-2">
-          <Truck className="h-5 w-5 text-primary" /> Recepción de compra
+          <Truck className="h-5 w-5 text-primary" /> {costEdit ? "Editar costos de la recepción" : "Recepción de compra"}
         </DialogTitle>
         <DialogDescription>
-          {draft.concurrencyToken
+          {costEdit
+            ? "Ajusta solo valores. Guarda el borrador para retomarlo; cerrar descarta cambios sin guardar. La cantidad recibida no cambia."
+            : draft.concurrencyToken
             ? "Borrador guardado. Puedes continuarlo, confirmarlo o eliminarlo."
             : "Captura local sin guardar. Cerrar conserva lo digitado en este dispositivo."}
         </DialogDescription>
@@ -1154,7 +1207,7 @@ function ReceiptEditor({
             {options.isFetching ? "Reintentando…" : "Reintentar"}
           </Button>
         </div>}
-        <section className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
+        {!costEdit && <section className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
           <Field label="Orden de compra (opcional)">
             <Select value={draft.purchaseOrderId || "__none"} onValueChange={async (value) => {
               if (value === "__none") {
@@ -1208,9 +1261,10 @@ function ReceiptEditor({
             </Select>
           </Field>
           <p className="mt-2 text-xs text-muted-foreground">Puedes recibir directamente sin orden. Si eliges una, Auraly propone únicamente su saldo pendiente.</p>
-        </section>
+        </section>}
         <section className="grid items-start gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-2 xl:grid-cols-3">
           <Field label="Proveedor · sede">
+            {costEdit ? <Input value={draft.costEditSupplierName ?? "Proveedor de la recepción"} readOnly aria-label="Proveedor de la recepción" /> :
             <SupplierSiteSelect value={draft.partySiteId} placeholder="Buscar proveedor y sede"
               preload
               roleId={draft.purchaseOrderId ? draft.supplierId : undefined}
@@ -1222,10 +1276,10 @@ function ReceiptEditor({
                   if(issueDate!==draft.supplierInvoiceDate||dueDate!==draft.dueDate)change({supplierInvoiceDate:issueDate,dueDate});
                 }
               }}
-              onChange={requestSupplierChange}/>
+              onChange={requestSupplierChange}/>}
           </Field>
           <Field label="Bodega">
-            <Select value={draft.warehouseId} disabled={!!draft.purchaseOrderId} onValueChange={(value) => change({ warehouseId: value })}>
+            <Select value={draft.warehouseId} disabled={costEdit || !!draft.purchaseOrderId} onValueChange={(value) => change({ warehouseId: value })}>
               <SelectTrigger><SelectValue placeholder="Seleccionar bodega" /></SelectTrigger>
               <SelectContent>{options.data?.warehouses.map((item) =>
                 <SelectItem key={item.warehouseId} value={item.warehouseId}>
@@ -1249,7 +1303,7 @@ function ReceiptEditor({
                 </Tooltip>
               </TooltipProvider>}
           </span>}>
-            <Select value={draft.purchaseEvidenceType} disabled={!draft.supplierId}
+            <Select value={draft.purchaseEvidenceType} disabled={costEdit || !draft.supplierId}
               onValueChange={(value: PurchaseEvidenceType) => {
                 if (!allowEvidence(value)) return;
                 change({ purchaseEvidenceType: value,
@@ -1270,19 +1324,19 @@ function ReceiptEditor({
           </Field>
           {["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType) &&
           <Field label="Factura del proveedor">
-            <Input value={draft.supplierInvoiceNumber}
+            <Input value={draft.supplierInvoiceNumber} readOnly={costEdit}
               onChange={(event) => change({ supplierInvoiceNumber: event.target.value })}
               placeholder="Número de factura" maxLength={80} />
           </Field>
           }
           <Field label="Fecha de emisión">
-            <DatePicker value={draft.supplierInvoiceDate} onChange={(value) => change({
+            <DatePicker value={draft.supplierInvoiceDate} disabled={costEdit} onChange={(value) => change({
               supplierInvoiceDate:value,
               dueDate:plusDaysFrom(value,selectedSupplier?.supplierDefaultPaymentDueDays??30),
             })} />
           </Field>
           <Field label="Moneda">
-            <Select value={draft.currencyCode} onValueChange={(currencyCode) => change({
+            <Select value={draft.currencyCode} disabled={costEdit} onValueChange={(currencyCode) => change({
               currencyCode, exchangeRate: currencyCode === "COP" ? 1 : draft.exchangeRate,
               exchangeRateDate: currencyCode === "COP" ? draft.supplierInvoiceDate : (draft.exchangeRateDate || draft.supplierInvoiceDate),
               exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" :
@@ -1294,10 +1348,11 @@ function ReceiptEditor({
           </Field>
           {draft.currencyCode !== "COP" && <>
             <Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={draft.exchangeRate}
+              disabled={costEdit}
               onValueChange={(value) => change({ exchangeRate: value ?? 0 })} /></Field>
-            <Field label="Fecha de la tasa"><DatePicker value={draft.exchangeRateDate} onChange={(exchangeRateDate) => change({ exchangeRateDate })} /></Field>
-            <Field label="Fuente de la tasa"><Select value={draft.exchangeRateSource} onValueChange={(exchangeRateSource) => change({ exchangeRateSource })}>
-              <SelectTrigger disabled={options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger>
+            <Field label="Fecha de la tasa"><DatePicker value={draft.exchangeRateDate} disabled={costEdit} onChange={(exchangeRateDate) => change({ exchangeRateDate })} /></Field>
+            <Field label="Fuente de la tasa"><Select value={draft.exchangeRateSource} disabled={costEdit} onValueChange={(exchangeRateSource) => change({ exchangeRateSource })}>
+              <SelectTrigger disabled={costEdit || options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger>
               <SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
             </Select></Field>
           </>}
@@ -1310,7 +1365,7 @@ function ReceiptEditor({
             también cuando se paga de contado. Para vencimiento inmediato, selecciona la fecha de emisión.
           </p>
           <Field label="Fecha de vencimiento">
-            <DatePicker min={draft.supplierInvoiceDate||undefined}
+            <DatePicker min={draft.supplierInvoiceDate||undefined} disabled={costEdit}
               value={draft.dueDate} onChange={(dueDate)=>change({dueDate})} />
             <p className="text-xs text-muted-foreground">Se propone con los {selectedSupplier?.supplierDefaultPaymentDueDays??30} días configurados en el proveedor, pero puede ajustarse para este documento.</p>
           </Field>
@@ -1349,7 +1404,7 @@ function ReceiptEditor({
           </div>}
         </section>
         <section className="rounded-2xl border">
-          <div ref={productPickerRef} className="relative" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
+          {!costEdit && <div ref={productPickerRef} className="relative" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
           <div className="grid gap-3 border-b p-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
             <div className="relative">
               <Barcode className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-primary" />
@@ -1412,7 +1467,7 @@ function ReceiptEditor({
             </div>}
           {productMenuOpen && draft.supplierId && productSearch.trim().length === 0 && <div role="listbox" className="absolute inset-x-0 top-full z-20 rounded-b-xl border bg-background px-4 py-3 text-sm text-muted-foreground shadow-lg">Escribe al menos una letra, código o referencia para buscar.</div>}
           {productMenuOpen && draft.supplierId && productSearch.trim().length > 0 && !products.isLoading && productItems.length === 0 && <div role="listbox" className="absolute inset-x-0 top-full z-20 rounded-b-xl border bg-background px-4 py-3 text-sm text-muted-foreground shadow-lg">Sin resultados para esta búsqueda.</div>}
-          </div>
+          </div>}
           <div className="overflow-hidden">
             <table className="w-full table-fixed text-sm">
               <thead className="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1430,7 +1485,7 @@ function ReceiptEditor({
                     <p className="text-xs text-muted-foreground">IVA de compra {line.taxRate} % · {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}</p>
                     <p className="text-xs text-muted-foreground">Costo promedio {line.averageUnitCost == null ? "—" : formatCurrency(line.averageUnitCost)} · Último costo {line.latestUnitCost == null ? "—" : formatCurrency(line.latestUnitCost)}</p>
                     <p className="text-xs text-muted-foreground">{line.presentationQuantity} {line.presentationName.toLowerCase()} × {line.unitsPerPresentation} = {line.quantity} {goodsReceiptUnitLabel(line.baseUnitCode, line.quantity)}</p></td>
-                  <td className="px-3 py-2"><Input type="number" min="0.000001" step="0.001"
+                  <td className="px-3 py-2"><Input type="number" min="0.000001" step="0.001" readOnly={costEdit}
                     ref={(element) => {
                       const key = editorCellKey(line.productId, "quantity");
                       if (element) editorCellRefs.current.set(key, element);
@@ -1443,7 +1498,7 @@ function ReceiptEditor({
                       updateLine(line.productId, { presentationQuantity, quantity: calculateBaseQuantity(presentationQuantity, line.unitsPerPresentation) });
                     }}
                     onKeyDown={(event) => moveEditorFocus(event, line.productId, "quantity")} />
-                    {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) > 1 && <Select
+                    {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) > 1 && <Select disabled={costEdit}
                       value={line.unitsPerPresentation === 1 ? "base" : "package"}
                       onValueChange={(value) => {
                         const factor = value === "base" ? 1 : (line.preferredUnitsPerPresentation ?? line.unitsPerPresentation);
@@ -1458,7 +1513,7 @@ function ReceiptEditor({
                     </Select>}
                     {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) <= 1 && <span className="mt-1 flex h-8 items-center rounded-md bg-muted/40 px-2 text-xs text-muted-foreground">{goodsReceiptUnitLabel(line.baseUnitCode)}</span>}
                     {line.remainingQuantity != null && <span className="mt-1 block text-xs text-muted-foreground">Pendiente en orden: {line.remainingQuantity}</span>}
-                    {line.remainingQuantity != null && line.quantity > line.remainingQuantity && <Input className="mt-2" value={line.overReceiptReason ?? ""}
+                    {line.remainingQuantity != null && line.quantity > line.remainingQuantity && <Input className="mt-2" readOnly={costEdit} value={line.overReceiptReason ?? ""}
                       onChange={(event) => updateLine(line.productId, { overReceiptReason: event.target.value })}
                       placeholder="Motivo obligatorio del excedente" maxLength={500} />}
                   </td>
@@ -1502,12 +1557,12 @@ function ReceiptEditor({
                   <td className="px-3 py-4 text-right font-semibold tabular-nums">
                     {formatCurrency(calculatedLine.total)} {draft.currencyCode}
                   </td>
-                  <td className="pr-3"><Button type="button" size="icon" variant="ghost"
+                  <td className="pr-3">{!costEdit && <Button type="button" size="icon" variant="ghost"
                     aria-label={`Eliminar ${line.description}`}
                     onClick={() => change({ lines: draft.lines
                       .filter((item) => item.productId !== line.productId)
                       .map((item, index) => ({ ...item, lineNumber: index + 1 })) })}>
-                    <Trash2 className="h-4 w-4" /></Button></td>
+                    <Trash2 className="h-4 w-4" /></Button>}</td>
                 </tr>;
               })}</tbody>
             </table>
@@ -1531,8 +1586,10 @@ function ReceiptEditor({
           {costsExpanded && <div className="space-y-5 border-t pt-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <p className="max-w-3xl text-sm text-muted-foreground">Cada documento conserva su proveedor, vencimiento, IVA, retención y cuenta por pagar. Solo el valor marcado como capitalizable se distribuye al inventario.</p>
-              <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={addCostDocument}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
-                {canUseCostVouchers && <Button type="button" variant="outline" disabled={!options.data} onClick={() => setVoucherEditor("new")}><Plus className="mr-2 h-4 w-4" />Agregar comprobante</Button>}</div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={addCostDocument}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
+                {canUseCostVouchers && <Button type="button" variant="outline" disabled={!options.data} onClick={() => setVoucherEditor("new")}><Plus className="mr-2 h-4 w-4" />Agregar comprobante</Button>}
+              </div>
             </div>
             {draft.referencedCostDocuments.map(document => <div key={document.associationId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-sm">
               <div><strong>{document.entryNumber ?? "Comprobante contabilizado"}</strong><p>{options.data?.purchaseCostAssociationModes?.find(item => item.code === document.mode)?.label}
@@ -1540,7 +1597,9 @@ function ReceiptEditor({
               <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => setVoucherEditor(document)}>Revisar comprobante</Button>
                 <Button type="button" variant="ghost" aria-label={`Quitar comprobante ${document.entryNumber ?? "asociado"}`} onClick={() => change({ referencedCostDocuments: draft.referencedCostDocuments.filter(item => item.associationId !== document.associationId) })}><Trash2 className="h-4 w-4" /></Button></div>
             </div>)}
-            {missingReferencedCostWeight && <p role="alert" className="text-sm text-destructive">Hay un comprobante repartido por peso sin peso positivo en todos los productos. Revisa el comprobante y completa los pesos; ese importe todavía no se refleja en el costo por producto.</p>}
+            {missingReferencedCostWeight && <p role="alert" className="text-sm text-destructive">{costEdit
+              ? "Esta recepción no conserva pesos para todos los productos. Usa reparto por valor o manual; los pesos de la entrada confirmada no cambian."
+              : "Hay un comprobante repartido por peso sin peso positivo en todos los productos. Revisa el comprobante y completa los pesos; ese importe todavía no se refleja en el costo por producto."}</p>}
             <CostDocumentGrid title="Facturas agregadas"
               documents={draft.additionalCostDocuments}
               supplierNames={resolvedCostSupplierNames}
@@ -1584,7 +1643,7 @@ function ReceiptEditor({
                     updateCostDocument({ supplierId: supplier?.supplierId ?? "", partySiteId: partySiteId || null,
                       purchaseEvidenceType: nextEvidence, documentNumber: nextEvidence === "BuyerElectronicSupportDocument" ? "" : document.documentNumber });
                   }} /></Field>
-                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => { if (allowEvidence(purchaseEvidenceType)) updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber }); }}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).filter((item) => item.code === "ImportDeclaration" || allowedCostEvidenceTypes.includes(item.code)).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+                <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => { if (allowEvidence(purchaseEvidenceType)) updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber }); }}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).filter((item) => (item.code === "ImportDeclaration" || allowedCostEvidenceTypes.includes(item.code)) && (!costEdit || item.code === "SupplierElectronicInvoice" || item.code === "InternalReceiptVoucher")).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                 <Field label="Número">{document.purchaseEvidenceType === "BuyerElectronicSupportDocument" ? <Input readOnly value="Se asignará al confirmar" /> : <Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} />}</Field>
                 <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
                 <Field label="Moneda"><Select value={document.currencyCode} onValueChange={(currencyCode) => updateCostDocument({ currencyCode, exchangeRate: currencyCode === "COP" ? 1 : document.exchangeRate, exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" : (document.exchangeRateSource === "FunctionalCurrency" ? options.data?.exchangeRateSources[0]?.code ?? "" : document.exchangeRateSource) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
@@ -1611,7 +1670,7 @@ function ReceiptEditor({
                       <Field label="Tratamiento del costo"><Select value={line.costTreatment} onValueChange={(costTreatment: "Capitalize" | "Expense") => updateCostLine(document, line.lineNumber, { costTreatment, allocationMethod: costTreatment === "Expense" ? "None" : (line.allocationMethod === "None" ? "Value" : line.allocationMethod), eligibleReceiptLineNumbers: null, manualAllocations: null })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostTreatments.length)}><SelectValue placeholder="Cargando tratamientos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostTreatments ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                       {line.costTreatment === "Capitalize" && <Field label="Cómo prorratear"><Select value={line.allocationMethod} onValueChange={(allocationMethod: PurchaseCostAllocationMethod) => updateCostLine(document, line.lineNumber, { allocationMethod, eligibleReceiptLineNumbers: allocationMethod === "Manual" ? draft.lines.map((item) => item.lineNumber) : null, manualAllocations: allocationMethod === "Manual" ? draft.lines.map((item) => ({ receiptLineNumber: item.lineNumber, functionalAmount: 0 })) : null })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostAllocationMethods.length)}><SelectValue placeholder="Cargando métodos…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostAllocationMethods ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>}
                     </div>
-                    {(line.allocationMethod === "Weight" || line.allocationMethod === "Volume") && <div className="grid gap-2 rounded-xl bg-muted/25 p-3 md:grid-cols-2"><p className="text-sm text-muted-foreground md:col-span-2">{line.allocationMethod === "Weight" ? "El peso total se calcula con la cantidad recibida y el peso en kg registrado en cada producto. Solo debes completar productos antiguos que aún no tengan peso." : "Indica el volumen total de cada producto; el motor usará esa proporción."}</p>{draft.lines.map((product) => <Field key={product.productId} label={product.description}>{line.allocationMethod === "Weight" && product.unitGrossWeightKg ? <div className="rounded-lg border bg-background px-3 py-2 text-sm"><strong>{new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.totalGrossWeightKg ?? 0)} kg</strong><p className="text-xs text-muted-foreground">{new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.unitGrossWeightKg)} kg por unidad × {new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.quantity)}</p></div> : <Input aria-label={`${line.allocationMethod === "Weight" ? "Peso" : "Volumen"} de ${product.description}`} type="number" min="0.000001" step="0.001" value={(line.allocationMethod === "Weight" ? product.totalGrossWeightKg : product.totalVolumeM3) ?? ""} onChange={(event) => updateLine(product.productId, line.allocationMethod === "Weight" ? { totalGrossWeightKg: event.target.value === "" ? null : Number(event.target.value) } : { totalVolumeM3: event.target.value === "" ? null : Number(event.target.value) })} />}</Field>)}</div>}
+                    {(line.allocationMethod === "Weight" || line.allocationMethod === "Volume") && <div className="grid gap-2 rounded-xl bg-muted/25 p-3 md:grid-cols-2"><p className="text-sm text-muted-foreground md:col-span-2">{costEdit ? "Se conserva la proporción registrada en la entrada confirmada." : line.allocationMethod === "Weight" ? "El peso total se calcula con la cantidad recibida y el peso en kg registrado en cada producto. Solo debes completar productos antiguos que aún no tengan peso." : "Indica el volumen total de cada producto; el motor usará esa proporción."}</p>{draft.lines.map((product) => <Field key={product.productId} label={product.description}>{line.allocationMethod === "Weight" && product.unitGrossWeightKg ? <div className="rounded-lg border bg-background px-3 py-2 text-sm"><strong>{new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.totalGrossWeightKg ?? 0)} kg</strong><p className="text-xs text-muted-foreground">{new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.unitGrossWeightKg)} kg por unidad × {new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(product.quantity)}</p></div> : <Input aria-label={`${line.allocationMethod === "Weight" ? "Peso" : "Volumen"} de ${product.description}`} type="number" min="0.000001" step="0.001" readOnly={costEdit} value={(line.allocationMethod === "Weight" ? product.totalGrossWeightKg : product.totalVolumeM3) ?? ""} onChange={(event) => updateLine(product.productId, line.allocationMethod === "Weight" ? { totalGrossWeightKg: event.target.value === "" ? null : Number(event.target.value) } : { totalVolumeM3: event.target.value === "" ? null : Number(event.target.value) })} />}</Field>)}</div>}
                     {line.allocationMethod === "Manual" && <div className="grid gap-2 rounded-xl bg-muted/25 p-3 md:grid-cols-2"><p className="text-sm text-muted-foreground md:col-span-2">Distribuye exactamente {formatCurrency(manualTarget)} COP. La diferencia debe quedar en cero.</p>{draft.lines.map((product) => <Field key={product.productId} label={product.description}><FormattedNumberInput kind="currency" value={line.manualAllocations?.find((allocation) => allocation.receiptLineNumber === product.lineNumber)?.functionalAmount ?? 0} onValueChange={(value) => updateManualAllocation(document, line, product.lineNumber, value ?? 0)} /></Field>)}<p className={`text-sm font-medium md:col-span-2 ${Math.abs(manualTarget - manualAssigned) < 0.0001 ? "text-emerald-700" : "text-amber-700"}`}>Diferencia pendiente: {formatCurrency(manualTarget - manualAssigned)} COP</p></div>}
                     <div className="grid gap-3 text-sm md:grid-cols-3"><DocumentTotal label="Base" value={line.amount} suffix={document.currencyCode} /><DocumentTotal label="IVA" value={line.taxAmount} suffix={document.currencyCode} /><DocumentTotal label={line.costTreatment === "Capitalize" ? `Al inventario · ${allocationLabel}` : "Al gasto"} value={(line.amount + capitalizedTax) * rate} suffix="COP" /></div>
                   </div>;
@@ -1667,7 +1726,7 @@ function ReceiptEditor({
           <p className="text-xs text-muted-foreground">Agrega un producto y completa la fecha, el soporte y los valores para habilitar la retención.</p>}
 
         <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_23rem]">
-          <Textarea value={draft.notes} onChange={(event) => change({ notes: event.target.value })}
+          <Textarea value={draft.notes} readOnly={costEdit} onChange={(event) => change({ notes: event.target.value })}
             className="h-full min-h-[8.5rem] resize-none"
             placeholder="Observaciones de recepción" maxLength={1000} />
           <dl className="space-y-2 rounded-2xl bg-slate-950 p-5 text-white">
@@ -1714,7 +1773,7 @@ function ReceiptEditor({
         </section>
         <section className="grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
           <Field label="Concepto fiscal de la compra">
-            <Select value={draft.withholdingConceptCode || "__none"} onValueChange={(value) => change({ withholdingConceptCode: value === "__none" ? "" : value })}>
+            <Select value={draft.withholdingConceptCode || "__none"} disabled={costEdit} onValueChange={(value) => change({ withholdingConceptCode: value === "__none" ? "" : value })}>
               <SelectTrigger><SelectValue placeholder="Sin concepto" /></SelectTrigger>
               <SelectContent><SelectItem value="__none">Sin concepto</SelectItem>{(options.data?.withholdingConcepts ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
             </Select>
@@ -1775,11 +1834,13 @@ function ReceiptEditor({
         initialPartyId={selectedSupplier?.partyId}
         existing={voucherEditor === "new" ? undefined : voucherEditor} receiptLines={draft.lines} options={options.data}
         associations={draft.referencedCostDocuments}
-        onUpdateReceiptLine={updateReceiptWeight}
+        onUpdateReceiptLine={costEdit ? undefined : updateReceiptWeight}
         onClose={() => setVoucherEditor(undefined)} onAdd={value => {
           const previous = draft.referencedCostDocuments.find(item => item.entryId === value.entryId);
+          const changed = costEdit && previous && JSON.stringify({ mode: previous.mode, lines: previous.lines }) !==
+            JSON.stringify({ mode: value.mode, lines: value.lines });
           change({ referencedCostDocuments: [...draft.referencedCostDocuments.filter(item => item.associationId !== value.associationId && item.entryId !== value.entryId),
-            { ...value, associationId: previous?.associationId ?? value.associationId }] });
+            { ...value, associationId: changed ? crypto.randomUUID() : previous?.associationId ?? value.associationId }] });
           setVoucherEditor(undefined);
         }} />}
       <DialogFooter className="border-t bg-background px-6 py-4 sm:justify-between">
@@ -1795,7 +1856,7 @@ function ReceiptEditor({
             <Save className="mr-2 h-4 w-4" /> Guardar borrador
           </Button>
           {canConfirm && <Button type="button" disabled={confirm.isPending || !options.data} onClick={confirmEntry}>
-              <ArchiveRestore className="mr-2 h-4 w-4" /> Confirmar entrada
+              <ArchiveRestore className="mr-2 h-4 w-4" /> {costEdit ? "Confirmar ajuste de costos" : "Confirmar entrada"}
             </Button>}
         </div>
       </DialogFooter>
@@ -1816,8 +1877,81 @@ function emptyDraft(): EditorDraft {
   };
 }
 
+function fromDetailForCostEdit(detail: GoodsReceiptDetail, baseCostRevisionNumber: number): EditorDraft {
+  return {
+    ...emptyDraft(),
+    costEditOfReceiptId: detail.documentId,
+    costEditRevisionId: crypto.randomUUID(),
+    costEditSupplierName: detail.supplierName,
+    existingCostDocumentIds: (detail.additionalCostDocuments ?? []).map(document => document.costDocumentId),
+    baseCostRevisionNumber,
+    originalReceivedAt: detail.receivedAt,
+    warehouseId: detail.warehouseId,
+    supplierId: detail.supplierId,
+    partySiteId: detail.partySiteId ?? "",
+    supplierInvoiceNumber: detail.supplierInvoiceNumber ?? "",
+    supplierInvoiceDate: detail.supplierInvoiceDate?.slice(0, 10) ?? "",
+    purchaseEvidenceType: detail.purchaseEvidenceType,
+    receivedAt: localDateTime(detail.receivedAt),
+    dueDate: detail.dueDate?.slice(0, 10) ?? "",
+    notes: detail.notes ?? "",
+    withholdingConceptCode: detail.withholdingConceptCode ?? "",
+    withholdingAdjustments: (detail.withholding?.adjustments ?? []).map(adjustment => {
+      const manual = detail.withholding?.lines.find(line =>
+        line.manualLineId && line.manualLineId === adjustment.manualLineId);
+      return {
+        ruleId: adjustment.ruleId,
+        action: adjustment.action,
+        taxableBase: adjustment.taxableBase,
+        amount: adjustment.amount,
+        reason: adjustment.reason,
+        manualLineId: adjustment.manualLineId,
+        kind: manual?.kind as WithholdingAdjustment["kind"],
+        name: manual?.name,
+        rate: manual?.rate,
+        jurisdictionCode: manual?.jurisdictionCode,
+        accountId: adjustment.accountId ?? manual?.accountId,
+      };
+    }),
+    lines: detail.lines.map(line => ({ ...line,
+      discountAmount: line.commercialDiscountPercent == null ? line.discountAmount : 0,
+    })),
+    purchaseOrderId: detail.purchaseOrderId ?? "",
+    currencyCode: detail.currencyCode,
+    exchangeRate: detail.exchangeRate,
+    exchangeRateDate: detail.exchangeRateDate ?? detail.supplierInvoiceDate?.slice(0, 10) ?? "",
+    exchangeRateSource: detail.exchangeRateSource,
+    additionalCostDocuments: (detail.additionalCostDocuments ?? []).map(openDraftCostDocument),
+    referencedCostDocuments: (detail.referencedCostDocuments ?? []).map(document => ({
+      associationId: document.associationId,
+      entryId: document.entryId,
+      entryNumber: document.entryNumber,
+      mode: document.mode,
+      lines: document.lines.map(line => ({
+        entryLineNumber: line.entryLineNumber,
+        functionalAmount: line.functionalAmount,
+        allocationMethod: line.allocationMethod,
+        manualAllocations: line.allocationMethod === "Manual"
+          ? line.allocations.map(allocation => ({
+              receiptLineNumber: allocation.receiptLineNumber,
+              functionalAmount: allocation.functionalAmount,
+            })) : null,
+      })),
+    })),
+    financialDiscount: detail.financialDiscount ? {
+      percent: detail.financialDiscount.percent,
+      expectedOn: detail.financialDiscount.expectedOn,
+      anticipateInCost: detail.financialDiscount.anticipatedInCost,
+    } : null,
+  };
+}
+
 function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
   return {
+    costEditOfReceiptId: draft.costEditOfReceiptId ?? undefined,
+    costEditRevisionId: draft.costEditOfReceiptId ? crypto.randomUUID() : undefined,
+    baseCostRevisionNumber: draft.baseCostRevisionNumber ?? undefined,
+    originalReceivedAt: draft.costEditOfReceiptId ? draft.receivedAt : undefined,
     draftId: draft.draftId, warehouseId: draft.warehouseId ?? "",
     supplierId: draft.supplierId ?? "", partySiteId: draft.partySiteId ?? "", supplierInvoiceNumber: draft.supplierInvoiceNumber ?? "",
     supplierInvoiceDate: draft.supplierInvoiceDate?.slice(0, 10) ?? "",
@@ -1834,6 +1968,8 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
       preferredPresentationName: line.preferredPresentationName,
       preferredUnitsPerPresentation: line.preferredUnitsPerPresentation,
       presentationQuantity: line.presentationQuantity, unitsPerPresentation: line.unitsPerPresentation,
+      purchaseOrderLineId: line.purchaseOrderLineId,
+      overReceiptReason: line.overReceiptReason,
       totalGrossWeightKg: line.totalGrossWeightKg, totalVolumeM3: line.totalVolumeM3,
       unitGrossWeightKg: line.unitGrossWeightKg,
     })),

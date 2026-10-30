@@ -135,6 +135,7 @@ CREATE TABLE [purchasing].[GoodsReceiptCostRevisions]
     [AcceptedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [AcceptedAt] DATETIMEOFFSET(7) NOT NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
+    [PendingPayableDecrease] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_GoodsReceiptCostRevisions_PendingPayableDecrease] DEFAULT (0),
     CONSTRAINT [PK_GoodsReceiptCostRevisions] PRIMARY KEY CLUSTERED ([RevisionId]),
     CONSTRAINT [FK_GoodsReceiptCostRevisions_Receipt] FOREIGN KEY ([GoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts]([GoodsReceiptId]),
     CONSTRAINT [FK_GoodsReceiptCostRevisions_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
@@ -142,7 +143,8 @@ CREATE TABLE [purchasing].[GoodsReceiptCostRevisions]
     CONSTRAINT [UQ_GoodsReceiptCostRevisions_Number] UNIQUE ([GoodsReceiptId],[RevisionNumber]),
     CONSTRAINT [UQ_GoodsReceiptCostRevisions_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [CK_GoodsReceiptCostRevisions_Number] CHECK ([RevisionNumber]>0),
-    CONSTRAINT [CK_GoodsReceiptCostRevisions_Status] CHECK ([Status] IN(N'Accepted',N'Processed'))
+    CONSTRAINT [CK_GoodsReceiptCostRevisions_Status] CHECK ([Status] IN(N'Accepted',N'Processed')),
+    CONSTRAINT [CK_GoodsReceiptCostRevisions_PendingPayableDecrease] CHECK ([PendingPayableDecrease]>=0)
 );
 GO
 
@@ -171,6 +173,7 @@ CREATE TABLE [purchasing].[GoodsReceiptCostDocuments]
     [SourceEntryId] UNIQUEIDENTIFIER NULL,
     [AssociationMode] NVARCHAR(16) NULL,
     [CostRevisionId] UNIQUEIDENTIFIER NULL,
+    [RemovedByRevisionId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_GoodsReceiptCostDocuments] PRIMARY KEY ([CostDocumentId]),
     CONSTRAINT [FK_GoodsReceiptCostDocuments_Receipt] FOREIGN KEY ([GoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts]([GoodsReceiptId]),
     CONSTRAINT [FK_GoodsReceiptCostDocuments_Supplier] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers]([SupplierId]),
@@ -178,6 +181,7 @@ CREATE TABLE [purchasing].[GoodsReceiptCostDocuments]
     CONSTRAINT [UQ_GoodsReceiptCostDocuments_SourceBinding] UNIQUE ([CostDocumentId],[SourceEntryId]),
     CONSTRAINT [FK_GoodsReceiptCostDocuments_SourceEntry] FOREIGN KEY ([SourceEntryId]) REFERENCES [dbo].[AccountingEntries]([EntryId]),
     CONSTRAINT [FK_GoodsReceiptCostDocuments_Revision] FOREIGN KEY ([CostRevisionId]) REFERENCES [purchasing].[GoodsReceiptCostRevisions]([RevisionId]),
+    CONSTRAINT [FK_GoodsReceiptCostDocuments_RemovalRevision] FOREIGN KEY ([RemovedByRevisionId]) REFERENCES [purchasing].[GoodsReceiptCostRevisions]([RevisionId]),
     CONSTRAINT [CK_GoodsReceiptCostDocuments_SourceShape] CHECK (
       ([SourceEntryId] IS NULL AND [AssociationMode] IS NULL AND [SupplierId] IS NOT NULL
         AND [PurchaseEvidenceType] IS NOT NULL AND [DocumentNumber] IS NOT NULL AND [IssuedAt] IS NOT NULL

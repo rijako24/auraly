@@ -118,6 +118,8 @@ export interface GoodsReceiptLineSnapshot extends GoodsReceiptLine {
 }
 
 export interface GoodsReceiptDraft {
+  costEditOfReceiptId?: string | null;
+  baseCostRevisionNumber?: number | null;
   financialDiscount?: GoodsReceiptFinancialDiscount | null;
   referencedCostDocuments?: GoodsReceiptVoucherCost[] | null;
   draftId: string;
@@ -147,6 +149,8 @@ export interface GoodsReceiptDraft {
 }
 
 export interface GoodsReceiptDetail {
+  partySiteId?: string | null;
+  withholdingConceptCode?: string | null;
   financialDiscount?: GoodsReceiptFinancialDiscountSnapshot | null;
   payable?: { payableId: string; status: string; outstandingAmount: number; currencyCode: string;
     partySiteId: string | null; partySiteName: string | null; dueDate: string } | null;
@@ -181,7 +185,13 @@ export interface GoodsReceiptDetail {
       ruleId: string; ruleVersion: number; ruleCode: string; name: string;
       kind: string; baseKind: string; taxableBase: number; rate: number;
       amount: number; jurisdictionCode: string | null;
+      accountId?: string | null; manualLineId?: string | null;
     }>;
+    adjustments?: Array<{
+      ruleId: string; action: WithholdingAdjustment["action"];
+      taxableBase: number | null; amount: number | null; reason: string;
+      manualLineId?: string | null; accountId?: string | null;
+    }> | null;
   } | null;
   exchangeRate: number; exchangeRateDate: string | null; exchangeRateSource: string;
   functionalNetAmount: number; functionalTaxAmount: number; functionalGrandTotal: number;
@@ -191,6 +201,8 @@ export interface GoodsReceiptDetail {
 }
 
 export interface SaveGoodsReceiptDraftRequest {
+  costEditOfReceiptId?: string | null;
+  baseCostRevisionNumber?: number | null;
   financialDiscount?: GoodsReceiptFinancialDiscount | null;
   referencedCostDocuments?: GoodsReceiptVoucherCost[] | null;
   draftId: string;
@@ -296,6 +308,12 @@ export interface GoodsReceiptAcceptance {
   idempotentReplay: boolean;
 }
 
+export interface GoodsReceiptCostEditState {
+  goodsReceiptId: string;
+  baseCostRevisionNumber: number;
+  draft: GoodsReceiptDraft | null;
+}
+
 export interface GoodsReceiptWithholdingCalculation extends WithholdingCalculation {
   reviewHash?: string | null;
 }
@@ -322,6 +340,8 @@ export const goodsReceiptsApi = {
     apiClient.get<GoodsReceiptDraft>(`/commerce/v1/goods-receipts/drafts/${draftId}`),
   getDetail: (documentId: string) =>
     apiClient.get<GoodsReceiptDetail>(`/commerce/v1/goods-receipts/${documentId}`),
+  getCostEditState: (documentId: string) =>
+    apiClient.get<GoodsReceiptCostEditState>(`/commerce/v1/goods-receipts/${documentId}/cost-edit`),
   saveDraft: (request: SaveGoodsReceiptDraftRequest) =>
     apiClient.put<GoodsReceiptDraft>(`/commerce/v1/goods-receipts/drafts/${request.draftId}`, request),
   deleteDraft: (draftId: string, concurrencyToken: string) =>
@@ -357,6 +377,9 @@ export const goodsReceiptsApi = {
     additionalCostDocuments: GoodsReceiptCostDocument[] | null;
     withholdingAdjustments?: WithholdingAdjustment[] | null;
     withholdingReviewHash?: string | null;
+    costEditOfReceiptId?: string | null;
+    costEditDraftId?: string | null;
+    baseCostRevisionNumber?: number | null;
   }) => apiClient.postIdempotent<GoodsReceiptAcceptance>(
     "/commerce/v1/goods-receipts/confirm", request, `goods-receipt-${request.documentId}`,
   ),

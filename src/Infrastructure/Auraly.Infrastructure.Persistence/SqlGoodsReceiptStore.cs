@@ -151,19 +151,10 @@ public sealed partial class SqlGoodsReceiptStore(
             var sequence = await AllocateProcessingSequenceAsync(
                 connection, transaction, user.BusinessId, now, cancellationToken);
             var additionalDocuments = costCalculation.AdditionalDocuments.Select(document =>
-                new GoodsReceiptCostDocumentSnapshot(
-                    document.Request.CostDocumentId, document.Request.SupplierId,
-                    document.Request.PurchaseEvidenceType,
+                CreateCostDocumentSnapshot(document,
+                    additionalWithholdings[document.Request.CostDocumentId],
                     supports.TryGetValue(document.Request.CostDocumentId, out var costSupport)
-                        ? costSupport.FiscalNumber : document.Request.DocumentNumber,
-                    document.Request.IssuedAt, document.Request.CreatesPayable,
-                    document.Request.DueDate, document.Request.CurrencyCode,
-                    document.Request.ExchangeRate, document.Request.ExchangeRateDate!.Value,
-                    document.Request.ExchangeRateSource, document.NetAmount, document.TaxAmount,
-                    document.GrandTotal, document.FunctionalNetAmount, document.FunctionalTaxAmount,
-                    document.FunctionalGrandTotal,
-                    additionalWithholdings[document.Request.CostDocumentId], document.Lines,
-                    document.Request.PartySiteId)).ToArray();
+                        ? costSupport.FiscalNumber : null)).ToArray();
             var payload = new GoodsReceiptDocumentPayload(
                 user.TenantId,
                 user.BusinessId,
@@ -203,7 +194,8 @@ public sealed partial class SqlGoodsReceiptStore(
                 AdditionalCostDocuments: additionalDocuments,
                 PartySiteId: request.PartySiteId,
                 ReferencedCostDocuments: referencedDocuments,
-                FinancialDiscount: costCalculation.FinancialDiscount);
+                FinancialDiscount: costCalculation.FinancialDiscount,
+                WithholdingConceptCode: request.WithholdingConceptCode);
             var payloadJson = GoodsReceiptContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
 
@@ -1130,4 +1122,18 @@ public sealed partial class SqlGoodsReceiptStore(
         string FiscalNumber, int Environment, string QrValidationUrl,
         PosSaleUblAuthorizationContract Authorization, PosSaleUblPartyContract Seller,
         string SellerPostalZone);
+
+    private static GoodsReceiptCostDocumentSnapshot CreateCostDocumentSnapshot(
+        CalculatedGoodsReceiptCostDocument document,
+        WithholdingCalculationSnapshot withholding, string? fiscalNumber = null) =>
+        new(document.Request.CostDocumentId, document.Request.SupplierId,
+            document.Request.PurchaseEvidenceType,
+            fiscalNumber ?? document.Request.DocumentNumber,
+            document.Request.IssuedAt, document.Request.CreatesPayable,
+            document.Request.DueDate, document.Request.CurrencyCode,
+            document.Request.ExchangeRate, document.Request.ExchangeRateDate!.Value,
+            document.Request.ExchangeRateSource, document.NetAmount, document.TaxAmount,
+            document.GrandTotal, document.FunctionalNetAmount, document.FunctionalTaxAmount,
+            document.FunctionalGrandTotal, withholding, document.Lines,
+            document.Request.PartySiteId);
 }

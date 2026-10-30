@@ -31,7 +31,7 @@ public sealed class SqlAccountingProcessingSignalGate(
                 )
                 OR
                 (
-                  @DocumentType=N'GoodsReceipt'
+                  @DocumentType IN(N'GoodsReceipt',N'GoodsReceiptCostRevision')
                   AND job.SourceDocumentType=N'GoodsReceiptCostDocument'
                   AND EXISTS
                   (
@@ -39,7 +39,8 @@ public sealed class SqlAccountingProcessingSignalGate(
                     INNER JOIN dbo.GoodsReceipts receipt
                       ON receipt.GoodsReceiptId=cost.GoodsReceiptId
                      AND receipt.BusinessId=@BusinessId
-                    WHERE cost.GoodsReceiptId=@DocumentId
+                    WHERE ((@DocumentType=N'GoodsReceipt' AND cost.GoodsReceiptId=@DocumentId)
+                      OR (@DocumentType=N'GoodsReceiptCostRevision' AND cost.CostRevisionId=@DocumentId))
                       AND cost.SourceEntryId IS NULL
                       AND cost.CostDocumentId=job.SourceDocumentId
                   )

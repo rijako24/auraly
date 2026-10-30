@@ -30,6 +30,9 @@ AS RETURN
     JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=entry.TenantId
     OUTER APPLY(SELECT SUM(cost.FunctionalAmount) FunctionalAmount
       FROM purchasing.GoodsReceiptCostLines cost
+      JOIN purchasing.GoodsReceiptCostDocuments assignment
+        ON assignment.CostDocumentId=cost.CostDocumentId
+       AND assignment.RemovedByRevisionId IS NULL
       WHERE cost.SourceEntryId=line.EntryId AND cost.SourceEntryLineNumber=line.LineNumber) used
     WHERE entry.EntryId=@EntryId;
 GO

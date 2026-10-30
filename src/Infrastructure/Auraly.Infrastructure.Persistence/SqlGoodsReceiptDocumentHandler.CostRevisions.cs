@@ -16,32 +16,40 @@ public sealed partial class SqlGoodsReceiptDocumentHandler
         CancellationToken cancellationToken)
     {
         var revision = GoodsReceiptContractSerializer.DeserializeCostRevision(document.Payload);
+        var edit = revision.CostEdit;
         if (revision.RevisionId != document.DocumentId.Value ||
             revision.BusinessId != document.BusinessId.Value ||
             revision.TenantId != document.TenantId.Value ||
-            revision.ReferencedCostDocuments.Count == 0 ||
-            revision.ReferencedCostDocuments.All(item => item.Mode == GoodsReceiptCostAssociationModes.Associate))
+            (edit is null && (revision.ReferencedCostDocuments.Count == 0 ||
+            revision.ReferencedCostDocuments.All(item => item.Mode == GoodsReceiptCostAssociationModes.Associate))))
             throw new InvalidOperationException("The cost revision does not match its document envelope.");
         var session = sessions.Current;
-        var affected = revision.ReferencedCostDocuments
+        var allocationDelta = edit?.CurrentLines.ToDictionary(line => line.LineNumber,
+            line => line.RecognizedInventoryCostAmount -
+                edit.PreviousLines.Single(previous => previous.LineNumber == line.LineNumber).RecognizedInventoryCostAmount);
+        var affected = edit is null ? revision.ReferencedCostDocuments
             .SelectMany(item => item.Lines)
             .SelectMany(item => item.Allocations)
             .Where(item => item.FunctionalAmount > 0m)
-            .Select(item => item.ReceiptLineNumber).Distinct().Order().ToArray();
-        if (affected.Length == 0 || affected.Any(number =>
-            revision.ReceiptLines.All(line => line.LineNumber != number)))
+            .Select(item => item.ReceiptLineNumber).Distinct().Order().ToArray()
+            : allocationDelta!.Where(item => item.Value != 0m).Select(item => item.Key).Order().ToArray();
+        if ((edit is null && affected.Length == 0) || affected.Any(number =>
+            (edit?.CurrentLines ?? revision.ReceiptLines).All(line => line.LineNumber != number)))
             throw new InvalidOperationException("The cost revision has no valid merchandise allocation.");
 
-        var origins = await LoadRevisionOriginsAsync(session, revision, affected, cancellationToken);
+        var origins = affected.Length == 0
+            ? new Dictionary<int, RevisionOrigin>()
+            : await LoadRevisionOriginsAsync(session, revision, affected, cancellationToken);
         var expectedByLine = revision.ReferencedCostDocuments
             .SelectMany(document => document.Lines)
             .SelectMany(line => line.Allocations)
             .GroupBy(allocation => allocation.ReceiptLineNumber)
             .ToDictionary(group => group.Key, group => group.Sum(allocation => allocation.FunctionalAmount));
-        if (affected.Any(number => origins[number].NewAllocation != expectedByLine[number]))
+        if (edit is null && affected.Any(number => origins[number].NewAllocation != expectedByLine[number]))
             throw new InvalidOperationException(
                 "La revisión y sus asignaciones aceptadas no concilian; no se ajustó el inventario.");
-        var affectedLines = revision.ReceiptLines.Where(line => affected.Contains(line.LineNumber))
+        var affectedLines = (edit?.CurrentLines ?? revision.ReceiptLines)
+            .Where(line => affected.Contains(line.LineNumber))
             .OrderBy(line => line.LineNumber).ToArray();
         var targets = await SqlProductLinkResolution.ResolveInventoryBatchAsync(session,
             revision.BusinessId, affectedLines.Select(line => line.ProductId).ToArray(),
@@ -62,10 +70,11 @@ public sealed partial class SqlGoodsReceiptDocumentHandler
                 if (origin.RemainingQuantity < 0m || origin.RemainingQuantity > origin.ReceivedQuantity ||
                     origin.ReceivedQuantity <= 0m)
                     throw new InvalidOperationException("El origen de la recepción no concilia con sus existencias actuales.");
-                var retained = decimal.Round(origin.NewAllocation *
+                var retained = decimal.Round((edit is null
+                    ? origin.NewAllocation : allocationDelta![line.LineNumber]) *
                     origin.RemainingQuantity / origin.ReceivedQuantity, 4,
                     MidpointRounding.AwayFromZero);
-                if (retained > 0m)
+                if (retained != 0m)
                 {
                     var productId = origin.InventoryProductId.Value;
                     capitalizedByProduct[productId] = capitalizedByProduct.GetValueOrDefault(productId) + retained;
@@ -73,7 +82,8 @@ public sealed partial class SqlGoodsReceiptDocumentHandler
                 }
             }
         }
-        var postings = capitalizedByProduct.OrderBy(item => item.Key).Select(item =>
+        var postings = capitalizedByProduct.Where(item => item.Value != 0m)
+            .OrderBy(item => item.Key).Select(item =>
             new InventoryLedgerPosting(revision.BusinessId, revision.WarehouseId,
                 firstProductLine[item.Key].ProductId, revision.RevisionId,
                 PurchasingDocumentTypes.GoodsReceiptCostRevision,
@@ -92,7 +102,8 @@ public sealed partial class SqlGoodsReceiptDocumentHandler
             var state = states[line.ProductId];
             var target = targets[line.ProductId];
             var acquisition = decimal.Round(
-                (line.RecognizedInventoryCostAmount + origins[line.LineNumber].CumulativeAllocation) /
+                (line.RecognizedInventoryCostAmount + (edit is null
+                    ? origins[line.LineNumber].CumulativeAllocation : 0m)) /
                 line.Quantity, 6, MidpointRounding.AwayFromZero);
             var hasValuation = valuationByProduct.TryGetValue(target.ProductId, out var valuation);
             var useAverage = state.ManageStock && state.PriceFormationCostBasis == "WeightedAverageCost" &&
@@ -133,7 +144,29 @@ public sealed partial class SqlGoodsReceiptDocumentHandler
         if (effects.Count > 0)
             await PersistLineEffectsAsync(session, revision.BusinessId, revision.SupplierId,
                 revision.GoodsReceiptId, revision.AcceptedByUserId, revision.OccurredAt,
-                effects, now, cancellationToken, revision.RevisionNumber, false);
+                effects, now, cancellationToken, revision.RevisionNumber,
+                persistSupplierCosts: false, updateLatestSupplierCosts: edit is not null);
+        if (edit is not null)
+            await PersistCostEditProjectionAsync(session, revision, edit, cancellationToken);
+        var newInvoices = revision.NewAdditionalCostDocuments ?? [];
+        if (newInvoices.Count > 0)
+        {
+            await SqlWithholdingRuleStore.InsertDocumentSnapshotsAsync(session.Connection,
+                session.Transaction, revision.BusinessId,
+                newInvoices.Select(invoice => new SqlWithholdingRuleStore.DocumentSnapshotSource(
+                    invoice.CostDocumentId, PurchasingDocumentTypes.GoodsReceiptCostDocument,
+                    invoice.IssuedAt, invoice.Withholding)).ToArray(), cancellationToken);
+            await SqlAccountingPostingJobWriter.InsertSourcesAsync(session.Connection,
+                session.Transaction, newInvoices.Select(invoice =>
+                    new SqlAccountingPostingJobWriter.Source(revision.TenantId,
+                        revision.BusinessId, invoice.CostDocumentId,
+                        PurchasingDocumentTypes.GoodsReceiptCostDocument,
+                        GoodsReceiptContractSerializer.SerializeCostDocument(
+                            new GoodsReceiptCostDocumentAccountingPayload(revision.TenantId,
+                                revision.BusinessId, revision.GoodsReceiptId, invoice)),
+                        invoice.IssuedAt, ids.NewId())).ToArray(), now,
+                AccountingJobRequirement.PreserveCommercialEffects, cancellationToken);
+        }
         await SqlAccountingPostingJobWriter.InsertSourceAsync(session.Connection,
             session.Transaction, revision.TenantId, revision.BusinessId, revision.RevisionId,
             PurchasingDocumentTypes.GoodsReceiptCostRevision, document.Payload,
@@ -250,6 +283,63 @@ public sealed partial class SqlGoodsReceiptDocumentHandler
     private sealed record RevisionOrigin(Guid? InventoryProductId,
         decimal ReceivedQuantity, decimal RemainingQuantity, bool Traceable,
         decimal CumulativeAllocation, decimal NewAllocation);
+
+    private static async Task PersistCostEditProjectionAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        GoodsReceiptCostRevisionPayload revision, GoodsReceiptCostEditSnapshot edit,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            DECLARE @Desired TABLE(LineNumber int PRIMARY KEY,UnitCost decimal(19,6),
+              DiscountAmount decimal(19,4),CommercialDiscountPercent decimal(9,6),
+              NetAmount decimal(19,4),TaxAmount decimal(19,4),LineTotal decimal(19,4),
+              FunctionalNetAmount decimal(19,4),FunctionalTaxAmount decimal(19,4),
+              FunctionalLineTotal decimal(19,4),AllocatedLandedCostAmount decimal(19,4),
+              RecognizedInventoryCostAmount decimal(19,4));
+            INSERT @Desired SELECT * FROM OPENJSON(@LinesJson) WITH(
+              LineNumber int,UnitCost decimal(19,6),DiscountAmount decimal(19,4),
+              CommercialDiscountPercent decimal(9,6),NetAmount decimal(19,4),
+              TaxAmount decimal(19,4),LineTotal decimal(19,4),
+              FunctionalNetAmount decimal(19,4),FunctionalTaxAmount decimal(19,4),
+              FunctionalLineTotal decimal(19,4),AllocatedLandedCostAmount decimal(19,4),
+              RecognizedInventoryCostAmount decimal(19,4));
+            IF (SELECT COUNT(*) FROM @Desired)<>@LineCount
+              THROW 51680,N'La revisión no conserva todas las líneas de costo.',1;
+            UPDATE line SET UnitCost=desired.UnitCost,DiscountAmount=desired.DiscountAmount,
+              CommercialDiscountPercent=desired.CommercialDiscountPercent,
+              NetAmount=desired.NetAmount,TaxAmount=desired.TaxAmount,
+              LineTotal=desired.LineTotal,FunctionalNetAmount=desired.FunctionalNetAmount,
+              FunctionalTaxAmount=desired.FunctionalTaxAmount,
+              FunctionalLineTotal=desired.FunctionalLineTotal,
+              AllocatedLandedCostAmount=desired.AllocatedLandedCostAmount,
+              RecognizedInventoryCostAmount=desired.RecognizedInventoryCostAmount
+            FROM dbo.GoodsReceiptLines line JOIN @Desired desired
+              ON desired.LineNumber=line.LineNumber
+            WHERE line.GoodsReceiptId=@ReceiptId;
+            IF @@ROWCOUNT<>@LineCount
+              THROW 51680,N'La recepción cambió antes de aplicar su ajuste de costos.',1;
+            UPDATE dbo.GoodsReceipts SET NetAmount=@Net,TaxAmount=@Tax,
+              GrandTotal=@Grand,FunctionalNetAmount=@FunctionalNet,
+              FunctionalTaxAmount=@FunctionalTax,FunctionalGrandTotal=@FunctionalGrand
+            WHERE GoodsReceiptId=@ReceiptId AND BusinessId=@BusinessId
+              AND Status=N'Processed';
+            IF @@ROWCOUNT<>1
+              THROW 51680,N'La recepción no está disponible para ajustar costos.',1;
+            """, session.Connection, session.Transaction);
+        var lines = edit.CurrentLines;
+        command.Parameters.Add("@LinesJson", SqlDbType.NVarChar, -1).Value =
+            JsonSerializer.Serialize(lines);
+        command.Parameters.AddWithValue("@LineCount", lines.Count);
+        command.Parameters.AddWithValue("@ReceiptId", revision.GoodsReceiptId);
+        command.Parameters.AddWithValue("@BusinessId", revision.BusinessId);
+        command.Parameters.AddWithValue("@Net", lines.Sum(line => line.NetAmount));
+        command.Parameters.AddWithValue("@Tax", lines.Sum(line => line.TaxAmount));
+        command.Parameters.AddWithValue("@Grand", lines.Sum(line => line.LineTotal));
+        command.Parameters.AddWithValue("@FunctionalNet", lines.Sum(line => line.FunctionalNetAmount));
+        command.Parameters.AddWithValue("@FunctionalTax", lines.Sum(line => line.FunctionalTaxAmount));
+        command.Parameters.AddWithValue("@FunctionalGrand", edit.CurrentFunctionalGrandTotal);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
 }
 
 public sealed class SqlGoodsReceiptCostRevisionDocumentHandler(

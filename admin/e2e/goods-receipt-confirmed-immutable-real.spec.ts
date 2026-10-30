@@ -7,7 +7,7 @@ import type { GoodsReceiptAcceptance, GoodsReceiptDetail, GoodsReceiptOptions,
   GoodsReceiptProductPage } from "../src/services/api/goods-receipts";
 import type { SupplierAcceptance } from "../src/services/api/parties";
 
-test("una recepción confirmada muestra sus costos sin permitir agregar comprobantes", async ({ page }) => {
+test("una recepción confirmada permite editar costos sin cambiar su entrada física", async ({ page }) => {
   test.setTimeout(150_000);
   const context = await realAccountingWorkspace(page);
   const { scopedJson, businessId } = context;
@@ -22,8 +22,12 @@ test("una recepción confirmada muestra sus costos sin permitir agregar comproba
   });
   const productName = await createRealProduct(page);
   const options = await scopedJson<GoodsReceiptOptions>("GET", "/api/commerce/v1/goods-receipts/options");
-  const warehouse = options.warehouses[0];
-  expect(warehouse).toBeTruthy();
+  const warehouse = options.warehouses[0] ?? await scopedJson<{ warehouseId: string; name: string }>(
+    "POST", "/api/commerce/v1/inventory/warehouse-masters", {
+      name: `Bodega recepción ${randomUUID().slice(0, 8)}`,
+      allowNegativeStockSales: false, priceFormationCostBasis: "LatestReceiptCost",
+      useForSales: true, isActive: true,
+    });
   const products = await scopedJson<GoodsReceiptProductPage>("GET",
     `/api/commerce/v1/goods-receipts/products?supplierId=${supplier.supplierId}&includeUnassociated=true&search=${encodeURIComponent(productName)}&page=1&pageSize=10`);
   const product = products.items.find(item => item.name === productName);
@@ -63,4 +67,33 @@ test("una recepción confirmada muestra sus costos sin permitir agregar comproba
   await expect(detail).toContainText(productName);
   await expect(detail.getByRole("button", { name: "Agregar comprobante", exact: true })).toHaveCount(0);
   await expect(detail.getByRole("button", { name: "Agregar factura", exact: true })).toHaveCount(0);
+  await detail.getByRole("button", { name: "Editar costos" }).click();
+  const editor = page.getByRole("dialog", { name: "Editar costos de la recepción" });
+  await expect(editor).toBeVisible();
+  const productRow = editor.getByRole("row").filter({ hasText: productName });
+  await expect(productRow.getByRole("spinbutton", { name: "Cantidad en Unidad" })).toHaveAttribute("readonly", "");
+  await expect(productRow.locator("td").nth(2).locator("input")).toBeEditable();
+  await editor.getByRole("button", { name: /Facturas y otros costos/ }).click();
+  await expect(editor.getByRole("button", { name: "Agregar comprobante", exact: true })).toHaveCount(1);
+  await expect(editor.getByRole("button", { name: "Agregar factura", exact: true })).toHaveCount(1);
+  await editor.getByLabel(`Costo unitario de ${productName}`).fill("11000");
+  await editor.getByRole("button", { name: "Guardar borrador" }).click();
+  await expect(editor).toBeHidden();
+  await page.goto(`/dashboard/purchasing/goods-receipts?receiptId=${receiptId}`);
+  await expect(detail).toBeVisible();
+  await detail.getByRole("button", { name: "Editar costos" }).click();
+  expect(Number((await editor.getByLabel(`Costo unitario de ${productName}`).inputValue())
+    .replace(/\s/g, ""))).toBe(11000);
+  const confirmed = page.waitForResponse(response => response.request().method() === "POST" &&
+    response.url().includes("/goods-receipts/confirm"));
+  await editor.getByRole("button", { name: "Confirmar ajuste de costos" }).click();
+  const confirmation = await confirmed;
+  expect(confirmation.ok(), await confirmation.text()).toBe(true);
+  await expect.poll(async () => (await scopedJson<GoodsReceiptDetail>("GET",
+    `/api/commerce/v1/goods-receipts/${receiptId}`)).lines[0].unitCost,
+  { timeout: 45_000 }).toBe(11000);
+  const changed = await scopedJson<GoodsReceiptDetail>("GET",
+    `/api/commerce/v1/goods-receipts/${receiptId}`);
+  expect(changed.lines[0].quantity).toBe(5);
+  expect(changed.documentId).toBe(receiptId);
 });

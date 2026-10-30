@@ -2,6 +2,8 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
 (
     [GoodsReceiptDraftId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [CostEditOfReceiptId] UNIQUEIDENTIFIER NULL,
+    [BaseCostRevisionNumber] INT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NULL,
     [SupplierId] UNIQUEIDENTIFIER NULL,
     [PartySiteId] UNIQUEIDENTIFIER NULL,
@@ -32,11 +34,13 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     [ReferencedCostsJson] NVARCHAR(MAX) NULL,
     CONSTRAINT [PK_GoodsReceiptDrafts] PRIMARY KEY CLUSTERED ([GoodsReceiptDraftId]),
     CONSTRAINT [FK_GoodsReceiptDrafts_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
+    CONSTRAINT [FK_GoodsReceiptDrafts_CostEditReceipt] FOREIGN KEY ([CostEditOfReceiptId]) REFERENCES [dbo].[GoodsReceipts] ([GoodsReceiptId]),
     CONSTRAINT [FK_GoodsReceiptDrafts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_GoodsReceiptDrafts_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
     CONSTRAINT [FK_GoodsReceiptDrafts_PartySite] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
     CONSTRAINT [FK_GoodsReceiptDrafts_PurchaseOrder] FOREIGN KEY ([PurchaseOrderId]) REFERENCES [purchasing].[PurchaseOrders] ([PurchaseOrderId]),
     CONSTRAINT [CK_GoodsReceiptDrafts_Amounts] CHECK ([NetAmount] >= 0 AND [TaxAmount] >= 0 AND [GrandTotal] = [NetAmount] + [TaxAmount]),
+    CONSTRAINT [CK_GoodsReceiptDrafts_CostEdit] CHECK (([CostEditOfReceiptId] IS NULL AND [BaseCostRevisionNumber] IS NULL) OR ([CostEditOfReceiptId] IS NOT NULL AND [BaseCostRevisionNumber] IS NOT NULL AND [BaseCostRevisionNumber]>=0)),
     CONSTRAINT [CK_GoodsReceiptDrafts_Payable] CHECK (([CreatesPayable] = 0) OR ([DueDate] IS NOT NULL)),
     CONSTRAINT [CK_GoodsReceiptDrafts_PurchaseEvidenceType] CHECK ([PurchaseEvidenceType] IS NULL OR [PurchaseEvidenceType] IN
       (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher',N'ForeignCommercialInvoice')),
@@ -49,6 +53,10 @@ GO
 CREATE INDEX [IX_GoodsReceiptDrafts_Business_Updated]
     ON [dbo].[GoodsReceiptDrafts] ([BusinessId], [UpdatedAt] DESC)
     INCLUDE ([SupplierId], [WarehouseId], [GrandTotal]);
+GO
+CREATE UNIQUE INDEX [UX_GoodsReceiptDrafts_CostEditReceipt]
+    ON [dbo].[GoodsReceiptDrafts] ([BusinessId], [CostEditOfReceiptId])
+    WHERE [CostEditOfReceiptId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[GoodsReceiptDraftLines]

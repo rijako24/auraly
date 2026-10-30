@@ -1847,10 +1847,42 @@ capacidades marcadas pendientes en sus secciones siguen abiertas.
 
 ### Revisiones de costo posteriores — verificación local del 2026-10-25
 
-> Registro histórico de una implementación anterior. La decisión final del
-> 2026-10-29 retira su aceptación pública: una recepción confirmada no admite
-> asociar comprobantes ni alterar costos o descuentos. Solo permanecen la
-> lectura y el procesamiento de revisiones aceptadas antes de ese corte.
+> Registro histórico de una implementación anterior. Decisión vigente del
+> 2026-10-30: la recepción confirmada conserva su misma
+> identidad y sus cantidades físicas. «Editar costos» guarda primero un borrador
+> de cambios ligado a esa recepción; al confirmarlo, una revisión inmutable
+> procesa únicamente las diferencias de costos, descuentos, facturas y
+> comprobantes asociados por los motores documental, de inventario y contable
+> existentes. No confirma otra entrada ni vuelve a ingresar unidades. La
+> recepción y sus fuentes originales conservan su trazabilidad; cambios de
+> obligaciones y documentos fiscales exigen su corrección enlazada. La revisión
+> positiva anterior es solo un caso de este flujo y no habilita una ruta paralela.
+
+El corte de implementación actual habilita la corrección de valores y
+descuentos en comprobantes internos en COP. También
+permite asociar, repartir y retirar comprobantes de costo existentes en
+revisiones sucesivas de esa misma recepción: el saldo repartible se reserva al
+aceptar y se libera al contabilizar el retiro; una asociación informativa no
+produce asiento de valor. El asiento original del comprobante permanece intacto.
+En una misma revisión se puede retirar y reemplazar un reparto: solo el importe
+retirado por esa recepción queda disponible para su reemplazo, mientras las
+otras recepciones siguen viendo la reserva hasta que se contabilice el retiro.
+Una nueva edición espera a que la recepción, su revisión anterior y las
+facturas asociadas terminen de contabilizarse; así no consume saldos a medio
+procesar.
+La medición local aislada de la solicitud completa de una edición de una
+partida registró 42 comandos SQL y 938 ms; el presupuesto de regresión es no
+superar los 55 comandos de la confirmación original medida con el mismo
+contador. El presupuesto de ocho viajes descrito arriba corresponde al tramo
+de validación/persistencia de la revisión anterior, no a toda la solicitud HTTP.
+Se pueden agregar facturas electrónicas del proveedor o comprobantes internos
+en COP, cada uno con su propia obligación; la revisión reclasifica su costo
+desde gasto hacia inventario o costo de venta según las unidades conservadas.
+Al retirar una factura de la asociación, el costo sale de la recepción y se
+reclasifica a gasto sin anular su documento ni su obligación. La edición de los
+importes de una factura ya contabilizada y los soportes que emite Auraly a la
+DIAN requieren una corrección fiscal vinculada antes de habilitarse.
+Este corte no se considera la entrega completa de la decisión.
 
 `GoodsReceiptService.ReviseCostsAsync` aceptaba una asociación o reparto sobre
 una recepción ya procesada, con identidad de revisión y clave idempotente.

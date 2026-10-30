@@ -250,7 +250,8 @@ public sealed partial class SqlGoodsReceiptDocumentHandler(
     private static async Task PersistLineEffectsAsync(SqlDocumentProcessingSessionAccessor.Session session,
         Guid businessId, Guid supplierId, Guid sourceDocumentId, Guid userId,
         DateTimeOffset observedAt, IReadOnlyList<ReceiptLineEffects> effects, DateTimeOffset now,
-        CancellationToken cancellationToken, int sourceRevision = 0, bool persistSupplierCosts = true)
+        CancellationToken cancellationToken, int sourceRevision = 0, bool persistSupplierCosts = true,
+        bool updateLatestSupplierCosts = false)
     {
         await using var command = new SqlCommand("""
             DECLARE @TenantId uniqueidentifier,@SharesPrices bit;
@@ -288,6 +289,16 @@ public sealed partial class SqlGoodsReceiptDocumentHandler(
               WHERE NOT EXISTS(SELECT 1 FROM dbo.SupplierProductLatestCosts cost WITH(UPDLOCK,HOLDLOCK)
                 WHERE cost.BusinessId=@BusinessId AND cost.SupplierId=@SupplierId AND cost.ProductId=line.ProductId)
               OPTION(RECOMPILE);
+            END;
+            IF @UpdateLatestSupplierCosts=1
+            BEGIN
+              UPDATE cost SET PreviousUnitCost=cost.LatestUnitCost,
+                LatestUnitCost=line.SupplierCost,ObservedAt=@ObservedAt
+              FROM dbo.SupplierProductLatestCosts cost
+              JOIN @Latest last ON last.ProductId=cost.ProductId
+              JOIN @Lines line ON line.LineNumber=last.LineNumber
+              WHERE cost.BusinessId=@BusinessId AND cost.SupplierId=@SupplierId
+                AND cost.SourceDocumentId=@DocumentId;
             END;
             DECLARE @Changes TABLE(CatalogChangeId bigint);
             INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
@@ -348,6 +359,7 @@ public sealed partial class SqlGoodsReceiptDocumentHandler(
         command.Parameters.AddWithValue("@LineCount", effects.Count);
         command.Parameters.AddWithValue("@SourceRevision", sourceRevision);
         command.Parameters.AddWithValue("@PersistSupplierCosts", persistSupplierCosts);
+        command.Parameters.AddWithValue("@UpdateLatestSupplierCosts", updateLatestSupplierCosts);
         command.Parameters.Add("@LinesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(effects.Select(line => new
         {
             line.ObservationId, line.LineNumber, line.ProductId, SupplierCost = line.SupplierUnitCost,

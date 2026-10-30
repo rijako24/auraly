@@ -15,6 +15,7 @@ public interface IGoodsReceiptWorkspaceStore
     Task<GoodsReceiptProductOption> AssociateProductAsync(PurchasingUserIdentity user, AssociateGoodsReceiptProductRequest request, CancellationToken cancellationToken);
     Task<GoodsReceiptPage> ListAsync(PurchasingUserIdentity user, string? search, string? status, int page, int pageSize, CancellationToken cancellationToken);
     Task<GoodsReceiptDraft?> GetDraftAsync(PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken);
+    Task<GoodsReceiptCostEditState?> GetCostEditStateAsync(PurchasingUserIdentity user, Guid receiptId, CancellationToken cancellationToken);
     Task<GoodsReceiptDetail?> GetDetailAsync(PurchasingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<GoodsReceiptDraft> SaveDraftAsync(PurchasingUserIdentity user, SaveGoodsReceiptDraftRequest request, GoodsReceiptCalculation? calculation, CancellationToken cancellationToken);
     Task DeleteDraftAsync(PurchasingUserIdentity user, Guid draftId, string concurrencyToken, CancellationToken cancellationToken);
@@ -94,6 +95,15 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
         Require(user, PurchasingPermissionCodes.ReadGoodsReceipts);
         if (draftId == Guid.Empty) throw new PurchasingValidationException("Falta el identificador del borrador.");
         return store.GetDraftAsync(user, draftId, cancellationToken);
+    }
+    public Task<GoodsReceiptCostEditState?> GetCostEditStateAsync(
+        PurchasingUserIdentity user, Guid receiptId, CancellationToken cancellationToken = default)
+    {
+        Require(user, PurchasingPermissionCodes.ReadGoodsReceipts);
+        Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
+        if (receiptId == Guid.Empty)
+            throw new PurchasingValidationException("Falta el identificador de la recepción.");
+        return store.GetCostEditStateAsync(user, receiptId, cancellationToken);
     }
     public Task<GoodsReceiptDetail?> GetDetailAsync(
         PurchasingUserIdentity user, Guid documentId, CancellationToken cancellationToken = default)
