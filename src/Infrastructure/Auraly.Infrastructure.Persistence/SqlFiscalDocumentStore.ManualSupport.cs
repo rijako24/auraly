@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Auraly.Application.Fiscal;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Infrastructure;
@@ -18,6 +19,87 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlFiscalDocumentStore
 {
+    public async Task<string?> ReleaseManualSupportAsync(Guid businessId, Guid documentId,
+        DateTimeOffset requestedAt, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        string? status;
+        string? postingStatus;
+        await using (var read = new SqlCommand("""
+            SELECT process.Status,posting.Status
+            FROM dbo.FiscalDocumentProcesses process WITH(UPDLOCK,HOLDLOCK)
+            JOIN dbo.FiscalDocuments fiscal ON fiscal.DocumentId=process.DocumentId
+              AND fiscal.BusinessId=process.BusinessId
+            LEFT JOIN dbo.AccountingPostingJobs posting ON posting.SourceDocumentId=fiscal.DocumentId
+              AND posting.SourceDocumentType=fiscal.SourceDocumentType
+              AND posting.BusinessId=fiscal.BusinessId
+            WHERE process.DocumentId=@DocumentId AND process.BusinessId=@BusinessId
+              AND fiscal.SourceDocumentType=@SourceType
+              AND fiscal.FiscalDocumentType IN(N'SupportDocument',N'SupportDocumentAdjustment');
+            """, connection, transaction))
+        {
+            read.Parameters.AddWithValue("@DocumentId", documentId);
+            read.Parameters.AddWithValue("@BusinessId", businessId);
+            read.Parameters.AddWithValue("@SourceType", AccountingManualDocumentTypes.ManualVoucher);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                status = null;
+                postingStatus = null;
+            }
+            else
+            {
+                status = reader.GetString(0);
+                postingStatus = reader.IsDBNull(1) ? null : reader.GetString(1);
+            }
+        }
+        if (status is null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return null;
+        }
+        if ((status is FiscalDocumentStatusCodes.AwaitingManualSubmission or
+            FiscalDocumentStatusCodes.PendingGeneration) && postingStatus != "Posted")
+            throw new FiscalOperationException(
+                "Espera a que el comprobante esté contabilizado antes de enviarlo a la DIAN.");
+        if (status == FiscalDocumentStatusCodes.AwaitingManualSubmission)
+        {
+            bool reserved;
+            try
+            {
+                reserved = await SqlDianDocumentQuota.TryReserveAsync(connection, transaction,
+                    businessId, documentId, FiscalDocumentTypeCodes.SupportDocument,
+                    requestedAt, cancellationToken);
+            }
+            catch (Auraly.Application.Sales.PosSaleInvalidException error)
+            { throw new FiscalOperationException(error.Message); }
+            if (!reserved)
+                throw new FiscalOperationException(
+                    "No hay cupos DIAN disponibles para enviar el documento soporte.");
+            await using var update = new SqlCommand("""
+                UPDATE dbo.FiscalDocumentProcesses
+                SET Status=@Pending,NextAttemptAt=@Now,UpdatedAt=@Now
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId AND Status=@Awaiting;
+                IF @@ROWCOUNT<>1 THROW 51736,N'El estado fiscal cambió antes del envío.',1;
+                UPDATE dbo.FiscalDocuments
+                SET FiscalStatus=@Pending,UpdatedAt=@Now
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId AND FiscalStatus=@Awaiting;
+                IF @@ROWCOUNT<>1 THROW 51736,N'El documento fiscal cambió antes del envío.',1;
+                """, connection, transaction);
+            update.Parameters.AddWithValue("@DocumentId", documentId);
+            update.Parameters.AddWithValue("@BusinessId", businessId);
+            update.Parameters.AddWithValue("@Now", requestedAt);
+            update.Parameters.AddWithValue("@Pending", FiscalDocumentStatusCodes.PendingGeneration);
+            update.Parameters.AddWithValue("@Awaiting", FiscalDocumentStatusCodes.AwaitingManualSubmission);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return status == FiscalDocumentStatusCodes.AwaitingManualSubmission
+            ? FiscalDocumentStatusCodes.PendingGeneration : status;
+    }
     private static readonly JsonSerializerOptions ManualReviewHashJson = new()
     {
         Converters = { new ManualReviewDecimalConverter() }
@@ -124,23 +206,6 @@ public sealed partial class SqlFiscalDocumentStore
         return new(supplierId, acquisitions, review.Calculation, hash, review.Diagnostics, review.CanConfirm);
     }
 
-    public async Task ReserveAsync(SqlConnection connection, SqlTransaction transaction,
-        AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request, CancellationToken token)
-    {
-        if (transaction.Connection != connection)
-            throw new InvalidOperationException("Manual support requires the journal acceptance transaction.");
-        bool reserved;
-        try
-        {
-            reserved = await SqlDianDocumentQuota.TryReserveAsync(connection, transaction,
-                user.BusinessId, request.VoucherId, FiscalDocumentTypeCodes.SupportDocument, timeProvider.GetUtcNow(), token);
-        }
-        catch (Auraly.Application.Sales.PosSaleInvalidException error)
-        { throw new AccountingValidationException(error.Message); }
-        if (!reserved)
-            throw new AccountingValidationException("No hay cupo de documentos DIAN para generar el documento soporte.");
-    }
-
     public async Task<PreparedManualVoucherFiscal> PrepareAsync(SqlConnection connection, SqlTransaction transaction,
         AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request,
         VoucherFiscalCalculation calculation, VoucherFiscalPreview preview, CancellationToken token)
@@ -204,6 +269,7 @@ public sealed partial class SqlFiscalDocumentStore
             [new(request.VoucherId, user.BusinessId, AccountingManualDocumentTypes.ManualVoucher,
                 prepared.FiscalDocumentType, prepared.FiscalNumber, prepared.FiscalNumber,
                 request.OccurredAt, prepared.IssuerId, prepared.Environment, prepared.SnapshotJson)],
-            timeProvider.GetUtcNow(), token);
+            timeProvider.GetUtcNow(), token,
+            FiscalDocumentStatusCodes.AwaitingManualSubmission);
     }
 }

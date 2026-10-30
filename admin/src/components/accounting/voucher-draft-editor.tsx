@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowLeftRight, Copy, FileText, Plus, Save, Send, Trash2 } from "lucide-react";
 import { accountingApi, type AccountingOpenPosition, type SaveVoucherDraft, type VoucherDraft, type VoucherDraftAdjustment, type VoucherDraftLineView, type VoucherDraftPreparation } from "@/services/api/accounting";
+import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
 import { useAuthStore } from "@/stores/auth-store";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { AccountSelect } from "./account-select";
@@ -34,9 +35,10 @@ const identifyLines = (lines: VoucherDraftLineView[]) => lines.map(line => line.
 const editablePayloadVersion = (draft: VoucherDraft) => draft.documentType === "ManualAccountingVoucher"
   ? draft.payloadVersion === 4 ? 4 : 2 : null;
 
-export function VoucherDraftEditor({ businessId, initial, adjustment, preparation, onSaved, onCloned, onClose, onBusyChange, modal = false, closeLabel = "Volver a trazabilidad" }: {
+export function VoucherDraftEditor({ businessId, initial, adjustment, preparation, onSaved, onDiscarded, onCloned, onClose, onBusyChange, modal = false, closeLabel = "Volver a trazabilidad" }: {
   businessId: string; initial?: VoucherDraft; adjustment?: VoucherDraftAdjustment; preparation?: VoucherDraftPreparation;
-  onSaved?: (value: VoucherDraft) => void; onClose: () => void; onBusyChange?: (busy: boolean) => void;
+  onSaved?: (value: VoucherDraft) => void; onDiscarded?: (documentId: string) => void;
+  onClose: () => void; onBusyChange?: (busy: boolean) => void;
   onCloned?: (value: VoucherDraft) => void;
   modal?: boolean; closeLabel?: string;
 }) {
@@ -57,11 +59,12 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const [scrollTop, setScrollTop] = useState(0);
   const [dirty, setDirty] = useState(!initial || !initial.sentAt && initial.documentType === "ManualAccountingVoucher" &&
     (initial.payloadVersion !== editablePayloadVersion(initial) || !!initial.workSessionId));
-  const [phase, setPhase] = useState<"save" | "send" | "refresh" | "retry" | null>(null);
+  const [phase, setPhase] = useState<"save" | "send" | "fiscal" | "refresh" | "retry" | "discard" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [entryOpen, setEntryOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const confirmUnsavedChanges = !modal || Boolean(preparation);
   const [positionOpen, setPositionOpen] = useState(false);
   const [showPendingDocuments, setShowPendingDocuments] = useState(false);
@@ -137,26 +140,63 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     setDirty(!value.sentAt && value.documentType === "ManualAccountingVoucher" &&
       (value.payloadVersion !== editablePayloadVersion(value) || !!value.workSessionId)); onSaved?.(value);
   }
-  async function save() {
-    if (busy) return;
-    if (!form.description.trim() || !form.occurredAt || !form.conceptCode) { setError("Completa fecha y descripción."); return; }
-    if (form.adjustment && (!form.adjustment.subledgerId || !obligation.data)) { setError("Selecciona la factura u obligación que vas a ajustar."); return; }
+  async function save(): Promise<VoucherDraft | null> {
+    if (busy) return null;
+    if (!form.description.trim() || !form.occurredAt || !form.conceptCode) { setError("Completa fecha y descripción."); return null; }
+    if (form.adjustment && (!form.adjustment.subledgerId || !obligation.data)) { setError("Selecciona la factura u obligación que vas a ajustar."); return null; }
     const missingDescription = lines.findIndex(line => !line.value.description.trim() || line.value.description.length > 500);
-    if (missingDescription !== -1) { setError(`La descripción de la partida ${missingDescription + 1} es obligatoria y admite máximo 500 caracteres.`); return; }
+    if (missingDescription !== -1) { setError(`La descripción de la partida ${missingDescription + 1} es obligatoria y admite máximo 500 caracteres.`); return null; }
     setPhase("save"); setError(null);
-    try { accept(await accountingApi.saveVoucherDraft({ ...form, workSessionId: null, lines: lines.map(line => line.value) })); }
-    catch (value) { setError(value instanceof Error ? value.message : "No se pudo guardar el comprobante."); }
+    try {
+      const result = await accountingApi.saveVoucherDraft({ ...form, workSessionId: null, lines: lines.map(line => line.value) });
+      accept(result);
+      return result;
+    }
+    catch (value) { setError(value instanceof Error ? value.message : "No se pudo guardar el comprobante."); return null; }
     finally { setPhase(null); }
   }
-  async function send() {
-    if (!saved || dirty || busy) return;
-    if (saved.payloadVersion === 4 && !saved.mainPartyId) {
+  async function discard() {
+    if (!saved || saved.sentAt || busy) return;
+    setPhase("discard"); setError(null);
+    try {
+      await accountingApi.discardVoucherDraft(saved.documentId, saved.rowVersion);
+      onDiscarded?.(saved.documentId);
+      onClose();
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "No se pudo descartar el borrador.");
+    } finally { setPhase(null); setDeleteOpen(false); }
+  }
+  async function send(target?: VoucherDraft) {
+    const current = target ?? saved;
+    if (!current || (!target && dirty) || busy) return;
+    if (current.payloadVersion === 4 && !current.mainPartyId) {
       setError("Selecciona el tercero principal antes de contabilizar el comprobante."); return;
     }
     setPhase("send"); setError(null);
-    try { accept(await accountingApi.sendVoucherDraft(saved.documentId, saved.rowVersion)); }
+    try { accept(await accountingApi.sendVoucherDraft(current.documentId, current.rowVersion)); }
     catch (value) { setError(value instanceof Error ? value.message : "No se pudo contabilizar. Consulta el mismo comprobante antes de reintentar."); }
     finally { setPhase(null); }
+  }
+  async function saveAndPost() {
+    if (busy || saved?.sentAt) return;
+    const current = dirty || !saved ? await save() : saved;
+    if (!current) return;
+    if (!current.canSend) {
+      setError("El borrador quedó guardado. Completa las partidas y corrige los avisos antes de guardar el comprobante definitivo.");
+      return;
+    }
+    await send(current);
+  }
+  async function sendFiscal() {
+    if (!saved || busy || saved.status !== "Posted" ||
+      saved.row.fiscalStatus !== "AwaitingManualSubmission") return;
+    setPhase("fiscal"); setError(null);
+    try {
+      const fiscal = await fiscalDocumentsApi.sendManualSupport(saved.documentId);
+      accept({ ...saved, row: { ...saved.row, fiscalStatus: fiscal.status } });
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "No se pudo solicitar el envío a la DIAN.");
+    } finally { setPhase(null); }
   }
   async function reviewCancellation() {
     if (busy || !supportCancellation) return;
@@ -212,6 +252,26 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         !item.value.credit && !item.value.existingPosition);
       return empty < 0 ? [...current, line] : current.map((item, index) => index === empty ? line : item);
     });
+    markChanged();
+  }
+
+  function copyMainPartyToLines() {
+    const partyId = form.mainPartyId;
+    if (!partyId || readOnly || supportCancellation) return;
+    setLines(current => current.map(line => line.value.existingPosition ? line : {
+      ...line,
+      value: { ...line.value, partyId },
+      partyName: mainParty.name,
+      partyIdentification: mainParty.identification,
+    }));
+    markChanged();
+  }
+
+  function replicateDescription() {
+    if (!form.description.trim() || readOnly || supportCancellation) return;
+    setLines(current => current.map(line => ({
+      ...line, value: { ...line.value, description: form.description.trim() },
+    })));
     markChanged();
   }
 
@@ -287,7 +347,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
             disabled={item.code !== "Accounting" && item.code !== "Disbursement" && item.code !== "SupportDocument" && item.code !== "SupportDocumentCancellation"}>{item.label}</SelectItem>)}</SelectContent></Select>
           <p className="text-xs text-muted-foreground">Los documentos soporte requieren su captura fiscal.</p></div>}
         {!form.adjustment && form.payloadVersion !== 4 && !readOnly && <div className="sm:col-span-3"><Button variant="outline" onClick={() => change({ payloadVersion: 4, voucherTypeCode: "Accounting" })}>Usar captura financiera</Button><p className="mt-1 text-xs text-muted-foreground">Valida la configuración financiera de los auxiliares antes de contabilizar.</p></div>}
-        {!form.adjustment && <div className="space-y-2 sm:col-span-3"><Label>Tercero principal{form.payloadVersion === 4 ? " *" : ""}</Label><div className="flex items-start gap-2"><div className="min-w-0 flex-1"><PartySelect value={form.mainPartyId ?? ""} ariaLabel="Seleccionar tercero principal"
+        {!form.adjustment && <div className="min-w-0 space-y-2 sm:col-span-3"><Label>Tercero principal{form.payloadVersion === 4 ? " *" : ""}</Label><div className="flex flex-col gap-2 sm:flex-row sm:items-start"><div className="w-full min-w-0 flex-1"><PartySelect value={form.mainPartyId ?? ""} ariaLabel="Seleccionar tercero principal"
           selectedOption={form.mainPartyId && mainParty.name ? { value: form.mainPartyId, label: mainParty.name, description: mainParty.identification } : null}
           disabled={busy || readOnly} onChange={(id, party) => {
             change({ mainPartyId: id || null });
@@ -295,16 +355,18 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
             setMainParty({ name: party?.displayName ?? null, identification: party?.identification ?? null });
             setLines(current => current.map(line => !line.value.accountId && !line.value.partyId && !line.value.description && !line.value.debit && !line.value.credit
               ? { ...line, value: { ...line.value, partyId: id || null }, partyName: party?.displayName ?? null, partyIdentification: party?.identification ?? null } : line));
-          }}/></div>{form.payloadVersion === 4 && !fiscalDocument && <Button type="button" variant="outline" disabled={!form.mainPartyId}
+          }}/></div>{form.payloadVersion === 4 && !fiscalDocument && <Button type="button" variant="outline" className="self-start" disabled={!form.mainPartyId}
             onClick={() => setShowPendingDocuments(current => !current)}>{showPendingDocuments ? "Ocultar documentos" : "Ver documentos"}</Button>}</div>
-          <p className="text-xs text-muted-foreground">{form.payloadVersion === 4 ? "Obligatorio para contabilizar. " : ""}Se propone en las nuevas partidas. Cada partida conserva su propio tercero.</p></div>}
+          <div className="flex flex-wrap items-center gap-2"><p className="text-xs text-muted-foreground">{form.payloadVersion === 4 ? "Obligatorio para contabilizar. " : ""}Se propone en las nuevas partidas. Cada partida conserva su propio tercero.</p>
+            {!readOnly && !supportCancellation && <Button type="button" size="sm" variant="outline" disabled={!form.mainPartyId || busy} onClick={copyMainPartyToLines}>Copiar tercero a partidas sin vínculo</Button>}</div></div>}
         {!form.adjustment && form.payloadVersion === 4 && !fiscalDocument && form.mainPartyId && showPendingDocuments && !readOnly &&
           <div id="voucher-pending-documents" className="sm:col-span-3"><VoucherPendingDocuments key={form.mainPartyId}
             businessId={businessId} documentId={form.documentId} occurredAt={form.occurredAt}
             voucherTypeCode={form.voucherTypeCode} partyId={form.mainPartyId}
             remainingLineCapacity={500 - lines.length} linkedPositions={linkedPositions} onAdd={addPositionLines} /></div>}
         <div className="space-y-2"><Label>Fecha contable</Label><DatePicker value={form.occurredAt.slice(0, 10)} onChange={date => change({ occurredAt: date ? `${date}T12:00:00-05:00` : "" })} /></div>
-        <div className="space-y-2 sm:col-span-2"><Label htmlFor="voucher-description">Descripción</Label><Input id="voucher-description" maxLength={500} value={form.description} onChange={event => change({ description: event.target.value })} placeholder="Motivo del comprobante" /></div>
+        <div className="space-y-2 sm:col-span-2"><Label htmlFor="voucher-description">Descripción</Label><Input id="voucher-description" maxLength={500} value={form.description} onChange={event => change({ description: event.target.value })} placeholder="Motivo del comprobante" />
+          {!form.adjustment && !readOnly && !supportCancellation && <Button type="button" size="sm" variant="outline" disabled={!form.description.trim() || busy} onClick={replicateDescription}>Replicar descripción en todas las partidas</Button>}</div>
         {!form.adjustment && form.payloadVersion === 4 && form.voucherTypeCode === "SupportDocument" && <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
           <Button variant="outline" disabled={busy || readOnly || !form.mainPartyId} onClick={() => setFiscalOpen(true)}>Datos fiscales del soporte</Button>
           <p role="status" className="text-xs text-muted-foreground">{form.fiscalCapture?.calculationHash ? "Cálculo fiscal revisado" : "Completa las partidas y revisa el cálculo fiscal antes de contabilizar."}</p>
@@ -312,14 +374,14 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         {!form.adjustment && form.payloadVersion === 4 && supportCancellation && <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
           <Button variant="outline" disabled={busy || readOnly} onClick={() => setPositionOpen(true)}>Seleccionar soporte original</Button>
           <Button variant="outline" disabled={busy || readOnly || !form.fiscalCapture} onClick={() => void reviewCancellation()}>{fiscalBusy ? "Revisando anulación…" : "Revisar anulación"}</Button>
-          <p role="status" className="text-xs text-muted-foreground">{form.fiscalCapture?.calculationHash ? "Anulación revisada. Guarda el comprobante antes de contabilizar." : "Selecciona el soporte y revisa sus dependencias antes de contabilizar."}</p>
+          <p role="status" className="text-xs text-muted-foreground">{form.fiscalCapture?.calculationHash ? "Anulación revisada. Ya puedes guardar el comprobante." : "Selecciona el soporte y revisa sus dependencias antes de guardar el comprobante."}</p>
         </div>}
       </section>
       {form.adjustment ? <section className="grid gap-4 rounded-2xl border bg-card p-5 sm:grid-cols-3">
         <div className="space-y-2"><Label>Dirección del ajuste</Label><Select value={form.adjustment.direction} disabled={readOnly || busy} onValueChange={direction => change({ adjustment: { ...form.adjustment!, direction: direction as "Increase" | "Decrease" } })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{directions.data?.map(item => <SelectItem key={item.id} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></div>
         <div className="space-y-2"><Label>Valor del ajuste</Label><FormattedNumberInput kind="currency" ariaLabel="Valor del ajuste" value={form.adjustment.amount} onValueChange={amount => change({ adjustment: { ...form.adjustment!, amount: amount ?? 0 } })} /></div>
         <div className="space-y-2"><Label>Cuenta de contrapartida</Label><AccountSelect value={form.adjustment.counterpartAccountId ?? ""} onChange={counterpartAccountId => change({ adjustment: { ...form.adjustment!, counterpartAccountId } })} /></div>
-        <p className="text-sm text-muted-foreground sm:col-span-3">La obligación elegida se conserva vinculada. Guardar no cambia su saldo; contabilizar valida el saldo disponible.</p>
+        <p className="text-sm text-muted-foreground sm:col-span-3">La obligación elegida se conserva vinculada. Guardar borrador no cambia su saldo; Guardar comprobante valida el saldo disponible y contabiliza.</p>
       </section> : <fieldset disabled={supportCancellation} className="min-w-0 overflow-hidden rounded-2xl border bg-card">
         <div className="flex items-center justify-between gap-3 border-b p-4"><div><h2 className="font-semibold">Partidas del comprobante</h2><p className="text-sm text-muted-foreground">{supportCancellation ? "Partidas inversas del asiento original. Para cambiar el origen, selecciona otro soporte." : "Edita cada partida en su fila. D = débito, C = crédito. Puedes guardar un comprobante incompleto."}</p></div><Button variant="outline" disabled={lines.length >= 500} onClick={() => { setLines(current => { const line = newLine(); return [...current, {...line,value:{...line.value,partyId:form.mainPartyId??null},partyName:mainParty.name,partyIdentification:mainParty.identification}]; }); markChanged(); }}><Plus className="mr-2 h-4 w-4" />Agregar partida</Button></div>
         <div className="max-h-[32rem] overflow-auto" onScroll={event => setScrollTop(event.currentTarget.scrollTop)}><table className="w-full min-w-[1200px] table-fixed text-sm"><colgroup><col className="w-9" /><col className="w-[220px]" /><col className="w-[170px]" /><col className="w-[140px]" /><col className="w-[205px]" /><col className="w-[120px]" /><col className="w-[110px]" /><col className="w-[110px]" /><col className="w-[160px]" /></colgroup><thead className="sticky top-0 z-10 bg-muted"><tr><th className="p-2 text-left">D/C</th><th className="p-2 text-left">Cuenta PUC</th><th className="p-2 text-left">Tercero</th><th className="p-2 text-left">Centro de costo</th><th className="p-2 text-left">Descripción u observación</th><th className="p-2 text-right">Base (opcional)</th><th className="p-2 text-right">Débito</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-right">Acciones</th></tr></thead><tbody>
@@ -344,12 +406,16 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       </fieldset>}
     </fieldset>
     <footer className="sticky bottom-0 z-20 flex flex-wrap items-center gap-4 rounded-2xl border bg-background p-4 shadow-lg">
-      <div className="flex-1 text-sm">{!form.adjustment && <><b>Débito {money.format(debit)}</b> · Crédito {money.format(credit)}<p className={Math.abs(debit - credit) > 0.00001 ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(debit - credit)} · {lines.length} partidas</p></>}<p className="text-muted-foreground">{saved?.sentAt ? "Documento enviado: contenido inmutable." : dirty ? "Cambios sin guardar. Guardar no contabiliza." : "Guardado. Se contabilizará únicamente cuando lo solicites."}</p></div>
+      <div className="flex-1 text-sm">{!form.adjustment && <><b>Débito {money.format(debit)}</b> · Crédito {money.format(credit)}<p className={Math.abs(debit - credit) > 0.00001 ? "text-destructive" : "text-muted-foreground"}>Diferencia {money.format(debit - credit)} · {lines.length} partidas</p></>}
+        <p className="text-muted-foreground">{saved?.status === "Posted" ? "Comprobante contabilizado: contenido inmutable." : saved?.sentAt ? "Comprobante aceptado; consulta su estado contable. El contenido está congelado." : "Guarda un borrador para seguir editando, o guarda el comprobante definitivo para contabilizarlo."}</p></div>
       <Button variant="outline" disabled={busy} onClick={close}>{modal ? closeLabel : "Volver"}</Button>
       {saved && !dirty && <Button variant="outline" disabled={busy} onClick={() => void refresh()}>{phase === "refresh" ? "Consultando estado…" : "Actualizar estado"}</Button>}
       {saved?.sentAt && saved.status !== "Posted" && permissions.includes("accounting.postings.retry") && <Button disabled={busy} onClick={() => void retry()}>{phase === "retry" ? "Solicitando reintento…" : "Reintentar contabilización"}</Button>}
-      {!readOnly && <Button variant="outline" disabled={busy || !dirty} onClick={() => void save()}><Save className="mr-2 h-4 w-4" />{phase === "save" ? "Guardando…" : "Guardar comprobante"}</Button>}
-      {saved?.canSend && <Button disabled={busy || dirty || fiscalDocument && !form.fiscalCapture?.calculationHash} onClick={() => void send()}><Send className="mr-2 h-4 w-4" />{phase === "send" ? supportCancellation ? "Registrando anulación…" : fiscalDocument ? "Registrando soporte…" : "Enviando a contabilidad…" : "Contabilizar"}</Button>}
+      {saved?.status === "Posted" && saved.row.fiscalStatus === "AwaitingManualSubmission" && permissions.includes("fiscal.manual-support.send") &&
+        <Button disabled={busy} onClick={() => void sendFiscal()}><Send className="mr-2 h-4 w-4" />{phase === "fiscal" ? "Solicitando envío…" : "Enviar documento soporte a la DIAN"}</Button>}
+      {saved && !saved.sentAt && !readOnly && <Button variant="destructive" disabled={busy} onClick={() => setDeleteOpen(true)}>{phase === "discard" ? "Descartando…" : "Descartar borrador"}</Button>}
+      {!readOnly && <Button variant="outline" disabled={busy || !dirty} onClick={() => void save()}><Save className="mr-2 h-4 w-4" />{phase === "save" ? "Guardando…" : "Guardar borrador"}</Button>}
+      {!readOnly && permissions.includes("accounting.manual.send") && <Button disabled={busy || fiscalDocument && !form.fiscalCapture?.calculationHash} onClick={() => void saveAndPost()}><Send className="mr-2 h-4 w-4" />{phase === "send" ? "Contabilizando…" : "Guardar comprobante"}</Button>}
     </footer>
     {entryOpen && <AccountingDocumentDialog documentId={saved?.documentId} hasFiscalDocument={!!saved?.row.fiscalDocumentType} onClose={() => setEntryOpen(false)} />}
     {fiscalOpen && <VoucherFiscalDialog businessId={businessId} draft={form} lines={lines} onBusyChange={setFiscalBusy}
@@ -396,5 +462,12 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         </DialogFooter>
       </DialogContent>
     </Dialog>}
+    <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>¿Descartar este borrador?</DialogTitle>
+        <DialogDescription>Se eliminará la captura guardada de este comprobante. Esta acción no afecta la contabilidad porque aún no se ha contabilizado.</DialogDescription></DialogHeader>
+        <DialogFooter><Button variant="outline" onClick={() => setDeleteOpen(false)}>Seguir editando</Button>
+          <Button variant="destructive" disabled={busy} onClick={() => void discard()}>Descartar borrador</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>;
 }

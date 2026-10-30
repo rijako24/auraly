@@ -41,5 +41,5 @@ test("el comprobante manual busca cuentas por código o nombre en el servidor", 
   await page.getByPlaceholder("Buscar por código o nombre…").fill("inexistente");
   await expect(page.getByText("No hay resultados.", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toHaveCount(0);
 });

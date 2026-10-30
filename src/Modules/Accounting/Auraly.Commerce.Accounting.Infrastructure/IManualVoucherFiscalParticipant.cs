@@ -9,15 +9,12 @@ public sealed record PreparedManualVoucherFiscal(
     string FiscalNumber, Guid IssuerId, int Environment, string SnapshotJson,
     WithholdingCalculationSnapshot Withholding, string FiscalDocumentType);
 
-// Existing fiscal persistence participates in the journal's transaction. Quota
-// protection precedes shared account/configuration reads; independent tax reads
-// remain compatible with that update lock. Number allocation follows the proof.
+// Fiscal snapshot persistence participates in journal acceptance. DIAN quota is
+// reserved only when the user explicitly releases that snapshot for transmission.
 public interface IManualVoucherFiscalParticipant
 {
     Task<VoucherDraftPreparation> PrepareCancellationCaptureAsync(SqlConnection connection, SqlTransaction transaction,
         AccountingUserIdentity user, Guid payableId, CancellationToken token);
-    Task ReserveAsync(SqlConnection connection, SqlTransaction transaction,
-        AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request, CancellationToken token);
     Task<VoucherFiscalCalculation> ReviewAsync(SqlConnection connection, SqlTransaction? transaction,
         AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request, CancellationToken token);
     Task<PreparedManualVoucherFiscal> PrepareAsync(SqlConnection connection, SqlTransaction transaction,

@@ -142,6 +142,8 @@ export const accountingApi = {
     apiClient.get<VoucherDraftPreparation>(`/commerce/v1/accounting/payment-correction-capture?${new URLSearchParams({ subledgerKind, paymentId })}`),
   supportCancellationCapture: (payableId: string) => apiClient.get<VoucherDraftPreparation>("/commerce/v1/accounting/support-cancellation-capture", { payableId }),
   saveVoucherDraft: (request: SaveVoucherDraft) => apiClient.put<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${request.documentId}`, request),
+  discardVoucherDraft: (id: string, rowVersion: string) => apiClient.delete<{ deleted: boolean }>(
+    `/commerce/v1/accounting/manual/drafts/${id}?rowVersion=${encodeURIComponent(rowVersion)}`),
   previewVoucherFiscal: (businessId: string, request: SaveVoucherDraft) => apiClient.post<VoucherFiscalPreview>("/commerce/v1/accounting/manual/fiscal-preview", {
     voucherId: request.documentId, businessId, occurredAt: request.occurredAt, conceptCode: request.conceptCode,
     description: request.description, reference: request.reference, mainPartyId: request.mainPartyId,

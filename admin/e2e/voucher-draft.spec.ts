@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import readExcelFile from "read-excel-file/node";
 import type { SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
 
-test("guardar conserva el comprobante editable, sin enviarlo, y contabilizar congela la captura", async ({ page, baseURL }) => {
+test("guardar borrador conserva la captura y guardar comprobante contabiliza", async ({ page, baseURL }) => {
   const tenantId = "11111111-1111-1111-1111-111111111111", businessId = "22222222-2222-2222-2222-222222222222";
   const user = { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "@voucher", username: "accountant",
     firstName: "Prueba", lastName: "Comprobante", roles: [], permissions: ["accounting.read", "accounting.manual.create", "accounting.manual.send"] };
@@ -14,7 +14,7 @@ test("guardar conserva el comprobante editable, sin enviarlo, y contabilizar con
     { partyId: "66666666-6666-6666-6666-666666666666", roleId: "66666666-6666-6666-6666-666666666666", role: "Supplier", displayName: "Otro tercero", identification: "900333444" },
   ];
   let saved: VoucherDraft | undefined;
-  let writes = 0, sends = 0, draftReads = 0, listReads = 0, positionReads = 0, kindReads = 0, fail = true;
+  let writes = 0, sends = 0, discards = 0, draftReads = 0, listReads = 0, positionReads = 0, kindReads = 0, fail = true;
   const positionQueries: string[] = [];
   const cloneIds: string[] = [];
   const accountSearches: Array<string | null> = [];
@@ -76,12 +76,17 @@ test("guardar conserva el comprobante editable, sin enviarlo, y contabilizar con
             mainPartyId: value.mainPartyId, mainPartyName: principal?.displayName, mainPartyIdentification: principal?.identification,
             status: "Created", attemptCount: 0, errorCode: null, errorMessage: null, entryId: null, entryNumber: null,
             debitTotal: 1200, creditTotal: 1200, postedAt: null, fiscalDocumentType: null, dianNumber: null, uniqueCodeType: null, uniqueCode: null, fiscalStatus: null, hasManualDraft: true } };
+      } else if (request.method() === "DELETE") {
+        discards++;
+        expect(new URL(request.url()).searchParams.get("rowVersion")).toBe(saved?.rowVersion);
+        saved = undefined;
+        body = { deleted: true };
       } else if (path.endsWith("/send")) {
         sends++;
         if (fail) { status = 409; body = { detail: "No hay un período abierto para esta fecha." }; }
         else if (saved) saved = { ...saved, status: "Pending", sentAt: new Date().toISOString(), canEdit: false, canSend: false, row: { ...saved.row, status: "Pending" } };
       } else draftReads++;
-      if (status === 200) body = saved;
+      if (status === 200 && request.method() !== "DELETE") body = saved;
     }
     await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
   });
@@ -95,7 +100,15 @@ test("guardar conserva el comprobante editable, sin enviarlo, y contabilizar con
   await page.getByRole("option", { name: /Proveedor de energía/ }).click();
   await expect(principal).toContainText("Proveedor de energía");
   await expect(page.getByRole("row", { name: "Partida 1" }).getByRole("combobox", { name: "Seleccionar tercero", exact: true })).toContainText("Proveedor de energía");
+  const firstParty = page.getByRole("row", { name: "Partida 1" }).getByRole("combobox", { name: "Seleccionar tercero", exact: true });
+  await firstParty.click();
+  await page.getByRole("option", { name: /Otro tercero/ }).click();
+  await page.getByRole("button", { name: "Copiar tercero a partidas sin vínculo" }).click();
+  await expect(firstParty).toContainText("Proveedor de energía");
   await page.getByLabel("Descripción", { exact: true }).fill("Reclasificación de prueba");
+  await page.getByRole("button", { name: "Replicar descripción en todas las partidas" }).click();
+  await expect(page.getByLabel("Descripción de la partida").first()).toHaveValue("Reclasificación de prueba");
+  await expect(page.getByLabel("Descripción de la partida").nth(1)).toHaveValue("Reclasificación de prueba");
   expect(positionReads).toBe(0);
   await expect(page.getByRole("region", { name: "Documentos pendientes del tercero" })).toHaveCount(0);
   await page.getByRole("button", { name: "Ver documentos", exact: true }).click();
@@ -174,12 +187,13 @@ test("guardar conserva el comprobante editable, sin enviarlo, y contabilizar con
   await page.getByRole("option", { name: /519595.*Servicios/ }).click();
   await second.getByLabel("Crédito de la partida", { exact: true }).fill("1200");
   await expect(second.getByText("C", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await second.getByLabel("Descripción de la partida", { exact: true }).fill("");
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "La descripción de la partida 2" })).toContainText("es obligatoria");
   expect(writes).toBe(0);
   await second.getByLabel("Descripción de la partida", { exact: true }).fill("Crédito");
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeEnabled();
   expect(writes).toBe(1); expect(sends).toBe(0); expect(draftReads).toBe(0); expect(listReads).toBe(1);
   expect(saved?.mainPartyId).toBe(parties[1].partyId);
   expect(saved?.payloadVersion).toBe(4);
@@ -193,8 +207,9 @@ test("guardar conserva el comprobante editable, sin enviarlo, y contabilizar con
   await page.getByRole("button", { name: "Volver a trazabilidad" }).click();
   await expect(page).toHaveURL(/\/dashboard\/financial-traceability$/);
   await expect(page.getByRole("columnheader", { name: "Tercero principal", exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Crédito", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: /Otro tercero.*900333444/ })).toBeVisible();
-  await page.getByRole("button", { name: "Contabilizar", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   await expect(page.getByText("No hay un período abierto para esta fecha.")).toBeVisible();
   expect(sends).toBe(1); expect(draftReads).toBe(0);
   await page.getByRole("button", { name: "Ver documento" }).click();
@@ -214,15 +229,14 @@ test("guardar conserva el comprobante editable, sin enviarlo, y contabilizar con
   expect(sheet[4][8]).toBe(1200);
   await page.getByRole("button", { name: "Cerrar", exact: true }).click();
   await page.getByLabel("Descripción", { exact: true }).fill("Descripción editada");
-  await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "Contabilizar", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "período abierto" })).toBeVisible();
   await expect(page.getByLabel("Descripción", { exact: true })).toHaveValue("Descripción editada");
+  expect(writes).toBe(2);
   fail = false;
-  await page.getByRole("button", { name: "Contabilizar", exact: true }).click();
-  await expect(page.getByText("Documento enviado: contenido inmutable.")).toBeVisible();
+  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await expect(page.getByText("Comprobante contabilizado: contenido inmutable.")).toBeVisible();
   await expect(page.getByLabel("Descripción", { exact: true })).toBeDisabled();
   await expect(page.getByLabel("Base de la partida", { exact: true }).first()).toBeDisabled();
   expect(sends).toBe(3); expect(writes).toBe(2); expect(listReads).toBe(1); expect(draftReads).toBe(0);
@@ -243,4 +257,9 @@ test("guardar conserva el comprobante editable, sin enviarlo, y contabilizar con
   await expect(page.getByLabel("Base de la partida", { exact: true }).first()).toHaveValue("-123.4567");
   await expect(page.getByLabel("Base de la partida", { exact: true }).nth(1)).toHaveValue("0");
   expect(sends).toBe(3); expect(writes).toBe(2); expect(listReads).toBe(1); expect(draftReads).toBe(0);
+  await page.getByRole("button", { name: "Descartar borrador", exact: true }).first().click();
+  const confirmation = page.getByRole("dialog", { name: "¿Descartar este borrador?" });
+  await confirmation.getByRole("button", { name: "Descartar borrador" }).click();
+  await expect(page).toHaveURL(/\/dashboard\/financial-traceability$/);
+  expect(discards).toBe(1);
 });

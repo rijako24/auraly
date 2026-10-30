@@ -17,6 +17,39 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Discard_removes_only_the_selected_unsent_draft_and_rejects_a_stale_version()
+    {
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<AccountingService>();
+        var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+                AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate });
+        await service.EnsureDefaultsAsync(user);
+        await service.ActivateAsync(user, new(new(2026, 1, 1), "COP", "ZeroDeclared"));
+        var at = new DateTimeOffset(2026, 10, 29, 12, 0, 0, TimeSpan.Zero);
+        SaveVoucherDraftRequest Draft(Guid id) => new(id, AccountingManualDocumentTypes.ManualVoucher,
+            at, "MANUAL_VOUCHER", "Borrador para revisar", null,
+            [new(null, null, null, "Primera partida", 0, 0, LineId: Guid.NewGuid()),
+             new(null, null, null, "Segunda partida", 0, 0, LineId: Guid.NewGuid())],
+            null, null, PayloadVersion: 2);
+        var first = await service.SaveVoucherDraftAsync(user, Draft(Guid.NewGuid()));
+        var second = await service.SaveVoucherDraftAsync(user, Draft(Guid.NewGuid()));
+        var changed = await service.SaveVoucherDraftAsync(user, Draft(second.DocumentId) with {
+            RowVersion = second.RowVersion, Description = "Borrador actualizado",
+            Lines = second.Lines.Select(line => line.Value).ToArray(),
+        });
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read,
+            AccountingPermissionCodes.ManualCreate);
+        var path = $"/api/commerce/v1/accounting/manual/drafts/{second.DocumentId:D}";
+        using var stale = await client.DeleteAsync($"{path}?rowVersion={Uri.EscapeDataString(second.RowVersion)}");
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        using var deleted = await client.DeleteAsync($"{path}?rowVersion={Uri.EscapeDataString(changed.RowVersion)}");
+        Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+        Assert.Null(await service.GetVoucherDraftAsync(user, second.DocumentId));
+        Assert.NotNull(await service.GetVoucherDraftAsync(user, first.DocumentId));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -60,6 +93,8 @@ public sealed partial class AccountingVoucherDraftTests(ServerSliceFixture fixtu
         var legacySnapshot = legacyAcceptedSource ? await SnapshotAsync() : default;
         var sent = await service.SendVoucherDraftAsync(user, saved.DocumentId, new(saved.RowVersion));
         Assert.Equal("Posted", sent.Status);
+        await Assert.ThrowsAsync<AccountingConflictException>(() =>
+            service.DeleteVoucherDraftAsync(user, saved.DocumentId, saved.RowVersion));
         Assert.Equal(reference, sent.Reference);
         var snapshot = await SnapshotAsync();
         using (var source = JsonDocument.Parse(snapshot.Payload))

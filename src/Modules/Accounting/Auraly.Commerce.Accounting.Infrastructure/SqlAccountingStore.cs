@@ -69,12 +69,16 @@ public sealed partial class SqlAccountingStore(
                     request.OccurredAt, request.ConceptCode, final: true, token, validateDraftReadiness: draftVersion is not null);
             }, cancellationToken, draftVersion);
 
-    public Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(
+    public async Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(
         AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request,
         CancellationToken cancellationToken, string? draftVersion = null)
     {
-        PreparedManualVoucherFiscal? preparedFiscal = null;
-        return AcceptManualDocumentAsync(
+        for (var attempt = 1; ; attempt++)
+        {
+            PreparedManualVoucherFiscal? preparedFiscal = null;
+            try
+            {
+                return await AcceptManualDocumentAsync(
             user, request.VoucherId, AccountingManualDocumentTypes.ManualVoucher,
             request.OccurredAt, request, async (connection, transaction, accepted, token) =>
             {
@@ -96,8 +100,6 @@ public sealed partial class SqlAccountingStore(
                     if (raw.MainPartyId is null)
                         throw new AccountingValidationException("Selecciona el tercero principal antes de contabilizar el comprobante.");
                     var hasFiscalEffect = raw.VoucherTypeCode is "SupportDocument" or "SupportDocumentCancellation";
-                    if (hasFiscalEffect)
-                        await fiscalParticipant.ReserveAsync(connection, transaction, user, raw, token);
                     var fiscalCalculation = hasFiscalEffect
                         ? await fiscalParticipant.ReviewAsync(connection, transaction, user, raw, token) : null;
                     var context = await ValidateVoucherDimensionsAsync(connection, transaction, user,
@@ -117,6 +119,12 @@ public sealed partial class SqlAccountingStore(
                     }
                     return raw with { FinancialEffects = AccountingVoucherFinancialValidation.Normalize(user, raw, context!, ids, fiscalProof) };
                 } : null);
+            }
+            catch (SqlException error) when (error.Number == 1205 && attempt < 4)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt), timeProvider, cancellationToken);
+            }
+        }
     }
 
     private async Task<AccountingManualDocumentAcceptance> AcceptManualDocumentAsync<T>(

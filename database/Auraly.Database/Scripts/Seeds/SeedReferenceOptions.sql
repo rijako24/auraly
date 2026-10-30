@@ -249,7 +249,7 @@ VALUES
 
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
 VALUES
-('63500000-0000-0000-0000-000000000001',N'accounting-document-status',N'Created',N'Creado / sin enviar',NULL,10),
+('63500000-0000-0000-0000-000000000001',N'accounting-document-status',N'Created',N'Borrador',NULL,10),
 ('63500000-0000-0000-0000-000000000002',N'accounting-document-status',N'Pending',N'Enviado / pendiente',NULL,20),
 ('63500000-0000-0000-0000-000000000003',N'accounting-document-status',N'Posted',N'Contabilizado',NULL,30),
 ('63500000-0000-0000-0000-000000000004',N'accounting-document-status',N'AccountingPendingConfiguration',N'Requiere configuración',NULL,40),

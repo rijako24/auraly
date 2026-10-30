@@ -26,6 +26,7 @@ public sealed partial class GoodsReceiptProcessingTests
             new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
                 AccountingPermissionCodes.Activate, AccountingPermissionCodes.PeriodsManage,
                 AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
+                FiscalPermissionCodes.SendManualSupport,
                 TaxationPermissionCodes.ManageWithholdingRules, TaxationPermissionCodes.ViewWithholdingRules });
         await accounting.EnsureDefaultsAsync(identity);
         if (!(await accounting.ListPeriodsAsync(identity)).Any(period => period.StartsOn <= new DateOnly(2026, 9, 30) && period.EndsOn >= new DateOnly(2026, 9, 30)))
@@ -187,30 +188,6 @@ public sealed partial class GoodsReceiptProcessingTests
                 using var restoreResponse = await client.PutAsJsonAsync(path, draft with { RowVersion = changed.RowVersion });
                 Assert.True(restoreResponse.IsSuccessStatusCode, await restoreResponse.Content.ReadAsStringAsync());
                 saved = (await restoreResponse.Content.ReadFromJsonAsync<VoucherDraftView>())!;
-                int previousLimit;
-                await using (var exhaust = new SqlCommand("""
-                    UPDATE billing.TenantSubscriptions SET DianDocumentMonthlyLimit=0
-                    OUTPUT deleted.DianDocumentMonthlyLimit WHERE TenantId=@TenantId;
-                    """, connection))
-                {
-                    exhaust.Parameters.AddWithValue("@TenantId", fixture.TenantId);
-                    previousLimit = (int)(await exhaust.ExecuteScalarAsync())!;
-                }
-                try
-                {
-                    using var noQuota = await client.PostAsJsonAsync(path + "/send", new SendVoucherDraftRequest(saved.RowVersion));
-                    Assert.Equal(HttpStatusCode.BadRequest, noQuota.StatusCode);
-                    Assert.Contains("cupo", await noQuota.Content.ReadAsStringAsync());
-                    Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id", documentId));
-                    Assert.Equal(before, await ScalarAsync<long>("SELECT COALESCE(SUM(NextConsecutive),0) FROM dbo.FiscalSeriesCursors", documentId));
-                }
-                finally
-                {
-                    await using var restoreLimit = new SqlCommand("UPDATE billing.TenantSubscriptions SET DianDocumentMonthlyLimit=@Limit WHERE TenantId=@TenantId;", connection);
-                    restoreLimit.Parameters.AddWithValue("@TenantId", fixture.TenantId);
-                    restoreLimit.Parameters.AddWithValue("@Limit", previousLimit);
-                    await restoreLimit.ExecuteNonQueryAsync();
-                }
                 var trigger = $"TestManualFiscalFailure_{Guid.NewGuid():N}";
                 await using (var create = new SqlCommand($"""
                     CREATE TRIGGER fiscal.[{trigger}] ON fiscal.PurchaseSupportFiscalSnapshots AFTER INSERT AS
@@ -273,6 +250,55 @@ public sealed partial class GoodsReceiptProcessingTests
             using var payload = JsonDocument.Parse(snapshot);
             Assert.Equal(documentId, payload.RootElement.GetProperty("manualAcquisition").GetProperty("documentId").GetGuid());
             Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("expense").ValueKind);
+            Assert.Equal(FiscalDocumentStatusCodes.AwaitingManualSubmission,
+                await ScalarAsync<string>("SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@Id", documentId));
+            using (var unauthorized = fixture.CreateAdminClient(AccountingPermissionCodes.ManualSend))
+            using (var denied = await unauthorized.PostAsJsonAsync(
+                $"/api/commerce/v1/fiscal/documents/{documentId}/send-manual-support", new { }))
+                Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            if (withTaxes)
+            {
+                int previousLimit;
+                await using (var exhaust = new SqlCommand("""
+                    UPDATE billing.TenantSubscriptions SET DianDocumentMonthlyLimit=0
+                    OUTPUT deleted.DianDocumentMonthlyLimit WHERE TenantId=@TenantId;
+                    """, connection))
+                {
+                    exhaust.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                    previousLimit = (int)(await exhaust.ExecuteScalarAsync())!;
+                }
+                try
+                {
+                    using var noQuota = await client.PostAsJsonAsync(
+                        $"/api/commerce/v1/fiscal/documents/{documentId}/send-manual-support", new { });
+                    Assert.Equal(HttpStatusCode.Conflict, noQuota.StatusCode);
+                    Assert.Contains("cupo", await noQuota.Content.ReadAsStringAsync());
+                    Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id", documentId));
+                    Assert.Equal(FiscalDocumentStatusCodes.AwaitingManualSubmission,
+                        await ScalarAsync<string>("SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@Id", documentId));
+                }
+                finally
+                {
+                    await using var restoreLimit = new SqlCommand("UPDATE billing.TenantSubscriptions SET DianDocumentMonthlyLimit=@Limit WHERE TenantId=@TenantId;", connection);
+                    restoreLimit.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                    restoreLimit.Parameters.AddWithValue("@Limit", previousLimit);
+                    await restoreLimit.ExecuteNonQueryAsync();
+                }
+            }
+            using (var submitted = await client.PostAsJsonAsync(
+                $"/api/commerce/v1/fiscal/documents/{documentId}/send-manual-support", new { }))
+            {
+                Assert.True(submitted.IsSuccessStatusCode, await submitted.Content.ReadAsStringAsync());
+                Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration,
+                    (await submitted.Content.ReadFromJsonAsync<FiscalDocumentView>())!.Status);
+            }
+            using (var replaySubmission = await client.PostAsJsonAsync(
+                $"/api/commerce/v1/fiscal/documents/{documentId}/send-manual-support", new { }))
+            {
+                Assert.True(replaySubmission.IsSuccessStatusCode, await replaySubmission.Content.ReadAsStringAsync());
+                Assert.Equal(1, await ScalarAsync<int>(
+                    "SELECT COUNT(*) FROM billing.TenantDianDocumentUsages WHERE SourceDocumentId=@Id", documentId));
+            }
             await GenerateFiscalAsync(documentId);
             var fiscal = await ReadFiscalGenerationAsync(documentId);
             Assert.Equal(FiscalDocumentStatusCodes.PendingSubmission, fiscal.Status);
@@ -350,12 +376,6 @@ public sealed partial class GoodsReceiptProcessingTests
 
                 var repeated = await PrepareRelatedSupportAsync(Guid.NewGuid());
                 var cursorBeforeRepeat = await ScalarAsync<long>("SELECT COALESCE(SUM(NextConsecutive),0) FROM dbo.FiscalSeriesCursors", repeated.DocumentId);
-                const string periodUsage = """
-                    SELECT period.DianDocumentsUsed FROM billing.TenantSubscriptionUsagePeriods period
-                    JOIN billing.TenantDianDocumentUsages usage ON usage.TenantSubscriptionUsagePeriodId=period.TenantSubscriptionUsagePeriodId
-                    WHERE usage.SourceDocumentId=@Id AND usage.DocumentKind=N'SupportDocument' AND usage.Status=N'Reserved';
-                    """;
-                var quotaBeforeRepeat = await ScalarAsync<int>(periodUsage, documentId);
                 using var sameDraft = new Barrier(2);
                 var attempts = 0;
                 using var repeatFence = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
@@ -379,7 +399,7 @@ public sealed partial class GoodsReceiptProcessingTests
                     Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.Payables WHERE SourceDocumentId=@Id", repeated.DocumentId));
                     Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.FiscalDocuments WHERE DocumentId=@Id", repeated.DocumentId));
                     Assert.Equal(cursorBeforeRepeat + 1, await ScalarAsync<long>("SELECT COALESCE(SUM(NextConsecutive),0) FROM dbo.FiscalSeriesCursors", repeated.DocumentId));
-                    Assert.Equal(quotaBeforeRepeat + 1, await ScalarAsync<int>(periodUsage, repeated.DocumentId));
+                    Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM billing.TenantDianDocumentUsages WHERE SourceDocumentId=@Id", repeated.DocumentId));
                 }
                 finally { foreach (var response in repeats) response.Dispose(); }
             }

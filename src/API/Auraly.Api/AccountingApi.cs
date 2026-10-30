@@ -68,6 +68,12 @@ public static class AccountingApi
                 var value = await service.GetVoucherDraftAsync(context.User.ToAccountingIdentity(), documentId, token);
                 return value is null ? Results.NotFound() : Results.Ok(value);
             })).RequireAuthorization("accounting.user");
+        endpoints.MapDelete("/api/commerce/v1/accounting/manual/drafts/{documentId:guid}", async (HttpContext context,
+            Guid documentId, string rowVersion, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(async () => {
+                var deleted = await service.DeleteVoucherDraftAsync(context.User.ToAccountingIdentity(), documentId, rowVersion, token);
+                return deleted ? Results.Ok(new { deleted = true }) : Results.NotFound();
+            })).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/manual/drafts/{documentId:guid}/send", async (HttpContext context, Guid documentId, SendVoucherDraftRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.SendVoucherDraftAsync(context.User.ToAccountingIdentity(), documentId, request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/accounts", async (HttpContext context, int? page, int? pageSize, string? search, AccountingService service, CancellationToken token) =>

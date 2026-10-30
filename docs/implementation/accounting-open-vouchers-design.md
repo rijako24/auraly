@@ -1,5 +1,28 @@
 # Comprobantes abiertos en Trazabilidad financiera
 
+> **Decisión posterior del usuario (2026-10-29):** «Guardar borrador» conserva una
+> captura editable y permite varios comprobantes en proceso; «Guardar comprobante»
+> guarda los cambios y solicita inmediatamente la contabilización mediante el
+> motor existente. Esta decisión sustituye las menciones antiguas a un botón
+> separado «Contabilizar», pero no convierte el guardado de borrador en asiento.
+> Los comprobantes tipo documento soporte y anulación de soporte conservan una
+> raíz fiscal pendiente de acción manual, sin generar ni transmitir a la DIAN
+> al contabilizar. Solo «Enviar documento soporte a la DIAN», con permiso fiscal
+> y asiento ya contabilizado, activa el procesamiento fiscal canónico; un
+> reintento de esa acción sobre el mismo documento no crea otra fuente, número,
+> cupo ni asiento. Las referencias anteriores a emisión fiscal automática de
+> estos comprobantes quedan sustituidas por esta decisión. Los flujos asistidos
+> de gastos y compras conservan sus contratos fiscales propios.
+
+> **Verificación local del cambio (2026-10-29):** las dos variantes SQL/API del
+> documento soporte manual (con y sin retenciones) pasaron, incluida aceptación
+> concurrente, repetición, ausencia de cupo y envío DIAN explícito. La ausencia
+> de cupo conserva el asiento contabilizado y deja el proceso fiscal esperando.
+> La vista compiló y pasó 17 recorridos de navegador del editor, cruces y
+> anulación de soporte; la prueba móvil del ajuste de cartera pasó después de
+> corregir el ancho del selector de tercero. PDF/Excel individuales reutilizan
+> `ReportViewer`. Estos checks no equivalen a una prueba de emisión DIAN real.
+
 > **Ampliación técnica del 2026-10-20:** la sección 13 define el destino solicitado
 > para PUC, comprobantes, cruces y fuentes de verdad. Las secciones 1–12 describen
 > el alcance anterior y su evidencia; sus exclusiones de pagos, anticipos, cruces
@@ -17,9 +40,9 @@ Incorpora guardar, ver y editar antes de contabilizar explícitamente; dos acces
 
 **Trazabilidad financiera** es la única bandeja. Su cabecera incorpora **Nuevo comprobante**, con icono `FilePlus2`. **Ajuste de cartera** se crea desde Cuentas por cobrar o Cuentas por pagar, en el contexto del tercero y la obligación. Se trasladan las capturas de Contabilidad a sus vistas propietarias, conservando contratos, permisos, identidad e históricos. Ambos documentos aparecen en trazabilidad para consulta y seguimiento. No se duplican pantallas ni se elimina su capacidad.
 
-Ambos permiten **Crear → Guardar → Ver / Editar → Contabilizar**. Guardar conserva la captura en servidor como **Creado**, incluso incompleta con diagnóstico, sin fuentes, jobs, reservas, efectos contables ni DIAN. Ver no cambia el estado. Editar permite guardar y volver a abrir tantas veces como se necesite antes de aceptar la contabilización, con control de versión.
+Ambos permiten **Crear → Guardar borrador → Ver / Editar / Descartar → Contabilizar**. Guardar borrador conserva la captura en servidor como **Creado**, incluso incompleta con diagnóstico, sin fuentes, jobs, reservas, efectos contables ni DIAN. Pueden coexistir varios borradores. Ver no cambia el estado. Editar permite guardar y volver a abrir tantas veces como se necesite antes de aceptar la contabilización, con control de versión. Descartar elimina únicamente una captura no aceptada, con versión vigente y alcance de tenant y sede; jamás elimina una fuente o asiento.
 
-**Contabilizar**, con icono `Send`, es una acción explícita del usuario sobre el creado guardado. No hay autoenvío por guardar, cerrar o abrir. Revalida permisos, cuentas, periodo, cuadre y saldo aplicable. **Enviado a contabilidad** significa aceptación durable; **Contabilizado** significa que el motor terminó. Desde la aceptación el contenido queda congelado; procesados e históricos se consultan y sus correcciones usan el flujo canónico. Un fallo permite **Reintentar contabilización** sobre la misma identidad y snapshot.
+**Guardar comprobante**, con icono `Send`, guarda la captura y solicita la contabilización en el motor existente. **Guardar borrador** conserva la captura editable sin asiento ni envío fiscal. La aceptación revalida permisos, cuentas, periodo, cuadre y saldo aplicable. **Enviado a contabilidad** significa aceptación durable; **Contabilizado** significa que el motor terminó. Desde la aceptación el contenido queda congelado; procesados e históricos se consultan y sus correcciones usan el flujo canónico. Un fallo permite **Reintentar contabilización** sobre la misma identidad y snapshot.
 
 Estos dos documentos no se transmiten a DIAN. **Gastos conserva su pantalla y flujo**, incluido documento soporte cuando corresponda. Pagos, recaudos, aperturas, devoluciones y notas fiscales conservan sus propietarios; sus resultados siguen visibles en Trazabilidad. El nuevo editor no ofrece esas operaciones como modalidades. La ampliación de Gastos se analiza en [cuentas y retenciones](expenses-account-selection-and-withholdings-design.md).
 
@@ -81,7 +104,7 @@ Hallazgos que deben resolverse en el slice que los toque:
 
 ### Bandeja
 
-Conservar `/dashboard/financial-traceability`. Cabecera con título, **Nuevo comprobante** y **Reportes**. El botón **Ajuste de cartera** pertenece a Cuentas por cobrar/Cuentas por pagar, no se duplica aquí. Las filas ofrecen **Ver**, **Editar** y **Contabilizar** según estado, permisos y validación. Filtros combinables de fecha, origen, operación, estado contable, tercero, número y sede autorizada. Paginación y orden desde servidor; por defecto 25 documentos.
+Conservar `/dashboard/financial-traceability`. Cabecera con título, **Nuevo comprobante** y **Reportes**. El botón **Ajuste de cartera** pertenece a Cuentas por cobrar/Cuentas por pagar, no se duplica aquí. Las filas ofrecen **Ver**, **Editar** y **Guardar comprobante** según estado, permisos y validación. Filtros combinables de fecha, origen, operación, estado contable, tercero, número y sede autorizada. Paginación y orden desde servidor; por defecto 25 documentos.
 
 En Cuentas por cobrar y por pagar, el encabezado ofrece **Ajuste de cartera** al usuario con permiso de captura manual. Abre el editor completo en un modal de la misma vista: primero se elige el tercero con el combo paginado y luego una factura u obligación de ese tercero. Los campos del ajuste permanecen bloqueados hasta cargar la obligación. El detalle de una factura abre el mismo modal con tercero y obligación seleccionados, mostrando número, valor original, saldo y vencimiento antes de editar el importe. Los indicadores de saldo pendiente, saldo vencido y número de facturas/obligaciones usan los agregados de la respuesta de terceros o facturas que está visible. La pestaña de pagos muestra su historial y conteo; no carga un directorio de terceros oculto para reconstruir saldos. El saldo a favor de proveedores corresponde al agregado de la pestaña de terceros. Una respuesta fallida muestra importes sin confirmar, no ceros inventados.
 
@@ -91,7 +114,7 @@ La fila del borrador y la del documento enviado representan el mismo recurso vis
 
 ### Editor
 
-Pantalla amplia dentro de la misma ruta, con URL del comprobante para reabrirlo. Encabezado compacto, captura directa en las filas de la grilla, totales y acciones al pie. Las seis columnas principales —cuenta, tercero, centro, descripción u observación, débito y crédito— se editan sin seleccionar una fila ni abrir otro formulario. La grilla muestra un solo campo de texto por partida; el contrato conserva referencias históricas, pero no ofrece otra caja de texto redundante. Débito y crédito son columnas estrechas con cifras a la derecha; la primera columna muestra D o C según el movimiento.
+Pantalla amplia dentro de la misma ruta, con URL del comprobante para reabrirlo. Encabezado compacto, captura directa en las filas de la grilla, totales y acciones al pie. Las seis columnas principales —cuenta, tercero, centro, descripción u observación, débito y crédito— se editan sin seleccionar una fila ni abrir otro formulario. La grilla muestra un solo campo de texto por partida; el contrato conserva referencias históricas, pero no ofrece otra caja de texto redundante. Débito y crédito son columnas estrechas con cifras a la derecha; la primera columna muestra D o C según el movimiento. La cabecera ofrece copiar el tercero principal a partidas sin vínculo documental y replicar explícitamente la descripción en todas las partidas; cambiar la cabecera por sí solo no sobrescribe líneas personalizadas.
 
 | Zona | Campos / comportamiento |
 | --- | --- |
@@ -100,7 +123,7 @@ Pantalla amplia dentro de la misma ruta, con URL del comprobante para reabrirlo.
 | Grilla | Cuenta código/nombre, tercero, centro, descripción u observación, débito, crédito, acciones de línea |
 | Detalle de línea | En la captura libre actual, la referencia es texto informativo y no aplica saldo. Una eventual selección tipada de factura/obligación, saldo y aplicación exige extender el propietario de cartera; no forma parte de este slice. |
 | Soportes | Referencia a soporte existente; asociación de archivos por almacenamiento autorizado del sistema, nunca URL externa arbitraria o base64 dentro del asiento |
-| Pie | Total débito, total crédito, diferencia, número de errores y **Guardar comprobante** |
+| Pie | Total débito, total crédito, diferencia, número de errores, **Guardar borrador** y **Guardar comprobante** |
 
 Entrada por Tab/Shift+Tab, búsqueda por código/nombre/NIT, Enter para seleccionar, añadir/duplicar/eliminar partidas. No sobrescribir líneas ya personalizadas al cambiar el predeterminado. Para cantidades, componentes numéricos compartidos; para fechas, `DatePicker`. A partir de 100 partidas, virtualización de la captura, sin paginar un mismo documento.
 
@@ -114,7 +137,7 @@ y sede. La configuración estructural del PUC conserva la vista del tenant.
 
 En móvil, consulta, estados y acciones legibles; la grilla conserva desplazamiento horizontal. No ocultar débito/crédito ni saldo aplicado para hacerla caber. Desktop es la superficie principal de digitación contable.
 
-Guardar permite un comprobante incompleto o descuadrado con diagnóstico visible **Creado · Por completar**; requiere sede, fecha, descripción general y descripción de cada partida (1 a 500 caracteres) válidas. Solo **Contabilizar** exige validación completa. No se agrega un estado persistido adicional “Por completar”: es el resultado de validación del creado.
+Guardar borrador permite un comprobante incompleto o descuadrado con diagnóstico visible **Creado · Por completar**; requiere sede, fecha, descripción general y descripción de cada partida (1 a 500 caracteres) válidas. Solo **Guardar comprobante** exige validación completa. No se agrega un estado persistido adicional “Por completar”: es el resultado de validación del creado.
 
 ## 5. Operaciones y límites del comprobante abierto
 
@@ -141,7 +164,7 @@ Una partida de gasto no sustituye factura/documento soporte cuando se requieren.
 
 | Estado visible | Autoridad | Edición | Acción principal |
 | --- | --- | --- | --- |
-| Creado | Captura guardada, sin fuente/job | Sí, con versión | `Ver`, `Editar`, `Contabilizar` si valida; de lo contrario `Completar` |
+| Creado | Captura guardada, sin fuente/job | Sí, con versión | `Ver`, `Editar`, `Descartar borrador`, `Guardar comprobante` si valida; de lo contrario `Completar` |
 | Enviado a contabilidad | Aceptación durable + job pendiente | No | `Ver detalle` |
 | Procesando | Job con ejecución activa | No | `Ver detalle` |
 | Contabilizado | Job `Posted` y asiento existente | No | `Ver comprobante`, PDF/Excel |
@@ -152,7 +175,8 @@ Una partida de gasto no sustituye factura/documento soporte cuando se requieren.
 
 1. **Guardar:** persiste captura y devuelve detalle, versión, validación y fila de trazabilidad. No crea `AccountingSourceDocuments` ni `AccountingPostingJobs`. No reserva saldo de factura: otro usuario puede pagar mientras se prepara.
 2. **Editar creado:** requiere versión actual. Dos pestañas no se sobrescriben; conflicto visible, conserva cambios locales y permite comparar con versión vigente.
-3. **Contabilizar:** desde la bandeja o detalle del creado guardado, con resumen de importe/efecto. Si hay edición sin guardar, se exige guardarla antes. El servidor vuelve a validar permisos, periodo, cuentas, terceros, saldos disponibles y versión; no confirma con la validación antigua del navegador.
+   **Descartar creado:** requiere la versión actual y elimina únicamente el borrador no aceptado dentro de su tenant y sede. No elimina una fuente, trabajo o asiento; si ya fue contabilizado, el servidor rechaza el descarte.
+3. **Guardar comprobante:** desde la bandeja o detalle del borrador; en el editor guarda primero los cambios pendientes. El servidor vuelve a validar permisos, periodo, cuentas, terceros, saldos disponibles y versión; no confirma con la validación antigua del navegador.
 4. **Aceptación:** en una transacción del propietario nativo se fija el contenido, se crea fuente/job canónico y se vincula el creado con su fuente final. Después se activa el coordinador existente. No dejar captura enviada sin fuente durable, ni dos fuentes por doble clic.
 5. **Respuesta incierta:** conservar ID/clave; consultar explícitamente el estado del mismo comprobante o repetir idempotentemente su envío. No crear un comprobante nuevo ni repetir aceptación con otro ID.
 6. **Resultado:** eventos existentes actualizan el dueño de la consulta; cuando haga falta lectura por señal, una sola lectura acotada del documento afectado. Sin polling.
@@ -216,8 +240,8 @@ El [Concepto DIAN 6698 de 2026](https://normograma.dian.gov.co/dian/compilacion/
 
 **Decisiones de interfaz y contrato:**
 
-1. Guardar y contabilizar ambos documentos manuales nunca invoca fiscal; muestran **No aplica** como envío fiscal propio, sin ocultar una referencia a documento fiscal original.
-2. El botón se llama **Contabilizar**, no «Enviar a DIAN». Los estados y reintentos de esos documentos son contables.
+1. Guardar borrador no invoca fiscal. Guardar comprobante acepta la raíz contable y, para documento soporte manual, deja la raíz fiscal en espera. La generación y transmisión fiscal requieren la acción explícita posterior.
+2. El botón contable se llama **Guardar comprobante**. Solo el documento soporte manual contabilizado ofrece **Enviar documento soporte a la DIAN**; los estados y reintentos contables y fiscales permanecen separados.
 3. Gastos conserva su aceptación nativa: `ExpenseService.ConfirmAsync` activa fiscal cuando `HasFiscalSupport`; no es una modalidad del nuevo borrador manual ni se modifica su ciclo de confirmación aquí.
 4. Trazabilidad conserva estado contable y fiscal separado para documentos automáticos de otros módulos. Reintento contable no reenvía fiscal, ni reintento fiscal vuelve a causar gasto/CxP.
 5. El respaldo tributario se resuelve en su operación propietaria según condiciones aplicables. Un asiento interno no certifica deducibilidad ni reemplaza soporte exigible.

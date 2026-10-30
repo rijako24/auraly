@@ -172,6 +172,7 @@ public sealed class SqlTenantProvisioningStore(
                    OR Resource LIKE N'expenses.%'
                    OR Resource LIKE N'commerce.taxation.%'
                    OR Resource LIKE N'fiscal.configuration.%'
+                   OR Resource=N'fiscal.manual-support.send'
                    OR Resource IN(
                      N'businesses.read',N'dashboard.read',N'audit_logs.read',N'payments.read',N'payments.confirm_manual',
                      N'parties.read',N'customers.read',N'suppliers.read',N'catalog.read',N'catalog.costs.read',N'products.read',

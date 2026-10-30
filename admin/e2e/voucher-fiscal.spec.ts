@@ -10,7 +10,7 @@ for (const width of [1440, 390]) {
       fiscalCapture: { acquisitions: [{ sourceLineId: scenario.draft.lines[0].value.lineId!, taxExclusiveAmount: 100, taxProfileId: null, taxTreatment: "CapitalizedCost" as const }] },
       lines: scenario.draft.lines.map((line, index) => ({ ...line, accountCode: index ? "22050501" : "51959501", accountName: index ? "Proveedor" : "Servicio",
         value: { ...line.value, existingPosition: null, paymentEvidence: null, description: index ? "Obligación" : "Servicio", dueDate: index ? "2026-11-23T12:00:00+00:00" : null } })) };
-    let reviews = 0, taxReads = 0, writes = 0, sends = 0, draftReads = 0, accountReads = 0;
+    let reviews = 0, taxReads = 0, writes = 0, sends = 0, fiscalSends = 0, draftReads = 0, accountReads = 0;
     let fail = true;
     const hash = "A".repeat(64);
     await installFinancialVoucherContext(page, baseURL!, scenario);
@@ -43,15 +43,19 @@ for (const width of [1440, 390]) {
         await route.fulfill({ json: draft }); return;
       }
       if (path.endsWith(`/accounting/manual/drafts/${draft.documentId}/send`)) {
-        sends++; draft = { ...draft, sentAt: new Date().toISOString(), canEdit: false, canSend: false,
-          row: { ...draft.row, fiscalDocumentType: "SupportDocument", dianNumber: "DS100", fiscalStatus: "PendingGeneration" } };
+        sends++; draft = { ...draft, status: "Posted", sentAt: new Date().toISOString(), canEdit: false, canSend: false,
+          row: { ...draft.row, status: "Posted", fiscalDocumentType: "SupportDocument", dianNumber: "DS100", fiscalStatus: "AwaitingManualSubmission" } };
         await route.fulfill({ json: draft }); return;
+      }
+      if (path.endsWith(`/fiscal/documents/${draft.documentId}/send-manual-support`)) {
+        fiscalSends++;
+        await route.fulfill({ json: { status: "PendingGeneration" } }); return;
       }
       await route.fallback();
     });
     await page.goto(`/dashboard/financial-traceability?document=${draft.documentId}`);
     await expect(page.getByText("Documento soporte electrónico", { exact: false })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeDisabled();
     expect(taxReads).toBe(0);
     await page.getByRole("button", { name: "Datos fiscales del soporte", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Datos fiscales del documento soporte" });
@@ -65,20 +69,20 @@ for (const width of [1440, 390]) {
     expect(bounds!.width).toBeLessThanOrEqual(width);
     await page.screenshot({ path: `../work/documento-soporte-manual-revision-${width}.png`, fullPage: true });
     await dialog.getByRole("button", { name: "Conservar datos fiscales", exact: true }).click();
-    await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeEnabled();
     expect(draft.fiscalCapture?.calculationHash).toBe(hash);
     const first = page.getByRole("row", { name: "Partida 1", exact: true });
     await first.getByLabel("Descripción de la partida", { exact: true }).fill("Servicio revisado");
-    await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeDisabled();
-    await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
     await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
     expect(draft.fiscalCapture?.calculationHash).toBeNull();
     await page.getByRole("button", { name: "Datos fiscales del soporte", exact: true }).click();
     await dialog.getByRole("button", { name: "Quitar base", exact: true }).click();
     await dialog.getByRole("button", { name: "Conservar datos fiscales", exact: true }).click();
-    await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
     expect(draft.fiscalCapture).toBeNull();
     await page.getByRole("button", { name: "Datos fiscales del soporte", exact: true }).click();
     await dialog.getByRole("combobox", { name: "Partida para base fiscal" }).click();
@@ -88,9 +92,13 @@ for (const width of [1440, 390]) {
     await dialog.getByRole("button", { name: "Revisar cálculo fiscal", exact: true }).click();
     await expect(dialog.getByText("Revisión completa", { exact: true })).toBeVisible();
     await dialog.getByRole("button", { name: "Conservar datos fiscales", exact: true }).click();
+    await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
     await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-    await page.getByRole("button", { name: "Contabilizar", exact: true }).click();
     await expect(first.getByLabel("Descripción de la partida", { exact: true })).toBeDisabled();
+    expect(fiscalSends).toBe(0);
+    await page.getByRole("button", { name: "Enviar documento soporte a la DIAN" }).click();
+    await expect(page.getByRole("button", { name: "Enviar documento soporte a la DIAN" })).toHaveCount(0);
+    expect(fiscalSends).toBe(1);
     expect(reviews).toBe(3); expect(writes).toBe(4); expect(sends).toBe(1);
     expect(draftReads).toBe(1); expect(taxReads).toBe(1); expect(accountReads).toBe(0);
   });

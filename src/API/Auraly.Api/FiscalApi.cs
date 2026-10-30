@@ -38,6 +38,14 @@ public static class FiscalApi
                 var result = await service.RetryAsync(context.User.ToFiscalUserIdentity(), documentId, ct);
                 return result is null ? Results.NotFound() : Results.Ok(result);
             }));
+        group.MapPost("/{documentId:guid}/send-manual-support", async (
+            HttpContext context, FiscalDocumentService service, Guid documentId, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var result = await service.SendManualSupportAsync(
+                    context.User.ToFiscalUserIdentity(), documentId, ct);
+                return result is null ? Results.NotFound() : Results.Ok(result);
+            }));
         group.MapPost("/{documentId:guid}/recover-accepted-sale", async (
             HttpContext context, FiscalDocumentService service, Guid documentId, CancellationToken ct) =>
             await Handle(async () =>

@@ -30,14 +30,14 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
     .getByLabel(payable ? "Crédito de la partida" : "Débito de la partida", { exact: true }).fill("50.0001");
   await advanceRow.getByLabel(payable ? "Débito de la partida" : "Crédito de la partida", { exact: true }).fill("50.0001");
   const saving = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/accounting/manual/drafts/"));
-  await editor.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await editor.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   const saveResponse = await saving;
   expect(saveResponse.ok(), await saveResponse.text()).toBe(true);
   const draft = await saveResponse.json() as VoucherDraft;
   const balanceBeforeSending = await scopedJson<{ outstandingAmount: number }>("GET", `${api}/${payable ? "payables" : "receivables"}/${positionId}`);
   expect(balanceBeforeSending.outstandingAmount).toBe(previousOutstanding);
   const sending = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/manual/drafts/${draft.documentId}/send`));
-  await editor.getByRole("button", { name: "Contabilizar", exact: true }).click();
+  await editor.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const sendResponse = await sending;
   expect(sendResponse.ok(), await sendResponse.text()).toBe(true);
   const sent = await sendResponse.json() as VoucherDraft;
@@ -102,12 +102,12 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
   await restore.getByRole("row", { name: "Partida 2", exact: true })
     .getByLabel(payable ? "Débito de la partida" : "Crédito de la partida", { exact: true }).fill(String(restoreAmount));
   const savingRestore = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/accounting/manual/drafts/"));
-  await restore.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await restore.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   const restoredDraftResponse = await savingRestore;
   expect(restoredDraftResponse.ok(), await restoredDraftResponse.text()).toBe(true);
   const restoredDraft = await restoredDraftResponse.json() as VoucherDraft;
   const sendingRestore = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/manual/drafts/${restoredDraft.documentId}/send`));
-  await restore.getByRole("button", { name: "Contabilizar", exact: true }).click();
+  await restore.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const restoredResponse = await sendingRestore;
   expect(restoredResponse.ok(), await restoredResponse.text()).toBe(true);
   const restored = await restoredResponse.json() as VoucherDraft;
@@ -142,12 +142,12 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
   await editor.getByRole("row", { name: "Partida 2", exact: true })
     .getByLabel(payable ? "Débito de la partida" : "Crédito de la partida", { exact: true }).fill("20.0001");
   const savingReturn = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/accounting/manual/drafts/"));
-  await editor.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await editor.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   const returnSavedResponse = await savingReturn;
   expect(returnSavedResponse.ok(), await returnSavedResponse.text()).toBe(true);
   const returnDraft = await returnSavedResponse.json() as VoucherDraft;
   const sendingReturn = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/manual/drafts/${returnDraft.documentId}/send`));
-  await editor.getByRole("button", { name: "Contabilizar", exact: true }).click();
+  await editor.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const returnSentResponse = await sendingReturn;
   expect(returnSentResponse.ok(), await returnSentResponse.text()).toBe(true);
   const returned = await returnSentResponse.json() as VoucherDraft;
@@ -217,13 +217,13 @@ test(`tesorería directa ${method} se contabiliza desde la vista sin factura fic
   }
   await expect(page.getByRole("button", { name: /Vincular sesión|Retomar sesión|Quitar sesión/ })).toHaveCount(0);
   const saving = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/accounting/manual/drafts/"));
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   const saveResponse = await saving;
   expect(saveResponse.ok(), await saveResponse.text()).toBe(true);
   const saved = await saveResponse.json() as VoucherDraft;
   expect(saved.workSessionId).toBeNull();
   const sending = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/manual/drafts/${saved.documentId}/send`));
-  await page.getByRole("button", { name: "Contabilizar", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const sendResponse = await sending;
   expect(sendResponse.ok(), await sendResponse.text()).toBe(true);
   const sent = await sendResponse.json();
@@ -283,7 +283,7 @@ test("asiento libre real conserva terceros y bases al guardar, contabilizar y cl
   await second.getByLabel("Base de la partida", { exact: true }).fill("0");
   await second.getByLabel("Crédito de la partida", { exact: true }).fill("1200.1234");
   const saving = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/accounting/manual/drafts/"));
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   const saveResponse = await saving;
   expect(saveResponse.ok(), await saveResponse.text()).toBe(true);
   const saved = await saveResponse.json() as VoucherDraft;
@@ -299,7 +299,7 @@ test("asiento libre real conserva terceros y bases al guardar, contabilizar y cl
   await expect(first.getByLabel("Base de la partida", { exact: true })).toHaveValue("-12.3456");
   await expect(second.getByLabel("Base de la partida", { exact: true })).toHaveValue("0");
   const sending = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/manual/drafts/${saved.documentId}/send`));
-  await page.getByRole("button", { name: "Contabilizar", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   const sendResponse = await sending;
   expect(sendResponse.ok(), await sendResponse.text()).toBe(true);
   const sent = await sendResponse.json() as VoucherDraft;

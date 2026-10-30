@@ -49,6 +49,16 @@ public sealed partial class AccountingService
         return store.GetVoucherDraftAsync(user, documentId, cancellationToken);
     }
 
+    public Task<bool> DeleteVoucherDraftAsync(AccountingUserIdentity user,
+        Guid documentId, string rowVersion, CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.ManualCreate);
+        if (documentId == Guid.Empty)
+            throw new AccountingValidationException("Selecciona el borrador que vas a descartar.");
+        ValidateDraftVersion(rowVersion, required: true);
+        return store.DeleteVoucherDraftAsync(user, documentId, rowVersion, cancellationToken);
+    }
+
     public Task<VoucherDraftView> SaveVoucherDraftAsync(AccountingUserIdentity user,
         SaveVoucherDraftRequest request, CancellationToken cancellationToken = default)
     {
@@ -179,13 +189,8 @@ public sealed partial class AccountingService
         }
         if (!acceptance.IsDuplicate)
         {
-            // Both durable roots were accepted together. A failing transport
-            // or inline posting must not prevent signaling the other owner.
-            var posting = processing.RequestPostingAsync(user.BusinessId, acceptance.DocumentId, acceptance.DocumentType, cancellationToken);
-            var generation = draft.VoucherTypeCode is "SupportDocument" or "SupportDocumentCancellation"
-                ? fiscal.RequestGenerationAsync(user.BusinessId, acceptance.DocumentId, cancellationToken)
-                : Task.CompletedTask;
-            await Task.WhenAll(posting, generation);
+            await processing.RequestPostingAsync(user.BusinessId, acceptance.DocumentId,
+                acceptance.DocumentType, cancellationToken);
         }
         if (acceptance.IsDuplicate && acceptance.Status == draft.Status) return draft;
         return (await store.GetVoucherDraftAsync(user, documentId, cancellationToken))!;

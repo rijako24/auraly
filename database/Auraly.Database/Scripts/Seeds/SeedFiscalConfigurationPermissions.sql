@@ -4,6 +4,7 @@ INSERT @FiscalPermissions VALUES
  (N'Read',N'fiscal.configuration.read',N'Consultar la configuración fiscal de una sede'),
  (N'Manage',N'fiscal.configuration.manage',N'Configurar resoluciones y series fiscales'),
  (N'DocumentsRead',N'fiscal.documents.read',N'Consultar documentos y estados fiscales'),
+ (N'SendManualSupport',N'fiscal.manual-support.send',N'Enviar un documento soporte manual a la DIAN'),
  (N'Retry',N'fiscal.retry',N'Reintentar el procesamiento de documentos fiscales'),
  (N'Correct',N'fiscal.correct',N'Corregir una factura fiscal duplicada');
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
@@ -13,5 +14,5 @@ INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
 SELECT NEWID(),r.RoleId,p.PermissionId,SYSUTCDATETIME()
 FROM dbo.AppRoles r CROSS JOIN dbo.Permissions p
 WHERE r.IsActive=1 AND r.NormalizedName IN(N'ADMINISTRATOR',N'SUPERADMIN')
- AND p.Resource IN(N'fiscal.configuration.read',N'fiscal.configuration.manage',N'fiscal.documents.read',N'fiscal.retry',N'fiscal.correct')
+ AND p.Resource IN(N'fiscal.configuration.read',N'fiscal.configuration.manage',N'fiscal.documents.read',N'fiscal.manual-support.send',N'fiscal.retry',N'fiscal.correct')
  AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions rp WHERE rp.RoleId=r.RoleId AND rp.PermissionId=p.PermissionId);

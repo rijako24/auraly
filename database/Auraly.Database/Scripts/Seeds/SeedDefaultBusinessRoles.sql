@@ -105,6 +105,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'A
       OR permissionValue.Resource LIKE N'expenses.%'
       OR permissionValue.Resource LIKE N'commerce.taxation.%'
       OR permissionValue.Resource LIKE N'fiscal.configuration.%'
+      OR permissionValue.Resource=N'fiscal.manual-support.send'
       OR permissionValue.Resource IN(
         N'businesses.read',N'dashboard.read',N'audit_logs.read',N'payments.read',N'payments.confirm_manual',
         N'parties.read',N'customers.read',N'suppliers.read',N'catalog.read',N'catalog.costs.read',N'products.read',
@@ -163,6 +164,7 @@ WHERE roleValue.IsActive=1
       OR permissionValue.Resource LIKE N'expenses.%'
       OR permissionValue.Resource LIKE N'commerce.taxation.%'
       OR permissionValue.Resource LIKE N'fiscal.configuration.%'
+      OR permissionValue.Resource=N'fiscal.manual-support.send'
       OR permissionValue.Resource IN(
         N'businesses.read',N'dashboard.read',N'audit_logs.read',N'payments.read',N'payments.confirm_manual',
         N'parties.read',N'customers.read',N'suppliers.read',N'catalog.read',N'catalog.costs.read',N'products.read',

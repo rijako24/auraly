@@ -26,11 +26,11 @@ test("reabrir y guardar una captura financiera conserva su versión, vínculos y
     await route.fulfill({ status: 200, json: draft });
   });
   await page.goto(`/dashboard/financial-traceability?document=${documentId}`);
-  await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeEnabled();
   await expect(page.getByLabel("Descripción", { exact: true })).toHaveValue(draft.description);
   await page.getByLabel("Descripción", { exact: true }).fill("Abono con descripción corregida");
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeEnabled();
   await expect(page.getByLabel("Descripción", { exact: true })).toHaveValue("Abono con descripción corregida");
   expect(reads).toBe(1);
   expect(writes).toBe(1);
@@ -58,8 +58,8 @@ test("las cuentas no disponibles de una captura no disparan consultas por partid
   await page.goto(`/dashboard/financial-traceability?document=${draft.documentId}`);
   await expect(page.getByText(/Revisa las partidas marcadas/)).toBeVisible();
   await page.getByLabel("Descripción", { exact: true }).fill("Revisar las cuentas del comprobante");
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
   expect(writes).toBe(1); expect(lookups).toBe(0);
 });
 
@@ -227,8 +227,8 @@ for (const sample of [
     await row.getByLabel("Abono a DOC-PENDIENTE-250").fill("300");
     await row.getByRole("button", { name: "Actualizar" }).click();
     await expect(page.getByRole("row", { name: "Partida 4", exact: true })).toHaveCount(0);
-    await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
     expect(positionReads).toBe(1); expect(draftReads).toBe(1); expect(writes).toBe(1);
   });
 }
@@ -282,8 +282,8 @@ for (const legacy of [false, true]) {
     await page.getByRole("option", { name: "Grupo 1", exact: true }).click();
     await dialog.getByRole("button", { name: "Cerrar detalles" }).click();
     await expect(page.getByRole("button", { name: /sesión de trabajo|cierre de caja/i })).toHaveCount(0);
-    await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
     expect(reads).toBe(1); expect(writes).toBe(1); expect(sessionCalls).toBe(0); expect(positionReads).toBe(0);
   });
 }
@@ -305,7 +305,7 @@ test("un comprobante financiero sin tercero principal no se contabiliza desde la
   });
   await page.goto(`/dashboard/financial-traceability?document=${draft.documentId}`);
   await expect(page.getByText("Obligatorio para contabilizar.", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Contabilizar", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "tercero principal" })).toBeVisible();
   expect(sends).toBe(0);
 });

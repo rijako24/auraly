@@ -226,8 +226,8 @@ for (const direction of ["payables", "receivables"] as const) {
     const positionReadsBeforeSave = positionReads.length;
     expect(unapplicationReads).toBe(1);
     expect(savedUnapplications).toHaveLength(0);
-    await unapplication.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-    await expect(unapplication.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeDisabled();
+    await unapplication.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+    await expect(unapplication.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
     expect(savedUnapplications).toHaveLength(1);
     const savedUnapplication = savedUnapplications[0];
     expect(savedUnapplication?.payloadVersion).toBe(4);
@@ -251,8 +251,8 @@ for (const direction of ["payables", "receivables"] as const) {
     expect(unapplicationReads).toBe(2);
     await unapplication.getByRole("row", { name: "Partida 2", exact: true }).getByRole("combobox", { name: "Seleccionar cuenta contable", exact: true }).click();
     await page.getByRole("option", { name: "11050501 · Caja de devoluciones", exact: true }).click();
-    await unapplication.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
-    await expect(unapplication.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeDisabled();
+    await unapplication.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+    await expect(unapplication.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
     expect(savedUnapplications).toHaveLength(2);
     expect(savedUnapplications[1]?.lines[1].accountId).toBe(treasuryAccountId);
     expect(savedUnapplications[1]?.lines[1][payable ? "debit" : "credit"]).toBe(250.0001);

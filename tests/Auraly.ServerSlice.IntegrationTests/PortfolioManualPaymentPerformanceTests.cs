@@ -7,7 +7,6 @@ using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Contracts.Payables;
 using Auraly.Application.Payables;
 using Auraly.Application.WorkSessions;
-using Auraly.Application.Fiscal;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,8 +51,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
         // gate and authoritative response stay real; posting is a separate stage.
         var service = new AccountingService(scope.ServiceProvider.GetRequiredService<IAccountingStore>(),
             scope.ServiceProvider.GetRequiredService<IBankReconciliationStore>(), coordinator,
-            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>(),
-            scope.ServiceProvider.GetRequiredService<FiscalProcessingCoordinator>());
+            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>());
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         Assert.StartsWith("AuralyServerSlice_", connection.Database);
@@ -148,8 +146,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
             scope.ServiceProvider.GetRequiredService<IAccountingProcessingSignalGate>());
         var service = new AccountingService(scope.ServiceProvider.GetRequiredService<IAccountingStore>(),
             scope.ServiceProvider.GetRequiredService<IBankReconciliationStore>(), coordinator,
-            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>(),
-            scope.ServiceProvider.GetRequiredService<FiscalProcessingCoordinator>());
+            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>());
         var processor = scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>();
         var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
             new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend });
@@ -247,8 +244,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
             scope.ServiceProvider.GetRequiredService<IAccountingProcessingSignalGate>());
         var service = new AccountingService(scope.ServiceProvider.GetRequiredService<IAccountingStore>(),
             scope.ServiceProvider.GetRequiredService<IBankReconciliationStore>(), coordinator,
-            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>(),
-            scope.ServiceProvider.GetRequiredService<FiscalProcessingCoordinator>());
+            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>());
         var processor = scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>();
         var sessions = scope.ServiceProvider.GetRequiredService<WorkSessionService>();
         var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
@@ -483,8 +479,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
             scope.ServiceProvider.GetRequiredService<IAccountingProcessingSignalGate>());
         var unapplications = new AccountingService(scope.ServiceProvider.GetRequiredService<IAccountingStore>(),
             scope.ServiceProvider.GetRequiredService<IBankReconciliationStore>(), unapplicationCoordinator,
-            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>(),
-            scope.ServiceProvider.GetRequiredService<FiscalProcessingCoordinator>());
+            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>());
         foreach (var size in new[] { 1, 100 })
         {
             var acceptTimes = new List<double>();

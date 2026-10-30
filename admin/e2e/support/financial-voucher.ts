@@ -6,7 +6,7 @@ export function financialVoucherScenario() {
   const documentId = "77777777-7777-7777-7777-777777777777", partyId = "55555555-5555-5555-5555-555555555555";
   const positionId = "99999999-9999-9999-9999-999999999999";
   const user = { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "@voucher", username: "accountant",
-    firstName: "Prueba", lastName: "Comprobante", roles: [], permissions: ["accounting.read", "accounting.manual.create", "accounting.manual.send", "payables.payments.create"] };
+    firstName: "Prueba", lastName: "Comprobante", roles: [], permissions: ["accounting.read", "accounting.manual.create", "accounting.manual.send", "fiscal.manual-support.send", "payables.payments.create"] };
   const draft: VoucherDraft = {
     documentId, documentType: "ManualAccountingVoucher", occurredAt: "2026-10-23T12:00:00+00:00", conceptCode: "MANUAL_VOUCHER",
     description: "Abono pendiente de contabilizar", reference: "REF-V4", currencyCode: "COP", adjustment: null,

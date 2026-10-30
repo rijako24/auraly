@@ -4,7 +4,6 @@ using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Receivables;
 using Auraly.Commerce.Accounting.Domain;
-using Auraly.Application.Fiscal;
 
 namespace Auraly.Commerce.Accounting.Application;
 
@@ -38,6 +37,7 @@ public interface IAccountingStore
     Task<IReadOnlyList<AccountingOpeningBalancePosting>> ListPendingOpeningPostingsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<VoucherDraftView?> GetVoucherDraftAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<VoucherDraftView> SaveVoucherDraftAsync(AccountingUserIdentity user, SaveVoucherDraftRequest request, CancellationToken cancellationToken);
+    Task<bool> DeleteVoucherDraftAsync(AccountingUserIdentity user, Guid documentId, string rowVersion, CancellationToken cancellationToken);
     Task<VoucherFiscalPreview> PreviewFiscalVoucherAsync(AccountingUserIdentity user,
         ConfirmManualAccountingVoucherRequest request, CancellationToken cancellationToken);
     Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(AccountingUserIdentity user, ConfirmAccountAdjustmentRequest request, CancellationToken cancellationToken, string? draftVersion = null);
@@ -79,8 +79,7 @@ public sealed partial class AccountingService(
     IAccountingStore store,
     IBankReconciliationStore bankReconciliations,
     AccountingProcessingCoordinator processing,
-    IAuralyIdGenerator ids,
-    FiscalProcessingCoordinator fiscal)
+    IAuralyIdGenerator ids)
 {
     public Task<AccountingOpenPositionPage> OpenPositionsAsync(AccountingUserIdentity user,
         AccountingOpenPositionQuery query, CancellationToken cancellationToken = default)

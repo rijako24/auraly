@@ -3,6 +3,7 @@ namespace Auraly.Contracts.Fiscal;
 public static class FiscalPermissionCodes
 {
     public const string DocumentsRead = "fiscal.documents.read";
+    public const string SendManualSupport = "fiscal.manual-support.send";
     public const string ArtifactsRead = "fiscal.artifacts.read";
     public const string Retry = "fiscal.retry";
     public const string Correct = "fiscal.correct";
@@ -16,6 +17,7 @@ public static class FiscalDocumentStatusCodes
     public const string FiscalIntegrityConflict = "FiscalIntegrityConflict";
     public const string MissingMandatoryFiscalData = "MissingMandatoryFiscalData";
     public const string PendingGeneration = "PendingGeneration";
+    public const string AwaitingManualSubmission = "AwaitingManualSubmission";
     public const string BlockedByQuota = "BlockedByQuota";
     public const string XmlGenerated = "XmlGenerated";
     public const string SchemaValidationFailed = "SchemaValidationFailed";

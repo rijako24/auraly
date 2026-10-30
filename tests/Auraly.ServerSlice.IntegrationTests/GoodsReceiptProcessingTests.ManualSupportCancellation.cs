@@ -148,7 +148,7 @@ public sealed partial class GoodsReceiptProcessingTests
                 var accepted = (await client.GetFromJsonAsync<VoucherDraftView>(path[..^5]))!;
                 Assert.NotEqual("Posted", accepted.Status);
                 Assert.NotNull(accepted.SentAt);
-                Assert.Single(fixture.DrainFiscalSignals().Where(item => item.Signal.DocumentId == saved.DocumentId
+                Assert.Empty(fixture.DrainFiscalSignals().Where(item => item.Signal.DocumentId == saved.DocumentId
                     && item.Signal.Stage == FiscalProcessingStage.Generation));
                 Assert.Equal(preview.Withholding.NetAmount,
                     await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
@@ -239,6 +239,11 @@ public sealed partial class GoodsReceiptProcessingTests
               AND (reversed.AccountId<>prior.AccountId OR reversed.Debit<>prior.Credit OR reversed.Credit<>prior.Debit
                 OR ISNULL(reversed.BaseAmount,0)<>-ISNULL(prior.BaseAmount,0));
             """, saved.DocumentId));
+        Assert.Equal(FiscalDocumentStatusCodes.AwaitingManualSubmission,
+            await ScalarAsync<string>("SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@Id", saved.DocumentId));
+        using (var submitted = await client.PostAsJsonAsync(
+            $"/api/commerce/v1/fiscal/documents/{saved.DocumentId}/send-manual-support", new { }))
+            Assert.True(submitted.IsSuccessStatusCode, await submitted.Content.ReadAsStringAsync());
         await GenerateFiscalAsync(saved.DocumentId);
         var fiscal = await ReadFiscalGenerationAsync(saved.DocumentId);
         Assert.Equal(FiscalDocumentStatusCodes.PendingSubmission, fiscal.Status);
@@ -252,7 +257,7 @@ public sealed partial class GoodsReceiptProcessingTests
         using var replay = await client.PostAsJsonAsync(path, new SendVoucherDraftRequest(saved.RowVersion));
         Assert.True(replay.IsSuccessStatusCode, await replay.Content.ReadAsStringAsync());
         Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id", saved.DocumentId));
-        Assert.Equal(withTaxes ? 1 : 0, fixture.DrainFiscalSignals().Count(item => item.Signal.DocumentId == saved.DocumentId
+        Assert.Equal(1, fixture.DrainFiscalSignals().Count(item => item.Signal.DocumentId == saved.DocumentId
             && item.Signal.Stage == FiscalProcessingStage.Generation));
         Assert.Equal(0m, await ScalarAsync<decimal>("""
             SELECT SUM(EligibleFunctionalAmount) FROM purchasing.ReceiptCostVoucherLines(@Id) WHERE Debit>0;

@@ -239,6 +239,10 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
   y no repara metadatos durante replay. La captura fiscal manual usa el participante
   anterior; la anulación de pagos usa el aplicador anterior. No se rellenan saldos históricos
   por inferencia.
+  En el soporte manual, la aceptación contable conserva la raíz y el snapshot
+  fiscal en estado de espera. La acción explícita del usuario libera esa misma
+  raíz al coordinador de generación fiscal después de contabilizar; no crea
+  una segunda fuente financiera ni usa otro worker.
 - La búsqueda de terceros manuales reutiliza `accounting.SourcePartyIndex`,
   derivado por esa aceptación mediante `accounting.ManualVoucherPartyReferences`.
   El backfill de esquema comparte esa extracción y valida tenant. No existe una

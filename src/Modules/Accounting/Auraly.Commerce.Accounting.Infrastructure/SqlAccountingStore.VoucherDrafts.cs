@@ -18,6 +18,47 @@ public sealed partial class SqlAccountingStore
         return await ReadVoucherDraftAsync(connection, null, user, documentId, cancellationToken);
     }
 
+    public async Task<bool> DeleteVoucherDraftAsync(AccountingUserIdentity user,
+        Guid documentId, string rowVersion, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await using var command = new SqlCommand("""
+            DECLARE @Version binary(8), @SentAt datetimeoffset(7);
+            SELECT @Version=RowVersion,@SentAt=SentAt FROM accounting.VoucherDrafts WITH(UPDLOCK,HOLDLOCK)
+            WHERE DocumentId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId;
+            IF @Version IS NULL SELECT CAST(0 AS bit);
+            ELSE IF @SentAt IS NOT NULL OR EXISTS(
+                SELECT 1 FROM dbo.AccountingSourceDocuments
+                WHERE SourceDocumentId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId)
+                THROW 51001,N'El comprobante ya fue aceptado y no se puede descartar.',1;
+            ELSE IF @Version<>@ExpectedVersion
+                THROW 51002,N'El borrador cambió. Ábrelo nuevamente antes de descartarlo.',1;
+            ELSE BEGIN
+                DELETE accounting.VoucherDraftLines WHERE DocumentId=@Id;
+                DELETE accounting.VoucherDrafts WHERE DocumentId=@Id
+                  AND TenantId=@TenantId AND BusinessId=@BusinessId AND SentAt IS NULL
+                  AND RowVersion=@ExpectedVersion;
+                IF @@ROWCOUNT<>1 THROW 51002,N'El borrador cambió antes de descartarlo.',1;
+                SELECT CAST(1 AS bit);
+            END;
+            """, connection, transaction);
+        AddDraftScope(command, user, documentId);
+        command.Parameters.Add("@ExpectedVersion", SqlDbType.Binary, 8).Value = Convert.FromBase64String(rowVersion);
+        try
+        {
+            var deleted = (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+            await transaction.CommitAsync(cancellationToken);
+            return deleted;
+        }
+        catch (SqlException error) when (error.Number is 51001 or 51002)
+        {
+            throw new AccountingConflictException(error.Message);
+        }
+    }
+
     public async Task<VoucherDraftView> SaveVoucherDraftAsync(AccountingUserIdentity user,
         SaveVoucherDraftRequest request, CancellationToken cancellationToken)
     {

@@ -62,7 +62,7 @@ test("captura fiscal manual real revisa, guarda y reabre sin crear una deuda ni 
   await dialog.screenshot({ path: "../work/documento-soporte-manual-revision-real.png" });
   await dialog.getByRole("button", { name: "Conservar datos fiscales", exact: true }).click();
   const saving = page.waitForResponse(response => new URL(response.url()).pathname === path && response.request().method() === "PUT");
-  await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
   const savedResponse = await saving;
   expect(savedResponse.ok(), await savedResponse.text()).toBe(true);
   const saved = await savedResponse.json() as VoucherDraft;
@@ -70,7 +70,7 @@ test("captura fiscal manual real revisa, guarda y reabre sin crear una deuda ni 
   expect(saved.sentAt).toBeNull();
   await page.reload();
   await expect(page.getByText("Cálculo fiscal revisado", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Contabilizar", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toBeEnabled();
   expect(previews).toBe(1); expect(writes).toBe(1); expect(sends).toBe(0); expect(profileReads).toBe(1);
   const status = await page.evaluate(async ({ path, tenantId, businessId }) => {
     const response = await fetch(path, { headers: { "X-Tenant-Id": tenantId!, "X-Business-Id": businessId }, credentials: "include" });

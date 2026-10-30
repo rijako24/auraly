@@ -49,6 +49,8 @@ public interface IFiscalDocumentStore
     Task<FiscalDocumentView?> GetAsync(Guid businessId, Guid documentId, CancellationToken cancellationToken);
     Task<FiscalDocumentPage> PageAsync(Guid businessId, FiscalDocumentQuery query, CancellationToken cancellationToken);
     Task<FiscalDocumentView?> RetryAsync(Guid businessId, Guid documentId, DateTimeOffset requestedAt, CancellationToken cancellationToken);
+    Task<string?> ReleaseManualSupportAsync(Guid businessId, Guid documentId,
+        DateTimeOffset requestedAt, CancellationToken cancellationToken);
 }
 
 public sealed class FiscalDocumentService(
@@ -118,6 +120,21 @@ public sealed class FiscalDocumentService(
                 cancellationToken: CancellationToken.None);
 
         return document;
+    }
+
+    public async Task<FiscalDocumentView?> SendManualSupportAsync(
+        FiscalUserIdentity user, Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.SendManualSupport);
+        var status = await store.ReleaseManualSupportAsync(user.BusinessId, documentId,
+            timeProvider.GetUtcNow(), cancellationToken);
+        if (status is null) return null;
+        // A committed transition can outlive a failed queue publish. Waking the
+        // same pending process again is safe because the fiscal claim is unique.
+        if (status == FiscalDocumentStatusCodes.PendingGeneration)
+            await processing.RequestGenerationAsync(user.BusinessId, documentId, cancellationToken);
+        return await store.GetAsync(user.BusinessId, documentId, cancellationToken);
     }
 
     public Task<AcceptedSaleRecoveryResult?> RecoverAcceptedSaleAsync(

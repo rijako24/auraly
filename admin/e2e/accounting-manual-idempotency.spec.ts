@@ -24,13 +24,13 @@ test("reintenta el mismo comprobante sin duplicarlo cuando se pierde la primera 
     } else await route.fallback();
   });
   await page.goto(`/dashboard/financial-traceability?document=${documentId}`);
-  const send = page.getByRole("button", { name: "Contabilizar", exact: true });
+  const send = page.getByRole("button", { name: "Guardar comprobante", exact: true });
   await send.click();
   await expect(page.getByRole("alert").filter({ hasText: "Se perdió la respuesta" })).toBeVisible();
-  await expect(page.getByText("Documento enviado: contenido inmutable.")).toHaveCount(0);
+  await expect(page.getByText("Comprobante contabilizado: contenido inmutable.")).toHaveCount(0);
   expect(attempts).toHaveLength(1);
   await send.click();
-  await expect(page.getByText("Documento enviado: contenido inmutable.")).toBeVisible();
+  await expect(page.getByText("Comprobante contabilizado: contenido inmutable.")).toBeVisible();
   await expect(page.getByLabel("Descripción", { exact: true })).toBeDisabled();
   expect(attempts).toHaveLength(2);
   expect(attempts[1]).toEqual(attempts[0]);

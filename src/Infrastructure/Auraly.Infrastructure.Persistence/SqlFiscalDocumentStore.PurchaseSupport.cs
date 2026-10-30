@@ -17,7 +17,8 @@ public sealed partial class SqlFiscalDocumentStore
     // It neither allocates numbers nor applies financial effects or sends work.
     internal static async Task InsertPurchaseSupportSourcesAsync(SqlConnection connection,
         SqlTransaction transaction, Guid tenantId, IReadOnlyList<PurchaseSupportSource> sources,
-        DateTimeOffset now, CancellationToken cancellationToken)
+        DateTimeOffset now, CancellationToken cancellationToken,
+        string initialStatus = FiscalDocumentStatusCodes.PendingGeneration)
     {
         if (transaction.Connection != connection || tenantId == Guid.Empty)
             throw new InvalidOperationException("Purchase support acceptance requires its scoped transaction.");
@@ -60,7 +61,7 @@ public sealed partial class SqlFiscalDocumentStore
         command.Parameters.Add("@SourcesJson", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(sources);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@Count", sources.Count);
-        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
+        command.Parameters.AddWithValue("@Status", initialStatus);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
