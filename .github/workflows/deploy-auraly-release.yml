@@ -277,6 +277,19 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Verify DEV App Configuration access before publication
+        if: inputs.environment == 'dev' && contains(needs.release.outputs.components, 'function')
+        shell: pwsh
+        run: |
+          az appconfig kv list `
+            --name cfg-auraly-dev-w5usmo6w `
+            --key 'WhatsApp:Webhook:ApiBaseUrl' `
+            --auth-mode login `
+            --output none
+          if ($LASTEXITCODE -ne 0) {
+            throw 'No se pudo acceder a App Configuration antes de publicar la base de datos.'
+          }
+
       - name: Publish cloud release
         shell: pwsh
         env:

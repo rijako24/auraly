@@ -99,6 +99,9 @@ $version = '0.2.0-rc4'
    `WhatIf`, especialmente SKU, identidades, configuración y recursos nuevos.
 5. Publicar DACPAC, API, Function y frontend desde los artefactos del mismo
    manifiesto. No recompilar entre componentes.
+   El job de DEV verifica el acceso de lectura a App Configuration justo después
+   del inicio de sesión de Azure y antes de publicar la base; así obtiene el token
+   del plano de datos y falla temprano sin mostrar valores de configuración.
 6. Ejecutar el preflight remoto:
 
 ```powershell
