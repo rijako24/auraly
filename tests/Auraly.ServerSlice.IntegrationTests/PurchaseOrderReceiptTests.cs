@@ -34,12 +34,15 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Restaurant_weekday_suggestion_reads_recipes_and_stock_without_changing_receiving()
     {
+        // The shared fixture may already have rotation on the recent Friday.
+        var warehouseId = Guid.NewGuid();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var daysUntilFriday = ((int)DayOfWeek.Friday - (int)today.DayOfWeek + 7) % 7;
         var plannedFriday = today.AddDays(daysUntilFriday == 0 ? 7 : daysUntilFriday);
-        // The shared fixture can already have a sale projected on the most
-        // recent Friday. Seed earlier completed Fridays to avoid that collision.
-        var secondFriday = plannedFriday.AddDays(-14);
+        var secondFriday = plannedFriday.AddDays(-7);
+        // Only completed days belong to the planner's history. On Friday the
+        // previous planned Friday is today and must not be seeded as history.
+        if (secondFriday >= today) secondFriday = secondFriday.AddDays(-7);
         var firstFriday = secondFriday.AddDays(-7);
         using var client = CreateClient(InventoryPermissionCodes.Read);
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -59,6 +62,17 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
                 change.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
                 await change.ExecuteNonQueryAsync();
             }
+            await using (var warehouse = new SqlCommand("""
+                INSERT dbo.Warehouses
+                  (WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsActive,CreatedAt)
+                VALUES(@WarehouseId,@BusinessId,@Code,N'Bodega sugerido restaurante',1,1,SYSDATETIMEOFFSET());
+                """, connection))
+            {
+                warehouse.Parameters.AddWithValue("@WarehouseId", warehouseId);
+                warehouse.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                warehouse.Parameters.AddWithValue("@Code", $"T{warehouseId.ToString("N")[..8]}");
+                await warehouse.ExecuteNonQueryAsync();
+            }
             await using (var projected = new SqlCommand("""
                 INSERT reporting.ProductDailyRotationSnapshots
                   (BusinessId,WarehouseId,ProductId,BusinessLocalDate,NetQuantity,
@@ -77,14 +91,14 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
                 """, connection))
             {
                 projected.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-                projected.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+                projected.Parameters.AddWithValue("@WarehouseId", warehouseId);
                 projected.Parameters.AddWithValue("@ProductId", fixture.ProductId);
                 projected.Parameters.AddWithValue("@FirstFriday", firstFriday.ToDateTime(TimeOnly.MinValue));
                 projected.Parameters.AddWithValue("@SecondFriday", secondFriday.ToDateTime(TimeOnly.MinValue));
                 await projected.ExecuteNonQueryAsync();
             }
             var request = new PurchaseOrderSuggestionRequest(
-                fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+                fixture.BusinessId, warehouseId, fixture.SupplierId,
                 [fixture.ProductId], 7, true, plannedFriday);
             using var response = await client.PostAsJsonAsync(
                 "/api/commerce/v1/purchase-orders/suggestions", request);
@@ -105,7 +119,7 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
             Assert.Equal(2, friday.ComparableDays);
             using var production = await client.GetAsync(
                 $"/api/commerce/v1/inventory/production-products/{fixture.ProductId:D}/suggestion" +
-                $"?warehouseId={fixture.WarehouseId:D}&startDate={plannedFriday:yyyy-MM-dd}&days=7");
+                $"?warehouseId={warehouseId:D}&startDate={plannedFriday:yyyy-MM-dd}&days=7");
             Assert.True(production.IsSuccessStatusCode,
                 await production.Content.ReadAsStringAsync());
         }
@@ -122,12 +136,17 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
                 """, connection))
             {
                 cleanup.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-                cleanup.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+                cleanup.Parameters.AddWithValue("@WarehouseId", warehouseId);
                 cleanup.Parameters.AddWithValue("@ProductId", fixture.ProductId);
                 cleanup.Parameters.AddWithValue("@FirstFriday", firstFriday.ToDateTime(TimeOnly.MinValue));
                 cleanup.Parameters.AddWithValue("@SecondFriday", secondFriday.ToDateTime(TimeOnly.MinValue));
                 await cleanup.ExecuteNonQueryAsync();
             }
+            await using var removeWarehouse = new SqlCommand(
+                "DELETE dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId", connection);
+            removeWarehouse.Parameters.AddWithValue("@WarehouseId", warehouseId);
+            removeWarehouse.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await removeWarehouse.ExecuteNonQueryAsync();
             await using var restore = new SqlCommand(
                 "UPDATE dbo.Businesses SET PointOfSaleMode=@Mode WHERE BusinessId=@BusinessId", connection);
             restore.Parameters.AddWithValue("@Mode", previousMode ?? "DirectSale");
