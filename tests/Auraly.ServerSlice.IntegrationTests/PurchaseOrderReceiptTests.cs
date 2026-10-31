@@ -37,10 +37,9 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var daysUntilFriday = ((int)DayOfWeek.Friday - (int)today.DayOfWeek + 7) % 7;
         var plannedFriday = today.AddDays(daysUntilFriday == 0 ? 7 : daysUntilFriday);
-        var secondFriday = plannedFriday.AddDays(-7);
-        // Only completed days belong to the planner's history. On Friday the
-        // previous planned Friday is today and must not be seeded as history.
-        if (secondFriday >= today) secondFriday = secondFriday.AddDays(-7);
+        // The shared fixture can already have a sale projected on the most
+        // recent Friday. Seed earlier completed Fridays to avoid that collision.
+        var secondFriday = plannedFriday.AddDays(-14);
         var firstFriday = secondFriday.AddDays(-7);
         using var client = CreateClient(InventoryPermissionCodes.Read);
         await using var connection = new SqlConnection(fixture.ConnectionString);
