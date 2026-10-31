@@ -1,21 +1,22 @@
 # Órdenes y recepciones de compra
 
-> **Decisión final del usuario (2026-10-29):** costos, descuentos y comprobantes
-> asociados se editan exclusivamente en el borrador de recepción. Después de
-> confirmar, ninguna recepción admite cambiar esos valores ni agregar nuevos
-> comprobantes, cualquiera que sea su tipo de soporte fiscal. Los trabajos de
-> revisión ya aceptados conservan su procesamiento y lectura histórica; se
-> retira la creación de revisiones posteriores.
+> **Decisión vigente del usuario (2026-10-30):** una recepción confirmada
+> conserva su identidad y cantidades. «Editar costos» guarda un borrador
+> vinculado a esa recepción; al confirmarlo, una revisión inmutable procesa
+> únicamente las diferencias de costos, descuentos, facturas y comprobantes
+> asociados por los motores existentes. No se crea otra entrada de inventario.
+> Los soportes ya enviados a la DIAN y la edición de importes de facturas ya
+> contabilizadas requieren una corrección fiscal vinculada antes de habilitarse.
 
-Fecha de actualización: 2026-10-29
+Fecha de actualización: 2026-10-30
 
 > **Ampliación histórica 2026-10-20:** la sección final define asociaciones de comprobantes
-> existentes, reparto parcial entre recepciones y cargos posteriores. Su opción
-> de crear cargos después de confirmar quedó sustituida por la decisión final anterior. Sustituye
-> para el destino los límites de cada cargo ligado a una sola recepción y de captura únicamente
-> antes de confirmar. El resto describe el alcance anterior. Esta ampliación es
-> diseño; la aclaración final admite el ajuste contable de valoración sin cambiar
-> la factura ni su deuda. El usuario aprobó el 22 de octubre atribuir salidas a
+> existentes, reparto parcial entre recepciones y cargos posteriores. La decisión
+> del 29 de octubre de impedir cambios tras confirmar quedó sustituida por la
+> decisión vigente anterior. El resto de esa sección describe el alcance histórico.
+> Esta ampliación es diseño; la aclaración sobre el prorrateo admite el ajuste
+> contable de valoración sin cambiar la factura asociada ni su deuda. El usuario
+> aprobó el 22 de octubre atribuir salidas a
 > las entradas más antiguas primero; el writer ya registra esa atribución.
 > Los trabajos de revisión de cargos distribuidos ya aceptados se procesan por el motor documental,
 > ajusta el valor de las existencias trazables por el writer de inventario y
@@ -745,11 +746,12 @@ proveedores y vencimientos, monedas y tasas congeladas, métodos de asignación 
 cantidad, peso, volumen, igual o manual, IVA y retenciones por documento, múltiples cuentas
 por pagar y contabilización nativa mediante el motor existente.
 
-Todos los documentos deben estar completos antes de confirmar. Se conservan estos límites:
+Los documentos de la confirmación inicial deben estar completos. Los cambios
+posteriores pasan por «Editar costos» y su revisión. Se conservan estos límites:
 
 - una recepción conserva un solo proveedor de mercancía; si llegan productos comprados a otro proveedor se crea otra recepción;
 - un documento adicional pertenece a una sola recepción;
-- no se pueden anexar facturas después de confirmar;
+- una factura posterior se anexa mediante «Editar costos», sin otra entrada física;
 - peso o volumen se captura sólo cuando el método elegido lo requiere;
 - no se crea un módulo general de facturas de proveedor ni se reutiliza `Expenses`;
 - anticipos, reembolsos de agencia, pagos de obligaciones en moneda extranjera y diferencia en cambio se resuelven en sus flujos financieros propios, no dentro de la recepción.
