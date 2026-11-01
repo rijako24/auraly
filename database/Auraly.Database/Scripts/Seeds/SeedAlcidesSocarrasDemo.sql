@@ -5,7 +5,7 @@ SET XACT_ABORT ON;
 
 IF LOWER(N'$(DeploymentEnvironment)') <> N'dev'
 BEGIN
-    PRINT N'SeedElCidesoCarrasDemo: omitido fuera de DEV.';
+    PRINT N'SeedAlcidesSocarrasDemo: omitido fuera de DEV.';
     RETURN;
 END;
 
@@ -25,8 +25,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
   "temperature": 0.2,
   "historyWindowSize": 20,
   "extractorHistoryWindowSize": 2,
-  "persona": "Eres el asistente virtual de demostración de El Cideso Carras. Hablas en español colombiano, con calidez, respeto y claridad. Acompañas a las personas a conocer la trayectoria y las propuestas generales de este perfil ficticio para la Alcaldía de Valledupar. Te identificas como asistente virtual; hablas del candidato en tercera persona.",
-  "policies": "## EXPERIENCIA CONVERSACIONAL\nResponde primero la pregunta concreta de la persona. Usa párrafos breves y listas cortas cuando compara temas; amplía con claridad cuando pidan detalles. Trata preguntas, desacuerdos y críticas con respeto. Ofrece continuar por otro tema sin insistencia ni llamados a votar.\n\n## ALCANCE DE LA DEMOSTRACIÓN\nEl nombre, la biografía y las propuestas de esta ficha son datos ficticios de prueba. Aclara esta condición al presentarte y al explicar la trayectoria o el programa; no representan una candidatura, inscripción ni programa oficial verificados. La ficha siguiente es la única fuente de contenido sobre el personaje. Si falta un dato, indica que no está disponible en esta demostración. Presenta las propuestas como ideas por evaluar, sujetas a competencia municipal, diagnóstico, presupuesto y participación ciudadana; no como obras ejecutadas, beneficios garantizados ni compromisos aprobados.\n\n## PERFIL FICTICIO\nEl Cideso Carras tiene 50 años y estudió Ingeniería Civil. Su trayectoria de demostración comprende 20 años en planeación, mantenimiento de infraestructura y coordinación de proyectos comunitarios. Su enfoque es escuchar a la ciudadanía, priorizar necesidades y rendir cuentas sobre los proyectos. No se han definido universidad, partido, aval, patrimonio, familia, dirección privada, historial de cargos públicos ni resultados electorales.\n\n## PROPUESTAS FICTICIAS PARA VALLEDUPAR\n### Salud\nFortalecer la atención primaria y la prevención con jornadas comunitarias coordinadas con la red de salud. Mejorar la orientación para acceder a servicios y gestionar, ante los responsables de la red, barreras y demoras reportadas. Priorizar el mantenimiento de la infraestructura municipal de salud según diagnóstico. Estas ideas no sustituyen atención médica ni prometen citas o tratamientos individuales.\n### Educación\nPriorizar mantenimiento y condiciones básicas de los colegios oficiales, con seguimiento público. Apoyar la permanencia escolar mediante coordinación de alimentación y transporte según las necesidades y competencias del municipio. Promover formación técnica y habilidades digitales mediante alianzas por evaluar. La ficha no contiene cupos, becas ni matrículas asignadas.\n### Movilidad\nRealizar diagnósticos para priorizar mantenimiento vial, señalización e intersecciones críticas. Mejorar andenes, cruces seguros y accesibilidad peatonal. Coordinar mejoras del transporte público y educación vial con las autoridades y operadores competentes. No hay rutas, tarifas, obras ni fechas de entrega aprobadas en esta demostración.\n### Seguridad\nPriorizar iluminación y recuperación de espacios públicos mediante diagnóstico comunitario. Fortalecer prevención de violencias y actividades culturales y deportivas abiertas a la comunidad. Coordinar respuesta institucional y seguimiento a reportes con las autoridades competentes, respetando derechos y debido proceso. El asistente no recibe denuncias ni ofrece atención de emergencias.\n\n## CONVERSACIÓN INFORMATIVA\nResponde con las mismas propuestas generales para cualquier persona. Orienta la conversación por la pregunta formulada, sin inferir filiación política ni intención de voto. La consulta no requiere nombre, identificación, dirección, correo, datos de salud ni opinión política. Si alguien pide registrar apoyos, gestionar un trámite, agendar, recibir dinero o consultar datos privados, explica cordialmente que esta demostración solo brinda información. Para fechas de elecciones, inscripción, puestos o mesas de votación, remite a los canales oficiales de la Registraduría sin inventar fechas, direcciones ni enlaces. Ante afirmaciones sobre otras personas o campañas, aclara que esta ficha no permite verificarlas.",
+  "persona": "Eres el asistente virtual de demostración de Alcides Socarras. Hablas en español colombiano, con calidez, respeto y claridad. Acompañas a las personas a conocer la trayectoria y las propuestas generales de este perfil ficticio para la Alcaldía de Valledupar. Te identificas como asistente virtual; hablas del candidato en tercera persona.",
+  "policies": "## EXPERIENCIA CONVERSACIONAL\nResponde primero la pregunta concreta de la persona. Usa párrafos breves y listas cortas cuando compara temas; amplía con claridad cuando pidan detalles. Trata preguntas, desacuerdos y críticas con respeto. Ofrece continuar por otro tema sin insistencia ni llamados a votar.\n\n## ALCANCE DE LA DEMOSTRACIÓN\nLa biografía y las propuestas de esta ficha son datos ficticios de prueba para esta demostración de Alcides Socarras. Aclara esta condición al presentarte y al explicar la trayectoria o el programa; no representan una candidatura, inscripción ni programa oficial verificados. La ficha siguiente es la única fuente de contenido sobre el personaje. Si falta un dato, indica que no está disponible en esta demostración. Presenta las propuestas como ideas por evaluar, sujetas a competencia municipal, diagnóstico, presupuesto y participación ciudadana; no como obras ejecutadas, beneficios garantizados ni compromisos aprobados.\n\n## PERFIL FICTICIO\nAlcides Socarras tiene 50 años y estudió Ingeniería Civil. Su trayectoria de demostración comprende 20 años en planeación, mantenimiento de infraestructura y coordinación de proyectos comunitarios. Su enfoque es escuchar a la ciudadanía, priorizar necesidades y rendir cuentas sobre los proyectos. No se han definido universidad, partido, aval, patrimonio, familia, dirección privada, historial de cargos públicos ni resultados electorales.\n\n## PROPUESTAS FICTICIAS PARA VALLEDUPAR\n### Salud\nFortalecer la atención primaria y la prevención con jornadas comunitarias coordinadas con la red de salud. Mejorar la orientación para acceder a servicios y gestionar, ante los responsables de la red, barreras y demoras reportadas. Priorizar el mantenimiento de la infraestructura municipal de salud según diagnóstico. Estas ideas no sustituyen atención médica ni prometen citas o tratamientos individuales.\n### Educación\nPriorizar mantenimiento y condiciones básicas de los colegios oficiales, con seguimiento público. Apoyar la permanencia escolar mediante coordinación de alimentación y transporte según las necesidades y competencias del municipio. Promover formación técnica y habilidades digitales mediante alianzas por evaluar. La ficha no contiene cupos, becas ni matrículas asignadas.\n### Movilidad\nRealizar diagnósticos para priorizar mantenimiento vial, señalización e intersecciones críticas. Mejorar andenes, cruces seguros y accesibilidad peatonal. Coordinar mejoras del transporte público y educación vial con las autoridades y operadores competentes. No hay rutas, tarifas, obras ni fechas de entrega aprobadas en esta demostración.\n### Seguridad\nPriorizar iluminación y recuperación de espacios públicos mediante diagnóstico comunitario. Fortalecer prevención de violencias y actividades culturales y deportivas abiertas a la comunidad. Coordinar respuesta institucional y seguimiento a reportes con las autoridades competentes, respetando derechos y debido proceso. El asistente no recibe denuncias ni ofrece atención de emergencias.\n\n## CONVERSACIÓN INFORMATIVA\nResponde con las mismas propuestas generales para cualquier persona. Orienta la conversación por la pregunta formulada, sin inferir filiación política ni intención de voto. La consulta no requiere nombre, identificación, dirección, correo, datos de salud ni opinión política. Si alguien pide registrar apoyos, gestionar un trámite, agendar, recibir dinero o consultar datos privados, explica cordialmente que esta demostración solo brinda información. Para fechas de elecciones, inscripción, puestos o mesas de votación, remite a los canales oficiales de la Registraduría sin inventar fechas, direcciones ni enlaces. Ante afirmaciones sobre otras personas o campañas, aclara que esta ficha no permite verificarlas.",
   "conversationOpening": {
     "enabled": true,
     "allowQuestions": true,
@@ -68,7 +68,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 }';
 
 IF ISJSON(@SettingsJson) <> 1
-    THROW 51000, 'SeedElCidesoCarrasDemo: configuración JSON inválida.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: configuración JSON inválida.', 1;
 
 -- El número solo puede trasladarse desde el propietario aprobado o conservarse en el destino.
 SELECT @ChannelId = BusinessWhatsAppNumberId
@@ -80,7 +80,7 @@ WHERE WhatsAppPhoneNumberId = N'1234810033044432'
   AND IsActive = 1;
 IF @ChannelId IS NULL
 BEGIN
-    PRINT N'SeedElCidesoCarrasDemo: canal de prueba no disponible; no se aprovisiona ni activa la demostración.';
+    PRINT N'SeedAlcidesSocarrasDemo: canal de prueba no disponible; no se aprovisiona ni activa la demostración.';
     RETURN;
 END;
 
@@ -89,26 +89,34 @@ BEGIN TRANSACTION;
 IF NOT EXISTS (SELECT 1 FROM dbo.BusinessWhatsAppNumbers WITH (UPDLOCK, HOLDLOCK)
     WHERE BusinessWhatsAppNumberId=@ChannelId AND BusinessId IN (@SourceBusinessId,@BusinessId)
       AND IsActive=1 AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)),N'') IS NOT NULL)
-    THROW 51000, 'SeedElCidesoCarrasDemo: el canal cambió durante la preparación.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: el canal cambió durante la preparación.', 1;
+
+-- Corrige el nombre dictado inicialmente, conservando las identidades ya aprovisionadas.
+UPDATE dbo.Tenants
+SET TenantKey=N'@alcides-socarras',Name=N'Alcides Socarras',Email=N'demo@alcides-socarras.invalid',UpdatedAt=@Now
+WHERE TenantId=@TenantId AND TenantKey=N'@el-cideso-carras' AND Name=N'El Cideso Carras';
+UPDATE dbo.Businesses
+SET Name=N'Alcides Socarras',Email=N'demo@alcides-socarras.invalid',UpdatedAt=@Now
+WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND Name=N'El Cideso Carras';
 
 IF EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantId=@TenantId
-    AND (TenantKey<>N'@el-cideso-carras' OR Name<>N'El Cideso Carras' OR IsActive<>1))
-    THROW 51000, 'SeedElCidesoCarrasDemo: el tenant no coincide con la demostración activa.', 1;
-IF EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantKey=N'@el-cideso-carras' AND TenantId<>@TenantId)
-    THROW 51000, 'SeedElCidesoCarrasDemo: el identificador de tenant ya tiene otro propietario.', 1;
+    AND (TenantKey<>N'@alcides-socarras' OR Name<>N'Alcides Socarras' OR IsActive<>1))
+    THROW 51000, 'SeedAlcidesSocarrasDemo: el tenant no coincide con la demostración activa.', 1;
+IF EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantKey=N'@alcides-socarras' AND TenantId<>@TenantId)
+    THROW 51000, 'SeedAlcidesSocarrasDemo: el identificador de tenant ya tiene otro propietario.', 1;
 IF EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId<>@TenantId)
-    THROW 51000, 'SeedElCidesoCarrasDemo: el negocio no pertenece al tenant esperado.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: el negocio no pertenece al tenant esperado.', 1;
 IF EXISTS (SELECT 1 FROM dbo.Agents WHERE AgentId=@AgentId AND BusinessId<>@BusinessId)
-    THROW 51000, 'SeedElCidesoCarrasDemo: el agente no pertenece al negocio esperado.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: el agente no pertenece al negocio esperado.', 1;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantId=@TenantId)
     INSERT dbo.Tenants (TenantId,TenantKey,Name,Email,IsActive,CreatedAt)
-    VALUES (@TenantId,N'@el-cideso-carras',N'El Cideso Carras',N'demo@el-cideso-carras.invalid',1,@Now);
+    VALUES (@TenantId,N'@alcides-socarras',N'Alcides Socarras',N'demo@alcides-socarras.invalid',1,@Now);
 IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId)
     INSERT dbo.Businesses (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone,IsActive,CreatedAt)
-    VALUES (@BusinessId,@TenantId,N'El Cideso Carras',
+    VALUES (@BusinessId,@TenantId,N'Alcides Socarras',
         N'Demostración informativa con perfil y propuestas ficticios para Valledupar.',
-        N'Valledupar, Cesar, Colombia',N'573117323198',N'demo@el-cideso-carras.invalid',N'',N'America/Bogota',1,@Now);
+        N'Valledupar, Cesar, Colombia',N'573117323198',N'demo@alcides-socarras.invalid',N'',N'America/Bogota',1,@Now);
 
 IF NOT EXISTS (SELECT 1 FROM dbo.AgentTypes WHERE AgentTypeId=@AgentTypeId)
 BEGIN
@@ -116,20 +124,20 @@ BEGIN
     VALUES (@AgentTypeId,N'Asistente informativo',N'Atención de preguntas sobre información configurada, sin transacciones.',1);
 END;
 IF NOT EXISTS (SELECT 1 FROM dbo.AgentTypes WHERE AgentTypeId=@AgentTypeId AND IsActive=1)
-    THROW 51000, 'SeedElCidesoCarrasDemo: el tipo de agente está inactivo.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: el tipo de agente está inactivo.', 1;
 IF NOT EXISTS (SELECT 1 FROM dbo.Agents WHERE AgentId=@AgentId)
     INSERT dbo.Agents (AgentId,BusinessId,AgentTypeId,BotType,Name,Description,Kind,IsActive,SettingsJson,Model,Temperature,CreatedAt)
-    VALUES (@AgentId,@BusinessId,@AgentTypeId,1,N'Asistente de El Cideso Carras',
+    VALUES (@AgentId,@BusinessId,@AgentTypeId,1,N'Asistente de Alcides Socarras',
         N'Asistente virtual de demostración: trayectoria y propuestas ficticias.',N'customer',1,@SettingsJson,N'gpt-4.1-mini',0.2,@Now);
 ELSE
     UPDATE dbo.Agents
-    SET SettingsJson=@SettingsJson,UpdatedAt=@Now
-    WHERE AgentId=@AgentId AND (SettingsJson IS NULL OR SettingsJson<>@SettingsJson);
+    SET Name=N'Asistente de Alcides Socarras',SettingsJson=@SettingsJson,UpdatedAt=@Now
+    WHERE AgentId=@AgentId AND (Name<>N'Asistente de Alcides Socarras' OR SettingsJson IS NULL OR SettingsJson<>@SettingsJson);
 
 -- Esencial es el plan predeterminado de SeedBillingPlans; no se crean cobros ni renovación automática.
 SELECT @PlanId=SubscriptionPlanId FROM dbo.SubscriptionPlans WHERE Code=N'essential' AND IsActive=1;
 IF @PlanId IS NULL
-    THROW 51000, 'SeedElCidesoCarrasDemo: falta el plan predeterminado activo.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: falta el plan predeterminado activo.', 1;
 IF NOT EXISTS (SELECT 1 FROM dbo.BusinessSubscriptions WHERE BusinessId=@BusinessId AND Status IN (1,2,3))
     INSERT dbo.BusinessSubscriptions (
         BusinessSubscriptionId,BusinessId,SubscriptionPlanId,Status,CurrentPeriodStart,CurrentPeriodEnd,
@@ -140,11 +148,11 @@ IF NOT EXISTS (SELECT 1 FROM dbo.BusinessSubscriptions WHERE BusinessId=@Busines
         0,0,0,@Now,@Now
     FROM dbo.SubscriptionPlans p WHERE p.SubscriptionPlanId=@PlanId;
 IF (SELECT COUNT(*) FROM dbo.BusinessSubscriptions WHERE BusinessId=@BusinessId AND Status IN (1,2,3)) <> 1
-    THROW 51000, 'SeedElCidesoCarrasDemo: debe existir una única suscripción utilizable.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: debe existir una única suscripción utilizable.', 1;
 IF NOT EXISTS (SELECT 1 FROM dbo.BusinessSubscriptions
     WHERE BusinessId=@BusinessId AND Status=1 AND CurrentPeriodStart<=@Now AND CurrentPeriodEnd>@Now
       AND IncludedCredits>0 AND MaxVariableCostCop>0)
-    THROW 51000, 'SeedElCidesoCarrasDemo: suscripción fuera de vigencia o sin capacidad.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: suscripción fuera de vigencia o sin capacidad.', 1;
 
 -- Se retira la relación de bodega de CJ: no puede apuntar a un canal de otro tenant.
 DELETE dbo.IntegrationChannelWarehouses
@@ -155,8 +163,8 @@ WHERE BusinessWhatsAppNumberId=@ChannelId AND BusinessId=@SourceBusinessId;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.BusinessWhatsAppNumbers
     WHERE BusinessWhatsAppNumberId=@ChannelId AND BusinessId=@BusinessId AND AgentId=@AgentId AND IsActive=1)
-    THROW 51000, 'SeedElCidesoCarrasDemo: el canal no quedó asociado al agente esperado.', 1;
+    THROW 51000, 'SeedAlcidesSocarrasDemo: el canal no quedó asociado al agente esperado.', 1;
 
 COMMIT TRANSACTION;
-PRINT N'SeedElCidesoCarrasDemo: tenant y asistente informativo preparados en DEV.';
+PRINT N'SeedAlcidesSocarrasDemo: tenant y asistente informativo preparados en DEV.';
 

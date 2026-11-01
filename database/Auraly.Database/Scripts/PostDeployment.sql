@@ -130,7 +130,7 @@ GO
 GO
 :r .\Migrations\MigrateDigitalShopWhatsAppToCJ.sql
 GO
-:r .\Seeds\SeedElCidesoCarrasDemo.sql
+:r .\Seeds\SeedAlcidesSocarrasDemo.sql
 GO
 :r .\Migrations\RenameDigitalShopAgentCatalina.sql
 GO

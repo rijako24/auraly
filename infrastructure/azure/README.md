@@ -85,7 +85,7 @@ un mensaje desde el SDK no demuestra que el disparador pueda consumirlo.
 
 ## Demostración informativa en DEV
 
-`SeedElCidesoCarrasDemo.sql` aprovisiona un asistente informativo de prueba solo
+`SeedAlcidesSocarrasDemo.sql` aprovisiona un asistente informativo de prueba solo
 en DEV, cuando está disponible el canal autorizado de CJ. El perfil y las
 propuestas ficticias tienen una sola fuente en `Agents.SettingsJson` y se
 identifican como demostración. El seed conserva las credenciales y la identidad

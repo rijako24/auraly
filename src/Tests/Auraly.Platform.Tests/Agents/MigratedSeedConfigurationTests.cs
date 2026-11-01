@@ -21,7 +21,7 @@ public sealed class MigratedSeedConfigurationTests
     [InlineData("SeedAndinaSantander.sql", "SettingsJson")]
     [InlineData("SeedAuraly.sql", "SettingsJson")]
     [InlineData("SeedInmobiliariaDemo.sql", "SettingsJson")]
-    [InlineData("SeedElCidesoCarrasDemo.sql", "SettingsJson")]
+    [InlineData("SeedAlcidesSocarrasDemo.sql", "SettingsJson")]
     [InlineData("SeedMedidental.sql", "SettingsJson")]
     [InlineData("SeedRadaConcept.sql", "SettingsJson")]
     [InlineData("SeedSolorzanoAgentConfiguration.sql", "SettingsJson")]
@@ -802,7 +802,7 @@ public sealed class MigratedSeedConfigurationTests
     public async Task InformationalDemo_UsesProductionParserWithoutCollectingDataOrAuthorizingActions()
     {
         var sql = File.ReadAllText(Path.Combine(FindSolutionRoot(), "database", "Auraly.Database",
-            "Scripts", "Seeds", "SeedElCidesoCarrasDemo.sql"));
+            "Scripts", "Seeds", "SeedAlcidesSocarrasDemo.sql"));
         var agentId = Guid.NewGuid();
         var agents = new Moq.Mock<Auraly.Platform.Domain.Repositories.IAgentRepository>();
         agents.Setup(repository => repository.GetByIdAsync(agentId, Moq.It.IsAny<CancellationToken>()))
@@ -833,6 +833,7 @@ public sealed class MigratedSeedConfigurationTests
         config.ConversationFollowUp.Enabled.Should().BeFalse();
         config.ConversationOpening.Enabled.Should().BeTrue();
         config.ConversationOpening.Guidance.Should().Contain("datos ficticios");
+        config.Persona.Should().Contain("Alcides Socarras");
         config.Policies.Should().Contain("no representan una candidatura");
     }
 
