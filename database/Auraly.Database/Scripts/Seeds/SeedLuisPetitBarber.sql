@@ -1526,7 +1526,8 @@ SELECT TOP (1)
     @LuisWhatsAppAccessToken = WhatsAppAccessToken,
     @LuisWhatsAppBusinessAccountId = WhatsAppBusinessAccountId
 FROM dbo.BusinessWhatsAppNumbers
-WHERE (WhatsAppPhoneNumberId = @LuisWhatsAppPhoneId OR BusinessId = @BusinessId)
+WHERE WhatsAppPhoneNumberId = @LuisWhatsAppPhoneId
+  AND BusinessId = @BusinessId
   AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
 ORDER BY
     CASE WHEN WhatsAppPhoneNumberId = @LuisWhatsAppPhoneId THEN 0 ELSE 1 END,
@@ -1535,31 +1536,6 @@ ORDER BY
 IF @LuisWhatsAppAccessToken IS NULL
 BEGIN
     PRINT N'SeedLuisPetitBarber: no se encontro token propio de Luis; omitiendo numero WhatsApp.';
-END
-ELSE IF @LuisWhatsAppNumberId IS NULL
-BEGIN
-    INSERT INTO dbo.BusinessWhatsAppNumbers (
-        BusinessWhatsAppNumberId,
-        BusinessId,
-        AgentId,
-        PhoneNumber,
-        WhatsAppBusinessAccountId,
-        WhatsAppPhoneNumberId,
-        WhatsAppAccessToken,
-        IsActive,
-        CreatedAt
-    )
-    VALUES (
-        NEWID(),
-        @BusinessId,
-        @AgentId,
-        @LuisPhoneNumber,
-        @LuisWhatsAppBusinessAccountId,
-        @LuisWhatsAppPhoneId,
-        @LuisWhatsAppAccessToken,
-        1,
-        GETUTCDATE()
-    );
 END
 ELSE
 BEGIN
@@ -1571,7 +1547,8 @@ BEGIN
         WhatsAppBusinessAccountId = @LuisWhatsAppBusinessAccountId,
         WhatsAppAccessToken = @LuisWhatsAppAccessToken,
         IsActive = 1
-    WHERE BusinessWhatsAppNumberId = @LuisWhatsAppNumberId;
+    WHERE BusinessWhatsAppNumberId = @LuisWhatsAppNumberId
+      AND BusinessId = @BusinessId;
 END
 DECLARE @ExistingLuisWompiId UNIQUEIDENTIFIER;
 DECLARE @SourceWompiConnectionId UNIQUEIDENTIFIER;

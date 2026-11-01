@@ -83,6 +83,22 @@ estos valores y el preflight comprueba su presencia y el modo de autenticación.
 El host de Functions usa esta conexión para activar WhatsApp y campañas; publicar
 un mensaje desde el SDK no demuestra que el disparador pueda consumirlo.
 
+## Demostración informativa en DEV
+
+`SeedElCidesoCarrasDemo.sql` aprovisiona un asistente informativo de prueba solo
+en DEV, cuando está disponible el canal autorizado de CJ. El perfil y las
+propuestas ficticias tienen una sola fuente en `Agents.SettingsJson` y se
+identifican como demostración. El seed conserva las credenciales y la identidad
+del canal al trasladarlo, retira su asociación comercial anterior y crea una
+suscripción con el plan predeterminado de `SeedBillingPlans`, sin renovación
+automática. No crea cobros ni copia el historial del tenant anterior.
+
+Después de aplicar el seed, la suscripción de esa WABA en Meta debe usar el
+webhook de DEV con su clave de función y el token de verificación efectivo del
+ambiente. El traslado en SQL no cambia por sí solo el destino de Meta. Antes de
+declararlo listo se verifican el compilador, la vigencia y capacidad de la
+suscripción, el handshake del webhook y un turno del runtime.
+
 ## Ambiente legado: no borrar
 
 Existe un grupo de recursos anterior, fuera de la infraestructura canónica. No se enumeran aquí sus identificadores para evitar reutilizarlos por error.

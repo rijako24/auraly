@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using Moq;
 using Auraly.Platform.Application.Agents;
 using Auraly.Platform.Application.Agents.Configuration;
 using Auraly.Platform.Application.Agents.Operations;
@@ -20,6 +21,7 @@ public sealed class MigratedSeedConfigurationTests
     [InlineData("SeedAndinaSantander.sql", "SettingsJson")]
     [InlineData("SeedAuraly.sql", "SettingsJson")]
     [InlineData("SeedInmobiliariaDemo.sql", "SettingsJson")]
+    [InlineData("SeedElCidesoCarrasDemo.sql", "SettingsJson")]
     [InlineData("SeedMedidental.sql", "SettingsJson")]
     [InlineData("SeedRadaConcept.sql", "SettingsJson")]
     [InlineData("SeedSolorzanoAgentConfiguration.sql", "SettingsJson")]
@@ -796,6 +798,44 @@ public sealed class MigratedSeedConfigurationTests
             .NotContain(".response.awaitCustomerReply")
             .And.NotContain("{\"awaitCustomerReply\":true}");
     }
+    [Fact]
+    public async Task InformationalDemo_UsesProductionParserWithoutCollectingDataOrAuthorizingActions()
+    {
+        var sql = File.ReadAllText(Path.Combine(FindSolutionRoot(), "database", "Auraly.Database",
+            "Scripts", "Seeds", "SeedElCidesoCarrasDemo.sql"));
+        var agentId = Guid.NewGuid();
+        var agents = new Moq.Mock<Auraly.Platform.Domain.Repositories.IAgentRepository>();
+        agents.Setup(repository => repository.GetByIdAsync(agentId, Moq.It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Auraly.Platform.Domain.Entities.Agent
+            {
+                AgentId = agentId,
+                BusinessId = Guid.NewGuid(),
+                Name = "Informational demo",
+                IsActive = true,
+                BotType = Auraly.Platform.Domain.Enums.AgentBotType.Reservation,
+                SettingsJson = ExtractSettingsJson(sql, "SettingsJson")
+            });
+        using var cache = new Microsoft.Extensions.Caching.Memory.MemoryCache(
+            new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        var provider = new AgentConfigProvider(agents.Object, cache,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AgentConfigProvider>.Instance,
+            new AgentConfigurationCompiler(new AgentOperationRegistry([])));
+
+        var config = await provider.GetConfigAsync(agentId);
+
+        config.Flows.Should().ContainSingle(flow => flow.Type == FlowTypes.Primary);
+        config.Flows.Single().Stages.Should().ContainSingle();
+        config.Flows.Single().Stages.Single().Actions.Should().BeEmpty();
+        config.Flows.Single().Stages.Single().Collect.Should().BeEmpty();
+        config.FactSchema.Should().BeEmpty();
+        config.GlobalActions.Should().BeEmpty();
+        config.Commerce.Enabled.Should().BeFalse();
+        config.ConversationFollowUp.Enabled.Should().BeFalse();
+        config.ConversationOpening.Enabled.Should().BeTrue();
+        config.ConversationOpening.Guidance.Should().Contain("datos ficticios");
+        config.Policies.Should().Contain("no representan una candidatura");
+    }
+
     private static void AssertSemanticAndPresentationTextIsSeparated(AgentConfig config)
     {
         const string internalVocabulary = @"\b(tool|tools|herramienta|herramientas|prepare_checkout|create_reservation)\b";

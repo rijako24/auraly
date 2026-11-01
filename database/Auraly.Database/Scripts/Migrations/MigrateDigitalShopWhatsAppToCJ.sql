@@ -41,6 +41,17 @@ SELECT TOP (1)
 FROM dbo.BusinessWhatsAppNumbers
 WHERE WhatsAppPhoneNumberId = @WhatsAppPhoneNumberId;
 
+-- Un traslado administrativo posterior conserva su propietario; este seed no lo revierte.
+IF EXISTS (
+    SELECT 1 FROM dbo.BusinessWhatsAppNumbers
+    WHERE BusinessWhatsAppNumberId = @WhatsAppNumberId
+      AND BusinessId NOT IN (@CJBusinessId, 'D1617A10-0000-0000-0000-000000000010')
+)
+BEGIN
+    PRINT N'MigrateDigitalShopWhatsAppToCJ: canal asignado a otro negocio; se conserva su propietario.';
+    RETURN;
+END;
+
 IF @WhatsAppNumberId IS NULL
 BEGIN
     INSERT INTO dbo.BusinessWhatsAppNumbers
@@ -74,7 +85,8 @@ BEGIN
         WhatsAppBusinessAccountId = @WhatsAppBusinessAccountId,
         WhatsAppAccessToken = COALESCE(@ConfiguredAccessToken, WhatsAppAccessToken),
         IsActive = CASE WHEN @ConfiguredAccessToken IS NULL THEN 0 ELSE 1 END
-    WHERE BusinessWhatsAppNumberId = @WhatsAppNumberId;
+    WHERE BusinessWhatsAppNumberId = @WhatsAppNumberId
+      AND BusinessId IN (@CJBusinessId, 'D1617A10-0000-0000-0000-000000000010');
 
     IF @ConfiguredAccessToken IS NULL
     BEGIN
@@ -99,7 +111,8 @@ SET BusinessId = @CJBusinessId,
     WhatsAppBusinessAccountId = @WhatsAppBusinessAccountId,
     WhatsAppAccessToken = COALESCE(@ConfiguredAccessToken, WhatsAppAccessToken),
     IsActive = 1
-WHERE BusinessWhatsAppNumberId = @WhatsAppNumberId;
+WHERE BusinessWhatsAppNumberId = @WhatsAppNumberId
+  AND BusinessId IN (@CJBusinessId, 'D1617A10-0000-0000-0000-000000000010');
 
 IF @@ROWCOUNT <> 1
 BEGIN
