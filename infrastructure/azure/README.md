@@ -89,11 +89,14 @@ un mensaje desde el SDK no demuestra que el disparador pueda consumirlo.
 en DEV, cuando está disponible el canal autorizado de CJ. El perfil y las
 propuestas ficticias tienen una sola fuente en `Agents.SettingsJson`. Por decisión
 del usuario, el texto visible usa la voz final del asistente sin avisos de prueba.
-`policies` gobierna la presentación general: bloques separados, consultas breves,
-títulos, viñetas y emojis discretos; solo se pregunta para aclarar una ambigüedad.
-`conversationOpening` gobierna la bienvenida de hasta 35 palabras: presentación y
-ofrecimiento de ayuda en dos bloques, sin pregunta de cierre. Son pautas para
-redacción contextual, sin una plantilla fija. El seed conserva las credenciales
+`policies` gobierna la presentación de cada mensaje: al menos dos bloques separados,
+consultas breves, títulos, viñetas y emojis discretos; el saludo ocupa su propio bloque y
+solo se pregunta para aclarar una ambigüedad. `conversationOpening` orienta una
+bienvenida amable de hasta 35 palabras, sin autopresentaciones ni una frase fija.
+`persona` conserva la identidad del canal y la aclara cuando la persona pregunta
+quién responde. Los datos o temas no cubiertos se reconocen cordialmente como
+información no disponible, sin inventar respuestas ni prometer gestiones posteriores.
+El seed conserva las credenciales
 y la identidad del canal al trasladarlo, retira su asociación comercial anterior
 y crea una
 suscripción con el plan predeterminado de `SeedBillingPlans`, sin renovación

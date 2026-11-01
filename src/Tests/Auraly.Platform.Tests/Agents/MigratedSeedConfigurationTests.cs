@@ -832,9 +832,10 @@ public sealed class MigratedSeedConfigurationTests
         config.Commerce.Enabled.Should().BeFalse();
         config.ConversationFollowUp.Enabled.Should().BeFalse();
         config.ConversationOpening.Enabled.Should().BeTrue();
-        config.ConversationOpening.Guidance.Should().Contain("asistente virtual de Alcides Socarras");
+        config.ConversationOpening.Guidance.Should().NotContain("asistente virtual");
         config.ConversationOpening.Guidance.Should().NotContain("datos ficticios");
         config.Persona.Should().Contain("Alcides Socarras");
+        config.Persona.Should().NotContain("Te identificas como");
         config.Policies.Should().Contain("sin incluir avisos de prueba");
         config.Templates.Should().BeEmpty("the assistant composes contextual replies instead of a fixed greeting");
         config.Policies.Should().Contain("Si falta un dato");
