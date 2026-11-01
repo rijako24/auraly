@@ -832,9 +832,12 @@ public sealed class MigratedSeedConfigurationTests
         config.Commerce.Enabled.Should().BeFalse();
         config.ConversationFollowUp.Enabled.Should().BeFalse();
         config.ConversationOpening.Enabled.Should().BeTrue();
-        config.ConversationOpening.Guidance.Should().Contain("datos ficticios");
+        config.ConversationOpening.Guidance.Should().Contain("asistente virtual de Alcides Socarras");
+        config.ConversationOpening.Guidance.Should().NotContain("datos ficticios");
         config.Persona.Should().Contain("Alcides Socarras");
-        config.Policies.Should().Contain("no representan una candidatura");
+        config.Policies.Should().Contain("sin incluir avisos de prueba");
+        config.Policies.Should().Contain("Organiza las respuestas para WhatsApp");
+        config.Policies.Should().Contain("Si falta un dato");
     }
 
     private static void AssertSemanticAndPresentationTextIsSeparated(AgentConfig config)

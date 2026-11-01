@@ -87,8 +87,10 @@ un mensaje desde el SDK no demuestra que el disparador pueda consumirlo.
 
 `SeedAlcidesSocarrasDemo.sql` aprovisiona un asistente informativo de prueba solo
 en DEV, cuando está disponible el canal autorizado de CJ. El perfil y las
-propuestas ficticias tienen una sola fuente en `Agents.SettingsJson` y se
-identifican como demostración. El seed conserva las credenciales y la identidad
+propuestas ficticias tienen una sola fuente en `Agents.SettingsJson`. Por decisión
+del usuario, el texto visible usa la voz final del asistente sin avisos de prueba.
+La presentación de WhatsApp se configura en `policies`: bloques separados, títulos
+cortos, viñetas y emojis discretos. El seed conserva las credenciales y la identidad
 del canal al trasladarlo, retira su asociación comercial anterior y crea una
 suscripción con el plan predeterminado de `SeedBillingPlans`, sin renovación
 automática. No crea cobros ni copia el historial del tenant anterior.
