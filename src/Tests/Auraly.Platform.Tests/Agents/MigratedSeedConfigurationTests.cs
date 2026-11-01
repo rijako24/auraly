@@ -836,7 +836,7 @@ public sealed class MigratedSeedConfigurationTests
         config.ConversationOpening.Guidance.Should().NotContain("datos ficticios");
         config.Persona.Should().Contain("Alcides Socarras");
         config.Policies.Should().Contain("sin incluir avisos de prueba");
-        config.Policies.Should().Contain("Organiza las respuestas para WhatsApp");
+        config.Templates.Should().BeEmpty("the assistant composes contextual replies instead of a fixed greeting");
         config.Policies.Should().Contain("Si falta un dato");
     }
 
