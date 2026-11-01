@@ -104,12 +104,16 @@ function Test-RemoteEnvironment {
     $requiredFunctionSettings = @(
         'AzureWebJobsStorage__accountName',
         'ServiceBusConnection__fullyQualifiedNamespace',
+        'ServiceBusConnection__credential',
+        'ServiceBusConnection__clientId',
         'AppConfiguration__Endpoint',
         'AZURE_CLIENT_ID',
         'Release__Version'
     )
     $missingFunctionSettings = @($requiredFunctionSettings | Where-Object { -not $functionSettings.ContainsKey($_) -or [string]::IsNullOrWhiteSpace($functionSettings[$_]) })
     Assert-Condition ($missingFunctionSettings.Count -eq 0) "Faltan configuraciones del worker: $($missingFunctionSettings -join ', ')."
+    Assert-Condition ($functionSettings['ServiceBusConnection__credential'] -eq 'managedidentity') `
+        'ServiceBusConnection__credential debe usar managedidentity para activar los triggers del worker.'
     Assert-Condition ($functionSettings['Release__Version'] -eq $ReleaseVersion) 'La version configurada en el worker no coincide con el release solicitado.'
     $settings = ConvertTo-SettingsMap $api.SiteConfig.AppSettings
 

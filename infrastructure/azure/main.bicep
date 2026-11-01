@@ -609,6 +609,7 @@ resource functionSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     AzureWebJobsStorage__credential: 'managedidentity'
     AzureWebJobsStorage__clientId: identity.properties.clientId
     ServiceBusConnection__fullyQualifiedNamespace: '${serviceBus.name}.servicebus.windows.net'
+    ServiceBusConnection__credential: 'managedidentity'
     ServiceBusConnection__clientId: identity.properties.clientId
     Auraly__Accounting__ServiceBus__QueueName: accountingProcessingQueue.name
     Auraly__Fiscal__ServiceBus__QueueName: fiscalProcessingQueue.name

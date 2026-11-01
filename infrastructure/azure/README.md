@@ -74,6 +74,15 @@ El pipeline usa `SqlPackage 170.4.83`, genera primero un DeployReport, rechaza e
 
 Los apartados manuales siguientes son procedimiento de contingencia y bootstrap, no la ruta ordinaria.
 
+### Autenticación de los disparadores de Service Bus
+
+Las Function Apps de DEV y PROD requieren `ServiceBusConnection__fullyQualifiedNamespace`,
+`ServiceBusConnection__credential=managedidentity` y `ServiceBusConnection__clientId`
+con el identificador de la identidad asignada al ambiente. `main.bicep` declara
+estos valores y el preflight comprueba su presencia y el modo de autenticación.
+El host de Functions usa esta conexión para activar WhatsApp y campañas; publicar
+un mensaje desde el SDK no demuestra que el disparador pueda consumirlo.
+
 ## Ambiente legado: no borrar
 
 Existe un grupo de recursos anterior, fuera de la infraestructura canónica. No se enumeran aquí sus identificadores para evitar reutilizarlos por error.

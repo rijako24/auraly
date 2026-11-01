@@ -292,6 +292,12 @@ public sealed class ServerSliceArchitectureTests
         Assert.Contains("requiresSession: true", template, StringComparison.Ordinal);
         Assert.Contains("ServiceBusConnection__fullyQualifiedNamespace", template,
             StringComparison.Ordinal);
+        var functionSettings = template[template.IndexOf("resource functionSettings ", StringComparison.Ordinal)..];
+        functionSettings = functionSettings[..functionSettings.IndexOf("resource apiPlan ", StringComparison.Ordinal)];
+        Assert.Contains("ServiceBusConnection__credential: 'managedidentity'", functionSettings,
+            StringComparison.Ordinal);
+        Assert.Contains("ServiceBusConnection__clientId: identity.properties.clientId", functionSettings,
+            StringComparison.Ordinal);
         Assert.Contains("Auraly__SalesReporting__ServiceBus__QueueName", template,
             StringComparison.Ordinal);
         Assert.Contains("AzureRuntimeClientFactory.CreateServiceBusClient", program,
