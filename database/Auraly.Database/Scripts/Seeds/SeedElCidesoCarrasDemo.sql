@@ -12,7 +12,7 @@ END;
 DECLARE @TenantId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000001';
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000010';
 DECLARE @AgentId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000020';
-DECLARE @AgentTypeId UNIQUEIDENTIFIER;
+DECLARE @AgentTypeId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000030';
 DECLARE @SubscriptionId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000040';
 DECLARE @SourceBusinessId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000010';
 DECLARE @ChannelId UNIQUEIDENTIFIER;
@@ -110,13 +110,13 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId)
         N'Demostración informativa con perfil y propuestas ficticios para Valledupar.',
         N'Valledupar, Cesar, Colombia',N'573117323198',N'demo@el-cideso-carras.invalid',N'',N'America/Bogota',1,@Now);
 
-SELECT @AgentTypeId=AgentTypeId FROM dbo.AgentTypes WHERE Name=N'Asistente informativo' AND IsActive=1;
-IF @AgentTypeId IS NULL
+IF NOT EXISTS (SELECT 1 FROM dbo.AgentTypes WHERE AgentTypeId=@AgentTypeId)
 BEGIN
-    SET @AgentTypeId='EC1DE500-0000-0000-0000-000000000030';
     INSERT dbo.AgentTypes (AgentTypeId,Name,Description,IsActive)
     VALUES (@AgentTypeId,N'Asistente informativo',N'Atención de preguntas sobre información configurada, sin transacciones.',1);
 END;
+IF NOT EXISTS (SELECT 1 FROM dbo.AgentTypes WHERE AgentTypeId=@AgentTypeId AND IsActive=1)
+    THROW 51000, 'SeedElCidesoCarrasDemo: el tipo de agente está inactivo.', 1;
 IF NOT EXISTS (SELECT 1 FROM dbo.Agents WHERE AgentId=@AgentId)
     INSERT dbo.Agents (AgentId,BusinessId,AgentTypeId,BotType,Name,Description,Kind,IsActive,SettingsJson,Model,Temperature,CreatedAt)
     VALUES (@AgentId,@BusinessId,@AgentTypeId,1,N'Asistente de El Cideso Carras',

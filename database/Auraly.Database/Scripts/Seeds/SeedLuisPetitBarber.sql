@@ -1521,18 +1521,14 @@ DECLARE @LuisWhatsAppPhoneId NVARCHAR(100) = N'1234810033044432';
 DECLARE @LuisWhatsAppBusinessAccountId NVARCHAR(100);
 DECLARE @LuisWhatsAppAccessToken NVARCHAR(500);
 DECLARE @LuisWhatsAppNumberId UNIQUEIDENTIFIER;
-SELECT TOP (1)
+SELECT
     @LuisWhatsAppNumberId = BusinessWhatsAppNumberId,
     @LuisWhatsAppAccessToken = WhatsAppAccessToken,
     @LuisWhatsAppBusinessAccountId = WhatsAppBusinessAccountId
 FROM dbo.BusinessWhatsAppNumbers
 WHERE WhatsAppPhoneNumberId = @LuisWhatsAppPhoneId
   AND BusinessId = @BusinessId
-  AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
-ORDER BY
-    CASE WHEN WhatsAppPhoneNumberId = @LuisWhatsAppPhoneId THEN 0 ELSE 1 END,
-    IsActive DESC,
-    CreatedAt DESC;
+  AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL;
 IF @LuisWhatsAppAccessToken IS NULL
 BEGIN
     PRINT N'SeedLuisPetitBarber: no se encontro token propio de Luis; omitiendo numero WhatsApp.';
