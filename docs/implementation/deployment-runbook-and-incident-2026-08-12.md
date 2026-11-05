@@ -112,6 +112,15 @@ $version = '0.2.0-rc4'
 7. Ejecutar las regresiones UI contra DEV y conservar el informe como evidencia
    del release.
 
+Los contactos iniciales de `SeedSystemAgentTemplatesAndInboundContacts.sql`
+se crean únicamente si no existen ni su identificador ni su clave de negocio y
+teléfono normalizado. Una publicación posterior conserva identidad, teléfono,
+agente, capacidades y estado de los contactos administrados. El alta usa las
+claves indexadas existentes en una sola sentencia con protección de rango;
+no reidentifica ni reactiva contactos para resolver una colisión. La regresión
+`InboundContactSeedTests` ejecuta el seed real repetidamente sobre un contacto
+editado e inactivo y sobre un teléfono ya registrado con otro identificador.
+
 ## Promoción segura a producción
 
 Producción se bloquea si falta cualquiera de estos puntos:
