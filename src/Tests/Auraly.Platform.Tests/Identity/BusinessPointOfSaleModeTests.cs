@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Catalog;
 using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Application.Common.Exceptions;
@@ -20,6 +21,8 @@ public sealed class BusinessPointOfSaleModeTests
     private readonly Mock<IBusinessRepository> _businesses = new();
     private readonly Mock<IReferenceOptionStore> _options = new(MockBehavior.Strict);
     private readonly Mock<IBusinessDefaultsProvisioner> _defaults = new();
+    private readonly Mock<IPosPricingSynchronizationWriter> _pricingSynchronization = new();
+    private readonly Mock<IPosSynchronizationOutboxDispatcher> _synchronization = new();
     private readonly Business _business = new()
     {
         BusinessId = Guid.NewGuid(), TenantId = Guid.NewGuid(), Name = "Sede",
@@ -27,7 +30,8 @@ public sealed class BusinessPointOfSaleModeTests
     };
     private BusinessAdminService Service => new(
         _work.Object, _defaults.Object, Mock.Of<ICorrelationIdProvider>(),
-        NullLogger<BusinessAdminService>.Instance, _options.Object, TimeProvider.System);
+        NullLogger<BusinessAdminService>.Instance, _options.Object, TimeProvider.System,
+        _pricingSynchronization.Object, _synchronization.Object);
 
     public BusinessPointOfSaleModeTests()
     {
@@ -50,6 +54,8 @@ public sealed class BusinessPointOfSaleModeTests
         _defaults.Verify(value => value.ReconcileRestaurantRolePermissionsAsync(
             _business.TenantId, default), Times.Never);
         _options.VerifyNoOtherCalls();
+        _pricingSynchronization.VerifyNoOtherCalls();
+        _synchronization.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -105,19 +111,25 @@ public sealed class BusinessPointOfSaleModeTests
         _work.Verify(work => work.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    [Fact]
-    public async Task Mode_change_validates_once_and_returns_the_saved_value_without_refetching()
+    [Theory]
+    [InlineData(PointOfSaleModes.DirectSale)]
+    [InlineData(PointOfSaleModes.Store)]
+    public async Task Mode_change_validates_once_and_returns_the_saved_value_without_refetching(string mode)
     {
-        SetActiveModes(PointOfSaleModes.DirectSale);
+        SetActiveModes(mode);
         var result = await Service.UpdateAsync(_business.TenantId, false, _business.BusinessId,
-            ChangeMode(PointOfSaleModes.DirectSale), default);
+            ChangeMode(mode), default);
 
-        Assert.Equal(PointOfSaleModes.DirectSale, result.PointOfSaleMode);
+        Assert.Equal(mode, result.PointOfSaleMode);
         _options.Verify(store => store.ListAsync(PointOfSaleModes.CatalogCode, default), Times.Once);
         _businesses.Verify(repo => repo.GetByIdAsync(_business.BusinessId), Times.Once);
         _work.Verify(work => work.SaveChangesAsync(default), Times.Once);
         _defaults.Verify(value => value.ReconcileRestaurantRolePermissionsAsync(
             _business.TenantId, default), Times.Once);
+        _pricingSynchronization.Verify(value => value.EnqueueBusinessesAsync(
+            It.Is<IReadOnlyCollection<Guid>>(ids => ids.Count == 1 && ids.Contains(_business.BusinessId)), default), Times.Once);
+        _synchronization.Verify(value => value.DispatchPendingAsync(
+            _business.TenantId, _business.BusinessId, default), Times.Once);
     }
 
     [Theory]
