@@ -33,8 +33,22 @@ public sealed partial class SqlSalesReportingStore
               a.RecognizedCostAmount,a.OriginalSaleDocumentId,a.CustomerId,a.MissingCostLines,a.ProjectedAt {chartColumns}
             INTO #Activity {ExplorerSource};
             """;
+        // Keep document dimensions separate from product/supplier detail. The
+        // same canonical measures preserve nullable cost and signed returns.
+        var documentColumns="a.SourceDocumentId,a.SourceDocumentType,a.OriginalSaleDocumentId,a.BusinessLocalDate,"+
+            "a.CustomerId,a.MovementType,a.ItemKind,a.BusinessLocalHour,a.SellerId,a.SellerName,a.WarehouseId,a.WarehouseName";
+        var documentSql=includeBreakdowns?$"""
+            WITH documents AS(SELECT {documentColumns},{ExplorerMeasures}
+              FROM #Activity a GROUP BY {documentColumns})
+            SELECT SourceDocumentId,SourceDocumentType,OriginalSaleDocumentId,BusinessLocalDate,
+              CustomerId,MovementType,ItemKind,BusinessLocalHour,SellerId,SellerName,WarehouseId,WarehouseName,
+              Quantity,GrossSales GrossAmount,Discounts DiscountAmount,NetUntaxed UntaxedAmount,Tax TaxAmount,
+              NetTotal TotalAmount,RecognizedCost RecognizedCostAmount,MissingCostLines
+            INTO #DocumentActivity FROM documents;
+            """:"";
+        var summaryActivity=includeBreakdowns?"#DocumentActivity":"#Activity";
         var activitySummary=HasDimensionFilter(filter)||includeBreakdowns;
-        var source=activitySummary?activitySql+"""
+        var source=activitySummary?activitySql+documentSql+$"""
             SELECT m.BusinessLocalDate,SUM(m.OfficialTotal) OfficialTotal INTO #Money
             FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
             WHERE @WholeDocuments=1 AND EXISTS(SELECT 1 FROM #Activity a WHERE a.SourceDocumentId=m.SourceDocumentId AND a.SourceDocumentType=m.SourceDocumentType)
@@ -57,7 +71,7 @@ public sealed partial class SqlSalesReportingStore
               CASE WHEN @WholeDocuments=1 THEN MAX(m.OfficialTotal) ELSE SUM(a.TotalAmount) END NetTotalSales,
               CASE WHEN COUNT_BIG(*)=COUNT_BIG(a.RecognizedCostAmount) THEN SUM(a.RecognizedCostAmount) END NetRecognizedCost,
               MAX(p.CreditSales) CreditSales,MAX(p.Collected) Collected,MAX(p.Refunded) Refunded
-            INTO #Summary FROM #Activity a LEFT JOIN #Money m ON m.BusinessLocalDate=a.BusinessLocalDate
+            INTO #Summary FROM {summaryActivity} a LEFT JOIN #Money m ON m.BusinessLocalDate=a.BusinessLocalDate
               LEFT JOIN #Payments p ON p.BusinessLocalDate=a.BusinessLocalDate GROUP BY a.BusinessLocalDate;
             """:"""
             SELECT BusinessLocalDate,DocumentCount,UnitsSold,UnitsReturned,GrossSales,Discounts,Returns,NetUntaxedSales,NetTax,NetTotalSales,
@@ -119,13 +133,15 @@ public sealed partial class SqlSalesReportingStore
     {
         // All panels share the same filtered activity and the same projection cut.
         const string source="FROM #Activity a WHERE a.BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo";
+        const string documents="FROM #DocumentActivity a WHERE a.BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo";
         string Breakdown(string dimension,int limit)
         {
             var (key,label)=ExplorerDimension(dimension);
-            return LineBreakdownSql(source,key,label.Replace("d.","a.",StringComparison.Ordinal),limit);
+            var documentDimension=dimension is SalesReportingDimensions.Hour or SalesReportingDimensions.Seller or SalesReportingDimensions.Warehouse;
+            return LineBreakdownSql(documentDimension?documents:source,key,label.Replace("d.","a.",StringComparison.Ordinal),limit);
         }
         return Breakdown(SalesReportingDimensions.Hour,25)+
-            (lineScope?"":PaymentBreakdownSql(source))+
+            (lineScope?"":PaymentBreakdownSql(documents))+
             Breakdown(SalesReportingDimensions.Seller,8)+Breakdown(SalesReportingDimensions.Product,8)+
             Breakdown(SalesReportingDimensions.Supplier,8)+Breakdown(SalesReportingDimensions.Warehouse,8);
     }

@@ -33,7 +33,10 @@ function CommercialSummaryContent(){
   const today=useQuery({queryKey:["sales-report-summary",scope,filter,"with-breakdowns"],enabled:Boolean(context.data)&&valid,queryFn:({signal})=>salesReportingApi.summary(filter,undefined,true,signal),refetchOnWindowFocus:false,retry:false});
   const refreshing=today.isFetching||context.isFetching;
   const refresh=async()=>{
+    const refreshAddress=window.location.href;
     const fresh=await context.refetch();
+    if(fresh.isError||useTenantContextStore.getState().selectedTenantId!==tenant||
+      useBusinessContextStore.getState().selectedBusinessId!==business||window.location.href!==refreshAddress)return;
     if(fresh.data&&(((!active||!url.has("from"))&&fresh.data.businessDate!==filter.from)||((!active||!url.has("to"))&&fresh.data.businessDate!==filter.to)))return;
     await today.refetch();
   };

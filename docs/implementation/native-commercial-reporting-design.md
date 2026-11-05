@@ -691,6 +691,10 @@ Las tarjetas y gráficas del resumen se derivan de la misma actividad filtrada.
 Impacto y proveedores materializan sólo sus campos financieros y claves de
 agrupación. Los identificadores de línea, impuestos desglosados y nombres de
 comprobante quedan en el explorador que realmente los necesita para el detalle.
+El resumen reutiliza una agrupación temporal por comprobante y sus dimensiones
+para tarjetas, horas, vendedores, bodegas y selección de pagos; producto y
+proveedor conservan la actividad por línea. Ambos niveles usan las medidas
+canónicas, incluidos costo desconocido, devoluciones y precisión de origen.
 En el recurso de aplicación existente, los lectores usan `IntentShared`,
 compatible con otros lectores y con `Shared` del processor. Sólo se conserva la
 exclusión ante `Exclusive` de una reconstrucción explícita, para no mostrar un
@@ -707,6 +711,11 @@ La cobertura evita exigir búsquedas de la fila completa por cada hecho del
 período y permite elegir el acceso por sede y fecha. No incorpora otra tabla,
 proyección ni índice paralelo; las categorías y otros detalles mantienen su
 alcance filtrado en la consulta canónica.
+El índice existente `IX_SalesReportDocuments_Business_Customer_Date` cubre
+tenant, nombre congelado, venta sin impuestos y filtros de vendedor, bodega,
+usuario, tipo de comprobante y mesa. Permite agrupar el universo
+histórico en orden de cliente, evitando el hash que derramaba a disco en la
+prueba de integración, sin agregar otro índice ni un consolidado nuevo.
 
 Los importes visibles de las cinco vistas comparten formato COP de hasta dos
 decimales. Ese formato no redondea datos persistidos, cálculos ni exportaciones.
