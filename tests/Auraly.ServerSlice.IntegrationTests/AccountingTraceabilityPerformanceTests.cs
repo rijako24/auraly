@@ -226,6 +226,7 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
             diagnostic.Parameters.AddWithValue("@From", new DateTime(2026, 10, 1));
             diagnostic.Parameters.AddWithValue("@To", new DateTime(2026, 10, 31));
             diagnostic.Parameters.AddWithValue("@DocumentType", DBNull.Value);
+            diagnostic.Parameters.AddWithValue("@VoucherTypeCode", DBNull.Value);
             diagnostic.Parameters.AddWithValue("@Status", DBNull.Value);
             diagnostic.Parameters.AddWithValue("@Search", (object?)failure.Search ?? DBNull.Value);
             diagnostic.Parameters.AddWithValue("@PartyId", (object?)failure.PartyId ?? DBNull.Value);

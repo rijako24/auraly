@@ -131,7 +131,8 @@ public sealed partial class GoodsReceiptProcessingTests
                     var samples = new List<double>();
                     for (var sample = 0; sample < 20; sample++)
                     {
-                        using var commands = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+                        using var activity = new System.Diagnostics.Activity("manual-support-preview").SetIdFormat(System.Diagnostics.ActivityIdFormat.W3C).Start();
+                        using var commands = new InventoryBalanceProcessingTests.CommandCounter(connection.Database, activity.TraceId);
                         var watch = System.Diagnostics.Stopwatch.StartNew();
                         var calculation = await accounting.PreviewFiscalVoucherAsync(identity, volume);
                         watch.Stop();

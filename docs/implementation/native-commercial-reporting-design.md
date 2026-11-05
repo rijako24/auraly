@@ -454,6 +454,10 @@ los atributos históricos faltantes, además del grano distinto de servicios
 `ServiceSalesReportLineFacts` aprobado expresamente; los índices requieren
 evidencia del camino medido. Financial traceability sigue siendo
 lectura de Accounting: no se copia al motor de ventas.
+El tipo de comprobante nuevo se valida contra su catálogo persistido. Tipo de
+operación y estado conservan su contrato de búsqueda: un valor sin coincidencias
+devuelve una página vacía. Los diagnósticos SQL reproducen también el parámetro
+de comprobante, sin ejecutar una consulta distinta de la medida.
 
 Todas las consultas de las cinco vistas comerciales, incluidos conteos,
 encabezados, filtros cruzados, niveles intermedios y detalle mínimo de líneas,
@@ -572,6 +576,10 @@ Los lectores se ejecutan en dos comandos como máximo: autorización y un lote
 SQL para página, agregados y detalle. El resumen agrupa sus resultsets en ese
 mismo límite. Un bloqueo de aplicación por sede fija el corte contra escrituras
 de Reporting; no bloquea el motor operacional ni rangos de otros tenants.
+El explorador materializa una vez los importes oficiales y el redondeo de los
+movimientos seleccionados; la página y el total reutilizan ese conjunto numérico.
+La carga descriptiva de la página compila las ramas aplicables y sigue después
+del límite. No vuelve a consultar los mismos movimientos para cada resultado.
 Las APIs anteriores de documentos/proveedor reutilizan ese lector. Sus listas
 y detalles exponen paginación, con límite 200; el proveedor sin atribución tiene
 identidad nullable. Los importes no atribuibles y márgenes no calculables son

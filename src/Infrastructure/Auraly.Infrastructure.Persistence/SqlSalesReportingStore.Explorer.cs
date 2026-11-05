@@ -168,6 +168,12 @@ public sealed partial class SqlSalesReportingStore
             INTO #Activity {source} OPTION(RECOMPILE);
             SELECT DISTINCT SourceDocumentId,SourceDocumentType INTO #MovementKeys FROM #Activity;
             CREATE UNIQUE CLUSTERED INDEX IX_MovementKeys ON #MovementKeys(SourceDocumentId,SourceDocumentType);
+            SELECT m.SourceDocumentId,m.SourceDocumentType,m.OriginalSaleDocumentId,m.RoundingAdjustmentAmount,
+              m.OfficialTotal,m.RestaurantTipAmount INTO #DocumentMoney
+            FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
+            WHERE @WholeDocuments=1 AND EXISTS(SELECT 1 FROM #MovementKeys selected
+              WHERE selected.SourceDocumentId=m.SourceDocumentId AND selected.SourceDocumentType=m.SourceDocumentType)
+            OPTION(RECOMPILE);
             SELECT a.GroupKey,MAX(a.GroupLabel) Label,{groupMeasures},
               MAX(CONVERT(nvarchar(36),a.FactId)) FactKey,MAX(a.ItemKind) ItemKind,
               MAX(a.DocumentNumber) DocumentNumber,MAX(a.DocumentType) DocumentType,MAX(a.OccurredAt) OccurredAt,MAX(a.MovementType) MovementType
@@ -189,12 +195,12 @@ public sealed partial class SqlSalesReportingStore
               AND metadata.TenantId=@TenantId AND metadata.BusinessId=@BusinessId
             LEFT JOIN(SELECT m.OriginalSaleDocumentId,SUM(m.RoundingAdjustmentAmount) RoundingAdjustment,
               SUM(m.OfficialTotal) OfficialTotal,SUM(m.RestaurantTipAmount) RestaurantTip
-              FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
-              WHERE @WholeDocuments=1 AND @DocumentGroups=1
+              FROM #DocumentMoney m
+              WHERE @DocumentGroups=1
                 AND EXISTS(SELECT 1 FROM #Page selected WHERE selected.GroupKey=CONVERT(nvarchar(36),m.OriginalSaleDocumentId))
               GROUP BY m.OriginalSaleDocumentId) money
               ON money.OriginalSaleDocumentId=COALESCE(@Document,TRY_CONVERT(uniqueidentifier,g.GroupKey))
-            ORDER BY {order},GroupKey;
+            ORDER BY {order},GroupKey OPTION(RECOMPILE);
             SELECT {ExplorerMeasures},(SELECT COUNT_BIG(*) FROM #Groups) TotalGroups,
               MAX(a.ProjectedAt) ProjectedThrough FROM #Activity a;
             SELECT a.TaxCode,a.TaxRate,SUM(a.UntaxedAmount),SUM(a.TaxAmount),SUM(a.TotalAmount)
@@ -208,9 +214,7 @@ public sealed partial class SqlSalesReportingStore
             SELECT CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.RoundingAdjustmentAmount),0) END,
               CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.RestaurantTipAmount),0) END,
               CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.OfficialTotal),0) END
-            FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
-            WHERE @WholeDocuments=1 AND EXISTS(SELECT 1 FROM #MovementKeys selected WHERE selected.SourceDocumentId=m.SourceDocumentId AND selected.SourceDocumentType=m.SourceDocumentType)
-            OPTION(RECOMPILE);
+            FROM #DocumentMoney m;
             SELECT {ExplorerMeasures} {ComparisonSource(source)} AND @HasComparison=1 OPTION(RECOMPILE);
             SELECT {DocumentSnapshotColumns} FROM reporting.SalesReportDocuments metadata
             WHERE metadata.DocumentId=@Document AND metadata.TenantId=@TenantId AND metadata.BusinessId=@BusinessId

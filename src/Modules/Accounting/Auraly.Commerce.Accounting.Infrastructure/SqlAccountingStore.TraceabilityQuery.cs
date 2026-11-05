@@ -2,11 +2,9 @@ namespace Auraly.Commerce.Accounting.Infrastructure;
 
 public sealed partial class SqlAccountingStore
 {
+    // Operation/status are search filters with an existing empty-page contract for
+    // unmatched values; the new voucher selector validates its persisted catalog.
     private const string TraceabilityFilterValidationSql="""
-        IF @DocumentType IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.Options WHERE CatalogCode=N'accounting-document-type' AND Code=@DocumentType AND IsActive=1)
-          THROW 51799,N'El tipo de operación no es válido.',1;
-        IF @Status IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.Options WHERE CatalogCode=N'accounting-document-status' AND Code=@Status AND IsActive=1)
-          THROW 51799,N'El estado no es válido.',1;
         IF @VoucherTypeCode IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.Options WHERE CatalogCode=N'accounting-voucher-type' AND Code=@VoucherTypeCode AND IsActive=1)
           THROW 51799,N'El tipo de comprobante no es válido.',1;
         """;

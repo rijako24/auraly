@@ -17,7 +17,13 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
-[Collection(ServerSliceCollection.Name)]
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class ServiceInvoiceReportingCollection : ICollectionFixture<ServerSliceFixture>
+{
+    public const string Name = "Service invoice reporting";
+}
+
+[Collection(ServiceInvoiceReportingCollection.Name)]
 public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
 {
     [Fact]

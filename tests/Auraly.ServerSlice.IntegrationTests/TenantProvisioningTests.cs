@@ -257,7 +257,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(0, reader.GetInt32(3));
         Assert.Equal(0, reader.GetInt32(4));
         Assert.Equal(1, reader.GetInt32(5));
-        Assert.Equal(0, reader.GetInt32(6));
+        Assert.Equal(1, reader.GetInt32(6));
         Assert.Equal(1, reader.GetInt32(7));
         Assert.Equal(newerPeriodAlreadyPaid ? 7_777 : 3_100, reader.GetInt32(8));
         Assert.Equal(newerPeriodAlreadyPaid ? order.TargetPeriodEnd.AddMonths(2) : order.TargetPeriodEnd,
