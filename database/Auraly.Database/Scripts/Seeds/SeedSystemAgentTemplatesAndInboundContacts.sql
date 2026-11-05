@@ -818,53 +818,25 @@ INSERT INTO @Contacts VALUES
 
 
 
-MERGE dbo.BusinessInboundContacts AS target
+-- Initial contacts are insert-only: an edited phone or inactive contact is
+-- administered data, not a reason to recreate, rekey or reactivate its row.
+INSERT dbo.BusinessInboundContacts
+    (BusinessInboundContactId, BusinessId, [Type], [Key], [Name], [Role], PhoneNumber, PhoneNormalized,
+     InboundAgentId, CapabilitiesJson, IsActive, CreatedAt)
+SELECT c.BusinessInboundContactId, c.BusinessId, c.[Type], c.[Key], c.[Name], c.[Role], c.PhoneNumber,
+       c.PhoneNormalized, c.InboundAgentId, c.CapabilitiesJson, 1, GETUTCDATE()
+FROM @Contacts c
+WHERE EXISTS (SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId = c.BusinessId)
+  AND EXISTS (SELECT 1 FROM dbo.Agents a WHERE a.AgentId = c.InboundAgentId AND a.BusinessId = c.BusinessId)
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.BusinessInboundContacts existing WITH (UPDLOCK, HOLDLOCK)
+      WHERE existing.BusinessInboundContactId = c.BusinessInboundContactId)
+  AND NOT EXISTS (
+      SELECT 1 FROM dbo.BusinessInboundContacts existing WITH (UPDLOCK, HOLDLOCK)
+      WHERE existing.BusinessId = c.BusinessId AND existing.PhoneNormalized = c.PhoneNormalized);
 
-USING (
-
-    SELECT *
-
-    FROM @Contacts c
-
-    WHERE EXISTS (SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId = c.BusinessId)
-
-      AND EXISTS (SELECT 1 FROM dbo.Agents a WHERE a.AgentId = c.InboundAgentId AND a.BusinessId = c.BusinessId)
-
-) AS source
-
-ON target.BusinessId = source.BusinessId AND target.PhoneNormalized = source.PhoneNormalized
-
-WHEN MATCHED THEN
-
-    UPDATE SET BusinessInboundContactId = source.BusinessInboundContactId,
-
-               [Type] = source.[Type],
-
-               [Key] = source.[Key],
-
-               [Name] = source.[Name],
-
-               [Role] = source.[Role],
-
-               PhoneNumber = source.PhoneNumber,
-
-               InboundAgentId = source.InboundAgentId,
-
-               CapabilitiesJson = source.CapabilitiesJson,
-
-               IsActive = 1,
-
-               UpdatedAt = GETUTCDATE()
-
-WHEN NOT MATCHED THEN
-
-    INSERT (BusinessInboundContactId, BusinessId, [Type], [Key], [Name], [Role], PhoneNumber, PhoneNormalized,
-
-            InboundAgentId, CapabilitiesJson, IsActive, CreatedAt)
-
-    VALUES (source.BusinessInboundContactId, source.BusinessId, source.[Type], source.[Key], source.[Name], source.[Role], source.PhoneNumber, source.PhoneNormalized,
-
-            source.InboundAgentId, source.CapabilitiesJson, 1, GETUTCDATE());
+PRINT CONCAT(N'SeedSystemAgentTemplatesAndInboundContacts: ', @@ROWCOUNT,
+             N' contactos iniciales creados; existentes conservados.');
 
 
 
