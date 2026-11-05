@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Xml.Linq;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
@@ -128,6 +130,7 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
         Assert.Equal(first.Totals,next.Totals);Assert.DoesNotContain(next.Items,row=>first.Items.Any(other=>other.Key==row.Key));
         var supplier=await reports.ExploreAsync(user,new(month,GroupBy:"supplier"));var supplierId=Guid.Parse(supplier.Items[0].Key);
         var failures=new List<string>();
+        var failedPlans=new List<(string Name,SqlCommand Command)>();
         await Measure("Resumen diario",async()=>{await reports.GetTodayAsync(user);},300);
         var summary=await reports.GetSummaryAsync(user,month,null,null,includeBreakdowns:true);
         Assert.NotNull(summary.Breakdowns);
@@ -158,11 +161,40 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
             Assert.Equal(first.Totals,concurrent[0].Totals);Assert.Equal(first.Totals,concurrent[1].Totals);
             Assert.Equal(portfolio.Totals,concurrent[2].Totals);
         }
+        // Capture plans only after every measured read has finished. This keeps
+        // diagnostics out of the latency samples and exposes runner-specific plans.
+        foreach(var (name,command) in failedPlans)
+        {
+            using(command)
+            {
+                command.Connection=connection;command.CommandTimeout=120;
+                command.CommandText="SET STATISTICS XML ON;\n"+command.CommandText;
+                try
+                {
+                    await using var plans=await command.ExecuteReaderAsync();
+                    do
+                    {
+                        while(await plans.ReadAsync())
+                            if(plans.FieldCount==1&&plans.GetName(0).Contains("Showplan",StringComparison.OrdinalIgnoreCase))
+                                WritePlan(name,XDocument.Parse(plans.GetString(0)));
+                    }while(await plans.NextResultAsync());
+                }
+                catch(SqlException error){output.WriteLine("{0}: diagnóstico SQL no disponible: {1}",name,error.Message);}
+            }
+        }
         Assert.True(failures.Count==0,string.Join(Environment.NewLine,failures));
 
         async Task Measure(string name,Func<Task> action,int budget)
         {
-            for(var warmup=0;warmup<3;warmup++)await action();
+            SqlCommand? captured=null;
+            using(var capture=new InventoryBalanceProcessingTests.CommandCounter(connection.Database,beforeExecute:command=>
+            {
+                if(!command.Parameters.Contains("@ReportingLockMode"))return;
+                captured?.Dispose();captured=new SqlCommand(command.CommandText);
+                foreach(SqlParameter parameter in command.Parameters)
+                    captured.Parameters.Add((SqlParameter)((ICloneable)parameter).Clone());
+            }))
+                for(var warmup=0;warmup<3;warmup++)await action();
             var samples=new List<double>();
             for(var iteration=0;iteration<15;iteration++)
             {
@@ -172,7 +204,36 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
             }
             samples.Sort();var p95=samples[(int)Math.Ceiling(samples.Count*.95)-1];
             output.WriteLine("{0}: p50={1:F1} ms, p95={2:F1} ms, 2 SQL, presupuesto={3} ms; 100k ventas + 5k devoluciones / 1.005m líneas / 24 meses, rango de 31 días.",name,samples[samples.Count/2],p95,budget);
-            if(p95>=budget)failures.Add($"{name}: p95 {p95:F1} ms supera {budget} ms.");
+            if(p95>=budget)
+            {
+                failures.Add($"{name}: p95 {p95:F1} ms supera {budget} ms.");
+                Assert.NotNull(captured);failedPlans.Add((name,captured));
+            }
+            else captured?.Dispose();
         }
+
+        void WritePlan(string name,XDocument plan)
+        {
+            XNamespace ns="http://schemas.microsoft.com/sqlserver/2004/07/showplan";
+            var timing=plan.Descendants(ns+"QueryTimeStats").FirstOrDefault();
+            if(timing is null||Number(timing,"ElapsedTime")<50)return;
+            var text=plan.Descendants(ns+"StmtSimple").FirstOrDefault()?.Attribute("StatementText")?.Value??"";
+            output.WriteLine("PLAN {0}: elapsed={1} ms, cpu={2} ms: {3}",name,Number(timing,"ElapsedTime"),Number(timing,"CpuTime"),text[..Math.Min(160,text.Length)]);
+            foreach(var operation in plan.Descendants(ns+"RelOp"))
+            {
+                var index=operation.Element(ns+"IndexScan")?.Element(ns+"Object");
+                var counters=operation.Elements(ns+"RunTimeInformation").Elements(ns+"RunTimeCountersPerThread").ToArray();
+                var rows=counters.Sum(value=>Number(value,"ActualRowsRead"));
+                var executions=counters.Sum(value=>Number(value,"ActualExecutions"));
+                if(index is not null&&(rows>=100000||executions>=10000))
+                    output.WriteLine("  {0}/{1} {2}.{3}: rowsRead={4}, executions={5}, logicalReads={6}",
+                        operation.Attribute("PhysicalOp")?.Value,operation.Attribute("LogicalOp")?.Value,
+                        index.Attribute("Table")?.Value,index.Attribute("Index")?.Value,rows,executions,
+                        counters.Sum(value=>Number(value,"ActualLogicalReads")));
+            }
+            var memory=plan.Descendants(ns+"MemoryGrantInfo").FirstOrDefault();
+            if(memory is not null)output.WriteLine("  {0}",memory.ToString(SaveOptions.DisableFormatting));
+        }
+        static double Number(XElement value,string name)=>double.Parse(value.Attribute(name)?.Value??"0",CultureInfo.InvariantCulture);
     }
 }

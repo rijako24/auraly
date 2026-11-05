@@ -709,6 +709,9 @@ Los importes visibles de las cinco vistas comparten formato COP de hasta dos
 decimales. Ese formato no redondea datos persistidos, cálculos ni exportaciones.
 La regresión modifica el costo en `0,0001` y exige la misma utilidad exacta
 en resumen, ventas, productos, impacto comercial y proveedores.
+Si el benchmark incumple un presupuesto, obtiene sus planes reales después
+de terminar todas las mediciones; el diagnóstico no corre en paralelo con
+las muestras ni cambia sus límites.
 
 ### Evidencia local del 2026-11-04
 
