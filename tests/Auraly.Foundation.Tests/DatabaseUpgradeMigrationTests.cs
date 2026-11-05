@@ -262,7 +262,8 @@ public sealed class DatabaseUpgradeMigrationTests
             "SeedDigitalShop.sql",
             "SeedAndinaSantander.sql",
             "SeedAndinaProductCategories.sql",
-            "SeedMedidental.sql"
+            "SeedMedidental.sql",
+            "SeedCJWhatsAppNumber.sql"
         };
 
         foreach (var seed in demoSeeds)
@@ -276,7 +277,6 @@ public sealed class DatabaseUpgradeMigrationTests
 
         foreach (var migration in new[]
                  {
-                     "MigrateDigitalShopWhatsAppToCJ.sql",
                      "RenameDigitalShopAgentCatalina.sql"
                  })
         {

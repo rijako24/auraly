@@ -121,6 +121,17 @@ no reidentifica ni reactiva contactos para resolver una colisión. La regresión
 `InboundContactSeedTests` ejecuta el seed real repetidamente sobre un contacto
 editado e inactivo y sobre un teléfono ya registrado con otro identificador.
 
+Los traslados históricos de canales Luis → CJ → Medidental → Digital Shop → CJ
+se retiraron de `PostDeployment.sql`: no se vuelven a ejecutar al publicar.
+Sus versiones aplicadas permanecen en el historial de Git. La configuración
+vigente pertenece a la administración de canales, incluidos propietario,
+identificadores Meta, token y estado activo/inactivo. `SeedCJWhatsAppNumber.sql`
+solo da de alta la configuración inicial de DEV cuando no hay canal para CJ
+ni están registrados su ID inicial o su identificador Meta. Un canal sin token
+se crea inactivo; las publicaciones posteriores no lo reactivan, trasladan ni
+sobrescriben sus credenciales. Las migraciones puntuales de configuración no
+deben permanecer en el bloque recurrente después de aplicarse.
+
 ## Promoción segura a producción
 
 Producción se bloquea si falta cualquiera de estos puntos:

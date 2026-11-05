@@ -123,13 +123,9 @@ GO
 GO
 :r .\Seeds\SeedCJPaymentApprovalAgent.sql
 GO
-:r .\Migrations\MigrateLuisWhatsAppToCJ.sql
-GO
-:r .\Migrations\MigrateCJWhatsAppToMedidental.sql
-GO
-:r .\Migrations\MigrateMedidentalWhatsAppToDigitalShop.sql
-GO
-:r .\Migrations\MigrateDigitalShopWhatsAppToCJ.sql
+-- Historical channel transfers are retired. Publishing must not replay them
+-- over channel ownership and credentials subsequently managed in the app.
+:r .\Seeds\SeedCJWhatsAppNumber.sql
 GO
 :r .\Seeds\SeedAlcidesSocarrasDemo.sql
 GO

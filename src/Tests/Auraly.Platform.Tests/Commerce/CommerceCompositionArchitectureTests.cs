@@ -32,28 +32,31 @@ public sealed class CommerceCompositionArchitectureTests
     }
 
     [Fact]
-    public void Cj_seed_provisions_one_active_subscription_and_the_final_channel_route()
+    public void Cj_seed_provisions_one_active_subscription_and_only_initial_channel_configuration()
     {
         var root = FindSolutionRoot();
         var seed = Read(root, "database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql");
         var postDeployment = Read(root, "database/Auraly.Database/Scripts/PostDeployment.sql");
-        var finalRoute = Read(root,
-            "database/Auraly.Database/Scripts/Migrations/MigrateDigitalShopWhatsAppToCJ.sql");
+        var initialChannel = Read(root,
+            "database/Auraly.Database/Scripts/Seeds/SeedCJWhatsAppNumber.sql");
 
         seed.Should().Contain("MERGE dbo.BusinessSubscriptions")
             .And.Contain("INSERT INTO dbo.BusinessUsagePeriods")
             .And.Contain("debe existir exactamente una suscripcion activa");
-        postDeployment.IndexOf("MigrateDigitalShopWhatsAppToCJ.sql", StringComparison.Ordinal)
+        postDeployment.IndexOf("SeedCJWhatsAppNumber.sql", StringComparison.Ordinal)
             .Should().BeGreaterThan(
-                postDeployment.IndexOf("MigrateMedidentalWhatsAppToDigitalShop.sql", StringComparison.Ordinal));
-        finalRoute.Should().Contain("SET BusinessId = @CJBusinessId")
-            .And.Contain("AgentId = @CJAgentId")
+                postDeployment.IndexOf("SeedCJDistribuciones.sql", StringComparison.Ordinal));
+        foreach (var retired in new[] { "MigrateLuisWhatsAppToCJ.sql", "MigrateCJWhatsAppToMedidental.sql",
+                     "MigrateMedidentalWhatsAppToDigitalShop.sql", "MigrateDigitalShopWhatsAppToCJ.sql" })
+            postDeployment.Should().NotContain(retired, "historical transfers must not replay over administrative changes");
+        initialChannel.Should().Contain("INSERT dbo.BusinessWhatsAppNumbers")
             .And.Contain("N'573117323198'")
             .And.Contain("N'1234810033044432'")
             .And.Contain("N'4841200399440958'")
             .And.Contain("$(CJWhatsAppAccessToken)")
-            .And.Contain("canal inactivo hasta cargar un access token valido")
-            .And.Contain("IntegrationChannelWarehouses");
+            .And.Contain("inactivo hasta cargar un access token valido")
+            .And.Contain("IntegrationChannelWarehouses")
+            .And.NotContain("UPDATE dbo.BusinessWhatsAppNumbers");
     }
 
     [Fact]
