@@ -76,7 +76,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             P("@RestaurantAccountId", restaurantAccountId),
             P("@RestaurantDirectAccess", restaurantDirectAccess),
             P("@ProductId", exactProductId),
-            P("@CategoryId", categoryId)
+            P("@CategoryId", categoryId ?? request.CategoryId),
+            P("@FamilyProductId", request.FamilyProductId)
         ]);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -102,7 +103,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 reader.GetBoolean(11), reader.GetBoolean(12), "Base",
                 ProductCategoryId: reader.IsDBNull(14) ? null : reader.GetGuid(14),
                 CategoryName: reader.IsDBNull(13) ? null : reader.GetString(13),
-                ImageUrl: reader.IsDBNull(20) ? null : reader.GetString(20));
+                ImageUrl: reader.IsDBNull(20) ? null : reader.GetString(20),
+                Presentation: reader.IsDBNull(21) ? null : JsonSerializer.Deserialize<ProductPresentation>(reader.GetString(21)));
             candidates.Add(new(product, new(
                 product.ProductCode, product.Name, product.BaseUnitCode, product.TaxCode,
                 product.TaxRate, product.UnitPrice, product.CurrencyCode,

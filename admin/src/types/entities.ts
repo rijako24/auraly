@@ -52,7 +52,7 @@ export interface Business {
   website: string;
   timeZone: string;
   sharesProductPrices: boolean;
-  pointOfSaleMode: "DirectSale" | "RestaurantBar";
+  pointOfSaleMode: "DirectSale" | "Store" | "RestaurantBar";
   restaurantRequireWaiterCredential: boolean;
   restaurantRestrictTableToWaiter: boolean;
   restaurantSuggestedTipPercent: number;

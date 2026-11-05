@@ -62,6 +62,8 @@ export function ProductOverview({ product }: { product: Product }) {
         {["Area", "Linea", "Grupo", "Subgrupo"].map((label, index) => <Summary key={label} label={label} value={classification[index]?.name ?? "Sin asignar"} />)}
       </div>
       <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <Summary label="Color" value={merch?.productColorName ?? "Sin especificar"} />
+        <Summary label="Talla" value={merch?.productSizeName ?? "Sin especificar"} />
         <Summary label="Marca" value={brand?.name ?? "Sin marca"} />
         <Summary label="Unidad en la que se vende" value={unit ? `${unit.name} - ${unit.symbol}` : merch?.baseUnitCode ?? "Sin unidad"} />
         <Summary label="Peso del producto" value={merch?.unitGrossWeightKg ? `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 6 }).format(merch.unitGrossWeightKg)} kg` : "Sin registrar"} />

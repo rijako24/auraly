@@ -1,3 +1,5 @@
+using Auraly.Contracts.Catalog;
+
 namespace Auraly.Contracts.Sales;
 
 public sealed record OnlineSalesDraftContext(
@@ -63,7 +65,8 @@ public sealed record SearchOnlineSalesRequest(
     int Skip = 0,
     int Take = 50,
     Guid? CustomerId = null,
-    bool PublicPriceOnly = false);
+    bool PublicPriceOnly = false,
+    Guid? CategoryId = null, Guid? FamilyProductId = null);
 
 public sealed record OnlineSalesProduct(
     Guid ProductId,
@@ -82,7 +85,8 @@ public sealed record OnlineSalesProduct(
     decimal PromotionDiscount = 0,
     Guid? ProductCategoryId = null,
     string? CategoryName = null,
-    string? ImageUrl = null);
+    string? ImageUrl = null,
+    ProductPresentation? Presentation = null);
 
 public sealed record OnlineSalesProductPage(
     IReadOnlyList<OnlineSalesProduct> Items,

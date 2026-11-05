@@ -12,6 +12,8 @@ import { Switch } from "@/components/ui/switch";
 import { MasterListPanel } from "@/components/masters/master-list-panel";
 import { productMerchandisingApi, type ProductBrand, type ProductUnit } from "@/services/api/product-merchandising";
 
+import { ProductVariantMasters } from "./product-variant-masters";
+
 type BrandEditor = { item: ProductBrand | null; name: string; active: boolean };
 type UnitEditor = { item: ProductUnit | null; code: string; name: string; symbol: string; active: boolean };
 
@@ -27,6 +29,7 @@ export function ProductCommercialMasters({ canManage }: { canManage: boolean }) 
     return unit!.item ? productMerchandisingApi.saveUnit(unit!.item.productUnitId, request) : productMerchandisingApi.createUnit(request);
   }, onSuccess: async () => { await client.invalidateQueries({ queryKey: ["product-units"] }); toast.success("Unidad de venta guardada"); setUnit(null); }, onError: (error) => toast.error(error instanceof Error ? error.message : "No fue posible guardar la unidad") });
   return <div className="grid gap-5 xl:grid-cols-2">
+    <div className="xl:col-span-2"><ProductVariantMasters /></div>
     <MasterListPanel title="Marcas" description="Fabricante o marca comercial del producto." createLabel="Nueva marca" rows={(brands.data ?? []).map((item) => ({ id: item.productBrandId, name: item.name, active: item.isActive }))} canManage={canManage} icon={<Tags className="h-5 w-5" />} onCreate={() => setBrand({ item: null, name: "", active: true })} onEdit={(id) => { const item = brands.data!.find((candidate) => candidate.productBrandId === id)!; setBrand({ item, name: item.name, active: item.isActive }); }} />
     <MasterListPanel title="Unidades en que se vende" description="Expresa la cantidad del producto: unidad, kg, metro o litro." createLabel="Nueva unidad" rows={(units.data ?? []).map((item) => ({ id: item.productUnitId, name: item.name, detail: `${item.code} · ${item.symbol}`, active: item.isActive }))} canManage={canManage} icon={<Ruler className="h-5 w-5" />} onCreate={() => setUnit({ item: null, code: "", name: "", symbol: "", active: true })} onEdit={(id) => { const item = units.data!.find((candidate) => candidate.productUnitId === id)!; setUnit({ item, code: item.code, name: item.name, symbol: item.symbol, active: item.isActive }); }} />
     <Dialog open={!!brand} onOpenChange={(open) => !open && setBrand(null)}><DialogContent><DialogHeader><DialogTitle>{brand?.item ? "Editar" : "Nueva"} marca</DialogTitle></DialogHeader><div className="space-y-2"><Label htmlFor="brand-name">Nombre</Label><Input id="brand-name" autoFocus value={brand?.name ?? ""} onChange={(event) => brand && setBrand({ ...brand, name: event.target.value })} /></div><Status active={brand?.active ?? true} onChange={(active) => brand && setBrand({ ...brand, active })} label="Marca activa" /><DialogFooter><Button variant="outline" onClick={() => setBrand(null)}>Cancelar</Button><Button disabled={!brand?.name.trim() || saveBrand.isPending} onClick={() => saveBrand.mutate()}>Guardar</Button></DialogFooter></DialogContent></Dialog>

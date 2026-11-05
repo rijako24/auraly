@@ -34,6 +34,8 @@ import { useCatalogDraft } from "@/hooks/use-catalog-draft";
 import { catalogDraftKey } from "@/lib/catalog-draft-store";
 import { genericProductCatalogPrice, setGenericProductMode, validateProductCreateFields } from "@/components/products/product-generic-policy";
 
+import { ProductVariantFields } from "./product-variant-fields";
+
 const none = "__none__";
 const sections = [
   ["identity", "Identidad", PackagePlus],
@@ -49,6 +51,7 @@ const sections = [
 interface Props { open: boolean; onOpenChange: (open: boolean) => void; onCreated?: (productId: string) => void }
 
 interface CreateState {
+  productColorId: string | null; productSizeId: string | null;
   compositionKind: string;
   reference: string; name: string; description: string;
   productCategoryId: string | null; productBrandId: string | null; baseUnitCode: string;
@@ -73,6 +76,7 @@ interface ProductCreateDraft {
 }
 
 const initialState: CreateState = {
+  productColorId: null, productSizeId: null,
   compositionKind: "Ingredients",
   reference: "", name: "", description: "", productCategoryId: null,
   productBrandId: null, baseUnitCode: "EA", unitGrossWeightKg: null, isGenericProduct: false, isIngredient: false, manageInventory: true, allowsFractionalSale: false,
@@ -206,6 +210,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         scale: form.isWeighable ? { scaleCode: form.scaleCode.trim(), barcodePrefix: form.scalePrefix.trim(),
           embeddedValueType: "Weight", valueStart: 0, valueLength: 5, decimalPlaces: form.scaleDecimals } : null,
         productCategoryId: form.productCategoryId, productBrandId: form.productBrandId,
+        variant: { productColorId: form.productColorId, productSizeId: form.productSizeId },
         allowsFractionalSale: form.allowsFractionalSale,
         link: null,
         linkedProducts: form.isGenericProduct ? [] : linkedProducts.map(({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor }) =>
@@ -303,6 +308,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
               </Section>
               <Section id="new-classification" icon={Tags} title="Clasificación, marca y unidad" description="Auraly conserva la ruta completa y la unidad real en la que se vende.">
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{["Área", "Línea", "Grupo", "Subgrupo"].map((label, depth) => { const parent = depth === 0 ? null : chain[depth - 1]?.productCategoryId ?? null; const items = (categories.data ?? []).filter((item) => item.depth === depth && item.parentProductCategoryId === parent); return <Field key={label} label={label}><Select value={chain[depth]?.productCategoryId ?? none} disabled={depth > 0 && !parent} onValueChange={(value) => setCategory(depth, value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={none}>Sin {label.toLowerCase()}</SelectItem>{items.map((item) => <SelectItem key={item.productCategoryId} value={item.productCategoryId}>{item.name}</SelectItem>)}</SelectContent></Select></Field>; })}</div>
+                <ProductVariantFields value={form} onChange={value => setForm({ ...form, ...value })} />
                 <div className="mt-4 space-y-4"><Field label="Marca"><Select value={form.productBrandId ?? none} onValueChange={(value) => setForm({ ...form, productBrandId: value === none ? null : value })}><SelectTrigger><SelectValue placeholder="Sin marca" /></SelectTrigger><SelectContent><SelectItem value={none}>Sin marca</SelectItem>{(brands.data ?? []).map((item) => <SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>)}</SelectContent></Select></Field><div className="grid gap-4 md:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]"><Field label="Unidad en la que se vende" error={fieldErrors.baseUnitCode}><Select value={form.baseUnitCode} onValueChange={(value) => setForm({ ...form, baseUnitCode: value })}><SelectTrigger aria-invalid={Boolean(fieldErrors.baseUnitCode)}><SelectValue /></SelectTrigger><SelectContent>{(units.data ?? []).map((item) => <SelectItem key={item.productUnitId} value={item.code}>{item.name} · {item.symbol}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">Describe qué cantidad se vende; la regla de fracciones pertenece al producto.</p></Field><Field label="Peso del producto (kg)"><Input aria-label="Peso del producto en kilogramos" type="number" inputMode="decimal" min="0.000001" step="0.000001" value={form.unitGrossWeightKg ?? ""} onChange={(event) => setForm({ ...form, unitGrossWeightKg: event.target.value === "" ? null : Number(event.target.value) })} /><p className="text-xs text-muted-foreground">Peso bruto de una unidad base, siempre en kg; se usa para prorratear fletes.</p></Field></div></div>
               </Section>
               <Section id="new-sale" icon={Barcode} title="Captura, cantidad y balanza" description="Varios códigos de barras y reglas de cantidad en un mismo lugar.">

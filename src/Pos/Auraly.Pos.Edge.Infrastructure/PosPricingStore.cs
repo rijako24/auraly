@@ -15,6 +15,27 @@ public sealed record PosPriceLineRequest(
 
 public sealed partial class PosCatalogStore
 {
+    public async Task<string> PointOfSaleModeAsync(CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT PointOfSaleMode FROM PosPricingConfiguration WHERE ConfigurationId=1;";
+        return (string?)await command.ExecuteScalarAsync(ct) ?? throw new InvalidDataException("Falta la configuración de presentación del POS.");
+    }
+
+    public async Task<IReadOnlyList<PosCatalogCategory>> CategoriesAsync(CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT ProductCategoryId,MAX(CategoryName) FROM PosCatalogProducts WHERE IsActive=1 AND IsIngredient=0 AND ProductCategoryId IS NOT NULL AND CategoryName IS NOT NULL GROUP BY ProductCategoryId ORDER BY MAX(CategoryName),ProductCategoryId;";
+        var result = new List<PosCatalogCategory>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct)) result.Add(new(Guid.Parse(reader.GetString(0)), reader.GetString(1)));
+        return result;
+    }
+
     public async Task<PosPricingSnapshot> ReadPricingSnapshotAsync(
         CancellationToken ct = default) =>
         await ReadPricingSnapshotAsync(includeCustomers: true, ct);
@@ -338,9 +359,9 @@ public sealed partial class PosCatalogStore
             DELETE FROM PosWithholdingRules;
             DELETE FROM PosPromotions;
             UPDATE PosPricingConfiguration
-            SET AllowPromotionChannelCombination=@AllowCombination
+            SET AllowPromotionChannelCombination=@AllowCombination,PointOfSaleMode=COALESCE(@Mode,PointOfSaleMode)
             WHERE ConfigurationId=1;
-            """, [Q("@AllowCombination", snapshot.AllowPromotionChannelCombination ? 1 : 0)], ct);
+            """, [Q("@AllowCombination", snapshot.AllowPromotionChannelCombination ? 1 : 0), Q("@Mode", snapshot.PointOfSaleMode)], ct);
         foreach (var channel in snapshot.PriceChannels)
             await ExecutePricingAsync(connection, transaction, """
                 INSERT INTO PosPriceChannels(PriceChannelId,Code,Name,Strategy,Value)
@@ -750,6 +771,15 @@ public sealed partial class PosCatalogStore
             DROP TABLE IF EXISTS PosPriceChannelItems;
             """;
         await command.ExecuteNonQueryAsync(ct);
+        command.CommandText = "PRAGMA table_info(PosPricingConfiguration);";
+        var hasMode = false;
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct)) hasMode |= reader.GetString(1) == "PointOfSaleMode";
+        if (!hasMode)
+        {
+            command.CommandText = "ALTER TABLE PosPricingConfiguration ADD COLUMN PointOfSaleMode TEXT NOT NULL DEFAULT 'DirectSale';";
+            await command.ExecuteNonQueryAsync(ct);
+        }
         command.CommandText = "PRAGMA table_info(PosPricingCustomers);";
         var hasBillingColumn = false;
         var hasWithholdingColumn = false;

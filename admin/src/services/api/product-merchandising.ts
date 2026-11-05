@@ -1,5 +1,9 @@
 import { apiClient } from "./client";
 
+export interface ProductVariantOption { id: string; code: string; name: string; isActive: boolean; sortOrder: number }
+export interface ProductVariantInput { productColorId: string | null; productSizeId: string | null }
+export type ProductVariantAttribute = "colors" | "sizes";
+
 export interface ProductBrand { productBrandId: string; name: string; isActive: boolean }
 export interface ProductUnit { productUnitId: string; code: string; name: string; symbol: string; allowsFractionalQuantity: boolean; decimalPlaces: number; isActive: boolean }
 export interface ProductBarcode { value: string; isPrimary: boolean }
@@ -10,6 +14,10 @@ export interface ProductMerchandising {
   productId: string;
   productCategoryId: string | null;
   productBrandId: string | null;
+  productColorId?: string | null;
+  productColorName?: string | null;
+  productSizeId?: string | null;
+  productSizeName?: string | null;
   baseUnitCode: string;
   isGenericProduct: boolean;
   manageInventory: boolean;
@@ -23,11 +31,16 @@ export interface ProductMerchandising {
   conversionMaximumLossPercent: number | null;
 }
 export type SaveProductMerchandising = Omit<ProductMerchandising, "productId" | "link" | "linkedProducts"> & {
+  variant?: ProductVariantInput;
   link: null | Omit<ProductLink, "parentProductCode" | "parentProductName">;
   linkedProducts: Array<Omit<LinkedProduct, "childProductCode" | "childProductName">>;
 };
 
 export const productMerchandisingApi = {
+  variantOptions: (attribute: ProductVariantAttribute) => apiClient.get<ProductVariantOption[]>(`/commerce/v1/product-${attribute}`, { includeInactive: true }),
+  saveVariantOption: (attribute: ProductVariantAttribute, id: string | null, value: Omit<ProductVariantOption, "id">) => id
+    ? apiClient.put<ProductVariantOption>(`/commerce/v1/product-${attribute}/${id}`, value)
+    : apiClient.post<ProductVariantOption>(`/commerce/v1/product-${attribute}`, value),
   get: (productId: string) => apiClient.get<ProductMerchandising>(`/commerce/v1/products/${productId}/merchandising`),
   save: (productId: string, request: SaveProductMerchandising) => apiClient.put<ProductMerchandising>(`/commerce/v1/products/${productId}/merchandising`, request),
   brands: () => apiClient.get<ProductBrand[]>("/commerce/v1/product-brands"),

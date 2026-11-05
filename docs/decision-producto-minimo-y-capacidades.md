@@ -76,6 +76,22 @@ RowVersion
 `Description`, categoría y marca pueden quedar vacíos. No bloquean la creación
 rápida ni la venta.
 
+Color y talla son clasificaciones opcionales del producto (`ProductColorId`,
+`ProductSizeId`) desde 2026-11-05. Sus catálogos administrables pertenecen a
+`catalog.ProductColors` y `catalog.ProductSizes`, por tenant, con código estable,
+nombre, activación y orden. Las FKs compuestas impiden cruzar empresas. Los campos
+se capturan en Crear/Editar y se muestran en Ver; el nombre permanece manual.
+Una opción inactiva se conserva en una asignación existente, pero no puede
+asignarse a otro producto. No se infieren valores desde nombres históricos.
+
+`Variant` en los comandos de producto y merchandising distingue clientes anteriores
+(omitir el objeto conserva la asignación) de una limpieza explícita (objeto con IDs
+nulos). Ambos comandos usan `catalog.ProductVariantAssignmentSave` dentro de su
+transacción canónica. No modifica cantidades, precio, costo ni familia. La
+proyección `catalog.ProductPresentation` resuelve los labels actuales y se reutiliza
+en lectura y sincronización de catálogo. No se reutiliza `ProductOffers.Color`:
+ese campo pertenece a ofertas externas, no a la clasificación de la ficha.
+
 La interfaz no presenta los campos técnicos de auditoría.
 
 ---

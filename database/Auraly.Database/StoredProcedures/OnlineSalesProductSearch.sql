@@ -13,6 +13,7 @@ CREATE PROCEDURE [dbo].[OnlineSalesProductSearch]
     @RestaurantAccountId UNIQUEIDENTIFIER = NULL,
     @ProductId UNIQUEIDENTIFIER = NULL,
     @CategoryId UNIQUEIDENTIFIER = NULL,
+    @FamilyProductId UNIQUEIDENTIFIER = NULL,
     @RestaurantDirectAccess BIT = 0
 AS
 BEGIN
@@ -45,6 +46,12 @@ BEGIN
       AND ((@RestaurantAccountId IS NULL AND s.WorkSessionId IS NOT NULL)
            OR (@RestaurantAccountId IS NOT NULL AND account.AccountId IS NOT NULL));
 
+    DECLARE @FamilyRoot UNIQUEIDENTIFIER;
+    SELECT @FamilyRoot=COALESCE(link.ParentProductId,product.ProductId)
+    FROM dbo.Products product LEFT JOIN dbo.ProductLinks link
+      ON link.TenantId=@TenantId AND link.ChildProductId=product.ProductId AND link.IsActive=1
+    WHERE product.ProductId=@FamilyProductId AND product.TenantId=@TenantId;
+
     DECLARE @Candidates TABLE(
       SortOrder INT NOT NULL PRIMARY KEY,ProductId UNIQUEIDENTIFIER NOT NULL,
       ProductCode NVARCHAR(64) NOT NULL,Reference NVARCHAR(120) NULL,Name NVARCHAR(250) NOT NULL,
@@ -55,6 +62,9 @@ BEGIN
       ProductBrandId UNIQUEIDENTIFIER NULL,AverageUnitCost DECIMAL(19,6) NOT NULL,
       LatestUnitCost DECIMAL(19,6) NOT NULL,TargetMarginPercent DECIMAL(9,6) NULL);
 
+    DECLARE @PageProducts TABLE(
+      SortOrder INT NOT NULL PRIMARY KEY,ProductId UNIQUEIDENTIFIER NOT NULL,
+      ProductPriceId UNIQUEIDENTIFIER NOT NULL);
     ;WITH Ranked AS(
       SELECT ROW_NUMBER() OVER(ORDER BY CASE
                WHEN p.ProductCode=@Search OR p.Sku=@Search OR p.Reference=@Search OR EXISTS(
@@ -62,33 +72,18 @@ BEGIN
                  WHERE exactBarcode.ProductId=p.ProductId AND exactBarcode.TenantId=@TenantId
                    AND exactBarcode.IsActive=1 AND exactBarcode.Barcode=@Search) THEN 0 ELSE 1 END,
                p.Name,p.ProductId) SortOrder,
-             p.ProductId,COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N'') ProductCode,
-             p.Reference,p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA') UnitCode,
-             COALESCE(t.DianTaxCode,N'01') TaxCode,COALESCE(t.Rate,0) TaxRate,
-             price.Amount UnitPrice,price.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
-             p.CategoryName,p.ProductCategoryId,p.ProductBrandId,
-             COALESCE(price.CostBasisAmount,0) AverageUnitCost,
-             COALESCE(latest.LatestUnitCost,price.CostBasisAmount,NULLIF(balance.AverageUnitCost,0),0) LatestUnitCost,
-             COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent) TargetMarginPercent
+             p.ProductId,price.ProductPriceId
       FROM dbo.Products p
-      LEFT JOIN dbo.TaxProfiles t
-        ON t.TaxProfileId=p.TaxProfileId AND t.TenantId=@TenantId AND t.IsActive=1
-      CROSS APPLY(SELECT TOP(1) pp.Amount,pp.CurrencyCode,pp.CostBasisAmount,
-                   pp.TargetMarginPercent,pp.EffectiveMarginPercent
-        FROM dbo.ProductPrices pp
-        WHERE pp.BusinessId=@BusinessId AND pp.ProductId=p.ProductId AND pp.IsActive=1
-          AND (pp.Amount>0 OR p.IsGenericProduct=1)
-          AND pp.ValidFrom<=SYSDATETIMEOFFSET()
-          AND(pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
-        ORDER BY pp.ValidFrom DESC,pp.ProductPriceId) price
-      LEFT JOIN dbo.InventoryBalances balance
-        ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
-       AND balance.ProductId=p.ProductId
-      OUTER APPLY(SELECT TOP(1) cost.LatestUnitCost
-        FROM dbo.SupplierProductLatestCosts cost
-        WHERE cost.BusinessId=@BusinessId AND cost.ProductId=p.ProductId
-        ORDER BY cost.ObservedAt DESC,cost.SupplierId) latest
-      WHERE p.TenantId=@TenantId AND p.IsActive=1 AND p.IsIngredient=0
+      JOIN dbo.ProductPrices price
+        ON price.BusinessId=@BusinessId AND price.ProductId=p.ProductId AND price.IsActive=1
+       AND (price.Amount>0 OR p.IsGenericProduct=1)
+       AND price.ValidFrom<=SYSDATETIMEOFFSET()
+       AND (price.ValidUntil IS NULL OR price.ValidUntil>SYSDATETIMEOFFSET())
+      WHERE p.TenantId=@TenantId
+        AND (@FamilyProductId IS NULL OR (@FamilyRoot IS NOT NULL AND
+          (p.ProductId=@FamilyRoot OR EXISTS(SELECT 1 FROM dbo.ProductLinks family
+            WHERE family.TenantId=@TenantId AND family.ParentProductId=@FamilyRoot
+              AND family.ChildProductId=p.ProductId AND family.IsActive=1)))) AND p.IsActive=1 AND p.IsIngredient=0
         AND (@ProductId IS NULL OR p.ProductId=@ProductId)
         AND (@CategoryId IS NULL OR p.ProductCategoryId=@CategoryId)
         AND(@Search=N'' OR p.Name LIKE @Contains OR p.ProductCode LIKE @Prefix
@@ -99,12 +94,30 @@ BEGIN
           OR EXISTS(SELECT 1 FROM dbo.ProductIdentifiers identifier
             WHERE identifier.ProductId=p.ProductId AND identifier.TenantId=@TenantId
               AND identifier.IsActive=1 AND identifier.Value LIKE @Prefix)))
+    INSERT @PageProducts
+    SELECT SortOrder,ProductId,ProductPriceId
+    FROM Ranked WHERE SortOrder>@Skip AND SortOrder<=@Skip+@Take;
+
+    -- UX_ProductPrices_Active guarantees one published price per business/product.
+    -- Enrich only this materialized page, never the entire eligible catalog.
     INSERT @Candidates
-    SELECT SortOrder,ProductId,ProductCode,Reference,Name,UnitCode,TaxCode,TaxRate,
-           UnitPrice,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,CategoryName,
-           ProductCategoryId,ProductBrandId,AverageUnitCost,LatestUnitCost,TargetMarginPercent
-    FROM Ranked WHERE SortOrder>@Skip AND SortOrder<=@Skip+@Take
-    ORDER BY SortOrder;
+    SELECT page.SortOrder,p.ProductId,COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
+           p.Reference,p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
+           COALESCE(t.DianTaxCode,N'01'),COALESCE(t.Rate,0),
+           price.Amount,price.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
+           p.CategoryName,p.ProductCategoryId,p.ProductBrandId,
+           COALESCE(price.CostBasisAmount,0),
+           COALESCE(latest.LatestUnitCost,price.CostBasisAmount,NULLIF(balance.AverageUnitCost,0),0),
+           COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)
+    FROM @PageProducts page
+    JOIN dbo.Products p ON p.ProductId=page.ProductId AND p.TenantId=@TenantId
+    JOIN dbo.ProductPrices price ON price.ProductPriceId=page.ProductPriceId
+    LEFT JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId AND t.TenantId=@TenantId AND t.IsActive=1
+    LEFT JOIN dbo.InventoryBalances balance
+      ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId
+    OUTER APPLY(SELECT TOP(1) cost.LatestUnitCost FROM dbo.SupplierProductLatestCosts cost
+      WHERE cost.BusinessId=@BusinessId AND cost.ProductId=p.ProductId
+      ORDER BY cost.ObservedAt DESC,cost.SupplierId) latest;
 
     ;WITH Ancestors AS(
       SELECT candidate.ProductId RootProductId,category.ProductCategoryId,category.ParentProductCategoryId
@@ -119,16 +132,10 @@ BEGIN
     SELECT candidate.*,
            COALESCE((SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),ancestor.ProductCategoryId),N',')
              FROM Ancestors ancestor WHERE ancestor.RootProductId=candidate.ProductId),N'') AncestorIds,
-           image.MediaUrl
+           presentation.ImageUrl,
+           (SELECT presentation.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER) PresentationJson
     FROM @Candidates candidate
-    OUTER APPLY(
-      SELECT TOP(1) item.MediaUrl
-      FROM dbo.ProductImages item
-      WHERE @RestaurantAccountId IS NOT NULL
-        AND item.ProductId=candidate.ProductId AND item.TenantId=@TenantId
-        AND item.ProductOfferId IS NULL AND item.IsActive=1
-      ORDER BY item.IsPrimary DESC,item.DisplayOrder,item.ProductImageId
-    ) image
+    OUTER APPLY catalog.ProductPresentation(@TenantId,candidate.ProductId) presentation
     ORDER BY candidate.SortOrder;
 
     DECLARE @SelectedPriceChannelId UNIQUEIDENTIFIER;

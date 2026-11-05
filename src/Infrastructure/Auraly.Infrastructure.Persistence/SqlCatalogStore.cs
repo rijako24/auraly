@@ -481,6 +481,11 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@AffectedProductIds", JsonSerializer.Serialize(affectedCatalogProducts)),
                     P("@Now", now)
                 ], ct);
+            if (request.Variant is { } variant)
+                await ExecuteAsync(connection, transaction,
+                    "EXEC catalog.ProductVariantAssignmentSave @TenantId,@ProductId,@ProductColorId,@ProductSizeId;",
+                    [P("@TenantId", user.TenantId), P("@ProductId", productId),
+                     P("@ProductColorId", variant.ProductColorId), P("@ProductSizeId", variant.ProductSizeId)], ct);
             await transaction.CommitAsync(ct);
         }
         catch (SqlException exception) when (exception.Number is 51020 or 51024)
@@ -738,7 +743,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               averageCost.Amount,latestCost.Amount,
               COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent),
               COALESCE(inventoryLink.ParentProductId,p.ProductId),
-              COALESCE(inventoryLink.InventoryFactor,1),p.IsGenericProduct,p.IsIngredient,p.HasIngredients,p.IsCombo
+              COALESCE(inventoryLink.InventoryFactor,1),p.IsGenericProduct,p.IsIngredient,p.HasIngredients,p.IsCombo,
+              (SELECT presentation.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER) PresentationJson
             FROM @PageChanges c
             JOIN dbo.Products p ON p.ProductId=c.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
@@ -748,6 +754,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               AND warehouseValue.BusinessId=b.BusinessId AND warehouseValue.IsActive=1
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=c.BusinessId AND pr.IsActive=1
               AND (pr.Amount>0 OR p.IsGenericProduct=1)
+            OUTER APPLY catalog.ProductPresentation(@TenantId,p.ProductId) presentation
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
             LEFT JOIN dbo.ProductLinks inventoryLink
               ON inventoryLink.TenantId=@TenantId
@@ -1061,13 +1068,15 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               averageCost.Amount,latestCost.Amount,
               COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent),
               COALESCE(inventoryLink.ParentProductId,p.ProductId),
-              COALESCE(inventoryLink.InventoryFactor,1),p.IsGenericProduct,p.IsIngredient,p.HasIngredients,p.IsCombo
+              COALESCE(inventoryLink.InventoryFactor,1),p.IsGenericProduct,p.IsIngredient,p.HasIngredients,p.IsCombo,
+              (SELECT presentation.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER) PresentationJson
             FROM dbo.CatalogSyncSessions ss
             JOIN dbo.CatalogSyncSessionProducts ssp ON ssp.CatalogSyncSessionId=ss.CatalogSyncSessionId
             JOIN dbo.Products p ON p.ProductId=ssp.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=ss.BusinessId AND pr.IsActive=1
               AND (pr.Amount>0 OR p.IsGenericProduct=1)
+            OUTER APPLY catalog.ProductPresentation(@TenantId,p.ProductId) presentation
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
             LEFT JOIN dbo.ProductLinks inventoryLink
               ON inventoryLink.TenantId=p.TenantId
@@ -1119,7 +1128,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             reader.GetDecimal(offset + 26),reader.GetDecimal(offset + 27),
             reader.IsDBNull(offset + 28) ? null : reader.GetDecimal(offset + 28),
             reader.GetGuid(offset + 29),reader.GetDecimal(offset + 30),reader.GetBoolean(offset + 31),
-            reader.GetBoolean(offset + 32),reader.GetBoolean(offset + 33),reader.GetBoolean(offset + 34));
+            reader.GetBoolean(offset + 32),reader.GetBoolean(offset + 33),reader.GetBoolean(offset + 34),
+            reader.IsDBNull(offset + 35) ? null : JsonSerializer.Deserialize<ProductPresentation>(reader.GetString(offset + 35)));
     }
 
     private static T[] DeserializeArray<T>(SqlDataReader reader, int ordinal) =>

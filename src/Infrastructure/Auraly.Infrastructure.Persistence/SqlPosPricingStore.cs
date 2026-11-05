@@ -68,8 +68,12 @@ public sealed partial class SqlCatalogStore
                 reader.IsDBNull(14) ? null : DateOnly.FromDateTime(reader.GetDateTime(14)),
                 reader.GetBoolean(15)));
         bool? warehouseAllowsNegativeStock = null;
+        string? pointOfSaleMode = null;
         if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
+        {
             warehouseAllowsNegativeStock = reader.GetBoolean(0);
+            pointOfSaleMode = reader.GetString(1);
+        }
         var allowPromotionChannelCombination = false;
         if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
             allowPromotionChannelCombination = reader.GetBoolean(0);
@@ -91,6 +95,6 @@ public sealed partial class SqlCatalogStore
         await transaction.CommitAsync(ct);
         return new PosPricingSnapshot(
             channels, tiers, exclusions, customers, rules, warehouseAllowsNegativeStock,
-            allowPromotionChannelCombination, promotions, null, configurationCursor);
+            allowPromotionChannelCombination, promotions, null, configurationCursor, pointOfSaleMode);
     }
 }

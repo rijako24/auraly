@@ -71,7 +71,8 @@ public sealed record PosPricingSnapshot(
     bool AllowPromotionChannelCombination = false,
     IReadOnlyCollection<PosPromotion>? Promotions = null,
     long? CustomerCursor = null,
-    long? ConfigurationCursor = null);
+    long? ConfigurationCursor = null,
+    string? PointOfSaleMode = null);
 
 public sealed record PosCustomerBootstrapPage(
     long ThroughCursor,

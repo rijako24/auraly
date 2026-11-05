@@ -6,6 +6,9 @@ namespace Auraly.Application.Catalog;
 
 public interface IProductMerchandisingStore
 {
+    Task<IReadOnlyList<PosCatalogCategory>> PosCategoriesAsync(CatalogUserIdentity user, CancellationToken ct);
+    Task<IReadOnlyList<ProductVariantOption>> ListVariantOptionsAsync(CatalogUserIdentity user, bool colors, bool includeInactive, CancellationToken ct);
+    Task<ProductVariantOption> SaveVariantOptionAsync(CatalogUserIdentity user, bool colors, Guid? id, SaveProductVariantOption request, DateTimeOffset now, CancellationToken ct);
     Task<IReadOnlyList<ProductBrandSummary>> ListBrandsAsync(CatalogUserIdentity user, bool includeInactive, CancellationToken ct);
     Task<ProductBrandSummary> SaveBrandAsync(CatalogUserIdentity user, Guid? id, SaveProductBrandRequest request, DateTimeOffset now, CancellationToken ct);
     Task<IReadOnlyList<ProductUnitSummary>> ListUnitsAsync(CatalogUserIdentity user, bool includeInactive, CancellationToken ct);
@@ -19,6 +22,30 @@ public sealed class ProductMerchandisingService(
     TimeProvider timeProvider,
     IPosSynchronizationOutboxDispatcher synchronization)
 {
+    public Task<IReadOnlyList<PosCatalogCategory>> PosCategoriesAsync(CatalogUserIdentity user, CancellationToken ct)
+    {
+        Require(user, "sales.create");
+        return store.PosCategoriesAsync(user, ct);
+    }
+
+    public Task<IReadOnlyList<ProductVariantOption>> ListVariantOptionsAsync(CatalogUserIdentity user, bool colors, bool includeInactive, CancellationToken ct)
+    {
+        Require(user, CatalogPermissionCodes.Read);
+        return store.ListVariantOptionsAsync(user, colors, includeInactive, ct);
+    }
+
+    public async Task<ProductVariantOption> SaveVariantOptionAsync(CatalogUserIdentity user, bool colors, Guid? id, SaveProductVariantOption request, CancellationToken ct)
+    {
+        Require(user, CatalogPermissionCodes.Update);
+        var code = request.Code?.Trim().ToUpperInvariant() ?? string.Empty;
+        var name = request.Name?.Trim() ?? string.Empty;
+        if (code.Length is < 1 or > 32 || name.Length is < 1 or > 120 || request.SortOrder < 0)
+            throw new CatalogValidationException("Indica un código, nombre y orden válidos para el color o la talla.");
+        var value = await store.SaveVariantOptionAsync(user, colors, id, request with { Code = code, Name = name }, timeProvider.GetUtcNow(), ct);
+        await synchronization.DispatchTenantPendingAsync(user.TenantId, CancellationToken.None);
+        return value;
+    }
+
     public Task<IReadOnlyList<ProductBrandSummary>> ListBrandsAsync(CatalogUserIdentity user, bool includeInactive, CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Read);

@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Banknote, Check, CheckCircle2, CreditCard,
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Banknote, Check, CheckCircle2, ChevronDown, CreditCard,
   FileText, Plus, ReceiptText, RotateCcw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -72,15 +72,16 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   const disabled = busy || working;
   const covered = useMemo(() => new Map(summary.coveredQuantities.map(
     (line) => [line.additionId, line.quantity])), [summary.coveredQuantities]);
-  const { available, paidLines } = useMemo(() => {
+  const available = useMemo(() => {
     const lines = draft.additions.filter((line) =>
       line.status === "Sent" || line.status === "Direct")
       .map((line) => ({ ...line,
       coveredQuantity: covered.get(line.additionId) ?? 0,
       remainingQuantity: Math.max(0, round(line.quantity - (covered.get(line.additionId) ?? 0))) }));
-    return { available: lines.filter((line) => line.remainingQuantity > 0),
-      paidLines: lines.filter((line) => line.coveredQuantity > 0) };
+    return lines.filter((line) => line.remainingQuantity > 0);
   }, [draft.additions, covered]);
+  const additionsById = useMemo(() => new Map(draft.additions.map(line =>
+    [line.additionId, line])), [draft.additions]);
   const selection = useMemo(() => available.map((line) => ({
     additionId: line.additionId,
     quantity: selectionMode === "all" ? line.remainingQuantity :
@@ -373,24 +374,31 @@ export function RestaurantPaymentDialog({ draft, summary, client,
               <ModeButton active={selectionMode === "all"} onClick={() => setSelectionMode("all")} label="Todo lo pendiente"/>
               <ModeButton active={selectionMode === "choose"} onClick={() => { setSelectionMode("choose"); setQuantities({}); }} label="Elegir productos"/>
             </div>
-            <div className="mt-4 space-y-2">{[
-              ...available.map((line) => ({ line, paid: false })),
-              ...paidLines.map((line) => ({ line, paid: true })),
-            ].map(({ line, paid }, index) => {
-              const chosen = paid ? 0 : selectionMode === "all" ? line.remainingQuantity :
-                quantities[line.additionId] ?? 0;
+            <div className="mt-4 space-y-2"><h4 className="text-sm font-bold text-slate-600 dark:text-slate-300">Pendientes de pago</h4>{available.map(line => {
+              const chosen = selectionMode === "all" ? line.remainingQuantity : quantities[line.additionId] ?? 0;
               const unit = line.publicUnitPrice - line.promotionDiscountPerUnit;
-              return <Fragment key={`${line.additionId}:${paid}`}>
-                {index === 0 && <h4 className="text-sm font-bold text-slate-600 dark:text-slate-300">Pendientes de pago</h4>}
-                {paid && index === available.length && <h4 className="pt-3 text-sm font-bold text-teal-700 dark:text-teal-300">Ya pagados</h4>}
-                <div className={`flex min-h-20 items-center gap-3 rounded-2xl border px-4 py-3 transition ${paid ? "border-teal-200 bg-teal-50/60 dark:border-teal-900 dark:bg-teal-950/20" : chosen ? "border-teal-500 bg-teal-50 dark:bg-teal-950/40" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
-                <button type="button" disabled={disabled || selectionMode === "all" || paid} onClick={() => changeSelection(line.additionId, chosen ? 0 : line.remainingQuantity, line.remainingQuantity)} className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border-2 ${paid || chosen ? "border-teal-600 bg-teal-600 text-white" : "border-slate-300"}`} aria-label={paid ? `${line.description} pagado` : `${chosen ? "Desmarcar" : "Marcar"} ${line.description}`}>{(paid || chosen > 0) && <Check className="h-5 w-5"/>}</button>
-                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{line.description}</p><p className="text-xs text-slate-500 dark:text-slate-400">{paid ? `${line.coveredQuantity} pagado${line.coveredQuantity !== 1 ? "s" : ""}` : `${line.remainingQuantity} pendiente${line.remainingQuantity !== 1 ? "s" : ""}`} · {money.format(unit)} c/u</p></div>
-                {!paid && selectionMode === "choose" && line.remainingQuantity > 1 && !line.allowsFractionalSale ? <div className="flex items-center gap-1"><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen - 1, line.remainingQuantity)} disabled={disabled} aria-label={`Quitar ${line.description}`}>−</Button><span className="min-w-7 text-center font-bold">{chosen}</span><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen + 1, line.remainingQuantity)} disabled={disabled} aria-label={`Agregar ${line.description}`}>+</Button></div> : <strong className="whitespace-nowrap">{paid ? money.format(line.coveredQuantity * unit) : money.format(chosen * unit)}</strong>}
-                </div>
-              </Fragment>;
+              return <div key={line.additionId} className={`flex min-h-20 items-center gap-3 rounded-2xl border px-4 py-3 transition ${chosen ? "border-teal-500 bg-teal-50 dark:bg-teal-950/40" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"}`}>
+                <button type="button" disabled={disabled || selectionMode === "all"} onClick={() => changeSelection(line.additionId, chosen ? 0 : line.remainingQuantity, line.remainingQuantity)} className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border-2 ${chosen ? "border-teal-600 bg-teal-600 text-white" : "border-slate-300"}`} aria-label={`${chosen ? "Desmarcar" : "Marcar"} ${line.description}`}>{chosen > 0 && <Check className="h-5 w-5"/>}</button>
+                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{line.description}</p><p className="text-xs text-slate-500 dark:text-slate-400">{line.remainingQuantity} pendiente{line.remainingQuantity !== 1 ? "s" : ""} · {money.format(unit)} c/u</p></div>
+                {selectionMode === "choose" && line.remainingQuantity > 1 && !line.allowsFractionalSale ? <div className="flex items-center gap-1"><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen - 1, line.remainingQuantity)} disabled={disabled} aria-label={`Quitar ${line.description}`}>−</Button><span className="min-w-7 text-center font-bold">{chosen}</span><Button variant="outline" size="icon" className="h-11 w-11 rounded-xl" onClick={() => changeSelection(line.additionId, chosen + 1, line.remainingQuantity)} disabled={disabled} aria-label={`Agregar ${line.description}`}>+</Button></div> : <strong className="whitespace-nowrap">{money.format(chosen * unit)}</strong>}
+              </div>;
             })}</div></>}
-          {summary.collections.length > 0 && <section className="mt-8"><h3 className="text-lg font-bold">Cobros recibidos</h3><div className="mt-3 space-y-2">{summary.collections.map((entry) => <div key={entry.collectionId} className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 dark:border-teal-900 dark:bg-slate-900"><CheckCircle2 className="h-6 w-6 shrink-0 text-teal-600"/><div className="min-w-0 flex-1"><p className="font-semibold">{money.format(entry.amount + entry.payments.reduce((sum, payment) => sum + (payment.roundingAdjustment ?? 0), 0))} · {entry.payments.map((payment) => paymentLabels.get(payment.methodCode) ?? payment.methodCode).join(" + ")}</p>{entry.tipPayment && <p className="text-sm font-medium text-teal-700">Propina: {money.format(entry.tipPayment.amount)} · {paymentLabels.get(entry.tipPayment.methodCode) ?? entry.tipPayment.methodCode}</p>}<p className="text-xs text-slate-500">{new Date(entry.capturedAt).toLocaleString("es-CO")} · {entry.allocations.length} producto(s)</p></div><Button variant="ghost" size="sm" className="min-h-11 text-red-700" disabled={disabled} onClick={() => setConfirmReverse(entry.collectionId)}><RotateCcw className="mr-1 h-4 w-4"/>Anular</Button></div>)}</div></section>}
+          {summary.collections.length > 0 && <section className="mt-8"><h3 className="text-lg font-bold">Cobros recibidos</h3><div className="mt-3 space-y-2">{summary.collections.map(entry => <div key={entry.collectionId} className="rounded-2xl border border-teal-200 bg-white dark:border-teal-900 dark:bg-slate-900">
+            <div className="flex items-start gap-2 px-4 py-3"><details className="group min-w-0 flex-1">
+              <summary className="flex min-h-12 cursor-pointer list-none items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-teal-600 [&::-webkit-details-marker]:hidden">
+                <CheckCircle2 className="h-6 w-6 shrink-0 text-teal-600"/><div className="min-w-0 flex-1"><p className="font-semibold">{money.format(entry.amount + entry.payments.reduce((sum, payment) => sum + (payment.roundingAdjustment ?? 0), 0))} · {entry.payments.map(payment => paymentLabels.get(payment.methodCode) ?? payment.methodCode).join(" + ")}</p>
+                {entry.tipPayment && <p className="text-sm font-medium text-teal-700">Propina: {money.format(entry.tipPayment.amount)} · {paymentLabels.get(entry.tipPayment.methodCode) ?? entry.tipPayment.methodCode}</p>}
+                <p className="text-xs text-slate-500">{new Date(entry.capturedAt).toLocaleString("es-CO")} · {entry.allocations.length} producto(s)</p><span className="text-xs font-semibold text-teal-700">Ver detalle del cobro</span></div><ChevronDown className="h-5 w-5 shrink-0 transition group-open:rotate-180"/>
+              </summary>
+              <div className="mt-3 space-y-2 border-t pt-3" aria-label="Detalle del cobro">
+                {entry.payments.map((payment, index) => <p key={index} className="flex justify-between gap-3 text-sm"><span>{paymentLabels.get(payment.methodCode) ?? payment.methodCode}</span><strong>{money.format(payment.amount + (payment.roundingAdjustment ?? 0))}</strong></p>)}
+                {entry.allocations.map(allocation => {
+                  const line = additionsById.get(allocation.additionId);
+                  return <div key={allocation.additionId} className="rounded-xl bg-teal-50 p-3 text-sm dark:bg-teal-950/30"><p className="font-semibold">{line?.description ?? "Producto no disponible"}</p><p className="mt-1 text-slate-600 dark:text-slate-300">{allocation.quantity} pagado{allocation.quantity !== 1 ? "s" : ""}{line && <> · {money.format(line.publicUnitPrice - line.promotionDiscountPerUnit)} c/u</>}</p></div>;
+                })}
+              </div>
+            </details><Button variant="ghost" size="sm" className="min-h-11 shrink-0 text-red-700" disabled={disabled} onClick={() => setConfirmReverse(entry.collectionId)}><RotateCcw className="mr-1 h-4 w-4"/>Anular</Button></div>
+          </div>)}</div></section>}
         </div>
         <aside className="flex shrink-0 flex-col border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:min-h-0 lg:border-l lg:border-t-0">
           <section className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900 sm:px-6" aria-label="Documento de venta">
@@ -418,7 +426,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
                 <label className="mt-2 block text-sm font-semibold">{row.methodCode === "Cash" ? cashTipIncluded > 0 ? "Efectivo entregado (incluye propina)" : "Efectivo entregado" : "Valor cobrado por consumo"}<Input inputMode="decimal" className="mt-1 h-11 rounded-xl text-lg font-bold" value={row.amount} onChange={(event) => updateRow(row.id, { amount: event.target.value })}/></label>
                 {(row.methodCode === "DebitCard" || row.methodCode === "CreditCard") && <div className="mt-2 grid grid-cols-2 gap-2"><Select value={row.franchise} onValueChange={(value) => updateRow(row.id, { franchise: value })}><SelectTrigger aria-label="Franquicia" className="h-12 rounded-xl"><SelectValue placeholder="Franquicia de tarjeta"/></SelectTrigger><SelectContent>{franchises.map((item) => <SelectItem key={item.code} value={item.code} className="min-h-11">{item.label}</SelectItem>)}</SelectContent></Select><Input aria-label="Número de aprobación" className="h-12 rounded-xl" placeholder="Número de aprobación" value={row.approval} onChange={(event) => updateRow(row.id, { approval: event.target.value })}/></div>}
                 {row.methodCode === "Transfer" && <div className="mt-2 grid grid-cols-2 gap-2">{accountingEnabled && <Select value={row.bankAccountId} onValueChange={(value) => updateRow(row.id, { bankAccountId: value })}><SelectTrigger aria-label="Cuenta bancaria" className="h-12 rounded-xl"><SelectValue placeholder="Cuenta bancaria"/></SelectTrigger><SelectContent>{banks.map((bank) => <SelectItem key={bank.bankAccountId} value={bank.bankAccountId} className="min-h-11">{bank.displayName}</SelectItem>)}</SelectContent></Select>}<Input aria-label="Referencia de transferencia" className="h-12 rounded-xl" placeholder="Referencia de transferencia" value={row.reference} onChange={(event) => updateRow(row.id, { reference: event.target.value })}/></div>}
-              </div>)}<Button variant="outline" className="min-h-12 w-full rounded-xl" disabled={disabled || !referencesReady || !canAddPaymentMethod || paymentRows.length >= 10 || selectedTotal <= 0} onClick={addPaymentMethod}><Plus className="mr-2 h-5 w-5"/>Agregar otro medio</Button><div className="space-y-1 rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold dark:bg-slate-800"><div className="flex justify-between"><span>{due > 0 ? "Falta" : due < 0 ? "Excede" : "Pago completo"}</span><span>{money.format(Math.abs(due))}</span></div>{change > 0 && <div className="flex justify-between text-teal-700 dark:text-teal-300"><span>Cambio a entregar</span><span>{money.format(change)}</span></div>}</div></div>}
+              </div>)}<Button variant="outline" className="min-h-12 w-full rounded-xl" disabled={disabled || !referencesReady || !canAddPaymentMethod || paymentRows.length >= 10 || selectedTotal <= 0} onClick={addPaymentMethod}><Plus className="mr-2 h-5 w-5"/>Agregar otro medio</Button><div role="status" aria-label="Estado del pago" className="flex justify-between rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold dark:bg-slate-800"><span>{due > 0 ? "Falta" : due < 0 ? "Excede" : change > 0 ? "Cambio a entregar" : "Pago exacto"}</span><span>{money.format(due !== 0 ? Math.abs(due) : change > 0 ? change : selectedTotal + currentAdjustment)}</span></div></div>}
           </div>
           <footer className="shrink-0 border-t bg-white p-3 dark:bg-slate-900 sm:p-4">{error && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">{error}</p>}{captureBlockReason && captureBlockReason !== error && <p role="status" className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">{captureBlockReason}</p>}
             {summary.remaining > 0 || actualTip > 0 ? <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!captureBlockReason || missingRecordedAdjustment} onClick={() => void receivePayment()}><Banknote className="mr-2 h-6 w-6"/>{summary.remaining === 0 ? "Guardar propina y emitir documento" : selectedTotal === summary.remaining ? `Cobrar y emitir ${documentType === "SalesInvoice" ? "factura" : "documento"}` : "Guardar este pago"}</Button> : <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!documentTypeBlockReason || otherSession || missingRecordedAdjustment} onClick={() => void retryDocument()}><CreditCard className="mr-2 h-6 w-6"/>Reintentar {documentType === "SalesInvoice" ? "factura" : "documento"} único</Button>}

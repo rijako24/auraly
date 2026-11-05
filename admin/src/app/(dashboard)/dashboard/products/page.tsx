@@ -321,6 +321,7 @@ export default function ProductsPage() {
         scale: merchandising.scale,
         productCategoryId: merchandising.productCategoryId,
         productBrandId: merchandising.productBrandId,
+        variant: merchandising.variant,
         allowsFractionalSale: merchandising.allowsFractionalSale,
         link: merchandising.link,
         linkedProducts: merchandising.linkedProducts,

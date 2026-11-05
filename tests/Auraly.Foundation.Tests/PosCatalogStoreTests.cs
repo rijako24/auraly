@@ -5,7 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace Auraly.Foundation.Tests;
 
 [Collection(PerformanceTestCollection.Name)]
-public sealed class PosCatalogStoreTests
+public sealed partial class PosCatalogStoreTests
 {
     [Fact]
     public async Task Bootstrap_is_durable_atomic_and_preserves_existing_pos_data()

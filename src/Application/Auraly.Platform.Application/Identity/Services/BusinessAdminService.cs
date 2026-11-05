@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Microsoft.Extensions.Logging;
 using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Application.Common.Exceptions;
@@ -20,6 +21,8 @@ public class BusinessAdminService : IBusinessAdminService
     private readonly ILogger<BusinessAdminService> _logger;
     private readonly IReferenceOptionStore _referenceOptions;
     private readonly TimeProvider _clock;
+    private readonly IPosPricingSynchronizationWriter _pricingSynchronization;
+    private readonly IPosSynchronizationOutboxDispatcher _synchronization;
 
     public BusinessAdminService(
         IUnitOfWork unitOfWork,
@@ -27,7 +30,9 @@ public class BusinessAdminService : IBusinessAdminService
         ICorrelationIdProvider correlationIdProvider,
         ILogger<BusinessAdminService> logger,
         IReferenceOptionStore referenceOptions,
-        TimeProvider clock)
+        TimeProvider clock,
+        IPosPricingSynchronizationWriter pricingSynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization)
     {
         _unitOfWork = unitOfWork;
         _defaultsProvisioner = defaultsProvisioner;
@@ -35,6 +40,8 @@ public class BusinessAdminService : IBusinessAdminService
         _logger = logger;
         _referenceOptions = referenceOptions;
         _clock = clock;
+        _pricingSynchronization = pricingSynchronization;
+        _synchronization = synchronization;
     }
 
     public async Task<BusinessDto> GetByIdAsync(
@@ -129,8 +136,9 @@ public class BusinessAdminService : IBusinessAdminService
         CancellationToken ct)
     {
         var business = await GetBusinessForScopeAsync(tenantId, canAccessAllTenants, businessId);
-        if (request.PointOfSaleMode is not null && request.PointOfSaleMode != business.PointOfSaleMode)
-            await ValidatePointOfSaleModeAsync(request.PointOfSaleMode, ct);
+        var modeChanged = request.PointOfSaleMode is not null && request.PointOfSaleMode != business.PointOfSaleMode;
+        if (modeChanged)
+            await ValidatePointOfSaleModeAsync(request.PointOfSaleMode!, ct);
         ValidateRestaurantWaiterPolicy(
             request.RestaurantRequireWaiterCredential ?? business.RestaurantRequireWaiterCredential,
             request.RestaurantRestrictTableToWaiter ?? business.RestaurantRestrictTableToWaiter);
@@ -166,10 +174,14 @@ public class BusinessAdminService : IBusinessAdminService
         {
             await _unitOfWork.Businesses.UpdateAsync(business);
             await _unitOfWork.SaveChangesAsync(ct);
+            if (modeChanged)
+                await _pricingSynchronization.EnqueueBusinessesAsync([businessId], ct);
             if (request.PointOfSaleMode is not null)
                 await _defaultsProvisioner.ReconcileRestaurantRolePermissionsAsync(business.TenantId, ct);
         }, ct);
 
+        if (modeChanged)
+            await _synchronization.DispatchPendingAsync(business.TenantId, businessId, CancellationToken.None);
         return MapToDto(business);
     }
 

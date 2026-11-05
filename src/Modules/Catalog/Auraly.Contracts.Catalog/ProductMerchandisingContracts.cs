@@ -1,5 +1,9 @@
 namespace Auraly.Contracts.Catalog;
 
+public sealed record ProductVariantOption(Guid Id, string Code, string Name, bool IsActive, int SortOrder);
+public sealed record SaveProductVariantOption(string Code, string Name, bool IsActive = true, int SortOrder = 0);
+public sealed record ProductVariantInput(Guid? ProductColorId = null, Guid? ProductSizeId = null);
+
 public sealed record ProductBrandSummary(Guid ProductBrandId, string Name, bool IsActive);
 public sealed record SaveProductBrandRequest(string Name, bool IsActive = true);
 
@@ -74,7 +78,9 @@ public sealed record ProductMerchandisingConfiguration(
     IReadOnlyCollection<LinkedProductDetail> LinkedProducts,
     decimal? ConversionMaximumLossPercent = null,
     decimal? UnitGrossWeightKg = null,
-    bool IsGenericProduct = false);
+    bool IsGenericProduct = false,
+    Guid? ProductColorId = null, string? ProductColorName = null,
+    Guid? ProductSizeId = null, string? ProductSizeName = null);
 
 public sealed record SaveProductMerchandisingRequest(
     Guid? ProductCategoryId,
@@ -89,4 +95,5 @@ public sealed record SaveProductMerchandisingRequest(
     IReadOnlyCollection<LinkedProductInput> LinkedProducts,
     decimal? ConversionMaximumLossPercent = null,
     decimal? UnitGrossWeightKg = null,
-    bool IsGenericProduct = false);
+    bool IsGenericProduct = false,
+    ProductVariantInput? Variant = null);

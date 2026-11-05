@@ -78,8 +78,9 @@ BEGIN
     WHERE rn=1 AND IsActive=1 AND Direction=N'Sale' AND Moment=N'Accrual'
     ORDER BY Kind,Code;
 
-    SELECT warehouseValue.AllowNegativeStockSales
+    SELECT warehouseValue.AllowNegativeStockSales,businessValue.PointOfSaleMode
     FROM dbo.Warehouses warehouseValue
+    JOIN dbo.Businesses businessValue ON businessValue.BusinessId=warehouseValue.BusinessId
     WHERE warehouseValue.WarehouseId = @WarehouseId
       AND warehouseValue.BusinessId = @BusinessId
       AND warehouseValue.IsActive = 1;

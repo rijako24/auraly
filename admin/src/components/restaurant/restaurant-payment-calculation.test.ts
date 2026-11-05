@@ -2,6 +2,29 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { finalRestaurantPayments, settleRestaurantPayment } from "./restaurant-payment-calculation";
 
+test("un solo efectivo conserva el orden y los datos de los cobros guardados", () => {
+  const card = { methodCode: "DebitCard", amount: 27_370, reference: null,
+    cardFranchiseCode: "Visa", approvalNumber: "12345", tenderedAmount: null };
+  const cash = { methodCode: "Cash", amount: 2_500, reference: null,
+    tenderedAmount: 2_530, roundingAdjustment: 30 };
+  assert.deepEqual(finalRestaurantPayments([
+    { payments: [card] }, { payments: [cash] },
+  ]), [card, cash]);
+  assert.deepEqual(finalRestaurantPayments([{ payments: [card, cash] }]), [card, cash]);
+});
+
+test("varios efectivos se consolidan una vez sin alterar el orden de los otros medios", () => {
+  const debit = { methodCode: "DebitCard", amount: 10_000, reference: null,
+    cardFranchiseCode: "Visa", approvalNumber: "12345" };
+  const transfer = { methodCode: "Transfer", amount: 5_000, reference: "TR-1" };
+  assert.deepEqual(finalRestaurantPayments([
+    { payments: [debit, { methodCode: "Cash", amount: 1_000, reference: null }] },
+    { payments: [transfer, { methodCode: "Cash", amount: 2_500, reference: null,
+      tenderedAmount: 3_000, roundingAdjustment: 30 }] },
+  ]), [{ methodCode: "Cash", amount: 3_500, reference: null,
+    tenderedAmount: 4_000, roundingAdjustment: 30 }, debit, transfer]);
+});
+
 test("al emitir la factura tras pagos parciales la propina no entra en los medios de venta", () => {
   const salePayments = finalRestaurantPayments([
     { payments: [{ methodCode: "Cash", amount: 80_000, reference: null, tenderedAmount: 90_000 }] },

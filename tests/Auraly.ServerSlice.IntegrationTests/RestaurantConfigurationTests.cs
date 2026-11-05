@@ -9,8 +9,10 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class RestaurantConfigurationTests(ServerSliceFixture fixture)
 {
-    [Fact]
-    public async Task Existing_business_is_direct_sale_and_old_updates_preserve_its_explicit_mode()
+    [Theory]
+    [InlineData("RestaurantBar")]
+    [InlineData("Store")]
+    public async Task Existing_business_is_direct_sale_and_old_updates_preserve_its_explicit_mode(string mode)
     {
         var businessId = await CreateBusinessAsync();
         using var client = fixture.CreateAdminClient("businesses.read", "businesses.update");
@@ -18,16 +20,24 @@ public sealed class RestaurantConfigurationTests(ServerSliceFixture fixture)
         Assert.Equal("DirectSale", original!.PointOfSaleMode);
 
         using var change = await client.PutAsJsonAsync($"/api/v1/businesses/{businessId}",
-            new { pointOfSaleMode = "RestaurantBar" });
+            new { pointOfSaleMode = mode });
         Assert.Equal(HttpStatusCode.OK, change.StatusCode);
-        Assert.Equal("RestaurantBar", (await change.Content.ReadFromJsonAsync<BusinessDto>())!.PointOfSaleMode);
+        Assert.Equal(mode, (await change.Content.ReadFromJsonAsync<BusinessDto>())!.PointOfSaleMode);
 
         using var legacyUpdate = await client.PutAsJsonAsync($"/api/v1/businesses/{businessId}",
             new { name = "Sede actualizada" });
         Assert.Equal(HttpStatusCode.OK, legacyUpdate.StatusCode);
-        Assert.Equal("RestaurantBar", (await legacyUpdate.Content.ReadFromJsonAsync<BusinessDto>())!.PointOfSaleMode);
+        Assert.Equal(mode, (await legacyUpdate.Content.ReadFromJsonAsync<BusinessDto>())!.PointOfSaleMode);
         var unchanged = await client.GetFromJsonAsync<BusinessDto>($"/api/v1/businesses/{fixture.BusinessId}");
         Assert.Equal("DirectSale", unchanged!.PointOfSaleMode);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages
+            WHERE BusinessId=@Business AND Stream=N'Configuration';
+            """, connection);
+        command.Parameters.AddWithValue("@Business", businessId);
+        Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync()));
     }
 
     [Fact]

@@ -99,6 +99,7 @@ export interface ProductRotationDetail {
 }
 
 export interface CreateCatalogProductRequest {
+  variant?: import("./product-merchandising").ProductVariantInput;
   businessId: string;
   productCode: string;
   reference: string | null;

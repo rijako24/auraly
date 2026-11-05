@@ -10,7 +10,7 @@ using Microsoft.Data.SqlClient;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
+public sealed partial class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
     public async Task Manual_voucher_creator_can_read_only_active_tax_profiles_without_product_or_configuration_access()

@@ -20,6 +20,8 @@ import {
   type ProductMerchandising,
 } from "@/services/api/product-merchandising";
 
+import { ProductVariantFields } from "./product-variant-fields";
+
 const none = "__none__";
 const emptyScale = {
   scaleCode: "",
@@ -80,6 +82,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
     mutationFn: () => productMerchandisingApi.save(productId, {
       productCategoryId: form!.productCategoryId,
       productBrandId: form!.productBrandId,
+      variant: { productColorId: form!.productColorId ?? null, productSizeId: form!.productSizeId ?? null },
       baseUnitCode: form!.baseUnitCode,
       isGenericProduct: form!.isGenericProduct,
       manageInventory: form!.isGenericProduct || form!.link?.sharesInventory ? false : form!.manageInventory,
@@ -113,10 +116,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
     onSuccess: async (value) => {
       setForm(value);
       client.setQueryData(["product-merchandising", productId], value);
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["products"] }),
-        client.invalidateQueries({ queryKey: ["product-merchandising"] }),
-      ]);
+      await client.invalidateQueries({ queryKey: ["products"] });
       toast.success("Configuración comercial actualizada.");
     },
     onError: (error: { message?: string }) =>
@@ -129,6 +129,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
       return {
         productCategoryId: form.productCategoryId,
         productBrandId: form.productBrandId,
+        variant: { productColorId: form.productColorId ?? null, productSizeId: form.productSizeId ?? null },
         baseUnitCode: form.baseUnitCode,
         isGenericProduct: form.isGenericProduct,
         manageInventory: form.isGenericProduct || form.link?.sharesInventory ? false : form.manageInventory,
@@ -266,6 +267,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             </div>;
           })}
         </div>
+      <ProductVariantFields value={form} onChange={value => setForm({ ...form, ...value })} />
       <div className="mt-5 border-t pt-5">
         <div className="space-y-4">
           <div className="space-y-1.5">

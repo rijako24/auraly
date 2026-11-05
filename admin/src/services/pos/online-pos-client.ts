@@ -1,3 +1,4 @@
+import { createPosStateInvalidationNotifier } from "./pos-state-invalidation";
 import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
 import {
   invoiceCommerceOrders,
@@ -100,7 +101,7 @@ import { cashDenominationCountHtml, printCashDenominationCount, printWorkSession
 import { cashMovementTicketHtml, printCashMovementTicket } from "./pos-cash-movement-print";
 import type { PortfolioPaymentReceipt } from "./pos-portfolio-payment-print";
 import {
-  isWorkspacePolicySynchronizationMessage,
+  workspaceSynchronizationStream,
   shouldReconnectWorkspacePolicy,
 } from "./pos-workspace-synchronization";
 
@@ -116,7 +117,7 @@ export type SalesWorkspaceOption = {
   fiscalReadyForEnrollment?: boolean;
   hasDianDocumentQuota?: boolean;
   fiscalWarningMessages?: string[];
-  pointOfSaleMode?: "DirectSale" | "RestaurantBar";
+  pointOfSaleMode?: "DirectSale" | "Store" | "RestaurantBar";
 };
 
 export type SalesWorkspaceContext = Omit<
@@ -437,7 +438,7 @@ export class OnlinePosClient implements PosClient {
     return session;
   }
 
-  watchWarehousePolicy(onChanged: (allowsNegativeStock: boolean) => void) {
+  watchWarehousePolicy(onChanged: (allowsNegativeStock: boolean, mode?: string) => void, onCatalogChanged?: () => void) {
     let stopped = false;
     let connecting = false;
     let socket: WebSocket | null = null;
@@ -460,9 +461,17 @@ export class OnlinePosClient implements PosClient {
       const current = options.find((option) =>
         option.businessId === this.context.businessId &&
         option.warehouseId === this.context.warehouseId);
-      if (!stopped && current)
-        onChanged(current.warehouseAllowsNegativeStockSales);
+      if (!stopped && current) {
+        this.context.pointOfSaleMode = current.pointOfSaleMode;
+        onChanged(current.warehouseAllowsNegativeStockSales, current.pointOfSaleMode);
+      }
     };
+    const scheduleNotification = (notify: () => void) => {
+      const timer = window.setTimeout(notify, 50);
+      return () => window.clearTimeout(timer);
+    };
+    const catalogNotifier = createPosStateInvalidationNotifier(() => onCatalogChanged?.(), scheduleNotification);
+    const policyNotifier = createPosStateInvalidationNotifier(() => { void refresh(); }, scheduleNotification);
     const connect = async () => {
       if (stopped || connecting || socket) return;
       connecting = true;
@@ -478,8 +487,9 @@ export class OnlinePosClient implements PosClient {
           if (!stopped && socket === current) openedAt = Date.now();
         });
         current.addEventListener("message", (event: MessageEvent<string>) => {
-          if (isWorkspacePolicySynchronizationMessage(event.data))
-            void refresh();
+          const stream = workspaceSynchronizationStream(event.data);
+          if (stream === "Configuration") policyNotifier.notify();
+          else if (stream === "Catalog") catalogNotifier.notify();
         });
         current.addEventListener("close", () => {
           if (stopped || socket !== current) return;
@@ -508,6 +518,8 @@ export class OnlinePosClient implements PosClient {
     void connect();
     return () => {
       stopped = true;
+      policyNotifier.dispose();
+      catalogNotifier.dispose();
       window.removeEventListener("online", restartConnection);
       document.removeEventListener("visibilitychange", restartConnection);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -613,6 +625,7 @@ export class OnlinePosClient implements PosClient {
       deviceSeriesCode: "00",
       businessId: this.context.businessId,
       warehouseId: this.context.warehouseId,
+      pointOfSaleMode: this.context.pointOfSaleMode ?? "DirectSale",
       businessName: this.context.businessName,
       warehouseName: this.context.warehouseName,
       warehouseAllowsNegativeStockSales: this.context.warehouseAllowsNegativeStockSales,
@@ -701,6 +714,16 @@ export class OnlinePosClient implements PosClient {
     return printCashDenominationCount(cashDenominationCountHtml(ticket));
   }
 
+
+  catalogCategories() {
+    return request<import("./pos-edge-client").PosCatalogCategory[]>("/api/commerce/v1/pos/catalog/categories");
+  }
+
+  browseProducts(search: string, skip: number, customerId: string | null, categoryId: string | null, familyProductId: string | null, signal?: AbortSignal) {
+    return request<PosCatalogSearchPage>("/api/commerce/v1/pos/catalog/products/search", {
+      ...this.post({ context: this.scope(), search, skip, take: 50, customerId, categoryId, familyProductId }), signal,
+    });
+  }
 
   async searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null, publicPriceOnly = false) {
     const page = await request<OnlineProductPage>(

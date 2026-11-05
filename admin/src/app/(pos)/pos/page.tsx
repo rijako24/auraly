@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { tenantsApi } from "@/services/api/tenants";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -64,6 +65,7 @@ import {
   type PosSensitiveAuthorization,
   type PosPrintTemplateFormat,
   type PosDraftLineUpdate,
+  type PosDraftLine,
   clearEdgeUserSession,
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
@@ -160,6 +162,8 @@ import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
 import type { PosPreparationHealth } from "./pos-preparation-progress";
 import { posPublicError } from "./pos-public-error";
 import { saleRequiresBelowCostAuthorization } from "./pos-sale-authorization";
+import { PosStoreCatalog } from "@/components/pos/pos-store-catalog";
+import { PosSaleItemCard } from "@/components/pos/pos-catalog-presentation";
 import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
 
 
@@ -257,6 +261,8 @@ async function runOnlineOrderRequest<T>(operation: () => Promise<T>): Promise<T>
 }
 
 export default function PosPage() {
+  const queryClient = useQueryClient();
+  const observedCatalogCursor = useRef<{ scope: string; cursor: number } | null>(null);
   const scanner = useRef<HTMLInputElement>(null);
   const captureInFlight = useRef(false);
   const router = useRouter();
@@ -265,7 +271,7 @@ export default function PosPage() {
   const cloudUserId = useAuthStore((state) => state.user?.userId);
   const logoutCloud = useAuthStore((state) => state.logout);
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
-  const lineRows = useRef(new Map<string, HTMLTableRowElement>());
+  const lineRows = useRef(new Map<string, HTMLElement>());
   const recoveredOrderFromUrl = useRef<string | null>(null);
   const skipQuantityBlur = useRef<string | null>(null);
   const closureOperationId = useRef<string | null>(null);
@@ -353,6 +359,7 @@ export default function PosPage() {
     deviceSeriesCode: "\u2014",
     businessId: "",
     warehouseId: "",
+    pointOfSaleMode: "DirectSale",
     businessName: "",
     warehouseName: "",
     warehouseAllowsNegativeStockSales: false,
@@ -681,6 +688,7 @@ export default function PosPage() {
                 deviceSeriesCode: health.deviceSeriesCode,
                 businessId: health.businessId,
                 warehouseId: health.warehouseId,
+                pointOfSaleMode: health.pointOfSaleMode ?? "DirectSale",
                 businessName: health.businessName,
                 warehouseName: health.warehouseName,
                 warehouseAllowsNegativeStockSales: health.warehouseAllowsNegativeStockSales,
@@ -817,10 +825,17 @@ export default function PosPage() {
       });
       setServerConnected(health.serverConnected);
       setPushConnected(health.pushConnected);
+      if (client.mode === "edge" && health.catalogCursor !== undefined) {
+        const scope = `${health.businessId}:${health.warehouseId}`;
+        if (observedCatalogCursor.current?.scope === scope && observedCatalogCursor.current.cursor !== health.catalogCursor)
+          void queryClient.invalidateQueries({ predicate: query => String(query.queryKey[0]).startsWith("pos-store-") && query.queryKey[1] === scope });
+        observedCatalogCursor.current = { scope, cursor: health.catalogCursor };
+      }
       setWorkstation({
         deviceSeriesCode: health.deviceSeriesCode,
         businessId: health.businessId,
         warehouseId: health.warehouseId,
+        pointOfSaleMode: health.pointOfSaleMode ?? "DirectSale",
         businessName: health.businessName,
         warehouseName: health.warehouseName,
         warehouseAllowsNegativeStockSales: health.warehouseAllowsNegativeStockSales,
@@ -983,11 +998,14 @@ export default function PosPage() {
       stopLiveState = client instanceof PosEdgeClient
         ? client.watchLocalState(() => void connect())
         : client instanceof OnlinePosClient
-          ? client.watchWarehousePolicy((allowsNegativeStock) =>
+          ? client.watchWarehousePolicy((allowsNegativeStock, mode) => {
               setWorkstation((current) => ({
                 ...current,
                 warehouseAllowsNegativeStockSales: allowsNegativeStock,
-              })))
+                pointOfSaleMode: mode ?? current.pointOfSaleMode,
+              }));
+              void queryClient.invalidateQueries({ queryKey: ["pos-store-products"] });
+            }, () => { void queryClient.invalidateQueries({ predicate: query => String(query.queryKey[0]).startsWith("pos-store-") }); })
           : null;
     };
     void connect().finally(startLiveState);
@@ -1017,7 +1035,7 @@ export default function PosPage() {
       window.removeEventListener("offline", handleOffline);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [client, documentType, focusScanner]);
+  }, [client, documentType, focusScanner, queryClient]);
 
   useEffect(() => {
     if (!client || !edgeReady || !draft || busy || typeof window === "undefined") return;
@@ -2863,6 +2881,7 @@ export default function PosPage() {
         deviceSeriesCode: "\u2014",
         businessId: context.businessId,
         warehouseId: context.warehouseId,
+        pointOfSaleMode: context.pointOfSaleMode ?? "DirectSale",
         businessName: context.businessName,
         warehouseName: context.warehouseName,
         warehouseAllowsNegativeStockSales: context.warehouseAllowsNegativeStockSales,
@@ -3090,6 +3109,86 @@ export default function PosPage() {
     );
   }
 
+  const isStore = workstation.pointOfSaleMode === "Store";
+
+  function renderQuantityInput(line: PosDraftLine) {
+    return (
+      <input
+                          ref={(element) => {
+                            if (element) {
+                              quantityInputs.current.set(line.lineId, element);
+                            } else {
+                              quantityInputs.current.delete(line.lineId);
+                            }
+                          }}
+                          type="number"
+                          inputMode={line.allowsFractionalSale ? "decimal" : "numeric"}
+                          min={line.allowsFractionalSale ? "0.001" : "1"}
+                          step={line.allowsFractionalSale ? "0.001" : "1"}
+                          value={quantityDrafts[line.lineId] ?? String(line.quantity)}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (!acceptsPosQuantityDraft(value, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false })) return;
+                            setQuantityDrafts((current) => ({
+                              ...current, [line.lineId]: value.replace(",", "."),
+                            }));
+                          }}
+                          onFocus={() => setSelectedLineId(line.lineId)}
+                          onKeyDown={(event) => {
+                            if (blocksPosQuantityKey(event.key, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false })) {
+                              event.preventDefault();
+                              return;
+                            }
+                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                              event.preventDefault();
+                              void navigateFromQuantity(
+                                line.lineId,
+                                event.currentTarget.valueAsNumber,
+                                event.key === "ArrowUp",
+                              );
+                            } else if (event.key === "Enter") {
+                              event.preventDefault();
+                              void navigateFromQuantity(
+                                line.lineId,
+                                event.currentTarget.valueAsNumber,
+                                false,
+                              );
+                            } else if (event.key === "Tab") {
+                              event.preventDefault();
+                              void navigateFromQuantity(
+                                line.lineId,
+                                event.currentTarget.valueAsNumber,
+                                event.shiftKey,
+                              );
+                            }
+                          }}
+                          onBlur={(event) => {
+                            if (skipQuantityBlur.current === line.lineId) {
+                              skipQuantityBlur.current = null;
+                              return;
+                            }
+                            const validation = validatePosQuantity(event.currentTarget.value, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false });
+                            if (!validation.valid && validation.reason !== "whole-units") {
+                              setQuantityDrafts((current) => ({
+                                ...current, [line.lineId]: String(line.quantity),
+                              }));
+                              focusScanner();
+                            } else if (!validation.valid) {
+                              setQuantityDrafts((current) => ({ ...current, [line.lineId]: String(line.quantity) }));
+                              setError(`${line.description} solo se vende en unidades completas.`);
+                              focusScanner();
+                            } else if (validation.quantity !== line.quantity) {
+                              void changeQuantity(line.lineId, validation.quantity);
+                            } else {
+                              focusScanner();
+                            }
+                          }}
+                          className="h-10 w-24 rounded-lg border border-slate-300 bg-white px-2 text-right font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
+                          aria-label={`Cantidad de ${line.description}`}
+                        />
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#eef3f3] text-slate-950 xl:h-screen xl:overflow-hidden">
       <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
@@ -3226,8 +3325,8 @@ export default function PosPage() {
         </div>
       )}
 
-      <section className="grid min-h-[calc(100vh-3.5rem)] grid-cols-1 gap-3 p-3 xl:h-[calc(100vh-3.5rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
-        <div className="flex min-w-0 flex-col gap-3 xl:min-h-0">
+      <section className={`grid min-h-[calc(100vh-3.5rem)] grid-cols-1 gap-3 p-3 xl:h-[calc(100vh-3.5rem)] xl:min-h-0 ${isStore ? "lg:grid-cols-[minmax(330px,30%)_minmax(0,70%)] lg:grid-rows-[minmax(200px,1fr)_auto]" : "xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]"}`}>
+        <div className={`flex min-w-0 flex-col gap-3 xl:min-h-0 ${isStore ? "lg:overflow-y-auto" : ""}`}>
           <form
             onSubmit={capture}
             className={`relative overflow-hidden rounded-2xl border bg-white p-3 shadow-sm transition-all duration-300 ${scanRejection.phase !== "idle" ? "border-red-500 shadow-lg shadow-red-200/70 ring-4 ring-red-300/50" : "border-teal-900/10"} ${scanRejection.phase === "animating" ? "pos-scan-rejected" : ""}`}
@@ -3249,7 +3348,7 @@ export default function PosPage() {
                 </span>
               )}
             </label>
-            <div className="flex gap-2">
+            <div className={`flex gap-2 ${isStore ? "flex-wrap" : ""}`}>
               <input
                 ref={scanner}
                 id="pos-scanner"
@@ -3279,14 +3378,14 @@ export default function PosPage() {
                 disabled={busy || !salesReady}
                 autoComplete="off"
                 inputMode="text"
-                className={`h-14 min-w-0 flex-1 rounded-xl border-2 px-4 text-xl font-semibold tracking-wide outline-none transition disabled:opacity-50 ${scanRejection.phase !== "idle" ? "border-red-600 bg-white text-red-950 focus:border-red-600 focus:ring-4 focus:ring-red-500/20" : "border-teal-700/25 bg-slate-50 focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"}`}
+                className={`h-14 min-w-0 flex-1 ${isStore ? "basis-full" : ""} rounded-xl border-2 px-4 text-xl font-semibold tracking-wide outline-none transition disabled:opacity-50 ${scanRejection.phase !== "idle" ? "border-red-600 bg-white text-red-950 focus:border-red-600 focus:ring-4 focus:ring-red-500/20" : "border-teal-700/25 bg-slate-50 focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"}`}
                 placeholder="Código de barras, interno o referencia"
                 aria-describedby="capture-state"
               />
               <button
                 type="submit"
                 disabled={!scan.trim() || busy || !salesReady}
-                className="min-w-28 rounded-xl bg-teal-700 px-5 font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-11 min-w-28 rounded-xl bg-teal-700 px-5 font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? <Loader2 className="mx-auto animate-spin" /> : "Agregar"}
               </button>
@@ -3294,7 +3393,7 @@ export default function PosPage() {
                 type="button"
                 onClick={() => { setPriceVerifierMode(false); setProductSearchOpen(true); }}
                 disabled={busy || !salesReady}
-                className="flex min-w-28 items-center justify-center gap-2 rounded-xl border border-teal-700/25 bg-white px-4 font-semibold text-teal-800 transition hover:bg-teal-50 focus:outline-none focus:ring-4 focus:ring-teal-600/15 disabled:opacity-45"
+                className="flex min-h-11 min-w-28 items-center justify-center gap-2 rounded-xl border border-teal-700/25 bg-white px-4 font-semibold text-teal-800 transition hover:bg-teal-50 focus:outline-none focus:ring-4 focus:ring-teal-600/15 disabled:opacity-45"
               >
                 <Search className="h-4 w-4" />
                 Buscar <span className="rounded bg-teal-50 px-1.5 py-0.5 text-xs">{POS_ACTION_SHORTCUTS.productSearch}</span>
@@ -3323,14 +3422,13 @@ export default function PosPage() {
             </p>}
           </form>
 
-          <div
-            className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
-            aria-label="Acciones de la venta"
-          >
+          <details open={isStore ? undefined : true} className="shrink-0 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+            <summary className={isStore ? "cursor-pointer px-2 py-2 text-sm font-semibold" : "hidden"}>Acciones de la venta</summary>
+          <div className="flex flex-wrap items-center justify-between gap-2" aria-label="Acciones de la venta">
             <p className="hidden pl-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 sm:block">
               Acciones de captura
             </p>
-            <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-auto xl:grid-cols-5">
+            <div className={`grid w-full grid-cols-2 gap-2 ${isStore ? "" : "sm:ml-auto sm:w-auto xl:grid-cols-5"}`}>
               <button type="button" disabled={!draft?.lines.length || busy}
                 onClick={() => void openDiscount()}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
@@ -3370,9 +3468,27 @@ export default function PosPage() {
               </button>
             </div>
           </div>
+          </details>
 
           <div className="flex min-h-[360px] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:min-h-0">
             <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+              {isStore ? <div className="space-y-2 p-3">{draft?.lines.map(line => (
+                <PosSaleItemCard key={line.lineId} className={selectedLineId === line.lineId ? "ring-2 ring-primary/30" : ""}
+                  ref={element => { if (element) lineRows.current.set(line.lineId, element); else lineRows.current.delete(line.lineId); }}>
+                  <button type="button" className="flex w-full items-start justify-between gap-2 text-left" onClick={() => { setSelectedLineId(line.lineId); quantityInputs.current.get(line.lineId)?.focus(); }}>
+                    <span className="min-w-0"><strong className="text-base">{line.description}</strong><span className="mt-1 block text-xs text-muted-foreground">{line.productCode} · {money.format(calculateEffectiveRetailUnitPrice(line.total, line.quantity))} c/u</span></span><strong>{money.format(line.total)}</strong>
+                  </button>
+                  {(line.discount > 0 || (line.promotionDiscount ?? 0) > 0) && <p className="mt-2 text-xs text-amber-800">Descuento: {money.format(line.discount + (line.promotionDiscount ?? 0))}</p>}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-sm"><span className="sr-only">Cantidad: {line.quantity}</span>{renderQuantityInput(line)}</label>
+                    <div className="flex items-center gap-2">
+                      <button type="button" className="h-11 w-11 rounded-xl border" disabled={busy} aria-label={`Quitar uno de ${line.description}`} onClick={() => { setSelectedLineId(line.lineId); if (line.quantity <= 1) void requestRemoveLine(line.lineId); else void changeQuantity(line.lineId, line.quantity - 1); }}>−</button>
+                      <button type="button" className="h-11 w-11 rounded-xl bg-primary text-primary-foreground" disabled={busy} aria-label={`Agregar uno de ${line.description}`} onClick={() => { setSelectedLineId(line.lineId); void changeQuantity(line.lineId, line.quantity + 1); }}>+</button>
+                      <button type="button" className="h-11 w-11 rounded-xl border text-red-700" disabled={busy} aria-label={`Eliminar ${line.description}`} onClick={() => void requestRemoveLine(line.lineId)}><Trash2 className="mx-auto h-4 w-4"/></button>
+                    </div>
+                  </div>
+                </PosSaleItemCard>
+              ))}</div> : (
               <table className="w-full min-w-[680px] border-collapse text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs font-semibold tracking-wide text-slate-600">
                   <tr>
@@ -3434,79 +3550,7 @@ export default function PosPage() {
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <input
-                          ref={(element) => {
-                            if (element) {
-                              quantityInputs.current.set(line.lineId, element);
-                            } else {
-                              quantityInputs.current.delete(line.lineId);
-                            }
-                          }}
-                          type="number"
-                          inputMode={line.allowsFractionalSale ? "decimal" : "numeric"}
-                          min={line.allowsFractionalSale ? "0.001" : "1"}
-                          step={line.allowsFractionalSale ? "0.001" : "1"}
-                          value={quantityDrafts[line.lineId] ?? String(line.quantity)}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            if (!acceptsPosQuantityDraft(value, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false })) return;
-                            setQuantityDrafts((current) => ({
-                              ...current, [line.lineId]: value.replace(",", "."),
-                            }));
-                          }}
-                          onFocus={() => setSelectedLineId(line.lineId)}
-                          onKeyDown={(event) => {
-                            if (blocksPosQuantityKey(event.key, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false })) {
-                              event.preventDefault();
-                              return;
-                            }
-                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                              event.preventDefault();
-                              void navigateFromQuantity(
-                                line.lineId,
-                                event.currentTarget.valueAsNumber,
-                                event.key === "ArrowUp",
-                              );
-                            } else if (event.key === "Enter") {
-                              event.preventDefault();
-                              void navigateFromQuantity(
-                                line.lineId,
-                                event.currentTarget.valueAsNumber,
-                                false,
-                              );
-                            } else if (event.key === "Tab") {
-                              event.preventDefault();
-                              void navigateFromQuantity(
-                                line.lineId,
-                                event.currentTarget.valueAsNumber,
-                                event.shiftKey,
-                              );
-                            }
-                          }}
-                          onBlur={(event) => {
-                            if (skipQuantityBlur.current === line.lineId) {
-                              skipQuantityBlur.current = null;
-                              return;
-                            }
-                            const validation = validatePosQuantity(event.currentTarget.value, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false });
-                            if (!validation.valid && validation.reason !== "whole-units") {
-                              setQuantityDrafts((current) => ({
-                                ...current, [line.lineId]: String(line.quantity),
-                              }));
-                              focusScanner();
-                            } else if (!validation.valid) {
-                              setQuantityDrafts((current) => ({ ...current, [line.lineId]: String(line.quantity) }));
-                              setError(`${line.description} solo se vende en unidades completas.`);
-                              focusScanner();
-                            } else if (validation.quantity !== line.quantity) {
-                              void changeQuantity(line.lineId, validation.quantity);
-                            } else {
-                              focusScanner();
-                            }
-                          }}
-                          className="h-10 w-24 rounded-lg border border-slate-300 bg-white px-2 text-right font-semibold outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
-                          aria-label={`Cantidad de ${line.description}`}
-                        />
+                        {renderQuantityInput(line)}
                       </td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-700">
                         {effectiveUnitMoney.format(calculateEffectiveRetailUnitPrice(
@@ -3531,6 +3575,7 @@ export default function PosPage() {
                   ))}
                 </tbody>
               </table>
+              )}
             {!draft?.lines.length && (
               <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-6 text-center">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(13,148,136,0.10),transparent_52%)]" />
@@ -3558,7 +3603,7 @@ export default function PosPage() {
           </div>
         </div>
 
-        <aside className="flex min-h-0 flex-col gap-3 xl:overflow-hidden">
+        <aside className={`flex min-h-0 flex-col gap-3 ${isStore ? "lg:col-start-1 lg:row-start-2 lg:max-h-[45dvh] lg:overflow-y-auto" : "xl:overflow-hidden"}`}>
           <section className={`shrink-0 rounded-2xl bg-auraly-background p-4 text-auraly-text shadow-lg ${showCashChange ? "xl:basis-[54%]" : ""}`}>
             <div className="mb-3 flex items-center justify-between">
               <div>
@@ -3825,6 +3870,7 @@ export default function PosPage() {
           </section>
           )}
         </aside>
+        {isStore && <PosStoreCatalog key={`${workstation.businessId}:${workstation.warehouseId}`} client={client} scopeKey={`${workstation.businessId}:${workstation.warehouseId}`} customerId={draft?.customerId ?? null} ready={salesReady && !!workstation.workSessionId} disabled={busy || !salesReady} onSelect={captureSelectedProduct} />}
       </section>
 
       {ordersExpanded && client && (

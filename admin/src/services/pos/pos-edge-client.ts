@@ -59,7 +59,14 @@ const EDGE_BASE_URL =
 
 export type DraftId = { value: string };
 export type ProductId = { value: string };
+export type PosCatalogCategory = { categoryId: string; name: string };
+export type PosProductPresentation = { imageUrl: string | null; familyProductId: string | null;
+  productColorId: string | null; colorName: string | null; productSizeId: string | null; sizeName: string | null };
 export type PosCatalogProduct = {
+  productCategoryId?: string | null;
+  categoryName?: string | null;
+  imageUrl?: string | null;
+  presentation?: PosProductPresentation | null;
   productId: string;
   productCode: string;
   reference: string | null;
@@ -671,12 +678,14 @@ export interface PosClient {
     workSessionId?: string | null;
     deviceId?: string | null;
     fiscalReady: boolean;
+    pointOfSaleMode?: string;
     fiscalWarnings: string[];
     dianQuotaAvailable: boolean | null;
     identityReady: boolean;
     initialEnrollmentSessionAvailable?: boolean;
     recoverableLocalNumbering?: boolean;
     catalogStatus: string;
+    catalogCursor?: number;
     synchronizationInProgress: boolean;
     automaticRetryScheduled?: boolean;
     automaticRetryAttempt?: number;
@@ -704,6 +713,8 @@ export interface PosClient {
   openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null, publicPriceOnly?: boolean): Promise<PosCatalogSearchPage>;
+  catalogCategories(): Promise<PosCatalogCategory[]>;
+  browseProducts(search: string, skip: number, customerId: string | null, categoryId: string | null, familyProductId: string | null, signal?: AbortSignal): Promise<PosCatalogSearchPage>;
   productWarehouseAvailability(
     productId: string,
     signal?: AbortSignal,
@@ -984,12 +995,14 @@ export class PosEdgeClient implements PosClient {
       deviceId: string;
       permissions: string[];
       fiscalReady: boolean;
+      pointOfSaleMode?: string;
       fiscalWarnings: string[];
       dianQuotaAvailable: boolean | null;
       identityReady: boolean;
       initialEnrollmentSessionAvailable: boolean;
       recoverableLocalNumbering?: boolean;
       catalogStatus: string;
+      catalogCursor?: number;
       synchronizationInProgress: boolean;
       automaticRetryScheduled?: boolean;
       automaticRetryAttempt?: number;
@@ -1307,6 +1320,18 @@ export class PosEdgeClient implements PosClient {
         window.localStorage.getItem("auraly.pos.user-session"),
       )) window.localStorage.removeItem("auraly.pos.user-session");
     }
+  }
+
+  catalogCategories() {
+    return this.request<PosCatalogCategory[]>("/edge/v1/catalog/categories");
+  }
+
+  browseProducts(search: string, skip: number, customerId: string | null, categoryId: string | null, familyProductId: string | null, signal?: AbortSignal) {
+    const query = new URLSearchParams({ search, skip: String(skip), take: "50" });
+    if (customerId) query.set("customerId", customerId);
+    if (categoryId) query.set("categoryId", categoryId);
+    if (familyProductId) query.set("familyProductId", familyProductId);
+    return this.request<PosCatalogSearchPage>(`/edge/v1/catalog/products?${query}`, { signal });
   }
 
   searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null, publicPriceOnly = false) {

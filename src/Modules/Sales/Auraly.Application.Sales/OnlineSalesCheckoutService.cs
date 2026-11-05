@@ -473,10 +473,7 @@ public sealed class OnlineSalesCheckoutService(
                         "Los cobros de esta mesa no incluyen el ajuste al peso. " +
                         "Anula el último cobro y vuelve a recibirlo con el total redondeado.");
                 if (storedPayments.Count > 10 ||
-                    !string.Equals(System.Text.Json.JsonSerializer.Serialize(
-                        request.Payments),
-                        System.Text.Json.JsonSerializer.Serialize(storedPayments),
-                        StringComparison.Ordinal))
+                    !request.Payments.SequenceEqual(storedPayments))
                     throw new OnlineSalesDraftValidationException(
                         "Los medios de pago cambiaron. Actualiza el cobro de la mesa.");
             }

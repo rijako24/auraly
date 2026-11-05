@@ -9,6 +9,7 @@ SELECT source.Id,N'point-of-sale-mode',source.Code,source.Label,source.Descripti
        1,source.SortOrder,SYSUTCDATETIME(),SYSUTCDATETIME()
 FROM (VALUES
     (CAST('1a900000-0000-0000-0000-000000000001' AS uniqueidentifier),N'DirectSale',N'Venta directa',N'Punto de venta comercial.',10),
+    (CAST('1a900000-0000-0000-0000-000000000003' AS uniqueidentifier),N'Store',N'Tiendas',N'Venta directa con catálogo visual de productos y familias.',15),
     (CAST('1a900000-0000-0000-0000-000000000002' AS uniqueidentifier),N'RestaurantBar',N'Restaurante y bar',N'Atención por mesas y comandas.',20)
 ) source(Id,Code,Label,Description,SortOrder)
 WHERE NOT EXISTS (

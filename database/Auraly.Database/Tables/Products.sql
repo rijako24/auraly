@@ -9,6 +9,8 @@ CREATE TABLE [dbo].[Products] (
     [PurchaseTaxTreatment] NVARCHAR(32) NOT NULL CONSTRAINT [DF_Products_PurchaseTaxTreatment] DEFAULT N'DeductibleInputVat',
     [ProductCategoryId] UNIQUEIDENTIFIER NULL,
     [ProductBrandId] UNIQUEIDENTIFIER NULL,
+    [ProductColorId] UNIQUEIDENTIFIER NULL,
+    [ProductSizeId] UNIQUEIDENTIFIER NULL,
     [IntegrationConnectionId] UNIQUEIDENTIFIER NULL,
     [ExternalProductId] NVARCHAR(300) NULL,
     [Source] INT NOT NULL DEFAULT 0,
@@ -49,6 +51,8 @@ CREATE TABLE [dbo].[Products] (
     CONSTRAINT [FK_Products_ProductCategories] FOREIGN KEY ([TenantId], [ProductCategoryId])
         REFERENCES [dbo].[ProductCategories] ([TenantId], [ProductCategoryId])
         ON DELETE NO ACTION,
+    CONSTRAINT [FK_Products_ProductColors] FOREIGN KEY ([TenantId], [ProductColorId]) REFERENCES [catalog].[ProductColors] ([TenantId], [ProductColorId]),
+    CONSTRAINT [FK_Products_ProductSizes] FOREIGN KEY ([TenantId], [ProductSizeId]) REFERENCES [catalog].[ProductSizes] ([TenantId], [ProductSizeId]),
     CONSTRAINT [FK_Products_ProductBrands] FOREIGN KEY ([TenantId], [ProductBrandId])
         REFERENCES [dbo].[ProductBrands] ([TenantId], [ProductBrandId])
         ON DELETE NO ACTION,

@@ -7,7 +7,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlProductMerchandisingStore(
+public sealed partial class SqlProductMerchandisingStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids) : IProductMerchandisingStore
 {
@@ -218,6 +218,11 @@ public sealed class SqlProductMerchandisingStore(
                   SELECT NEWID(),BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
                 """, [P("@TenantId", user.TenantId), P("@ProductId", productId),
                     P("@AffectedProductIds", JsonSerializer.Serialize(affectedCatalogProducts)), P("@Now", now)], ct);
+            if (request.Variant is { } variant)
+                await ExecuteAsync(connection, transaction,
+                    "EXEC catalog.ProductVariantAssignmentSave @TenantId,@ProductId,@ProductColorId,@ProductSizeId;",
+                    [P("@TenantId", user.TenantId), P("@ProductId", productId),
+                     P("@ProductColorId", variant.ProductColorId), P("@ProductSizeId", variant.ProductSizeId)], ct);
             await transaction.CommitAsync(ct);
         }
         catch (SqlException ex) when (ex.Number is 51020 or 51021 or 51022 or 51024)
@@ -265,8 +270,10 @@ public sealed class SqlProductMerchandisingStore(
           (SELECT child.ProductId AS ChildProductId,COALESCE(child.ProductCode,child.Sku) AS ChildProductCode,child.Name AS ChildProductName,
                   links.SharesInventory,links.InventoryFactor,links.SharesPrice,links.PriceFactor,links.AllowsConversion,links.ConversionFactor
              FROM dbo.ProductLinks links JOIN dbo.Products child ON child.ProductId=links.ChildProductId AND child.TenantId=p.TenantId WHERE links.TenantId=@TenantId AND links.ParentProductId=p.ProductId AND links.IsActive=1 ORDER BY child.Name FOR JSON PATH)
-          ,l.AllowsConversion,l.ConversionFactor,p.ConversionMaximumLossPercent,p.UnitGrossWeightKg,p.IsGenericProduct
+          ,l.AllowsConversion,l.ConversionFactor,p.ConversionMaximumLossPercent,p.UnitGrossWeightKg,p.IsGenericProduct,p.ProductColorId,color.Name,p.ProductSizeId,size.Name
         FROM dbo.Products p
+        LEFT JOIN catalog.ProductColors color ON color.TenantId=p.TenantId AND color.ProductColorId=p.ProductColorId
+        LEFT JOIN catalog.ProductSizes size ON size.TenantId=p.TenantId AND size.ProductSizeId=p.ProductSizeId
         LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
         LEFT JOIN dbo.ProductLinks l ON l.ChildProductId=p.ProductId AND l.TenantId=@TenantId AND l.IsActive=1
         LEFT JOIN dbo.Products parent ON parent.ProductId=l.ParentProductId AND parent.TenantId=p.TenantId
@@ -280,7 +287,7 @@ public sealed class SqlProductMerchandisingStore(
         var barcodes = r.IsDBNull(13) ? [] : JsonSerializer.Deserialize<ProductBarcodeInput[]>(r.GetString(13)) ?? [];
         var link = r.IsDBNull(14) ? null : new ProductLinkDetail(r.GetGuid(14), r.IsDBNull(15) ? string.Empty : r.GetString(15), r.GetString(16), r.GetBoolean(17), r.IsDBNull(18) ? null : r.GetDecimal(18), r.GetBoolean(19), r.IsDBNull(20) ? null : r.GetDecimal(20), r.GetBoolean(22), r.IsDBNull(23) ? null : r.GetDecimal(23));
         var linkedProducts = r.IsDBNull(21) ? [] : JsonSerializer.Deserialize<LinkedProductDetail[]>(r.GetString(21)) ?? [];
-        return new(r.GetGuid(0), r.IsDBNull(1) ? null : r.GetGuid(1), r.IsDBNull(2) ? null : r.GetGuid(2), r.GetString(3), r.GetBoolean(4), r.GetBoolean(5), r.GetBoolean(6), scale, barcodes, link, linkedProducts, r.IsDBNull(24) ? null : r.GetDecimal(24), r.IsDBNull(25) ? null : r.GetDecimal(25), r.GetBoolean(26));
+        return new(r.GetGuid(0), r.IsDBNull(1) ? null : r.GetGuid(1), r.IsDBNull(2) ? null : r.GetGuid(2), r.GetString(3), r.GetBoolean(4), r.GetBoolean(5), r.GetBoolean(6), scale, barcodes, link, linkedProducts, r.IsDBNull(24) ? null : r.GetDecimal(24), r.IsDBNull(25) ? null : r.GetDecimal(25), r.GetBoolean(26), r.IsDBNull(27) ? null : r.GetGuid(27), r.IsDBNull(28) ? null : r.GetString(28), r.IsDBNull(29) ? null : r.GetGuid(29), r.IsDBNull(30) ? null : r.GetString(30));
     }
 
     private static async Task ExecuteAsync(SqlConnection connection, SqlTransaction transaction, string sql, SqlParameter[] parameters, CancellationToken ct)

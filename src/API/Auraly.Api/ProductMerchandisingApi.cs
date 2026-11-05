@@ -81,6 +81,30 @@ public static class ProductMerchandisingApi
         });
         units.MapPut("/{id:guid}", async (HttpContext context, ProductMerchandisingService service, Guid id, SaveProductUnitRequest request, CancellationToken ct) =>
             Results.Ok(await service.SaveUnitAsync(context.User.ToCatalogUserIdentity(), id, request, ct)));
+        MapVariantMaster(endpoints, "product-colors", true);
+        MapVariantMaster(endpoints, "product-sizes", false);
         return endpoints;
     }
+    private static void MapVariantMaster(IEndpointRouteBuilder endpoints, string route, bool colors)
+    {
+        var group = endpoints.MapGroup($"/api/commerce/v1/{route}").RequireAuthorization("catalog.user");
+        group.MapGet("/", async (HttpContext context, ProductMerchandisingService service, bool? includeInactive, CancellationToken ct) =>
+            await VariantResult(async () => Results.Ok(await service.ListVariantOptionsAsync(context.User.ToCatalogUserIdentity(), colors, includeInactive ?? false, ct))));
+        group.MapPost("/", async (HttpContext context, ProductMerchandisingService service, SaveProductVariantOption request, CancellationToken ct) =>
+            await VariantResult(async () => {
+                var value = await service.SaveVariantOptionAsync(context.User.ToCatalogUserIdentity(), colors, null, request, ct);
+                return Results.Created($"/api/commerce/v1/{route}/{value.Id}", value);
+            }));
+        group.MapPut("/{id:guid}", async (HttpContext context, ProductMerchandisingService service, Guid id, SaveProductVariantOption request, CancellationToken ct) =>
+            await VariantResult(async () => Results.Ok(await service.SaveVariantOptionAsync(context.User.ToCatalogUserIdentity(), colors, id, request, ct))));
+    }
+
+    private static async Task<IResult> VariantResult(Func<Task<IResult>> action)
+    {
+        try { return await action(); }
+        catch (CatalogValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
+        catch (CatalogConflictException exception) { return Results.Problem(exception.Message, statusCode: 409); }
+        catch (CatalogForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
+    }
+
 }

@@ -77,13 +77,13 @@ Hallazgo de código: PosSaleContractSerializer.Hash calcula SHA-256 del JSON ser
 
 Migración aditiva, sin backfill de autores/mesas inventados, defaults obligatorios en los metadatos de factura ni borrado en cascada hacia ventas. La configuración de modo POS sí se inicializa explícitamente como Venta directa según §3. Consultas e impresos admiten metadatos ausentes, sin INNER JOIN que elimine facturas normales. Validar despliegue y bloqueos sobre un volumen representativo, contratos anteriores, operación normal con sedes en ambos modos y convivencia de clientes antiguos/nuevos. La seguridad de diseño permite implementar con riesgo acotado; ausencia de regresiones requiere evidencia sobre la implementación, no se certifica con esta maqueta.
 
-La única decisión por sede es **Modo de punto de venta: Venta directa / Restaurante y bar**. **Todas las sedes de todos los tenants actuales se migran a Venta directa**, porque actualmente no hay restaurantes. No existe activación adicional, estado de módulo desactivado, flag ni entitlement gastronómico nuevo. El modo y los permisos se validan en servidor antes de abrir cuentas de mesa o emitir efectos gastronómicos; ocultar navegación no concede aislamiento. Cambiar el modo no altera la elegibilidad de productos ni documentos históricos de otras sedes. Los trabajos aceptados se completan con su versión congelada aunque la sede vuelva a Venta directa. Las migraciones no publican cartas, cambian productos existentes, asignan permisos de mesero ni alteran la ruta normal; seeds idempotentes tampoco lo hacen. El despliegue debe completar compatibilidad de lectores y procesadores antes de permitir guardar Restaurante y bar, conforme a §12; es una condición técnica de publicación, no un paso de activación para el negocio.
+La única decisión por sede es **Modo de punto de venta: Venta directa / Tiendas / Restaurante y bar**. **Todas las sedes de todos los tenants actuales se migran a Venta directa**, porque actualmente no hay restaurantes. No existe activación adicional, estado de módulo desactivado, flag ni entitlement gastronómico nuevo. El modo y los permisos se validan en servidor antes de abrir cuentas de mesa o emitir efectos gastronómicos; ocultar navegación no concede aislamiento. Cambiar el modo no altera la elegibilidad de productos ni documentos históricos de otras sedes. Los trabajos aceptados se completan con su versión congelada aunque la sede vuelva a Venta directa. Las migraciones no publican cartas, cambian productos existentes, asignan permisos de mesero ni alteran la ruta normal; seeds idempotentes tampoco lo hacen. El despliegue debe completar compatibilidad de lectores y procesadores antes de permitir guardar Restaurante y bar, conforme a §12; es una condición técnica de publicación, no un paso de activación para el negocio.
 
 ## 3. Pantalla de venta y operaciones
 
 ### Entrada al punto de venta y modo de la sede
 
-**Decisión:** configurar en Crear/Editar sede → Punto de venta el campo **Modo de punto de venta**, con opciones **Venta directa** (pantalla actual) y **Restaurante y bar** (Mesas y toma de pedidos). Pertenece a Organization por `BusinessId`; no clasifica todo el tenant, no depende del nombre/actividad económica de la sede y no se guarda como preferencia de usuario o navegador. Un tenant puede tener sedes con modos distintos. Configuración → Restaurante muestra/enlaza esta misma decisión; no mantiene otro selector independiente ni un segundo booleano de habilitación que pueda contradecirla.
+**Decisión:** configurar en Crear/Editar sede → Punto de venta el campo **Modo de punto de venta**, con opciones **Venta directa** (pantalla actual), **Tiendas** (presentación visual del mismo borrador de venta directa) y **Restaurante y bar** (Mesas y toma de pedidos). Pertenece a Organization por `BusinessId`; no clasifica todo el tenant, no depende del nombre/actividad económica de la sede y no se guarda como preferencia de usuario o navegador. Un tenant puede tener sedes con modos distintos. Configuración → Restaurante muestra/enlaza esta misma decisión; no mantiene otro selector independiente ni un segundo booleano de habilitación que pueda contradecirla.
 
 La migración inicial asigna explícitamente **Venta directa a todas las sedes existentes de todos los tenants**. Venta directa también es el valor predeterminado al crear una sede o recibir una creación desde un cliente anterior que omita el campo. La migración/seed es idempotente: una nueva ejecución no sobrescribe una elección posterior de Restaurante y bar. Al actualizar una sede, omitir el campo conserva el modo vigente. Un administrador con permiso de configuración elige cualquiera de los dos modos al crear o editar la sede; guardar Restaurante y bar basta para que Punto de venta abra esa pantalla. No hay botón Activar ni aprobación comercial adicional. No exige haber dibujado el salón y, sin mesas, abre el estado inicial de §3 para configurarlas. Tener acceso a la pantalla no permite enviar pedidos con configuración incompleta.
 
@@ -724,3 +724,25 @@ Revisión crítica del 2026-10-08: fuente inspeccionada en contratos de venta, p
 Revisión funcional del 2026-10-08: la operación sin plano publicado, el maestro independiente de mesas, la creación autorizada durante el servicio, el alta guiada de Mesero y el retorno a Mesas tras facturar quedan definidos en §3–§6 y A36–A39. El plano es una representación opcional, no la condición para usar las mesas creadas. Estas son decisiones de diseño documentadas; no describen funciones ya implementadas.
 
 Cierre de entrada al POS: §3–§6 y A40–A44 fijan modo por sede, nombres de las opciones, resolución automática al entrar y separación de atención Mesero/facturación Cajero. Queda retirada la propuesta de igualar sus permisos. El usuario conectado y su sesión de trabajo siguen funcionando como hoy; la credencial secundaria identifica al mesero que toma pedidos. Se inspeccionaron formulario/DTOs de sede, navegación, contexto/bootstrap online, `/pos`, aprovisionamiento de Cajero en `SqlTenantProvisioningStore`, validación de identidad de `ReceivePosSaleService` y sesión activa en `WorkSessionService`. Esta revisión documenta la extensión gastronómica, sin rediseñar login ni WorkSessions y sin declararla implementada.
+
+### Presentación de cobros recibidos (2026-11-05)
+
+Los productos ya cubiertos aparecen en el detalle inicialmente colapsado de cada
+cobro recibido, debajo de sus medios e importe. Se usan las asignaciones guardadas
+y las incorporaciones ya cargadas; no se consultan por producto ni se atribuye
+ficticiamente cada artículo a un medio cuando el cobro fue mixto. Anular conserva
+su comando y alcance de cobro completo. La selección principal muestra únicamente
+cantidades pendientes. El pago en captura tiene un solo indicador: falta, exceso
+electrónico, pago exacto o cambio en efectivo.
+
+Al preparar la emisión, la UI conserva el orden de cobros guardado si hay cero o
+un efectivo. Solo consolida efectivos cuando existen varios, según el contrato
+vigente; conserva el orden relativo y los datos de los otros medios y excluye la
+propina del consumo.
+
+La comparación interna de medios al emitir usa igualdad de campos de
+`OnlineSalesPayment` en su orden canónico. Los decimales se comparan por valor:
+`31400` y `31400.00` representan el mismo importe. No se usa igualdad textual del
+JSON para dinero; continúan verificándose medio, importe, referencia, franquicia,
+aprobación, cuenta, notas, efectivo entregado y ajuste. Esta corrección puntual no
+cambia el contrato, los recibos idempotentes ni los efectos de facturación.

@@ -31,6 +31,7 @@
     <Build Include="Schemas\Billing.sql" />
     <Build Include="Functions\TenantDianQuotaSnapshot.sql" />
     <Build Include="Functions\ProductCompositionCost.sql" />
+    <Build Include="Functions\ProductPresentation.sql" />
     <Build Include="Functions\ProductPriceCostBasis.sql" />
     <Build Include="Functions\SalesReportActivity.sql" />
     <Build Include="Functions\SalesReportDocumentMovements.sql" />
@@ -180,6 +181,9 @@
     <Build Include="Tables\IntegrationChannelWarehouses.sql" />
     <Build Include="Tables\ProductCategories.sql" />
     <Build Include="Tables\ProductMerchandising.sql" />
+    <Build Include="Tables\ProductColors.sql" />
+    <Build Include="Tables\ProductSizes.sql" />
+    <Build Include="StoredProcedures\ProductVariantAssignmentSave.sql" />
     <Build Include="Tables\ProductCompositions.sql" />
     <Build Include="Tables\Products.sql" />
     <Build Include="Tables\AuralyCatalog.sql" />

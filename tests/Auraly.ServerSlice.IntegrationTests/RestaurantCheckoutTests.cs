@@ -12,8 +12,10 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
 {
-    [Fact]
-    public async Task Two_partial_collections_create_one_invoice_only_after_full_payment()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Two_partial_collections_create_one_invoice_only_after_full_payment(bool mixedPayments)
     {
         var waiterId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
@@ -76,11 +78,20 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             }
             Assert.Equal(0, initial.Collected);
             var unitAmount = initial.Total / 2;
+            static decimal BrowserNumber(decimal value) => decimal.Parse(value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture), System.Globalization.CultureInfo.InvariantCulture);
+            OnlineSalesPayment[] firstPayments = mixedPayments
+                ? [new("Cash", BrowserNumber(unitAmount - 0.01m), null),
+                   new("DebitCard", 0.01m, null, CardFranchiseCode: "Visa", ApprovalNumber: "FIRST")]
+                : [new("Cash", unitAmount, null)];
+            OnlineSalesPayment[] secondPayments = mixedPayments
+                ? [new("Cash", BrowserNumber(unitAmount - 0.99m), null),
+                   new("DebitCard", 0.99m, null, CardFranchiseCode: "Visa", ApprovalNumber: "SECOND")]
+                : [new("Cash", unitAmount, null)];
             var firstId = Guid.NewGuid();
             var firstRequest = new CaptureRestaurantCollectionRequest(firstId,
                 workSessionId, initial.AccountVersion,
                 [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
-                [new OnlineSalesPayment("Cash", unitAmount, null)]);
+                firstPayments);
             var firstKey = Guid.NewGuid().ToString("N");
             RestaurantCollectionSummary first;
             using (var response = await CaptureAsync(cashier, account.AccountId,
@@ -113,7 +124,7 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 new CaptureRestaurantCollectionRequest(Guid.NewGuid(),
                     workSessionId, first.AccountVersion,
                     [new RestaurantCollectionAllocationRequest(addition.AdditionId, 1)],
-                    [new OnlineSalesPayment("Cash", unitAmount, null)]),
+                    secondPayments),
                 Guid.NewGuid().ToString("N")))
             {
                 response.EnsureSuccessStatusCode();
@@ -122,11 +133,24 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             }
             Assert.Equal(0, second.Remaining);
             Assert.Equal(2, second.Collections.Count);
+            OnlineSalesPayment[] finalPayments = mixedPayments
+                ? [new("Cash", BrowserNumber(initial.Total - 1m), null, TenderedAmount: BrowserNumber(initial.Total - 1m)),
+                   firstPayments[1], secondPayments[1]]
+                : [new("Cash", initial.Total, null, TenderedAmount: initial.Total)];
             var checkout = new CompleteRestaurantAccountRequest(workSessionId,
                 new CompleteOnlineSalesDraftRequest(second.AccountVersion,
-                    [new OnlineSalesPayment("Cash", initial.Total, null,
-                        TenderedAmount: initial.Total)],
+                    finalPayments,
                     DocumentType: PosSaleDocumentTypes.Receipt));
+            if (mixedPayments)
+            {
+                var changedPayments = finalPayments.ToArray();
+                changedPayments[1] = changedPayments[1] with { ApprovalNumber = "CHANGED" };
+                using var changed = await CompleteAsync(cashier, account.AccountId,
+                    checkout with { Checkout = checkout.Checkout with { Payments = changedPayments } },
+                    Guid.NewGuid().ToString("N"));
+                Assert.Equal(HttpStatusCode.BadRequest, changed.StatusCode);
+                Assert.Contains("Los medios de pago cambiaron", await changed.Content.ReadAsStringAsync());
+            }
             CompleteOnlineOrderSaleResponse invoice;
             using (var response = await CompleteAsync(cashier, account.AccountId,
                 checkout, Guid.NewGuid().ToString("N")))

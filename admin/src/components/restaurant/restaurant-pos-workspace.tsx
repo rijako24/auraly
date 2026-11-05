@@ -1,12 +1,14 @@
 "use client";
 
+import { PosCategoryPill as CategoryPill, PosProductTile as ProductTile, PosSaleItemCard } from "@/components/pos/pos-catalog-presentation";
+
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, CakeSlice, ChefHat, CircleCheck, Clock3,
   Coffee, DoorOpen,
   Fish, GlassWater, List, Map as MapIcon, MessageSquareText, FileText, LayoutGrid,
-  Loader2, Minus, Plus, Printer, Salad, Sandwich, Search, Settings2, Soup, Trash2, UtensilsCrossed,
+  Minus, Plus, Printer, Salad, Sandwich, Search, Settings2, Soup, Trash2, UtensilsCrossed,
   type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { RestaurantPaymentDialog } from "@/components/restaurant/restaurant-payment-dialog";
@@ -31,7 +33,7 @@ import { restaurantAccountApi, type RestaurantAccountDraft,
   type RestaurantAttention, type RestaurantCancellation,
   type RestaurantCollectionAllocation, type RestaurantCollectionSummary,
   type RestaurantPrebill,
-  type RestaurantProduct, type RestaurantTableOccupancy } from
+  type RestaurantTableOccupancy } from
   "@/services/api/restaurant-account";
 import { inventoryApi } from "@/services/api/inventory";
 
@@ -857,10 +859,10 @@ export function RestaurantPosWorkspace({ option }: {
             </div>
           </div>
           <div className="flex-1 space-y-2 p-3 sm:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">{!groups.length && <div className="grid min-h-52 place-items-center text-center text-muted-foreground"><div><Coffee className="mx-auto h-8 w-8"/><p className="mt-3 text-sm">Toca un producto para empezar el pedido.</p></div></div>}
-            {groups.map((group, index) => <div key={`${group.productId}-${index}`} className="rounded-2xl border bg-background p-4"><div className="flex items-start justify-between gap-2"><div><strong className="text-base">{group.name}</strong><p className="mt-0.5 text-xs text-muted-foreground">{group.contributors.join(", ")}</p><p className={`mt-1 text-xs font-medium ${"text-muted-foreground"}`}>{group.sentQuantity > 0 && `${group.sentQuantity} enviadas · `}{group.pendingQuantity > 0 ? `${group.pendingQuantity} pendientes · ${group.stationName ?? "Sin estación"}` : group.sentQuantity > 0 ? group.stationName ?? "Estación no disponible" : "Sin comanda · se cobra directamente"}</p></div><span className="font-semibold">{money.format(group.amount)}</span></div>
+            {groups.map((group, index) => <PosSaleItemCard key={`${group.productId}-${index}`}><div className="flex items-start justify-between gap-2"><div><strong className="text-base">{group.name}</strong><p className="mt-0.5 text-xs text-muted-foreground">{group.contributors.join(", ")}</p><p className={`mt-1 text-xs font-medium ${"text-muted-foreground"}`}>{group.sentQuantity > 0 && `${group.sentQuantity} enviadas · `}{group.pendingQuantity > 0 ? `${group.pendingQuantity} pendientes · ${group.stationName ?? "Sin estación"}` : group.sentQuantity > 0 ? group.stationName ?? "Estación no disponible" : "Sin comanda · se cobra directamente"}</p></div><span className="font-semibold">{money.format(group.amount)}</span></div>
               <div className="mt-3 flex items-center justify-between"><span className="text-sm font-semibold">{group.quantity} {group.quantity === 1 ? "unidad" : "unidades"}</span>{canAdd && <div className="flex items-center gap-2">{group.stationId === null && <Button aria-label={`Quitar uno de ${group.name}`} variant="outline" size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { const lastDirect = group.items.filter((item) => item.status === "Direct").at(-1); if (lastDirect) void mutateProduct(group.productId, "remove", lastDirect.additionId); }}><Minus className="h-5 w-5"/></Button>}<Button aria-label={`Agregar uno de ${group.name}`} size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "plus")}><Plus className="h-5 w-5"/></Button></div>}</div>
               {group.stationId !== null && <div className="mt-3 space-y-2 border-t pt-3">{group.items.map((item, itemIndex) => <div key={item.additionId} className="flex items-start justify-between gap-2 rounded-xl bg-muted/50 px-3 py-2 text-sm"><div className="min-w-0"><p className="font-semibold">{item.quantity} × {group.name} <span className="font-normal text-muted-foreground">· {item.status === "Sent" ? "Enviada" : "Pendiente"}</span></p>{item.preparationNote && <p className="mt-1 whitespace-pre-wrap text-primary"><MessageSquareText className="mr-1 inline h-4 w-4"/>{item.preparationNote}</p>}{cancellationsByAddition.get(item.additionId) && <p className="mt-1 text-xs font-bold text-red-700 dark:text-red-300">Cancelación en revisión</p>}</div>{item.status === "Pending" && canAdd ? <div className="flex shrink-0 flex-wrap justify-end gap-2"><Button size="sm" variant="outline" className="min-h-10 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { setNoteAdditionId(item.additionId); setNoteText(item.preparationNote ?? ""); }}><MessageSquareText className="mr-1 h-4 w-4"/>{item.preparationNote ? "Editar" : "Observación"} <span className="sr-only">de la unidad {itemIndex + 1}</span></Button><Button size="icon" variant="outline" className="h-10 w-10 rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-900 dark:text-rose-300" aria-label={`Eliminar producto pendiente ${group.name}, incorporación ${itemIndex + 1}`} title="Eliminar producto pendiente" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "remove", item.additionId)}><Trash2 className="h-5 w-5"/></Button></div> : item.status === "Sent" && canAdd && !cancellationsByAddition.has(item.additionId) && <Button size="sm" variant="outline" className="min-h-10 shrink-0 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { setCancelAdditionId(item.additionId); setCancelQuantity(1); setCancelReasonCode(""); setCancelExplanation(""); setCancelRequestId(null); }}>Corregir</Button>}</div>)}</div>}
-              {group.sentQuantity > 0 && group.pendingQuantity === 0 && canAdd && <p className="mt-2 text-xs text-muted-foreground">Toca + para agregar más y enviar una nueva comanda.</p>}{group.pending.length > 0 && canAdd && <Button className="mt-3 min-h-12 w-full rounded-xl bg-teal-600 font-bold text-white shadow-sm transition hover:bg-teal-700 hover:shadow-md dark:bg-teal-500 dark:text-slate-950 dark:hover:bg-teal-400" disabled={busy || !!pendingSend && pendingSend.additionId !== group.pending[0].additionId} onClick={() => void sendPending(group.pending[0].additionId)}><ChefHat className="mr-2 h-5 w-5"/>{group.pending.length > 1 ? `Enviar 1 de ${group.pending.length} cantidades pendientes` : "Enviar este producto"}</Button>}</div>)}</div>
+              {group.sentQuantity > 0 && group.pendingQuantity === 0 && canAdd && <p className="mt-2 text-xs text-muted-foreground">Toca + para agregar más y enviar una nueva comanda.</p>}{group.pending.length > 0 && canAdd && <Button className="mt-3 min-h-12 w-full rounded-xl bg-teal-600 font-bold text-white shadow-sm transition hover:bg-teal-700 hover:shadow-md dark:bg-teal-500 dark:text-slate-950 dark:hover:bg-teal-400" disabled={busy || !!pendingSend && pendingSend.additionId !== group.pending[0].additionId} onClick={() => void sendPending(group.pending[0].additionId)}><ChefHat className="mr-2 h-5 w-5"/>{group.pending.length > 1 ? `Enviar 1 de ${group.pending.length} cantidades pendientes` : "Enviar este producto"}</Button>}</PosSaleItemCard>)}</div>
           <div className="shrink-0 border-t bg-card p-5">
             <div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Consumo estimado</span><strong className="text-2xl">{money.format(estimatedTotal)}</strong></div>
             {canAdd && (pendingCount > 0 || pendingSend) && <Button className="mt-4 min-h-14 w-full rounded-2xl bg-teal-700 text-base font-bold text-white shadow-md shadow-teal-900/15 hover:bg-teal-800 dark:bg-teal-500 dark:text-slate-950 dark:hover:bg-teal-400" disabled={busy || !!pendingSend?.additionId} onClick={() => void sendPending()}><ChefHat className="mr-2 h-5 w-5"/>{pendingSend ? "Reintentar envío" : `Enviar pendientes · ${pendingCount}`}</Button>}
@@ -956,30 +958,4 @@ function categoryIcon(name: string): LucideIcon {
   if (/ensalada|vegetal/.test(value)) return Salad;
   if (/entrada|sopa/.test(value)) return Soup;
   return UtensilsCrossed;
-}
-
-function CategoryPill({ active, label, count, icon: Icon, onClick }: {
-  active: boolean; label: string; count?: number; icon: LucideIcon;
-  onClick: () => void;
-}) {
-  return <button type="button" onClick={onClick} className={`flex min-h-14 shrink-0 items-center gap-2.5 rounded-2xl border px-3.5 py-2 text-sm font-semibold shadow-sm transition active:scale-[.98] ${active ? "border-primary bg-primary text-primary-foreground shadow-primary/20" : "bg-background hover:border-primary/60 hover:bg-primary/5 hover:shadow-md"}`}>
-    <span className={`grid h-8 w-8 place-items-center rounded-xl ${active ? "bg-white/20" : "bg-primary/10 text-primary"}`}><Icon className="h-[18px] w-[18px]"/></span>
-    <span>{label}</span>{count !== undefined && <span className={`rounded-lg px-2 py-0.5 text-xs ${active ? "bg-white/20" : "bg-muted text-muted-foreground"}`}>{count}</span>}
-  </button>;
-}
-
-function ProductTile({ product, disabled, loading, onClick }: {
-  product: RestaurantProduct; disabled: boolean; loading: boolean; onClick: () => void;
-}) {
-  const [imageFailed, setImageFailed] = useState(false);
-  return <button disabled={disabled} onClick={onClick} aria-label={`Agregar ${product.name}`}
-    className="group min-h-52 overflow-hidden rounded-3xl border bg-background text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/70 hover:shadow-md focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60">
-    <div className="relative grid min-h-32 aspect-[4/3] place-items-center overflow-hidden bg-gradient-to-br from-emerald-50 via-teal-50 to-slate-100 text-primary dark:from-emerald-950 dark:via-teal-950 dark:to-slate-900">
-      {product.imageUrl && !imageFailed
-        // eslint-disable-next-line @next/next/no-img-element
-        ? <img src={product.imageUrl} alt="" className="h-full w-full object-cover transition duration-300 group-hover:scale-105" onError={() => setImageFailed(true)}/>
-        : <UtensilsCrossed className="h-14 w-14 opacity-50" aria-hidden="true"/>}
-      <span className="absolute right-3 top-3 grid h-10 w-10 place-items-center rounded-full bg-background/90 text-primary shadow">{loading ? <Loader2 className="h-5 w-5 animate-spin"/> : <Plus className="h-5 w-5"/>}</span>
-    </div><div className="p-4"><p className="line-clamp-2 min-h-11 text-sm font-bold sm:text-base">{product.name}</p><p className="mt-2 text-lg font-extrabold text-primary">{money.format(product.unitPrice)}</p></div>
-  </button>;
 }

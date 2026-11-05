@@ -77,7 +77,8 @@ public sealed record SaveProductRequest(
     bool? IsIngredient = null,
     IReadOnlyCollection<ProductRecipeIngredientInput>? RecipeIngredients = null,
     int? RecipeExpectedVersion = null,
-    string? CompositionKind = null);
+    string? CompositionKind = null,
+    ProductVariantInput? Variant = null);
 
 public sealed record ProductDetail(
     Guid ProductId,
@@ -137,6 +138,10 @@ public sealed record CatalogDeviceIdentity(
     Guid WarehouseId);
 
 [method: System.Text.Json.Serialization.JsonConstructor]
+public sealed record ProductPresentation(string? ImageUrl, Guid? FamilyProductId,
+    Guid? ProductColorId, string? ColorName, Guid? ProductSizeId, string? SizeName);
+public sealed record PosCatalogCategory(Guid CategoryId, string Name);
+
 public sealed record PosCatalogItem(
     Guid ProductId,
     string ProductCode,
@@ -167,7 +172,8 @@ public sealed record PosCatalogItem(
     bool IsGenericProduct = false,
     bool IsIngredient = false,
     bool HasIngredients = false,
-    bool IsCombo = false)
+    bool IsCombo = false,
+    ProductPresentation? Presentation = null)
 {
     public PosCatalogItem(
         Guid productId,

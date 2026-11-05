@@ -8,7 +8,7 @@ export function finalRestaurantPayments(collections: ReadonlyArray<{
   const captured = collections.flatMap((entry) => entry.payments);
   const cash = captured.filter((payment) => payment.methodCode === "Cash");
   const other = captured.filter((payment) => payment.methodCode !== "Cash");
-  if (!cash.length) return other;
+  if (cash.length <= 1) return captured;
   const roundingAdjustment = round(cash.reduce((sum, item) =>
     sum + (item.roundingAdjustment ?? 0), 0));
   return [{ methodCode: "Cash", amount: round(cash.reduce((sum, item) =>

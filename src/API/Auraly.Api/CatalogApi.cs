@@ -36,6 +36,14 @@ public static class CatalogApi
         var onlinePos = endpoints.MapGroup("/api/commerce/v1/pos/catalog")
             .RequireAuthorization("pos.user");
 
+        onlinePos.MapPost("/products/search", async (HttpContext context,
+            Auraly.Application.Sales.OnlineSalesDraftService service,
+            Auraly.Contracts.Sales.SearchOnlineSalesRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.SearchProductsAsync(context.User.ToOnlineSalesUserIdentity(), request, ct))));
+
+        onlinePos.MapGet("/categories", async (HttpContext context, ProductMerchandisingService service, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.PosCategoriesAsync(context.User.ToCatalogUserIdentity(), ct))));
+
         onlinePos.MapGet("/products/{productId:guid}/warehouse-availability", async (
             HttpContext context, CatalogService service, Guid productId, CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.PosWarehouseAvailabilityAsync(
@@ -197,6 +205,14 @@ public static class CatalogApi
         try
         {
             return await action();
+        }
+        catch (Auraly.Application.Sales.OnlineSalesDraftForbiddenException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (Auraly.Application.Sales.OnlineSalesDraftValidationException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: StatusCodes.Status400BadRequest);
         }
         catch (CatalogForbiddenException exception)
         {

@@ -792,6 +792,7 @@ public static class PosEdgeHostApplication
                 deviceSeriesCode = workstation.DeviceSeriesCode,
                 businessId = runtime.BusinessId.Value,
                 warehouseId = runtime.WarehouseId.Value,
+                pointOfSaleMode = await catalog.PointOfSaleModeAsync(ct),
                 businessName = workstation.BusinessName,
                 warehouseName = workstation.WarehouseName,
                 warehouseAllowsNegativeStockSales = runtime.WarehouseAllowsNegativeStock,
@@ -873,8 +874,10 @@ public static class PosEdgeHostApplication
             if (!session.Permissions.Contains(CommercePermissionCodes.SalesCreate)) return Results.Forbid();
             return Results.Ok(await drafts.RemoveChargeAsync(context.ScopeFor(session), new(draftId), appliedChargeId, ct));
         });
+        edge.MapGet("/catalog/categories", async (PosCatalogStore catalog, CancellationToken ct) =>
+            Results.Ok(await catalog.CategoriesAsync(ct)));
         edge.MapGet("/catalog/products", async (
-            string? search,
+            string? search, Guid? categoryId, Guid? familyProductId,
             int? skip,
             int? take,
             Guid? customerId,
@@ -888,7 +891,7 @@ public static class PosEdgeHostApplication
                 search ?? string.Empty,
                 offset,
                 pageSize + 1,
-                ct)).ToArray();
+                ct, categoryId, familyProductId)).ToArray();
             var hasMore = values.Length > pageSize;
             var visible = values.Take(pageSize).ToArray();
             if (publicPriceOnly == true)
@@ -901,7 +904,8 @@ public static class PosEdgeHostApplication
                         value.BaseUnitCode, value.TaxCode, value.TaxRate,
                         unitPrice = value.UnitPrice, value.CurrencyCode, value.IsActive,
                         value.IsWeighable, value.AllowsFractionalSale,
-                        priceSource = "Base", promotionDiscount = 0m
+                        priceSource = "Base", promotionDiscount = 0m, value.ProductCategoryId,value.CategoryName,
+                        value.Presentation,imageUrl=value.Presentation?.ImageUrl
                     }).ToArray(),
                     hasMore,
                     nextOffset = hasMore ? offset + pageSize : (int?)null
@@ -921,7 +925,8 @@ public static class PosEdgeHostApplication
                     value.ProductId,value.ProductCode,value.Reference,value.Name,value.BaseUnitCode,
                     value.TaxCode,value.TaxRate,unitPrice=resolved.Amount,resolved.CurrencyCode,
                     value.IsActive,value.IsWeighable,value.AllowsFractionalSale,priceSource=resolved.Source,
-                    promotionDiscount=resolved.PromotionDiscount
+                    promotionDiscount=resolved.PromotionDiscount,value.ProductCategoryId,value.CategoryName,
+                    value.Presentation,imageUrl=value.Presentation?.ImageUrl
                 });
             }
             return Results.Ok(new

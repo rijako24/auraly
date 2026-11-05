@@ -291,3 +291,65 @@ producción. No se puede afirmar paridad online si el estado vive solo en React.
   incluida la outbox pendiente, según `pos-enrollment-design.md`. Reiniciar la
   aplicación o reintentar una descarga del mismo enrolamiento no ejecuta esa limpieza.
 
+
+## Presentación Tiendas (2026-11-05)
+
+El modo persistido de sede tiene tres opciones del catálogo `point-of-sale-mode`:
+Venta directa (`DirectSale`), Tiendas (`Store`) y Restaurante y bar (`RestaurantBar`).
+Tiendas cambia exclusivamente la presentación de venta directa. Comparte su mismo
+`SalesDraftId`/borrador SQLite, propietario, versión, idempotencia, captura por ID,
+cantidades, pausas, precios, cobro, emisión e impresión. No crea otro carrito,
+borrador, tabla de ventas, emisor ni API de confirmación.
+
+`/pos` mantiene una sola instancia del flujo de venta directa. Tiendas presenta
+las tarjetas, categorías y superficie de líneas extraídas del restaurante como
+componentes de presentación compartidos. Las acciones invocan los handlers del
+POS vigente. Los datos y callbacks de restaurante conservan su propietario.
+
+La consulta `POST /pos/catalog/products/search` reutiliza el servicio y la consulta
+canónicos de búsqueda/precio. Categoría y familia se aplican antes del límite de
+50 productos. La familia se resuelve desde `ProductLinks`, con principal y hermanos,
+sin inferir relaciones por nombre ni cambiar inventario. La proyección tipada de
+imagen, familia, color y talla pertenece a `catalog.ProductPresentation`; se resuelve
+por página y acompaña el snapshot/delta de catálogo existente. No hay consultas
+adicionales por tarjeta ni inventario local. La búsqueda local consume esa misma
+proyección en SQLite; catálogo y familia no tienen un sincronizador independiente.
+El modo viaja por el snapshot/stream de configuración ya existente.
+
+El catálogo visible tiene un propietario de consulta, búsqueda con espera de 250 ms,
+cancelación de solicitudes obsoletas y paginación explícita. Agregar una prenda usa
+la respuesta autoritativa del comando de captura; no recarga catálogo o borrador.
+Cada combinación sigue siendo un producto vendible distinto, con saldo propio
+cuando no comparte inventario. Los atributos opcionales no generan combinaciones,
+no agrupan líneas, no renombran productos ni modifican precios o impuestos.
+
+Presupuesto de aceptación: páginas de 50 sobre un catálogo de 10.000 productos,
+una petición de productos por cambio de búsqueda/categoría/página/familia y ninguna
+por tarjeta; categorías una vez al entrar. Objetivo p95 de consulta online <500 ms
+en entorno controlado, separado de carga de imágenes. El alta/cambio de cantidad,
+cobro e impresión conservan los presupuestos y validaciones existentes. La prueba
+local verifica además familias de más de una página y persistencia tras reinicio.
+
+Al actualizar una caja que aún no tenga la columna local de presentación, la
+migración invalida una sola vez su snapshot de catálogo y el sincronizador
+existente lo reconstruye. Las ventas, borradores y outbox se preservan y la
+promoción del snapshot sigue siendo atómica. Esto es necesario para obtener
+imágenes y familias de fichas previas, que no generarían por sí solas un delta.
+Las aperturas posteriores conservan el cursor incremental normal. Las señales
+push se agrupan con el notificador compartido y no se añade polling.
+
+La búsqueda materializa primero los IDs de la página y después resuelve sus
+costos, clasificación, imágenes y atributos. La unicidad filtrada
+`UX_ProductPrices_Active` respalda el único precio activo por sede/producto;
+la selección conserva su vigencia y no agrega un segundo cálculo de precios.
+Medición local controlada (SQL Server, Release, 10.000 productos, páginas de 50,
+20 lecturas calientes alternando primera/siguiente, después de dos lecturas de
+calentamiento): p95 de 464 ms frente a 849 ms antes de acotar el enriquecimiento.
+La prueba conserva el umbral de 500 ms y la paginación se comprueba por API.
+El E2E verifica una consulta inicial de categorías y otra de productos, sin
+recargar el catálogo al capturar ni cambiar cantidades.
+
+Rollback: devolver la sede a Venta directa mediante su actualización habitual;
+conserva el mismo borrador y los productos/atributos. El esquema es aditivo y
+puede permanecer durante la reversión de binarios. Una versión anterior de la
+UI debe recibir la sede ya en Venta directa antes de retirarse Tiendas.

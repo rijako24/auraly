@@ -261,7 +261,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         string term,
         int skip = 0,
         int take = 50,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, Guid? categoryId = null, Guid? familyProductId = null)
     {
         if (skip < 0) throw new ArgumentOutOfRangeException(nameof(skip));
         if (take is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(take));
@@ -272,6 +272,10 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             SELECT p.*
             FROM PosCatalogProducts p
             WHERE p.IsActive=1 AND p.IsIngredient=0
+              AND (@CategoryId IS NULL OR p.ProductCategoryId=@CategoryId)
+              AND (@FamilyId IS NULL OR COALESCE(p.FamilyProductId,p.ProductId)=
+                (SELECT COALESCE(root.FamilyProductId,root.ProductId)
+                 FROM PosCatalogProducts root WHERE root.ProductId=@FamilyId))
               AND (
                 @Exact='' OR
                 p.ProductCode LIKE @Prefix OR
@@ -294,7 +298,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         var normalized = term.Trim();
         command.Parameters.AddRange([
             P("@Exact", normalized), P("@Prefix", $"{normalized}%"),
-            P("@Name", $"%{normalized}%"), P("@Take", take), P("@Skip", skip)]);
+            P("@Name", $"%{normalized}%"), P("@Take", take), P("@Skip", skip),
+            P("@CategoryId", categoryId?.ToString("D")), P("@FamilyId", familyProductId?.ToString("D"))]);
         var products = new List<PosCatalogItem>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -484,6 +489,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
 
         var productRows = effectiveItems.Select(item => new
         {
+            FamilyProductId = item.Presentation?.FamilyProductId?.ToString("D"),
+            PresentationJson = item.Presentation is null ? null : JsonSerializer.Serialize(item.Presentation),
             ProductId = item.ProductId.ToString("D"),
             item.ProductCode,
             item.Reference,
@@ -517,7 +524,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             INSERT INTO {products}
               (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
                ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent,
-               InventoryProductId,InventoryFactor,IsGenericProduct,IsIngredient,HasIngredients,IsCombo)
+               InventoryProductId,InventoryFactor,IsGenericProduct,IsIngredient,HasIngredients,IsCombo,PresentationJson,FamilyProductId)
             SELECT
               json_extract(value,'$.ProductId'),json_extract(value,'$.ProductCode'),json_extract(value,'$.Reference'),json_extract(value,'$.Name'),
               json_extract(value,'$.BaseUnitCode'),json_extract(value,'$.TaxCode'),json_extract(value,'$.TaxRate'),json_extract(value,'$.UnitPrice'),
@@ -527,7 +534,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               json_extract(value,'$.ProductCategoryAncestorIds'),json_extract(value,'$.AverageUnitCost'),json_extract(value,'$.LatestUnitCost'),
               json_extract(value,'$.TargetMarginPercent'),json_extract(value,'$.InventoryProductId'),json_extract(value,'$.InventoryFactor'),
               json_extract(value,'$.IsGenericProduct'),json_extract(value,'$.IsIngredient'),
-              json_extract(value,'$.HasIngredients'),json_extract(value,'$.IsCombo')
+              json_extract(value,'$.HasIngredients'),json_extract(value,'$.IsCombo'),json_extract(value,'$.PresentationJson'),json_extract(value,'$.FamilyProductId')
             FROM json_each(@Rows)
             WHERE true
             ON CONFLICT(ProductId) DO UPDATE SET
@@ -542,7 +549,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               TargetMarginPercent=excluded.TargetMarginPercent,
               InventoryProductId=excluded.InventoryProductId,InventoryFactor=excluded.InventoryFactor,
               IsGenericProduct=excluded.IsGenericProduct,IsIngredient=excluded.IsIngredient,
-              HasIngredients=excluded.HasIngredients,IsCombo=excluded.IsCombo;
+              HasIngredients=excluded.HasIngredients,IsCombo=excluded.IsCombo,PresentationJson=excluded.PresentationJson,FamilyProductId=excluded.FamilyProductId;
             """, [P("@Rows", JsonSerializer.Serialize(productRows))], ct);
 
         var barcodeRows = effectiveItems.SelectMany(item =>
@@ -602,7 +609,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             reader.GetInt64(reader.GetOrdinal("IsGenericProduct")) == 1,
             reader.GetInt64(reader.GetOrdinal("IsIngredient")) == 1,
             reader.GetInt64(reader.GetOrdinal("HasIngredients")) == 1,
-            reader.GetInt64(reader.GetOrdinal("IsCombo")) == 1);
+            reader.GetInt64(reader.GetOrdinal("IsCombo")) == 1,
+            reader.IsDBNull(reader.GetOrdinal("PresentationJson")) ? null : JsonSerializer.Deserialize<ProductPresentation>(reader.GetString(reader.GetOrdinal("PresentationJson"))));
     }
 
     private static async Task<PosCatalogStatus> StatusAsync(
@@ -660,6 +668,13 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 await using var reader = await info.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct)) columns.Add(reader.GetString(1));
             }
+            if (table == "PosCatalogProducts" && !columns.Contains("PresentationJson"))
+            {
+                await using var invalidate = connection.CreateCommand();
+                invalidate.CommandText = "UPDATE PosCatalogState SET Status='Invalid',SessionId=NULL,NextPageCursor=NULL WHERE StateId=1 AND Status<>'Empty';";
+                await invalidate.ExecuteNonQueryAsync(ct);
+            }
+
             foreach (var column in new[] { "IsWeighable", "AllowsFractionalSale" })
             {
                 if (columns.Contains(column)) continue;
@@ -685,7 +700,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 alter.CommandText = $"ALTER TABLE {table} ADD COLUMN CategoryName TEXT NULL;";
                 await alter.ExecuteNonQueryAsync(ct);
             }
-            foreach (var column in new[] { "ProductCategoryId", "ProductBrandId", "ProductCategoryAncestorIds", "TargetMarginPercent" })
+            foreach (var column in new[] { "ProductCategoryId", "ProductBrandId", "ProductCategoryAncestorIds", "TargetMarginPercent", "PresentationJson", "FamilyProductId" })
             {
                 if (columns.Contains(column)) continue;
                 await using var alter = connection.CreateCommand();
@@ -732,7 +747,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             }
             await using (var index = connection.CreateCommand())
             {
-                index.CommandText = $"CREATE INDEX IF NOT EXISTS IX_{table}_InventoryProductId ON {table}(InventoryProductId);";
+                index.CommandText = $"CREATE INDEX IF NOT EXISTS IX_{table}_InventoryProductId ON {table}(InventoryProductId); CREATE INDEX IF NOT EXISTS IX_{table}_Family ON {table}(FamilyProductId,Name,ProductId); CREATE INDEX IF NOT EXISTS IX_{table}_Category ON {table}(ProductCategoryId,Name,ProductId);";
                 await index.ExecuteNonQueryAsync(ct);
             }
         }
@@ -792,7 +807,9 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         IsGenericProduct INTEGER NOT NULL DEFAULT 0,
         IsIngredient INTEGER NOT NULL DEFAULT 0,
         HasIngredients INTEGER NOT NULL DEFAULT 0,
-        IsCombo INTEGER NOT NULL DEFAULT 0
+        IsCombo INTEGER NOT NULL DEFAULT 0,
+        PresentationJson TEXT NULL,
+        FamilyProductId TEXT NULL
         """;
 
     private static readonly string Schema = $"""
