@@ -97,6 +97,17 @@ los siete casos de esta validación, incluida la conciliación del explorador;
 el build de backend terminó sin advertencias ni errores. La auditoría conserva
 los propietarios de JSON, proyección y costo, sin nuevas consultas, motores,
 escrituras operativas, contratos HTTP ni cargas frontend.
+Las pruebas de costo histórico usan una fixture propia, separada del escenario
+que comprueba los totales de una única venta; no dependen del orden de ejecución.
+Los siete casos volvieron a pasar con ese aislamiento.
+
+El corte de datos de DEV del 2026-11-05 reconstruyó 633 fuentes en cinco sedes,
+mediante el mismo comando canónico. Quedaron 349 documentos de venta y 225 de
+compra proyectados, con una línea de servicio. En cada sede se verificaron los
+encabezados contra sus documentos inmutables y las identidades de neto,
+impuestos, redondeo y total oficial, además de la conciliación del resumen
+diario y la cobertura de costo. La comprobación global no dejó proyecciones
+anteriores a la versión 5 ni reconstrucciones abiertas.
 
 ## Atribución nativa del pedido
 
