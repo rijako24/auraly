@@ -23,9 +23,9 @@ public sealed partial class SqlSalesReportingProjectionWriter(
 {
     public const short ProjectionVersion = 5;
 
-    public async Task ProjectSaleAsync(
+    internal async Task ProjectSaleAsync(
         SalesReportingSqlSession session,
-        PosSaleUploadRequest value,
+        SalesReportingSaleSource value,
         CancellationToken cancellationToken)
     {
         var localDate = await ResolveLocalDateAsync(
@@ -332,7 +332,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
 
     private static async Task<SellerAttribution> ResolveSellerAttributionAsync(
         SalesReportingSqlSession session,
-        PosSaleUploadRequest value,
+        SalesReportingSaleSource value,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -373,7 +373,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
 
     private async Task InsertSaleDocumentAsync(
         SalesReportingSqlSession session,
-        PosSaleUploadRequest value,
+        SalesReportingSaleSource value,
         SellerAttribution seller,
         (DateOnly Date, string TimeZoneId,byte Hour) localDate,
         DocumentCostProjection recognizedCost,
@@ -432,7 +432,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
 
     private async Task<DocumentCostProjection> InsertSaleLineFactsAsync(
         SalesReportingSqlSession session,
-        PosSaleUploadRequest value,
+        SalesReportingSaleSource value,
         Guid? sellerId,
         DateOnly localDate,
         DateTimeOffset now,
@@ -480,7 +480,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                        ON component.ProductRecipeVersionId=restaurant.ProductRecipeVersionId
                        AND component.IngredientProductId=consumption.IngredientProductId
                      WHERE consumption.DocumentId=@DocumentId AND consumption.SaleLineNumber=batch.LineNumber FOR JSON PATH,INCLUDE_NULL_VALUES),
-                   CONVERT(BIT,CASE WHEN restaurant.RecognizedCostAmount IS NOT NULL OR valuation.ValueChange IS NOT NULL OR sourceLine.IsGenericProductSnapshot=1 THEN 1 ELSE 0 END),
+                   CONVERT(BIT,CASE WHEN restaurant.RecognizedCostAmount IS NOT NULL OR valuation.ValueChange IS NOT NULL OR (sourceLine.IsGenericProductSnapshot=1 AND sourceLine.UnitCostSnapshot IS NOT NULL) THEN 1 ELSE 0 END),
                    sourceLine.CategoryHierarchySnapshotJson
             FROM OPENJSON(@Lines) WITH
               (FactId uniqueidentifier,LineNumber int,ProductId uniqueidentifier,
@@ -539,7 +539,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
 
     private static async Task InsertSalePaymentFactsAsync(
         SalesReportingSqlSession session,
-        PosSaleUploadRequest value,
+        SalesReportingSaleSource value,
         DateOnly localDate,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -599,7 +599,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
     }
 
     private static async Task InsertSaleTaxFactsAsync(
-        SalesReportingSqlSession session, PosSaleUploadRequest value,
+        SalesReportingSqlSession session, SalesReportingSaleSource value,
         DateOnly localDate, DateTimeOffset now, CancellationToken cancellationToken,byte localHour) =>
         await InsertTaxFactsAsync(session, value.DocumentId, value.CommercialSnapshot.DocumentType,
             value.TenantId, value.BusinessId, localDate, value.Lines.Select(line =>

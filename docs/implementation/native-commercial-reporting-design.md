@@ -74,6 +74,30 @@ con la sección 6 de la decisión de cuatro motores. Cambiar esta documentación
 no corrige por sí solo el runtime ni las proyecciones históricas: véase el corte
 de implementación y sus pruebas más abajo.
 
+El lector canónico de fuentes de Reporting deserializa únicamente los campos
+que consume la proyección, con la política JSON del serializador de ventas
+existente. No exige la estimación `documentUnitCost` del dispositivo: hay fuentes
+históricas aceptadas que la guardaron como `null`. Esa estimación no participa
+en el costo reconocido ni se sustituye por un cero; el writer conserva la
+valoración del kardex o el costo manual congelado del genérico. Este último solo
+constituye prueba de costo cuando `UnitCostSnapshot` no es nulo. La recepción
+operativa de ventas nuevas conserva su contrato estricto y sigue rechazando
+un costo de documento explícitamente nulo.
+
+Esta compatibilidad se aplica en el mismo processor y writer, sin modificar
+fuentes inmutables, hashes ni inventario. El corte de datos reconstruye por el
+comando canónico todas las sedes con fuentes de Reporting, incluidas las que
+ya tenían versión 5, para corregir la cobertura de costo de sus genéricos
+históricos; no requiere otro esquema ni un segundo proceso de proyección.
+La regresión local reconstruye dos veces ventas con la estimación nula: conserva
+el costo del kardex de la mercancía y deja no disponible el costo del genérico
+sin snapshot manual. Comprueba importes documentales, payload y hash intactos,
+y que el inventario mantenga respectivamente uno y cero movimientos. Pasaron
+los siete casos de esta validación, incluida la conciliación del explorador;
+el build de backend terminó sin advertencias ni errores. La auditoría conserva
+los propietarios de JSON, proyección y costo, sin nuevas consultas, motores,
+escrituras operativas, contratos HTTP ni cargas frontend.
+
 ## Atribución nativa del pedido
 
 Los pedidos comerciales guardan como columnas tipadas `WarehouseId`,

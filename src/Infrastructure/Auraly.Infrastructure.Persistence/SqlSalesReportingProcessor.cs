@@ -77,7 +77,7 @@ public sealed partial class SqlSalesReportingProcessor(
                 var session = new SalesReportingSqlSession(connection, transaction);
                 if (documentType is "SalesInvoice" or "SalesReceipt")
                 {
-                    var value=PosSaleContractSerializer.Deserialize(source.Payload);
+                    var value=PosSaleContractSerializer.Deserialize<SalesReportingSaleSource>(source.Payload);
                     ValidateSourceIdentity(value.TenantId,value.BusinessId,value.DocumentId,source.TenantId,businessId,documentId);
                     if(value.CommercialSnapshot.DocumentType!=documentType)throw new InvalidOperationException("El tipo de la fuente no corresponde al trabajo de reporting.");
                     await projectionWriter.ProjectSaleAsync(session,value,cancellationToken);
@@ -213,3 +213,23 @@ public sealed partial class SqlSalesReportingProcessor(
 
     private sealed record ReportingSource(string Payload, string Status,Guid TenantId);
 }
+
+// Read only fields consumed by the projection. The uploaded unit-cost estimate
+// is deliberately absent: historical sources may contain null, and recognized
+// cost is owned by the ledger or the frozen generic-product line.
+internal sealed record SalesReportingSaleSource(
+    Guid TenantId, Guid BusinessId, Guid WarehouseId, Guid WorkSessionId,
+    Guid SoldByUserId, Guid DocumentId,
+    PosSaleCommercialSnapshotContract CommercialSnapshot,
+    IReadOnlyList<SalesReportingSaleSourceLine> Lines,
+    IReadOnlyList<PosSalePaymentContract> Payments,
+    PosSaleUblSnapshotContract? UblSnapshot = null,
+    Guid? CustomerId = null, Guid? SourceOrderId = null,
+    PosSaleCreditContract? Credit = null, Guid? CustomerPartySiteId = null,
+    IReadOnlyList<AppliedInvoiceCharge>? Charges = null,
+    decimal RestaurantTipAmount = 0m);
+
+internal sealed record SalesReportingSaleSourceLine(
+    int LineNumber, Guid ProductId, string TaxCode, decimal Quantity,
+    decimal DiscountAmount, decimal TaxAmount, decimal UntaxedAmount,
+    decimal LineTotal, decimal TaxRate);

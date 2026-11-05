@@ -337,14 +337,16 @@ public static class PosSaleContractSerializer
         return JsonSerializer.Serialize(request, Options);
     }
 
-    public static PosSaleUploadRequest Deserialize(string payload)
+    public static PosSaleUploadRequest Deserialize(string payload) => Deserialize<PosSaleUploadRequest>(payload);
+
+    public static TSnapshot Deserialize<TSnapshot>(string payload) where TSnapshot : class
     {
         if (string.IsNullOrWhiteSpace(payload))
         {
             throw new ArgumentException("A POS sale payload is required.", nameof(payload));
         }
 
-        return JsonSerializer.Deserialize<PosSaleUploadRequest>(payload, Options)
+        return JsonSerializer.Deserialize<TSnapshot>(payload, Options)
             ?? throw new JsonException("The POS sale payload is empty.");
     }
 
