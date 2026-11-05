@@ -35,6 +35,7 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
             SELECT Seq,NEWID() Id,DATEADD(day,Seq%730,CONVERT(date,'20241105')) Date,
               CONVERT(uniqueidentifier,CONVERT(binary(16),HASHBYTES('SHA2_256',CONCAT(N'customer-',Seq%2000)))) Customer
             INTO #Documents FROM numbers;
+            CREATE UNIQUE CLUSTERED INDEX IX_SeedDocuments ON #Documents(Seq);
             INSERT reporting.SalesReportDocuments(DocumentId,TenantId,BusinessId,DocumentType,DocumentNumber,IssuedAt,
               BusinessLocalDate,TimeZoneId,WarehouseId,WarehouseName,SellerName,CustomerId,CustomerIdentification,CustomerName,SourceMode,
               GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,RoundingAdjustmentAmount,CreditAmount,CollectedAmount,
@@ -43,6 +44,9 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
               N'Bodega',N'Sin vendedor',Customer,CONCAT(N'ID-',Seq%2000),CONCAT(N'Cliente ',Seq%2000),N'Online',
               1000,0,1000,190,1200,10,0,1200,600,5,HASHBYTES('SHA2_256',N'performance fixture'),SYSDATETIMEOFFSET(),10 FROM #Documents;
             RAISERROR(N'Benchmark seed: documents complete',10,1) WITH NOWAIT;
+            INSERT reporting.SalesReportPaymentFacts(SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
+              BusinessLocalDate,MovementType,MethodCode,Amount,ProjectedAt)
+            SELECT Id,N'SalesInvoice',1,@Tenant,@Business,Date,N'Payment',N'Cash',1200,SYSDATETIMEOFFSET() FROM #Documents;
             -- Reuse the same 1,000 deterministic product identities instead of hashing them four million times.
             SELECT Seq%1000 Slot,
               CONVERT(uniqueidentifier,CONVERT(binary(16),HASHBYTES('SHA2_256',CONCAT(N'product-',Seq%1000)))) ProductId,
@@ -62,7 +66,10 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
               OriginalSaleDocumentId,OriginalLineNumber,MovementType,OccurredAt,BusinessLocalDate,WarehouseId,CustomerId,ProductId,
               ProductCode,ProductName,CategoryId,CategoryName,SupplierId,SupplierName,WaiterPartyId,WaiterName,UnitCode,TaxCode,TaxRate,
               Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,RecognizedCostAmount,CostAvailable,ProjectionVersion,ProjectedAt)
-            SELECT NEWID(),@Tenant,@Business,d.Id,N'SalesInvoice',line.Number,d.Id,line.Number,N'Sale',CONVERT(datetimeoffset,d.Date),d.Date,
+            -- Append fact identifiers in batch order, like the canonical sequential ID generator;
+            -- avoid random clustered-page splits while preserving all one million distinct lines.
+            SELECT CONVERT(uniqueidentifier,SUBSTRING(CONVERT(binary(16),@Business),1,10)+CONVERT(binary(6),CONVERT(bigint,d.Seq)*16+line.Number)),
+              @Tenant,@Business,d.Id,N'SalesInvoice',line.Number,d.Id,line.Number,N'Sale',CONVERT(datetimeoffset,d.Date),d.Date,
               @Warehouse,d.Customer,p.ProductId,p.ProductCode,p.ProductName,p.CategoryId,p.CategoryName,
               p.SupplierId,p.SupplierName,w.WaiterId,w.WaiterName,N'EA',N'IVA',19,1,100,0,100,19,119,60,1,5,SYSDATETIMEOFFSET()
             FROM #Documents d CROSS JOIN(VALUES(1),(2),(3),(4),(5),(6),(7),(8),(9),(10)) line(Number)

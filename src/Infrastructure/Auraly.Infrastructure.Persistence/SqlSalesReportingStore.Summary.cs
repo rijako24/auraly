@@ -30,10 +30,11 @@ public sealed partial class SqlSalesReportingStore
         var activitySql=$"""
             SELECT a.SourceDocumentId,a.SourceDocumentType,a.BusinessLocalDate,a.MovementType,a.ItemKind,
               a.Quantity,a.GrossAmount,a.DiscountAmount,a.UntaxedAmount,a.TaxAmount,a.TotalAmount,
-              a.RecognizedCostAmount,a.OriginalSaleDocumentId,a.CustomerId,a.MissingCostLines {chartColumns}
+              a.RecognizedCostAmount,a.OriginalSaleDocumentId,a.CustomerId,a.MissingCostLines,a.ProjectedAt {chartColumns}
             INTO #Activity {ExplorerSource};
             """;
-        var source=HasDimensionFilter(filter)?activitySql+"""
+        var activitySummary=HasDimensionFilter(filter)||includeBreakdowns;
+        var source=activitySummary?activitySql+"""
             SELECT m.BusinessLocalDate,SUM(m.OfficialTotal) OfficialTotal INTO #Money
             FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
             WHERE @WholeDocuments=1 AND EXISTS(SELECT 1 FROM #Activity a WHERE a.SourceDocumentId=m.SourceDocumentId AND a.SourceDocumentType=m.SourceDocumentType)
@@ -63,22 +64,23 @@ public sealed partial class SqlSalesReportingStore
               CASE WHEN UnknownCostDocumentCount=0 THEN NetRecognizedCost END NetRecognizedCost,CreditSales,Collected,Refunded
             INTO #Summary FROM reporting.SalesReportDailyTotals
             WHERE BusinessId=@BusinessId AND BusinessLocalDate BETWEEN @From AND @To;
-            """+(includeBreakdowns?activitySql:"");
-        var customerSource=HasDimensionFilter(filter)?"""
+            """;
+        var customerSource=activitySummary?"""
             SELECT COUNT_BIG(DISTINCT CustomerId) FROM #Activity
             WHERE MovementType=N'Sale' AND UntaxedAmount>0 AND BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo;
             """:"""
             SELECT COUNT_BIG(DISTINCT CustomerId) FROM reporting.SalesReportDocuments
             WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND UntaxedAmount>0 AND BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo;
             """;
+        var projectedSource=activitySummary?"SELECT MAX(ProjectedAt) FROM #Activity;":
+            "SELECT MAX(LastProjectedAt) FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId;";
         await using var command=new SqlCommand(source+SummaryTotalsSql+
             SummaryTotalsSql.Replace("@CurrentFrom","@ComparisonFrom",StringComparison.Ordinal).Replace("@CurrentTo","@ComparisonTo",StringComparison.Ordinal)
               .Replace("FROM #Summary WHERE","FROM #Summary WHERE @HasComparison=1 AND",StringComparison.Ordinal)+"""
             SELECT BusinessLocalDate,SUM(DocumentCount),SUM(GrossSales),SUM(Returns),SUM(NetTotalSales),
               CASE WHEN COUNT_BIG(*)=COUNT_BIG(NetRecognizedCost) THEN SUM(NetUntaxedSales-NetRecognizedCost) END
             FROM #Summary WHERE BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo GROUP BY BusinessLocalDate ORDER BY BusinessLocalDate;
-            SELECT MAX(LastProjectedAt) FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId;
-            """+customerSource+(includeBreakdowns?SummaryBreakdownsSql(HasLineScope(filter)):""),connection);
+            """+projectedSource+customerSource+(includeBreakdowns?SummaryBreakdownsSql(HasLineScope(filter)):""),connection);
         AddExplorerParameters(command,user,new(filter with {From=first,To=last}));
         Date(command,"@CurrentFrom",filter.From);Date(command,"@CurrentTo",filter.To);
         command.Parameters["@ComparisonFrom"].Value=(comparisonFrom??filter.From).ToDateTime(TimeOnly.MinValue);

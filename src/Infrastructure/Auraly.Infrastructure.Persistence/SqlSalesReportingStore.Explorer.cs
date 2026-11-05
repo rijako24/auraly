@@ -368,17 +368,27 @@ public sealed partial class SqlSalesReportingStore
 
     private static async Task<SqlDataReader> ExecuteExplorerReaderAsync(SqlCommand command,Guid businessId,CancellationToken cancellationToken)
     {
-        // Boolean mode flags select a bounded query shape (whole documents,
-        // lines, active filters). Fold those branches without recompiling on
+        // Mode flags and optional-filter presence select a bounded query shape
+        // (whole documents, lines, active filters). Fold those branches without recompiling on
         // every read; identities, dates and selected values remain parameters.
-        var query=Regex.Replace(command.CommandText,@"@\w+\b",match=>
-            command.Parameters.Contains(match.Value)&&command.Parameters[match.Value].SqlDbType==SqlDbType.Bit&&
-            command.Parameters[match.Value].Value is bool value
-                ?(value?"CONVERT(bit,1)":"CONVERT(bit,0)"):match.Value);
+        var query=Regex.Replace(command.CommandText,@"(@\w+)\s+IS\s+(NOT\s+)?NULL\b",match=>
+        {
+            if(!command.Parameters.Contains(match.Groups[1].Value))return match.Value;
+            var absent=command.Parameters[match.Groups[1].Value].Value is DBNull;
+            return absent!=match.Groups[2].Success?"(1=1)":"(1=0)";
+        });
+        query=Regex.Replace(query,@"@\w+\b",match=>
+        {
+            if(!command.Parameters.Contains(match.Value))return match.Value;
+            var parameter=command.Parameters[match.Value];
+            if(parameter.Value is DBNull)return "NULL";
+            return parameter.SqlDbType==SqlDbType.Bit&&parameter.Value is bool value
+                ?(value?"CONVERT(bit,1)":"CONVERT(bit,0)"):match.Value;
+        });
         // One bounded SQL batch owns the page, independent aggregates and detail cuts.
-        // IntentExclusive readers coexist, but exclude the Shared locks of
-        // projection writers and the Exclusive lock of rebuilds. This freezes
-        // the cut without serializing readers or locking other tenants' ranges.
+        // IntentShared is compatible with projection writers and other readers.
+        // It only excludes explicit rebuilds; normal queries read committed
+        // projections without waiting for the tenant's processing queue.
         command.CommandText="SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL READ COMMITTED; BEGIN TRY BEGIN TRANSACTION;\n"+
             SqlSalesReportingProcessor.TransactionLockSql+"\n"+"""
             IF EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId AND RebuildInProgress=1)
@@ -387,7 +397,7 @@ public sealed partial class SqlSalesReportingStore
               THROW 51619,N'La proyección requiere completar su reconstrucción antes de consultar cifras.',1;
             """+"\n"+SelectionTableSql+"\n"+query+"\nCOMMIT TRANSACTION; END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK TRANSACTION; THROW; END CATCH;";
         command.Parameters.AddWithValue("@ReportingLockResource",SqlSalesReportingProcessor.ReportingLockResource(businessId));
-        command.Parameters.Add("@ReportingLockMode",SqlDbType.VarChar,32).Value="IntentExclusive";
+        command.Parameters.Add("@ReportingLockMode",SqlDbType.VarChar,32).Value="IntentShared";
         command.Parameters.AddWithValue("@CurrentProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion);
         try{return await command.ExecuteReaderAsync(cancellationToken);}
         catch(SqlException error) when(error.Number is 51619 or 51620)

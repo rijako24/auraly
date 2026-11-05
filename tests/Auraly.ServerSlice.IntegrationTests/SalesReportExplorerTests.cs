@@ -10,7 +10,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Readers_share_a_projection_cut_while_writers_and_rebuilds_remain_excluded()
+    public async Task Readers_do_not_wait_for_projection_writers_and_still_respect_explicit_rebuilds()
     {
         using var scope=fixture.CreateScope();
         var reporting=scope.ServiceProvider.GetRequiredService<SalesReportingService>();
@@ -47,9 +47,9 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
             await using var probing=(SqlTransaction)await probe.BeginTransactionAsync();
             await using var compatibility=new SqlCommand("SELECT APPLOCK_TEST(N'public',@Resource,@Mode,N'Transaction');",probe,probing);
             compatibility.Parameters.AddWithValue("@Resource",resource);compatibility.Parameters.AddWithValue("@Mode",readerMode);
-            Assert.Equal(mode==readerMode?1:0,Convert.ToInt32(await compatibility.ExecuteScalarAsync()));
+            Assert.Equal(mode=="Exclusive"?0:1,Convert.ToInt32(await compatibility.ExecuteScalarAsync()));
             await probing.RollbackAsync();
-            if(mode==readerMode)
+            if(mode!="Exclusive")
                 Assert.Equal(baseline.Totals,(await reporting.ExploreAsync(user,request)).Totals);
             await held.RollbackAsync();
         }

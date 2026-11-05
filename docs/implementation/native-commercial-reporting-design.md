@@ -609,8 +609,11 @@ por fecha de movimiento. No distribuye dinero del documento entre líneas.
 
 Los lectores se ejecutan en dos comandos como máximo: autorización y un lote
 SQL para página, agregados y detalle. El resumen agrupa sus resultsets en ese
-mismo límite. Un bloqueo de aplicación por sede fija el corte contra escrituras
-de Reporting; no bloquea el motor operacional ni rangos de otros tenants.
+mismo límite. El bloqueo de aplicación por sede protege únicamente frente a
+reconstrucciones explícitas; es compatible con las escrituras normales del
+motor de Reporting. Las consultas reutilizan su actividad filtrada ya leída
+para filas y agregados; los movimientos posteriores aparecen al consultar de
+nuevo. No bloquea el motor operacional ni rangos de otros tenants.
 El explorador materializa una vez los importes oficiales y el redondeo de los
 movimientos seleccionados; la página y el total reutilizan ese conjunto numérico.
 La carga descriptiva de la página compila las ramas aplicables y sigue después
@@ -673,17 +676,24 @@ Los bloques cerrados de comparación, pagos e impuestos mantienen sus resultsets
 compatibles sin preparar las uniones que no se van a consultar.
 
 Los parámetros opcionales conservan tipos SQL estables. El lector especializa
-únicamente las banderas booleanas que determinan la forma de la consulta; fechas,
-identidades y valores seleccionados siguen parametrizados. Esto permite podar
+las banderas booleanas y la presencia o ausencia de filtros que determinan la
+forma de la consulta; fechas, identidades y valores seleccionados siguen
+parametrizados. Esto permite podar
 ramas inactivas y reutilizar planes, sin forzar recompilación en cada lectura ni
-guardar resultados que puedan quedar desactualizados. Se conserva el bloqueo de
-corte por sede, la validación de versión y el máximo de dos comandos SQL por
-consulta. En el mismo recurso de aplicación, los lectores toman `IntentExclusive`:
-son compatibles entre sí e incompatibles con `Shared` del processor y con
-`Exclusive` de reconstrucción. El nombre de este modo corresponde al recurso
-de aplicación; la consulta continúa siendo de lectura. La regresión comprueba
-la compatibilidad real, el recurso canónico y una lectura completa mientras
-otra lectura conserva el corte. El frontend propaga cancelación al cambiar filtros y conserva el plazo
+guardar resultados que puedan quedar desactualizados. Se conserva la protección
+de reconstrucción por sede, la validación de versión y el máximo de dos comandos SQL por
+consulta. Las consultas normales no esperan a la
+cola de procesamiento: leen lo confirmado y los movimientos posteriores aparecen
+al volver a consultar. Se usa `READ COMMITTED` con la configuración existente de
+la base; no se habilita otro nivel de aislamiento, caché de resultados, tabla ni
+proyección paralela.
+Las tarjetas y gráficas del resumen se derivan de la misma actividad filtrada.
+En el recurso de aplicación existente, los lectores usan `IntentShared`,
+compatible con otros lectores y con `Shared` del processor. Sólo se conserva la
+exclusión ante `Exclusive` de una reconstrucción explícita, para no mostrar un
+conjunto que está siendo borrado y repuesto. La regresión comprueba el recurso
+canónico y lecturas completas mientras otro lector o escritor conserva su lock.
+El frontend propaga cancelación al cambiar filtros y conserva el plazo
 de timeout, incluso durante la lectura del cuerpo de la respuesta.
 
 Los importes visibles de las cinco vistas comparten formato COP de hasta dos
