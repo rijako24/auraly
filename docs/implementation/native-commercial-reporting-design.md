@@ -688,6 +688,9 @@ al volver a consultar. Se usa `READ COMMITTED` con la configuración existente d
 la base; no se habilita otro nivel de aislamiento, caché de resultados, tabla ni
 proyección paralela.
 Las tarjetas y gráficas del resumen se derivan de la misma actividad filtrada.
+Impacto y proveedores materializan sólo sus campos financieros y claves de
+agrupación. Los identificadores de línea, impuestos desglosados y nombres de
+comprobante quedan en el explorador que realmente los necesita para el detalle.
 En el recurso de aplicación existente, los lectores usan `IntentShared`,
 compatible con otros lectores y con `Shared` del processor. Sólo se conserva la
 exclusión ante `Exclusive` de una reconstrucción explícita, para no mostrar un

@@ -26,7 +26,7 @@ public sealed partial class SqlSalesReportingStore
             SELECT TOP(0) GroupKey,Label,Net INTO #PreviousPurchases FROM #Purchases;
             """:$"""
             SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
-              COALESCE(a.SupplierName,N'Sin proveedor atribuido') GroupLabel,{ActivityColumns} INTO #PreviousActivity {ComparisonSource(source)};
+              COALESCE(a.SupplierName,N'Sin proveedor atribuido') GroupLabel,{FinancialActivityColumns} INTO #PreviousActivity {ComparisonSource(source)};
             SELECT a.GroupKey,MAX(a.GroupLabel) Label,SUM(a.UntaxedAmount) Net,
               COUNT_BIG(DISTINCT CASE WHEN a.MovementType=N'Sale' AND a.UntaxedAmount>0 THEN a.CustomerId END) Buyers
             INTO #PreviousSales FROM #PreviousActivity a GROUP BY a.GroupKey;
@@ -40,7 +40,7 @@ public sealed partial class SqlSalesReportingStore
         await using var command=new SqlCommand($"""
             {ImpactUniverseSql}
             SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
-              COALESCE(a.SupplierName,N'Sin proveedor atribuido') GroupLabel,{ActivityColumns}
+              COALESCE(a.SupplierName,N'Sin proveedor atribuido') GroupLabel,{FinancialActivityColumns}
             INTO #Activity {source};
             SELECT a.GroupKey,MAX(a.GroupLabel) Label,{ExplorerMeasures}
             INTO #Sales FROM #Activity a GROUP BY a.GroupKey;

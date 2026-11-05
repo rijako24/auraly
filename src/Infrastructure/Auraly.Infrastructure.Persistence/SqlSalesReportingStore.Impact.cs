@@ -36,7 +36,7 @@ public sealed partial class SqlSalesReportingStore
         await using var command=new SqlCommand($"""
             {ImpactUniverseSql}
             SELECT COALESCE(CONVERT(nvarchar(36),a.CustomerId),N'unattributed') GroupKey,d.CustomerName GroupLabel,
-              {ActivityColumns} INTO #Activity {ExplorerSource};
+              {FinancialActivityColumns} INTO #Activity {ExplorerSource};
             SELECT a.GroupKey,MAX(a.GroupLabel) Label,
               {ExplorerMeasures},COUNT_BIG(CASE WHEN a.MovementType=N'Sale' AND a.UntaxedAmount>0 THEN 1 END) PositiveSaleLines
             INTO #Current FROM #Activity a GROUP BY a.GroupKey;

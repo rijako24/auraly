@@ -95,11 +95,13 @@ public sealed partial class SqlSalesReportingStore
         CASE WHEN @WholeDocuments=1 THEN metadata.RoundingAdjustmentAmount END OriginalRounding
         """;
 
-    private const string ActivityColumns="""
-        a.FactId,a.SourceDocumentId,a.SourceDocumentType,a.OriginalSaleDocumentId,a.SourceLineNumber,
-        a.ItemKind,a.CustomerId,a.ProductId,a.Quantity,a.GrossAmount,a.DiscountAmount,
-        a.UntaxedAmount,a.TaxAmount,a.TotalAmount,a.RecognizedCostAmount,a.MovementType,a.OccurredAt,a.ProjectedAt,
-        a.TaxCode,a.TaxRate,d.DocumentNumber,d.DocumentType,a.MissingCostLines
+    private const string FinancialActivityColumns="""
+        a.OriginalSaleDocumentId,a.ItemKind,a.CustomerId,a.Quantity,a.GrossAmount,a.DiscountAmount,
+        a.UntaxedAmount,a.TaxAmount,a.TotalAmount,a.RecognizedCostAmount,a.MovementType,a.ProjectedAt,a.MissingCostLines
+        """;
+    private const string ActivityColumns=FinancialActivityColumns+"""
+        ,a.FactId,a.SourceDocumentId,a.SourceDocumentType,a.SourceLineNumber,a.ProductId,a.OccurredAt,
+        a.TaxCode,a.TaxRate,d.DocumentNumber,d.DocumentType
         """;
 
     public async Task<SalesReportExplorerPage> ExploreAsync(SalesReportingUserIdentity user,
