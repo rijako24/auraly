@@ -50,6 +50,178 @@ El producto pertenece al tenant: existe un solo `ProductId` y un solo código pa
 
 ## 3. IVA de compra e IVA de venta
 
+### Ampliación: costo comercial de ingredientes y combos (2026-11-04)
+
+El usuario requiere que los productos con lista Ingredientes y los productos con
+lista Combo preparen su costo comercial mediante la suma de
+`QuantityPerUnit × precio costo con IVA del componente`. La fuente fue
+confirmada expresamente por el usuario: no es el precio de venta. Las listas son excluyentes
+según el diseño gastronómico. Esta es una nueva fuente de costo para Pricing,
+no un costo de adquisición ni una modificación de `InventoryBalances`.
+
+Un cambio de precio costo de un componente, del impuesto que interviene en su
+costo con IVA o de la composición debe recalcular el costo comercial
+de los productos dependientes, manteniendo su margen objetivo y su impuesto de
+venta. El precio se calcula con `PriceMargin` y el flujo canónico de preparación
+y publicación, sin otra fórmula en UI, worker de combos, polling ni regla copiada
+en la receta. Los cambios de cantidades/composición también afectan esa base.
+No se obtiene el nuevo costo editando el margen del padre. Cambiar solo el precio
+de venta, el margen o una promoción del componente no modifica el costo del padre.
+La composición usa cantidades convertidas a la unidad de costo del componente,
+con su precisión canónica, antes de sumar; no suma precios unitarios sin cantidad.
+
+El costo del padre queda bloqueado automáticamente mientras tenga una composición
+vigente no vacía, independientemente de si controla stock propio. No es solo un
+campo deshabilitado: el servidor rechaza cambios manuales a su costo derivados
+de formularios, importaciones o llamadas directas y usa el mismo propietario de
+composición/Pricing para recalcularlo. Al quitar la última línea deja de ser
+derivado; no se borra el historial ni se pone a cero el último costo válido por
+defecto. La nueva captura manual exige la operación de preparación habitual.
+
+Decisión final: no existe checkbox de sincronización. Recalcular el costo y
+preparar el precio son automáticos; publicar sigue siendo una acción manual.
+
+El guardado extiende `catalog.ProductCompositionSave`, con una sola versión y
+una sola lista de componentes. La suma pertenece a
+`catalog.ProductCompositionCost`; `dbo.ProductCompositionCostsPrepare` resuelve
+las dependencias afectadas y delega la escritura de preparaciones a
+`dbo.ProductLinkedCostsPrepare`. No introduce otro publicador ni toca el kardex.
+El usuario pidió renombrar las dos tablas: `catalog.ProductCompositionVersions`
+y `catalog.ProductCompositionComponents`. El refactor de esquema conserva datos,
+versiones y relaciones mediante rename registrado en el dacpac; no copia las tablas.
+El corte debe coordinar esquema y runtime porque el nombre SQL cambia. Un rollback
+requiere un refactor inverso que preserve datos e historial de refactors y un
+runtime compatible; publicar sin más el dacpac anterior no es un rollback del
+rename. La prueba local cubre migración de dos tablas pobladas y segunda
+publicación idempotente, preservando versión, componentes y relación.
+Los IDs y contratos públicos de receta conservan compatibilidad. El selector de
+captura es segmentado Ingredientes/Combo, con indicador deslizante, en creación y
+edición; ambas posiciones conservan las validaciones canónicas de componentes.
+El selector ocupa todo el ancho de la sección y la creación deja separación
+explícita antes de agregar componentes. Cada fila muestra el costo unitario
+vigente con IVA en su unidad, tanto al crear como al consultar o editar.
+`ProductPriceCostBasis.UnitCostWithTax` es la misma fuente usada por la suma
+compuesta: respeta costo ya bruto, composición y tratamiento capitalizado sin
+sumar IVA dos veces. Las opciones paginadas y la receta entregan ese importe en
+su respuesta existente; no hay consultas por fila ni cálculos tributarios en UI.
+Solo se devuelve con `catalog.costs.read`; un costo faltante permanece nulo.
+Las opciones se paginan y limitan antes de resolver costos (hasta 100 por página);
+la receta está acotada a 100 componentes. Presupuesto de opción paginada local:
+menos de un segundo, un comando de datos además de autorización. Los importes
+visibles son costos actuales del contexto de sede, no snapshots históricos de
+la versión de composición.
+
+Verificación de esta ampliación: backend y dacpac sin advertencias ni errores;
+build web de 94 rutas y lint de los archivos afectados aprobados. Los 18 casos
+de composición y restaurante pasaron. La regresión nueva cruza costos unitarios
+con IVA, cantidades y total preparado; prueba IVA capitalizado, costo faltante,
+ocultamiento por permiso y una consulta de datos para la página de opciones,
+dentro del presupuesto de un segundo. El navegador confirmó un selector del
+ancho exacto del contenido y separación de 20 px al crear, costos visibles en
+Ingredientes/Combo y cantidades fraccionadas que concilian con el preview. Se
+inspeccionaron creación y edición en escritorio y móvil. La auditoría posterior
+conserva el resolvedor, la suma y el publicador canónicos: el frontend solo
+presenta importes, no consulta por fila ni agrega efectos de inventario. El campo
+de respuesta es aditivo y nullable; los clientes anteriores siguen funcionando.
+
+Los cambios de composición e impuestos recorren las sedes activas del tenant
+en un conjunto; un cambio de costo conserva el alcance de precios de la sede
+o grupo y no modifica las sedes independientes.
+La preparación se limita a padres ofrecidos o con preparación pendiente en cada
+sede; crear una composición no exige costos en una sede que no ofrece ese padre.
+`dbo.ProductPriceCostBasis` es el único resolvedor de la base y de su procedencia
+bruta para el contexto de Pricing y la suma compuesta. Al quitar la composición,
+el último costo retenido conserva procedencia `Composition` mientras no cambie,
+para no sumarle IVA de nuevo cuando sea componente de otro padre. Una nueva
+captura manual obtiene procedencia `Manual`, incluso al vaciar la lista y editar
+el costo en el mismo guardado.
+
+Presupuesto verificable: hasta 100 componentes por lista, precisión de seis
+decimales y profundidad máxima de 32 niveles, incluidos vínculos de costo.
+El preview usa una petición HTTP y una consulta de costos por conjunto,
+independientemente de la cantidad de componentes; presupuesto local con caché
+caliente: menos de cinco segundos para 100 componentes. La cascada viaja en
+un comando SQL y escribe por nivel, sin comandos de red por producto ni escaneo
+de productos ajenos a las dependencias afectadas. La prueba
+`Composition_cost_preview_handles_one_hundred_components_in_one_request`
+registra la duración con SQL Server real; la auditoría del store verifica el
+único `ExecuteReaderAsync` del preview, aparte de autenticación y autorización.
+
+El costo con IVA de cada componente se obtiene desde su costo y tratamiento
+tributario canónicos, con una descomposición explícita de base e impuesto. No se
+aplica ciegamente `CostBasisAmount × (1 + tarifa)`: esa base puede incluir ya IVA
+capitalizado, que no debe sumarse dos veces. Tampoco se usa el impuesto de venta
+para reconstruir IVA de compra ni el precio público como sustituto del costo.
+La aplicación de Pricing debe identificar el origen/versión de esa base bruta;
+si el origen no permite probar base/impuesto, la preparación falla con motivo
+explícito, sin inventar costo cero ni deducirlo del precio de venta.
+
+**Impuesto del padre:** para Combo la tarifa de venta debe ser 0 %, obligatoria,
+no solo un valor inicial editable. Se usa un perfil tributario activo válido
+del catálogo canónico y se valida en servidor; el código y tratamiento del perfil
+no se infieren únicamente de la tarifa. Para Ingredientes el usuario selecciona
+el impuesto de venta permitido por el catálogo, incluido impuesto al consumo;
+no se fuerza 0 %. Esto no cambia el impuesto/costo de los componentes ni altera
+documentos ya emitidos. El margen se aplica al costo compuesto, y luego el impuesto
+de venta del padre con las fórmulas y redondeo de `PriceMargin`.
+
+**Publicación confirmada:** todo precio derivado se prepara para revisión. La
+propagación actualiza costo/margen/precio preparado, pero no cambia el público,
+ni dispara publicación o sincronización de precios vendibles por sí sola.
+Publicar sigue requiriendo la acción autorizada del publicador existente, con su
+auditoría y outbox. Las precisiones de fuente, IVA y publicación quedan resueltas
+con las respuestas del usuario del 2026-11-04.
+
+La composición pertenece al tenant; su valorización usa el contexto de precios
+de la sede/grupo vigente. No se toma el precio de otra sede por conveniencia.
+Un precio componente faltante no vale cero por defecto: la preparación informa
+qué dato falta y no declara válido un precio final incompleto. Conserva IDs,
+versión de composición y de precios usados para probar concurrencia y explicar
+el cálculo. La edición manual del costo derivado no puede competir con su fuente.
+Una publicación concurrente valida que la preparación y las versiones de sus
+componentes sigan vigentes; no publica una suma obsoleta después de una cascada.
+
+La propagación se diseña por conjunto sobre las dependencias afectadas, con
+deduplicación cuando varias ramas comparten un componente y sin lecturas por
+producto. Se detectan autorreferencias/ciclos antes de aceptar composiciones.
+No se añade procesamiento proporcional al catálogo completo por cada cambio.
+Los casos anidados deben cerrarse con el diseño de composición antes de
+habilitarlos; una cascada de precio nunca recalcula una venta confirmada.
+
+Reporting conserva el costo reconocido histórico del inventario efectivamente
+consumido. Puede explicar el costo comercial usado para preparar precio si ese
+snapshot se proyecta explícitamente, pero no lo presenta como costo contable ni
+lo sustituye en utilidad real de ventas pasadas.
+
+Aceptación: exclusión Ingredientes/Combo; selección de componentes elegibles;
+cantidades y unidades; misma fórmula con margen/IVA/redondeo; costo bloqueado en
+UI y servidor; combo con impuesto distinto de cero rechazado; ingrediente con
+IVA/consumo elegible conservado; cambio de un
+componente usado por varios padres; cambio concurrente de composición/precio;
+aislamiento por sede/tenant y precios faltantes; rechazo de ciclos; sin doble
+descuento de stock; replay sin propagaciones duplicadas; ventas y reportes
+históricos intactos; IVA capitalizado no duplicado; cambio exclusivo de precio
+venta no modifica costo compuesto; ningún cambio derivado publica automáticamente;
+medición de viajes SQL y latencia de la cascada afectada.
+
+Verificación local del 2026-11-04: los nueve escenarios de
+`ProductionVerticalSliceTests` pasaron, incluidos exclusión, costo bruto,
+preparación sin publicación, cascada por vínculos, impuesto capitalizado,
+descarte del componente, sede sin oferta, retiro y edición manual simultáneos,
+y preview de 100 componentes. Los cuatro casos de inventario propio/componentes
+para Ingredientes/Combo en `RestaurantCheckoutTests` verifican el único movimiento
+y su replay, además de la devolución y sus efectos contables existentes.
+El catálogo y la proyección siguen siendo los propietarios de clasificación y
+consumo histórico respectivamente; ninguna preparación escribe inventario.
+
+Ejemplo dorado: una unidad de componente con costo neto 10.000 e IVA de compra
+19 % (costo bruto 11.900), más dos unidades con costo bruto 5.000, generan costo
+compuesto 21.900. Con margen sobre venta 25 % el precio neto preparado es 29.200;
+para Combo el impuesto de venta 0 % deja precio bruto 29.200 antes del redondeo
+configurado. Para un terminado con Ingredientes y perfil de consumo 8 % elegido,
+el precio bruto preparado sería 31.536 antes de redondeo. Estos son valores de
+prueba, no tarifas predeterminadas ni clasificación tributaria de un producto real.
+
 La creación y edición del producto exige seleccionar por separado:
 
 ```text

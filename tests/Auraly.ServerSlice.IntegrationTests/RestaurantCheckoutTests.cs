@@ -216,6 +216,16 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 send.EnsureSuccessStatusCode();
                 sent = (await send.Content.ReadFromJsonAsync<SendRestaurantPendingResult>())!;
             }
+            // A role/name change after capture must not rewrite the line's historical waiter.
+            await using(var changed=new SqlConnection(fixture.ConnectionString))
+            {
+                await changed.OpenAsync();await using var update=new SqlCommand("""
+                    UPDATE parties.Waiters SET IsActive=0 WHERE TenantId=@Tenant AND PartyId=@Party;
+                    UPDATE dbo.AppUsers SET FirstName=N'Nombre cambiado' WHERE UserId=@Waiter AND TenantId=@Tenant;
+                    """,changed);
+                update.Parameters.AddWithValue("@Tenant",fixture.TenantId);update.Parameters.AddWithValue("@Party",partyId);
+                update.Parameters.AddWithValue("@Waiter",waiterId);await update.ExecuteNonQueryAsync();
+            }
             await SetProductStockModeAsync(false);
             using (var changedMode = await cashier.GetAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/settlement-preview?workSessionId={workSessionId:D}"))
@@ -265,8 +275,10 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                        line.AddedByUserId,line.AddedAt,
                        account.Status,account.ReleasedAt,
                        (SELECT COUNT(*) FROM dbo.SalesDocuments d
-                        WHERE d.DocumentId=@DocumentId)
+                        WHERE d.DocumentId=@DocumentId),fact.WaiterPartyId,fact.WaiterName,projected.BilledByUserId,projected.TableId,projected.TableName,document.TableNameSnapshot
                 FROM dbo.SalesDocuments document
+                JOIN reporting.SalesReportDocuments projected ON projected.DocumentId=document.DocumentId
+                JOIN reporting.SalesReportLineFacts fact ON fact.SourceDocumentId=document.DocumentId AND fact.SourceLineNumber=1
                 JOIN dbo.SalesDocumentLines line
                   ON line.DocumentId=document.DocumentId
                 JOIN sales.RestaurantAccounts account
@@ -280,10 +292,21 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             Assert.Equal(tableId, reader.GetGuid(0));
             Assert.Equal(fixture.UserId, reader.GetGuid(1));
             Assert.Equal(waiterId, reader.GetGuid(2));
+            Assert.Equal(partyId,reader.GetGuid(7));
+            Assert.Equal(sent.Draft.Additions.Single().AddedByName,reader.GetString(8));
+            Assert.Equal(fixture.UserId,reader.GetGuid(9));
+            Assert.Equal(tableId,reader.GetGuid(10));
+            Assert.False(string.IsNullOrWhiteSpace(reader.GetString(11)));
+            Assert.Equal(reader.GetString(12),reader.GetString(11));
             Assert.False(reader.IsDBNull(3));
             Assert.Equal("Released", reader.GetString(4));
             Assert.False(reader.IsDBNull(5));
             Assert.Equal(1, reader.GetInt32(6));
+            await using(var restored=new SqlConnection(fixture.ConnectionString))
+            {
+                await restored.OpenAsync();await using var update=new SqlCommand("UPDATE parties.Waiters SET IsActive=1 WHERE TenantId=@Tenant AND PartyId=@Party;",restored);
+                update.Parameters.AddWithValue("@Tenant",fixture.TenantId);update.Parameters.AddWithValue("@Party",partyId);await update.ExecuteNonQueryAsync();
+            }
             using (var reopened = await waiter.PostAsJsonAsync(
                 "/api/commerce/v1/restaurant/accounts",
                 new OpenRestaurantAccountRequest(Guid.NewGuid(), tableId,
@@ -297,8 +320,12 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
         }
     }
 
-    [Fact]
-    public async Task Restaurant_recipe_uses_frozen_ingredients_once_at_sale_processing()
+    [Theory]
+    [InlineData(false,false)]
+    [InlineData(false,true)]
+    [InlineData(true,false)]
+    [InlineData(true,true)]
+    public async Task Restaurant_composition_consumes_only_own_or_component_stock_once(bool isCombo,bool ownStock)
     {
         var waiterId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
@@ -329,7 +356,7 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                     activate.EnsureSuccessStatusCode();
                 }
             }
-            await SeedRecipeAsync(finishedId, ingredientId);
+            await SeedRecipeAsync(finishedId, ingredientId, isCombo, ownStock);
             using (var created = await cashier.PostAsJsonAsync(
                 "/api/commerce/v1/restaurant/tables",
                 new CreateRestaurantTableRequest(tableId, fixture.BusinessId,
@@ -372,16 +399,22 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             preview.EnsureSuccessStatusCode();
             var settlement = (await preview.Content.ReadFromJsonAsync<
                 WithholdingCalculationSnapshot>())!;
-            using var completed = await CompleteAsync(cashier, account.AccountId,
-                new CompleteRestaurantAccountRequest(workSessionId,
-                    new CompleteOnlineSalesDraftRequest(sent.Draft.Account.Version,
-                        [new OnlineSalesPayment("Cash", settlement.NetAmount, null)],
-                        DocumentType: PosSaleDocumentTypes.Receipt)),
-                Guid.NewGuid().ToString("N"));
+            var completionKey=Guid.NewGuid().ToString("N");
+            var completionRequest=new CompleteRestaurantAccountRequest(workSessionId,
+                new CompleteOnlineSalesDraftRequest(sent.Draft.Account.Version,
+                    [new OnlineSalesPayment("Cash", settlement.NetAmount, null)],
+                    DocumentType: PosSaleDocumentTypes.Receipt));
+            using var completed = await CompleteAsync(cashier, account.AccountId,completionRequest,completionKey);
             completed.EnsureSuccessStatusCode();
             var result = (await completed.Content.ReadFromJsonAsync<
                 CompleteOnlineOrderSaleResponse>())!;
             await WaitForProcessedAsync(result.Receipt.DocumentId);
+            using(var replay=await CompleteAsync(cashier,account.AccountId,completionRequest,completionKey))
+            {
+                replay.EnsureSuccessStatusCode();
+                var repeated=(await replay.Content.ReadFromJsonAsync<CompleteOnlineOrderSaleResponse>())!;
+                Assert.Equal(result.Receipt.DocumentId,repeated.Receipt.DocumentId);
+            }
             await using var connection = new SqlConnection(fixture.ConnectionString);
             await connection.OpenAsync();
             await using var command = new SqlCommand("""
@@ -403,11 +436,22 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             command.Parameters.AddWithValue("@IngredientId", ingredientId);
             await using var reader = await command.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
-            Assert.Equal(98m, reader.GetDecimal(0));
-            Assert.Equal(1, reader.GetInt32(1));
-            Assert.Equal(1000m, reader.GetDecimal(2));
+            Assert.Equal(ownStock ? 100m : 98m, reader.GetDecimal(0));
+            Assert.Equal(ownStock ? 0 : 1, reader.GetInt32(1));
+            Assert.Equal(ownStock ? 3000m : 1000m, reader.GetDecimal(2));
             await reader.DisposeAsync();
 
+            await using(var stock=connection.CreateCommand())
+            {
+                stock.CommandText="""
+                  SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Document;
+                  SELECT ProductId FROM dbo.InventoryMovements WHERE DocumentId=@Document;
+                  """;
+                stock.Parameters.AddWithValue("@Document",result.Receipt.DocumentId);
+                await using var movement=await stock.ExecuteReaderAsync();Assert.True(await movement.ReadAsync());
+                Assert.Equal(1,movement.GetInt32(0));Assert.True(await movement.NextResultAsync());Assert.True(await movement.ReadAsync());
+                Assert.Equal(ownStock ? finishedId : ingredientId,movement.GetGuid(0));
+            }
             using var returns = fixture.CreateAdminClient(
                 SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Read);
             var returnable = await returns.GetFromJsonAsync<ReturnableSale>(
@@ -449,7 +493,7 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             await using var returned = await verifyReturn.ExecuteReaderAsync();
             Assert.True(await returned.ReadAsync());
             Assert.Equal(0, returned.GetInt32(0));
-            Assert.Equal(98m, returned.GetDecimal(1));
+            Assert.Equal(ownStock ? 100m : 98m, returned.GetDecimal(1));
             Assert.Equal(1, returned.GetInt32(2));
             await returned.DisposeAsync();
 
@@ -477,14 +521,14 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             accountingLines.Parameters.AddWithValue("@ReturnId", returnId);
             await using var posting = await accountingLines.ExecuteReaderAsync();
             Assert.True(await posting.ReadAsync());
-            Assert.Equal(1000m, posting.GetDecimal(0));
-            Assert.Equal(1000m, posting.GetDecimal(1));
+            Assert.Equal(ownStock ? 3000m : 1000m, posting.GetDecimal(0));
+            Assert.Equal(ownStock ? 3000m : 1000m, posting.GetDecimal(1));
             await posting.DisposeAsync();
 
-            var directSale = fixture.CreateValidRequest(9_997);
+            var directSale = fixture.CreateValidRequest(9_990 + (isCombo ? 2 : 0) + (ownStock ? 1 : 0));
             using (var upload = fixture.CreateUploadMessage(directSale))
             using (var accepted = await fixture.CreateClient().SendAsync(upload))
-                accepted.EnsureSuccessStatusCode();
+                Assert.True(accepted.IsSuccessStatusCode, await accepted.Content.ReadAsStringAsync());
             await WaitForProcessedAsync(directSale.DocumentId);
             var invalidRestaurantReturn = cancellation with
             {
@@ -504,7 +548,7 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
         finally { await RestoreModeAsync(); }
     }
 
-    private async Task SeedRecipeAsync(Guid finishedId, Guid ingredientId)
+    private async Task SeedRecipeAsync(Guid finishedId, Guid ingredientId, bool isCombo, bool ownStock)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -529,15 +573,22 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
             VALUES(NEWID(),@BusinessId,@FinishedId,10000,10000,N'COP',
                 DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
             DECLARE @VersionId uniqueidentifier=NEWID();
-            INSERT catalog.ProductRecipeVersions(ProductRecipeVersionId,TenantId,
+            INSERT catalog.ProductCompositionVersions(ProductRecipeVersionId,TenantId,
                 ProductId,[Version],IsEnabled,PublishedAt,PublishedByUserId)
             VALUES(@VersionId,@TenantId,@FinishedId,1,1,
                 SYSDATETIMEOFFSET(),@UserId);
-            INSERT catalog.ProductRecipeIngredients(ProductRecipeVersionId,
+            INSERT catalog.ProductCompositionComponents(ProductRecipeVersionId,
                 LineNumber,TenantId,IngredientProductId,QuantityPerUnit,
                 BaseUnitCodeSnapshot)
             SELECT @VersionId,1,@TenantId,@IngredientId,2,p.BaseUnitCode
             FROM dbo.Products p WHERE p.ProductId=@IngredientId;
+            UPDATE dbo.Products SET ManageStock=@OwnStock,HasIngredients=IIF(@IsCombo=0,1,0),IsCombo=@IsCombo WHERE ProductId=@FinishedId;
+            UPDATE dbo.Products SET IsIngredient=IIF(@IsCombo=1,0,1) WHERE ProductId=@IngredientId;
+            IF @IsCombo=1 UPDATE dbo.TaxProfiles SET Rate=0 WHERE TaxProfileId=@TaxProfileId;
+            UPDATE catalog.ProductCompositionVersions SET CompositionKind=IIF(@IsCombo=1,N'Combo',N'Ingredients') WHERE ProductId=@FinishedId;
+            IF @OwnStock=1
+              INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+              VALUES(@BusinessId,@WarehouseId,@FinishedId,10,3000,30000,COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),SYSDATETIMEOFFSET());
             INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,
                 QuantityOnHand,AverageUnitCost,InventoryValue,
                 LastProcessingSequence,UpdatedAt)
@@ -546,6 +597,8 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                 COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors
                           WHERE BusinessId=@BusinessId),0),SYSDATETIMEOFFSET());
             """, connection);
+        command.Parameters.AddWithValue("@IsCombo",isCombo);
+        command.Parameters.AddWithValue("@OwnStock",ownStock);
         command.Parameters.AddWithValue("@FinishedId", finishedId);
         command.Parameters.AddWithValue("@FinishedCode", $"FIN-{finishedId:N}"[..32]);
         command.Parameters.AddWithValue("@IngredientId", ingredientId);

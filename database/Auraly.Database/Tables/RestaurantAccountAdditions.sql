@@ -19,6 +19,7 @@ CREATE TABLE [sales].[RestaurantAccountAdditions]
     [PriceSource] NVARCHAR(24) NOT NULL,
     [AddedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [AddedByName] NVARCHAR(201) NOT NULL,
+    [AddedByWaiterPartyIdSnapshot] UNIQUEIDENTIFIER NULL,
     [AddedAt] DATETIMEOFFSET(7) NOT NULL,
     [Status] NVARCHAR(16) NOT NULL CONSTRAINT [DF_RestaurantAccountAdditions_Status] DEFAULT N'Pending',
     [CancelledAt] DATETIMEOFFSET(7) NULL,
@@ -37,7 +38,7 @@ CREATE TABLE [sales].[RestaurantAccountAdditions]
     CONSTRAINT [FK_RestaurantAccountAdditions_Replacement] FOREIGN KEY ([ReplacementOfCancellationId])
         REFERENCES [sales].[RestaurantCancellationRequests] ([CancellationId]),
     CONSTRAINT [FK_RestaurantAccountAdditions_RecipeVersion] FOREIGN KEY ([TenantId],[ProductRecipeVersionId])
-        REFERENCES [catalog].[ProductRecipeVersions] ([TenantId],[ProductRecipeVersionId]),
+        REFERENCES [catalog].[ProductCompositionVersions] ([TenantId],[ProductRecipeVersionId]),
     CONSTRAINT [FK_RestaurantAccountAdditions_User] FOREIGN KEY ([AddedByUserId],[TenantId])
         REFERENCES [dbo].[AppUsers] ([UserId],[TenantId]),
     CONSTRAINT [FK_RestaurantAccountAdditions_Business] FOREIGN KEY ([BusinessId],[TenantId])

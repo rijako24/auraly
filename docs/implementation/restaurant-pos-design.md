@@ -306,6 +306,107 @@ No desmarcar ingrediente en recetas activas sin resolver dependencias. Cambios q
 
 ### Regla única de consumo
 
+**Ampliación funcional acordada el 2026-11-04, pendiente de implementación:** la
+ficha distingue dos listas de composición: **Ingredientes** y **Combo**. Son
+mutuamente excluyentes: una versión activa del producto puede tener ingredientes
+o productos de combo, nunca ambos. Ingredientes conserva la selección exclusiva
+de productos activos marcados `IsIngredient=1`. Combo selecciona productos
+terminados activos con `IsIngredient=0`; incorporarlos no cambia su clasificación
+ni impide venderlos individualmente. La exclusión se valida en servidor y en la
+transacción de guardado/publicación de la composición, también ante concurrencia;
+no basta ocultar una sección en UI.
+
+Catalog conserva el propietario y versionado de composición existente. Se amplía
+su contrato con una modalidad única respaldada por catálogo; los indicadores de
+consulta de Products se derivan de esa modalidad, no son dos interruptores
+manuales ni un segundo motor de combos. Cambiar de modalidad no
+elimina versiones históricas ni modifica cuentas, facturas o consumos aceptados.
+La UI muestra la lista de la modalidad elegida y no conserva renglones activos
+de la otra al guardar. Componentes y cantidades son explícitos, sin selección
+variable durante la venta en este alcance.
+
+**Indicadores automáticos acordados el 2026-11-04:** Products expone
+`HasIngredients` (tiene lista de ingredientes vigente y no vacía) e `IsCombo`
+(tiene lista de productos de combo vigente y no vacía), ambos booleanos y de
+solo lectura para los clientes. `IsIngredient` conserva su significado distinto:
+el producto mismo es un insumo. No se usa el nombre Producto terminado como
+indicador de receta, porque un producto vendible puede no tener composición.
+
+| Clasificación vigente | IsIngredient | HasIngredients | IsCombo |
+| --- | --- | --- | --- |
+| Insumo sin composición | true | false | false |
+| Insumo elaborado con receta e inventario propio (compatibilidad existente) | true | true | false |
+| Producto vendible sin composición | false | false | false |
+| Producto vendible con ingredientes | false | true | false |
+| Producto vendible combo | false | false | true |
+
+Los indicadores de Products son una proyección mínima para filtros. Catalog los
+actualiza desde la versión de composición aceptada dentro de la misma transacción
+que guarda sus líneas, tanto en Guardar producto como en publicación de receta;
+no los recibe como decisiones independientes del navegador. La validación y
+escritura se comparten por el propietario canónico, sin reglas distintas para
+ambas entradas. Se refuerza en esquema que no sean verdaderos al mismo tiempo;
+la fila y la versión de composición quedan protegidas frente a cambios concurrentes.
+
+Agregar el primer componente activa el indicador correspondiente; modificar
+cantidades lo conserva; quitar el último o deshabilitar la composición vigente
+lo desactiva. Cambiar de Ingredientes a Combo actualiza ambos de forma atómica.
+Los borradores sin guardar no cambian Products. Desactivar el producto no borra
+su composición ni su historia. El backfill usa solo la última versión vigente
+y su contenido, nunca la existencia de una receta histórica cualquiera.
+
+Los filtros del catálogo se aplican por estos campos en SQL antes de contar y
+paginar, sin cargar listas ni ejecutar EXISTS/GET por producto en la interfaz.
+Los contratos/bootstrap/deltas solo exponen los indicadores como derivados,
+con compatibilidad para clientes antiguos y sin permitir que estos los pisen.
+Los reportes históricos proyectan la clasificación de la venta cuando la
+necesiten; no consultan los indicadores actuales para reclasificar documentos.
+Estos campos se incorporan junto al guardado de composiciones y sus consumidores,
+no como columnas huérfanas con defaults mientras falta implementar Combo.
+
+La regla de la tabla siguiente se aplica también a Combo: con stock propio sale
+solo el padre; sin stock propio sale únicamente la composición resuelta. Se
+reutilizan handler documental, resolución de demanda y writer de inventario,
+validaciones por conjunto, costo reconocido, orden y replay idempotente. Nunca
+se aplican una descarga por receta y otra por combo al mismo renglón. Las
+restricciones actuales de canales siguen vigentes hasta tener soporte de esa
+composición en el canal; configurar un combo no habilita una venta con consumo
+cero ni una segunda ruta de inventario.
+
+La regla anterior de que todas las composiciones se integran únicamente con
+ingredientes se conserva para Ingredientes y se amplía expresamente para Combo.
+La ampliación no habilita por inferencia composiciones anidadas: un terminado
+con receta que no maneje stock propio necesita resolver su composición, no
+ignorarlo. Esa frontera (incluido combo dentro de combo) debe quedar resuelta
+antes de permitir ese caso y no se entrega como soportada por existir una lista.
+En este slice los miembros requieren inventario propio: Ingredientes exige
+`IsIngredient=true`; Combo exige `IsIngredient=false` e `IsCombo=false`.
+Un terminado elaborado con receta sí puede ser miembro de un combo cuando
+controla su propio stock; esa venta consume su saldo y no expande su receta.
+No se aceptan combos dentro de combos ni componentes que requieran expansión
+recursiva de inventario.
+
+El costo comercial de la ficha será la suma de cantidades por precios costo con
+IVA de sus componentes (fuente expresamente confirmada por el usuario), según
+la decisión de Pricing del 2026-11-04. Queda bloqueado para edición manual
+mientras exista composición vigente no vacía. Para Combo el impuesto de venta
+del padre es obligatoriamente 0 %; para Ingredientes se selecciona del catálogo
+el impuesto aplicable, incluido consumo. El margen se conserva y los cambios
+preparan precios para revisión, sin publicación automática. No sustituye el
+costo real reconocido del consumo ni revaloriza inventario por cambiar un precio.
+La decisión de Pricing conserva la autoridad sobre margen, impuestos, redondeo,
+preparación, publicación y propagación de dependencias.
+
+No hay casilla de sincronización de precios: costo bloqueado, preparación
+automática y publicación manual. Crear un producto con composición conserva
+precio público cero y sin publicación, fuera del catálogo vendible, hasta que
+Pricing lo publique. El bootstrap y los deltas incorporan `HasIngredients` e
+`IsCombo` por el stream de catálogo existente; no se agrega un sincronizador.
+La migración clasifica la última versión de recetas existentes y notifica solo
+los cambios de clasificación. Antes de desplegar se deben validar sus costos
+de componentes e impuestos: la clasificación histórica no prueba que esas
+preparaciones comerciales anteriores ya hayan sido recalculadas.
+
 | Producto | Al facturar |
 | --- | --- |
 | `ManageStock=true`, con o sin receta | Descontar solo el saldo del producto terminado; la receta no descarga componentes en esta venta. |

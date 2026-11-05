@@ -60,6 +60,8 @@ public sealed class ReferenceOptionServiceTests
 
     private sealed class CapturingStore : IReferenceOptionStore
     {
+        public Task<IReadOnlyList<ReferenceOption>> ListContextualAsync(CatalogUserIdentity user,string catalogCode,
+            DateOnly? from,DateOnly? to,CancellationToken cancellationToken)=>ListAsync(catalogCode,cancellationToken);
         public string? CatalogCode { get; private set; }
         public CreateReferenceOptionRequest? Created { get; private set; }
 

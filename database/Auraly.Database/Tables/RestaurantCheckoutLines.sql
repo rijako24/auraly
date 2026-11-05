@@ -6,6 +6,8 @@ CREATE TABLE [sales].[RestaurantCheckoutLines]
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [AccountId] UNIQUEIDENTIFIER NOT NULL,
     [AdditionId] UNIQUEIDENTIFIER NOT NULL,
+    [WaiterPartyIdSnapshot] UNIQUEIDENTIFIER NULL,
+    [WaiterNameSnapshot] NVARCHAR(201) NULL,
     [ProductRecipeVersionId] UNIQUEIDENTIFIER NULL,
     [RecognizedCostAmount] DECIMAL(19,4) NULL,
     CONSTRAINT [PK_RestaurantCheckoutLines] PRIMARY KEY ([DocumentId],[LineNumber]),
@@ -15,7 +17,7 @@ CREATE TABLE [sales].[RestaurantCheckoutLines]
     CONSTRAINT [FK_RestaurantCheckoutLines_Addition] FOREIGN KEY ([AccountId],[AdditionId])
         REFERENCES [sales].[RestaurantAccountAdditions] ([AccountId],[AdditionId]),
     CONSTRAINT [FK_RestaurantCheckoutLines_RecipeVersion] FOREIGN KEY ([TenantId],[ProductRecipeVersionId])
-        REFERENCES [catalog].[ProductRecipeVersions] ([TenantId],[ProductRecipeVersionId]),
+        REFERENCES [catalog].[ProductCompositionVersions] ([TenantId],[ProductRecipeVersionId]),
     CONSTRAINT [FK_RestaurantCheckoutLines_Business] FOREIGN KEY ([BusinessId],[TenantId])
         REFERENCES [dbo].[Businesses] ([BusinessId],[TenantId])
 );

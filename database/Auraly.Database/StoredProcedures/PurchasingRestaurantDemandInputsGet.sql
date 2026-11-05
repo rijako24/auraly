@@ -28,12 +28,12 @@ BEGIN
         INSERT #RelatedProducts(ProductId)
         SELECT DISTINCT version.ProductId
         FROM #RelatedProducts related
-        JOIN catalog.ProductRecipeIngredients component
+        JOIN catalog.ProductCompositionComponents component
           ON component.TenantId=@TenantId AND component.IngredientProductId=related.ProductId
-        JOIN catalog.ProductRecipeVersions version
+        JOIN catalog.ProductCompositionVersions version
           ON version.ProductRecipeVersionId=component.ProductRecipeVersionId
              AND version.TenantId=@TenantId AND version.IsEnabled=1
-        WHERE NOT EXISTS(SELECT 1 FROM catalog.ProductRecipeVersions newer
+        WHERE NOT EXISTS(SELECT 1 FROM catalog.ProductCompositionVersions newer
             WHERE newer.TenantId=@TenantId AND newer.ProductId=version.ProductId
               AND newer.[Version]>version.[Version])
           AND NOT EXISTS(SELECT 1 FROM #RelatedProducts existing
@@ -53,12 +53,12 @@ BEGIN
         INSERT #RelatedProducts(ProductId)
         SELECT DISTINCT component.IngredientProductId
         FROM #RelatedProducts related
-        JOIN catalog.ProductRecipeVersions version
+        JOIN catalog.ProductCompositionVersions version
           ON version.TenantId=@TenantId AND version.ProductId=related.ProductId
              AND version.IsEnabled=1
-        JOIN catalog.ProductRecipeIngredients component
+        JOIN catalog.ProductCompositionComponents component
           ON component.ProductRecipeVersionId=version.ProductRecipeVersionId
-        WHERE NOT EXISTS(SELECT 1 FROM catalog.ProductRecipeVersions newer
+        WHERE NOT EXISTS(SELECT 1 FROM catalog.ProductCompositionVersions newer
             WHERE newer.TenantId=@TenantId AND newer.ProductId=version.ProductId
               AND newer.[Version]>version.[Version])
           AND NOT EXISTS(SELECT 1 FROM #RelatedProducts existing
@@ -75,10 +75,10 @@ BEGIN
     INTO #CurrentRecipes
     FROM #RelatedProducts related
     CROSS APPLY (SELECT TOP(1) version.ProductRecipeVersionId,version.IsEnabled
-        FROM catalog.ProductRecipeVersions version
+        FROM catalog.ProductCompositionVersions version
         WHERE version.TenantId=@TenantId AND version.ProductId=related.ProductId
         ORDER BY version.[Version] DESC) latest
-    JOIN catalog.ProductRecipeIngredients component
+    JOIN catalog.ProductCompositionComponents component
       ON component.ProductRecipeVersionId=latest.ProductRecipeVersionId
     WHERE latest.IsEnabled=1;
 

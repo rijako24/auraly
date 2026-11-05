@@ -37,6 +37,7 @@ public static class ServiceInvoiceApi
             ServiceInvoiceWorkspaceService service,
             FiscalProcessingCoordinator fiscal,
             AccountingProcessingCoordinator accounting,
+            SalesReportingProcessingCoordinator reporting,
             CancellationToken ct) =>
         {
             var key = context.Request.Headers["Idempotency-Key"].ToString();
@@ -44,11 +45,14 @@ public static class ServiceInvoiceApi
             {
                 var issued = await service.IssueAsync(
                     context.User.ToServiceInvoiceUserIdentity(), request, key, ct);
+                if (issued.IsReplay) return issued;
                 await accounting.RequestPostingAsync(
                     request.BusinessId, issued.DocumentId,
                     ServiceInvoiceDocumentTypes.ServiceInvoice, ct);
                 await fiscal.RequestGenerationAsync(
                     request.BusinessId, issued.DocumentId, ct);
+                await reporting.RequestProjectionAsync(request.BusinessId, issued.DocumentId,
+                    ServiceInvoiceDocumentTypes.ServiceInvoice, ct);
                 return issued;
             });
         });

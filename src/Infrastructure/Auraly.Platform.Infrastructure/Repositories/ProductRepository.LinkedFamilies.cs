@@ -45,6 +45,7 @@ public sealed partial class ProductRepository
                     price.BusinessId == businessId
                     && price.ProductId == product.ProductId
                     && price.IsActive
+                    && (price.Amount > 0m || product.IsGenericProduct)
                     && price.ValidFrom <= now
                     && (price.ValidUntil == null || price.ValidUntil > now)))
             .OrderBy(product => product.Name)

@@ -222,12 +222,13 @@ public sealed class CatalogService(
 
     private static void Validate(SaveProductRequest request)
     {
-        if (request.RecipeIngredients is not null &&
-            (request.IsIngredient == true || request.IsGenericProduct ||
-             request.RecipeIngredients.Any(line => line.IngredientProductId == Guid.Empty || line.QuantityPerUnit <= 0) ||
-             request.RecipeIngredients.GroupBy(line => line.IngredientProductId).Any(group => group.Count() > 1) ||
-             request.RecipeExpectedVersion is null or < 0))
-            throw new CatalogValidationException("La receta contiene ingredientes inválidos o una versión incorrecta.");
+        if (request.RecipeIngredients is not null)
+        {
+            if ((request.IsIngredient == true && !request.ManageInventory) || request.IsGenericProduct ||
+                request.RecipeExpectedVersion is null or < 0 || request.CompositionKind is not (null or "Ingredients" or "Combo"))
+                throw new CatalogValidationException("La composición o su versión no son válidas.");
+            ProductRecipeService.ValidateComponents(request.RecipeIngredients);
+        }
         if (string.IsNullOrWhiteSpace(request.Name) ||
             string.IsNullOrWhiteSpace(request.BaseUnitCode) || request.TaxProfileId == Guid.Empty ||
             (!request.IsGenericProduct && (!request.PurchaseTaxProfileId.HasValue || request.PurchaseTaxProfileId.Value == Guid.Empty)))
@@ -238,7 +239,8 @@ public sealed class CatalogService(
             throw new CatalogValidationException("A scale configuration requires a product sold by weight.");
         if (request.UnitGrossWeightKg is <= 0)
             throw new CatalogValidationException("Product weight must be greater than zero when provided.");
-        if (request.Prices.Count != 1 || (!request.IsGenericProduct && request.Prices.Any(price => price.Amount <= 0)))
+        if (request.Prices.Count != 1 || (!request.IsGenericProduct && request.Prices.Any(price =>
+            price.Amount < 0 || (price.Amount == 0 && price.PreparedAmount is not > 0))))
             throw new CatalogValidationException(
                 "Every sellable product requires exactly one positive base price for its business.");
         if (!request.IsGenericProduct && request.Prices.Any(price =>

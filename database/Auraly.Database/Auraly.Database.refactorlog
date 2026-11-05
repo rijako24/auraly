@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Operations Version="1.0" xmlns="http://schemas.microsoft.com/sqlserver/dac/Serialization/2012/02">
+  <Operation Name="Rename Refactor" Key="d49ac603-680d-42a6-992f-aeeac262160b" ChangeDateTime="11/04/2026 00:00:00">
+    <Property Name="ElementName" Value="[catalog].[ProductRecipeVersions]" />
+    <Property Name="ElementType" Value="SqlTable" />
+    <Property Name="ParentElementName" Value="[catalog]" />
+    <Property Name="ParentElementType" Value="SqlSchema" />
+    <Property Name="NewName" Value="ProductCompositionVersions" />
+  </Operation>
+  <Operation Name="Rename Refactor" Key="ea6e3b9a-d9f7-4f13-942a-10c8a3dbf604" ChangeDateTime="11/04/2026 00:00:00">
+    <Property Name="ElementName" Value="[catalog].[ProductRecipeIngredients]" />
+    <Property Name="ElementType" Value="SqlTable" />
+    <Property Name="ParentElementName" Value="[catalog]" />
+    <Property Name="ParentElementType" Value="SqlSchema" />
+    <Property Name="NewName" Value="ProductCompositionComponents" />
+  </Operation>
+</Operations>

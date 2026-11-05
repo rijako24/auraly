@@ -1,25 +1,12 @@
+import type {SalesBreakdownRow} from "@/services/api/sales-reporting";
+
 export interface PaymentMethodOption {
   code: string;
   label: string;
   sortOrder: number;
 }
 
-export interface PaymentBreakdownRow {
-  key: string;
-  label: string;
-  documentCount: number;
-  quantity: number;
-  grossSales: number;
-  discounts: number;
-  returns: number;
-  netUntaxedSales: number;
-  tax: number;
-  netSales: number;
-  recognizedCost: number;
-  grossProfit: number;
-  grossMarginPercent: number;
-  participationPercent: number;
-}
+export type PaymentBreakdownRow = SalesBreakdownRow;
 
 const emptyRow = (code: string, label: string): PaymentBreakdownRow => ({
   key: code,
@@ -32,9 +19,9 @@ const emptyRow = (code: string, label: string): PaymentBreakdownRow => ({
   netUntaxedSales: 0,
   tax: 0,
   netSales: 0,
-  recognizedCost: 0,
-  grossProfit: 0,
-  grossMarginPercent: 0,
+  recognizedCost: null,
+  grossProfit: null,
+  grossMarginPercent: null,
   participationPercent: 0,
 });
 

@@ -13,8 +13,13 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 const pathLabels: Record<string, string> = {
-  dashboard: "Hoy",
+  dashboard: "Resumen comercial",
   analytics: "Analítica de ventas",
+  reports: "Reportes",
+  sales: "Ventas",
+  impact: "Impacto comercial",
+  "supplier-impact": "Proveedores: compras y ventas",
+  products: "Productos",
   services: "Servicios",
   employees: "Empleados",
   reservations: "Reservaciones",
@@ -59,7 +64,7 @@ export function BreadcrumbNav({ className }: BreadcrumbNavProps) {
       <Breadcrumb className={className}>
         <BreadcrumbList>
           <BreadcrumbItem>
-            <BreadcrumbPage>Hoy</BreadcrumbPage>
+            <BreadcrumbPage>Resumen comercial</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
@@ -71,7 +76,7 @@ export function BreadcrumbNav({ className }: BreadcrumbNavProps) {
       <BreadcrumbList>
         {segments.map((segment, index) => {
           const href = "/" + segments.slice(0, index + 1).join("/");
-          const label = getLabel(segment);
+          const label = href==="/dashboard/reports/products"?"Productos y rentabilidad":getLabel(segment);
           const isLast = index === segments.length - 1;
 
           return (

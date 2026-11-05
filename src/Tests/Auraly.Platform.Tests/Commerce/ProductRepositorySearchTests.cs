@@ -6,6 +6,7 @@ using Auraly.Platform.Infrastructure.Data;
 using Auraly.Platform.Infrastructure.Data.ReadModels;
 using Auraly.Platform.Infrastructure.Repositories;
 using Xunit;
+using CatalogProduct = Auraly.Platform.Domain.Entities.Product;
 
 namespace Auraly.Platform.Tests.Commerce;
 
@@ -19,6 +20,12 @@ public sealed class ProductRepositorySearchTests
         context.Model.FindEntityType(typeof(Auraly.Platform.Domain.Entities.Product))!
             .FindProperty(nameof(Auraly.Platform.Domain.Entities.Product.UnitPrice))
             .Should().BeNull();
+        foreach (var flagName in new[] { nameof(CatalogProduct.HasIngredients), nameof(CatalogProduct.IsCombo), nameof(CatalogProduct.IsGenericProduct) })
+        {
+            var flag = context.Model.FindEntityType(typeof(CatalogProduct))!.FindProperty(flagName)!;
+            flag.GetBeforeSaveBehavior().Should().Be(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Ignore);
+            flag.GetAfterSaveBehavior().Should().Be(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Ignore);
+        }
     }
 
     [Fact]

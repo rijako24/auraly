@@ -41,7 +41,9 @@ restricción física, sin reconstruir por nombre ni dirección.
 
 ### Consultar
 
-Las consultas son paginadas en servidor y combinan número, cliente, producto, estado, fuente y fechas. Un pedido de otro negocio nunca se devuelve.
+Las consultas son paginadas en servidor y combinan número, cliente, producto, estado, fuente, fechas y usuario creador (`createdByUserId`). El creador se resuelve desde `Orders.CapturedByUserId`; para productores históricos sin ese campo se conserva la identidad `createdBy` del JSON válido, sin inferirla del vendedor, editor ni usuario que factura. `onlyMine` y el usuario seleccionado se intersectan. Un pedido de otro negocio o tenant nunca se devuelve.
+
+`OrdersWorkspace`, compartido por dashboard y POS, muestra el creador y la fecha/hora original debajo del número; si no existe identidad se muestra «Usuario no registrado». El selector de usuarios consume la proyección paginada canónica `Parties.role-options` con rol `User`. Conteo y página usan los mismos predicados en un único comando; se resuelve el nombre del creador y el número de líneas únicamente para la página seleccionada. Presupuesto de lista: menos de un segundo para primera y segunda página con 2.000 pedidos, sin consulta por fila ni cambios en captura, facturación o inventario. La regresión SQL con 2.000 pedidos midió 32,3 ms en primera página y 37,1 ms en segunda: un comando de lista, con autorización compartida aparte. Verifica aislamiento, identidad tipada e histórica, intersección con `onlyMine`, conteo estable y página vacía fuera del rango. La prueba de navegador confirmó filtro, nombre y fecha original en la tabla compartida.
 
 ### Recuperar uno
 

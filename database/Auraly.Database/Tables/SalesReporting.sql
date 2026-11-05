@@ -8,9 +8,17 @@ CREATE TABLE [reporting].[SalesReportDocuments]
     [FiscalNumber] NVARCHAR(64) NULL,
     [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
     [BusinessLocalDate] DATE NOT NULL,
+    [BusinessLocalHour] TINYINT NULL,
+    [ProductQuantity] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_SalesReportDocuments_ProductQuantity] DEFAULT(0),
+    [MissingCostLineCount] BIGINT NOT NULL CONSTRAINT [DF_SalesReportDocuments_MissingCostLineCount] DEFAULT(0),
     [TimeZoneId] NVARCHAR(100) NOT NULL,
-    [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
-    [WarehouseName] NVARCHAR(200) NOT NULL,
+    [WarehouseId] UNIQUEIDENTIFIER NULL,
+    [WarehouseName] NVARCHAR(200) NULL,
+    [BilledByUserId] UNIQUEIDENTIFIER NULL,
+    [BilledByName] NVARCHAR(201) NULL,
+    [TableId] UNIQUEIDENTIFIER NULL,
+    [TableName] NVARCHAR(140) NULL,
+    [AttributionSnapshotVersion] SMALLINT NOT NULL CONSTRAINT [DF_SalesReportDocuments_AttributionSnapshotVersion] DEFAULT (0),
     [WorkSessionId] UNIQUEIDENTIFIER NULL,
     [SellerId] UNIQUEIDENTIFIER NULL,
     [SellerName] NVARCHAR(201) NOT NULL,
@@ -33,7 +41,7 @@ CREATE TABLE [reporting].[SalesReportDocuments]
     [ReturnedUntaxedAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_SalesReportDocuments_ReturnedUntaxed] DEFAULT 0,
     [ReturnedTaxAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_SalesReportDocuments_ReturnedTax] DEFAULT 0,
     [ReturnedTotalAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_SalesReportDocuments_ReturnedTotal] DEFAULT 0,
-    [RecognizedCostAmount] DECIMAL(19,4) NOT NULL,
+    [RecognizedCostAmount] DECIMAL(19,4) NULL,
     [ReturnedCostAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_SalesReportDocuments_ReturnedCost] DEFAULT 0,
     [ProjectionVersion] SMALLINT NOT NULL,
     [SourcePayloadHash] BINARY(32) NOT NULL,
@@ -42,7 +50,7 @@ CREATE TABLE [reporting].[SalesReportDocuments]
     CONSTRAINT [PK_SalesReportDocuments] PRIMARY KEY CLUSTERED ([DocumentId]),
     CONSTRAINT [FK_SalesReportDocuments_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_SalesReportDocuments_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
-    CONSTRAINT [CK_SalesReportDocuments_Type] CHECK ([DocumentType] IN (N'SalesInvoice',N'SalesReceipt')),
+    CONSTRAINT [CK_SalesReportDocuments_Type] CHECK ([DocumentType] IN (N'SalesInvoice',N'SalesReceipt',N'ServiceInvoice')),
     CONSTRAINT [CK_SalesReportDocuments_Amounts] CHECK
       ([GrossAmount]>=0 AND [DiscountAmount]>=0 AND [UntaxedAmount]>=0 AND [TaxAmount]>=0 AND
        [TotalAmount]>=0 AND [RoundingAdjustmentAmount]>-50 AND [RoundingAdjustmentAmount]<=50 AND
@@ -55,11 +63,17 @@ GO
 CREATE INDEX [IX_SalesReportDocuments_Business_Date]
   ON [reporting].[SalesReportDocuments]([BusinessId],[BusinessLocalDate] DESC,[DocumentId] DESC)
   INCLUDE([DocumentNumber],[CustomerId],[SellerId],[WarehouseId],[WarehouseName],[SellerName],[UntaxedAmount],[TaxAmount],[TotalAmount],
-          [ReturnedTotalAmount],[RecognizedCostAmount],[ReturnedCostAmount],[FiscalStatus]);
+          [ReturnedTotalAmount],[RecognizedCostAmount],[ReturnedCostAmount],[FiscalStatus],
+          [TenantId],[DocumentType],[CustomerName],[BilledByUserId],[BilledByName],[RoundingAdjustmentAmount],[RestaurantTipAmount],
+          [GrossAmount],[DiscountAmount],[IssuedAt],[ProjectedAt],[BusinessLocalHour],[ProductQuantity],[MissingCostLineCount],[TableId],[TableName]);
 GO
 CREATE INDEX [IX_SalesReportDocuments_Business_Customer_Date]
   ON [reporting].[SalesReportDocuments]([BusinessId],[CustomerId],[BusinessLocalDate] DESC,[DocumentId] DESC)
   WHERE [CustomerId] IS NOT NULL;
+GO
+-- Rebuild gates must seek the version range, without looking up every document.
+CREATE INDEX [IX_SalesReportDocuments_Business_ProjectionVersion]
+  ON [reporting].[SalesReportDocuments]([BusinessId],[ProjectionVersion]);
 GO
 CREATE INDEX [IX_SalesReportDocuments_Business_Seller_Date]
   ON [reporting].[SalesReportDocuments]([BusinessId],[SellerId],[BusinessLocalDate] DESC,[DocumentId] DESC)
@@ -79,6 +93,7 @@ CREATE TABLE [reporting].[SalesReportLineFacts]
     [MovementType] NVARCHAR(24) NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     [BusinessLocalDate] DATE NOT NULL,
+    [BusinessLocalHour] TINYINT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [WorkSessionId] UNIQUEIDENTIFIER NULL,
     [SellerId] UNIQUEIDENTIFIER NULL,
@@ -89,8 +104,17 @@ CREATE TABLE [reporting].[SalesReportLineFacts]
     [ProductName] NVARCHAR(300) NOT NULL,
     [CategoryId] UNIQUEIDENTIFIER NULL,
     [CategoryName] NVARCHAR(160) NULL,
+    [CategoryHierarchyJson] NVARCHAR(MAX) NULL,
     [SupplierId] UNIQUEIDENTIFIER NULL,
     [SupplierName] NVARCHAR(240) NULL,
+    [WaiterPartyId] UNIQUEIDENTIFIER NULL,
+    [WaiterName] NVARCHAR(201) NULL,
+    [UnitCode] NVARCHAR(24) NULL,
+    [TaxCode] NVARCHAR(16) NULL,
+    [TaxRate] DECIMAL(9,6) NULL,
+    [CompositionKind] NVARCHAR(16) NULL,
+    [CompositionDetailJson] NVARCHAR(MAX) NULL,
+    [CostAvailable] BIT NOT NULL CONSTRAINT [DF_SalesReportLineFacts_CostAvailable] DEFAULT (0),
     [Quantity] DECIMAL(19,6) NOT NULL,
     [GrossAmount] DECIMAL(19,4) NOT NULL,
     [DiscountAmount] DECIMAL(19,4) NOT NULL,
@@ -99,6 +123,7 @@ CREATE TABLE [reporting].[SalesReportLineFacts]
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [RecognizedCostAmount] DECIMAL(19,4) NOT NULL,
     [ReturnReasonCode] NVARCHAR(40) NULL,
+    [ReturnReasonDescription] NVARCHAR(500) NULL,
     [ReturnDisposition] NVARCHAR(24) NULL,
     [ProjectionVersion] SMALLINT NOT NULL,
     [ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -119,7 +144,9 @@ GO
 CREATE INDEX [IX_SalesReportLineFacts_Business_Date]
   ON [reporting].[SalesReportLineFacts]([BusinessId],[BusinessLocalDate] DESC,[FactId] DESC)
   INCLUDE([ProductId],[SellerId],[CustomerId],[WarehouseId],[Quantity],[UntaxedAmount],[TaxAmount],
-          [TotalAmount],[RecognizedCostAmount],[MovementType]);
+          [TotalAmount],[RecognizedCostAmount],[MovementType],
+          [TenantId],[SourceDocumentId],[SourceDocumentType],[SourceLineNumber],[OriginalSaleDocumentId],
+          [OccurredAt],[ProjectedAt],[GrossAmount],[DiscountAmount],[TaxCode],[TaxRate],[CostAvailable]);
 GO
 CREATE INDEX [IX_SalesReportLineFacts_Business_Product_Date]
   ON [reporting].[SalesReportLineFacts]([BusinessId],[ProductId],[BusinessLocalDate] DESC,[FactId] DESC)
@@ -147,8 +174,8 @@ CREATE TABLE [reporting].[SalesReportDailyDimensionTotals]
     [NetUntaxedSales] DECIMAL(19,4) NOT NULL,
     [NetTax] DECIMAL(19,4) NOT NULL,
     [NetTotalSales] DECIMAL(19,4) NOT NULL,
-    [NetRecognizedCost] DECIMAL(19,4) NOT NULL,
-    [GrossProfit] DECIMAL(19,4) NOT NULL,
+    [NetRecognizedCost] DECIMAL(19,4) NULL,
+    [GrossProfit] DECIMAL(19,4) NULL,
     [ProjectionVersion] SMALLINT NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
@@ -195,13 +222,16 @@ GO
 
 CREATE TABLE [reporting].[SalesReportTaxFacts]
 (
+    [OccurredAt] DATETIMEOFFSET(7) NULL,
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(32) NOT NULL,
+    [OriginalSaleDocumentId] UNIQUEIDENTIFIER NULL,
     [TaxCode] NVARCHAR(16) NOT NULL,
     [TaxRate] DECIMAL(9,6) NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessLocalDate] DATE NOT NULL,
+    [BusinessLocalHour] TINYINT NULL,
     [TaxableAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
@@ -214,7 +244,7 @@ CREATE TABLE [reporting].[SalesReportTaxFacts]
 GO
 CREATE INDEX [IX_SalesReportTaxFacts_Business_Date_Tax]
   ON [reporting].[SalesReportTaxFacts]([BusinessId],[BusinessLocalDate],[TaxCode],[TaxRate])
-  INCLUDE([TaxableAmount],[TaxAmount],[TotalAmount]);
+  INCLUDE([TaxableAmount],[TaxAmount],[TotalAmount],[TenantId],[OriginalSaleDocumentId],[OccurredAt],[ProjectedAt],[BusinessLocalHour]);
 GO
 
 CREATE TABLE [reporting].[SalesReportDailyTotals]
@@ -233,6 +263,7 @@ CREATE TABLE [reporting].[SalesReportDailyTotals]
     [NetTotalSales] DECIMAL(19,4) NOT NULL,
     [NetRecognizedCost] DECIMAL(19,4) NOT NULL,
     [GrossProfit] DECIMAL(19,4) NOT NULL,
+    [UnknownCostDocumentCount] BIGINT NOT NULL CONSTRAINT [DF_SalesReportDailyTotals_UnknownCost] DEFAULT (0),
     [CreditSales] DECIMAL(19,4) NOT NULL,
     [Collected] DECIMAL(19,4) NOT NULL,
     [Refunded] DECIMAL(19,4) NOT NULL,
@@ -249,6 +280,7 @@ GO
 
 CREATE TABLE [reporting].[SalesReportingCheckpoints]
 (
+    [RebuildInProgress] BIT NOT NULL CONSTRAINT [DF_SalesReportingCheckpoints_Rebuild] DEFAULT (0),
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [ProjectionVersion] SMALLINT NOT NULL,
     [LastSourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
@@ -308,6 +340,8 @@ CREATE TABLE [reporting].[PurchaseReportDocuments] (
   [OccurredAt] DATETIMEOFFSET(7) NOT NULL,[BusinessLocalDate] DATE NOT NULL,[TimeZoneId] NVARCHAR(100) NOT NULL,
   [SupplierId] UNIQUEIDENTIFIER NOT NULL,[SupplierName] NVARCHAR(240) NOT NULL,[WarehouseId] UNIQUEIDENTIFIER NOT NULL,[WarehouseName] NVARCHAR(200) NOT NULL,
   [CurrencyCode] CHAR(3) NOT NULL,[NetAmount] DECIMAL(19,4) NOT NULL,[TaxAmount] DECIMAL(19,4) NOT NULL,[TotalAmount] DECIMAL(19,4) NOT NULL,
+  [FunctionalNetAmount] DECIMAL(19,4) NULL,[FunctionalTaxAmount] DECIMAL(19,4) NULL,[FunctionalTotalAmount] DECIMAL(19,4) NULL,
+  [FunctionalCurrencyCode] CHAR(3) NOT NULL CONSTRAINT [DF_PurchaseReportDocuments_FunctionalCurrency] DEFAULT N'COP',[ExchangeRate] DECIMAL(19,6) NULL,
   [ProjectionVersion] SMALLINT NOT NULL,[ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
   CONSTRAINT [FK_PurchaseReportDocuments_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
   CONSTRAINT [FK_PurchaseReportDocuments_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
@@ -318,8 +352,12 @@ GO
 CREATE INDEX [IX_PurchaseReportDocuments_Query]
 ON [reporting].[PurchaseReportDocuments]([BusinessId],[BusinessLocalDate],[SupplierId]) INCLUDE([WarehouseId],[NetAmount],[TaxAmount],[TotalAmount]);
 GO
+CREATE INDEX [IX_PurchaseReportDocuments_Business_ProjectionVersion]
+ON [reporting].[PurchaseReportDocuments]([BusinessId],[ProjectionVersion]);
+GO
 
 CREATE TABLE [reporting].[PurchaseReportLineFacts] (
+  [CategoryHierarchyJson] NVARCHAR(MAX) NULL,
   [PurchaseFactId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,[TenantId] UNIQUEIDENTIFIER NOT NULL,[BusinessId] UNIQUEIDENTIFIER NOT NULL,
   [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,[SourceDocumentType] NVARCHAR(32) NOT NULL,[SourceLineNumber] INT NOT NULL,
   [OriginalGoodsReceiptId] UNIQUEIDENTIFIER NULL,[OriginalLineNumber] INT NULL,[OccurredAt] DATETIMEOFFSET(7) NOT NULL,[BusinessLocalDate] DATE NOT NULL,
@@ -327,6 +365,8 @@ CREATE TABLE [reporting].[PurchaseReportLineFacts] (
   [ProductId] UNIQUEIDENTIFIER NOT NULL,[ProductName] NVARCHAR(300) NOT NULL,[Quantity] DECIMAL(19,6) NOT NULL,
   [UnitCost] DECIMAL(19,6) NOT NULL,[DiscountAmount] DECIMAL(19,4) NOT NULL,[NetAmount] DECIMAL(19,4) NOT NULL,
   [TaxAmount] DECIMAL(19,4) NOT NULL,[TotalAmount] DECIMAL(19,4) NOT NULL,[CurrencyCode] CHAR(3) NOT NULL,
+  [FunctionalNetAmount] DECIMAL(19,4) NULL,[FunctionalTaxAmount] DECIMAL(19,4) NULL,[FunctionalTotalAmount] DECIMAL(19,4) NULL,
+  [FunctionalCurrencyCode] CHAR(3) NOT NULL CONSTRAINT [DF_PurchaseReportLineFacts_FunctionalCurrency] DEFAULT N'COP',[ExchangeRate] DECIMAL(19,6) NULL,
   [ProjectionVersion] SMALLINT NOT NULL,[ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
   CONSTRAINT [FK_PurchaseReportLineFacts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
   CONSTRAINT [FK_PurchaseReportLineFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),

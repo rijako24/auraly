@@ -13,12 +13,111 @@ using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Platform.Application.Identity.Services;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Explicit_reporting_rebuild_accepts_legacy_service_sources_and_preserves_operational_effects()
+    {
+        var context=await SeedAsync();
+        using var client=fixture.CreateAdminClient(ServiceInvoicePermissionCodes.Create,ServiceInvoicePermissionCodes.Issue,
+            SalesReportingPermissionCodes.Read,SalesReportingPermissionCodes.ReadAll);
+        client.DefaultRequestHeaders.Add("Idempotency-Key",context.IdempotencyKey);
+        using var response=await client.PostAsJsonAsync("/api/commerce/v1/service-invoices/issue",
+            new IssueServiceInvoiceRequest(fixture.BusinessId,context.CustomerId,[new(context.ServiceId,1)],"Transfer"));
+        Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
+        var invoice=(await response.Content.ReadFromJsonAsync<IssuedServiceInvoice>())!;
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var mutation=new SqlCommand("""
+            DELETE reporting.SalesReportingJobs WHERE SourceDocumentId=@Id;
+            UPDATE reporting.SalesReportDocuments SET ProjectionVersion=4 WHERE DocumentId=@Id;
+            SELECT (SELECT COUNT_BIG(*) FROM dbo.InventoryMovements WHERE BusinessId=@Business),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingPostingJobs WHERE BusinessId=@Business),
+              (SELECT COUNT_BIG(*) FROM dbo.DocumentProcessingJobs WHERE BusinessId=@Business);
+            """,connection);
+        mutation.Parameters.AddWithValue("@Id",invoice.DocumentId);mutation.Parameters.AddWithValue("@Business",fixture.BusinessId);
+        long inventory,accounting,operations;
+        await using(var data=await mutation.ExecuteReaderAsync())
+        {await data.ReadAsync();inventory=data.GetInt64(0);accounting=data.GetInt64(1);operations=data.GetInt64(2);}
+        using(var unavailable=await client.GetAsync("/api/commerce/v1/sales-reports/context"))
+            Assert.Equal(HttpStatusCode.ServiceUnavailable,unavailable.StatusCode);
+        using var scope=fixture.CreateScope();var processor=scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>();
+        Assert.True(await processor.RebuildAsync(fixture.TenantId,fixture.BusinessId,CancellationToken.None)>0);
+        mutation.CommandText="""
+            SELECT d.BusinessLocalDate,r.SourcePayloadJson,r.SourceDocumentProcessingJobId,
+              (SELECT COUNT_BIG(*) FROM dbo.InventoryMovements WHERE BusinessId=@Business),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingPostingJobs WHERE BusinessId=@Business),
+              (SELECT COUNT_BIG(*) FROM dbo.DocumentProcessingJobs WHERE BusinessId=@Business)
+            FROM reporting.SalesReportDocuments d JOIN reporting.SalesReportingJobs r ON r.SourceDocumentId=d.DocumentId
+              AND r.SourceDocumentType=d.DocumentType WHERE d.DocumentId=@Id AND d.ProjectionVersion=5 AND r.Status=N'Projected';
+            """;
+        DateOnly date;
+        await using(var data=await mutation.ExecuteReaderAsync())
+        {
+            Assert.True(await data.ReadAsync());date=DateOnly.FromDateTime(data.GetDateTime(0));Assert.False(data.IsDBNull(1));Assert.True(data.IsDBNull(2));
+            Assert.Equal(inventory,data.GetInt64(3));Assert.Equal(accounting,data.GetInt64(4));Assert.Equal(operations,data.GetInt64(5));
+            Assert.False(await data.ReadAsync());
+        }
+        var reporting=scope.ServiceProvider.GetRequiredService<SalesReportingService>();
+        var user=new SalesReportingUserIdentity(fixture.UserId,fixture.TenantId,fixture.BusinessId,
+            new HashSet<string>{SalesReportingPermissionCodes.Read,SalesReportingPermissionCodes.ReadAll});
+        var request=new SalesReportExplorerRequest(new(date,date),DocumentId:invoice.DocumentId);
+        var first=await reporting.ExploreAsync(user,request);Assert.Equal(invoice.PayableAmount,first.Totals.NetTotal);
+        await processor.RebuildAsync(fixture.TenantId,fixture.BusinessId,CancellationToken.None);
+        var second=await reporting.ExploreAsync(user,request);Assert.Equal(first.Totals,second.Totals);Assert.Equal(first.Taxes,second.Taxes);
+    }
+
+    [Fact]
+    public async Task Service_reporting_uses_its_own_lines_and_replays_without_inventory_or_a_second_job()
+    {
+        var context=await SeedAsync();
+        using var client=fixture.CreateAdminClient(ServiceInvoicePermissionCodes.Create,ServiceInvoicePermissionCodes.Issue,
+            SalesReportingPermissionCodes.Read,SalesReportingPermissionCodes.ReadAll);
+        client.DefaultRequestHeaders.Add("Idempotency-Key",context.IdempotencyKey);
+        var request=new IssueServiceInvoiceRequest(fixture.BusinessId,context.CustomerId,[new(context.ServiceId,2)],"Transfer");
+        using var response=await client.PostAsJsonAsync("/api/commerce/v1/service-invoices/issue",request);
+        Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
+        var invoice=(await response.Content.ReadFromJsonAsync<IssuedServiceInvoice>())!;
+        using var replay=await client.PostAsJsonAsync("/api/commerce/v1/service-invoices/issue",request);
+        replay.EnsureSuccessStatusCode();
+        Assert.True((await replay.Content.ReadFromJsonAsync<IssuedServiceInvoice>())!.IsReplay);
+        using(var scope=fixture.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>().ProcessAsync(
+                invoice.DocumentId,ServiceInvoiceDocumentTypes.ServiceInvoice,fixture.BusinessId,1,CancellationToken.None);
+        await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var query=new SqlCommand("""
+            SELECT d.BusinessLocalDate,d.RecognizedCostAmount,
+              (SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@Id AND Status=N'Projected' AND AttemptCount=1),
+              (SELECT COUNT(*) FROM reporting.ServiceSalesReportLineFacts WHERE SourceDocumentId=@Id),
+              (SELECT COUNT(*) FROM reporting.SalesReportLineFacts WHERE SourceDocumentId=@Id),
+              (SELECT COUNT(*) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id)
+            FROM reporting.SalesReportDocuments d WHERE DocumentId=@Id;
+            """,connection);
+        query.Parameters.AddWithValue("@Id",invoice.DocumentId);
+        DateOnly date;
+        await using(var data=await query.ExecuteReaderAsync())
+        {
+            Assert.True(await data.ReadAsync());date=DateOnly.FromDateTime(data.GetDateTime(0));Assert.True(data.IsDBNull(1));
+            Assert.Equal(1,data.GetInt32(2));Assert.Equal(1,data.GetInt32(3));
+            Assert.Equal(0,data.GetInt32(4));Assert.Equal(0,data.GetInt32(5));Assert.Equal(0,data.GetInt32(6));
+        }
+        using var report=await client.PostAsJsonAsync("/api/commerce/v1/sales-reports/explore",
+            new SalesReportExplorerRequest(new(date,date),DocumentId:invoice.DocumentId));
+        Assert.True(report.IsSuccessStatusCode,await report.Content.ReadAsStringAsync());
+        var page=(await report.Content.ReadFromJsonAsync<SalesReportExplorerPage>())!;
+        var line=Assert.Single(page.Items);Assert.Equal("Service",line.ItemKind);
+        Assert.Equal(invoice.UntaxedAmount,page.Totals.NetUntaxed);Assert.Equal(invoice.TaxAmount,page.Totals.Tax);
+        Assert.Equal(invoice.PayableAmount,page.Totals.NetTotal);Assert.Null(page.Totals.RecognizedCost);
+        Assert.Null(page.Totals.Profit);Assert.Null(page.Totals.MarginPercent);
+        Assert.Equal(invoice.TaxAmount,Assert.Single(page.Taxes).Tax);
+        Assert.Equal(invoice.PayableAmount,Assert.Single(page.Payments).Amount);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -277,7 +376,7 @@ public sealed class ServiceInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal(0, reader.GetInt32(3));
         Assert.Equal(0, reader.GetInt32(4));
         Assert.Equal(1, reader.GetInt32(5));
-        Assert.Equal(0, reader.GetInt32(6));
+        Assert.Equal(1, reader.GetInt32(6));
         Assert.Equal(1, reader.GetInt32(7));
         Assert.Equal(1, reader.GetInt32(8));
         await reader.DisposeAsync();

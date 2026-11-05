@@ -13,18 +13,25 @@ public static class ReferenceOptionsApi
             .RequireAuthorization();
 
         group.MapGet("/{catalogCode}", async (
+            HttpContext context,
             string catalogCode,
+            bool? contextual,DateOnly? from,DateOnly? to,
             ReferenceOptionService service,
             CancellationToken cancellationToken) =>
         {
             try
             {
-                return Results.Ok(await service.ListAsync(
-                    catalogCode, cancellationToken));
+                return Results.Ok(contextual==true
+                    ?await service.ListContextualAsync(context.User.ToCatalogUserIdentity(),catalogCode,from,to,cancellationToken)
+                    :await service.ListAsync(catalogCode, cancellationToken));
             }
             catch (CatalogValidationException exception)
             {
                 return Results.Problem(exception.Message, statusCode: 400);
+            }
+            catch(CatalogForbiddenException exception)
+            {
+                return Results.Problem(exception.Message,statusCode:403);
             }
         });
 

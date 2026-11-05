@@ -36,9 +36,12 @@ type PartyRoleSelectProps = {
   preload?: boolean;
   loadPage?: (search:string,page:number,pageSize:number)=>Promise<{items:PartyRoleOption[];page:number;totalPages:number;totalCount:number}>;
   sourceKey?: string;
+  values?: string[];
+  selectedOptions?: PagedEntityOption[];
+  onValuesChange?: (values:string[],options:PagedEntityOption[])=>void;
 };
 
-export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, ariaLabel, emptyMessage, disabled, includePartyId = false, preload = false,loadPage,sourceKey }: PartyRoleSelectProps) {
+export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, ariaLabel, emptyMessage, disabled, includePartyId = false, preload = false,loadPage,sourceKey,values,selectedOptions,onValuesChange }: PartyRoleSelectProps) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [picked, setPicked] = useState<PagedEntityOption | null>(null);
   const getOption = useCallback((item: PartyRoleSelection) => ({
@@ -65,6 +68,9 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
   return <PagedEntitySelect
     queryKey={["party-role-select", sourceKey??(loadPage ? "custom" : "web"), businessId, role ?? "Any", includePartyId]}
     value={value}
+    values={values}
+    selectedOptions={selectedOptions}
+    onValuesChange={onValuesChange}
     onChange={(id, option, item) => {
       if (item) setPicked(option);
       onChange(id, item);

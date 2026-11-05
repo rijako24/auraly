@@ -43,7 +43,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
     queryKey: ["product-merchandising", productId],
     queryFn: () => productMerchandisingApi.get(productId),
   });
-  const brands = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands });
+  const brands = useQuery({ queryKey: ["product-brands",businessId], queryFn: productMerchandisingApi.brands });
   const units = useQuery({ queryKey: ["product-units"], queryFn: productMerchandisingApi.units });
   const categories = useProductCategories(false);
   const [form, setForm] = useState<ProductMerchandising | null>(null);
@@ -163,7 +163,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
   const createBrand = useMutation({
     mutationFn: () => productMerchandisingApi.createBrand(newBrand.trim()),
     onSuccess: async (value) => {
-      await client.invalidateQueries({ queryKey: ["product-brands"] });
+      await client.invalidateQueries({ queryKey: ["product-brands",businessId] });
       setForm((current) => current && ({ ...current, productBrandId: value.productBrandId }));
       setNewBrand("");
       setShowBrandCreate(false);

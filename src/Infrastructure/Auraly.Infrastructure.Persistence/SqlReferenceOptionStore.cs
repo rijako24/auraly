@@ -8,6 +8,39 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlReferenceOptionStore(SqlServerConnectionFactory connections)
     : IReferenceOptionStore
 {
+    public async Task<IReadOnlyList<ReferenceOption>> ListContextualAsync(CatalogUserIdentity user,string catalogCode,
+        DateOnly? from,DateOnly? to,CancellationToken cancellationToken)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
+        await using var command=new SqlCommand("""
+            WITH historical AS(
+              SELECT SourceDocumentType Code FROM dbo.AccountingPostingJobs
+              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND CAST(OccurredAt AS date) BETWEEN @From AND @To
+              UNION SELECT SourceDocumentType FROM dbo.AccountingSourceDocuments
+              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND CAST(OccurredAt AS date) BETWEEN @From AND @To
+              UNION SELECT DocumentType FROM accounting.VoucherDrafts
+              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND CAST(OccurredAt AS date) BETWEEN @From AND @To)
+            SELECT optionValue.OptionId,optionValue.Code,
+              optionValue.Label+CASE WHEN optionValue.RequiredPointOfSaleMode IS NOT NULL AND optionValue.RequiredPointOfSaleMode<>b.PointOfSaleMode THEN N' (histórico)' ELSE N'' END,
+              optionValue.Description,optionValue.SortOrder
+            FROM reference.Options optionValue
+            JOIN dbo.Businesses b ON b.BusinessId=@Business AND b.TenantId=@Tenant
+            WHERE optionValue.CatalogCode=@Catalog AND optionValue.IsActive=1
+              AND (optionValue.RequiredPointOfSaleMode IS NULL OR optionValue.RequiredPointOfSaleMode=b.PointOfSaleMode
+                OR EXISTS(SELECT 1 FROM historical h WHERE h.Code=optionValue.Code))
+            ORDER BY optionValue.SortOrder,optionValue.Code;
+            """,connection);
+        command.Parameters.AddWithValue("@Tenant",user.TenantId);command.Parameters.AddWithValue("@Business",user.BusinessId);
+        command.Parameters.AddWithValue("@Catalog",catalogCode);
+        command.Parameters.AddWithValue("@From",(object?)from?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
+        command.Parameters.AddWithValue("@To",(object?)to?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
+        command.Parameters.AddWithValue("@History",catalogCode=="accounting-document-type"&&from.HasValue&&user.Permissions.Contains("accounting.read"));
+        var result=new List<ReferenceOption>();await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken))result.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),
+            reader.IsDBNull(3)?null:reader.GetString(3),reader.GetInt32(4)));
+        return result;
+    }
+
     public async Task<IReadOnlyList<ReferenceOption>> ListAsync(
         string catalogCode,
         CancellationToken cancellationToken)

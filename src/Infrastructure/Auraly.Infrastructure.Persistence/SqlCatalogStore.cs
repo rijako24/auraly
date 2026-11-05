@@ -28,11 +28,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
-            if (request.RecipeIngredients is not null)
-                await ExecuteAsync(connection, transaction,
-                    "EXEC catalog.ProductRecipeGraphValidate @TenantId, @ProductId, @Ingredients;",
-                    [P("@TenantId", user.TenantId), P("@ProductId", productId),
-                        P("@Ingredients", JsonSerializer.Serialize(request.RecipeIngredients))], ct);
+            await ExecuteAsync(connection, transaction,
+                "DECLARE @TenantExists bit; SELECT @TenantExists=1 FROM dbo.Tenants WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@TenantId; IF @TenantExists IS NULL THROW 51021,'La organización no existe.',1;",
+                [P("@TenantId",user.TenantId)],ct);
             var wasGenericProduct = !create && await ReadIsGenericProductAsync(
                 connection, transaction, user.TenantId, productId, ct);
             await EnsureBarcodesAvailableAsync(connection, transaction, user.TenantId, productId, request.Barcodes.Select(value => value.Value), ct);
@@ -65,19 +63,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                   THROW 51022, 'A product cannot be linked to itself.', 1;
                 IF @IsIngredient=1 AND @IsGenericProduct=1
                   THROW 51024, 'Un ingrediente no puede ser un producto genérico.', 1;
-                IF EXISTS (SELECT 1 FROM catalog.ProductRecipeIngredients recipeLine
-                    JOIN catalog.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=recipeLine.ProductRecipeVersionId
-                    WHERE recipeLine.TenantId=@TenantId AND recipeLine.IngredientProductId=@ProductId
-                      AND recipe.IsEnabled=1
-                      AND recipe.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductRecipeVersions latest
-                          WHERE latest.TenantId=recipe.TenantId AND latest.ProductId=recipe.ProductId))
-                    AND (COALESCE(@IsIngredient,1)=0 OR @ManageInventory=0 OR
-                         EXISTS (SELECT 1 FROM dbo.Products currentProduct WHERE currentProduct.ProductId=@ProductId
-                           AND currentProduct.TenantId=@TenantId AND currentProduct.BaseUnitCode<>@BaseUnitCode))
-                  THROW 51024, 'El ingrediente pertenece a recetas publicadas; conserva su clasificación, inventario y unidad.', 1;
-                IF @IsIngredient=1 AND @ManageInventory=0 AND EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions
-                    WHERE TenantId=@TenantId AND ProductId=@ProductId AND IsEnabled=1)
-                  THROW 51024, 'Un ingrediente elaborado con receta debe manejar inventario.', 1;
+                IF @IsIngredient=1 AND EXISTS(SELECT 1 FROM dbo.Products
+                    WHERE ProductId=@ProductId AND TenantId=@TenantId AND IsCombo=1)
+                  THROW 51024,'Quita primero la composición Combo antes de marcar el producto como ingrediente.',1;
                 IF EXISTS (SELECT 1 FROM dbo.InventoryOperations operation
                     JOIN dbo.InventoryOperationLines line ON line.InventoryOperationId=operation.InventoryOperationId
                     JOIN dbo.Businesses businessValue ON businessValue.BusinessId=operation.BusinessId
@@ -198,11 +186,15 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                       (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,CostBasisType,
                        CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,
                        RoundingMode,PublishedAt,ValidFrom,IsActive,CreatedAt)
-                    SELECT NEWID(),business.BusinessId,@ProductId,@Amount,@Amount,@Currency,N'Manual',@CostBasis,
-                       @TargetMargin,@TargetMargin,N'Margin',1,N'Nearest',@Now,@Now,1,@Now
-                    FROM dbo.Businesses business WHERE business.TenantId=@TenantId AND business.IsActive=1;
-                    """, [P("@TenantId", user.TenantId), P("@ProductId", productId),
-                    P("@Amount", price.Amount), P("@CostBasis", price.CostBasisAmount), P("@TargetMargin", price.TargetMarginPercent),
+                    SELECT NEWID(),business.BusinessId,@ProductId,IIF(@IsComposition=1,0,@Amount),@Amount,@Currency,N'Manual',@CostBasis,
+                       @TargetMargin,@TargetMargin,N'Margin',1,N'Nearest',IIF(@IsComposition=1,NULL,@Now),@Now,1,@Now
+                    FROM dbo.Businesses business WHERE business.TenantId=@TenantId AND business.IsActive=1
+                      AND (@IsComposition=0 OR business.BusinessId=@BusinessId OR EXISTS(
+                        SELECT 1 FROM catalog.ProductCompositionCost(@TenantId,business.BusinessId,@CompositionInput) cost
+                        WHERE cost.Missing=0 AND cost.Cost>0));
+                    """, [P("@TenantId", user.TenantId), P("@BusinessId",user.BusinessId), P("@ProductId", productId),
+                    P("@CompositionInput",JsonSerializer.Serialize(request.RecipeIngredients ?? [])),
+                    P("@IsComposition",request.RecipeIngredients?.Count > 0), P("@Amount", price.PreparedAmount ?? price.Amount), P("@CostBasis", price.CostBasisAmount), P("@TargetMargin", price.TargetMarginPercent),
                     P("@Currency", price.CurrencyCode.ToUpperInvariant()), P("@Now", now)], ct);
             }
             }
@@ -272,19 +264,21 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
 
                     DECLARE @CurrentPreparedAmount DECIMAL(19,4),
                             @CurrentCostBasis DECIMAL(19,6),
+                            @CurrentCostBasisType NVARCHAR(32),
                             @CurrentTargetMargin DECIMAL(9,6),
                             @CurrentInputMode NVARCHAR(16),
                             @CurrentRoundingIncrement DECIMAL(19,4),
                             @CurrentRoundingMode NVARCHAR(16);
                     SELECT @CurrentPreparedAmount=COALESCE(preparation.PreparedAmount,price.Amount),
                            @CurrentCostBasis=COALESCE(preparation.CostBasisAmount,price.CostBasisAmount),
+                           @CurrentCostBasisType=COALESCE(preparation.CostBasisType,price.CostBasisType),
                            @CurrentTargetMargin=COALESCE(preparation.TargetMarginPercent,price.TargetMarginPercent),
                            @CurrentInputMode=COALESCE(preparation.InputMode,price.InputMode,N'Margin'),
                            @CurrentRoundingIncrement=COALESCE(preparation.RoundingIncrement,price.RoundingIncrement,1),
                            @CurrentRoundingMode=COALESCE(preparation.RoundingMode,price.RoundingMode,N'Nearest')
                     FROM dbo.ProductPrices price
                     OUTER APPLY (
-                      SELECT TOP(1) pending.PreparedAmount,pending.CostBasisAmount,
+                      SELECT TOP(1) pending.PreparedAmount,pending.CostBasisAmount,pending.CostBasisType,
                         pending.TargetMarginPercent,pending.InputMode,
                         pending.RoundingIncrement,pending.RoundingMode
                       FROM dbo.ProductPricePreparations pending
@@ -295,6 +289,12 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     WHERE price.BusinessId=@BusinessId AND price.ProductId=@ProductId
                       AND price.IsActive=1;
 
+                    IF EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=@TenantId
+                        AND (HasIngredients=1 OR IsCombo=1)) AND ISNULL(@CurrentCostBasis,-1)<>ISNULL(@CostBasis,-1)
+                      AND NOT(@CompositionChanged=1 AND (NOT EXISTS(SELECT 1 FROM OPENJSON(@CompositionInput)) OR
+                        EXISTS(SELECT 1 FROM catalog.ProductCompositionCost(@TenantId,@BusinessId,@CompositionInput) inputCost
+                          WHERE inputCost.Missing=0 AND inputCost.Cost=@CostBasis)))
+                      THROW 51024,'El costo de la composición es automático y no se puede editar.',1;
                     IF @CurrentPreparedAmount<>@PreparedAmount
                        OR ISNULL(@CurrentCostBasis,-1)<>ISNULL(@CostBasis,-1)
                        OR ISNULL(@CurrentTargetMargin,-1)<>ISNULL(@TargetMargin,-1)
@@ -320,11 +320,15 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                          TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,
                          RoundingMode,Status,PreparedByUserId,PreparedAt)
                       SELECT NEWID(),target.BusinessId,@ProductId,N'Product',target.PublicAmount,
-                             @PreparedAmount,N'Manual',@CostBasis,@TargetMargin,@TargetMargin,
+                             @PreparedAmount,CASE WHEN (@CurrentCostBasisType=N'Composition' AND @CurrentCostBasis=@CostBasis)
+                               OR (EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND (HasIngredients=1 OR IsCombo=1))
+                                 AND NOT(@CompositionChanged=1 AND NOT EXISTS(SELECT 1 FROM OPENJSON(@CompositionInput))))
+                               THEN N'Composition' ELSE N'Manual' END,@CostBasis,@TargetMargin,@TargetMargin,
                              @InputMode,@RoundingIncrement,@RoundingMode,N'Pending',@UserId,@Now
                       FROM @Targets target;
                     END;
-                    """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId),
+                    """, [P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
+                    P("@CompositionChanged",request.RecipeIngredients is not null), P("@CompositionInput",JsonSerializer.Serialize(request.RecipeIngredients ?? [])),
                     P("@PreparedAmount", price.PreparedAmount ?? price.Amount), P("@CostBasis", price.CostBasisAmount),
                     P("@TargetMargin", price.TargetMarginPercent), P("@InputMode", price.InputMode),
                     P("@RoundingIncrement", price.RoundingIncrement), P("@RoundingMode", price.RoundingMode),
@@ -441,39 +445,20 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             }
 
             if (request.RecipeIngredients is not null)
-                await ExecuteAsync(connection, transaction, """
-                    DECLARE @CurrentVersion int = ISNULL((SELECT MAX([Version]) FROM catalog.ProductRecipeVersions WITH (UPDLOCK,HOLDLOCK)
-                        WHERE TenantId=@TenantId AND ProductId=@ProductId),0);
-                    IF @ExpectedCount>0 AND EXISTS (SELECT 1 FROM dbo.Products
-                        WHERE TenantId=@TenantId AND ProductId=@ProductId AND IsIngredient=1 AND ManageStock=0)
-                        THROW 51024, 'Un ingrediente elaborado debe manejar inventario.', 1;
-                    IF @CurrentVersion<>@ExpectedVersion
-                        THROW 51024, 'La receta cambió. Actualiza la ficha antes de guardar.', 1;
-                    DECLARE @Items TABLE(LineNumber int PRIMARY KEY, IngredientProductId uniqueidentifier, QuantityPerUnit decimal(19,6));
-                    INSERT @Items(LineNumber,IngredientProductId,QuantityPerUnit)
-                    SELECT TRY_CONVERT(int,j.[key])+1,TRY_CONVERT(uniqueidentifier,JSON_VALUE(j.value,'$.IngredientProductId')),
-                           TRY_CONVERT(decimal(19,6),JSON_VALUE(j.value,'$.QuantityPerUnit'))
-                    FROM OPENJSON(@Ingredients) j;
-                    IF (SELECT COUNT(*) FROM @Items)<>@ExpectedCount OR EXISTS (
-                        SELECT 1 FROM @Items i LEFT JOIN dbo.Products p WITH (UPDLOCK,HOLDLOCK)
-                            ON p.ProductId=i.IngredientProductId AND p.TenantId=@TenantId
-                        WHERE p.ProductId IS NULL OR p.IsActive=0 OR p.IsIngredient=0 OR p.ManageStock=0
-                           OR p.BaseUnitCode IS NULL OR i.QuantityPerUnit IS NULL OR i.QuantityPerUnit<=0
-                           OR EXISTS (SELECT 1 FROM dbo.ProductLinks link WHERE link.TenantId=@TenantId
-                               AND link.ChildProductId=p.ProductId AND link.IsActive=1 AND link.SharesInventory=1))
-                        THROW 51024, 'Selecciona ingredientes activos que controlen inventario.', 1;
-                    IF @CurrentVersion>0 OR @ExpectedCount>0
-                    BEGIN
-                        INSERT catalog.ProductRecipeVersions(ProductRecipeVersionId,TenantId,ProductId,[Version],IsEnabled,PublishedAt,PublishedByUserId)
-                        VALUES(@VersionId,@TenantId,@ProductId,@CurrentVersion+1,CASE WHEN @ExpectedCount>0 THEN 1 ELSE 0 END,@Now,@UserId);
-                        INSERT catalog.ProductRecipeIngredients(ProductRecipeVersionId,LineNumber,TenantId,IngredientProductId,QuantityPerUnit,BaseUnitCodeSnapshot)
-                        SELECT @VersionId,i.LineNumber,@TenantId,i.IngredientProductId,i.QuantityPerUnit,p.BaseUnitCode
-                        FROM @Items i JOIN dbo.Products p ON p.TenantId=@TenantId AND p.ProductId=i.IngredientProductId;
-                    END;
-                    """, [P("@TenantId", user.TenantId), P("@ProductId", productId),
-                    P("@ExpectedVersion", request.RecipeExpectedVersion), P("@ExpectedCount", request.RecipeIngredients.Count),
-                    P("@Ingredients", JsonSerializer.Serialize(request.RecipeIngredients)), P("@VersionId", ids.NewId()),
-                    P("@Now", now), P("@UserId", user.UserId)], ct);
+                await ExecuteAsync(connection, transaction,
+                    "EXEC catalog.ProductCompositionSave @TenantId,@BusinessId,@ProductId,@ExpectedVersion,@Ingredients,@VersionId,@UserId,@Now,@CompositionKind,0;",
+                    [P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
+                     P("@ExpectedVersion", request.RecipeExpectedVersion),
+                     P("@Ingredients", JsonSerializer.Serialize(request.RecipeIngredients)), P("@VersionId", ids.NewId()),
+                     P("@UserId", user.UserId), P("@Now", now), P("@CompositionKind", request.CompositionKind ?? "Ingredients")], ct);
+
+            await ExecuteAsync(connection, transaction,
+                """
+                EXEC catalog.ProductCompositionValidate @TenantId,@ProductIds;
+                EXEC dbo.ProductCompositionCostsPrepare @BusinessId,@ProductIds,@UserId,@Now,@AllBusinesses=@CompositionChanged;
+                """,
+                [P("@BusinessId", user.BusinessId), P("@TenantId", user.TenantId), P("@ProductId", productId), P("@ProductIds", JsonSerializer.Serialize(new[] { productId })),
+                 P("@CompositionChanged",request.RecipeIngredients is not null), P("@UserId", user.UserId), P("@Now", now)], ct);
 
             await ExecuteAsync(connection, transaction, """
                 DECLARE @Change TABLE (BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
@@ -498,7 +483,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 ], ct);
             await transaction.CommitAsync(ct);
         }
-        catch (SqlException exception) when (exception.Number == 51024)
+        catch (SqlException exception) when (exception.Number is 51020 or 51024)
         {
             await transaction.RollbackAsync(ct);
             throw new CatalogValidationException(exception.Message);
@@ -595,11 +580,11 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             SET XACT_ABORT ON;
             DECLARE @Change TABLE (BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
             BEGIN TRANSACTION;
-            IF @IsActive=0 AND EXISTS (SELECT 1 FROM catalog.ProductRecipeIngredients recipeLine
-                JOIN catalog.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=recipeLine.ProductRecipeVersionId
+            IF @IsActive=0 AND EXISTS (SELECT 1 FROM catalog.ProductCompositionComponents recipeLine
+                JOIN catalog.ProductCompositionVersions recipe ON recipe.ProductRecipeVersionId=recipeLine.ProductRecipeVersionId
                 WHERE recipeLine.TenantId=@TenantId AND recipeLine.IngredientProductId=@ProductId
                   AND recipe.IsEnabled=1
-                  AND recipe.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductRecipeVersions latest
+                  AND recipe.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductCompositionVersions latest
                       WHERE latest.TenantId=recipe.TenantId AND latest.ProductId=recipe.ProductId))
               THROW 51024,'El ingrediente pertenece a recetas publicadas.',1;
             IF @IsActive=0 AND EXISTS (SELECT 1 FROM dbo.InventoryOperations operation
@@ -656,7 +641,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             SELECT @SessionId,p.ProductId FROM dbo.Products p
             WHERE p.TenantId=@TenantId
               AND p.ProductCode IS NOT NULL AND p.TaxProfileId IS NOT NULL
-              AND EXISTS (SELECT 1 FROM dbo.ProductPrices pr WHERE pr.ProductId=p.ProductId AND pr.BusinessId=@BusinessId AND pr.IsActive=1);
+              AND EXISTS (SELECT 1 FROM dbo.ProductPrices pr WHERE pr.ProductId=p.ProductId AND pr.BusinessId=@BusinessId AND pr.IsActive=1
+                AND (pr.Amount>0 OR p.IsGenericProduct=1));
             SELECT @High,(SELECT COUNT(*) FROM dbo.CatalogSyncSessionProducts WHERE CatalogSyncSessionId=@SessionId),DATEADD(hour,2,@Now);
             """;
         command.Parameters.AddRange([P("@SessionId", sessionId), P("@DeviceId", deviceId), P("@TenantId", tenantId),
@@ -698,6 +684,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         }
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            DECLARE @PageChanges TABLE(CatalogChangeId BIGINT PRIMARY KEY,BusinessId UNIQUEIDENTIFIER,
+              ProductId UNIQUEIDENTIFIER,ChangeKind NVARCHAR(16));
             ;WITH LatestProductChanges AS
             (
               SELECT c.CatalogChangeId,c.BusinessId,c.ProductId,c.ChangeKind,
@@ -708,12 +696,28 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                      ) AS ProductPosition
               FROM dbo.CatalogChanges c
               WHERE c.BusinessId=@BusinessId AND c.CatalogChangeId>@Cursor
-            ),
+            )
+            INSERT @PageChanges
+            SELECT TOP(@Take) CatalogChangeId,BusinessId,ProductId,ChangeKind
+            FROM LatestProductChanges changeValue
+            WHERE ProductPosition=1 AND EXISTS(
+              SELECT 1 FROM dbo.Products product JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=product.TaxProfileId
+              JOIN dbo.ProductPrices price ON price.ProductId=product.ProductId
+                AND price.BusinessId=changeValue.BusinessId AND price.IsActive=1
+              WHERE product.ProductId=changeValue.ProductId AND product.TenantId=@TenantId
+                AND (price.Amount>0 OR product.IsGenericProduct=1))
+            ORDER BY CatalogChangeId;
+            DECLARE @HasMore BIT=IIF((SELECT COUNT(*) FROM @PageChanges)>@PageSize,1,0);
+            IF @HasMore=1 DELETE @PageChanges WHERE CatalogChangeId=(SELECT MAX(CatalogChangeId) FROM @PageChanges);
+            ;WITH
             CategoryAncestors AS
             (
               SELECT category.ProductCategoryId DescendantId,category.ProductCategoryId AncestorId,
                      category.ParentProductCategoryId
-              FROM dbo.ProductCategories category WHERE category.TenantId=@TenantId
+              FROM dbo.ProductCategories category
+              WHERE category.TenantId=@TenantId AND EXISTS(SELECT 1 FROM @PageChanges pageValue
+                JOIN dbo.Products product ON product.ProductId=pageValue.ProductId AND product.TenantId=@TenantId
+                WHERE product.ProductCategoryId=category.ProductCategoryId)
               UNION ALL
               SELECT child.DescendantId,parent.ProductCategoryId,parent.ParentProductCategoryId
               FROM CategoryAncestors child
@@ -734,8 +738,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               averageCost.Amount,latestCost.Amount,
               COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent),
               COALESCE(inventoryLink.ParentProductId,p.ProductId),
-              COALESCE(inventoryLink.InventoryFactor,1),p.IsGenericProduct,p.IsIngredient
-            FROM LatestProductChanges c
+              COALESCE(inventoryLink.InventoryFactor,1),p.IsGenericProduct,p.IsIngredient,p.HasIngredients,p.IsCombo
+            FROM @PageChanges c
             JOIN dbo.Products p ON p.ProductId=c.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
             JOIN dbo.EnrolledDevices d ON d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1
@@ -743,6 +747,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             JOIN dbo.Warehouses warehouseValue ON warehouseValue.WarehouseId=@WarehouseId
               AND warehouseValue.BusinessId=b.BusinessId AND warehouseValue.IsActive=1
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=c.BusinessId AND pr.IsActive=1
+              AND (pr.Amount>0 OR p.IsGenericProduct=1)
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
             LEFT JOIN dbo.ProductLinks inventoryLink
               ON inventoryLink.TenantId=@TenantId
@@ -764,10 +769,10 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                  ORDER BY latest.ObservedAt DESC,latest.SupplierId),
                 pr.CostBasisAmount,averageCost.Amount,0) Amount
             ) latestCost
-            WHERE c.ProductPosition=1
             ORDER BY c.CatalogChangeId;
+            SELECT COALESCE(MAX(CatalogChangeId),@Cursor),@HasMore FROM @PageChanges;
             """;
-        command.Parameters.AddRange([P("@Take", pageSize + 1), P("@DeviceId", deviceId), P("@TenantId", tenantId),
+        command.Parameters.AddRange([P("@Take", pageSize + 1), P("@PageSize",pageSize), P("@DeviceId", deviceId), P("@TenantId", tenantId),
             P("@BusinessId", businessId), P("@WarehouseId", warehouseId), P("@Cursor", cursor)]);
         var changes = new List<CatalogDelta>();
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -777,9 +782,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             var kind = reader.GetString(1);
             changes.Add(new CatalogDelta(version, kind, ReadPosItem(reader, 2)));
         }
-        var hasMore = changes.Count > pageSize;
-        if (hasMore) changes.RemoveAt(changes.Count - 1);
-        return new CatalogDeltaPage(cursor, changes.Count == 0 ? cursor : changes[^1].Version, hasMore, changes);
+        await reader.NextResultAsync(ct);
+        await reader.ReadAsync(ct);
+        return new CatalogDeltaPage(cursor, reader.GetInt64(0), reader.GetBoolean(1), changes);
     }
 
     public async Task<InventoryAvailabilityResponse> AvailabilityAsync(
@@ -981,7 +986,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
              FROM dbo.SupplierProducts sp JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId
              JOIN dbo.SupplierCostAgreements c ON c.SupplierProductId=sp.SupplierProductId AND c.IsActive=1
              WHERE sp.ProductId=p.ProductId AND sp.TenantId=@TenantId AND sp.IsActive=1 FOR JSON PATH),
-          p.TaxProfileId,p.PurchaseTaxProfileId,p.PurchaseTaxTreatment,p.Description,p.BaseUnitCode,p.ManageStock,p.IsWeighable,p.UnitGrossWeightKg,p.IsGenericProduct,p.IsIngredient
+          p.TaxProfileId,p.PurchaseTaxProfileId,p.PurchaseTaxTreatment,p.Description,p.BaseUnitCode,p.ManageStock,p.IsWeighable,p.UnitGrossWeightKg,p.IsGenericProduct,p.IsIngredient,p.HasIngredients,p.IsCombo
         FROM dbo.Products p
         JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
         """;
@@ -1021,7 +1026,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             reader.GetBoolean(15),
             reader.IsDBNull(16) ? null : reader.GetDecimal(16),
             reader.GetBoolean(17),
-            reader.GetBoolean(18));
+            reader.GetBoolean(18),reader.GetBoolean(19),reader.GetBoolean(20));
     }
 
     private async Task<List<PosCatalogItem>> PosItemsAsync(
@@ -1056,12 +1061,13 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               averageCost.Amount,latestCost.Amount,
               COALESCE(pr.TargetMarginPercent,pr.EffectiveMarginPercent),
               COALESCE(inventoryLink.ParentProductId,p.ProductId),
-              COALESCE(inventoryLink.InventoryFactor,1),p.IsGenericProduct,p.IsIngredient
+              COALESCE(inventoryLink.InventoryFactor,1),p.IsGenericProduct,p.IsIngredient,p.HasIngredients,p.IsCombo
             FROM dbo.CatalogSyncSessions ss
             JOIN dbo.CatalogSyncSessionProducts ssp ON ssp.CatalogSyncSessionId=ss.CatalogSyncSessionId
             JOIN dbo.Products p ON p.ProductId=ssp.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=ss.BusinessId AND pr.IsActive=1
+              AND (pr.Amount>0 OR p.IsGenericProduct=1)
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
             LEFT JOIN dbo.ProductLinks inventoryLink
               ON inventoryLink.TenantId=p.TenantId
@@ -1113,7 +1119,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             reader.GetDecimal(offset + 26),reader.GetDecimal(offset + 27),
             reader.IsDBNull(offset + 28) ? null : reader.GetDecimal(offset + 28),
             reader.GetGuid(offset + 29),reader.GetDecimal(offset + 30),reader.GetBoolean(offset + 31),
-            reader.GetBoolean(offset + 32));
+            reader.GetBoolean(offset + 32),reader.GetBoolean(offset + 33),reader.GetBoolean(offset + 34));
     }
 
     private static T[] DeserializeArray<T>(SqlDataReader reader, int ordinal) =>

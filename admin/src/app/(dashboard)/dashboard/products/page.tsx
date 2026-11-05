@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { ProductLearningSection } from "@/components/products/product-learning-section";
 import { ProductCreateWorkspace, ProductFormSection } from "@/components/products/product-create-workspace";
 import { ProductOverview } from "@/components/products/product-overview";
-import { ProductRecipePanel, type ProductRecipeEditorHandle } from "@/components/products/product-recipe-panel";
+import { ProductRecipePanel, type ProductRecipeEditorHandle, type ProductCompositionDraft } from "@/components/products/product-recipe-panel";
 import { ProductPricingEditor, type ProductPricingEditorDraft, type ProductPricingEditorHandle } from "@/components/products/product-price-publisher";
 import { ProductMerchandisingEditor, type ProductMerchandisingEditorDraft, type ProductMerchandisingEditorHandle } from "@/components/products/product-merchandising-editor";
 import { ProductSupplierEditor, type ProductSupplierEditorDraft, type ProductSupplierEditorHandle } from "@/components/products/product-supplier-editor";
@@ -53,6 +53,7 @@ import { productMerchandisingApi } from "@/services/api/product-merchandising";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCatalogDraft } from "@/hooks/use-catalog-draft";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { catalogDraftKey } from "@/lib/catalog-draft-store";
 import { genericProductCatalogPrice, productModeCapabilities } from "@/components/products/product-generic-policy";
 
@@ -110,6 +111,8 @@ export default function ProductsPage() {
   const [managesInventory, setManagesInventory] = useState<TriState>("all");
   const [allowsFractionalSale, setAllowsFractionalSale] = useState<TriState>("all");
   const [isWeighable, setIsWeighable] = useState<TriState>("all");
+  const [compositionFilter, setCompositionFilter] = useState("all");
+  const compositionKinds = useReferenceOptions("product-composition-kind");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("details");
   const [form, setForm] = useState<ProductFormState>(emptyForm);
@@ -122,16 +125,18 @@ export default function ProductsPage() {
     managesInventory: triValue(managesInventory),
     allowsFractionalSale: triValue(allowsFractionalSale),
     isWeighable: triValue(isWeighable),
+    hasIngredients: compositionFilter === "Ingredients" ? true : undefined,
+    isCombo: compositionFilter === "Combo" ? true : undefined,
   });
   const categoriesQuery = useProductCategories(false);
-  const brandsQuery = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands, staleTime: 5 * 60 * 1000 });
+  const brandsQuery = useQuery({ queryKey: ["product-brands",businessId], queryFn: productMerchandisingApi.brands, staleTime: 5 * 60 * 1000 });
   const categories = categoriesQuery.data ?? [];
   const areas = categories.filter(item => item.depth === 0);
   const lines = categories.filter(item => item.depth === 1 && (!areaId || item.parentProductCategoryId === areaId));
   const groups = categories.filter(item => item.depth === 2 && (!lineId || item.parentProductCategoryId === lineId));
   const subgroups = categories.filter(item => item.depth === 3 && (!groupId || item.parentProductCategoryId === groupId));
-  const activeFilterCount = [areaId, lineId, groupId, subgroupId, supplierId, brandId, managesInventory !== "all" ? managesInventory : undefined, allowsFractionalSale !== "all" ? allowsFractionalSale : undefined, isWeighable !== "all" ? isWeighable : undefined, includeInactive ? "including-inactive" : undefined].filter(Boolean).length;
-  const resetFilters = () => { setAreaId(undefined); setLineId(undefined); setGroupId(undefined); setSubgroupId(undefined); setSupplierId(undefined); setBrandId(undefined); setManagesInventory("all"); setAllowsFractionalSale("all"); setIsWeighable("all"); setIncludeInactive(false); setPage(1); };
+  const activeFilterCount = [areaId, lineId, groupId, subgroupId, supplierId, brandId, compositionFilter !== "all" ? compositionFilter : undefined, managesInventory !== "all" ? managesInventory : undefined, allowsFractionalSale !== "all" ? allowsFractionalSale : undefined, isWeighable !== "all" ? isWeighable : undefined, includeInactive ? "including-inactive" : undefined].filter(Boolean).length;
+  const resetFilters = () => { setCompositionFilter("all"); setAreaId(undefined); setLineId(undefined); setGroupId(undefined); setSubgroupId(undefined); setSupplierId(undefined); setBrandId(undefined); setManagesInventory("all"); setAllowsFractionalSale("all"); setIsWeighable("all"); setIncludeInactive(false); setPage(1); };
   const configurationQuery = useProductConfiguration(selectedProduct?.productId);
   const rotationQuery = useQuery({
     queryKey: ["product-rotation", businessId, selectedProduct?.productId],
@@ -148,6 +153,7 @@ export default function ProductsPage() {
   const supplierEditorRef = useRef<ProductSupplierEditorHandle>(null);
   const recognitionEditorRef = useRef<ProductRecognitionSectionsHandle>(null);
   const recipeEditorRef = useRef<ProductRecipeEditorHandle>(null);
+  const [compositionDraft, setCompositionDraft] = useState<ProductCompositionDraft>();
   const [savingProduct, setSavingProduct] = useState(false);
   const [productValidationError, setProductValidationError] = useState<string>();
   const [editingSalesTaxRate, setEditingSalesTaxRate] = useState<number>();
@@ -201,7 +207,7 @@ export default function ProductsPage() {
     setModalMode("edit");
   };
 
-  function resetProductEditState(){setRestoredEditDraft(undefined);setMerchandisingDraft(undefined);setPricingDraft(undefined);setSupplierDraft(undefined);setTaxDraft(undefined);setRecognitionDraft(undefined);setImageDraft(undefined)}
+  function resetProductEditState(){setCompositionDraft(undefined);setRestoredEditDraft(undefined);setMerchandisingDraft(undefined);setPricingDraft(undefined);setSupplierDraft(undefined);setTaxDraft(undefined);setRecognitionDraft(undefined);setImageDraft(undefined)}
 
   const handleReviewLearning = async (
     alias: ProductAlias,
@@ -348,7 +354,7 @@ export default function ProductsPage() {
       header: "Producto",
       cell: ({ row }) => (
         <div>
-          <p className="flex flex-wrap items-center gap-2 font-medium">{row.original.name}{row.original.isIngredient && <Badge variant="secondary">Ingrediente · no vendible</Badge>}</p>
+          <p className="flex flex-wrap items-center gap-2 font-medium">{row.original.name}{row.original.isIngredient && <Badge variant="secondary">Ingrediente · no vendible</Badge>}{row.original.isCombo && <Badge variant="secondary">Combo</Badge>}{row.original.hasIngredients && <Badge variant="secondary">Con ingredientes</Badge>}</p>
           <p className="text-xs text-muted-foreground">{row.original.reference || row.original.sku || "Sin referencia"}</p>
           <p className="max-w-md truncate text-xs text-muted-foreground">{row.original.description || "Sin descripción"}</p>
         </div>
@@ -425,6 +431,8 @@ export default function ProductsPage() {
         <div className="min-w-0">
           <h2 className="break-words font-semibold">{product.name}</h2>
           {product.isIngredient && <Badge variant="secondary" className="mt-1">Ingrediente · no vendible</Badge>}
+          {product.isCombo && <Badge variant="secondary" className="mt-1">Combo</Badge>}
+          {product.hasIngredients && <Badge variant="secondary" className="mt-1">Con ingredientes</Badge>}
           <p className="text-xs text-muted-foreground">{product.reference || product.sku || "Sin referencia"}</p>
           <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{product.description || "Sin descripción"}</p>
         </div>
@@ -482,6 +490,7 @@ export default function ProductsPage() {
         </summary>
         <div className="space-y-5 border-t p-4">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="space-y-2"><Label>Composición</Label><Select value={compositionFilter} disabled={compositionKinds.isPending || compositionKinds.isError} onValueChange={value => { setCompositionFilter(value); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todas</SelectItem>{compositionKinds.data?.map(option => <SelectItem key={option.id} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div>
             {([['Área', areaId, areas, (value:string|undefined)=>{setAreaId(value);setLineId(undefined);setGroupId(undefined);setSubgroupId(undefined)}],['Línea', lineId, lines, (value:string|undefined)=>{setLineId(value);setGroupId(undefined);setSubgroupId(undefined)}],['Grupo', groupId, groups, (value:string|undefined)=>{setGroupId(value);setSubgroupId(undefined)}],['Subgrupo', subgroupId, subgroups, setSubgroupId]] as const).map(([label,value,options,onChange])=><div key={label} className="space-y-2"><Label>{label}</Label><Select value={value ?? "all"} onValueChange={next=>{onChange(next === "all" ? undefined : next);setPage(1)}}><SelectTrigger><SelectValue placeholder={`Todos los ${label.toLocaleLowerCase("es")}`}/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{options.map(option=><SelectItem key={option.productCategoryId} value={option.productCategoryId}>{option.name}</SelectItem>)}</SelectContent></Select></div>)}
             <div className="space-y-2"><Label>Proveedor</Label><PartyRoleSelect role="Supplier" value={supplierId ?? "all"} leadingOptions={[{value:"all",label:"Todos"}]} placeholder="Buscar proveedor" onChange={value=>{setSupplierId(value === "all" ? undefined : value);setPage(1)}}/></div>
             <div className="space-y-2"><Label>Marca</Label><Select value={brandId ?? "all"} onValueChange={value=>{setBrandId(value === "all" ? undefined : value);setPage(1)}}><SelectTrigger><SelectValue placeholder="Todas"/></SelectTrigger><SelectContent><SelectItem value="all">Todas</SelectItem>{brandsQuery.data?.map(item=><SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>)}</SelectContent></Select></div>
@@ -590,7 +599,7 @@ export default function ProductsPage() {
                 <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} initialDraft={restoredEditDraft?.merchandising} onDraftChange={setMerchandisingDraft} />
 
                 {merchandisingDraft && !merchandisingDraft.isGenericProduct && (!form.isIngredient || merchandisingDraft.manageInventory) && <div className="space-y-2">
-                  <ProductRecipePanel ref={recipeEditorRef} editable productId={selectedProduct.productId} managesInventory={merchandisingDraft.manageInventory} />
+                  <ProductRecipePanel onCompositionChange={setCompositionDraft} ref={recipeEditorRef} editable productId={selectedProduct.productId} managesInventory={merchandisingDraft.manageInventory} />
                   <p className="px-1 text-xs text-muted-foreground">La receta se guarda con el producto. La cantidad de cada ingrediente corresponde a una unidad terminada y se expresa en su unidad base de inventario.</p>
                 </div>}
 
@@ -600,9 +609,9 @@ export default function ProductsPage() {
 
                 <ProductFormSection id="product-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decisión explícita.">
                   <div className="space-y-5">
-                    <ProductTaxEditor ref={taxEditorRef} embedded productId={selectedProduct.productId} isGenericProduct={Boolean(merchandisingDraft?.isGenericProduct)} onSalesTaxRateChange={setEditingSalesTaxRate} initialDraft={restoredEditDraft?.taxes} onDraftChange={setTaxDraft} />
+                    <ProductTaxEditor isCombo={compositionDraft?.kind === "Combo" && compositionDraft.hasComponents} ref={taxEditorRef} embedded productId={selectedProduct.productId} isGenericProduct={Boolean(merchandisingDraft?.isGenericProduct)} onSalesTaxRateChange={setEditingSalesTaxRate} initialDraft={restoredEditDraft?.taxes} onDraftChange={setTaxDraft} />
                     {editCapabilities.catalogPricing && <div>
-                      <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} initialDraft={restoredEditDraft?.pricing} onDraftChange={setPricingDraft} />
+                      <ProductPricingEditor compositionCostOverride={compositionDraft?.costBasisAmount} compositionLockedOverride={compositionDraft?.hasComponents} ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} initialDraft={restoredEditDraft?.pricing} onDraftChange={setPricingDraft} />
                     </div>}
                   </div>
                 </ProductFormSection>

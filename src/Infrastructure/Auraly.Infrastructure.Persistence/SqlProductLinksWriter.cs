@@ -111,6 +111,9 @@ internal static class SqlProductLinksWriter
             FROM dbo.Products product
             JOIN @Links requested ON requested.ChildProductId=product.ProductId
             WHERE product.TenantId=@TenantId;
+            DECLARE @CompositionProducts NVARCHAR(MAX)=(SELECT CONCAT(N'[',
+              STRING_AGG(CONVERT(NVARCHAR(MAX),CONCAT(N'"',ChildProductId,N'"')),N','),N']') FROM @Links);
+            EXEC catalog.ProductCompositionValidate @TenantId,@CompositionProducts;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@ProductId", productId);

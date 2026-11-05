@@ -151,6 +151,14 @@ rotación diaria ya proyectada por Reporting. La confirmación de una operación
 vuelve a validar existencias en el motor de operaciones; una proyección atrasada
 no autoriza movimientos físicos ni asientos.
 
+Para `ServiceInvoice` aplica la decisión específica de servicios online,
+conciliada expresamente con el usuario: el writer canónico de emisión acepta
+su fuente JSON inmutable en el mismo `SalesReportingJobs` durante el commit de
+la factura. Después se activa el coordinador existente. No hay trabajo
+operacional, inventario ni segundo motor. `ServiceSalesReportLineFacts`
+conserva el grano de servicio separado del producto; su costo no está modelado
+y no se presenta como cero ni se calcula un margen ficticio.
+
 Para ventas mantiene una proyección física versionada con:
 
 - documento y snapshots de cliente/vendedor/bodega;

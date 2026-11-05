@@ -1405,7 +1405,7 @@ public sealed partial class SqlAccountingStore(
     public async Task<AccountingDocumentPage> ListDocumentsAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
         string? status, string? search, int page, int pageSize,
-        CancellationToken cancellationToken, Guid? partyId = null)
+        CancellationToken cancellationToken, Guid? partyId = null, string? voucherTypeCode = null)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -1418,6 +1418,7 @@ public sealed partial class SqlAccountingStore(
         command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@DocumentType", (object?)documentType ?? DBNull.Value);
+        command.Parameters.AddWithValue("@VoucherTypeCode", (object?)voucherTypeCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);
         command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
         command.Parameters.AddWithValue("@PartyId", (object?)partyId ?? DBNull.Value);
@@ -1425,7 +1426,7 @@ public sealed partial class SqlAccountingStore(
         command.Parameters.AddWithValue("@PageSize", pageSize);
         var rows = new List<AccountingDocumentRow>();
         var total = 0;
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await using var reader = await ExecuteTraceabilityReaderAsync(command,cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             rows.Add(new(reader.GetGuid(0), reader.GetString(1),
@@ -1444,7 +1445,7 @@ public sealed partial class SqlAccountingStore(
                 reader.IsDBNull(16) ? null : reader.GetString(16),
                 reader.IsDBNull(17) ? null : reader.GetString(17), reader.GetBoolean(18),
                 NullableId(reader, 19), NullableText(reader, 20), NullableText(reader, 21),
-                NullableId(reader, 22), NullableText(reader, 23)));
+                NullableId(reader, 22), NullableText(reader, 23),NullableText(reader,24)));
         }
         await reader.NextResultAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
@@ -1455,11 +1456,11 @@ public sealed partial class SqlAccountingStore(
     public async Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
         string? status, string? search, int page, int pageSize,
-        CancellationToken cancellationToken, Guid? partyId = null)
+        CancellationToken cancellationToken, Guid? partyId = null, string? voucherTypeCode = null)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(TraceabilityDocumentKeysSql(search, partyId) + """
+        await using var command = new SqlCommand(TraceabilityDocumentKeysSql(search, partyId) + TraceabilityVoucherFilterSql + """
             SELECT d.*,line.LineNumber INTO #TraceabilityLinePage
             FROM #DocumentKeys d
             OUTER APPLY(
@@ -1502,6 +1503,7 @@ public sealed partial class SqlAccountingStore(
         command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@DocumentType", (object?)documentType ?? DBNull.Value);
+        command.Parameters.AddWithValue("@VoucherTypeCode", (object?)voucherTypeCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@Status", (object?)status ?? DBNull.Value);
         command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
         command.Parameters.AddWithValue("@PartyId", (object?)partyId ?? DBNull.Value);
@@ -1509,7 +1511,7 @@ public sealed partial class SqlAccountingStore(
         command.Parameters.AddWithValue("@PageSize", pageSize);
         var rows = new List<FinancialTraceabilityLineRow>();
         var total = 0;
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await using var reader = await ExecuteTraceabilityReaderAsync(command,cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             rows.Add(new(reader.GetGuid(0), reader.GetString(1),

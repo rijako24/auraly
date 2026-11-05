@@ -262,6 +262,10 @@ export default function PricingPage() {
   }, [query.data?.items]);
 
   const rejectRows = useCallback(async (rows: PriceRevisionListItem[]) => {
+    if (rows.some(row => row.origin === "Composition")) {
+      toast.info("Los costos compuestos son automáticos. Puedes revisar el margen o el precio y dejarlos pendientes de publicación.");
+      return;
+    }
     const candidates = rows.filter(isPublishable);
     if (!candidates.length) {
       toast.info("La selección no contiene precios pendientes.");
@@ -356,6 +360,7 @@ export default function PricingPage() {
         <p className="text-xs text-muted-foreground">
           {row.original.productCode} · {row.original.origin === "Product"
             ? "Preparado desde producto"
+            : row.original.origin === "Composition" ? "Preparado por ingredientes o combo"
             : row.original.supplierName}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -455,7 +460,7 @@ export default function PricingPage() {
       cell: ({ row }) => <div className="flex items-center justify-end gap-1">
         {canReadHistory && <Button type="button" variant="ghost" size="sm" onClick={() => setHistoryProduct({ id: row.original.productId, name: row.original.productName })} aria-label={`Ver historial de ${row.original.productName}`}><History className="mr-2 h-4 w-4" />Historial</Button>}
         {isPublishable(row.original) && canPublish && <Button type="button" variant="ghost" size="sm" disabled={publish.isPending} onClick={() => void publishRows([row.original], { allMatching: false, selectedCount: 1 })} aria-label={`Publicar precio de ${row.original.productName}`}><Send className="mr-2 h-4 w-4" />Publicar</Button>}
-        {isPublishable(row.original) && canReview && <Button type="button" variant="ghost" size="sm" disabled={reject.isPending} onClick={() => void rejectRows([row.original])} aria-label={`Descartar propuesta de ${row.original.productName}`}><XCircle className="mr-2 h-4 w-4" />Descartar</Button>}
+        {isPublishable(row.original) && row.original.origin !== "Composition" && canReview && <Button type="button" variant="ghost" size="sm" disabled={reject.isPending} onClick={() => void rejectRows([row.original])} aria-label={`Descartar propuesta de ${row.original.productName}`}><XCircle className="mr-2 h-4 w-4" />Descartar</Button>}
       </div>,
     },
   ], [canPublish, canReadHistory, canReview, draftFor, navigatePricingGrid, publish.isPending, publishRows, reject.isPending, rejectRows, saveErrors, savingProductIds, updateMargin, updateSalePrice]);

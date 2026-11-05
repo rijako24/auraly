@@ -45,6 +45,8 @@ public sealed class CatalogBootstrapIntegrityTests
 
         Assert.Equal(legacyDigest, CatalogBootstrapIntegrity.Compute([item]));
         Assert.True(CatalogBootstrapIntegrity.IsValid([item], legacyDigest));
+        Assert.True(CatalogBootstrapIntegrity.IsValid([item with { HasIngredients = true }], legacyDigest));
+        Assert.True(CatalogBootstrapIntegrity.IsValid([item with { IsCombo = true }], legacyDigest));
     }
 
     [Fact]

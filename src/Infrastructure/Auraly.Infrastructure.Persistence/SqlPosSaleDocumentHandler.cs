@@ -135,17 +135,21 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 Quantity, UnitPrice, UnitCostSnapshot, DiscountAmount, PromotionDiscountAmount, TaxAmount,
                 UntaxedAmount, LineTotal,ProductCodeSnapshot,ProductNameSnapshot,
                 CategoryIdSnapshot,CategoryNameSnapshot,SupplierIdSnapshot,SupplierNameSnapshot,
-                AttributionSnapshotVersion,IsGenericProductSnapshot
+                AttributionSnapshotVersion,IsGenericProductSnapshot,CompositionKindSnapshot,CategoryHierarchySnapshotJson
             )
             SELECT
                 @DocumentId,input.LineNumber,input.ProductId,input.AddedByUserId,input.AddedAt,
                 input.Description,input.TaxCode,input.TaxRate,
-                input.Quantity,input.UnitPrice,input.DocumentUnitCost,
+                input.Quantity,input.UnitPrice,
+                COALESCE(CONVERT(decimal(19,6),-valuation.ValueChange/NULLIF(input.Quantity,0)),input.DocumentUnitCost),
                 input.DiscountAmount,input.PromotionDiscountAmount,input.TaxAmount,
                 input.UntaxedAmount,input.LineTotal,
                 COALESCE(NULLIF(input.ProductCodeSnapshot,N''),p.ProductCode,p.Sku,p.Reference,N''),input.Description,
                 p.ProductCategoryId,COALESCE(category.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
-                1,input.IsGenericProductSnapshot
+                2,input.IsGenericProductSnapshot,
+                CASE WHEN recipe.CompositionKind IS NOT NULL THEN recipe.CompositionKind
+                  WHEN p.IsCombo=1 THEN N'Combo' WHEN p.HasIngredients=1 THEN N'Ingredients' ELSE N'None' END,
+                hierarchy.JsonValue
             FROM OPENJSON(@LinesJson) WITH(
               LineNumber int '$.LineNumber',ProductId uniqueidentifier '$.ProductId',
               AddedByUserId uniqueidentifier '$.AddedByUserId',
@@ -160,6 +164,11 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               IsGenericProductSnapshot bit '$.IsGenericProductSnapshot',
               ProductCodeSnapshot nvarchar(80) '$.ProductCodeSnapshot') input
             INNER JOIN dbo.Products p ON p.ProductId=input.ProductId
+            CROSS APPLY catalog.ProductCategoryHierarchySnapshot(p.TenantId,p.ProductCategoryId) hierarchy
+            LEFT JOIN sales.RestaurantCheckoutLines checkout ON checkout.DocumentId=@DocumentId AND checkout.LineNumber=input.LineNumber
+            LEFT JOIN catalog.ProductCompositionVersions recipe ON recipe.ProductRecipeVersionId=checkout.ProductRecipeVersionId
+            LEFT JOIN dbo.InventoryMovements valuation ON valuation.BusinessId=@BusinessId AND valuation.DocumentId=@DocumentId
+              AND valuation.DocumentType=@DocumentType AND valuation.LineNumber=input.LineNumber AND valuation.MovementType=N'Sale'
             LEFT JOIN dbo.AppUsers addedBy
               ON addedBy.UserId=input.AddedByUserId AND addedBy.TenantId=p.TenantId
             LEFT JOIN dbo.ProductCategories category
@@ -180,6 +189,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        command.Parameters.AddWithValue("@DocumentType",request.CommercialSnapshot.DocumentType);
         command.Parameters.AddWithValue("@LinesJson", JsonSerializer.Serialize(request.Lines));
         if (await command.ExecuteNonQueryAsync(cancellationToken) != request.Lines.Count)
             throw new InvalidOperationException(

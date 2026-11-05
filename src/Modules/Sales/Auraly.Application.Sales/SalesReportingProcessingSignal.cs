@@ -43,5 +43,5 @@ public static class SalesReportingProcessingPolicy
 {
     public static bool Supports(string? documentType) =>
         documentType is "SalesInvoice" or "SalesReceipt" or "SalesReturn" or
-            "GoodsReceipt" or "PurchaseReturn";
+            "GoodsReceipt" or "PurchaseReturn" or "ServiceInvoice";
 }

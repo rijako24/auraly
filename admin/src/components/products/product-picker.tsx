@@ -12,6 +12,7 @@ import { productRecipesApi } from "@/services/api/product-recipes";
 import { useActiveProductOptionScroll } from "./use-active-product-option-scroll";
 
 const PRODUCT_PAGE_SIZE = 10;
+type PickerProduct = InventoryProductItem & { compositionUnitCostWithTax?: number | null };
 
 export function ProductPicker({
   businessId,
@@ -23,6 +24,7 @@ export function ProductPicker({
   label = "Agregar productos",
   conversionOnly = false,
   ingredientOnly = false,
+  compositionKind = "Ingredients",
   excludeIngredients = false,
   conversionFamilyRootProductId,
   inputId = "product-picker-search",
@@ -33,10 +35,11 @@ export function ProductPicker({
   selectedProductIds: ReadonlySet<string>;
   excludedProductIds?: ReadonlySet<string>;
   disabled: boolean;
-  onSelect: (product: InventoryProductItem) => void;
+  onSelect: (product: InventoryProductItem, unitCostWithTax?: number | null) => void;
   label?: string;
   conversionOnly?: boolean;
   ingredientOnly?: boolean;
+  compositionKind?: string;
   excludeIngredients?: boolean;
   conversionFamilyRootProductId?: string;
   inputId?: string;
@@ -55,14 +58,15 @@ export function ProductPicker({
   }, [search]);
 
   const query = useInfiniteQuery({
-    queryKey: ["product-picker", businessId, warehouseId ?? "catalog", conversionOnly, ingredientOnly, excludeIngredients, conversionFamilyRootProductId ?? "all-families", debouncedSearch],
-    queryFn: async ({ pageParam }): Promise<{ items: InventoryProductItem[]; page: number; totalPages: number; totalCount: number }> => {
+    queryKey: ["product-picker", businessId, warehouseId ?? "catalog", conversionOnly, ingredientOnly, compositionKind, excludeIngredients, conversionFamilyRootProductId ?? "all-families", debouncedSearch],
+    queryFn: async ({ pageParam }): Promise<{ items: PickerProduct[]; page: number; totalPages: number; totalCount: number }> => {
       if (ingredientOnly) {
-        const page = await productRecipesApi.ingredientOptions(debouncedSearch, pageParam, PRODUCT_PAGE_SIZE);
+        const page = await productRecipesApi.ingredientOptions(debouncedSearch, pageParam, PRODUCT_PAGE_SIZE, compositionKind);
         return { ...page, items: page.items.map((product) => ({
           productId: product.productId, productCode: product.productCode,
           reference: null, productName: product.name, unitCode: product.baseUnitCode,
           quantityOnHand: 0, averageUnitCost: null, saleUnitPrice: null,
+          compositionUnitCostWithTax: product.unitCostWithTax,
         })) };
       }
       if (warehouseId && conversionOnly) return inventoryApi.conversionProducts({ warehouseId, familyRootProductId: conversionFamilyRootProductId, search: debouncedSearch || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
@@ -90,8 +94,8 @@ export function ProductPicker({
   useEffect(() => { if (activeIndex !== null && activeIndex >= products.length) setActiveIndex(null); }, [activeIndex, products.length]);
   useActiveProductOptionScroll(listRef, activeIndex, open, products.length);
 
-  function choose(product: InventoryProductItem) {
-    onSelect(product); setSearch(""); setOpen(false);
+  function choose(product: PickerProduct) {
+    onSelect(product, product.compositionUnitCostWithTax); setSearch(""); setOpen(false);
   }
   function chooseActive() {
     if (activeIndex !== null) choose(products[activeIndex]);
@@ -121,7 +125,9 @@ export function ProductPicker({
     if (search.trim() !== debouncedSearch || query.isLoading) return <p className={`${messageClass} flex items-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>;
     if (query.isError) return <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>;
     if (products.length === 0) return <div className={messageClass}><p>{ingredientOnly
-      ? "No hay ingredientes activos que coincidan. El saldo disponible puede ser cero; revisa que el producto esté marcado como ingrediente y controle inventario."
+      ? compositionKind === "Combo"
+        ? "No hay productos terminados con inventario propio que coincidan. Los ingredientes y otros combos no se pueden agregar."
+        : "No hay ingredientes activos que coincidan. El saldo disponible puede ser cero; revisa que el producto esté marcado como ingrediente y controle inventario."
       : conversionOnly
       ? "No hay productos habilitados para conversión que coincidan. Revisa la familia del producto principal y activa «Permitir conversión» en sus vínculos."
       : "No hay productos activos que coincidan con la búsqueda."}</p>{query.hasNextPage &&

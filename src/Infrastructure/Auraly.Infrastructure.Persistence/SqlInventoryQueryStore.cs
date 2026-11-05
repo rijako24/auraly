@@ -117,9 +117,9 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             DECLARE @TenantId uniqueidentifier=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             SELECT version.ProductId,version.[Version]
             INTO #ActiveRecipes
-            FROM catalog.ProductRecipeVersions version
+            FROM catalog.ProductCompositionVersions version
             WHERE version.TenantId=@TenantId AND version.IsEnabled=1
-              AND NOT EXISTS (SELECT 1 FROM catalog.ProductRecipeVersions newer
+              AND NOT EXISTS (SELECT 1 FROM catalog.ProductCompositionVersions newer
                   WHERE newer.TenantId=version.TenantId AND newer.ProductId=version.ProductId
                     AND newer.[Version]>version.[Version]);
             CREATE UNIQUE CLUSTERED INDEX IX_ActiveRecipes_Product ON #ActiveRecipes(ProductId);
@@ -206,9 +206,9 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    CASE WHEN @IncludeCosts=1 THEN ingredientBalance.AverageUnitCost END
             FROM dbo.Products finished
             CROSS APPLY (SELECT TOP(1) v.ProductRecipeVersionId,v.[Version],v.IsEnabled
-                FROM catalog.ProductRecipeVersions v WHERE v.TenantId=finished.TenantId AND v.ProductId=finished.ProductId
+                FROM catalog.ProductCompositionVersions v WHERE v.TenantId=finished.TenantId AND v.ProductId=finished.ProductId
                 ORDER BY v.[Version] DESC) recipe
-            JOIN catalog.ProductRecipeIngredients line ON line.ProductRecipeVersionId=recipe.ProductRecipeVersionId
+            JOIN catalog.ProductCompositionComponents line ON line.ProductRecipeVersionId=recipe.ProductRecipeVersionId
             JOIN dbo.Products ingredient ON ingredient.TenantId=finished.TenantId AND ingredient.ProductId=line.IngredientProductId
             LEFT JOIN dbo.InventoryBalances finishedBalance ON finishedBalance.BusinessId=@BusinessId AND finishedBalance.WarehouseId=@WarehouseId AND finishedBalance.ProductId=finished.ProductId
             LEFT JOIN dbo.InventoryBalances ingredientBalance ON ingredientBalance.BusinessId=@BusinessId AND ingredientBalance.WarehouseId=@WarehouseId AND ingredientBalance.ProductId=ingredient.ProductId
@@ -529,7 +529,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
               FROM dbo.InventoryOperations o
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.IsSystem=0
               LEFT JOIN dbo.Warehouses dw ON dw.WarehouseId=o.DestinationWarehouseId
-              LEFT JOIN catalog.ProductRecipeVersions recipe ON recipe.ProductRecipeVersionId=o.RecipeVersionId
+              LEFT JOIN catalog.ProductCompositionVersions recipe ON recipe.ProductRecipeVersionId=o.RecipeVersionId
               WHERE o.BusinessId=@BusinessId
               UNION ALL
               SELECT g.GoodsReceiptId,N'GoodsReceipt',g.DocumentNumber,g.WarehouseId,w.Name,

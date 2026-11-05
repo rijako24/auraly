@@ -8,9 +8,16 @@ public static class ProductMerchandisingApi
     public static IEndpointRouteBuilder MapProductMerchandisingApi(this IEndpointRouteBuilder endpoints)
     {
         var products = endpoints.MapGroup("/api/commerce/v1/products").RequireAuthorization("catalog.user");
-        products.MapGet("/recipe-ingredients", async (HttpContext context, ProductRecipeService service, string? search, int? page, int? pageSize, CancellationToken ct) =>
+        products.MapPost("/composition-cost", async (HttpContext context, ProductRecipeService service,
+            ProductRecipeIngredientInput[] components, CancellationToken ct) =>
         {
-            try { return Results.Ok(await service.IngredientOptionsAsync(context.User.ToCatalogUserIdentity(), search, page ?? 1, pageSize ?? 30, ct)); }
+            try { return Results.Ok(new { costBasisAmount = await service.CompositionCostAsync(context.User.ToCatalogUserIdentity(), components, ct) }); }
+            catch (CatalogValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
+            catch (CatalogForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
+        });
+        products.MapGet("/recipe-ingredients", async (HttpContext context, ProductRecipeService service, string? search, int? page, int? pageSize, string? compositionKind, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await service.IngredientOptionsAsync(context.User.ToCatalogUserIdentity(), search, page ?? 1, pageSize ?? 30, ct, compositionKind ?? "Ingredients")); }
             catch (CatalogValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
             catch (CatalogForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
         });

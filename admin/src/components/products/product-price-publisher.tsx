@@ -32,12 +32,14 @@ export interface ProductPricingEditorHandle { getValue: () => ProductPricingEdit
 export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   embedded?: boolean;
   salesTaxRateOverride?: number;
+  compositionCostOverride?: number;
+  compositionLockedOverride?: boolean;
   productId: string;
   productName: string;
   onSaved?: (result: PreparedProductPrice) => void;
   initialDraft?: ProductPricingEditorDraft;
   onDraftChange?: (draft: ProductPricingEditorDraft) => void;
-}>(function ProductPricingEditor({ productId, productName, onSaved, embedded = false, salesTaxRateOverride, initialDraft, onDraftChange }, ref) {
+}>(function ProductPricingEditor({ productId, productName, onSaved, embedded = false, salesTaxRateOverride, compositionCostOverride, compositionLockedOverride, initialDraft, onDraftChange }, ref) {
   const context = useProductPricingContext(productId);
   const savePrepared = useSavePreparedProductPrice();
   const [cost, setCost] = useState("");
@@ -78,6 +80,20 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
 
   const effectiveSalesTaxRate = salesTaxRateOverride ?? context.data?.salesTaxRate ?? 0;
   const publicSalePrice = context.data?.publicSalePrice;
+  const costLocked = (context.data?.isCostLinked === true && context.data.costBasisOrigin !== "Composition")
+    || (compositionLockedOverride ?? context.data?.isCostLinked ?? false);
+  const compositionInput = useRef({ margin, cost, salePrice, effectiveSalesTaxRate, loadedMargin: context.data?.currentMarginPercent });
+  compositionInput.current = { margin, cost, salePrice, effectiveSalesTaxRate, loadedMargin: context.data?.currentMarginPercent };
+  useEffect(() => {
+    const { margin, cost, salePrice, effectiveSalesTaxRate, loadedMargin } = compositionInput.current;
+    if (compositionCostOverride === undefined) return;
+    const currentMargin = decimalOrNull(margin) ?? loadedMargin;
+    if (currentMargin === null || currentMargin === undefined) return;
+    const result = recalculateProductPricing("cost", compositionCostOverride,
+      { cost: decimalOrNull(cost) ?? 0, margin: currentMargin, salePrice: decimalOrNull(salePrice) ?? 0, salesTaxRate: effectiveSalesTaxRate });
+    setCost(editableNumber(result.cost));setSalePrice(editableNumber(result.salePrice));setDirty(true);
+  }, [compositionCostOverride, context.isSuccess]);
+
   useEffect(() => { onDraftChange?.({ cost, salePrice, margin, increment, roundingMode, lastEdited, salesTaxRate: effectiveSalesTaxRate }); }, [cost, effectiveSalesTaxRate, increment, lastEdited, margin, onDraftChange, roundingMode, salePrice]);
 
   useEffect(() => {
@@ -108,7 +124,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   }, [context.data, cost, effectiveSalesTaxRate, margin, salePrice]);
 
   function change(field: ProductPricingField, raw: string) {
-    if (field === "cost" && context.data?.isCostLinked) return;
+    if (field === "cost" && costLocked) return;
     setLastEdited(field);
     setDirty(true);
     if (field === "cost") setCost(raw);
@@ -198,7 +214,10 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
       if (dirty) await save();
     },
   }), [dirty, publicSalePrice, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, save, savesBySalePrice, valid]);
-  const costOrigin = context.data?.isCostLinked
+  const costOrigin = costLocked && context.data?.costBasisOrigin === "Composition"
+    ? "Costo automático de los componentes, IVA incluido"
+    : context.data?.costBasisOrigin === "Composition" ? "Último costo compuesto, IVA incluido"
+    : context.data?.isCostLinked
     ? `Vinculado a ${context.data.costSourceProductName ?? "producto principal"} × ${context.data.costFactor?.toLocaleString("es-CO") ?? "factor"}`
     : context.data?.costBasisOrigin === "ObservedSupplierCost"
     ? "Último proveedor"
@@ -224,9 +243,9 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
     <div className={`space-y-5 ${embedded ? "" : "p-5"}`}>
       <section>
         <div className="mb-3"><h4 className="font-semibold">Datos para calcular el precio</h4><p className="text-xs text-muted-foreground">Costo y margen determinan primero el precio antes de IVA.</p></div>
-        {context.data.isCostLinked && <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><strong>Costo vinculado y bloqueado.</strong> Cambia automáticamente cuando cambia el costo de {context.data.costSourceProductName ?? "su producto principal"}; el margen y los precios de este producto se preparan y publican por separado.</div>}
+        {costLocked && <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><strong>Costo vinculado y bloqueado.</strong> Cambia automáticamente cuando cambia el costo de {context.data.costBasisOrigin === "Composition" ? "sus componentes" : context.data.costSourceProductName ?? "su producto principal"}; el margen y los precios de este producto se preparan y publican por separado.</div>}
         <div className="grid gap-4 lg:grid-cols-2">
-          <PriceInput label="Costo base *" helper={costOrigin} kind="currency" value={cost} disabled={context.data.isCostLinked} onChange={(value) => change("cost", value)} />
+          <PriceInput label="Costo base *" helper={costOrigin} kind="currency" value={cost} disabled={costLocked} onChange={(value) => change("cost", value)} />
           <PriceInput label="Margen sobre el precio antes de IVA *" helper="Puede ser 0 %" kind="percent" value={margin} onChange={(value) => change("margin", value)} />
         </div>
       </section>

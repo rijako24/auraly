@@ -11,35 +11,31 @@ BEGIN
     IF @TenantExists IS NULL
         THROW 51024, 'La receta pertenece a otra organización.', 1;
 
-    DECLARE @CurrentRecipes TABLE (ProductId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-        ProductRecipeVersionId UNIQUEIDENTIFIER NOT NULL);
-    INSERT @CurrentRecipes(ProductId, ProductRecipeVersionId)
-    SELECT version.ProductId, version.ProductRecipeVersionId
-    FROM catalog.ProductRecipeVersions version
-    WHERE version.TenantId = @TenantId AND version.IsEnabled = 1
-      AND version.[Version] = (SELECT MAX(latest.[Version])
-          FROM catalog.ProductRecipeVersions latest
-          WHERE latest.TenantId = @TenantId AND latest.ProductId = version.ProductId);
-
-    DECLARE @Invalid BIT = 0;
-    ;WITH IngredientTree AS
-    (
-        SELECT TRY_CONVERT(UNIQUEIDENTIFIER, JSON_VALUE(item.[value], '$.IngredientProductId')) ProductId,
-               1 Depth
-        FROM OPENJSON(@Ingredients) item
-        UNION ALL
-        SELECT component.IngredientProductId, tree.Depth + 1
-        FROM IngredientTree tree
-        JOIN @CurrentRecipes currentRecipe ON currentRecipe.ProductId = tree.ProductId
-        JOIN catalog.ProductRecipeIngredients component
-          ON component.ProductRecipeVersionId = currentRecipe.ProductRecipeVersionId
-        WHERE tree.Depth < 32
-    )
-    SELECT @Invalid = 1
-    FROM IngredientTree
-    WHERE ProductId = @ProductId OR ProductId IS NULL OR Depth >= 32
-    OPTION (MAXRECURSION 32);
-
-    IF @Invalid = 1
-        THROW 51024, 'La receta formaría un ciclo o supera el máximo de 32 niveles.', 1;
+    IF EXISTS(SELECT 1 FROM OPENJSON(@Ingredients) input
+      WHERE TRY_CONVERT(UNIQUEIDENTIFIER,JSON_VALUE(input.value,'$.IngredientProductId')) IS NULL)
+      THROW 51024,'La composición contiene un producto inválido.',1;
+    DECLARE @Frontier TABLE(ProductId UNIQUEIDENTIFIER PRIMARY KEY);
+    DECLARE @Next TABLE(ProductId UNIQUEIDENTIFIER PRIMARY KEY);
+    INSERT @Frontier SELECT DISTINCT TRY_CONVERT(UNIQUEIDENTIFIER,JSON_VALUE(input.value,'$.IngredientProductId'))
+      FROM OPENJSON(@Ingredients) input;
+    DECLARE @Depth INT=0;
+    WHILE EXISTS(SELECT 1 FROM @Frontier)
+    BEGIN
+        SET @Depth+=1;
+        IF @Depth>=32 OR EXISTS(SELECT 1 FROM @Frontier WHERE ProductId=@ProductId)
+          THROW 51024,'La receta formaría un ciclo o supera el máximo de 32 niveles.',1;
+        INSERT @Next SELECT DISTINCT component.IngredientProductId
+          FROM @Frontier source JOIN catalog.ProductCompositionVersions version
+            ON version.TenantId=@TenantId AND version.ProductId=source.ProductId AND version.IsEnabled=1
+          JOIN catalog.ProductCompositionComponents component ON component.ProductRecipeVersionId=version.ProductRecipeVersionId
+          WHERE version.[Version]=(SELECT MAX(latest.[Version]) FROM catalog.ProductCompositionVersions latest
+            WHERE latest.TenantId=@TenantId AND latest.ProductId=version.ProductId)
+          UNION
+          SELECT link.ParentProductId FROM @Frontier source JOIN dbo.ProductLinks link
+            ON link.TenantId=@TenantId AND link.ChildProductId=source.ProductId
+              AND link.SharesPrice=1 AND link.IsActive=1;
+        DELETE @Frontier;
+        INSERT @Frontier SELECT ProductId FROM @Next;
+        DELETE @Next;
+    END;
 END;

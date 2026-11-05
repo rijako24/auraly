@@ -41,7 +41,7 @@ public sealed partial class ProductRepository
                 product.UnitPrice = price.Amount;
                 product.UnitCost = price.UnitCost;
                 product.Currency = price.CurrencyCode;
-                product.HasPublishedPrice = true;
+                product.HasPublishedPrice = price.Amount > 0m || product.IsGenericProduct;
                 continue;
             }
 

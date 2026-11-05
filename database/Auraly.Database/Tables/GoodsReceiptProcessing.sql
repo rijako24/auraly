@@ -75,6 +75,7 @@ GO
 
 CREATE TABLE [dbo].[GoodsReceiptLines]
 (
+    [CategoryHierarchySnapshotJson] NVARCHAR(MAX) NULL,
     [GoodsReceiptId] UNIQUEIDENTIFIER NOT NULL,
     [LineNumber] INT NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,

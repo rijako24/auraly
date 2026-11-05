@@ -14,6 +14,10 @@ CREATE TABLE [dbo].[AccountingSourceDocuments]
     -- Derived link to existing work, populated only by acceptance, explicit
     -- legacy recovery or the schema backfill. NULL also covers legacy sources.
     [AccountingPostingJobId] UNIQUEIDENTIFIER NULL,
+    [VoucherTypeCode] AS (CONVERT(NVARCHAR(64),CASE
+      WHEN [SourceDocumentType]=N'ManualAccountingVoucher' AND ISJSON([PayloadJson])=1
+        AND TRY_CONVERT(INT,JSON_VALUE([PayloadJson],'$.PayloadVersion'))=4
+      THEN JSON_VALUE([PayloadJson],'$.VoucherTypeCode') END)) PERSISTED,
     -- A posted journal reversal remains a separate immutable source. The
     -- filtered unique key prevents two reversals of the same original.
     [ReversesDocumentId] UNIQUEIDENTIFIER NULL,

@@ -26,6 +26,8 @@ export interface Product {
   currency: string;
   manageStock: boolean;
   isIngredient?: boolean;
+  hasIngredients?: boolean;
+  isCombo?: boolean;
   stockQuantity?: number | null;
   isActive: boolean;
   createdAt?: string;
@@ -63,6 +65,8 @@ export interface ProductListFilters {
   allowsFractionalSale?: boolean;
   isWeighable?: boolean;
   isIngredient?: boolean;
+  hasIngredients?: boolean;
+  isCombo?: boolean;
 }
 
 export interface ProductAlias {
@@ -159,6 +163,7 @@ export interface CreateCatalogProductRequest {
 
   recipeIngredients?: Array<{ ingredientProductId: string; quantityPerUnit: number }>;
   recipeExpectedVersion?: number;
+  compositionKind?: string;
 
 
 }

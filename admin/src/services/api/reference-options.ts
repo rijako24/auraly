@@ -15,8 +15,8 @@ export interface CreateReferenceOptionRequest {
 }
 
 export const referenceOptionsApi = {
-  list: (catalogCode: string) =>
-    apiClient.get<ReferenceOption[]>(`/commerce/v1/reference-options/${encodeURIComponent(catalogCode)}`),
+  list: (catalogCode: string,context?:{contextual:boolean;from?:string;to?:string}) =>
+    apiClient.get<ReferenceOption[]>(`/commerce/v1/reference-options/${encodeURIComponent(catalogCode)}`,context),
   create: (catalogCode: string, request: CreateReferenceOptionRequest) =>
     apiClient.post<ReferenceOption>(
       `/commerce/v1/reference-options/${encodeURIComponent(catalogCode)}`,

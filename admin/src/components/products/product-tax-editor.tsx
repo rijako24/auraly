@@ -18,7 +18,7 @@ export interface ProductTaxEditorHandle {
 }
 export type ProductTaxEditorDraft = Omit<ProductTaxConfiguration, "productId">;
 
-export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: string; embedded?: boolean; isGenericProduct?: boolean; onSalesTaxRateChange?: (rate: number) => void; initialDraft?: ProductTaxEditorDraft; onDraftChange?: (draft: ProductTaxEditorDraft) => void }>(function ProductTaxEditor({ productId, embedded = false, isGenericProduct = false, onSalesTaxRateChange, initialDraft, onDraftChange }, ref) {
+export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: string; embedded?: boolean; isGenericProduct?: boolean; isCombo?: boolean; onSalesTaxRateChange?: (rate: number) => void; initialDraft?: ProductTaxEditorDraft; onDraftChange?: (draft: ProductTaxEditorDraft) => void }>(function ProductTaxEditor({ productId, embedded = false, isGenericProduct = false, isCombo = false, onSalesTaxRateChange, initialDraft, onDraftChange }, ref) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const client = useQueryClient();
   const taxes = useQuery({
@@ -55,9 +55,9 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
       purchaseTaxProfileId: isGenericProduct ? null : purchaseTaxProfileId || null,
       purchaseTaxTreatment: isGenericProduct ? "NotApplicable" : purchaseTaxTreatment,
     }),
-    onSuccess: async () => {
+    onSuccess: async (configuration) => {
+      client.setQueryData(["product-tax-configuration", businessId, productId], configuration);
       await Promise.all([
-        client.invalidateQueries({ queryKey: ["product-tax-configuration", businessId, productId] }),
         client.invalidateQueries({ queryKey: ["catalog-product", businessId, productId] }),
         client.invalidateQueries({ queryKey: ["products", businessId] }),
         client.invalidateQueries({ queryKey: ["pricing-product", businessId, productId] }),
@@ -68,6 +68,11 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
     onError: () => toast.error("No fue posible actualizar los IVA del producto."),
   });
   const validate = useCallback(() => {
+      if (isCombo && taxes.data?.find(tax => tax.taxProfileId === salesTaxProfileId)?.rate !== 0) {
+        const message = "El combo requiere un impuesto de venta del 0 %.";
+        setValidationError(message);
+        throw new Error(message);
+      }
       if (!salesTaxProfileId || (!isGenericProduct && !purchaseTaxProfileId)) {
         const message = !salesTaxProfileId && !purchaseTaxProfileId ? "Selecciona el IVA de venta y el IVA de compra." : !salesTaxProfileId ? "Selecciona el IVA de venta." : "Selecciona el IVA de compra.";
         setValidationError(message);
@@ -86,7 +91,7 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
         throw new Error(message);
       }
       setValidationError(undefined);
-  }, [isGenericProduct, purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, taxes.data]);
+  }, [isCombo, isGenericProduct, purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, taxes.data]);
   useImperativeHandle(ref, () => ({
     getValue: () => {
       validate();
@@ -99,6 +104,9 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
     },
   }), [isGenericProduct, purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, save, validate]);
   const salesTax = taxes.data?.find((tax) => tax.taxProfileId === salesTaxProfileId);
+  useEffect(() => {
+    if (isCombo && salesTax && salesTax.rate !== 0) setSalesTaxProfileId("");
+  }, [isCombo, salesTax]);
   const purchaseTax = taxes.data?.find((tax) => tax.taxProfileId === purchaseTaxProfileId);
   const fieldVisibility = productTaxFieldVisibility(isGenericProduct);
   useEffect(() => {
@@ -120,7 +128,7 @@ return <section className={`space-y-4 ${embedded ? "" : "rounded-xl border bg-mu
         <Label>IVA de venta <span className="text-destructive">*</span></Label>
         <Select value={salesTaxProfileId} onValueChange={(value) => { setSalesTaxProfileId(value); setValidationError(undefined); }}>
           <SelectTrigger aria-invalid={Boolean(validationError && !salesTaxProfileId)}><SelectValue placeholder="Selecciona IVA de venta" /></SelectTrigger>
-          <SelectContent>{(taxes.data ?? []).map((tax) =>
+          <SelectContent>{(taxes.data ?? []).filter(tax => !isCombo || tax.rate === 0).map((tax) =>
             <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate.toLocaleString("es-CO")} %</SelectItem>)}</SelectContent>
         </Select>
       </div>}

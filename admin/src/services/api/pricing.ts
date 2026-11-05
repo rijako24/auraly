@@ -25,7 +25,7 @@ export interface PriceRevisionListItem {
   status: PriceProposalStatus;
   createdAt: string;
   concurrencyToken: string;
-  origin: "GoodsReceipt" | "Product";
+  origin: "GoodsReceipt" | "Product" | "Composition";
   averageUnitCost?: number | null;
   latestUnitCost?: number | null;
   latestLandedUnitCost?: number | null;
@@ -123,7 +123,7 @@ export interface ProductPriceHistoryItem {
   activityId: string;
   productId: string;
   activityType: "Preparation" | "Publication";
-  origin: "GoodsReceipt" | "ProposalReview" | "Product" | "LinkedProduct" | "Migration" | "ReceiptProposal" | "Manual";
+  origin: "GoodsReceipt" | "ProposalReview" | "Product" | "LinkedProduct" | "Composition" | "Migration" | "ReceiptProposal" | "Manual";
   status: "Pending" | "Published" | "Superseded" | "Discarded";
   publicAmount: number;
   preparedAmount: number;

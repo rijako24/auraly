@@ -4,6 +4,13 @@ namespace Auraly.Application.Catalog;
 
 public sealed class ReferenceOptionService(IReferenceOptionStore store)
 {
+    public Task<IReadOnlyList<ReferenceOption>> ListContextualAsync(CatalogUserIdentity user,string catalogCode,
+        DateOnly? from,DateOnly? to,CancellationToken cancellationToken=default)
+    {
+        if(from.HasValue!=to.HasValue||to<from||from==default(DateOnly)||to?.DayNumber-from?.DayNumber>1827)
+            throw new CatalogValidationException("El rango de opciones históricas no es válido.");
+        return store.ListContextualAsync(user,NormalizeCatalogCode(catalogCode),from,to,cancellationToken);
+    }
     public Task<IReadOnlyList<ReferenceOption>> ListAsync(
         string catalogCode,
         CancellationToken cancellationToken = default)

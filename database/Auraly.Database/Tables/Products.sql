@@ -34,6 +34,10 @@ CREATE TABLE [dbo].[Products] (
     [UpdatedByUserId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
     [IsIngredient] BIT NOT NULL CONSTRAINT [DF_Products_IsIngredient] DEFAULT 0,
+    [HasIngredients] BIT NOT NULL CONSTRAINT [DF_Products_HasIngredients] DEFAULT 0,
+    [IsCombo] BIT NOT NULL CONSTRAINT [DF_Products_IsCombo] DEFAULT 0,
+    CONSTRAINT [CK_Products_ExclusiveComposition] CHECK ([HasIngredients]=0 OR [IsCombo]=0),
+    CONSTRAINT [CK_Products_ComboNotIngredient] CHECK ([IsCombo]=0 OR [IsIngredient]=0),
     CONSTRAINT [FK_Products_TaxProfiles] FOREIGN KEY ([TenantId], [TaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TenantId], [TaxProfileId]),
     CONSTRAINT [FK_Products_PurchaseTaxProfiles] FOREIGN KEY ([TenantId], [PurchaseTaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TenantId], [TaxProfileId]),
     CONSTRAINT [CK_Products_PurchaseTaxTreatment] CHECK ([PurchaseTaxTreatment] IN (N'DeductibleInputVat',N'CapitalizedCost',N'NotApplicable')),
@@ -68,6 +72,10 @@ CREATE INDEX [IX_Products_TenantId_Active_Name]
     INCLUDE ([ProductCode], [Sku], [Reference], [BaseUnitCode],
              [TaxProfileId], [PurchaseTaxProfileId], [PurchaseTaxTreatment],
              [UnitGrossWeightKg]);
+GO
+CREATE INDEX [IX_Products_Tenant_Composition_Name]
+    ON [dbo].[Products] ([TenantId],[HasIngredients],[IsCombo],[IsActive],[Name],[ProductId])
+    INCLUDE ([ProductCode],[IsIngredient]);
 GO
 CREATE UNIQUE INDEX [IX_Products_TenantId_Connection_ExternalProductId]
     ON [dbo].[Products] ([TenantId], [IntegrationConnectionId], [ExternalProductId])

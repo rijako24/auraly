@@ -30,6 +30,10 @@
     <Build Include="Schemas\WorkSessions.sql" />
     <Build Include="Schemas\Billing.sql" />
     <Build Include="Functions\TenantDianQuotaSnapshot.sql" />
+    <Build Include="Functions\ProductCompositionCost.sql" />
+    <Build Include="Functions\ProductPriceCostBasis.sql" />
+    <Build Include="Functions\SalesReportActivity.sql" />
+    <Build Include="Functions\SalesReportDocumentMovements.sql" />
     <Build Include="Functions\TenantSubscriptionPeriodBoundary.sql" />
     <Build Include="Functions\ManualVoucherPartyReferences.sql" />
     <Build Include="Functions\ManualVoucherCreditTargets.sql" />
@@ -102,6 +106,7 @@
     <Build Include="StoredProcedures\PriceChannelExclusionSave.sql" />
     <Build Include="StoredProcedures\PriceChannelExclusionDelete.sql" />
     <Build Include="StoredProcedures\ProductLinkedCostsPrepare.sql" />
+    <Build Include="StoredProcedures\ProductCompositionCostsPrepare.sql" />
     <Build Include="StoredProcedures\AuthenticationEmailOutboxClaim.sql" />
     <Build Include="StoredProcedures\AuthenticationInvitationRecipientGet.sql" />
     <Build Include="StoredProcedures\AuthenticationPasswordRecoveryRecipientGet.sql" />
@@ -127,6 +132,8 @@
     <Build Include="StoredProcedures\PurchasingPurchaseOrderSuggestionsGet.sql" />
     <Build Include="StoredProcedures\PurchasingRestaurantDemandInputsGet.sql" />
     <Build Include="StoredProcedures\CatalogProductRecipeGraphValidate.sql" />
+    <Build Include="StoredProcedures\CatalogProductCompositionSave.sql" />
+    <Build Include="StoredProcedures\CatalogProductCompositionValidate.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderDraftSave.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderDraftDelete.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderConfirm.sql" />
@@ -173,7 +180,7 @@
     <Build Include="Tables\IntegrationChannelWarehouses.sql" />
     <Build Include="Tables\ProductCategories.sql" />
     <Build Include="Tables\ProductMerchandising.sql" />
-    <Build Include="Tables\ProductRecipes.sql" />
+    <Build Include="Tables\ProductCompositions.sql" />
     <Build Include="Tables\Products.sql" />
     <Build Include="Tables\AuralyCatalog.sql" />
     <Build Include="Tables\AuralyParties.sql" />
@@ -262,6 +269,7 @@
     <Build Include="Tables\OnlineSalesCheckout.sql" />
     <Build Include="Tables\SalesDocumentLines.sql" />
     <Build Include="Tables\SalesReporting.sql" />
+    <Build Include="Tables\ServiceSalesReporting.sql" />
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\SalesReturns.sql" />
     <Build Include="Tables\SalesDebitNotes.sql" />
@@ -319,6 +327,10 @@
     <Build Include="Tables\PayrollReporting.sql" />
   </ItemGroup>
   <ItemGroup>
+    <Build Include="Functions\ProductCategoryHierarchySnapshot.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <RefactorLog Include="Auraly.Database.refactorlog" />
     <PostDeploy Include="Scripts\PostDeployment.sql" />
   </ItemGroup>
   <ItemGroup>

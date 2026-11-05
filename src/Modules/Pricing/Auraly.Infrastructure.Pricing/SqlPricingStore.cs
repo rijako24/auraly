@@ -55,7 +55,7 @@ public sealed class SqlPricingStore(
                 NULL,COALESCE(prepared.CostBasisAmount,0),price.Amount,COALESCE(price.PublishedAt,price.ValidFrom,price.CreatedAt),price.EffectiveMarginPercent,
                 prepared.TargetMarginPercent,prepared.PreparedAmount,COALESCE(tax.Rate,0),
                 prepared.EffectiveMarginPercent,N'Approved',prepared.PreparedAt,prepared.RowVersion,
-                CAST(1 AS bit),N'Product'
+                CAST(1 AS bit),CASE WHEN x.HasIngredients=1 OR x.IsCombo=1 THEN N'Composition' ELSE N'Product' END
               FROM dbo.ProductPricePreparations prepared
               INNER JOIN dbo.ProductPrices price ON price.BusinessId=prepared.BusinessId
                 AND price.ProductId=prepared.ProductId AND price.IsActive=1
@@ -69,7 +69,7 @@ public sealed class SqlPricingStore(
                 ORDER BY sp.IsPrimary DESC,sp.CreatedAt DESC
               ) supplier
               WHERE prepared.BusinessId=@BusinessId AND prepared.Status=N'Pending'
-                AND prepared.PreparationOrigin IN(N'Product',N'LinkedProduct',N'Migration')
+                AND prepared.PreparationOrigin IN(N'Product',N'LinkedProduct',N'Migration',N'Composition')
             ) candidate
             INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
             OUTER APPLY (
@@ -258,7 +258,7 @@ public sealed class SqlPricingStore(
             {{selectedProductsPredicate}}
               AND (proposal.PriceRevisionProposalId IS NOT NULL
                    OR preparation.SourceProposalId IS NULL
-                      AND preparation.PreparationOrigin IN(N'Product',N'LinkedProduct',N'Migration'))
+                      AND preparation.PreparationOrigin IN(N'Product',N'LinkedProduct',N'Migration',N'Composition'))
               AND (proposal.PriceRevisionProposalId IS NULL OR NOT EXISTS(
                 SELECT 1 FROM dbo.ProductLinks costLink
                 WHERE costLink.TenantId=@TenantId
@@ -510,6 +510,12 @@ public sealed class SqlPricingStore(
         await using var transaction =
             (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         await using var command = new SqlCommand("""
+            IF EXISTS(SELECT 1 FROM dbo.ProductPricePreparations preparation
+              JOIN dbo.Products product ON product.ProductId=preparation.ProductId AND product.TenantId=@TenantId
+              WHERE preparation.ProductPricePreparationId=@ProposalId AND preparation.BusinessId=@BusinessId
+                AND preparation.Status=N'Pending' AND (product.HasIngredients=1 OR product.IsCombo=1))
+              THROW 51601,'El costo compuesto es automático. Revisa el margen o el precio y conserva la preparación hasta su publicación.',1;
+            DECLARE @ChangedProducts TABLE(ProductId UNIQUEIDENTIFIER PRIMARY KEY,CostBasisAmount DECIMAL(19,6),CostBasisType NVARCHAR(32));
             IF EXISTS(SELECT 1 FROM dbo.PriceRevisionProposals WHERE PriceRevisionProposalId=@ProposalId)
             BEGIN
               UPDATE p SET Status=N'Rejected',ReviewedByUserId=@UserId,
@@ -522,12 +528,14 @@ public sealed class SqlPricingStore(
               IF @@ROWCOUNT=0 THROW 51601,'The price proposal changed or is not reviewable.',1;
               UPDATE dbo.ProductPricePreparations
               SET Status=N'Discarded',SupersededAt=SYSDATETIMEOFFSET()
+              OUTPUT inserted.ProductId,deleted.CostBasisAmount,deleted.CostBasisType INTO @ChangedProducts
               WHERE BusinessId=@BusinessId AND SourceProposalId=@ProposalId AND Status=N'Pending';
             END
             ELSE
             BEGIN
               UPDATE preparation
               SET Status=N'Discarded',SupersededAt=SYSDATETIMEOFFSET()
+              OUTPUT inserted.ProductId,deleted.CostBasisAmount,deleted.CostBasisType INTO @ChangedProducts
               FROM dbo.ProductPricePreparations preparation
               INNER JOIN dbo.Businesses b ON b.BusinessId=preparation.BusinessId
               WHERE preparation.ProductPricePreparationId=@ProposalId
@@ -535,6 +543,14 @@ public sealed class SqlPricingStore(
                 AND preparation.RowVersion=@RowVersion AND preparation.Status=N'Pending';
               IF @@ROWCOUNT=0 THROW 51601,'The prepared product price changed or is no longer available.',1;
             END
+            DECLARE @ChangedFamilies NVARCHAR(MAX)=(SELECT changed.ProductId ParentProductId FROM @ChangedProducts changed
+              OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,changed.ProductId) currentCost
+              WHERE ISNULL(currentCost.CostBasisAmount,-1)<>ISNULL(changed.CostBasisAmount,-1)
+                OR (changed.CostBasisType=N'Composition' AND ISNULL(currentCost.CostBasisType,N'')<>N'Composition') FOR JSON PATH),
+              @PreparationNow DATETIMEOFFSET(7)=SYSDATETIMEOFFSET();
+            IF @ChangedFamilies<>N'[]'
+              EXEC dbo.ProductLinkedCostsPrepare @BusinessId=@BusinessId,@UserId=@UserId,
+                @Now=@PreparationNow,@FamiliesJson=@ChangedFamilies;
             """, connection, transaction);
         AddScope(command, user);
         command.Parameters.AddWithValue("@ProposalId", proposalId);
@@ -544,6 +560,11 @@ public sealed class SqlPricingStore(
         {
             await ExecuteAsync(command, ct);
             await transaction.CommitAsync(ct);
+        }
+        catch (SqlException exception) when (exception.Number is 51020 or 51601)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new PricingConflictException(exception.Message);
         }
         catch
         {
@@ -923,17 +944,11 @@ public sealed class SqlPricingStore(
         await using var command = new SqlCommand("""
             SELECT x.ProductId,x.Name,COALESCE(preparation.PreparedAmount,price.Amount,0),
               COALESCE(price.Amount,0),
-              CASE WHEN costLink.ProductLinkId IS NOT NULL
-                     THEN ROUND(parentCost.CostBasisAmount*costLink.PriceFactor,6)
-                   ELSE COALESCE(preparation.CostBasisAmount,cost.LatestUnitCost,price.CostBasisAmount) END,
-              CASE WHEN costLink.ProductLinkId IS NOT NULL THEN N'LinkedProduct'
-                   WHEN preparation.ProductPricePreparationId IS NOT NULL THEN preparation.CostBasisType
-                   WHEN cost.LatestUnitCost IS NOT NULL THEN N'ObservedSupplierCost'
-                   ELSE price.CostBasisType END,
-              COALESCE(preparation.EffectiveMarginPercent,price.EffectiveMarginPercent),COALESCE(tax.Rate,0),
+              costBasis.CostBasisAmount,costBasis.CostBasisType,
+              COALESCE(preparation.TargetMarginPercent,price.TargetMarginPercent,preparation.EffectiveMarginPercent,price.EffectiveMarginPercent),COALESCE(tax.Rate,0),
               COALESCE(preparation.RoundingIncrement,price.RoundingIncrement,1),
               COALESCE(preparation.RoundingMode,price.RoundingMode,N'Nearest'),
-              CASE WHEN costLink.ProductLinkId IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END,
+              CASE WHEN costLink.ProductLinkId IS NULL AND (x.HasIngredients=0 AND x.IsCombo=0) THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END,
               costLink.ParentProductId,costParent.Name,costLink.PriceFactor
             FROM dbo.Products x
             INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
@@ -943,7 +958,7 @@ public sealed class SqlPricingStore(
              AND costLink.SharesPrice=1 AND costLink.IsActive=1
             LEFT JOIN dbo.Products costParent ON costParent.ProductId=costLink.ParentProductId
             OUTER APPLY (
-              SELECT TOP(1) p.Amount,p.PreparedAmount,p.CostBasisAmount,p.CostBasisType,p.EffectiveMarginPercent,p.RoundingIncrement,p.RoundingMode
+              SELECT TOP(1) p.Amount,p.PreparedAmount,p.CostBasisAmount,p.CostBasisType,p.TargetMarginPercent,p.EffectiveMarginPercent,p.RoundingIncrement,p.RoundingMode
               FROM dbo.ProductPrices p
               WHERE p.BusinessId=@BusinessId AND p.ProductId=x.ProductId
                 AND p.IsActive=1 AND p.ValidFrom<=SYSDATETIMEOFFSET()
@@ -952,54 +967,14 @@ public sealed class SqlPricingStore(
             ) price
             OUTER APPLY (
               SELECT TOP(1) prepared.ProductPricePreparationId,prepared.PreparedAmount,
-                prepared.CostBasisAmount,prepared.CostBasisType,prepared.EffectiveMarginPercent,
+                prepared.CostBasisAmount,prepared.CostBasisType,prepared.TargetMarginPercent,prepared.EffectiveMarginPercent,
                 prepared.RoundingIncrement,prepared.RoundingMode
               FROM dbo.ProductPricePreparations prepared
               WHERE prepared.BusinessId=@BusinessId AND prepared.ProductId=x.ProductId
                 AND prepared.Status=N'Pending'
               ORDER BY prepared.PreparedAt DESC,prepared.ProductPricePreparationId DESC
             ) preparation
-            OUTER APPLY (
-              SELECT TOP(1) latest.LatestUnitCost
-              FROM dbo.SupplierProductLatestCosts latest
-              LEFT JOIN dbo.SupplierProducts association ON association.TenantId=@TenantId
-                AND association.SupplierId=latest.SupplierId AND association.ProductId=latest.ProductId
-              WHERE latest.ProductId=x.ProductId
-                AND (b.SharesProductPrices=1 AND latest.BusinessId IN (
-                       SELECT shared.BusinessId FROM dbo.Businesses shared
-                       WHERE shared.TenantId=@TenantId AND shared.SharesProductPrices=1 AND shared.IsActive=1)
-                     OR b.SharesProductPrices=0 AND latest.BusinessId=@BusinessId)
-              ORDER BY CASE WHEN association.IsPrimary=1 AND association.IsActive=1 THEN 0 ELSE 1 END,
-                latest.ObservedAt DESC,latest.SupplierId
-            ) cost
-            OUTER APPLY (
-              SELECT COALESCE(parentPreparation.CostBasisAmount,
-                              parentLatest.LatestUnitCost,
-                              parentPrice.CostBasisAmount) CostBasisAmount
-              FROM (SELECT 1 AS Anchor) source
-              OUTER APPLY (
-                SELECT TOP(1) value.CostBasisAmount
-                FROM dbo.ProductPricePreparations value
-                WHERE value.BusinessId=@BusinessId
-                  AND value.ProductId=costLink.ParentProductId
-                  AND value.Status=N'Pending'
-                ORDER BY value.PreparedAt DESC,value.ProductPricePreparationId DESC
-              ) parentPreparation
-              OUTER APPLY (
-                SELECT TOP(1) value.LatestUnitCost
-                FROM dbo.SupplierProductLatestCosts value
-                WHERE value.BusinessId=@BusinessId
-                  AND value.ProductId=costLink.ParentProductId
-                ORDER BY value.ObservedAt DESC,value.SupplierId
-              ) parentLatest
-              OUTER APPLY (
-                SELECT TOP(1) value.CostBasisAmount
-                FROM dbo.ProductPrices value
-                WHERE value.BusinessId=@BusinessId
-                  AND value.ProductId=costLink.ParentProductId AND value.IsActive=1
-                ORDER BY value.ValidFrom DESC,value.ProductPriceId
-              ) parentPrice
-            ) parentCost
+            OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,x.ProductId) costBasis
             WHERE x.ProductId=@ProductId AND b.TenantId=@TenantId
               AND x.TenantId=@TenantId;
             """, connection);
@@ -1036,6 +1011,17 @@ public sealed class SqlPricingStore(
                   WHERE x.ProductId=@ProductId AND b.TenantId=@TenantId
                     AND x.TenantId=@TenantId)
                   THROW 51600,'The product is outside the authenticated business.',1;
+
+                IF EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=@TenantId
+                    AND (HasIngredients=1 OR IsCombo=1)) AND NOT EXISTS(
+                    SELECT 1 FROM dbo.ProductPrices price WITH(UPDLOCK,HOLDLOCK)
+                    OUTER APPLY(SELECT TOP(1) value.CostBasisAmount
+                      FROM dbo.ProductPricePreparations value WITH(UPDLOCK,HOLDLOCK)
+                      WHERE value.ProductId=@ProductId AND value.BusinessId=@BusinessId AND value.Status=N'Pending'
+                      ORDER BY value.PreparedAt DESC,value.ProductPricePreparationId DESC) preparation
+                    WHERE price.ProductId=@ProductId AND price.BusinessId=@BusinessId AND price.IsActive=1
+                      AND COALESCE(preparation.CostBasisAmount,price.CostBasisAmount)=@CostBasis)
+                  THROW 51600,'El costo de la composición cambió o no se puede editar manualmente.',1;
 
                 DECLARE @CostParentProductId UNIQUEIDENTIFIER;
                 SELECT @CostParentProductId=link.ParentProductId

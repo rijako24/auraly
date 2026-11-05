@@ -23,7 +23,7 @@ public record ProductDto(
     string? ProductCode = null,
     string? AreaName = null,
     string? Reference = null,
-    bool IsIngredient = false);
+    bool IsIngredient = false, bool HasIngredients = false, bool IsCombo = false);
 
 public record UpdateProductStatusRequest(bool IsActive);
 public record UpdateProductRequest(
@@ -42,7 +42,7 @@ public sealed record ProductListFilters(
     bool? ManagesInventory = null,
     bool? AllowsFractionalSale = null,
     bool? IsWeighable = null,
-    bool? IsIngredient = null);
+    bool? IsIngredient = null, bool? HasIngredients = null, bool? IsCombo = null);
 
 public sealed record ProductCategoryAdminDto(
     Guid ProductCategoryId,

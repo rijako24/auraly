@@ -9,7 +9,7 @@ public sealed record ProductListFilter(
     bool? ManagesInventory = null,
     bool? AllowsFractionalSale = null,
     bool? IsWeighable = null,
-    bool? IsIngredient = null);
+    bool? IsIngredient = null, bool? HasIngredients = null, bool? IsCombo = null);
 
 public sealed record ProductPricePublication(Product Product, decimal Amount, string Currency);
 

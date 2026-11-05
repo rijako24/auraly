@@ -11,6 +11,47 @@ DECLARE @Source TABLE
     SortOrder INT NOT NULL
 );
 
+INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder) VALUES
+('76600006-0000-0000-0000-000000000001',N'sales-report-product-returns',N'all',N'Todos los productos',NULL,10),
+('76600006-0000-0000-0000-000000000002',N'sales-report-product-returns',N'with-returns',N'Con devoluciones en el período',NULL,20),
+('76600006-0000-0000-0000-000000000003',N'sales-report-product-returns',N'without-returns',N'Sin devoluciones en el período',NULL,30),
+('76600007-0000-0000-0000-000000000001',N'sales-report-product-composition',N'None',N'Producto simple',NULL,10),
+('76600007-0000-0000-0000-000000000002',N'sales-report-product-composition',N'Ingredients',N'Con ingredientes',NULL,20),
+('76600007-0000-0000-0000-000000000003',N'sales-report-product-composition',N'Combo',N'Combo',NULL,30),
+('76600007-0000-0000-0000-000000000004',N'sales-report-product-composition',N'Unknown',N'Sin clasificación histórica',NULL,40),
+('76600005-0000-0000-0000-000000000001',N'sales-report-customer-activity',N'all',N'Todos los clientes conocidos',NULL,10),
+('76600005-0000-0000-0000-000000000002',N'sales-report-customer-activity',N'buyers',N'Con compra en el período',NULL,20),
+('76600005-0000-0000-0000-000000000003',N'sales-report-customer-activity',N'without-purchase',N'Sin compra en el período',NULL,30),
+('76600001-0000-0000-0000-000000000001',N'sales-report-grouping',N'document',N'Comprobante',NULL,10),
+('76600001-0000-0000-0000-000000000002',N'sales-report-grouping',N'billed-by',N'Usuario que facturó',NULL,20),
+('76600001-0000-0000-0000-000000000003',N'sales-report-grouping',N'seller',N'Vendedor comercial',NULL,30),
+('76600001-0000-0000-0000-000000000004',N'sales-report-grouping',N'customer',N'Cliente',NULL,40),
+('76600001-0000-0000-0000-000000000005',N'sales-report-grouping',N'supplier',N'Proveedor',NULL,50),
+('76600001-0000-0000-0000-000000000006',N'sales-report-grouping',N'product',N'Producto',NULL,60),
+('76600001-0000-0000-0000-000000000007',N'sales-report-grouping',N'category',N'Categoría',NULL,70),
+('76600001-0000-0000-0000-000000000008',N'sales-report-grouping',N'warehouse',N'Bodega',NULL,80),
+('76600001-0000-0000-0000-000000000009',N'sales-report-grouping',N'day',N'Día',NULL,90),
+('76600001-0000-0000-0000-00000000000a',N'sales-report-grouping',N'month',N'Mes',NULL,100),
+('76600001-0000-0000-0000-00000000000b',N'sales-report-grouping',N'waiter',N'Mesero',NULL,110),
+('76600001-0000-0000-0000-00000000000c',N'sales-report-grouping',N'area',N'Área',NULL,71),
+('76600001-0000-0000-0000-00000000000d',N'sales-report-grouping',N'category-line',N'Línea',NULL,72),
+('76600001-0000-0000-0000-00000000000e',N'sales-report-grouping',N'category-group',N'Grupo',NULL,73),
+('76600001-0000-0000-0000-00000000000f',N'sales-report-grouping',N'subgroup',N'Subgrupo',NULL,74),
+('76600001-0000-0000-0000-000000000010',N'sales-report-grouping',N'table',N'Mesa',NULL,115),
+('76600002-0000-0000-0000-000000000001',N'sales-report-comparison',N'none',N'Sin comparación',NULL,10),
+('76600002-0000-0000-0000-000000000002',N'sales-report-comparison',N'previous-period',N'Período anterior de igual duración',NULL,20),
+('76600002-0000-0000-0000-000000000003',N'sales-report-comparison',N'previous-year',N'Mismas fechas del año anterior',NULL,30),
+('76600003-0000-0000-0000-000000000001',N'sales-report-document-type',N'SalesInvoice',N'Factura de venta',NULL,10),
+('76600003-0000-0000-0000-000000000002',N'sales-report-document-type',N'SalesReceipt',N'Comprobante de venta',NULL,20),
+('76600003-0000-0000-0000-000000000003',N'sales-report-document-type',N'ServiceInvoice',N'Factura de servicio',NULL,30),
+('76600004-0000-0000-0000-000000000001',N'sales-report-order',N'net-desc',N'Mayor venta sin impuestos',NULL,10),
+('76600004-0000-0000-0000-000000000002',N'sales-report-order',N'net-asc',N'Menor venta sin impuestos',NULL,20),
+('76600004-0000-0000-0000-000000000003',N'sales-report-order',N'label',N'Nombre o número',NULL,30),
+('76600004-0000-0000-0000-000000000004',N'sales-report-order',N'profit-desc',N'Mayor utilidad',NULL,40),
+('76600004-0000-0000-0000-000000000005',N'sales-report-order',N'quantity-desc',N'Mayor cantidad física',NULL,50),
+('76500001-0000-0000-0000-000000000001',N'product-composition-kind',N'Ingredients',N'Ingredientes',NULL,10),
+('76500001-0000-0000-0000-000000000002',N'product-composition-kind',N'Combo',N'Combo',NULL,20);
+
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
 VALUES
 ('75300004-0000-0000-0000-000000000001',N'accounting-voucher-type',N'Accounting',N'Comprobante contable',NULL,10),
@@ -288,6 +329,11 @@ WHEN NOT MATCHED BY SOURCE
         N'purchase-cost-association-mode',N'purchase-cost-allocation-method',N'purchase-tax-rate',N'purchase-tax-treatment',
         N'purchase-currency',N'exchange-rate-source',N'expense-status',N'payable-status')
 THEN UPDATE SET target.IsActive=0,target.UpdatedAt=@Now;
+
+UPDATE reference.Options SET RequiredPointOfSaleMode=N'RestaurantBar'
+WHERE CatalogCode=N'sales-report-grouping' AND Code IN(N'waiter',N'table');
+UPDATE reference.Options SET RequiredPointOfSaleMode=N'RestaurantBar'
+WHERE CatalogCode=N'accounting-document-type' AND Code IN(N'RestaurantTip',N'RestaurantTipReversal',N'RestaurantTipSettlement');
 
 MERGE worksessions.CashClosurePaymentMethodMappings AS target
 USING (VALUES

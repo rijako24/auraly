@@ -570,7 +570,7 @@ public sealed partial class SqlPosSaleServerStore(
                 FiscalPrefix, FiscalConsecutive, IssuedAt, CustomerIdentification, CustomerId, CustomerPartySiteId,
                 UntaxedAmount, TaxAmount, PayableAmount, CreditAmount, CreditDueDate, CufeReceived,
                 CufeCalculated, FiscalStatus, ProcessingStatus, ReceivedAt,
-                CreatedByDeviceId, SoldByUserId
+                CreatedByDeviceId, SoldByUserId, SoldByNameSnapshot,TableNameSnapshot
             )
             VALUES
             (
@@ -582,8 +582,27 @@ public sealed partial class SqlPosSaleServerStore(
                 @FiscalPrefix, @FiscalConsecutive, @IssuedAt, @CustomerIdentification, @CustomerId, @CustomerPartySiteId,
                 @UntaxedAmount, @TaxAmount, @PayableAmount, @CreditAmount, @CreditDueDate, @CufeReceived,
                 @CufeCalculated, @FiscalStatus, @ProcessingStatus, @ReceivedAt,
-                @DeviceId, @SoldByUserId
+                @DeviceId, @SoldByUserId,
+                (SELECT COALESCE(NULLIF(CONCAT(FirstName,N' ',LastName),N' '),Username) FROM dbo.AppUsers WHERE UserId=@SoldByUserId),
+                (SELECT CONCAT(Code,CASE WHEN NULLIF(Name,N'') IS NOT NULL THEN N' · '+Name ELSE N'' END)
+                  FROM sales.RestaurantTables WHERE TableId=@TableId AND BusinessId=@BusinessId)
             );
+            UPDATE document SET CustomerNameSnapshot=COALESCE(NULLIF(customerParty.DisplayName,N''),NULLIF(customerParty.LegalName,N''),N'Consumidor final'),
+              WarehouseNameSnapshot=warehouseValue.Name,SellerIdSnapshot=seller.SellerId,
+              SellerNameSnapshot=COALESCE(NULLIF(sellerParty.DisplayName,N''),NULLIF(sellerParty.LegalName,N''),seller.Code),
+              AttributionSnapshotVersion=1
+            FROM dbo.SalesDocuments document
+            JOIN dbo.Businesses businessValue ON businessValue.BusinessId=document.BusinessId
+            JOIN dbo.AppUsers actor ON actor.UserId=@SoldByUserId AND actor.TenantId=businessValue.TenantId
+            JOIN dbo.Warehouses warehouseValue ON warehouseValue.WarehouseId=document.WarehouseId
+            LEFT JOIN dbo.Customers customer ON customer.CustomerId=document.CustomerId
+            LEFT JOIN dbo.Parties customerParty ON customerParty.PartyId=customer.PartyId
+            LEFT JOIN dbo.Orders originalOrder ON originalOrder.OrderId=@SourceOrderId AND originalOrder.BusinessId=@BusinessId
+            LEFT JOIN dbo.CommerceSellers seller ON seller.TenantId=businessValue.TenantId
+              AND ((@SourceOrderId IS NOT NULL AND seller.SellerId=originalOrder.SellerId)
+                OR (@SourceOrderId IS NULL AND seller.PartyId=actor.PartyId))
+            LEFT JOIN dbo.Parties sellerParty ON sellerParty.PartyId=seller.PartyId
+            WHERE document.DocumentId=@DocumentId;
             """;
         var request = command.Request;
         var commercial = request.CommercialSnapshot;
@@ -607,6 +626,7 @@ public sealed partial class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@SourceMode", request.SourceMode);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
         sqlCommand.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
+        sqlCommand.Parameters.AddWithValue("@SourceOrderId", (object?)request.SourceOrderId ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@DocumentNumber", request.DocumentNumber.FullNumber);
         sqlCommand.Parameters.AddWithValue("@DocumentPrefix", request.DocumentNumber.Prefix);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesCode", request.DocumentNumber.SeriesCode);

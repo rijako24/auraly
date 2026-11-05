@@ -39,6 +39,9 @@ export function PagedEntitySelect<T>({
   pageSize = 10,
   className,
   onClear,
+  values,
+  selectedOptions = [],
+  onValuesChange,
 }: {
   queryKey: readonly unknown[];
   value: string;
@@ -57,6 +60,9 @@ export function PagedEntitySelect<T>({
   pageSize?: number;
   className?: string;
   onClear?: () => void;
+  values?: string[];
+  selectedOptions?: PagedEntityOption[];
+  onValuesChange?: (values: string[], options: PagedEntityOption[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -86,8 +92,9 @@ export function PagedEntitySelect<T>({
     for (const option of leadingOptions) values.set(option.value, { option });
     if (selectedOption && !(openOnTyping && search.trim()) && !values.has(selectedOption.value))
       values.set(selectedOption.value, { option: selectedOption });
+    for (const option of selectedOptions) if (!values.has(option.value)) values.set(option.value, { option });
     return [...values.values()];
-  }, [getOption, leadingOptions, openOnTyping, query.data, search, selectedOption]);
+  }, [getOption, leadingOptions, openOnTyping, query.data, search, selectedOption, selectedOptions]);
   const selected = entries.find(entry => entry.option.value === value)?.option ?? selectedOption;
   const total = query.data?.pages[0]?.totalCount ?? 0;
 
@@ -110,7 +117,7 @@ export function PagedEntitySelect<T>({
           setOpen(true);
         }}
         className={cn("relative w-full justify-start font-normal", onClear ? "pr-16" : "pr-10", className)}>
-        <span className="min-w-0 truncate text-left">{selected?.label ?? placeholder}</span>
+        <span className="min-w-0 truncate text-left">{values ? (values.length ? `${values.length} seleccionados` : placeholder) : selected?.label ?? placeholder}</span>
         <ChevronsUpDown className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50"/>
       </Button>
     </PopoverTrigger>
@@ -124,13 +131,16 @@ export function PagedEntitySelect<T>({
           placeholder={searchPlaceholder}
           isLoading={waitingForSearch || query.isFetching}
         />
-        <CommandList onScroll={onScroll}>
+        <CommandList onScroll={onScroll} aria-multiselectable={values ? true : undefined}>
           {loading && <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Buscando…</div>}
           {query.isError && <div className="p-4 text-sm text-destructive">No fue posible consultar. <button className="underline" onClick={() => void query.refetch()}>Reintentar</button></div>}
           {!loading && !query.isError && entries.length === 0 && <CommandEmpty>{emptyMessage}</CommandEmpty>}
           {!loading && !query.isError && entries.length > 0 && <div className="px-3 py-2 text-xs text-muted-foreground">{Math.min(entries.length, total).toLocaleString("es-CO")} de {total.toLocaleString("es-CO")}</div>}
-          {!(openOnTyping && (loading || query.isError)) && entries.map(({ option, item }) => <CommandItem key={option.value} value={option.value} onSelect={() => { if(item||option.value!==value)onChange(option.value, option, item); setOpen(false); }} className="items-start">
-            <Check className={cn("mr-2 mt-0.5 h-4 w-4 shrink-0", value === option.value ? "opacity-100" : "opacity-0")}/>
+          {!(openOnTyping && (loading || query.isError)) && entries.map(({ option, item }) => <CommandItem key={option.value} value={option.value} onSelect={() => {
+            if(values && onValuesChange){const next=values.includes(option.value)?values.filter(id=>id!==option.value):[...values,option.value];onValuesChange(next,entries.filter(entry=>next.includes(entry.option.value)).map(entry=>entry.option));return;}
+            if(item||option.value!==value)onChange(option.value, option, item); setOpen(false);
+          }} aria-selected={values?.includes(option.value)} className="items-start">
+            <Check className={cn("mr-2 mt-0.5 h-4 w-4 shrink-0", (values ? values.includes(option.value) : value === option.value) ? "opacity-100" : "opacity-0")}/>
             <span className="min-w-0"><span className="block truncate">{option.label}</span>{option.description && <small className="block truncate text-muted-foreground">{option.description}</small>}</span>
           </CommandItem>)}
           {query.hasNextPage && !(openOnTyping && (loading || query.isError)) && <Button type="button" variant="ghost" className="w-full" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin"/>}Cargar {pageSize} más</Button>}

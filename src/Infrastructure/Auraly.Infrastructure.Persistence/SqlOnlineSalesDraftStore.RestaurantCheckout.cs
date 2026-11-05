@@ -105,7 +105,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             OUTER APPLY (
               SELECT SUM(ingredient.QuantityPerUnit *
                          COALESCE(ingredientBalance.AverageUnitCost,0)) AS UnitCost
-              FROM catalog.ProductRecipeIngredients ingredient
+              FROM catalog.ProductCompositionComponents ingredient
               LEFT JOIN dbo.InventoryBalances ingredientBalance
                 ON ingredientBalance.BusinessId=addition.BusinessId
                AND ingredientBalance.WarehouseId=account.WarehouseId
@@ -359,13 +359,16 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using (var mapping = new SqlCommand("""
             INSERT sales.RestaurantCheckoutLines
               (DocumentId,LineNumber,TenantId,BusinessId,AccountId,
-               AdditionId,ProductRecipeVersionId)
+               AdditionId,ProductRecipeVersionId,WaiterPartyIdSnapshot,WaiterNameSnapshot)
             SELECT @DocumentId,input.LineNumber,@TenantId,@BusinessId,@AccountId,
-                   input.AdditionId,input.RecipeVersionId
+                   input.AdditionId,input.RecipeVersionId,addition.AddedByWaiterPartyIdSnapshot,
+                   CASE WHEN addition.AddedByWaiterPartyIdSnapshot IS NOT NULL THEN addition.AddedByName END
             FROM OPENJSON(@LinesJson) WITH (
               LineNumber int '$.LineNumber',
               AdditionId uniqueidentifier '$.AdditionId',
-              RecipeVersionId uniqueidentifier '$.RecipeVersionId') input;
+              RecipeVersionId uniqueidentifier '$.RecipeVersionId') input
+            JOIN sales.RestaurantAccountAdditions addition ON addition.AdditionId=input.AdditionId AND addition.AccountId=@AccountId
+              AND addition.TenantId=@TenantId AND addition.BusinessId=@BusinessId;
             """, connection, transaction))
         {
             mapping.Parameters.AddRange([

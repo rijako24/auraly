@@ -36,6 +36,7 @@ public sealed partial class ProductRepository : IProductRepository
                 price.BusinessId == businessId
                 && price.ProductId == product.ProductId
                 && price.IsActive
+                && (price.Amount > 0m || product.IsGenericProduct)
                 && price.ValidFrom <= now
                 && (price.ValidUntil == null || price.ValidUntil > now)));
         if (!includeInactive)
@@ -83,6 +84,7 @@ public sealed partial class ProductRepository : IProductRepository
                 price.BusinessId == businessId
                 && price.ProductId == product.ProductId
                 && price.IsActive
+                && (price.Amount > 0m || product.IsGenericProduct)
                 && price.ValidFrom <= now
                 && (price.ValidUntil == null || price.ValidUntil > now)));
         if (!includeInactive)
@@ -140,6 +142,8 @@ public sealed partial class ProductRepository : IProductRepository
             query = query.Where(product => product.AllowsFractionalSale == allowsFractionalSale);
         if (filter?.IsWeighable is { } isWeighable)
             query = query.Where(product => product.IsWeighable == isWeighable);
+        if (filter?.HasIngredients is { } hasIngredients) query = query.Where(product => product.HasIngredients == hasIngredients);
+        if (filter?.IsCombo is { } isCombo) query = query.Where(product => product.IsCombo == isCombo);
         if (filter?.IsIngredient is { } isIngredient)
             query = query.Where(product => product.IsIngredient == isIngredient);
         if (filter?.SupplierId is { } supplierId)

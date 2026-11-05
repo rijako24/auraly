@@ -261,7 +261,7 @@ public sealed partial class SqlAccountingStore
             reader.IsDBNull(21) ? null : reader.GetDecimal(21), reader.IsDBNull(22) ? null : reader.GetDecimal(22),
             reader.IsDBNull(20) ? null : reader.GetDateTimeOffset(20), NullableText(reader, 33), NullableText(reader, 34),
             NullableText(reader, 35), NullableText(reader, 36), NullableText(reader, 37), true,
-            mainPartyId, mainPartyName, mainPartyIdentification, reversalDocumentId, reversalStatus);
+            mainPartyId, mainPartyName, mainPartyIdentification, reversalDocumentId, reversalStatus,voucherType);
         var lines = new List<VoucherDraftLineView>();
         await reader.NextResultAsync(token);
         while (await reader.ReadAsync(token))

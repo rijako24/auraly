@@ -13,6 +13,9 @@ public sealed class SqlOrderStore(
     IAuralyIdGenerator ids,
     TimeProvider time) : IOrderStore
 {
+    // CapturedByUserId is authoritative; legacy producers stored the same identity in attributes.
+    private const string CreatorSql = "COALESCE(o.CapturedByUserId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.createdBy')))";
+
     public async Task<OrderPage> PageAsync(
         OrderActor actor,
         OrderPageRequest request,
@@ -93,8 +96,14 @@ public sealed class SqlOrderStore(
         }
         if (request.OnlyCreatedByActor)
         {
-            filters.Add("COALESCE(o.CapturedByUserId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(CASE WHEN ISJSON(o.CustomAttributesJson)=1 THEN o.CustomAttributesJson END,'$.createdBy')))=@CreatedByActor");
+            filters.Add($"{CreatorSql}=@CreatedByActor");
             parameters.Add(P("@CreatedByActor", actor.UserId));
+        }
+
+        if (request.CreatedByUserId is not null)
+        {
+            filters.Add($"{CreatorSql}=@CreatedByUserId");
+            parameters.Add(P("@CreatedByUserId", request.CreatedByUserId.Value));
         }
 
         AddStatusFilter(filters, parameters, request.Status);
@@ -111,17 +120,8 @@ public sealed class SqlOrderStore(
         parameters.Add(P("@Now", time.GetUtcNow()));
         parameters.Add(P("@Offset", (request.Page - 1) * request.PageSize));
         parameters.Add(P("@Take", request.PageSize));
-        var sql = $"""
-            SELECT
-              o.OrderId,
-              COALESCE(NULLIF(o.ExternalDocumentNumber,N''),CONCAT(N'PED-',LEFT(CONVERT(nvarchar(36),o.OrderId),8))) OrderNumber,
-              o.Status,o.Source,o.CustomerNameSnapshot,o.CustomerDocumentSnapshot,
-              o.CustomerPhoneSnapshot,o.Currency,o.Total,
-              (SELECT COUNT_BIG(1) FROM dbo.OrderItems oi WHERE oi.OrderId=o.OrderId) LineCount,
-              o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
-              document.ProcessingStatus,processingJob.Status,
-              claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
-              COUNT_BIG(1) OVER() TotalRows,o.CustomerId,o.PartySiteId,site.Name
+        // Count with the same predicates, then enrich only the selected page in one round trip.
+        var fromSql = $"""
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=o.PartySiteId
@@ -138,22 +138,49 @@ public sealed class SqlOrderStore(
               WHERE c.OrderId=o.OrderId AND c.ReleasedAt IS NULL AND c.ExpiresAt>@Now
               ORDER BY c.ClaimedAt DESC
             ) claim
-            WHERE {string.Join(" AND ", filters)}
-            ORDER BY o.CreatedAt DESC,o.OrderId DESC
-            OFFSET @Offset ROWS FETCH NEXT @Take ROWS ONLY;
+            """;
+        var sql = $"""
+            SELECT COUNT_BIG(1)
+            {fromSql}
+            WHERE {string.Join(" AND ", filters)};
+
+            WITH Page AS (
+              SELECT o.OrderId
+              {fromSql}
+              WHERE {string.Join(" AND ", filters)}
+              ORDER BY o.CreatedAt DESC,o.OrderId DESC
+              OFFSET @Offset ROWS FETCH NEXT @Take ROWS ONLY
+            )
+            SELECT
+              o.OrderId,
+              COALESCE(NULLIF(o.ExternalDocumentNumber,N''),CONCAT(N'PED-',LEFT(CONVERT(nvarchar(36),o.OrderId),8))) OrderNumber,
+              o.Status,o.Source,o.CustomerNameSnapshot,o.CustomerDocumentSnapshot,
+              o.CustomerPhoneSnapshot,o.Currency,o.Total,
+              (SELECT COUNT_BIG(1) FROM dbo.OrderItems oi WHERE oi.OrderId=o.OrderId) LineCount,
+              o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
+              document.ProcessingStatus,processingJob.Status,
+              claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
+              o.CustomerId,o.PartySiteId,site.Name,
+              {CreatorSql} CreatedByUserId,
+              COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(creator.FirstName,N' ',creator.LastName))),N''),creator.Username) CreatedByName
+            {fromSql}
+            INNER JOIN Page selected ON selected.OrderId=o.OrderId
+            LEFT JOIN dbo.AppUsers creator ON creator.UserId={CreatorSql} AND creator.TenantId=b.TenantId
+            ORDER BY o.CreatedAt DESC,o.OrderId DESC;
             """;
 
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddRange(parameters.ToArray());
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var items = new List<OrderListItem>();
-        var total = 0;
+        await reader.ReadAsync(cancellationToken);
+        var total = checked((int)reader.GetInt64(0));
+        await reader.NextResultAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
             var hasInvoice = !reader.IsDBNull(12);
             var storedStatus = reader.GetInt32(2);
             var claim = ReadClaim(reader, 15, actor);
-            total = checked((int)reader.GetInt64(20));
             items.Add(new OrderListItem(
                 reader.GetGuid(0),
                 reader.GetString(1),
@@ -173,9 +200,11 @@ public sealed class SqlOrderStore(
                 OrderRules.CanInvoice(storedStatus, reader.GetBoolean(11), hasInvoice),
                 hasInvoice ? reader.GetGuid(12) : null,
                 claim,
+                reader.IsDBNull(20) ? null : reader.GetGuid(20),
                 reader.IsDBNull(21) ? null : reader.GetGuid(21),
-                reader.IsDBNull(22) ? null : reader.GetGuid(22),
-                NullableString(reader, 23)));
+                NullableString(reader, 22),
+                reader.IsDBNull(23) ? null : reader.GetGuid(23),
+                NullableString(reader, 24)));
         }
 
         return new OrderPage(

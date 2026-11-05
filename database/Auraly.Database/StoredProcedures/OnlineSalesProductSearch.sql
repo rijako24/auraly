@@ -77,6 +77,7 @@ BEGIN
                    pp.TargetMarginPercent,pp.EffectiveMarginPercent
         FROM dbo.ProductPrices pp
         WHERE pp.BusinessId=@BusinessId AND pp.ProductId=p.ProductId AND pp.IsActive=1
+          AND (pp.Amount>0 OR p.IsGenericProduct=1)
           AND pp.ValidFrom<=SYSDATETIMEOFFSET()
           AND(pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
         ORDER BY pp.ValidFrom DESC,pp.ProductPriceId) price

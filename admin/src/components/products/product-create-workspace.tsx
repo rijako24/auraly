@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Barcode, Boxes, Check, ChefHat, CircleDollarSign, Images, Link2, PackagePlus, ReceiptText, Scale, Tags, Trash2, Truck } from "lucide-react";
 import { toast } from "sonner";
@@ -23,7 +23,8 @@ import { productOffersApi } from "@/services/api/product-offers";
 import { PendingProductImagePicker, type PendingProductImage } from "@/components/products/product-image-gallery";
 import { ProductPicker } from "@/components/products/product-picker";
 import { ProductRecipeFields } from "@/components/products/product-recipe-fields";
-import type { ProductRecipeIngredient } from "@/services/api/product-recipes";
+import { ProductCompositionSelector } from "@/components/products/product-composition-selector";
+import { productRecipesApi, type ProductRecipeIngredient } from "@/services/api/product-recipes";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { taxProfilesApi } from "@/services/api/tax-profiles";
 import { partiesApi } from "@/services/api/parties";
@@ -48,6 +49,7 @@ const sections = [
 interface Props { open: boolean; onOpenChange: (open: boolean) => void; onCreated?: (productId: string) => void }
 
 interface CreateState {
+  compositionKind: string;
   reference: string; name: string; description: string;
   productCategoryId: string | null; productBrandId: string | null; baseUnitCode: string;
   unitGrossWeightKg: number | null;
@@ -71,6 +73,7 @@ interface ProductCreateDraft {
 }
 
 const initialState: CreateState = {
+  compositionKind: "Ingredients",
   reference: "", name: "", description: "", productCategoryId: null,
   productBrandId: null, baseUnitCode: "EA", unitGrossWeightKg: null, isGenericProduct: false, isIngredient: false, manageInventory: true, allowsFractionalSale: false,
   isWeighable: false, salesTaxProfileId: "", purchaseTaxProfileId: "",
@@ -130,20 +133,35 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         : "No fue posible limpiar la recuperación local del producto."),
   });
   const categories = useProductCategories(false);
+  const compositionKinds = useReferenceOptions("product-composition-kind", open);
   const purchasePresentations = useReferenceOptions("purchase-presentation", open);
-  const brands = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands, enabled: open, staleTime: 5 * 60 * 1000 });
+  const brands = useQuery({ queryKey: ["product-brands",businessId], queryFn: productMerchandisingApi.brands, enabled: open, staleTime: 5 * 60 * 1000 });
   const units = useQuery({ queryKey: ["product-units"], queryFn: productMerchandisingApi.units, enabled: open, staleTime: 5 * 60 * 1000 });
   const taxes = useQuery({ queryKey: ["tax-profiles", businessId], queryFn: () => taxProfilesApi.list(false), enabled: open && !!businessId, staleTime: 5 * 60 * 1000 });
   const chain = useMemo(() => categoryChain(categories.data ?? [], form.productCategoryId), [categories.data, form.productCategoryId]);
   const salesTax = taxes.data?.find((item) => item.taxProfileId === form.salesTaxProfileId);
   const purchaseTax = taxes.data?.find((item) => item.taxProfileId === form.purchaseTaxProfileId);
   const selectedUnit = units.data?.find((item) => item.code === form.baseUnitCode);
+  const validComponents = recipeLines.length > 0 && recipeLines.every(line => Number.isFinite(line.quantityPerUnit) && line.quantityPerUnit > 0);
+  const compositionCost = useQuery({ queryKey: ["composition-cost", businessId, recipeLines],
+    queryFn: () => productRecipesApi.compositionCost(recipeLines.map(line => ({ ingredientProductId: line.ingredientProductId, quantityPerUnit: line.quantityPerUnit }))),
+    enabled: open && !!businessId && validComponents, retry: false });
+  useEffect(() => {
+    if (!validComponents || !compositionCost.data) return;
+    setForm(current => {
+      const next = recalculateProductPricing("cost", compositionCost.data.costBasisAmount,
+        { cost: current.cost, margin: current.margin, salePrice: current.salePrice,
+          salesTaxRate: taxes.data?.find(tax => tax.taxProfileId === current.salesTaxProfileId)?.rate ?? 0 });
+      return { ...current, cost: next.cost, salePrice: next.salePrice };
+    });
+  }, [compositionCost.data, validComponents, taxes.data]);
   const salesTaxRate = salesTax?.rate ?? 0;
   const netSalePrice = salesTaxRate > 0 ? form.salePrice / (1 + salesTaxRate / 100) : form.salePrice;
   const marginAmount = Math.max(0, netSalePrice - form.cost);
 
   const create = useMutation({
     mutationFn: async () => {
+      if (recipeLines.length > 0 && (compositionCost.isFetching || compositionCost.isError || !compositionCost.data)) throw new Error("Espera a que se calcule el costo de la composición y corrige los componentes sin costo.");
       if (!businessId) throw new Error("Selecciona un negocio antes de crear el producto.");
       const nextErrors = validateProductCreateFields(form);
       setFieldErrors(nextErrors);
@@ -194,7 +212,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
           ({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor })),
         conversionMaximumLossPercent: linkedProducts.some((item) => item.allowsConversion) ? conversionMaximumLossPercent ?? 0 : null,
         ...(!form.isGenericProduct && (!form.isIngredient || form.manageInventory) && recipeLines.length > 0 ? {
-          recipeExpectedVersion: 0,
+          recipeExpectedVersion: 0, compositionKind: form.compositionKind ?? "Ingredients",
           recipeIngredients: recipeLines.map((line) => ({ ingredientProductId: line.ingredientProductId, quantityPerUnit: line.quantityPerUnit })),
         } : {}),
 
@@ -294,8 +312,8 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
                 {form.isWeighable && <div className="mt-4 grid items-start gap-4 rounded-xl bg-muted/30 p-4 md:grid-cols-3 [&>div>label]:flex [&>div>label]:min-h-10 [&>div>label]:items-center [&>div>p]:min-h-8"><Field label="Código del producto en la balanza"><Input value={form.scaleCode} onChange={(e) => setForm({ ...form, scaleCode: e.target.value })} placeholder="Ej. 125" /><p className="text-xs text-muted-foreground">También conocido como PLU.</p></Field><Field label="Inicio del código de balanza"><Input value={form.scalePrefix} onChange={(e) => setForm({ ...form, scalePrefix: e.target.value })} placeholder="Ej. 20" /><p className="text-xs text-muted-foreground">Identifica las etiquetas generadas por la balanza.</p></Field><Field label="Decimales del peso"><Input type="number" min={0} max={6} value={form.scaleDecimals} onChange={(e) => setForm({ ...form, scaleDecimals: Number(e.target.value) })} /><p className="text-xs text-muted-foreground">3 interpreta 1250 como 1,250 kg.</p></Field></div>}
               </Section>
 
-              {!form.isGenericProduct && (!form.isIngredient || form.manageInventory) && <Section id="new-recipe" icon={ChefHat} title="Ingredientes de la receta" description="Configura cuánto ingrediente consume cada unidad terminada.">
-                {businessId && <ProductRecipeFields businessId={businessId} lines={recipeLines} onChange={setRecipeLines} disabled={create.isPending} inputId="new-recipe-ingredient-search" />}
+              {!form.isGenericProduct && (!form.isIngredient || form.manageInventory) && <Section id="new-recipe" icon={ChefHat} title="Ingredientes o combo" description="Selecciona una sola composición y las cantidades por unidad.">
+                {businessId && <div className="space-y-5"><ProductCompositionSelector value={form.compositionKind ?? "Ingredients"} disabled={compositionKinds.isPending || compositionKinds.isError} options={compositionKinds.data??[]} onChange={value => { setRecipeLines([]); setForm({ ...form, compositionKind: value, salesTaxProfileId: value === "Combo" ? "" : form.salesTaxProfileId }); }}/><ProductRecipeFields businessId={businessId} lines={recipeLines} compositionKind={form.compositionKind ?? "Ingredients"} onChange={setRecipeLines} disabled={create.isPending} inputId="new-recipe-ingredient-search" /></div>}
               </Section>}
 
               {!form.isGenericProduct && <Section id="new-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. El inventario puede compartirse y el costo puede derivarse; cada producto conserva sus precios propios.">
@@ -325,17 +343,17 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
               {!form.isGenericProduct && <Section id="new-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido para que cada producto tenga trazabilidad de compra desde su creación.">
                 <div className="grid items-start gap-4 lg:grid-cols-3"><Field label="Proveedor principal *" error={fieldErrors.supplierId}><PartyRoleSelect role="Supplier" value={form.supplierId??""} placeholder="Busca un proveedor" onResolved={(party) => setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" })} onChange={(value, party) => { setForm((current) => ({ ...current, supplierId:value })); if (party) setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" }); }}/></Field><Field label="Código del proveedor"><Input value={form.supplierProductCode} onChange={(e) => setForm({ ...form, supplierProductCode: e.target.value })} /></Field><Field label="Empaque en que lo entrega"><Select value={form.packageName} onValueChange={(value) => setForm({ ...form, packageName: value })}><SelectTrigger><SelectValue placeholder="Selecciona el empaque" /></SelectTrigger><SelectContent>{(purchasePresentations.data ?? []).map((option) => <SelectItem key={option.id} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></Field><Field label="Contenido por empaque"><Input type="number" min="0.000001" step="0.001" value={form.unitsPerPackage} onChange={(e) => setForm({ ...form, unitsPerPackage: Number(e.target.value) })} /></Field></div>
               </Section>}
-              <Section id="new-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio público. El precio preparado y el público nacen con el mismo valor.">
-                <div className={`grid gap-4 ${form.isGenericProduct ? "md:grid-cols-1" : "md:grid-cols-3"}`}><Field label="IVA de venta *" error={fieldErrors.salesTaxProfileId}><Select value={form.salesTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate ?? 0; const next = recalculateProductPricing("cost", form.cost, { cost: form.cost, margin: form.margin, salePrice: form.salePrice, salesTaxRate: rate }); setForm({ ...form, salesTaxProfileId: value, salePrice: next.salePrice }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.salesTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field>{!form.isGenericProduct && <><Field label="IVA de compra *" error={fieldErrors.purchaseTaxProfileId}><Select value={form.purchaseTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate; setForm({ ...form, purchaseTaxProfileId: value, purchaseTaxTreatment: normalizeProductPurchaseTaxTreatment(rate, form.purchaseTaxTreatment) }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.purchaseTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field><Field label="Tratamiento del IVA de compra"><Select value={form.purchaseTaxTreatment} disabled={(purchaseTax?.rate ?? 0) === 0} onValueChange={(value) => setForm({ ...form, purchaseTaxTreatment: value as CreateState["purchaseTaxTreatment"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="DeductibleInputVat">IVA descontable</SelectItem><SelectItem value="CapitalizedCost">Mayor valor del costo</SelectItem><SelectItem value="NotApplicable">No aplica</SelectItem></SelectContent></Select></Field></>}</div>
+              <Section id="new-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description={recipeLines.length > 0 ? "Costo automático con IVA de los componentes. El precio queda preparado para publicación manual." : "El IVA se incluye en el precio público. El precio preparado y el público nacen con el mismo valor."}>
+                <div className={`grid gap-4 ${form.isGenericProduct ? "md:grid-cols-1" : "md:grid-cols-3"}`}><Field label="IVA de venta *" error={fieldErrors.salesTaxProfileId}><Select value={form.salesTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate ?? 0; const next = recalculateProductPricing("cost", form.cost, { cost: form.cost, margin: form.margin, salePrice: form.salePrice, salesTaxRate: rate }); setForm({ ...form, salesTaxProfileId: value, salePrice: next.salePrice }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.salesTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).filter(tax => form.compositionKind !== "Combo" || tax.rate === 0).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field>{!form.isGenericProduct && <><Field label="IVA de compra *" error={fieldErrors.purchaseTaxProfileId}><Select value={form.purchaseTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate; setForm({ ...form, purchaseTaxProfileId: value, purchaseTaxTreatment: normalizeProductPurchaseTaxTreatment(rate, form.purchaseTaxTreatment) }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.purchaseTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field><Field label="Tratamiento del IVA de compra"><Select value={form.purchaseTaxTreatment} disabled={(purchaseTax?.rate ?? 0) === 0} onValueChange={(value) => setForm({ ...form, purchaseTaxTreatment: value as CreateState["purchaseTaxTreatment"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="DeductibleInputVat">IVA descontable</SelectItem><SelectItem value="CapitalizedCost">Mayor valor del costo</SelectItem><SelectItem value="NotApplicable">No aplica</SelectItem></SelectContent></Select></Field></>}</div>
                 {!form.isGenericProduct && <div className="mt-5 space-y-5">
                   <div><h4 className="font-semibold">Datos para calcular el precio</h4><p className="text-xs text-muted-foreground">Costo y margen determinan el precio antes de IVA.</p></div>
-                  <div className="grid gap-4 lg:grid-cols-2"><MoneyField label="Costo base *" kind="currency" value={form.cost} error={fieldErrors.cost} onChange={(value) => changePricing("cost", value)} /><MoneyField label="Margen sobre el precio antes de IVA *" kind="percent" value={form.margin} error={fieldErrors.margin} onChange={(value) => changePricing("margin", value)} /></div>
+                  <div className="grid gap-4 lg:grid-cols-2"><MoneyField label="Costo base *" disabled={recipeLines.length > 0} kind="currency" value={form.cost} error={fieldErrors.cost} onChange={(value) => changePricing("cost", value)} /><MoneyField label="Margen sobre el precio antes de IVA *" kind="percent" value={form.margin} error={fieldErrors.margin} onChange={(value) => changePricing("margin", value)} /></div>
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 text-emerald-950">
                     <div className="mb-3"><h4 className="font-semibold">Así se forma el precio de venta</h4><p className="text-xs text-emerald-900/75">El margen se calcula antes del IVA; después se agrega el IVA de venta seleccionado arriba.</p></div>
                     <div className="grid items-stretch gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr]"><CreateFormulaValue label="Costo base" value={form.cost} /><CreateFormulaSign value={`÷ (1 − ${form.margin.toLocaleString("es-CO")}%)`} /><CreateFormulaValue label="Precio antes de IVA" value={netSalePrice} detail={`Margen: ${formatCurrency(marginAmount)}`} /><CreateFormulaSign value="+" /><CreateFormulaValue label={`IVA de venta (${salesTaxRate}%)`} value={Math.max(0, form.salePrice - netSalePrice)} /><CreateFormulaSign value="=" /><div className={`rounded-xl bg-emerald-600 p-3 text-white ${fieldErrors.salePrice ? "ring-2 ring-destructive" : ""}`}><Label className="text-xs text-white">Precio de venta preparado · IVA incluido *</Label><FormattedNumberInput className="mt-2 h-11 border-white/30 bg-white text-lg font-bold text-emerald-950" kind="currency" value={form.salePrice} onValueChange={(next) => changePricing("salePrice", next ?? 0)} /><p className="mt-2 text-xs text-white/75">Al cambiarlo se conserva el costo y se recalcula el margen.</p>{fieldErrors.salePrice && <p className="mt-2 text-sm font-medium text-red-100">{fieldErrors.salePrice}</p>}</div></div>
                     <p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs">Fórmula completa: precio antes de IVA = costo ÷ (1 − margen %). Precio de venta = precio antes de IVA + IVA.</p>
                   </div>
-                  <p className="text-xs text-muted-foreground">Al crear el producto, costo, margen, precio preparado y precio público quedan completos.</p>
+                  <p className="text-xs text-muted-foreground">{recipeLines.length>0?"Al crear, el precio queda preparado. Publícalo manualmente después de revisarlo.":"Al crear el producto, costo, margen, precio preparado y precio público quedan completos."}</p>
                 </div>}
               </Section>
               <Section id="new-images" icon={Images} title="Imágenes del producto" description="Añade varias imágenes, revisa su vista previa y elige una portada.">
@@ -356,7 +374,7 @@ function Field({ label, children, className = "", error }: { label: string; chil
 function Toggle({ label, detail, checked, disabled = false, onChange }: { label: string; detail: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) { return <div className={`flex items-center justify-between gap-3 rounded-xl border bg-background p-3 ${disabled ? "opacity-60" : ""}`}><div><p className="text-sm font-medium">{label}</p><p className="text-xs text-muted-foreground">{detail}</p></div><Switch checked={checked} disabled={disabled} onCheckedChange={onChange} /></div>; }
 function FamilyOption({ label, detail, checked, onToggle, children }: { label: string; detail: string; checked: boolean; onToggle: (checked: boolean) => void; children: React.ReactNode }) { return <div className="flex h-full min-w-0 flex-col rounded-xl border bg-background p-3"><div className="flex min-h-16 items-start justify-between gap-3"><div><p className="text-sm font-medium">{label}</p><p className="text-xs text-muted-foreground">{detail}</p></div><Switch checked={checked} onCheckedChange={onToggle} /></div><div className="mt-auto border-t pt-3">{children}</div></div>; }
 function FamilyNumberField({ label, disabled, value, kind, onValue }: { label: string; disabled: boolean; value: number | null; kind?: "percent"; onValue: (value: number | null) => void }) { return <div className="min-w-0 space-y-1.5"><Label className="flex min-h-10 items-end text-xs leading-tight">{label}</Label><FormattedNumberInput disabled={disabled} kind={kind} value={value ?? ""} onValueChange={onValue} /></div>; }
-function MoneyField({ label, kind, value, onChange, error }: { label: string; kind: "currency" | "percent"; value: number; onChange: (value: number) => void; error?: string }) { return <div className={`rounded-xl border bg-background p-4 ${error ? "border-destructive ring-1 ring-destructive/20" : ""}`}><Label>{label}</Label><FormattedNumberInput invalid={Boolean(error)} className="mt-3 h-12 text-lg font-semibold" kind={kind} value={value} onValueChange={(next) => onChange(next ?? 0)} />{error && <p className="mt-2 text-sm text-destructive">{error}</p>}</div>; }
+function MoneyField({ label, kind, value, onChange, error, disabled = false }: { label: string; kind: "currency" | "percent"; value: number; onChange: (value: number) => void; error?: string; disabled?: boolean }) { return <div className={`rounded-xl border bg-background p-4 ${error ? "border-destructive ring-1 ring-destructive/20" : ""}`}><Label>{label}</Label><FormattedNumberInput disabled={disabled} invalid={Boolean(error)} className="mt-3 h-12 text-lg font-semibold" kind={kind} value={value} onValueChange={(next) => onChange(next ?? 0)} />{error && <p className="mt-2 text-sm text-destructive">{error}</p>}</div>; }
 function CreateFormulaValue({ label, value, detail }: { label: string; value: number; detail?: string }) { return <div className="p-3"><p className="text-xs text-emerald-900/70">{label}</p><p className="mt-1 text-lg font-bold">{formatCurrency(value)}</p>{detail && <p className="mt-1 text-xs text-emerald-900/70">{detail}</p>}</div>; }
 function CreateFormulaSign({ value }: { value: string }) { return <div className="flex min-w-12 items-center justify-center px-1 py-2 text-center text-xs font-bold text-emerald-800">{value}</div>; }
 function categoryChain(categories: Array<{ productCategoryId: string; parentProductCategoryId: string | null; depth: number }>, selectedId: string | null) { const byId = new Map(categories.map((item) => [item.productCategoryId, item])); const result: typeof categories = []; let current = selectedId ? byId.get(selectedId) : undefined; while (current) { result.unshift(current); current = current.parentProductCategoryId ? byId.get(current.parentProductCategoryId) : undefined; } return result; }

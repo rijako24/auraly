@@ -169,6 +169,7 @@ export function OrdersWorkspace({
   const [createdTo, setCreatedTo] = useState(localOrderDateValue);
   const [routeId, setRouteId] = useState("All");
   const [sellerId, setSellerId] = useState("all");
+  const [createdByUserId, setCreatedByUserId] = useState("all");
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [selected, setSelected] = useState<Map<string, CommerceOrderListItem>>(new Map());
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
@@ -203,8 +204,9 @@ export function OrdersWorkspace({
       : undefined,
     routeId: routeId === "All" ? undefined : routeId,
     sellerId: sellerId !== "all" ? sellerId : undefined,
+    createdByUserId: createdByUserId !== "all" ? createdByUserId : undefined,
     source,
-  }), [createdFrom, createdTo, customerId, product, query, routeId, sellerId, source, status]);
+  }), [createdByUserId, createdFrom, createdTo, customerId, product, query, routeId, sellerId, source, status]);
 
   const refresh = useCallback(async (silent = false) => {
     if (!connected) {
@@ -272,6 +274,7 @@ export function OrdersWorkspace({
     status !== "All" ? status : "",
     routeId !== "All" ? routeId : "",
     sellerId !== "all" ? sellerId : "",
+    createdByUserId !== "all" ? createdByUserId : "",
     createdFrom,
     createdTo,
   ].filter(Boolean).length;
@@ -593,15 +596,16 @@ export function OrdersWorkspace({
       {!compact && filtersExpanded && (
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
-            <div><h3 className="font-semibold text-slate-950">Filtrar pedidos</h3><p className="text-sm text-slate-500">Combina cliente, vendedor, producto, estado y rango de fechas.</p></div>
+            <div><h3 className="font-semibold text-slate-950">Filtrar pedidos</h3><p className="text-sm text-slate-500">Combina cliente, vendedor, usuario creador, producto, estado y rango de fechas.</p></div>
             <Button type="button" variant="ghost" size="sm" onClick={() => {
-              setCustomerId("all"); setProduct(""); setStatus(initialStatus); setRouteId("All"); setSellerId("all");
+              setCustomerId("all"); setProduct(""); setStatus(initialStatus); setRouteId("All"); setSellerId("all"); setCreatedByUserId("all");
               setCreatedFrom(localOrderDateValue()); setCreatedTo(localOrderDateValue()); setPage(1);
             }}>Restablecer</Button>
           </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <FilterField label="Cliente"><PartyRoleSelect role="Customer" value={customerId} leadingOptions={[{ value: "all", label: "Todos los clientes" }]} placeholder="Buscar cliente" onChange={(value) => { setCustomerId(value); setPage(1); }} /></FilterField>
             <FilterField label="Vendedor"><PartyRoleSelect role="Seller" value={sellerId} leadingOptions={[{ value: "all", label: "Todos los vendedores" }]} placeholder="Buscar vendedor" onChange={(value) => { setSellerId(value); setPage(1); }} /></FilterField>
+            <FilterField label="Creado por"><PartyRoleSelect role="User" value={createdByUserId} leadingOptions={[{ value: "all", label: "Todos los usuarios" }]} placeholder="Buscar usuario creador" onChange={(value) => { setCreatedByUserId(value); setPage(1); }} /></FilterField>
             <FilterField label="Producto"><Input value={product} onChange={(event) => { setProduct(event.target.value); setPage(1); }} placeholder="Nombre, código o referencia" /></FilterField>
             <FilterField label="Estado"><OrderStatusSelect value={status} onChange={(value) => { setStatus(value); setPage(1); }} /></FilterField>
             {routeOptions.length > 0 && <FilterField label="Ruta"><Select value={routeId} onValueChange={(next) => { setRouteId(next); setPage(1); }}><SelectTrigger><SelectValue placeholder="Todas las rutas" /></SelectTrigger><SelectContent><SelectItem value="All">Todas las rutas</SelectItem>{routeOptions.map((route) => <SelectItem key={route.routeId} value={route.routeId}>{route.name}</SelectItem>)}</SelectContent></Select></FilterField>}
@@ -833,8 +837,12 @@ export function OrdersWorkspace({
                       </div>
                       <p className="mt-1 truncate text-xs text-slate-500">
                         {order.lineCount} {order.lineCount === 1 ? "producto" : "productos"} ·{" "}
-                        {sourceLabel(order.source)} · {date.format(new Date(order.createdAt))}
+                        {sourceLabel(order.source)}
                       </p>
+                      <p className="mt-1 truncate text-xs text-slate-600" title={`Creado por: ${order.createdByName || "Usuario no registrado"}`}>
+                        Creado por: {order.createdByName || "Usuario no registrado"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500">{date.format(new Date(order.createdAt))}</p>
                     </button>
                     {!compact && (
                       <div className="col-start-2 min-w-0 xl:col-auto">

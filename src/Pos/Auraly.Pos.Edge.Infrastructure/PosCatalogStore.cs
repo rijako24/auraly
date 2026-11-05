@@ -510,13 +510,14 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             InventoryProductId = (item.InventoryProductId ?? item.ProductId).ToString("D"),
             item.InventoryFactor,
             IsGenericProduct = item.IsGenericProduct ? 1 : 0,
-            IsIngredient = item.IsIngredient ? 1 : 0
+            IsIngredient = item.IsIngredient ? 1 : 0,
+            HasIngredients = item.HasIngredients ? 1 : 0, IsCombo = item.IsCombo ? 1 : 0
         });
         await ExecuteAsync(connection, transaction, $"""
             INSERT INTO {products}
               (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
                ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent,
-               InventoryProductId,InventoryFactor,IsGenericProduct,IsIngredient)
+               InventoryProductId,InventoryFactor,IsGenericProduct,IsIngredient,HasIngredients,IsCombo)
             SELECT
               json_extract(value,'$.ProductId'),json_extract(value,'$.ProductCode'),json_extract(value,'$.Reference'),json_extract(value,'$.Name'),
               json_extract(value,'$.BaseUnitCode'),json_extract(value,'$.TaxCode'),json_extract(value,'$.TaxRate'),json_extract(value,'$.UnitPrice'),
@@ -525,7 +526,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               json_extract(value,'$.CategoryName'),json_extract(value,'$.ProductCategoryId'),json_extract(value,'$.ProductBrandId'),
               json_extract(value,'$.ProductCategoryAncestorIds'),json_extract(value,'$.AverageUnitCost'),json_extract(value,'$.LatestUnitCost'),
               json_extract(value,'$.TargetMarginPercent'),json_extract(value,'$.InventoryProductId'),json_extract(value,'$.InventoryFactor'),
-              json_extract(value,'$.IsGenericProduct'),json_extract(value,'$.IsIngredient')
+              json_extract(value,'$.IsGenericProduct'),json_extract(value,'$.IsIngredient'),
+              json_extract(value,'$.HasIngredients'),json_extract(value,'$.IsCombo')
             FROM json_each(@Rows)
             WHERE true
             ON CONFLICT(ProductId) DO UPDATE SET
@@ -539,7 +541,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
               AverageUnitCost=excluded.AverageUnitCost,LatestUnitCost=excluded.LatestUnitCost,
               TargetMarginPercent=excluded.TargetMarginPercent,
               InventoryProductId=excluded.InventoryProductId,InventoryFactor=excluded.InventoryFactor,
-              IsGenericProduct=excluded.IsGenericProduct,IsIngredient=excluded.IsIngredient;
+              IsGenericProduct=excluded.IsGenericProduct,IsIngredient=excluded.IsIngredient,
+              HasIngredients=excluded.HasIngredients,IsCombo=excluded.IsCombo;
             """, [P("@Rows", JsonSerializer.Serialize(productRows))], ct);
 
         var barcodeRows = effectiveItems.SelectMany(item =>
@@ -597,7 +600,9 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 Guid.Parse(reader.GetString(reader.GetOrdinal("InventoryProductId"))),
             Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("InventoryFactor")), CultureInfo.InvariantCulture),
             reader.GetInt64(reader.GetOrdinal("IsGenericProduct")) == 1,
-            reader.GetInt64(reader.GetOrdinal("IsIngredient")) == 1);
+            reader.GetInt64(reader.GetOrdinal("IsIngredient")) == 1,
+            reader.GetInt64(reader.GetOrdinal("HasIngredients")) == 1,
+            reader.GetInt64(reader.GetOrdinal("IsCombo")) == 1);
     }
 
     private static async Task<PosCatalogStatus> StatusAsync(
@@ -700,6 +705,13 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 alter.CommandText = $"ALTER TABLE {table} ADD COLUMN IsGenericProduct INTEGER NOT NULL DEFAULT 0;";
                 await alter.ExecuteNonQueryAsync(ct);
             }
+            foreach (var classificationColumn in new[] { "HasIngredients", "IsCombo" })
+            {
+                if (columns.Contains(classificationColumn)) continue;
+                await using var classification = connection.CreateCommand();
+                classification.CommandText = $"ALTER TABLE {table} ADD COLUMN {classificationColumn} INTEGER NOT NULL DEFAULT 0;";
+                await classification.ExecuteNonQueryAsync(ct);
+            }
             if (!columns.Contains("IsIngredient"))
             {
                 await using var alter = connection.CreateCommand();
@@ -778,7 +790,9 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         InventoryProductId TEXT NULL,
         InventoryFactor TEXT NOT NULL DEFAULT '1',
         IsGenericProduct INTEGER NOT NULL DEFAULT 0,
-        IsIngredient INTEGER NOT NULL DEFAULT 0
+        IsIngredient INTEGER NOT NULL DEFAULT 0,
+        HasIngredients INTEGER NOT NULL DEFAULT 0,
+        IsCombo INTEGER NOT NULL DEFAULT 0
         """;
 
     private static readonly string Schema = $"""

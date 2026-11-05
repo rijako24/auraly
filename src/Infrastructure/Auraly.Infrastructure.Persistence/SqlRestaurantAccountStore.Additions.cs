@@ -81,7 +81,7 @@ public sealed partial class SqlRestaurantAccountStore
                  OriginalQuantity,
                  AllowsFractionalSale,
                  PublicUnitPrice,PromotionDiscountPerUnit,CurrencyCode,
-                 PriceSource,AddedByUserId,AddedByName,AddedAt,UpdatedAt,
+                 PriceSource,AddedByUserId,AddedByName,AddedByWaiterPartyIdSnapshot,AddedAt,UpdatedAt,
                  Status,ManageStockAtSend,ProductRecipeVersionId)
             SELECT @AdditionId,@TenantId,@BusinessId,@AccountId,@ProductId,
                    @ReplacementOfCancellationId,
@@ -97,7 +97,7 @@ public sealed partial class SqlRestaurantAccountStore
                    COALESCE(original.CurrencyCode,@CurrencyCode),
                    COALESCE(original.PriceSource,@PriceSource),[user].UserId,
                    LEFT(CONCAT([user].FirstName,N' ',[user].LastName),201),
-                   @Now,@Now,
+                   waiter.PartyId,@Now,@Now,
                    CASE WHEN EXISTS (
                      SELECT 1 FROM sales.RestaurantProductRoutes route
                      WHERE route.BusinessId=@BusinessId
@@ -106,7 +106,7 @@ public sealed partial class SqlRestaurantAccountStore
                    product.ManageStock,
                    CASE WHEN product.ManageStock=0 THEN (
                      SELECT TOP(1) versionRow.ProductRecipeVersionId
-                     FROM catalog.ProductRecipeVersions versionRow
+                     FROM catalog.ProductCompositionVersions versionRow
                      WHERE versionRow.TenantId=@TenantId
                        AND versionRow.ProductId=@ProductId
                        AND versionRow.IsEnabled=1

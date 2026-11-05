@@ -2,6 +2,35 @@ namespace Auraly.Commerce.Accounting.Infrastructure;
 
 public sealed partial class SqlAccountingStore
 {
+    private const string TraceabilityFilterValidationSql="""
+        IF @DocumentType IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.Options WHERE CatalogCode=N'accounting-document-type' AND Code=@DocumentType AND IsActive=1)
+          THROW 51799,N'El tipo de operación no es válido.',1;
+        IF @Status IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.Options WHERE CatalogCode=N'accounting-document-status' AND Code=@Status AND IsActive=1)
+          THROW 51799,N'El estado no es válido.',1;
+        IF @VoucherTypeCode IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.Options WHERE CatalogCode=N'accounting-voucher-type' AND Code=@VoucherTypeCode AND IsActive=1)
+          THROW 51799,N'El tipo de comprobante no es válido.',1;
+        """;
+
+    private const string TraceabilityVoucherFilterSql="""
+        IF @VoucherTypeCode IS NOT NULL
+        BEGIN
+          DELETE selected FROM #DocumentKeys selected
+          WHERE NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments source
+            WHERE source.SourceDocumentId=selected.SourceDocumentId AND source.SourceDocumentType=selected.SourceDocumentType
+              AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId AND source.VoucherTypeCode=@VoucherTypeCode)
+            AND NOT EXISTS(SELECT 1 FROM accounting.VoucherDrafts draft
+            WHERE draft.DocumentId=selected.SourceDocumentId AND draft.DocumentType=selected.SourceDocumentType
+              AND draft.TenantId=@TenantId AND draft.BusinessId=@BusinessId AND draft.VoucherTypeCode=@VoucherTypeCode);
+        END;
+        """;
+
+    private static async Task<Microsoft.Data.SqlClient.SqlDataReader> ExecuteTraceabilityReaderAsync(
+        Microsoft.Data.SqlClient.SqlCommand command,CancellationToken cancellationToken)
+    {
+        try{return await command.ExecuteReaderAsync(cancellationToken);}
+        catch(Microsoft.Data.SqlClient.SqlException error) when(error.Number==51799)
+        {throw new Auraly.Commerce.Accounting.Application.AccountingValidationException(error.Message);}
+    }
     private const string TraceabilityDraftPostingSql = """
             SELECT DocumentId SourceDocumentId,DocumentType SourceDocumentType,OccurredAt,N'Created' Status,TenantId,BusinessId
             FROM accounting.VoucherDrafts WHERE SentAt IS NULL
@@ -211,7 +240,7 @@ public sealed partial class SqlAccountingStore
     private static string TraceabilityDocumentKeysSql(string? search, Guid? partyId, bool includeEntry = true,
         bool reuseAcceptedPartyMetadata = false)
     {
-        var preparation = TraceabilityMatchPreparationSql(search, partyId);
+        var preparation = TraceabilityFilterValidationSql+"\n"+TraceabilityMatchPreparationSql(search, partyId);
         var selection = "SELECT job.SourceDocumentId,job.SourceDocumentType,job.OccurredAt,job.Status" +
             (includeEntry ? ",entry.EntryId" : "");
         if (TraceabilityMatchesTableSql(search, partyId) is not { } matches)
@@ -267,9 +296,12 @@ public sealed partial class SqlAccountingStore
               CONVERT(bit,CASE WHEN draft.DocumentId IS NOT NULL THEN 1 ELSE 0 END) HasManualDraft,
               mainParty.PartyId MainPartyId,
               mainParty.DisplayName MainPartyName,mainParty.Identification MainPartyIdentification,
-              reversal.SourceDocumentId ReversalDocumentId,reversalJob.Status ReversalStatus
+              reversal.SourceDocumentId ReversalDocumentId,reversalJob.Status ReversalStatus,
+              COALESCE(accepted.VoucherTypeCode,draft.VoucherTypeCode) VoucherTypeCode
             INTO #Documents
             FROM #DocumentPage job
+            LEFT JOIN dbo.AccountingSourceDocuments accepted ON accepted.SourceDocumentId=job.SourceDocumentId
+              AND accepted.SourceDocumentType=job.SourceDocumentType AND accepted.TenantId=@TenantId AND accepted.BusinessId=@BusinessId
             LEFT JOIN dbo.AccountingPostingJobs posting ON posting.SourceDocumentId=job.SourceDocumentId
               AND posting.SourceDocumentType=job.SourceDocumentType AND posting.TenantId=@TenantId AND posting.BusinessId=@BusinessId
             LEFT JOIN accounting.VoucherDrafts draft ON draft.DocumentId=job.SourceDocumentId
@@ -329,7 +361,7 @@ public sealed partial class SqlAccountingStore
             """;
 
     private static string TraceabilityDocumentsSql(string? search, Guid? partyId, bool filterStatus) =>
-            TraceabilityDocumentKeysSql(search, partyId, includeEntry: false, reuseAcceptedPartyMetadata: !filterStatus) + "\n" + """
+            TraceabilityDocumentKeysSql(search, partyId, includeEntry: false, reuseAcceptedPartyMetadata: !filterStatus) + TraceabilityVoucherFilterSql + "\n" + """
             SELECT job.SourceDocumentId,job.SourceDocumentType,job.OccurredAt,job.Status INTO #DocumentPageKeys
             FROM #DocumentKeys job
             ORDER BY job.OccurredAt DESC,job.SourceDocumentId,job.SourceDocumentType

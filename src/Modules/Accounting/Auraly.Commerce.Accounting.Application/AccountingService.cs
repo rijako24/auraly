@@ -60,8 +60,8 @@ public interface IAccountingStore
     Task<IReadOnlyList<FinancialStatementRow>> GetBalanceSheetAsync(AccountingUserIdentity user, DateOnly asOf, CancellationToken cancellationToken);
     Task<IReadOnlyList<FinancialStatementRow>> GetIncomeStatementAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingExceptionRow>> GetExceptionsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
-    Task<AccountingDocumentPage> ListDocumentsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken, Guid? partyId = null);
-    Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken, Guid? partyId = null);
+    Task<AccountingDocumentPage> ListDocumentsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken, Guid? partyId = null, string? voucherTypeCode = null);
+    Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken, Guid? partyId = null, string? voucherTypeCode = null);
 }
 
 public interface IBankReconciliationStore
@@ -762,25 +762,25 @@ public sealed partial class AccountingService(
     public Task<AccountingDocumentPage> ListDocumentsAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
         string? status, string? search, int page, int pageSize,
-        CancellationToken cancellationToken = default, Guid? partyId = null)
+        CancellationToken cancellationToken = default, Guid? partyId = null, string? voucherTypeCode = null)
     {
         ValidateReport(user, from, to);
         if (page < 1 || pageSize is < 1 or > 100)
             throw new AccountingValidationException("La paginación de documentos contables no es válida.");
         return store.ListDocumentsAsync(user, from, to, Normalize(documentType),
-            Normalize(status), Normalize(search), page, pageSize, cancellationToken, partyId);
+            Normalize(status), Normalize(search), page, pageSize, cancellationToken, partyId, Normalize(voucherTypeCode));
     }
 
     public Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
         string? status, string? search, int page, int pageSize,
-        CancellationToken cancellationToken = default, Guid? partyId = null)
+        CancellationToken cancellationToken = default, Guid? partyId = null, string? voucherTypeCode = null)
     {
         ValidateReport(user, from, to);
         if (page < 1 || pageSize is < 1 or > 500)
             throw new AccountingValidationException("La paginación de la trazabilidad financiera no es válida.");
         return store.ListFinancialTraceabilityLinesAsync(user, from, to, Normalize(documentType),
-            Normalize(status), Normalize(search), page, pageSize, cancellationToken, partyId);
+            Normalize(status), Normalize(search), page, pageSize, cancellationToken, partyId, Normalize(voucherTypeCode));
     }
 
     private static void ValidateReport(AccountingUserIdentity user, DateOnly from, DateOnly to)

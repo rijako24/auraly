@@ -88,6 +88,7 @@ function originLabel(origin: ProductPriceHistoryItem["origin"]) {
     ProposalReview: "Revisión de recepción",
     Product: "Ficha del producto",
     LinkedProduct: "Producto vinculado",
+    Composition: "Ingredientes o combo",
     Migration: "Preparación anterior",
     ReceiptProposal: "Publicación de recepción",
     Manual: "Publicación desde producto",

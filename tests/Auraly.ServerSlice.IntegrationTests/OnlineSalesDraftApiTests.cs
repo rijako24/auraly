@@ -632,7 +632,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             WHERE line.DocumentId=@DocumentId
             ORDER BY line.LineNumber;
 
-            SELECT TotalAmount,RecognizedCostAmount,TotalAmount-RecognizedCostAmount
+            SELECT TotalAmount,RecognizedCostAmount,UntaxedAmount-RecognizedCostAmount,UntaxedAmount
             FROM reporting.SalesReportDocuments
             WHERE DocumentId=@DocumentId;
 
@@ -671,7 +671,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         var projectedProfit = profitabilityReader.GetDecimal(2);
         Assert.Equal(completed.Receipt.PayableAmount, projectedTotalAmount);
         Assert.Equal(32_000m, projectedCostAmount);
-        Assert.Equal(projectedTotalAmount - 32_000m, projectedProfit);
+        Assert.Equal(profitabilityReader.GetDecimal(3) - 32_000m, projectedProfit);
         Assert.True(await profitabilityReader.NextResultAsync());
         Assert.True(await profitabilityReader.ReadAsync());
         Assert.Equal(0, profitabilityReader.GetInt32(0));

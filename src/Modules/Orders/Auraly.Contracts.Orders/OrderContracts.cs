@@ -30,7 +30,8 @@ public sealed record OrderPageRequest(
     Guid? RouteId = null,
     bool OnlyCreatedByActor = false,
     Guid? SellerId = null,
-    Guid? CustomerId = null);
+    Guid? CustomerId = null,
+    Guid? CreatedByUserId = null);
 
 public sealed record OrderClaimSummary(
     Guid ClaimId,
@@ -57,7 +58,9 @@ public sealed record OrderListItem(
     OrderClaimSummary? Claim,
     Guid? CustomerId = null,
     Guid? PartySiteId = null,
-    string? PartySiteName = null);
+    string? PartySiteName = null,
+    Guid? CreatedByUserId = null,
+    string? CreatedByName = null);
 
 public sealed record OrderPage(
     IReadOnlyList<OrderListItem> Items,

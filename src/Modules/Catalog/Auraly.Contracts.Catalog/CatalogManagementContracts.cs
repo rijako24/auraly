@@ -76,7 +76,8 @@ public sealed record SaveProductRequest(
     bool IsGenericProduct = false,
     bool? IsIngredient = null,
     IReadOnlyCollection<ProductRecipeIngredientInput>? RecipeIngredients = null,
-    int? RecipeExpectedVersion = null);
+    int? RecipeExpectedVersion = null,
+    string? CompositionKind = null);
 
 public sealed record ProductDetail(
     Guid ProductId,
@@ -97,7 +98,9 @@ public sealed record ProductDetail(
     bool IsWeighable = false,
     decimal? UnitGrossWeightKg = null,
     bool IsGenericProduct = false,
-    bool IsIngredient = false);
+    bool IsIngredient = false,
+    bool HasIngredients = false,
+    bool IsCombo = false);
 
 public sealed record ProductPageRequest(
     int PageSize = 50,
@@ -162,7 +165,9 @@ public sealed record PosCatalogItem(
     Guid? InventoryProductId = null,
     decimal InventoryFactor = 1m,
     bool IsGenericProduct = false,
-    bool IsIngredient = false)
+    bool IsIngredient = false,
+    bool HasIngredients = false,
+    bool IsCombo = false)
 {
     public PosCatalogItem(
         Guid productId,

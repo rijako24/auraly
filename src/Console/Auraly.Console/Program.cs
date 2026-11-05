@@ -107,6 +107,20 @@ var sqlConnectionSource = new AuralySqlConnectionSource(
     ?? throw new InvalidOperationException(
         "ConnectionStrings:DefaultConnection is required."));
 
+if (args.Length > 0 && args[0].Equals("rebuild-sales-reporting",StringComparison.OrdinalIgnoreCase))
+{
+    if(args.Length!=3||!Guid.TryParse(args[1],out var reportingTenant)||!Guid.TryParse(args[2],out var reportingBusiness))
+        throw new ArgumentException("Uso: rebuild-sales-reporting <TenantId> <BusinessId>. Usa la conexión explícita del entorno que deseas reconstruir.");
+    var reportingClock=TimeProvider.System;
+    var reportingIds=new Uuid7AuralyIdGenerator(reportingClock);
+    var processor=new Auraly.Infrastructure.Persistence.SqlSalesReportingProcessor(
+        new Auraly.Infrastructure.Persistence.SqlServerConnectionFactory(sqlConnectionSource),
+        new Auraly.Infrastructure.Persistence.SqlSalesReportingProjectionWriter(reportingIds,reportingClock),reportingClock,reportingIds);
+    var projected=await processor.RebuildAsync(reportingTenant,reportingBusiness,CancellationToken.None);
+    Console.WriteLine($"Reporting reconstruido: {projected} fuentes; versión {Auraly.Infrastructure.Persistence.SqlSalesReportingProjectionWriter.ProjectionVersion}.");
+    return;
+}
+
 if (args.Length >= 2 && args[0].Equals("rebuild-product-index", StringComparison.OrdinalIgnoreCase))
 {
     var dryRun = args.Any(arg => arg.Equals("--dry-run", StringComparison.OrdinalIgnoreCase));

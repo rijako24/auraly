@@ -606,6 +606,13 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Reference).HasMaxLength(120);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(250);
             entity.Property(e => e.CategoryName).HasMaxLength(150);
+            // Catalog SQL owns these classifications; platform saves must preserve them.
+            foreach (var flagName in new[] { nameof(Product.HasIngredients), nameof(Product.IsCombo), nameof(Product.IsGenericProduct) })
+            {
+                var flag = entity.Property<bool>(flagName).HasDefaultValue(false);
+                flag.Metadata.SetBeforeSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Ignore);
+                flag.Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Ignore);
+            }
             entity.Ignore(e => e.UnitPrice);
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
             entity.Property(e => e.StockQuantity).HasPrecision(18, 2);

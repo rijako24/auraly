@@ -64,6 +64,10 @@ public sealed partial class SqlCatalogStore
                   IF @@ROWCOUNT=0 THROW 51010,'The VAT master was not found.',1;
                 END;
 
+                DECLARE @TaxProducts NVARCHAR(MAX)=(SELECT CONCAT(N'[',STRING_AGG(CONVERT(NVARCHAR(MAX),CONCAT(N'"',ProductId,N'"')),N','),N']')
+                  FROM dbo.Products WHERE TenantId=@TenantId AND (TaxProfileId=@TaxProfileId OR PurchaseTaxProfileId=@TaxProfileId));
+                EXEC catalog.ProductCompositionValidate @TenantId,@TaxProducts;
+                EXEC dbo.ProductCompositionCostsPrepare @BusinessId,@TaxProducts,@UserId,@Now,@AllBusinesses=1;
                 DECLARE @Change TABLE(BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
                 INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
                   OUTPUT inserted.BusinessId,inserted.CatalogChangeId INTO @Change
@@ -80,6 +84,7 @@ public sealed partial class SqlCatalogStore
                 FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId AND TenantId=@TenantId;
                 """, connection, transaction);
             command.Parameters.AddWithValue("@Create", !taxProfileId.HasValue);
+            command.Parameters.AddWithValue("@UserId", user.UserId);
             command.Parameters.AddWithValue("@TaxProfileId", id);
             command.Parameters.AddWithValue("@TenantId", user.TenantId);
             command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -103,7 +108,7 @@ public sealed partial class SqlCatalogStore
             await transaction.RollbackAsync(CancellationToken.None);
             throw new CatalogConflictException("Ya existe un IVA con este código en el tenant.");
         }
-        catch (SqlException exception) when (exception.Number == 51024)
+        catch (SqlException exception) when (exception.Number is 51020 or 51024)
         {
             await transaction.RollbackAsync(CancellationToken.None);
             throw new CatalogValidationException(exception.Message);
@@ -205,6 +210,9 @@ public sealed partial class SqlCatalogStore
                   AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId);
                 IF @@ROWCOUNT=0 THROW 51010,'The product was not found.',1;
 
+                DECLARE @ChangedProduct NVARCHAR(MAX)=CONCAT(N'["',CONVERT(NVARCHAR(36),@ProductId),N'"]');
+                EXEC catalog.ProductCompositionValidate @TenantId,@ChangedProduct;
+                EXEC dbo.ProductCompositionCostsPrepare @BusinessId,@ChangedProduct,@UserId,@Now,@AllBusinesses=1;
                 DECLARE @Change TABLE(BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
                 INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
                   OUTPUT inserted.BusinessId,inserted.CatalogChangeId INTO @Change

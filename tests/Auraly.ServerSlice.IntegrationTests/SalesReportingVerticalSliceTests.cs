@@ -18,6 +18,31 @@ public sealed class SalesReportingSliceCollection : ICollectionFixture<ServerSli
 public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Recognized_sale_cost_comes_from_the_canonical_ledger_instead_of_a_stale_uploaded_estimate()
+    {
+        var original=fixture.CreateValidRequest(9_597);
+        var sale=original with {Lines=original.Lines.Select(line=>line with {DocumentUnitCost=1m}).ToArray()};
+        using(var upload=fixture.CreateUploadMessage(sale))
+        using(var response=await fixture.CreateClient().SendAsync(upload))
+            Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
+        await using var connection=new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString);await connection.OpenAsync();
+        await using var query=connection.CreateCommand();query.CommandText="""
+            SELECT movement.ValueChange,line.UnitCostSnapshot,fact.RecognizedCostAmount,document.RecognizedCostAmount,
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Document)
+            FROM dbo.SalesDocumentLines line
+            JOIN dbo.InventoryMovements movement ON movement.DocumentId=line.DocumentId AND movement.LineNumber=line.LineNumber AND movement.MovementType=N'Sale'
+            JOIN reporting.SalesReportLineFacts fact ON fact.SourceDocumentId=line.DocumentId AND fact.SourceLineNumber=line.LineNumber
+            JOIN reporting.SalesReportDocuments document ON document.DocumentId=line.DocumentId
+            WHERE line.DocumentId=@Document;
+            """;
+        query.Parameters.AddWithValue("@Document",sale.DocumentId);
+        await using var data=await query.ExecuteReaderAsync();Assert.True(await data.ReadAsync());
+        var actual=-data.GetDecimal(0);Assert.NotEqual(sale.Lines[0].Quantity,actual);
+        Assert.Equal(actual,data.GetDecimal(1)*sale.Lines[0].Quantity);
+        Assert.Equal(actual,data.GetDecimal(2));Assert.Equal(actual,data.GetDecimal(3));Assert.Equal(1,data.GetInt32(4));
+    }
+
+    [Fact]
     public async Task Read_all_permission_allows_a_platform_actor_without_a_local_tenant_user()
     {
         var externalPlatformUserId=Guid.NewGuid();
@@ -127,7 +152,7 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
                 """;
             await using var attribution = await command.ExecuteReaderAsync();
             Assert.True(await attribution.ReadAsync());
-            Assert.Equal((short)1, attribution.GetInt16(0));
+            Assert.Equal((short)2, attribution.GetInt16(0));
             Assert.Equal(fixture.SupplierId, attribution.GetGuid(1));
             Assert.Equal(sale.Lines[0].DocumentUnitCost, attribution.GetDecimal(2));
             Assert.Equal(
@@ -149,8 +174,8 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(summary);
         Assert.Equal(1, summary.Current.DocumentCount);
         Assert.Equal(11_900m, summary.Current.NetTotalSales);
-        Assert.Equal(5_900m, summary.Current.GrossProfit);
-        Assert.Equal(49.58m, summary.Current.GrossMarginPercent);
+        Assert.Equal(4_000m, summary.Current.GrossProfit);
+        Assert.Equal(40m, summary.Current.GrossMarginPercent);
         Assert.Single(summary.Trend);
         Assert.NotNull(summary.ProjectedThrough);
 
@@ -166,7 +191,7 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
         using (var scope = fixture.CreateScope())
         {
             var store = scope.ServiceProvider.GetRequiredService<ISalesReportingStore>();
-            var directPayments = await store.GetBreakdownAsync(
+            await Assert.ThrowsAsync<SalesReportingValidationException>(()=>store.GetBreakdownAsync(
                 new SalesReportingUserIdentity(
                     fixture.UserId, fixture.TenantId, fixture.BusinessId,
                     new HashSet<string> { SalesReportingPermissionCodes.Read }),
@@ -175,15 +200,16 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
                     ProductId: fixture.ProductId),
                 SalesReportingDimensions.PaymentMethod,
                 100,
-                CancellationToken.None);
-            Assert.Single(directPayments);
+                CancellationToken.None));
         }
 
         using var paymentsResponse = await reporting.GetAsync(
             $"/api/commerce/v1/sales-reports/breakdown?from=2026-07-27&to=2026-07-27&dimension=payment-method&productId={fixture.ProductId:D}");
-        Assert.True(paymentsResponse.StatusCode == HttpStatusCode.OK,
-            await paymentsResponse.Content.ReadAsStringAsync());
-        var payments = await paymentsResponse.Content.ReadFromJsonAsync<SalesReportBreakdownRow[]>();
+        Assert.Equal(HttpStatusCode.BadRequest,paymentsResponse.StatusCode);
+        using var wholePaymentsResponse=await reporting.GetAsync(
+            "/api/commerce/v1/sales-reports/breakdown?from=2026-07-27&to=2026-07-27&dimension=payment-method");
+        wholePaymentsResponse.EnsureSuccessStatusCode();
+        var payments = await wholePaymentsResponse.Content.ReadFromJsonAsync<SalesReportBreakdownRow[]>();
         var cash = Assert.Single(payments ?? []);
         Assert.Equal("Cash", cash.Key);
         Assert.Equal(11_900m, cash.NetSales);
@@ -199,8 +225,7 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
 
         using var excludedResponse = await reporting.GetAsync(
             $"/api/commerce/v1/sales-reports/breakdown?from=2026-07-27&to=2026-07-27&dimension=payment-method&productId={Guid.NewGuid():D}");
-        Assert.Equal(HttpStatusCode.OK, excludedResponse.StatusCode);
-        Assert.Empty(await excludedResponse.Content.ReadFromJsonAsync<SalesReportBreakdownRow[]>() ?? []);
+        Assert.Equal(HttpStatusCode.BadRequest, excludedResponse.StatusCode);
 
         using var documentsResponse = await reporting.GetAsync(
             $"/api/commerce/v1/sales-reports/documents?from=2026-07-27&to=2026-07-27&page=1&pageSize=25&supplierId={fixture.SupplierId:D}");
@@ -211,7 +236,7 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(1, documents.TotalCount);
         var directDocument = Assert.Single(documents.Items);
         Assert.Equal(sale.DocumentId, directDocument.DocumentId);
-        Assert.Equal(0m, directDocument.RestaurantTipAmount);
+        Assert.Null(directDocument.RestaurantTipAmount);
 
         using var detailResponse = await reporting.GetAsync(
             $"/api/commerce/v1/sales-reports/documents/{sale.DocumentId:D}");

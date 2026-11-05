@@ -8,8 +8,10 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     [ProductNameSnapshot] NVARCHAR(300) NULL,
     [CategoryIdSnapshot] UNIQUEIDENTIFIER NULL,
     [CategoryNameSnapshot] NVARCHAR(160) NULL,
+    [CategoryHierarchySnapshotJson] NVARCHAR(MAX) NULL,
     [SupplierIdSnapshot] UNIQUEIDENTIFIER NULL,
     [SupplierNameSnapshot] NVARCHAR(240) NULL,
+    [CompositionKindSnapshot] NVARCHAR(16) NULL,
     [AttributionSnapshotVersion] SMALLINT NOT NULL
         CONSTRAINT [DF_SalesDocumentLines_AttributionVersion] DEFAULT (0),
     [TaxCode] NVARCHAR(16) NOT NULL,

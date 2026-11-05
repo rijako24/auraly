@@ -26,7 +26,7 @@ public sealed class PosCatalogStoreTests
             await store.InitializeAsync();
             var session = new CatalogSyncSessionResponse(Guid.NewGuid(), 7, 1, DateTimeOffset.UtcNow.AddHours(1));
             await store.BeginBootstrapAsync(session);
-            var item = Product();
+            var item = Product() with { HasIngredients = true, IsCombo = false };
             var page = Page(session, [item], hasMore: false, next: null);
             await store.ApplyBootstrapPageAsync(page);
 
@@ -40,7 +40,14 @@ public sealed class PosCatalogStoreTests
             var captured = await reopened.CaptureAsync("7701234567890");
             Assert.NotNull(captured);
             Assert.Equal(item.ProductId, captured.Product.ProductId);
+            Assert.True(captured.Product.HasIngredients);
+            Assert.False(captured.Product.IsCombo);
             Assert.Equal(7, (await reopened.StatusAsync()).Cursor);
+            await reopened.ApplyChangesAsync(new CatalogDeltaPage(7, 8, false,
+                [new CatalogDelta(8, "Upsert", item with { HasIngredients = false, IsCombo = true })]));
+            var updated = (await reopened.CaptureAsync("7701234567890"))!.Product;
+            Assert.False(updated.HasIngredients);
+            Assert.True(updated.IsCombo);
 
             await using var verify = new SqliteConnection(connectionString);
             await verify.OpenAsync();

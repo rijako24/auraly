@@ -23,6 +23,8 @@ export type CommerceOrderListItem = {
   total: number;
   lineCount: number;
   createdAt: string;
+  createdByUserId?: string | null;
+  createdByName?: string | null;
   canInvoice: boolean;
   invoiceDocumentId: string | null;
   claim: CommerceOrderClaim | null;
@@ -109,6 +111,7 @@ export type CommerceOrderFilters = {
   routeId?: string;
   sellerId?: string;
   onlyMine?: boolean;
+  createdByUserId?: string;
 };
 
 export type InvoiceOrderResult = {

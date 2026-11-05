@@ -5,6 +5,7 @@ CREATE TABLE [reference].[Options]
     [Code] NVARCHAR(64) NOT NULL,
     [Label] NVARCHAR(160) NOT NULL,
     [Description] NVARCHAR(500) NULL,
+    [RequiredPointOfSaleMode] NVARCHAR(32) NULL,
     [IsActive] BIT NOT NULL CONSTRAINT [DF_ReferenceOptions_IsActive] DEFAULT 1,
     [SortOrder] INT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,

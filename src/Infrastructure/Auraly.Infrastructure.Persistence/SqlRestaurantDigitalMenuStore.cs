@@ -114,7 +114,7 @@ public sealed class SqlRestaurantDigitalMenuStore(
                      SELECT 1 FROM dbo.ProductPrices price
                      WHERE price.BusinessId=@BusinessId
                        AND price.ProductId=selected.ProductId
-                       AND price.IsActive=1
+                       AND price.IsActive=1 AND (price.Amount>0 OR product.IsGenericProduct=1)
                        AND price.ValidFrom<=SYSDATETIMEOFFSET()
                        AND (price.ValidUntil IS NULL OR
                             price.ValidUntil>SYSDATETIMEOFFSET())))
@@ -143,7 +143,7 @@ public sealed class SqlRestaurantDigitalMenuStore(
                 AND EXISTS(SELECT 1 FROM dbo.ProductPrices price
                   WHERE price.BusinessId=@BusinessId
                     AND price.ProductId=selected.ProductId
-                    AND price.IsActive=1
+                    AND price.IsActive=1 AND (price.Amount>0 OR product.IsGenericProduct=1)
                     AND price.ValidFrom<=SYSDATETIMEOFFSET()
                     AND (price.ValidUntil IS NULL OR
                          price.ValidUntil>SYSDATETIMEOFFSET())))
@@ -247,7 +247,7 @@ public sealed class SqlRestaurantDigitalMenuStore(
               AND EXISTS(SELECT 1 FROM dbo.ProductPrices price
                 WHERE price.BusinessId=menu.BusinessId
                   AND price.ProductId=product.ProductId
-                  AND price.IsActive=1
+                  AND price.IsActive=1 AND (price.Amount>0 OR product.IsGenericProduct=1)
                   AND price.ValidFrom<=SYSDATETIMEOFFSET()
                   AND (price.ValidUntil IS NULL OR
                        price.ValidUntil>SYSDATETIMEOFFSET()))
@@ -304,7 +304,7 @@ public sealed class SqlRestaurantDigitalMenuStore(
               FROM dbo.ProductPrices price
               WHERE price.BusinessId=menu.BusinessId
                 AND price.ProductId=product.ProductId
-                AND price.IsActive=1
+                AND price.IsActive=1 AND (price.Amount>0 OR product.IsGenericProduct=1)
                 AND price.ValidFrom<=SYSDATETIMEOFFSET()
                 AND (price.ValidUntil IS NULL OR
                      price.ValidUntil>SYSDATETIMEOFFSET())
@@ -373,7 +373,7 @@ public sealed class SqlRestaurantDigitalMenuStore(
               AND EXISTS(SELECT 1 FROM dbo.ProductPrices price
                 WHERE price.BusinessId=@BusinessId
                   AND price.ProductId=product.ProductId
-                  AND price.IsActive=1
+                  AND price.IsActive=1 AND (price.Amount>0 OR product.IsGenericProduct=1)
                   AND price.ValidFrom<=SYSDATETIMEOFFSET()
                   AND (price.ValidUntil IS NULL OR
                        price.ValidUntil>SYSDATETIMEOFFSET()))
@@ -425,7 +425,7 @@ public sealed class SqlRestaurantDigitalMenuStore(
               FROM dbo.ProductPrices price
               WHERE price.BusinessId=@BusinessId
                 AND price.ProductId=product.ProductId
-                AND price.IsActive=1
+                AND price.IsActive=1 AND (price.Amount>0 OR product.IsGenericProduct=1)
                 AND price.ValidFrom<=SYSDATETIMEOFFSET()
                 AND (price.ValidUntil IS NULL OR
                      price.ValidUntil>SYSDATETIMEOFFSET())

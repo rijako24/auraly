@@ -9,10 +9,11 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlSalesReportingProcessor(
+public sealed partial class SqlSalesReportingProcessor(
     SqlServerConnectionFactory connections,
     SqlSalesReportingProjectionWriter projectionWriter,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    Auraly.BuildingBlocks.Domain.Identifiers.IAuralyIdGenerator ids)
 {
     public async Task ProcessAsync(
         Guid documentId,
@@ -25,6 +26,12 @@ public sealed class SqlSalesReportingProcessor(
 
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
+        await ProcessSourceAsync(connection,documentId,documentType,businessId,sourceVersion,false,cancellationToken);
+    }
+
+    private async Task ProcessSourceAsync(SqlConnection connection,Guid documentId,string documentType,Guid businessId,
+        long sourceVersion,bool rebuilding,CancellationToken cancellationToken)
+    {
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
         var committed = false;
@@ -32,7 +39,7 @@ public sealed class SqlSalesReportingProcessor(
         {
             var source = await LockSourceAsync(
                 connection, transaction, documentId, documentType, businessId,
-                sourceVersion,cancellationToken);
+                sourceVersion,cancellationToken,rebuilding);
             if (source is null)
                 throw new InvalidOperationException(
                     "The completed document has no immutable reporting source.");
@@ -69,21 +76,37 @@ public sealed class SqlSalesReportingProcessor(
             {
                 var session = new SalesReportingSqlSession(connection, transaction);
                 if (documentType is "SalesInvoice" or "SalesReceipt")
-                    await projectionWriter.ProjectSaleAsync(
-                        session, PosSaleContractSerializer.Deserialize(source.Payload),
-                        cancellationToken);
-                else if (documentType == "SalesReturn")
-                    await projectionWriter.ProjectReturnAsync(session,
-                        SalesReturnContractSerializer.Deserialize(source.Payload),cancellationToken);
+                {
+                    var value=PosSaleContractSerializer.Deserialize(source.Payload);
+                    ValidateSourceIdentity(value.TenantId,value.BusinessId,value.DocumentId,source.TenantId,businessId,documentId);
+                    if(value.CommercialSnapshot.DocumentType!=documentType)throw new InvalidOperationException("El tipo de la fuente no corresponde al trabajo de reporting.");
+                    await projectionWriter.ProjectSaleAsync(session,value,cancellationToken);
+                }
+                else if(documentType==ServiceInvoiceDocumentTypes.ServiceInvoice)
+                {
+                    var value=ServiceInvoiceSnapshotSerializer.Deserialize(source.Payload);
+                    ValidateSourceIdentity(value.TenantId,value.BusinessId,value.DocumentId,source.TenantId,businessId,documentId);
+                    await projectionWriter.ProjectServiceInvoiceAsync(session,value,cancellationToken);
+                }
+                else if(documentType=="SalesReturn")
+                {
+                    var value=SalesReturnContractSerializer.Deserialize(source.Payload);
+                    ValidateSourceIdentity(value.TenantId,value.BusinessId,value.ReturnId,source.TenantId,businessId,documentId);
+                    await projectionWriter.ProjectReturnAsync(session,value,cancellationToken);
+                }
                 else if(documentType=="GoodsReceipt")
-                    await projectionWriter.ProjectGoodsReceiptAsync(session,
-                        GoodsReceiptContractSerializer.Deserialize(source.Payload),cancellationToken);
+                {
+                    var value=GoodsReceiptContractSerializer.Deserialize(source.Payload);
+                    ValidateSourceIdentity(value.TenantId,value.BusinessId,value.DocumentId,source.TenantId,businessId,documentId);
+                    await projectionWriter.ProjectGoodsReceiptAsync(session,value,cancellationToken);
+                }
                 else if(documentType=="PurchaseReturn")
-                    await projectionWriter.ProjectPurchaseReturnAsync(session,
-                        PurchaseReturnContractSerializer.Deserialize(source.Payload),cancellationToken);
-                else
-                    throw new InvalidOperationException(
-                        $"Reporting does not own document type '{documentType}'.");
+                {
+                    var value=PurchaseReturnContractSerializer.Deserialize(source.Payload);
+                    ValidateSourceIdentity(value.TenantId,value.BusinessId,value.ReturnId,source.TenantId,businessId,documentId);
+                    await projectionWriter.ProjectPurchaseReturnAsync(session,value,cancellationToken);
+                }
+                else throw new InvalidOperationException($"Reporting no admite el tipo '{documentType}'.");
 
                 var completedAt = timeProvider.GetUtcNow();
                 await using var complete = new SqlCommand("""
@@ -144,11 +167,15 @@ public sealed class SqlSalesReportingProcessor(
         SqlConnection connection, SqlTransaction transaction,
         Guid documentId, string documentType, Guid businessId,
         long sourceVersion,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,bool rebuilding)
     {
-        const string sql = """
-            SELECT COALESCE(r.SourcePayloadJson,p.PayloadJson),r.Status,r.SourcePayloadHash
+        var sql=(rebuilding?"":TransactionLockSql+"\n"+"""
+            IF EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId AND RebuildInProgress=1)
+              THROW 51619,N'La reconstrucción explícita de reporting debe completarse.',1;
+            """)+"\n"+"""
+            SELECT COALESCE(r.SourcePayloadJson,p.PayloadJson),r.Status,r.SourcePayloadHash,b.TenantId
             FROM reporting.SalesReportingJobs r WITH(UPDLOCK,HOLDLOCK)
+            JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             LEFT JOIN dbo.DocumentProcessingPayloads p
               ON p.DocumentId=r.SourceDocumentId
              AND p.DocumentType=r.SourceDocumentType
@@ -163,6 +190,8 @@ public sealed class SqlSalesReportingProcessor(
                 OR j.Status=N'Completed');
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@ReportingLockResource",ReportingLockResource(businessId));
+        command.Parameters.AddWithValue("@ReportingLockMode","Shared");
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@DocumentType", documentType);
         command.Parameters.AddWithValue("@BusinessId", businessId);
@@ -173,8 +202,14 @@ public sealed class SqlSalesReportingProcessor(
         var actual=SHA256.HashData(Encoding.UTF8.GetBytes(payload));
         if (!CryptographicOperations.FixedTimeEquals(expected,actual))
             throw new InvalidOperationException("The immutable reporting source hash is invalid.");
-        return new ReportingSource(payload,reader.GetString(1));
+        return new ReportingSource(payload,reader.GetString(1),reader.GetGuid(3));
     }
 
-    private sealed record ReportingSource(string Payload, string Status);
+    private static void ValidateSourceIdentity(Guid tenant,Guid business,Guid document,Guid expectedTenant,Guid expectedBusiness,Guid expectedDocument)
+    {
+        if(tenant!=expectedTenant||business!=expectedBusiness||document!=expectedDocument)
+            throw new InvalidOperationException("La identidad de la fuente inmutable no corresponde al trabajo de reporting.");
+    }
+
+    private sealed record ReportingSource(string Payload, string Status,Guid TenantId);
 }

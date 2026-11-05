@@ -174,8 +174,9 @@ public sealed class PricingService(
         if (costBasis is null && request.InputMode == PriceInputModes.Margin)
             throw new PricingValidationException("A cost is required to calculate a margin.");
 
-        var costBasisType = context.IsCostLinked
-            ? "LinkedProduct"
+        var costBasisType = context.IsCostLinked ||
+            (context.CostBasisOrigin == "Composition" && costBasis == context.CostBasisAmount)
+            ? context.CostBasisOrigin
             : request.CostBasisAmount.HasValue
             ? "Manual"
             : context.CostBasisOrigin;

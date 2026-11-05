@@ -10,17 +10,17 @@ public sealed class CommercialReportingDesignTests
     [InlineData("SalesReturn")]
     [InlineData("GoodsReceipt")]
     [InlineData("PurchaseReturn")]
-    public void Reporting_policy_accepts_only_operationally_projected_sources(string sourceType)
+    [InlineData("ServiceInvoice")]
+    public void Reporting_policy_accepts_canonical_operational_and_service_sources(string sourceType)
     {
         Assert.True(SalesReportingProcessingPolicy.Supports(sourceType));
     }
 
     [Theory]
-    [InlineData("ServiceInvoice")]
     [InlineData("RouteVisit")]
     [InlineData("SellerOrder")]
     [InlineData("CommercialCoveragePlan")]
-    public void Reporting_policy_rejects_sources_outside_the_operations_engine(string sourceType)
+    public void Reporting_policy_rejects_sources_without_a_canonical_reporting_source(string sourceType)
     {
         Assert.False(SalesReportingProcessingPolicy.Supports(sourceType));
     }

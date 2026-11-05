@@ -204,6 +204,8 @@ public sealed class SqlProductMerchandisingStore(
                     user.UserId, now, ct);
 
             await ExecuteAsync(connection, transaction, """
+                DECLARE @CompositionProducts NVARCHAR(MAX)=CONCAT(N'["',CONVERT(NVARCHAR(36),@ProductId),N'"]');
+                EXEC catalog.ProductCompositionValidate @TenantId,@CompositionProducts;
                 DECLARE @Change TABLE(BusinessId UNIQUEIDENTIFIER NOT NULL,CatalogChangeId BIGINT NOT NULL);
                 INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
                   OUTPUT inserted.BusinessId,inserted.CatalogChangeId INTO @Change

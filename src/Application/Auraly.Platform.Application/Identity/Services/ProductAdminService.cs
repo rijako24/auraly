@@ -42,7 +42,7 @@ public sealed class ProductAdminService : IProductAdminService
                 filters?.ManagesInventory,
                 filters?.AllowsFractionalSale,
                 filters?.IsWeighable,
-                filters?.IsIngredient),
+                filters?.IsIngredient, filters?.HasIngredients, filters?.IsCombo),
             ct);
         var categoryById = categories.ToDictionary(category => category.ProductCategoryId);
 
@@ -408,5 +408,5 @@ public sealed class ProductAdminService : IProductAdminService
         p.ProductCode,
         areaName,
         p.Reference,
-        p.IsIngredient);
+        p.IsIngredient, p.HasIngredients, p.IsCombo);
 }

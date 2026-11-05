@@ -6,7 +6,8 @@ CREATE PROCEDURE [dbo].[ProductLinkedCostsPrepare]
     @UserId UNIQUEIDENTIFIER,
     @Now DATETIMEOFFSET(7),
     @FamiliesJson NVARCHAR(MAX) = NULL,
-    @PrepareParents BIT = 0
+    @PrepareParents BIT = 0,
+    @CompositionPass BIT = 0
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -26,15 +27,19 @@ BEGIN
 
     -- Legacy scalar callers and receipt batches converge on this same owner.
     DECLARE @Families TABLE(Ordinal int PRIMARY KEY,ParentProductId uniqueidentifier,ParentCost decimal(19,6),ChildProductId uniqueidentifier,
-      SourceDocumentId uniqueidentifier,SourceLineNumber int);
+      SourceDocumentId uniqueidentifier,SourceLineNumber int,TargetBusinessId uniqueidentifier);
     IF @FamiliesJson IS NULL
-        INSERT @Families VALUES(0,@ParentProductId,@ParentCost,@ChildProductId,NULL,NULL);
+        INSERT @Families VALUES(0,@ParentProductId,@ParentCost,@ChildProductId,NULL,NULL,NULL);
     ELSE
         INSERT @Families SELECT CONVERT(int,input.[key]),family.ParentProductId,family.ParentCost,family.ChildProductId,
-          family.SourceDocumentId,family.SourceLineNumber
+          family.SourceDocumentId,family.SourceLineNumber,family.TargetBusinessId
         FROM OPENJSON(@FamiliesJson) input
         CROSS APPLY OPENJSON(input.value) WITH(ParentProductId uniqueidentifier,ParentCost decimal(19,6),ChildProductId uniqueidentifier,
-          SourceDocumentId uniqueidentifier,SourceLineNumber int) family;
+          SourceDocumentId uniqueidentifier,SourceLineNumber int,TargetBusinessId uniqueidentifier) family;
+    IF @CompositionPass=1 AND EXISTS(SELECT 1 FROM @Families family
+      WHERE NOT EXISTS(SELECT 1 FROM dbo.Businesses businessValue
+        WHERE businessValue.BusinessId=family.TargetBusinessId AND businessValue.TenantId=@TenantId AND businessValue.IsActive=1))
+      THROW 51020,'La preparación compuesta requiere una sede activa del tenant.',1;
     IF EXISTS(SELECT 1 FROM @Families WHERE ParentProductId IS NULL)
         THROW 51020,'La preparación requiere un producto principal válido.',1;
     IF EXISTS(SELECT 1 FROM @Families WHERE
@@ -50,36 +55,12 @@ BEGIN
         THROW 51020,'La partida de origen no pertenece a la recepción y producto del negocio.',1;
     DECLARE @Parents TABLE(Ordinal int PRIMARY KEY,ParentProductId uniqueidentifier,ResolvedParentCost decimal(19,6));
     INSERT @Parents
-    SELECT requested.Ordinal,requested.ParentProductId,COALESCE(requested.ParentCost,previous.ParentCost,preparation.CostBasisAmount,
-                                            latest.LatestUnitCost,
-                                            price.CostBasisAmount)
+    SELECT requested.Ordinal,requested.ParentProductId,COALESCE(requested.ParentCost,previous.ParentCost,costBasis.CostBasisAmount)
         FROM @Families requested
         OUTER APPLY(SELECT TOP(1) prior.ParentCost FROM @Families prior
           WHERE prior.ParentProductId=requested.ParentProductId AND prior.Ordinal<requested.Ordinal
             AND prior.ParentCost IS NOT NULL ORDER BY prior.Ordinal DESC) previous
-        OUTER APPLY (
-            SELECT TOP(1) value.CostBasisAmount
-            FROM dbo.ProductPricePreparations value
-            WHERE value.BusinessId=@BusinessId
-              AND value.ProductId=requested.ParentProductId
-              AND value.Status=N'Pending'
-            ORDER BY value.PreparedAt DESC,value.ProductPricePreparationId DESC
-        ) preparation
-        OUTER APPLY (
-            SELECT TOP(1) value.LatestUnitCost
-            FROM dbo.SupplierProductLatestCosts value
-            WHERE value.BusinessId=@BusinessId
-              AND value.ProductId=requested.ParentProductId
-            ORDER BY value.ObservedAt DESC,value.SupplierId
-        ) latest
-        OUTER APPLY (
-            SELECT TOP(1) value.CostBasisAmount
-            FROM dbo.ProductPrices value
-            WHERE value.BusinessId=@BusinessId
-              AND value.ProductId=requested.ParentProductId
-              AND value.IsActive=1
-            ORDER BY value.ValidFrom DESC,value.ProductPriceId
-        ) price
+        OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,requested.ParentProductId) costBasis
         WHERE @PrepareParents=1 OR EXISTS(SELECT 1 FROM dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
           WHERE link.TenantId=@TenantId AND link.ParentProductId=requested.ParentProductId
             AND link.SharesPrice=1 AND link.IsActive=1
@@ -97,11 +78,12 @@ BEGIN
         SourceDocumentId UNIQUEIDENTIFIER NULL,
         SourceLineNumber INT NULL,
         CostFactor DECIMAL(19,6) NOT NULL,
+        TargetBusinessId UNIQUEIDENTIFIER NULL,
         PRIMARY KEY(Ordinal,ProductId));
 
-    INSERT @Links(Ordinal,ProductId,ParentProductId,ParentCost,SourceDocumentId,SourceLineNumber,CostFactor)
+    INSERT @Links(Ordinal,ProductId,ParentProductId,ParentCost,SourceDocumentId,SourceLineNumber,CostFactor,TargetBusinessId)
     SELECT parent.Ordinal,link.ChildProductId,link.ParentProductId,parent.ResolvedParentCost,
-      family.SourceDocumentId,family.SourceLineNumber,link.PriceFactor
+      family.SourceDocumentId,family.SourceLineNumber,link.PriceFactor,family.TargetBusinessId
     FROM dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
     JOIN @Parents parent ON parent.ParentProductId=link.ParentProductId
     JOIN @Families family ON family.Ordinal=parent.Ordinal
@@ -114,9 +96,9 @@ BEGIN
     OPTION(RECOMPILE);
 
     IF @PrepareParents=1
-      INSERT @Links(Ordinal,ProductId,ParentProductId,ParentCost,SourceDocumentId,SourceLineNumber,CostFactor)
+      INSERT @Links(Ordinal,ProductId,ParentProductId,ParentCost,SourceDocumentId,SourceLineNumber,CostFactor,TargetBusinessId)
       SELECT parent.Ordinal,parent.ParentProductId,parent.ParentProductId,parent.ResolvedParentCost,
-        family.SourceDocumentId,family.SourceLineNumber,1
+        family.SourceDocumentId,family.SourceLineNumber,1,family.TargetBusinessId
       FROM @Parents parent JOIN @Families family ON family.Ordinal=parent.Ordinal;
 
     DECLARE @Targets TABLE(
@@ -189,9 +171,10 @@ BEGIN
     WHERE policy.TargetMargin>=0 AND policy.TargetMargin<100
       AND policy.RoundingIncrement>0
       AND policy.RoundingMode IN(N'Nearest',N'Up',N'Down')
-      AND ((@SharesPrices=1 AND target.TenantId=@TenantId
+      AND ((@CompositionPass=1 AND target.BusinessId=link.TargetBusinessId)
+        OR (@CompositionPass=0 AND ((@SharesPrices=1 AND target.TenantId=@TenantId
             AND target.SharesProductPrices=1 AND target.IsActive=1)
-        OR (@SharesPrices=0 AND target.BusinessId=@BusinessId)) OPTION(RECOMPILE);
+        OR (@SharesPrices=0 AND target.BusinessId=@BusinessId)))) OPTION(RECOMPILE);
 
     IF EXISTS(
         SELECT 1 FROM @Links link
@@ -220,10 +203,12 @@ BEGIN
        CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,
        RoundingIncrement,RoundingMode,Status,PreparedByUserId,PreparedAt,SupersededAt)
     SELECT NEWID(),target.BusinessId,target.ProductId,target.ParentProductId,target.SourceDocumentId,target.SourceLineNumber,
-           CASE WHEN @PrepareParents=1 AND target.ProductId=target.ParentProductId
+           CASE WHEN @CompositionPass=1 AND target.ProductId=target.ParentProductId THEN N'Composition'
+             WHEN @PrepareParents=1 AND target.ProductId=target.ParentProductId
              THEN N'SupplierDiscount' ELSE N'LinkedProduct' END,
            target.PublicAmount,target.PreparedAmount,
-           CASE WHEN @PrepareParents=1 AND target.ProductId=target.ParentProductId
+           CASE WHEN @CompositionPass=1 AND target.ProductId=target.ParentProductId THEN N'Composition'
+             WHEN @PrepareParents=1 AND target.ProductId=target.ParentProductId
              THEN CASE WHEN @InventoryCostBasis=N'WeightedAverageCost' THEN N'WeightedAverageCost'
                ELSE N'LatestReceiptCost' END ELSE N'LinkedProduct' END,
            target.CostBasis,target.TargetMargin,target.EffectiveMargin,N'Margin',
@@ -234,5 +219,12 @@ BEGIN
     JOIN (SELECT BusinessId,ProductId,MAX(Ordinal) Ordinal FROM @Targets GROUP BY BusinessId,ProductId) last
       ON last.BusinessId=target.BusinessId AND last.ProductId=target.ProductId
     OPTION(RECOMPILE);
+    IF @CompositionPass=0
+    BEGIN
+        DECLARE @Changed NVARCHAR(MAX);
+        SET @Changed=(SELECT CONCAT(N'[',STRING_AGG(CONVERT(NVARCHAR(MAX),CONCAT(N'"',ProductId,N'"')),N','),N']')
+          FROM(SELECT ParentProductId ProductId FROM @Families UNION SELECT ProductId FROM @Links) changed);
+        EXEC dbo.ProductCompositionCostsPrepare @BusinessId,@Changed,@UserId,@Now;
+    END;
 END;
 GO
