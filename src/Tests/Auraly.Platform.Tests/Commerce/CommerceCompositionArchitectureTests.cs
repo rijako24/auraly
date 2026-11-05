@@ -57,6 +57,10 @@ public sealed class CommerceCompositionArchitectureTests
             .And.Contain("inactivo hasta cargar un access token valido")
             .And.Contain("IntegrationChannelWarehouses")
             .And.NotContain("UPDATE dbo.BusinessWhatsAppNumbers");
+        var demo = Read(root, "database/Auraly.Database/Scripts/Seeds/SeedAlcidesSocarrasDemo.sql");
+        demo.Should().NotContain("UPDATE dbo.BusinessWhatsAppNumbers")
+            .And.NotContain("DELETE dbo.IntegrationChannelWarehouses")
+            .And.NotContain("@SourceBusinessId");
     }
 
     [Fact]

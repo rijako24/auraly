@@ -131,6 +131,9 @@ ni están registrados su ID inicial o su identificador Meta. Un canal sin token
 se crea inactivo; las publicaciones posteriores no lo reactivan, trasladan ni
 sobrescriben sus credenciales. Las migraciones puntuales de configuración no
 deben permanecer en el bloque recurrente después de aplicarse.
+El seed informativo de Alcides tampoco repite el traslado CJ → Alcides: solo
+configura la demostración cuando el canal ya está asignado a ese negocio y a
+su agente desde administración, sin reasignar números ni borrar sus bodegas.
 
 ## Promoción segura a producción
 
