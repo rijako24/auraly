@@ -1,5 +1,5 @@
 CREATE FUNCTION [dbo].[ProductPriceCostBasis](
-    @TenantId UNIQUEIDENTIFIER,@BusinessId UNIQUEIDENTIFIER,@ProductId UNIQUEIDENTIFIER)
+    @TenantId UNIQUEIDENTIFIER,@BusinessId UNIQUEIDENTIFIER,@ProductId UNIQUEIDENTIFIER,@AsOf DATETIMEOFFSET(7))
 RETURNS TABLE
 AS RETURN
 (
@@ -22,8 +22,9 @@ AS RETURN
       FROM dbo.ProductPricePreparations value WHERE value.BusinessId=@BusinessId AND value.ProductId=basis.ProductId
         AND value.Status=N'Pending' ORDER BY value.PreparedAt DESC,value.ProductPricePreparationId DESC) prepared
     OUTER APPLY(SELECT TOP(1) value.CostBasisAmount,value.CostBasisType
-      FROM dbo.ProductPrices value WHERE value.BusinessId=@BusinessId AND value.ProductId=basis.ProductId AND value.IsActive=1
-        AND value.ValidFrom<=SYSDATETIMEOFFSET() AND (value.ValidUntil IS NULL OR value.ValidUntil>SYSDATETIMEOFFSET())
+      FROM dbo.ProductPrices value WHERE value.BusinessId=@BusinessId AND value.ProductId=basis.ProductId
+        AND (value.IsActive=1 OR value.ValidUntil IS NOT NULL)
+        AND value.ValidFrom<=@AsOf AND (value.ValidUntil IS NULL OR value.ValidUntil>@AsOf)
       ORDER BY value.ValidFrom DESC,value.ProductPriceId) published
     OUTER APPLY(SELECT TOP(1) value.LatestUnitCost
       FROM dbo.SupplierProductLatestCosts value

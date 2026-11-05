@@ -110,10 +110,20 @@ la receta está acotada a 100 componentes. Presupuesto de opción paginada local
 menos de un segundo, un comando de datos además de autorización. Los importes
 visibles son costos actuales del contexto de sede, no snapshots históricos de
 la versión de composición.
+El contexto de precios y la base con IVA reciben un corte UTC explícito del
+reloj de aplicación; las preparaciones propagan su mismo `@Now`. No comparan una
+publicación fechada por la aplicación con otro instante del reloj SQL. La
+vigencia usa el intervalo `[ValidFrom, ValidUntil)` y puede recuperar la fila
+cerrada que aún correspondía al corte ante una publicación concurrente, sin
+convertir una lectura válida en precio cero. Un índice por sede, producto e
+inicio de vigencia mantiene esa resolución acotada; no lee historiales ajenos.
+La regresión publica con un reloj de aplicación adelantado y verifica el precio
+y costo a ambos lados del instante, con una consulta de contexto.
 
 Verificación de esta ampliación: backend y dacpac sin advertencias ni errores;
-build web de 94 rutas y lint de los archivos afectados aprobados. Los 18 casos
-de composición y restaurante pasaron. La regresión nueva cruza costos unitarios
+build web de 94 rutas y lint de los archivos afectados aprobados. Los 19 casos
+de composición y restaurante pasaron, incluida la publicación con reloj adelantado
+y lectura del período anterior. La regresión de presentación cruza costos unitarios
 con IVA, cantidades y total preparado; prueba IVA capitalizado, costo faltante,
 ocultamiento por permiso y una consulta de datos para la página de opciones,
 dentro del presupuesto de un segundo. El navegador confirmó un selector del

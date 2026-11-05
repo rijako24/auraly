@@ -190,7 +190,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                        @TargetMargin,@TargetMargin,N'Margin',1,N'Nearest',IIF(@IsComposition=1,NULL,@Now),@Now,1,@Now
                     FROM dbo.Businesses business WHERE business.TenantId=@TenantId AND business.IsActive=1
                       AND (@IsComposition=0 OR business.BusinessId=@BusinessId OR EXISTS(
-                        SELECT 1 FROM catalog.ProductCompositionCost(@TenantId,business.BusinessId,@CompositionInput) cost
+                        SELECT 1 FROM catalog.ProductCompositionCost(@TenantId,business.BusinessId,@CompositionInput,@Now) cost
                         WHERE cost.Missing=0 AND cost.Cost>0));
                     """, [P("@TenantId", user.TenantId), P("@BusinessId",user.BusinessId), P("@ProductId", productId),
                     P("@CompositionInput",JsonSerializer.Serialize(request.RecipeIngredients ?? [])),
@@ -292,7 +292,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     IF EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=@TenantId
                         AND (HasIngredients=1 OR IsCombo=1)) AND ISNULL(@CurrentCostBasis,-1)<>ISNULL(@CostBasis,-1)
                       AND NOT(@CompositionChanged=1 AND (NOT EXISTS(SELECT 1 FROM OPENJSON(@CompositionInput)) OR
-                        EXISTS(SELECT 1 FROM catalog.ProductCompositionCost(@TenantId,@BusinessId,@CompositionInput) inputCost
+                        EXISTS(SELECT 1 FROM catalog.ProductCompositionCost(@TenantId,@BusinessId,@CompositionInput,@Now) inputCost
                           WHERE inputCost.Missing=0 AND inputCost.Cost=@CostBasis)))
                       THROW 51024,'El costo de la composición es automático y no se puede editar.',1;
                     IF @CurrentPreparedAmount<>@PreparedAmount

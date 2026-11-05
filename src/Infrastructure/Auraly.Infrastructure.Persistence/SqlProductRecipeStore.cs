@@ -8,7 +8,7 @@ using Microsoft.Data.SqlClient;
 namespace Auraly.Infrastructure.Persistence;
 
 public sealed class SqlProductRecipeStore(
-    SqlServerConnectionFactory connections, IAuralyIdGenerator ids) : IProductRecipeStore
+    SqlServerConnectionFactory connections, IAuralyIdGenerator ids, TimeProvider clock) : IProductRecipeStore
 {
     public async Task<decimal> CompositionCostAsync(CatalogUserIdentity user,
         IReadOnlyCollection<ProductRecipeIngredientInput> components, CancellationToken ct)
@@ -16,12 +16,13 @@ public sealed class SqlProductRecipeStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
-            SELECT Cost,Missing FROM catalog.ProductCompositionCost(@TenantId,@BusinessId,@Components)
+            SELECT Cost,Missing FROM catalog.ProductCompositionCost(@TenantId,@BusinessId,@Components,@AsOf)
             WHERE EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId);
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.Add("@Components", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(components);
+        command.Parameters.AddWithValue("@AsOf", clock.GetUtcNow());
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct) || reader.IsDBNull(0) || reader.GetDecimal(0) <= 0 || !reader.IsDBNull(1) && reader.GetInt32(1) > 0)
             throw new CatalogValidationException("Falta costo o impuesto de compra de un componente.");
@@ -50,7 +51,7 @@ public sealed class SqlProductRecipeStore(
             ORDER BY p.Name,p.ProductId OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY)
             SELECT p.ProductId,p.ProductCode,p.Name,p.BaseUnitCode,cost.UnitCostWithTax
             FROM SelectedPage p
-            OUTER APPLY(SELECT UnitCostWithTax FROM dbo.ProductPriceCostBasis(@TenantId,@BusinessId,p.ProductId)
+            OUTER APPLY(SELECT UnitCostWithTax FROM dbo.ProductPriceCostBasis(@TenantId,@BusinessId,p.ProductId,@AsOf)
               WHERE @CanReadCosts=1) cost
             ORDER BY p.Name,p.ProductId;
             """;
@@ -58,6 +59,7 @@ public sealed class SqlProductRecipeStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@CanReadCosts", user.Permissions.Contains(CatalogPermissionCodes.ReadCosts));
+        command.Parameters.AddWithValue("@AsOf", clock.GetUtcNow());
         command.Parameters.AddWithValue("@IsIngredient", compositionKind == "Ingredients");
         command.Parameters.AddWithValue("@Search", string.IsNullOrWhiteSpace(search) ? DBNull.Value : search);
         command.Parameters.AddWithValue("@Skip", (page - 1) * pageSize);
@@ -77,7 +79,7 @@ public sealed class SqlProductRecipeStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        return await ReadAsync(connection, null, user, productId, ct);
+        return await ReadAsync(connection, null, user, productId, clock.GetUtcNow(), ct);
     }
 
     public async Task<ProductRecipeDetail> PublishAsync(CatalogUserIdentity user, Guid productId,
@@ -102,7 +104,7 @@ public sealed class SqlProductRecipeStore(
                 command.Parameters.AddWithValue("@CompositionKind", request.CompositionKind);
                 await command.ExecuteNonQueryAsync(ct);
             }
-            var result = await ReadAsync(connection, transaction, user, productId, ct)
+            var result = await ReadAsync(connection, transaction, user, productId, publishedAt, ct)
                 ?? throw new InvalidOperationException("La receta publicada no se pudo leer.");
             await transaction.CommitAsync(ct);
             return result;
@@ -125,7 +127,7 @@ public sealed class SqlProductRecipeStore(
     }
 
     private static async Task<ProductRecipeDetail?> ReadAsync(
-        SqlConnection connection, SqlTransaction? transaction, CatalogUserIdentity user, Guid productId, CancellationToken ct)
+        SqlConnection connection, SqlTransaction? transaction, CatalogUserIdentity user, Guid productId, DateTimeOffset asOf, CancellationToken ct)
     {
         const string sql = """
             SELECT v.[Version],v.IsEnabled,v.PublishedAt,i.IngredientProductId,p.ProductCode,p.Name,
@@ -133,7 +135,7 @@ public sealed class SqlProductRecipeStore(
             FROM catalog.ProductCompositionVersions v
             LEFT JOIN catalog.ProductCompositionComponents i ON i.ProductRecipeVersionId=v.ProductRecipeVersionId
             LEFT JOIN dbo.Products p ON p.TenantId=v.TenantId AND p.ProductId=i.IngredientProductId
-            OUTER APPLY(SELECT UnitCostWithTax FROM dbo.ProductPriceCostBasis(@TenantId,@BusinessId,p.ProductId)
+            OUTER APPLY(SELECT UnitCostWithTax FROM dbo.ProductPriceCostBasis(@TenantId,@BusinessId,p.ProductId,@AsOf)
               WHERE @CanReadCosts=1) cost
             WHERE v.TenantId=@TenantId AND v.ProductId=@ProductId
               AND v.[Version]=(SELECT MAX([Version]) FROM catalog.ProductCompositionVersions
@@ -144,6 +146,7 @@ public sealed class SqlProductRecipeStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@CanReadCosts", user.Permissions.Contains(CatalogPermissionCodes.ReadCosts));
+        command.Parameters.AddWithValue("@AsOf", asOf);
         command.Parameters.AddWithValue("@ProductId", productId);
         await using var reader = await command.ExecuteReaderAsync(ct);
         var ingredients = new List<ProductRecipeIngredientDetail>();

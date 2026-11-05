@@ -6,6 +6,9 @@ using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Pricing;
 using Microsoft.Data.SqlClient;
 using Xunit.Abstractions;
+using Auraly.Application.Pricing;
+using Auraly.BuildingBlocks.Application.Synchronization;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -13,6 +16,55 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Trait("EngineCertification", "Operational")]
 public sealed class ProductionVerticalSliceTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Published_price_and_cost_use_the_application_clock_even_when_sql_clock_is_behind()
+    {
+        var product = Guid.NewGuid();
+        await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid());
+        var business = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var seed = new SqlCommand("""
+            INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt,SharesProductPrices)
+            VALUES(@Business,@Tenant,N'Reloj de precios',N'',N'',N'',N'',N'',1,SYSDATETIMEOFFSET(),0);
+            INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
+              CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt)
+            SELECT NEWID(),@Business,ProductId,Amount,PreparedAmount,CurrencyCode,CostBasisAmount,
+              TargetMarginPercent,EffectiveMarginPercent,RoundingIncrement,RoundingMode,ValidFrom,1,CreatedAt
+            FROM dbo.ProductPrices WHERE BusinessId=@Source AND ProductId=@Product AND IsActive=1;
+            """, connection);
+        seed.Parameters.AddWithValue("@Business", business); seed.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+        seed.Parameters.AddWithValue("@Source", fixture.BusinessId); seed.Parameters.AddWithValue("@Product", product);
+        await seed.ExecuteNonQueryAsync();
+        using var scope = fixture.CreateScope();
+        var clock = new PublicationClock(DateTimeOffset.UtcNow.AddDays(2));
+        var service = new PricingService(scope.ServiceProvider.GetRequiredService<IPricingStore>(), clock,
+            scope.ServiceProvider.GetRequiredService<IPosSynchronizationOutboxDispatcher>());
+        var user = new PricingUserIdentity(fixture.UserId, fixture.TenantId, business,
+            new HashSet<string> { PricingPermissionCodes.Read, PricingPermissionCodes.ReadCostBasis,
+                PricingPermissionCodes.PreparePrices, PricingPermissionCodes.PublishPrices });
+        await service.SavePreparedProductAsync(user, product,
+            new(PriceInputModes.SalePrice, null, 2500m, 1m, PricingRoundingModes.Nearest, 1000m), default);
+        var result = await service.PublishAsync(user, new([product]), default);
+        Assert.Equal(2500m, Assert.Single(result.Items).Amount);
+        using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+            commandFilter: command => command.Parameters.Contains("@AsOf"));
+        var context = await service.GetProductContextAsync(user, product, default);
+        Assert.Equal(2500m, context.PublicSalePrice);
+        Assert.Equal(1000m, context.CostBasisAmount);
+        Assert.Equal(1, counter.Count);
+        var beforePublication = new PricingService(scope.ServiceProvider.GetRequiredService<IPricingStore>(), TimeProvider.System,
+            scope.ServiceProvider.GetRequiredService<IPosSynchronizationOutboxDispatcher>());
+        var previous = await beforePublication.GetProductContextAsync(user, product, default);
+        Assert.Equal(10000m, previous.PublicSalePrice);
+        Assert.Equal(1000m, previous.CostBasisAmount);
+    }
+
+    private sealed class PublicationClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
     [Fact]
     public async Task Composition_creation_does_not_require_component_prices_in_an_unoffered_business()
     {

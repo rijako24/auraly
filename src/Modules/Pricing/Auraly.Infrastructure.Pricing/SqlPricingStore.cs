@@ -543,11 +543,11 @@ public sealed class SqlPricingStore(
                 AND preparation.RowVersion=@RowVersion AND preparation.Status=N'Pending';
               IF @@ROWCOUNT=0 THROW 51601,'The prepared product price changed or is no longer available.',1;
             END
+            DECLARE @PreparationNow DATETIMEOFFSET(7)=SYSDATETIMEOFFSET();
             DECLARE @ChangedFamilies NVARCHAR(MAX)=(SELECT changed.ProductId ParentProductId FROM @ChangedProducts changed
-              OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,changed.ProductId) currentCost
+              OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,changed.ProductId,@PreparationNow) currentCost
               WHERE ISNULL(currentCost.CostBasisAmount,-1)<>ISNULL(changed.CostBasisAmount,-1)
-                OR (changed.CostBasisType=N'Composition' AND ISNULL(currentCost.CostBasisType,N'')<>N'Composition') FOR JSON PATH),
-              @PreparationNow DATETIMEOFFSET(7)=SYSDATETIMEOFFSET();
+                OR (changed.CostBasisType=N'Composition' AND ISNULL(currentCost.CostBasisType,N'')<>N'Composition') FOR JSON PATH);
             IF @ChangedFamilies<>N'[]'
               EXEC dbo.ProductLinkedCostsPrepare @BusinessId=@BusinessId,@UserId=@UserId,
                 @Now=@PreparationNow,@FamiliesJson=@ChangedFamilies;
@@ -937,7 +937,7 @@ public sealed class SqlPricingStore(
     }
 
     public async Task<ProductPricingContext?> GetProductContextAsync(
-        PricingUserIdentity user, Guid productId, CancellationToken ct)
+        PricingUserIdentity user, Guid productId, DateTimeOffset asOf, CancellationToken ct)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -961,8 +961,8 @@ public sealed class SqlPricingStore(
               SELECT TOP(1) p.Amount,p.PreparedAmount,p.CostBasisAmount,p.CostBasisType,p.TargetMarginPercent,p.EffectiveMarginPercent,p.RoundingIncrement,p.RoundingMode
               FROM dbo.ProductPrices p
               WHERE p.BusinessId=@BusinessId AND p.ProductId=x.ProductId
-                AND p.IsActive=1 AND p.ValidFrom<=SYSDATETIMEOFFSET()
-                AND (p.ValidUntil IS NULL OR p.ValidUntil>SYSDATETIMEOFFSET())
+                AND (p.IsActive=1 OR p.ValidUntil IS NOT NULL) AND p.ValidFrom<=@AsOf
+                AND (p.ValidUntil IS NULL OR p.ValidUntil>@AsOf)
               ORDER BY p.ValidFrom DESC,p.ProductPriceId
             ) price
             OUTER APPLY (
@@ -974,12 +974,13 @@ public sealed class SqlPricingStore(
                 AND prepared.Status=N'Pending'
               ORDER BY prepared.PreparedAt DESC,prepared.ProductPricePreparationId DESC
             ) preparation
-            OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,x.ProductId) costBasis
+            OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,x.ProductId,@AsOf) costBasis
             WHERE x.ProductId=@ProductId AND b.TenantId=@TenantId
               AND x.TenantId=@TenantId;
             """, connection);
         AddScope(command, user);
         command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@AsOf", asOf);
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
             ? new(reader.GetGuid(0),reader.GetString(1),reader.GetDecimal(2),reader.GetDecimal(3),

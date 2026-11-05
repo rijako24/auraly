@@ -111,6 +111,11 @@ GO
 CREATE UNIQUE INDEX [UX_ProductPrices_Active] ON [dbo].[ProductPrices] ([BusinessId], [ProductId])
     WHERE [IsActive] = 1;
 GO
+CREATE INDEX [IX_ProductPrices_Business_Product_Validity]
+    ON [dbo].[ProductPrices] ([BusinessId], [ProductId], [ValidFrom] DESC)
+    INCLUDE ([ValidUntil], [IsActive], [Amount], [PreparedAmount], [CostBasisAmount], [CostBasisType],
+      [TargetMarginPercent], [EffectiveMarginPercent], [RoundingIncrement], [RoundingMode]);
+GO
 
 CREATE TABLE [dbo].[Suppliers] (
     [SupplierId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,

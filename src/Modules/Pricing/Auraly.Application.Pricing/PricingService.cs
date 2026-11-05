@@ -53,7 +53,7 @@ public interface IPricingStore
     Task<ReviewedPricePreparation> ReviewAsync(PricingUserIdentity user, Guid proposalId, PriceCalculationResult calculation, byte[] expectedRowVersion, CancellationToken ct);
     Task RejectAsync(PricingUserIdentity user, Guid proposalId, byte[] expectedRowVersion, string? reason, CancellationToken ct);
     Task<PricePublicationStoreResult> PublishAsync(PricingUserIdentity user, IReadOnlyList<PreparedPricePublication> values, DateTimeOffset now, CancellationToken ct);
-    Task<ProductPricingContext?> GetProductContextAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
+    Task<ProductPricingContext?> GetProductContextAsync(PricingUserIdentity user, Guid productId, DateTimeOffset asOf, CancellationToken ct);
     Task<PreparedProductPrice> SavePreparedProductAsync(PricingUserIdentity user, PreparedDirectProductPricePublication value, DateTimeOffset now, CancellationToken ct);
     Task<ProductPriceHistoryPage> HistoryAsync(PricingUserIdentity user, Guid productId, int page, int pageSize, string? activityType, CancellationToken ct);
     Task<PriceChannelReportSource?> GetChannelReportSourceAsync(
@@ -150,7 +150,7 @@ public sealed class PricingService(
     {
         Require(user, PricingPermissionCodes.Read);
         Require(user, PricingPermissionCodes.ReadCostBasis);
-        return await store.GetProductContextAsync(user, productId, ct)
+        return await store.GetProductContextAsync(user, productId, timeProvider.GetUtcNow(), ct)
             ?? throw new PricingNotFoundException("Product was not found.");
     }
 
@@ -159,7 +159,7 @@ public sealed class PricingService(
     {
         Require(user, PricingPermissionCodes.PreparePrices);
         Require(user, PricingPermissionCodes.ReadCostBasis);
-        var context = await store.GetProductContextAsync(user, productId, ct)
+        var context = await store.GetProductContextAsync(user, productId, timeProvider.GetUtcNow(), ct)
             ?? throw new PricingNotFoundException("Product was not found.");
         if (!context.IsCostLinked && request.CostBasisAmount is <= 0m)
             throw new PricingValidationException("The manual cost must be greater than zero.");

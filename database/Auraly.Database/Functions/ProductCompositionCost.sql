@@ -1,5 +1,5 @@
 CREATE FUNCTION [catalog].[ProductCompositionCost](
-    @TenantId UNIQUEIDENTIFIER,@BusinessId UNIQUEIDENTIFIER,@Components NVARCHAR(MAX))
+    @TenantId UNIQUEIDENTIFIER,@BusinessId UNIQUEIDENTIFIER,@Components NVARCHAR(MAX),@AsOf DATETIMEOFFSET(7))
 RETURNS TABLE
 AS RETURN
 (
@@ -11,6 +11,6 @@ AS RETURN
     FROM OPENJSON(@Components) WITH(ProductId UNIQUEIDENTIFIER '$.IngredientProductId',
       Quantity DECIMAL(19,6) '$.QuantityPerUnit') component
     LEFT JOIN dbo.Products p ON p.TenantId=@TenantId AND p.ProductId=component.ProductId AND p.IsActive=1
-    OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,p.ProductId) cost
+    OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,p.ProductId,@AsOf) cost
 );
 GO

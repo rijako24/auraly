@@ -57,7 +57,7 @@ BEGIN
         CROSS JOIN @Scopes scope
         CROSS APPLY(SELECT IngredientProductId,QuantityPerUnit FROM catalog.ProductCompositionComponents i
           WHERE i.ProductRecipeVersionId=v.ProductRecipeVersionId FOR JSON PATH) components(JsonValue)
-        CROSS APPLY catalog.ProductCompositionCost(@TenantId,scope.BusinessId,components.JsonValue) cost
+        CROSS APPLY catalog.ProductCompositionCost(@TenantId,scope.BusinessId,components.JsonValue,@Now) cost
         WHERE a.Depth=@Depth AND
           ((@AllBusinesses=1 AND scope.BusinessId=@BusinessId AND a.Depth=0)
            OR EXISTS(SELECT 1 FROM dbo.ProductPrices offered WHERE offered.BusinessId=scope.BusinessId

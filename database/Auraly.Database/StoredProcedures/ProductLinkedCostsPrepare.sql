@@ -60,7 +60,7 @@ BEGIN
         OUTER APPLY(SELECT TOP(1) prior.ParentCost FROM @Families prior
           WHERE prior.ParentProductId=requested.ParentProductId AND prior.Ordinal<requested.Ordinal
             AND prior.ParentCost IS NOT NULL ORDER BY prior.Ordinal DESC) previous
-        OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,requested.ParentProductId) costBasis
+        OUTER APPLY dbo.ProductPriceCostBasis(@TenantId,@BusinessId,requested.ParentProductId,@Now) costBasis
         WHERE @PrepareParents=1 OR EXISTS(SELECT 1 FROM dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
           WHERE link.TenantId=@TenantId AND link.ParentProductId=requested.ParentProductId
             AND link.SharesPrice=1 AND link.IsActive=1
