@@ -292,6 +292,29 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
             if(bundled.HasLineScope)Assert.Empty(charts.Payments);
             else Assert.Equal((await reporting.GetBreakdownAsync(user,chartFilter,"payment-method",20)).ToArray(),charts.Payments.ToArray());
         }
+        // Presentation rounds money; the reporting calculation must retain all
+        // four source decimals, including after aggregating daily cost.
+        await using(var precision=new SqlCommand("""
+            UPDATE reporting.SalesReportLineFacts SET RecognizedCostAmount=RecognizedCostAmount+@Delta
+            WHERE BusinessId=@Business AND SourceDocumentId=@Invoice AND SourceLineNumber=1;
+            UPDATE reporting.SalesReportDocuments SET RecognizedCostAmount=RecognizedCostAmount+@Delta
+            WHERE BusinessId=@Business AND DocumentId=@Invoice;
+            UPDATE reporting.SalesReportDailyTotals SET NetRecognizedCost=NetRecognizedCost+@Delta,GrossProfit=GrossProfit-@Delta
+            WHERE BusinessId=@Business AND BusinessLocalDate='20261101';
+            """,connection))
+        {
+            precision.Parameters.AddWithValue("@Business",business);precision.Parameters.AddWithValue("@Invoice",invoice);
+            var delta=precision.Parameters.AddWithValue("@Delta",0.0001m);Assert.Equal(3,await precision.ExecuteNonQueryAsync());
+            try
+            {
+                var preciseFilter=filter with {SupplierIds=[supplierA]};
+                foreach(var charts in new[]{false,true})
+                    Assert.Equal(39.9999m,(await reporting.GetSummaryAsync(user,preciseFilter,null,null,includeBreakdowns:charts)).Current.GrossProfit);
+                foreach(var (module,groupBy) in new[]{("sales","document"),("products","product"),("impact","customer"),("supplier","supplier")})
+                    Assert.Equal(39.9999m,(await reporting.ExploreAsync(user,new(preciseFilter,Module:module,GroupBy:groupBy))).Totals.Profit);
+            }
+            finally{delta.Value=-0.0001m;Assert.Equal(3,await precision.ExecuteNonQueryAsync());}
+        }
         foreach(var dimension in new[]{"document","customer","seller","supplier","billed-by","warehouse","waiter","table","area","category-line","category-group","subgroup","product","day","month"})
         {
             var grouped=await reporting.ExploreAsync(user,new(filter,GroupBy:dimension,PageSize:200));

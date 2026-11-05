@@ -697,7 +697,7 @@ El frontend propaga cancelación al cambiar filtros y conserva el plazo
 de timeout, incluso durante la lectura del cuerpo de la respuesta.
 
 El índice existente `IX_SalesReportLineFacts_Business_Date` incluye también
-`ProductName`, `SupplierId` y `SupplierName`, los atributos congelados que usan
+`ProductName`, `SupplierId`, `SupplierName` y `BusinessLocalHour`, los atributos congelados que usan
 los rankings y agrupaciones habituales. El plan del ensayo de volumen recorría
 1.005.000 hechos para devolver 42.586 del período al no tener esa cobertura.
 La cobertura evita exigir búsquedas de la fila completa por cada hecho del
@@ -707,6 +707,8 @@ alcance filtrado en la consulta canónica.
 
 Los importes visibles de las cinco vistas comparten formato COP de hasta dos
 decimales. Ese formato no redondea datos persistidos, cálculos ni exportaciones.
+La regresión modifica el costo en `0,0001` y exige la misma utilidad exacta
+en resumen, ventas, productos, impacto comercial y proveedores.
 
 ### Evidencia local del 2026-11-04
 
