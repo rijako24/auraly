@@ -146,7 +146,8 @@ CREATE INDEX [IX_SalesReportLineFacts_Business_Date]
   INCLUDE([ProductId],[SellerId],[CustomerId],[WarehouseId],[Quantity],[UntaxedAmount],[TaxAmount],
           [TotalAmount],[RecognizedCostAmount],[MovementType],
           [TenantId],[SourceDocumentId],[SourceDocumentType],[SourceLineNumber],[OriginalSaleDocumentId],
-          [OccurredAt],[ProjectedAt],[GrossAmount],[DiscountAmount],[TaxCode],[TaxRate],[CostAvailable]);
+          [OccurredAt],[ProjectedAt],[GrossAmount],[DiscountAmount],[TaxCode],[TaxRate],[CostAvailable],
+          [ProductName],[SupplierId],[SupplierName]);
 GO
 CREATE INDEX [IX_SalesReportLineFacts_Business_Product_Date]
   ON [reporting].[SalesReportLineFacts]([BusinessId],[ProductId],[BusinessLocalDate] DESC,[FactId] DESC)

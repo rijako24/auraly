@@ -696,6 +696,15 @@ canónico y lecturas completas mientras otro lector o escritor conserva su lock.
 El frontend propaga cancelación al cambiar filtros y conserva el plazo
 de timeout, incluso durante la lectura del cuerpo de la respuesta.
 
+El índice existente `IX_SalesReportLineFacts_Business_Date` incluye también
+`ProductName`, `SupplierId` y `SupplierName`, los atributos congelados que usan
+los rankings y agrupaciones habituales. El plan del ensayo de volumen recorría
+1.005.000 hechos para devolver 42.586 del período al no tener esa cobertura.
+La cobertura evita exigir búsquedas de la fila completa por cada hecho del
+período y permite elegir el acceso por sede y fecha. No incorpora otra tabla,
+proyección ni índice paralelo; las categorías y otros detalles mantienen su
+alcance filtrado en la consulta canónica.
+
 Los importes visibles de las cinco vistas comparten formato COP de hasta dos
 decimales. Ese formato no redondea datos persistidos, cálculos ni exportaciones.
 
