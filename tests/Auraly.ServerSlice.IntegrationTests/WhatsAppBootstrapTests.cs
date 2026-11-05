@@ -125,7 +125,8 @@ public sealed class WhatsAppBootstrapTests(ServerSliceFixture fixture)
         var channelFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "MigrateLuisWhatsAppToCJ.sql", "MigrateCJWhatsAppToMedidental.sql",
-            "MigrateMedidentalWhatsAppToDigitalShop.sql", "MigrateDigitalShopWhatsAppToCJ.sql", "SeedCJWhatsAppNumber.sql"
+            "MigrateMedidentalWhatsAppToDigitalShop.sql", "MigrateDigitalShopWhatsAppToCJ.sql",
+            "SeedCJWhatsAppNumber.sql", "SeedAlcidesSocarrasDemo.sql"
         };
         var paths = Regex.Matches(postDeployment, @"(?m)^:r\s+\.\\(?<path>[^\r\n]+)")
             .Select(match => match.Groups["path"].Value.Trim().Replace('\\', Path.DirectorySeparatorChar))

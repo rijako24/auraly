@@ -1,5 +1,5 @@
 -- Bot informativo de demostración; solo DEV. El contenido ficticio vive en SettingsJson.
--- El traslado conserva la fila y las credenciales del canal; no copia conversaciones de CJ.
+-- El canal debe estar asignado desde administración; publicar no traslada números.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -14,7 +14,6 @@ DECLARE @BusinessId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000010';
 DECLARE @AgentId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000020';
 DECLARE @AgentTypeId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000030';
 DECLARE @SubscriptionId UNIQUEIDENTIFIER = 'EC1DE500-0000-0000-0000-000000000040';
-DECLARE @SourceBusinessId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000010';
 DECLARE @ChannelId UNIQUEIDENTIFIER;
 DECLARE @PlanId UNIQUEIDENTIFIER;
 DECLARE @Now DATETIME2 = SYSUTCDATETIME();
@@ -70,11 +69,13 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
 IF ISJSON(@SettingsJson) <> 1
     THROW 51000, 'SeedAlcidesSocarrasDemo: configuración JSON inválida.', 1;
 
--- El número solo puede trasladarse desde el propietario aprobado o conservarse en el destino.
+-- El traslado inicial fue una operación histórica. La administración es dueña
+-- de la asignación vigente, incluido el agente elegido para el canal.
 SELECT @ChannelId = BusinessWhatsAppNumberId
 FROM dbo.BusinessWhatsAppNumbers
 WHERE WhatsAppPhoneNumberId = N'1234810033044432'
-  AND BusinessId IN (@SourceBusinessId, @BusinessId)
+  AND BusinessId = @BusinessId
+  AND AgentId = @AgentId
   AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
   AND WhatsAppBusinessAccountId = N'4841200399440958'
   AND IsActive = 1;
@@ -85,9 +86,9 @@ BEGIN
 END;
 
 BEGIN TRANSACTION;
--- La comprobación bloqueada protege el traslado frente a una reasignación concurrente.
+-- No se configura la demostración sobre una reasignación administrativa concurrente.
 IF NOT EXISTS (SELECT 1 FROM dbo.BusinessWhatsAppNumbers WITH (UPDLOCK, HOLDLOCK)
-    WHERE BusinessWhatsAppNumberId=@ChannelId AND BusinessId IN (@SourceBusinessId,@BusinessId)
+    WHERE BusinessWhatsAppNumberId=@ChannelId AND BusinessId=@BusinessId AND AgentId=@AgentId
       AND IsActive=1 AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)),N'') IS NOT NULL)
     THROW 51000, 'SeedAlcidesSocarrasDemo: el canal cambió durante la preparación.', 1;
 
@@ -153,13 +154,6 @@ IF NOT EXISTS (SELECT 1 FROM dbo.BusinessSubscriptions
     WHERE BusinessId=@BusinessId AND Status=1 AND CurrentPeriodStart<=@Now AND CurrentPeriodEnd>@Now
       AND IncludedCredits>0 AND MaxVariableCostCop>0)
     THROW 51000, 'SeedAlcidesSocarrasDemo: suscripción fuera de vigencia o sin capacidad.', 1;
-
--- Se retira la relación de bodega de CJ: no puede apuntar a un canal de otro tenant.
-DELETE dbo.IntegrationChannelWarehouses
-WHERE BusinessWhatsAppNumberId=@ChannelId AND BusinessId=@SourceBusinessId;
-UPDATE dbo.BusinessWhatsAppNumbers
-SET BusinessId=@BusinessId,AgentId=@AgentId
-WHERE BusinessWhatsAppNumberId=@ChannelId AND BusinessId=@SourceBusinessId;
 
 IF NOT EXISTS (SELECT 1 FROM dbo.BusinessWhatsAppNumbers
     WHERE BusinessWhatsAppNumberId=@ChannelId AND BusinessId=@BusinessId AND AgentId=@AgentId AND IsActive=1)
