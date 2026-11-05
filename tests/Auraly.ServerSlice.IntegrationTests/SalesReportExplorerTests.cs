@@ -1,5 +1,6 @@
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -8,6 +9,52 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(SalesReportingSliceCollection.Name)]
 public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Readers_share_a_projection_cut_while_writers_and_rebuilds_remain_excluded()
+    {
+        using var scope=fixture.CreateScope();
+        var reporting=scope.ServiceProvider.GetRequiredService<SalesReportingService>();
+        var user=new SalesReportingUserIdentity(fixture.UserId,fixture.TenantId,fixture.BusinessId,
+            new HashSet<string>{SalesReportingPermissionCodes.Read,SalesReportingPermissionCodes.ReadAll});
+        var request=new SalesReportExplorerRequest(new(new(2026,7,27),new(2026,7,27)));
+        string? readerMode=null,readerResource=null;
+        var resource=SqlSalesReportingProcessor.ReportingLockResource(fixture.BusinessId);
+        SalesReportExplorerPage baseline;
+        using(var counter=new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,beforeExecute:command=>
+            {
+                if(command.Parameters.Contains("@ReportingLockMode"))
+                {
+                    readerMode=(string)command.Parameters["@ReportingLockMode"].Value;
+                    readerResource=(string)command.Parameters["@ReportingLockResource"].Value;
+                }
+            }))
+            baseline=await reporting.ExploreAsync(user,request);
+        Assert.Equal(resource,readerResource);Assert.NotNull(readerMode);
+        await using var holder=new SqlConnection(fixture.ConnectionString);
+        await using var probe=new SqlConnection(fixture.ConnectionString);
+        await holder.OpenAsync();await probe.OpenAsync();
+        foreach(var mode in new[]{readerMode,"Shared","Exclusive"})
+        {
+            await using var held=(SqlTransaction)await holder.BeginTransactionAsync();
+            await using var hold=new SqlCommand("""
+                DECLARE @result int;
+                EXEC @result=sys.sp_getapplock @Resource=@Resource,@LockMode=@Mode,@LockOwner=N'Transaction',@LockTimeout=0;
+                SELECT @result;
+                """,holder,held);
+            hold.Parameters.AddWithValue("@Resource",resource);hold.Parameters.AddWithValue("@Mode",mode);
+            Assert.True(Convert.ToInt32(await hold.ExecuteScalarAsync())>=0);
+            await using var probing=(SqlTransaction)await probe.BeginTransactionAsync();
+            await using var compatibility=new SqlCommand("SELECT APPLOCK_TEST(N'public',@Resource,@Mode,N'Transaction');",probe,probing);
+            compatibility.Parameters.AddWithValue("@Resource",resource);compatibility.Parameters.AddWithValue("@Mode",readerMode);
+            Assert.Equal(mode==readerMode?1:0,Convert.ToInt32(await compatibility.ExecuteScalarAsync()));
+            await probing.RollbackAsync();
+            if(mode==readerMode)
+                Assert.Equal(baseline.Totals,(await reporting.ExploreAsync(user,request)).Totals);
+            await held.RollbackAsync();
+        }
+    }
+
     [Fact]
     public async Task Projection_only_explorer_reconciles_returns_services_charges_filtered_details_and_customer_universe()
     {

@@ -376,8 +376,9 @@ public sealed partial class SqlSalesReportingStore
             command.Parameters[match.Value].Value is bool value
                 ?(value?"CONVERT(bit,1)":"CONVERT(bit,0)"):match.Value);
         // One bounded SQL batch owns the page, independent aggregates and detail cuts.
-        // The business lock freezes Reporting writers for this cut without holding
-        // serializable range locks across other tenants' projection rows.
+        // IntentExclusive readers coexist, but exclude the Shared locks of
+        // projection writers and the Exclusive lock of rebuilds. This freezes
+        // the cut without serializing readers or locking other tenants' ranges.
         command.CommandText="SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL READ COMMITTED; BEGIN TRY BEGIN TRANSACTION;\n"+
             SqlSalesReportingProcessor.TransactionLockSql+"\n"+"""
             IF EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId AND RebuildInProgress=1)
@@ -386,7 +387,7 @@ public sealed partial class SqlSalesReportingStore
               THROW 51619,N'La proyección requiere completar su reconstrucción antes de consultar cifras.',1;
             """+"\n"+SelectionTableSql+"\n"+query+"\nCOMMIT TRANSACTION; END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK TRANSACTION; THROW; END CATCH;";
         command.Parameters.AddWithValue("@ReportingLockResource",SqlSalesReportingProcessor.ReportingLockResource(businessId));
-        command.Parameters.AddWithValue("@ReportingLockMode","Exclusive");
+        command.Parameters.Add("@ReportingLockMode",SqlDbType.VarChar,32).Value="IntentExclusive";
         command.Parameters.AddWithValue("@CurrentProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion);
         try{return await command.ExecuteReaderAsync(cancellationToken);}
         catch(SqlException error) when(error.Number is 51619 or 51620)

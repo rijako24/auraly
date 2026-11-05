@@ -678,7 +678,12 @@ identidades y valores seleccionados siguen parametrizados. Esto permite podar
 ramas inactivas y reutilizar planes, sin forzar recompilación en cada lectura ni
 guardar resultados que puedan quedar desactualizados. Se conserva el bloqueo de
 corte por sede, la validación de versión y el máximo de dos comandos SQL por
-consulta. El frontend propaga cancelación al cambiar filtros y conserva el plazo
+consulta. En el mismo recurso de aplicación, los lectores toman `IntentExclusive`:
+son compatibles entre sí e incompatibles con `Shared` del processor y con
+`Exclusive` de reconstrucción. El nombre de este modo corresponde al recurso
+de aplicación; la consulta continúa siendo de lectura. La regresión comprueba
+la compatibilidad real, el recurso canónico y una lectura completa mientras
+otra lectura conserva el corte. El frontend propaga cancelación al cambiar filtros y conserva el plazo
 de timeout, incluso durante la lectura del cuerpo de la respuesta.
 
 Los importes visibles de las cinco vistas comparten formato COP de hasta dos
