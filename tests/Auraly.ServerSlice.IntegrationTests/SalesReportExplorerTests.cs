@@ -109,6 +109,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
             INSERT reporting.SalesReportPaymentFacts(SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
               BusinessLocalDate,MovementType,MethodCode,Amount,ProjectedAt)
             VALUES(@Invoice,N'SalesInvoice',1,@Tenant,@Business,'20261101',N'Payment',N'Cash',400,SYSDATETIMEOFFSET()),
+              (@Historical,N'SalesInvoice',1,@Tenant,@Business,'20260901',N'Payment',N'Cash',119,SYSDATETIMEOFFSET()),
               (@Return,N'SalesReturn',1,@Tenant,@Business,'20261103',N'Refund',N'Cash',-119,SYSDATETIMEOFFSET()),
               (@Service,N'ServiceInvoice',1,@Tenant,@Business,'20261102',N'Payment',N'Cash',59.5,SYSDATETIMEOFFSET());
             UPDATE reporting.SalesReportDocuments SET TotalAmount=400,CollectedAmount=400,RoundingAdjustmentAmount=38.2 WHERE DocumentId=@Invoice;
@@ -139,6 +140,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
               UnknownCostDocumentCount,CreditSales,Collected,Refunded,ProjectionVersion,UpdatedAt)
             SELECT @Business,Date,N'COP',Documents,Sold,Returned,Gross,Discount,Returns,Net,Tax,Official,Cost,Profit,UnknownCost,0,Collected,Refunded,5,SYSDATETIMEOFFSET()
             FROM(VALUES
+              (CONVERT(date,'20260901'),1,1,0,100,0,0,100,19,119,60,40,0,119,0),
               (CONVERT(date,'20261101'),1,3,0,330,10,0,320,41.8,400,180,140,0,400,0),
               (CONVERT(date,'20261102'),1,0,0,50,0,0,50,9.5,59.5,0,0,1,59.5,0),
               (CONVERT(date,'20261103'),0,0,1,0,0,100,-100,-19,-119,-60,-40,0,0,119)
