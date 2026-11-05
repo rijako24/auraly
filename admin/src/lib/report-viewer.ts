@@ -1,6 +1,10 @@
 export type ReportCell = string | number | null | undefined;
 export type ReportRow = Record<string, ReportCell>;
 
+export const commercialReportMoney = new Intl.NumberFormat("es-CO", {
+  style: "currency", currency: "COP", maximumFractionDigits: 2,
+});
+
 export interface ReportColumn {
   key: string;
   label: string;

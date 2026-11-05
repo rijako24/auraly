@@ -17,7 +17,7 @@ public static class SalesReportingApi
         group.MapPost("/filter-options",async(HttpContext context,SalesReportFilterOptionsRequest request,SalesReportingService service,CancellationToken token)=>
             await Execute(()=>service.GetFilterOptionsAsync(Identity(context.User),request,token),Results.Ok));
         group.MapPost("/summary",async(HttpContext context,SalesReportSummaryRequest request,SalesReportingService service,CancellationToken token)=>
-            await Execute(()=>service.GetSummaryAsync(Identity(context.User),request.Filter,request.ComparisonFrom,request.ComparisonTo,token),Results.Ok));
+            await Execute(()=>service.GetSummaryAsync(Identity(context.User),request.Filter,request.ComparisonFrom,request.ComparisonTo,token,request.IncludeBreakdowns),Results.Ok));
         group.MapPost("/breakdown",async(HttpContext context,SalesReportBreakdownRequest request,SalesReportingService service,CancellationToken token)=>
             await Execute(()=>service.GetBreakdownAsync(Identity(context.User),request.Filter,request.Dimension,request.Limit,token),Results.Ok));
         group.MapGet("/today",async(HttpContext context,SalesReportingService service,

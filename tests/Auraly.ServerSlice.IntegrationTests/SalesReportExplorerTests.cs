@@ -221,6 +221,28 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
         Assert.Equal(all.Totals.NetTotal,macro.ExactNetTotal);Assert.Equal(all.OfficialTotal,macro.Current.NetTotalSales);
         Assert.Equal(all.RoundingAdjustment,macro.RoundingAdjustment);Assert.Equal(all.Totals.RecognizedCost,macro.Current.NetRecognizedCost);
         Assert.Equal(all.Totals.Profit,macro.Current.GrossProfit);Assert.Equal(all.Totals.MarginPercent,macro.Current.GrossMarginPercent);
+        // One summary request owns every panel; charts retain the existing
+        // breakdown semantics, including services, charges and historical returns.
+        foreach(var chartFilter in new[]{filter,filter with {CustomerIds=[customerA]},
+            filter with {SupplierIds=[supplierA,supplierB]},filter with {WaiterPartyIds=[waiterA]},
+            filter with {From=new(2026,12,1),To=new(2026,12,2)}})
+        {
+            var expected=await reporting.GetSummaryAsync(user,chartFilter,new(2026,9,1),new(2026,9,30));
+            SalesReportSummary bundled;
+            using(var counter=new InventoryBalanceProcessingTests.CommandCounter(connection.Database))
+            {
+                bundled=await reporting.GetSummaryAsync(user,chartFilter,new(2026,9,1),new(2026,9,30),includeBreakdowns:true);
+                Assert.Equal(2,counter.Count);
+            }
+            Assert.Equal(expected.Current,bundled.Current);Assert.Equal(expected.Comparison,bundled.Comparison);
+            Assert.Equal(expected.Trend.ToArray(),bundled.Trend.ToArray());Assert.Equal(expected.CustomerCount,bundled.CustomerCount);
+            var charts=Assert.IsType<SalesReportSummaryBreakdowns>(bundled.Breakdowns);
+            foreach(var (dimension,limit,rows) in new[]{("hour",25,charts.Hourly),("seller",8,charts.Sellers),
+                ("product",8,charts.Products),("supplier",8,charts.Suppliers),("warehouse",8,charts.Warehouses)})
+                Assert.Equal((await reporting.GetBreakdownAsync(user,chartFilter,dimension,limit)).ToArray(),rows.ToArray());
+            if(bundled.HasLineScope)Assert.Empty(charts.Payments);
+            else Assert.Equal((await reporting.GetBreakdownAsync(user,chartFilter,"payment-method",20)).ToArray(),charts.Payments.ToArray());
+        }
         foreach(var dimension in new[]{"document","customer","seller","supplier","billed-by","warehouse","waiter","table","area","category-line","category-group","subgroup","product","day","month"})
         {
             var grouped=await reporting.ExploreAsync(user,new(filter,GroupBy:dimension,PageSize:200));

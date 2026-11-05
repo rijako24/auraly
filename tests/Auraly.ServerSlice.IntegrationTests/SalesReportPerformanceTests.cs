@@ -122,6 +122,12 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
         var supplier=await reports.ExploreAsync(user,new(month,GroupBy:"supplier"));var supplierId=Guid.Parse(supplier.Items[0].Key);
         var failures=new List<string>();
         await Measure("Resumen diario",async()=>{await reports.GetTodayAsync(user);},300);
+        var summary=await reports.GetSummaryAsync(user,month,null,null,includeBreakdowns:true);
+        Assert.NotNull(summary.Breakdowns);
+        Assert.Equal((await reports.GetSummaryAsync(user,month,null,null)).Current,summary.Current);
+        await Measure("Resumen con todos sus paneles",async()=>{await reports.GetSummaryAsync(user,month,null,null,includeBreakdowns:true);},1500);
+        await Measure("Impacto comercial",async()=>{await reports.ExploreAsync(user,new(month,Module:"impact",GroupBy:"customer"));},1500);
+        await Measure("Proveedores compras y ventas",async()=>{await reports.ExploreAsync(user,new(month,Module:"supplier",GroupBy:"supplier"));},1500);
         await Measure("Comprobantes primera página",async()=>{await reports.ExploreAsync(user,new(month));},600);
         await Measure("Comprobantes segunda página",async()=>{await reports.ExploreAsync(user,new(month,Page:2));},600);
         await Measure("Proveedor + bodega primera página",async()=>{await reports.ExploreAsync(user,new(month with {SupplierId=supplierId,WarehouseId=warehouse}));},1500);
@@ -136,6 +142,15 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
         Assert.True(portfolio.Products!.Products>0);Assert.Equal(portfolio.Products,(await reports.ExploreAsync(user,profitability with {Page=2})).Products);
         await Measure("Rentabilidad y devoluciones primera página",async()=>{await reports.ExploreAsync(user,profitability);},1500);
         await Measure("Rentabilidad y devoluciones segunda página",async()=>{await reports.ExploreAsync(user,profitability with {Page=2});},1500);
+        await Measure("Rentabilidad con comparación",async()=>{await reports.ExploreAsync(user,profitability with {Comparison="previous-period"});},1500);
+        using(var counter=new InventoryBalanceProcessingTests.CommandCounter(connection.Database))
+        {
+            var concurrent=await Task.WhenAll(reports.ExploreAsync(user,new(month)),
+                reports.ExploreAsync(user,new(month,Page:2)),reports.ExploreAsync(user,profitability));
+            Assert.Equal(6,counter.Count);
+            Assert.Equal(first.Totals,concurrent[0].Totals);Assert.Equal(first.Totals,concurrent[1].Totals);
+            Assert.Equal(portfolio.Totals,concurrent[2].Totals);
+        }
         Assert.True(failures.Count==0,string.Join(Environment.NewLine,failures));
 
         async Task Measure(string name,Func<Task> action,int budget)

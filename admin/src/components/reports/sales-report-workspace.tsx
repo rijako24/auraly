@@ -16,9 +16,8 @@ import {PageError} from "@/components/ui/page-error";
 import {PageLoading} from "@/components/ui/page-loading";
 import {Select,SelectContent,SelectItem,SelectTrigger,SelectValue} from "@/components/ui/select";
 import {SalesReportFilters,reportFilterFromQuery,reportFilterQueryChanges} from "@/components/reports/sales-report-filters";
-import {toReportCsv} from "@/lib/report-viewer";
+import {toReportCsv,commercialReportMoney as money} from "@/lib/report-viewer";
 
-const money=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:4});
 const number=new Intl.NumberFormat("es-CO",{maximumFractionDigits:6});
 const amount=(value:number|null)=>value===null?"No modelado":money.format(value);
 type ReportPathStep={dimension:string;key:string;label:string;page:number;comparison:string};
@@ -53,7 +52,7 @@ function SalesReportContent({scope,ready,module}:{scope:string;ready:boolean;mod
   const request:SalesReportExplorerRequest={filter,groupBy,page,pageSize:25,orderBy,search:search||undefined,
     products:productFilters,drillPath:path.map(step=>({dimension:step.dimension,key:step.key})),documentId,module,customerActivity:get("activity")??"all",comparison:get("comparison")??"none"};
   const validDates=Boolean(from&&to&&from<=to);
-  const report=useQuery({queryKey:["sales-report-explorer",scope,request],queryFn:()=>salesReportingApi.explore(request),
+  const report=useQuery({queryKey:["sales-report-explorer",scope,request],queryFn:({signal})=>salesReportingApi.explore(request,signal),
     enabled:ready&&Boolean(context.data)&&validDates&&!pathError,refetchOnWindowFocus:false,retry:false});
   const navigate=(changes:Record<string,string|null>)=>{
     setOriginalOpen(false);

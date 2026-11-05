@@ -6,7 +6,7 @@ import {SalesReportFilters,reportFilterFromQuery,reportFilterQueryChanges} from 
 import {useQuery} from "@tanstack/react-query";
 import {Area,AreaChart,Bar,BarChart,CartesianGrid,Cell,Pie,PieChart,ResponsiveContainer,Tooltip,XAxis,YAxis} from "recharts";
 import {Banknote,Boxes,Clock3,CreditCard,Landmark,PackageSearch,Percent,ReceiptText,RefreshCw,RotateCcw,ShoppingCart,TrendingUp,Users} from "lucide-react";
-import {salesReportingApi,type SalesBreakdownRow,type SalesDimension,type SalesReportFilter} from "@/services/api/sales-reporting";
+import {salesReportingApi,type SalesBreakdownRow,type SalesReportFilter} from "@/services/api/sales-reporting";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card,CardContent,CardDescription,CardHeader,CardTitle} from "@/components/ui/card";
@@ -15,8 +15,8 @@ import {PageLoading} from "@/components/ui/page-loading";
 import {useBusinessContextStore} from "@/stores/business-context-store";
 import {useTenantContextStore} from "@/stores/tenant-context-store";
 import {completePaymentBreakdown} from "@/lib/sales-payment-breakdown";
+import {commercialReportMoney as money} from "@/lib/report-viewer";
 
-const money=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0});
 const number=new Intl.NumberFormat("es-CO",{maximumFractionDigits:2});
 const palette=["#0f766e","#0891b2","#2563eb","#7c3aed","#d97706","#475569"];
 
@@ -30,17 +30,13 @@ function CommercialSummaryContent(){
   const active=!url.get("scope")||url.get("scope")===scope;
   const filter=reportFilterFromQuery(key=>active?url.get(key):null,{from:context.data?.businessDate??"",to:context.data?.businessDate??""});
   const valid=Boolean(filter.from&&filter.to&&filter.from<=filter.to);
-  const today=useQuery({queryKey:["sales-report-summary",scope,filter],enabled:Boolean(context.data)&&valid,queryFn:()=>salesReportingApi.summary(filter),refetchOnWindowFocus:false,retry:false});
-  const hourly=useBreakdown(valid?filter:undefined,"hour",25,scope);
-  const payments=useBreakdown(today.isSuccess&&!today.data.hasLineScope?filter:undefined,"payment-method",20,scope);
-  const paymentMethods={data:context.data?.paymentMethods.map((method,index)=>({...method,sortOrder:index})),isLoading:context.isLoading,isError:context.isError};
-  const sellers=useBreakdown(valid?filter:undefined,"seller",8,scope);
-  const products=useBreakdown(valid?filter:undefined,"product",8,scope);
-  const suppliers=useBreakdown(valid?filter:undefined,"supplier",8,scope);
-  const warehouses=useBreakdown(valid?filter:undefined,"warehouse",8,scope);
-  const queries=[today,hourly,payments,sellers,products,suppliers,warehouses];
-  const refreshing=queries.some(query=>query.isFetching);
-  const refresh=async()=>{await Promise.all(queries.filter(query=>query.isEnabled).map(query=>query.refetch()))};
+  const today=useQuery({queryKey:["sales-report-summary",scope,filter,"with-breakdowns"],enabled:Boolean(context.data)&&valid,queryFn:({signal})=>salesReportingApi.summary(filter,undefined,true,signal),refetchOnWindowFocus:false,retry:false});
+  const refreshing=today.isFetching||context.isFetching;
+  const refresh=async()=>{
+    const fresh=await context.refetch();
+    if(fresh.data&&(((!active||!url.has("from"))&&fresh.data.businessDate!==filter.from)||((!active||!url.has("to"))&&fresh.data.businessDate!==filter.to)))return;
+    await today.refetch();
+  };
   if(!tenant||!business||context.isLoading)return <PageLoading/>;
   if(context.isError||!context.data)return <PageError onRetry={()=>void context.refetch()}/>;
   const apply=(next:SalesReportFilter)=>{const params=new URLSearchParams();params.set("scope",scope);for(const [key,value] of Object.entries(reportFilterQueryChanges(next)))if(value)params.set(key,value);router.push(`${pathname}?${params}`,{scroll:false});};
@@ -48,10 +44,11 @@ function CommercialSummaryContent(){
   if(today.isLoading)return <PageLoading/>;
   if(today.isError||!today.data)return <><SalesReportFilters key={JSON.stringify(filter)} value={filter} context={context.data} scope={scope} onApply={apply}/><PageError onRetry={()=>void today.refetch()}/></>;
   const value=today.data,totals=value.current;
-  const paymentRows=completePaymentBreakdown(paymentMethods.data??[],payments.data??[]);
+  const breakdowns=value.breakdowns;
+  if(!breakdowns)return <PageError message="La respuesta del resumen no incluye sus desgloses." onRetry={()=>void today.refetch()}/>;
+  const paymentRows=completePaymentBreakdown(context.data.paymentMethods.map((method,index)=>({...method,sortOrder:index})),breakdowns.payments);
   const hasPayments=paymentRows.some(row=>row.netSales!==0);
   const noProjection=!value.projectedThrough;
-  const breakdownError=queries.slice(1).some(query=>query.isError);
   return <div className="space-y-6">
     <header className="relative overflow-hidden rounded-3xl bg-slate-950 p-6 text-white shadow-xl lg:p-8">
       <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-teal-500/25 blur-3xl"/>
@@ -63,7 +60,6 @@ function CommercialSummaryContent(){
     <SalesReportFilters key={`${scope}/${JSON.stringify(filter)}`} value={filter} context={context.data} scope={scope} onApply={apply}/>
 
     {(context.data.hasPendingSources||context.data.hasFailedSources)&&<p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-950">{context.data.hasFailedSources?"Hay documentos con proyección fallida. Las cifras están incompletas hasta resolverlos.":"Hay documentos pendientes de proyectar. Las cifras corresponden al corte visible."}</p>}
-    {breakdownError&&<p className="rounded-xl bg-red-50 p-4 text-sm text-red-950">No fue posible cargar uno o más desgloses. Usa Actualizar para reintentarlo; los espacios vacíos no representan ausencia de ventas.</p>}
     {noProjection&&<Card className="border-dashed"><CardContent className="p-6 text-sm text-muted-foreground">Todavía no hay ventas proyectadas para el período seleccionado. El tablero se llenará a medida que el motor confirme y proyecte movimientos.</CardContent></Card>}
 
     <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -78,20 +74,19 @@ function CommercialSummaryContent(){
     </section>
 
     <section className="grid gap-4 xl:grid-cols-[1.55fr_1fr]">
-      <Card className="rounded-3xl"><CardHeader><CardTitle>Ritmo de venta por hora</CardTitle><CardDescription>Venta neta sin impuestos por hora del negocio dentro del período.</CardDescription></CardHeader><CardContent><div className="h-80"><ResponsiveContainer width="100%" height="100%"><AreaChart data={hourly.data??[]}><defs><linearGradient id="todaySales" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0f766e" stopOpacity={.45}/><stop offset="95%" stopColor="#0f766e" stopOpacity={.03}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="label"/><YAxis tickFormatter={compact}/><Tooltip formatter={value=>money.format(Number(value))}/><Area type="monotone" dataKey="netUntaxedSales" name="Venta neta sin impuestos" stroke="#0f766e" fill="url(#todaySales)" strokeWidth={3}/></AreaChart></ResponsiveContainer></div></CardContent></Card>
-      <Card className="rounded-3xl"><CardHeader><CardTitle>Cómo pagaron</CardTitle><CardDescription>Pagos y crédito netos de reembolsos declarados en los comprobantes.</CardDescription></CardHeader><CardContent>{value.hasLineScope?<p className="py-20 text-center text-sm text-muted-foreground">Los pagos de un comprobante completo no se distribuyen entre las líneas seleccionadas.</p>:payments.isError?<p className="py-20 text-center text-sm text-destructive">No fue posible cargar los pagos.</p>:paymentMethods.isLoading?<p className="py-20 text-center text-sm text-muted-foreground">Cargando medios de pago…</p>:paymentMethods.isError?<p className="py-20 text-center text-sm text-destructive">No fue posible cargar los medios de pago.</p>:<><div className="h-56">{hasPayments?<ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={paymentRows} dataKey="netSales" nameKey="label" innerRadius={55} outerRadius={90} paddingAngle={3}>{paymentRows.map((row,index)=><Cell key={row.key} fill={palette[index%palette.length]}/>)}</Pie><Tooltip formatter={value=>money.format(Number(value))}/></PieChart></ResponsiveContainer>:<div className="grid h-full place-items-center rounded-2xl bg-muted/30 px-6 text-center text-sm text-muted-foreground">Los medios de pago están disponibles; todavía no registran cobros en este período.</div>}</div><Ranking rows={paymentRows} value="netSales"/></>}</CardContent></Card>
+      <Card className="rounded-3xl"><CardHeader><CardTitle>Ritmo de venta por hora</CardTitle><CardDescription>Venta neta sin impuestos por hora del negocio dentro del período.</CardDescription></CardHeader><CardContent><div className="h-80"><ResponsiveContainer width="100%" height="100%"><AreaChart data={breakdowns.hourly}><defs><linearGradient id="todaySales" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0f766e" stopOpacity={.45}/><stop offset="95%" stopColor="#0f766e" stopOpacity={.03}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="label"/><YAxis tickFormatter={compact}/><Tooltip formatter={value=>money.format(Number(value))}/><Area type="monotone" dataKey="netUntaxedSales" name="Venta neta sin impuestos" stroke="#0f766e" fill="url(#todaySales)" strokeWidth={3}/></AreaChart></ResponsiveContainer></div></CardContent></Card>
+      <Card className="rounded-3xl"><CardHeader><CardTitle>Cómo pagaron</CardTitle><CardDescription>Pagos y crédito netos de reembolsos declarados en los comprobantes.</CardDescription></CardHeader><CardContent>{value.hasLineScope?<p className="py-20 text-center text-sm text-muted-foreground">Los pagos de un comprobante completo no se distribuyen entre las líneas seleccionadas.</p>:<><div className="h-56">{hasPayments?<ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={paymentRows} dataKey="netSales" nameKey="label" innerRadius={55} outerRadius={90} paddingAngle={3}>{paymentRows.map((row,index)=><Cell key={row.key} fill={palette[index%palette.length]}/>)}</Pie><Tooltip formatter={value=>money.format(Number(value))}/></PieChart></ResponsiveContainer>:<div className="grid h-full place-items-center rounded-2xl bg-muted/30 px-6 text-center text-sm text-muted-foreground">Los medios de pago están disponibles; todavía no registran cobros en este período.</div>}</div><Ranking rows={paymentRows} value="netSales"/></>}</CardContent></Card>
     </section>
 
     <section className="grid gap-4 lg:grid-cols-2">
-      <RankingCard title="Vendedores" description="Quién explica la venta neta del período." rows={sellers.data??[]} icon={Users}/>
-      <RankingCard title="Productos" description="Productos con mayor venta neta." rows={products.data??[]} icon={PackageSearch}/>
-      <RankingCard title="Proveedores impactados" description="Venta atribuida al proveedor proyectado de cada producto." rows={suppliers.data??[]} icon={ShoppingCart}/>
-      <RankingCard title="Bodegas" description="Venta atribuida a cada bodega de la sede activa." rows={warehouses.data??[]} icon={Percent}/>
+      <RankingCard title="Vendedores" description="Quién explica la venta neta del período." rows={breakdowns.sellers} icon={Users}/>
+      <RankingCard title="Productos" description="Productos con mayor venta neta." rows={breakdowns.products} icon={PackageSearch}/>
+      <RankingCard title="Proveedores impactados" description="Venta atribuida al proveedor proyectado de cada producto." rows={breakdowns.suppliers} icon={ShoppingCart}/>
+      <RankingCard title="Bodegas" description="Venta atribuida a cada bodega de la sede activa." rows={breakdowns.warehouses} icon={Percent}/>
     </section>
   </div>;
 }
 
-function useBreakdown(filter:SalesReportFilter|undefined,dimension:SalesDimension,limit:number,scope:string){return useQuery({queryKey:["sales-report-today-breakdown",scope,filter,dimension],queryFn:()=>salesReportingApi.breakdown(filter!,dimension,limit),enabled:Boolean(filter),staleTime:0,refetchOnMount:"always",refetchOnWindowFocus:false})}
 function Metric({title,value,detail,icon:Icon,tone="plain"}:{title:string;value:string;detail:string;icon:typeof TrendingUp;tone?:"plain"|"dark"|"teal"|"amber"|"blue"}){const styles={plain:"",dark:"border-slate-950 bg-slate-950 text-white",teal:"border-teal-200 bg-teal-50 text-teal-950",amber:"border-amber-200 bg-amber-50 text-amber-950",blue:"border-blue-200 bg-blue-50 text-blue-950"};return <Card className={`rounded-2xl ${styles[tone]}`}><CardContent className="p-5"><div className="flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-wide opacity-65">{title}</span><Icon className="h-5 w-5 opacity-65"/></div><strong className="mt-3 block text-2xl tracking-tight">{value}</strong><small className="mt-1 block opacity-65">{detail}</small></CardContent></Card>}
 function RankingCard({title,description,rows,icon:Icon}:{title:string;description:string;rows:SalesBreakdownRow[];icon:typeof Users}){return <Card className="rounded-3xl"><CardHeader><div className="flex items-start justify-between"><div><CardTitle>{title}</CardTitle><CardDescription>{description} Principales grupos por venta neta sin impuestos.</CardDescription></div><Icon className="h-5 w-5 text-muted-foreground"/></div></CardHeader><CardContent>{rows.length?<><div className="h-56"><ResponsiveContainer width="100%" height="100%"><BarChart data={rows} layout="vertical" margin={{left:25}}><CartesianGrid strokeDasharray="3 3" horizontal={false}/><XAxis type="number" tickFormatter={compact}/><YAxis type="category" dataKey="label" width={120} tick={{fontSize:11}}/><Tooltip formatter={value=>money.format(Number(value))}/><Bar dataKey="netUntaxedSales" name="Venta neta sin impuestos" fill="#0f766e" radius={[0,7,7,0]}/></BarChart></ResponsiveContainer></div></>:<p className="py-16 text-center text-sm text-muted-foreground">Sin datos proyectados en este período.</p>}</CardContent></Card>}
 function Ranking({rows,value}:{rows:SalesBreakdownRow[];value:"netSales"}){return <div className="space-y-2">{rows.slice(0,5).map((row,index)=><div key={row.key} className="flex items-center gap-3 text-sm"><span className="h-2.5 w-2.5 rounded-full" style={{background:palette[index%palette.length]}}/><span className="min-w-0 flex-1 truncate">{row.label}</span><strong>{money.format(row[value])}</strong></div>)}{!rows.length&&<p className="text-center text-sm text-muted-foreground">Sin pagos proyectados en este período.</p>}</div>}

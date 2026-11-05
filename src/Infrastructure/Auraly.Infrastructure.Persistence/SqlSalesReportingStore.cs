@@ -43,12 +43,12 @@ public sealed partial class SqlSalesReportingStore(
 
     public async Task<SalesReportSummary> GetSummaryAsync(
         SalesReportingUserIdentity user,SalesReportFilter filter,
-        DateOnly? comparisonFrom,DateOnly? comparisonTo,CancellationToken cancellationToken)
+        DateOnly? comparisonFrom,DateOnly? comparisonTo,CancellationToken cancellationToken,bool includeBreakdowns=false)
     {
         await using var connection=connections.Create();
         await connection.OpenAsync(cancellationToken);
         filter=await ConstrainAsync(connection,user,filter,cancellationToken);
-        return (await ReadSummaryAsync(connection,user,filter,comparisonFrom,comparisonTo,cancellationToken)).Report;
+        return (await ReadSummaryAsync(connection,user,filter,comparisonFrom,comparisonTo,cancellationToken,includeBreakdowns)).Report;
     }
 
     public async Task<IReadOnlyList<SalesReportBreakdownRow>> GetBreakdownAsync(
@@ -109,38 +109,42 @@ public sealed partial class SqlSalesReportingStore(
         string dimension,int limit,CancellationToken token)
     {
         var (key,label)=ExplorerDimension(dimension);
-        await using var command=new SqlCommand($"""
-            WITH grouped AS(SELECT {key} [Key],MAX({label}) Label,{ExplorerMeasures}
-              {ExplorerSource} GROUP BY {key})
-            SELECT TOP(@Limit) [Key],Label,Documents,Quantity,GrossSales,Discounts,Returns,NetUntaxed,Tax,NetTotal,
-              RecognizedCost,Profit,Profit/NULLIF(NetUntaxed,0)*100,
-              COALESCE(NetUntaxed/NULLIF(SUM(NetUntaxed) OVER(),0)*100,0)
-            FROM grouped ORDER BY NetUntaxed DESC,Label,[Key];
-            """,connection);
+        await using var command=new SqlCommand(LineBreakdownSql(ExplorerSource,key,label),connection);
         AddExplorerParameters(command,user,new(filter));command.Parameters.AddWithValue("@Limit",limit);
         return await ReadBreakdownRowsAsync(command,token);
     }
+
+    private static string LineBreakdownSql(string source,string key,string label,int? limit=null)=>$"""
+            WITH grouped AS(SELECT {key} [Key],MAX({label}) Label,{ExplorerMeasures}
+              {source} GROUP BY {key})
+            SELECT TOP({(limit is {} take?take.ToString(System.Globalization.CultureInfo.InvariantCulture):"@Limit")}) [Key],Label,Documents,Quantity,GrossSales,Discounts,Returns,NetUntaxed,Tax,NetTotal,
+              RecognizedCost,Profit,Profit/NULLIF(NetUntaxed,0)*100,
+              COALESCE(NetUntaxed/NULLIF(SUM(NetUntaxed) OVER(),0)*100,0)
+            FROM grouped ORDER BY NetUntaxed DESC,Label,[Key];
+            """;
 
     private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadPaymentBreakdownAsync(
         SqlConnection connection,SalesReportingUserIdentity user,SalesReportFilter filter,int limit,CancellationToken token)
     {
         if(HasLineScope(filter))
             throw new SalesReportingValidationException("Los pagos no se distribuyen entre subconjuntos de líneas.");
-        await using var command=new SqlCommand($"""
+        await using var command=new SqlCommand(PaymentBreakdownSql(ExplorerSource),connection);
+        AddExplorerParameters(command,user,new(filter));command.Parameters.AddWithValue("@Limit",limit);
+        return await ReadBreakdownRowsAsync(command,token);
+    }
+
+    private static string PaymentBreakdownSql(string activitySource)=>$"""
             WITH grouped AS(SELECT p.MethodCode [Key],p.MethodCode Label,COUNT_BIG(DISTINCT p.SourceDocumentId) Documents,SUM(p.Amount) Net
               FROM reporting.SalesReportPaymentFacts p
               WHERE p.TenantId=@TenantId AND p.BusinessId=@BusinessId AND p.BusinessLocalDate BETWEEN @From AND @To
-                AND EXISTS(SELECT 1 {ExplorerSource} AND a.SourceDocumentId=p.SourceDocumentId AND a.SourceDocumentType=p.SourceDocumentType)
+                AND EXISTS(SELECT 1 {activitySource} AND a.SourceDocumentId=p.SourceDocumentId AND a.SourceDocumentType=p.SourceDocumentType)
               GROUP BY p.MethodCode)
             SELECT TOP(@Limit) [Key],Label,Documents,CAST(0 AS decimal(19,6)),Net,
               CAST(0 AS decimal(19,4)),CAST(0 AS decimal(19,4)),Net,CAST(0 AS decimal(19,4)),Net,
               CAST(NULL AS decimal(19,4)),CAST(NULL AS decimal(19,4)),CAST(NULL AS decimal(19,4)),
               COALESCE(Net/NULLIF(SUM(Net) OVER(),0)*100,0)
             FROM grouped ORDER BY grouped.Net DESC,grouped.[Key];
-            """,connection);
-        AddExplorerParameters(command,user,new(filter));command.Parameters.AddWithValue("@Limit",limit);
-        return await ReadBreakdownRowsAsync(command,token);
-    }
+            """;
 
     private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadTaxBreakdownAsync(
         SqlConnection connection,SalesReportingUserIdentity user,SalesReportFilter filter,int limit,CancellationToken token)
@@ -160,7 +164,16 @@ public sealed partial class SqlSalesReportingStore(
     }
 
     private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadBreakdownRowsAsync(SqlCommand command,CancellationToken token)
-    {var rows=new List<SalesReportBreakdownRow>();await using var r=await ExecuteExplorerReaderAsync(command,(Guid)command.Parameters["@BusinessId"].Value,token);while(await r.ReadAsync(token))rows.Add(new(r.GetString(0),r.GetString(1),r.GetInt64(2),r.GetDecimal(3),r.GetDecimal(4),r.GetDecimal(5),r.GetDecimal(6),r.GetDecimal(7),r.GetDecimal(8),r.GetDecimal(9),NullableDecimal(r,10),NullableDecimal(r,11),r.IsDBNull(12)?null:decimal.Round(r.GetDecimal(12),2),decimal.Round(r.GetDecimal(13),2)));return rows;}
+    {
+        await using var reader=await ExecuteExplorerReaderAsync(command,(Guid)command.Parameters["@BusinessId"].Value,token);
+        return await ReadBreakdownRowsAsync(reader,token);
+    }
+    private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadBreakdownRowsAsync(SqlDataReader reader,CancellationToken token)
+    {
+        var rows=new List<SalesReportBreakdownRow>();
+        while(await reader.ReadAsync(token))rows.Add(new(reader.GetString(0),reader.GetString(1),reader.GetInt64(2),reader.GetDecimal(3),reader.GetDecimal(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetDecimal(9),NullableDecimal(reader,10),NullableDecimal(reader,11),reader.IsDBNull(12)?null:decimal.Round(reader.GetDecimal(12),2),decimal.Round(reader.GetDecimal(13),2)));
+        return rows;
+    }
 
     private async Task<SalesReportFilter> ConstrainAsync(SqlConnection connection,SalesReportingUserIdentity user,
         SalesReportFilter filter,CancellationToken token)
@@ -215,9 +228,20 @@ public sealed partial class SqlSalesReportingStore(
     private static decimal Percent(long numerator,long denominator)=>denominator==0?0:decimal.Round(numerator*100m/denominator,2);
     private static decimal? Growth(decimal current,decimal previous)=>previous==0?(current==0?0:null):
         decimal.Round((current-previous)*100m/decimal.Abs(previous),2);
-    private static void AddFilter(SqlCommand c,SalesReportingUserIdentity u,SalesReportFilter f){Scope(c,u);Date(c,"@From",f.From);Date(c,"@To",f.To);c.Parameters.AddWithValue("@CustomerId",(object?)f.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@SellerId",(object?)f.SellerId??DBNull.Value);c.Parameters.AddWithValue("@SupplierId",(object?)f.SupplierId??DBNull.Value);c.Parameters.AddWithValue("@ProductId",(object?)f.ProductId??DBNull.Value);c.Parameters.AddWithValue("@CategoryId",(object?)f.CategoryId??DBNull.Value);c.Parameters.AddWithValue("@WarehouseId",(object?)f.WarehouseId??DBNull.Value);c.Parameters.AddWithValue("@DocumentType",(object?)f.DocumentType??DBNull.Value);}
+    private static void AddFilter(SqlCommand c,SalesReportingUserIdentity u,SalesReportFilter f)
+    {
+        Scope(c,u);Date(c,"@From",f.From);Date(c,"@To",f.To);
+        Identifier(c,"@CustomerId",f.CustomerId);Identifier(c,"@SellerId",f.SellerId);
+        Identifier(c,"@SupplierId",f.SupplierId);Identifier(c,"@ProductId",f.ProductId);
+        Identifier(c,"@CategoryId",f.CategoryId);Identifier(c,"@WarehouseId",f.WarehouseId);
+        Text(c,"@DocumentType",f.DocumentType,64);
+    }
     private static bool HasDimensionFilter(SalesReportFilter f)=>f.CustomerId is not null||f.SellerId is not null||f.SupplierId is not null||f.ProductId is not null||f.CategoryId is not null||f.WarehouseId is not null||f.DocumentType is not null||f.Selections().Any(selection=>selection.Values is {Count:>0});
     private static bool HasLineScope(SalesReportFilter f)=>f.SupplierId is not null||f.ProductId is not null||f.CategoryId is not null||HasMultipleLineScope(f);
     private static void Scope(SqlCommand c,SalesReportingUserIdentity u){c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.AddWithValue("@BusinessId",u.BusinessId);}
     private static void Date(SqlCommand c,string name,DateOnly value)=>c.Parameters.Add(new SqlParameter(name,SqlDbType.Date){Value=value.ToDateTime(TimeOnly.MinValue)});
+    private static void Identifier(SqlCommand command,string name,Guid? value)=>
+        command.Parameters.Add(name,SqlDbType.UniqueIdentifier).Value=(object?)value??DBNull.Value;
+    private static void Text(SqlCommand command,string name,string? value,int length)=>
+        command.Parameters.Add(name,SqlDbType.NVarChar,length).Value=(object?)value??DBNull.Value;
 }

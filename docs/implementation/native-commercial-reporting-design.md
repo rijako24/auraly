@@ -652,6 +652,38 @@ Ventas lista los originales con movimientos, incluidos originales antiguos con
 devoluciones actuales. Los gráficos comerciales del resumen usan venta neta
 sin impuestos; pagos conserva importes declarados netos de reembolsos.
 
+### Lectura y carga del resumen
+
+El POST de resumen acepta `includeBreakdowns`, opcional y desactivado para los
+clientes anteriores. Cuando se solicita, la misma respuesta incluye hora, medios
+de pago, vendedores, productos, proveedores y bodegas. Conserva los límites de
+presentación de esos paneles y comparte el corte transaccional con las tarjetas.
+La pantalla tiene un único propietario de carga para esa respuesta: no solicita
+seis desgloses adicionales. El contexto de sede/catálogos conserva su carga
+independiente. Pagos permanece vacío bajo un filtro de líneas; no se distribuye
+dinero documental entre productos, categorías, proveedores o meseros.
+
+El lector reutiliza la actividad filtrada para página y agregados. Rentabilidad
+forma su portafolio sobre el período completo una vez y aplica después el
+recorrido al detalle, sin cambiar la base de participación. Impacto reutiliza
+ese conjunto para compradores y totales; sin filtros de líneas usa el grano
+documental existente. Proveedores conserva compras y ventas separadas, reutiliza
+sus hechos de venta filtrados y prepara el período anterior sólo cuando se pide.
+Los bloques cerrados de comparación, pagos e impuestos mantienen sus resultsets
+compatibles sin preparar las uniones que no se van a consultar.
+
+Los parámetros opcionales conservan tipos SQL estables. El lector especializa
+únicamente las banderas booleanas que determinan la forma de la consulta; fechas,
+identidades y valores seleccionados siguen parametrizados. Esto permite podar
+ramas inactivas y reutilizar planes, sin forzar recompilación en cada lectura ni
+guardar resultados que puedan quedar desactualizados. Se conserva el bloqueo de
+corte por sede, la validación de versión y el máximo de dos comandos SQL por
+consulta. El frontend propaga cancelación al cambiar filtros y conserva el plazo
+de timeout, incluso durante la lectura del cuerpo de la respuesta.
+
+Los importes visibles de las cinco vistas comparten formato COP de hasta dos
+decimales. Ese formato no redondea datos persistidos, cálculos ni exportaciones.
+
 ### Evidencia local del 2026-11-04
 
 - Backend y dacpac Release: cero errores y cero advertencias. Build de producción

@@ -18,15 +18,22 @@ public sealed partial class SqlSalesReportingStore
         """;
 
     private static async Task<(SalesReportSummary Report,long Customers)> ReadSummaryAsync(SqlConnection connection,
-        SalesReportingUserIdentity user,SalesReportFilter filter,DateOnly? comparisonFrom,DateOnly? comparisonTo,CancellationToken ct)
+        SalesReportingUserIdentity user,SalesReportFilter filter,DateOnly? comparisonFrom,DateOnly? comparisonTo,CancellationToken ct,
+        bool includeBreakdowns=false)
     {
         var first=comparisonFrom is { } cf&&cf<filter.From?cf:filter.From;
         var last=comparisonTo is { } cto&&cto>filter.To?cto:filter.To;
-        var source=HasDimensionFilter(filter)?$"""
+        var chartColumns=includeBreakdowns?"""
+            ,a.BusinessLocalHour,a.SellerId,d.SellerName,a.ProductId,a.ItemName,
+              a.SupplierId,a.SupplierName,a.WarehouseId,d.WarehouseName
+            """:"";
+        var activitySql=$"""
             SELECT a.SourceDocumentId,a.SourceDocumentType,a.BusinessLocalDate,a.MovementType,a.ItemKind,
               a.Quantity,a.GrossAmount,a.DiscountAmount,a.UntaxedAmount,a.TaxAmount,a.TotalAmount,
-              a.RecognizedCostAmount,a.OriginalSaleDocumentId,a.CustomerId
-            INTO #Activity {ExplorerSource} OPTION(RECOMPILE);
+              a.RecognizedCostAmount,a.OriginalSaleDocumentId,a.CustomerId,a.MissingCostLines {chartColumns}
+            INTO #Activity {ExplorerSource};
+            """;
+        var source=HasDimensionFilter(filter)?activitySql+"""
             SELECT m.BusinessLocalDate,SUM(m.OfficialTotal) OfficialTotal INTO #Money
             FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
             WHERE @WholeDocuments=1 AND EXISTS(SELECT 1 FROM #Activity a WHERE a.SourceDocumentId=m.SourceDocumentId AND a.SourceDocumentType=m.SourceDocumentType)
@@ -56,7 +63,7 @@ public sealed partial class SqlSalesReportingStore
               CASE WHEN UnknownCostDocumentCount=0 THEN NetRecognizedCost END NetRecognizedCost,CreditSales,Collected,Refunded
             INTO #Summary FROM reporting.SalesReportDailyTotals
             WHERE BusinessId=@BusinessId AND BusinessLocalDate BETWEEN @From AND @To;
-            """;
+            """+(includeBreakdowns?activitySql:"");
         var customerSource=HasDimensionFilter(filter)?"""
             SELECT COUNT_BIG(DISTINCT CustomerId) FROM #Activity
             WHERE MovementType=N'Sale' AND UntaxedAmount>0 AND BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo;
@@ -71,13 +78,14 @@ public sealed partial class SqlSalesReportingStore
               CASE WHEN COUNT_BIG(*)=COUNT_BIG(NetRecognizedCost) THEN SUM(NetUntaxedSales-NetRecognizedCost) END
             FROM #Summary WHERE BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo GROUP BY BusinessLocalDate ORDER BY BusinessLocalDate;
             SELECT MAX(LastProjectedAt) FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId;
-            """+customerSource,connection);
+            """+customerSource+(includeBreakdowns?SummaryBreakdownsSql(HasLineScope(filter)):""),connection);
         AddExplorerParameters(command,user,new(filter with {From=first,To=last}));
         Date(command,"@CurrentFrom",filter.From);Date(command,"@CurrentTo",filter.To);
         command.Parameters["@ComparisonFrom"].Value=(comparisonFrom??filter.From).ToDateTime(TimeOnly.MinValue);
         command.Parameters["@ComparisonTo"].Value=(comparisonTo??filter.To).ToDateTime(TimeOnly.MinValue);
         command.Parameters["@HasComparison"].Value=comparisonFrom is not null;
         command.Parameters.AddWithValue("@WholeDocuments",!HasLineScope(filter));
+        if(includeBreakdowns)command.Parameters.AddWithValue("@Limit",20);
         await using var reader=await ExecuteExplorerReaderAsync(command,user.BusinessId,ct);
         await reader.ReadAsync(ct);var current=ReadSummaryTotals(reader);
         await reader.NextResultAsync(ct);await reader.ReadAsync(ct);
@@ -86,10 +94,38 @@ public sealed partial class SqlSalesReportingStore
         while(await reader.ReadAsync(ct))trend.Add(new(DateOnly.FromDateTime(reader.GetDateTime(0)),reader.GetInt64(1),reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4),NullableDecimal(reader,5)));
         await reader.NextResultAsync(ct);await reader.ReadAsync(ct);var projected=NullableDate(reader,0);
         await reader.NextResultAsync(ct);await reader.ReadAsync(ct);var customers=reader.GetInt64(0);
+        SalesReportSummaryBreakdowns? breakdowns=null;
+        if(includeBreakdowns)
+        {
+            async Task<IReadOnlyList<SalesReportBreakdownRow>> NextBreakdownAsync()
+            {
+                await reader.NextResultAsync(ct);
+                return await ReadBreakdownRowsAsync(reader,ct);
+            }
+            var hourly=await NextBreakdownAsync();
+            IReadOnlyList<SalesReportBreakdownRow> payments=HasLineScope(filter)?[]:await NextBreakdownAsync();
+            breakdowns=new(hourly,payments,await NextBreakdownAsync(),await NextBreakdownAsync(),
+                await NextBreakdownAsync(),await NextBreakdownAsync());
+        }
         var salesBeforeReturns=current.NetUntaxedSales+current.Returns;
         return (new(current,comparison,comparison is null?null:Growth(current.NetTotalSales,comparison.NetTotalSales),trend,projected,
             customers,current.DocumentCount==0?0:decimal.Round(current.NetTotalSales/current.DocumentCount,2),
-            salesBeforeReturns==0?0:decimal.Round(current.Returns/salesBeforeReturns*100m,2),HasLineScope(filter),current.NetUntaxedSales+current.NetTax,HasLineScope(filter)?null:current.NetTotalSales-current.NetUntaxedSales-current.NetTax),customers);
+            salesBeforeReturns==0?0:decimal.Round(current.Returns/salesBeforeReturns*100m,2),HasLineScope(filter),current.NetUntaxedSales+current.NetTax,HasLineScope(filter)?null:current.NetTotalSales-current.NetUntaxedSales-current.NetTax,breakdowns),customers);
+    }
+
+    private static string SummaryBreakdownsSql(bool lineScope)
+    {
+        // All panels share the same filtered activity and the same projection cut.
+        const string source="FROM #Activity a WHERE a.BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo";
+        string Breakdown(string dimension,int limit)
+        {
+            var (key,label)=ExplorerDimension(dimension);
+            return LineBreakdownSql(source,key,label.Replace("d.","a.",StringComparison.Ordinal),limit);
+        }
+        return Breakdown(SalesReportingDimensions.Hour,25)+
+            (lineScope?"":PaymentBreakdownSql(source))+
+            Breakdown(SalesReportingDimensions.Seller,8)+Breakdown(SalesReportingDimensions.Product,8)+
+            Breakdown(SalesReportingDimensions.Supplier,8)+Breakdown(SalesReportingDimensions.Warehouse,8);
     }
 
     private static SalesReportTotals ReadSummaryTotals(SqlDataReader r)

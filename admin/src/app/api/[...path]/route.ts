@@ -64,12 +64,14 @@ async function proxy(
   );
 
   const body = await readBackendProxyBody(request, method);
+  const reportRead = path.startsWith("commerce/v1/sales-reports/");
 
   try {
     const res = await fetch(url, {
       method,
       headers,
       body,
+      signal: reportRead ? request.signal : undefined,
     });
 
     const responseHeaders = new Headers();
@@ -91,6 +93,7 @@ async function proxy(
       headers: responseHeaders,
     });
   } catch (error) {
+    if (reportRead && request.signal.aborted) return new NextResponse(null, { status: 499 });
     console.error("[api/proxy]", method, path, error);
     return NextResponse.json(
       { message: "Error de conexión con el servidor" },

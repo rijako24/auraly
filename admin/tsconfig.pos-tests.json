@@ -119,6 +119,7 @@
     "src/services/api/tenant-print-branding-cache.test.ts",
     "src/services/api/tenant-print-branding-browser-store.test.ts",
     "src/lib/auth-client.ts",
+    "src/services/api/client.test.ts",
     "src/lib/realtime-reconnect-policy.ts",
     "src/lib/realtime-reconnect-policy.test.ts",
     "src/lib/auth-client.test.ts",

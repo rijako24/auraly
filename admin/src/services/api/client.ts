@@ -1,6 +1,6 @@
 import type { ApiError } from "@/types/api";
-import { buildLoginRedirect } from "@/lib/login-redirect";
-import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
+import { buildLoginRedirect } from "../../lib/login-redirect";
+import { shouldIncludeExecutionContext } from "../../lib/api-execution-context";
 
 import {
   announceSessionReplacement,
@@ -10,7 +10,7 @@ import {
   isCurrentWebSessionVersion,
   retryAuthenticatedRequest,
   type SessionRefreshResult,
-} from "@/lib/auth-session";
+} from "../../lib/auth-session";
 
 const API_BASE = "/api";
 const SELECTED_TENANT_STORAGE_KEY = "selected_tenant_id";
@@ -73,12 +73,28 @@ function buildExecutionHeaders(includeExecutionContext = true): Record<string, s
   return headers;
 }
 
-function fetchWithTimeout(
+export function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const caller = init.signal;
+  if (!caller) return fetch(input, { ...init, signal: deadline });
+  const controller = new AbortController();
+  // Keep both signals connected through response-body consumption as well as
+  // headers. The existing deadline bounds the listener lifetime on success.
+  const cancel = () => {
+    controller.abort(caller.aborted ? caller.reason : deadline.reason);
+    caller.removeEventListener("abort", cancel);
+    deadline.removeEventListener("abort", cancel);
+  };
+  if (caller.aborted) cancel();
+  else {
+    caller.addEventListener("abort", cancel, { once: true });
+    deadline.addEventListener("abort", cancel, { once: true });
+  }
+  return fetch(input, { ...init, signal: controller.signal });
 }
 
 async function expireWebSession(reason: "replaced" | "expired"): Promise<void> {
@@ -279,9 +295,10 @@ class ApiClient {
   }
 
   async post<T>(path: string, body?: unknown,
-    options?: Pick<RequestInit, "headers">): Promise<T> {
+    options?: Pick<RequestInit, "headers" | "signal">): Promise<T> {
     const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "POST",
+      signal: options?.signal,
       headers: {
         ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
         ...options?.headers,
