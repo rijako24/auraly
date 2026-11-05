@@ -20,22 +20,36 @@ public sealed partial class SqlSalesReportingStore
             "label"=>"Label ASC","profit-desc"=>"Profit DESC","quantity-desc"=>"Quantity DESC",
             _=>throw new SalesReportingValidationException("El orden no es válido.")};
         var source=ExplorerSource+" AND a.ItemKind=N'Product'";
+        var comparison=ComparisonRange(request);
+        var previousSql=comparison is null?"""
+            SELECT TOP(0) GroupKey,Label,NetUntaxed Net,Customers Buyers INTO #PreviousSales FROM #Sales;
+            SELECT TOP(0) GroupKey,Label,Net INTO #PreviousPurchases FROM #Purchases;
+            """:$"""
+            SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
+              COALESCE(a.SupplierName,N'Sin proveedor atribuido') GroupLabel,{FinancialActivityColumns} INTO #PreviousActivity {ComparisonSource(source)};
+            SELECT a.GroupKey,MAX(a.GroupLabel) Label,SUM(a.UntaxedAmount) Net,
+              COUNT_BIG(DISTINCT CASE WHEN a.MovementType=N'Sale' AND a.UntaxedAmount>0 THEN a.CustomerId END) Buyers
+            INTO #PreviousSales FROM #PreviousActivity a GROUP BY a.GroupKey;
+            SELECT CONVERT(nvarchar(36),p.SupplierId) GroupKey,MAX(p.SupplierName) Label,SUM(p.FunctionalNetAmount) Net
+            INTO #PreviousPurchases {ComparisonSource(PurchaseScope)} GROUP BY p.SupplierId;
+            """;
+        var comparisonSql=comparison is null?$"SELECT {ExplorerMeasures} FROM #Activity a WHERE 1=0;":$"""
+            SELECT {ExplorerMeasures} FROM #PreviousActivity a
+            WHERE EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=a.GroupKey);
+            """;
         await using var command=new SqlCommand($"""
             {ImpactUniverseSql}
             SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
-              MAX(COALESCE(a.SupplierName,N'Sin proveedor atribuido')) Label,{ExplorerMeasures}
-            INTO #Sales {source} GROUP BY a.SupplierId OPTION(RECOMPILE);
-            SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
-              MAX(COALESCE(a.SupplierName,N'Sin proveedor atribuido')) Label,
-              SUM(a.UntaxedAmount) Net,COUNT_BIG(DISTINCT CASE WHEN a.MovementType=N'Sale' AND a.UntaxedAmount>0 THEN a.CustomerId END) Buyers
-            INTO #PreviousSales {ComparisonSource(source)} AND @HasComparison=1 GROUP BY a.SupplierId OPTION(RECOMPILE);
+              COALESCE(a.SupplierName,N'Sin proveedor atribuido') GroupLabel,{FinancialActivityColumns}
+            INTO #Activity {source};
+            SELECT a.GroupKey,MAX(a.GroupLabel) Label,{ExplorerMeasures}
+            INTO #Sales FROM #Activity a GROUP BY a.GroupKey;
             SELECT CONVERT(nvarchar(36),p.SupplierId) GroupKey,MAX(p.SupplierName) Label,
               SUM(p.Quantity) Quantity,SUM(p.FunctionalNetAmount) Net,SUM(p.FunctionalTaxAmount) Tax,SUM(p.FunctionalTotalAmount) Total,MAX(p.ProjectedAt) ProjectedAt,
               SUM(CASE WHEN p.SourceDocumentType=N'GoodsReceipt' THEN p.FunctionalNetAmount ELSE 0 END) Receipts,
               -SUM(CASE WHEN p.SourceDocumentType=N'PurchaseReturn' THEN p.FunctionalNetAmount ELSE 0 END) Returns
-            INTO #Purchases {PurchaseScope} GROUP BY p.SupplierId OPTION(RECOMPILE);
-            SELECT CONVERT(nvarchar(36),p.SupplierId) GroupKey,MAX(p.SupplierName) Label,SUM(p.FunctionalNetAmount) Net
-            INTO #PreviousPurchases {ComparisonSource(PurchaseScope)} AND @HasComparison=1 GROUP BY p.SupplierId OPTION(RECOMPILE);
+            INTO #Purchases {PurchaseScope} GROUP BY p.SupplierId;
+            {previousSql}
             WITH supplierKeys AS(SELECT GroupKey FROM #Sales UNION SELECT GroupKey FROM #Purchases
               UNION SELECT GroupKey FROM #PreviousSales UNION SELECT GroupKey FROM #PreviousPurchases)
             SELECT keysValue.GroupKey,COALESCE(s.Label,p.Label,ps.Label,pp.Label) Label,
@@ -55,18 +69,16 @@ public sealed partial class SqlSalesReportingStore
             SELECT COUNT_BIG(*) KnownCustomers FROM #Universe;
             SELECT * FROM #Candidates ORDER BY {order},GroupKey OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             SELECT {ExplorerMeasures},(SELECT COUNT_BIG(*) FROM #Candidates) TotalGroups,MAX(a.ProjectedAt) ProjectedThrough
-            {source} AND EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed')) OPTION(RECOMPILE);
+            FROM #Activity a WHERE EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=a.GroupKey);
             SELECT COALESCE(SUM(PurchaseNet),0),COALESCE(SUM(PurchaseTax),0),COALESCE(SUM(PurchaseTotal),0),
               COALESCE(SUM(PurchaseQuantity),0),COALESCE(SUM(PreviousPurchases),0),MAX(ProjectedAt),
               COALESCE(SUM(PurchaseReceipts),0),COALESCE(SUM(PurchaseReturns),0) FROM #Candidates;
-            SELECT {ExplorerMeasures} {ComparisonSource(source)} AND @HasComparison=1
-              AND EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed')) OPTION(RECOMPILE);
+            {comparisonSql}
             """,connection);
         AddExplorerParameters(command,user,request with {Search=null});
         var search=string.IsNullOrWhiteSpace(request.Search)?null:request.Search.Trim();
-        command.Parameters.AddWithValue("@SupplierSearch",search is null?DBNull.Value:$"%{search.Replace("~","~~").Replace("%","~%").Replace("_","~_").Replace("[","~[")}%");
-        command.Parameters.AddWithValue("@RequiredSupplier",(object?)requiredSupplierId??DBNull.Value);
-        var comparison=ComparisonRange(request);
+        Text(command,"@SupplierSearch",search is null?null:$"%{search.Replace("~","~~").Replace("%","~%").Replace("_","~_").Replace("[","~[")}%",322);
+        Identifier(command,"@RequiredSupplier",requiredSupplierId);
         await using var reader=await ExecuteExplorerReaderAsync(command,user.BusinessId,cancellationToken);await reader.ReadAsync(cancellationToken);
         var known=reader.GetInt64(0);var rows=new List<SalesReportExplorerRow>();await reader.NextResultAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken))

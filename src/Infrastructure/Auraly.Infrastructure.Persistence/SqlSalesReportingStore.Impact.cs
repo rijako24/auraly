@@ -28,11 +28,18 @@ public sealed partial class SqlSalesReportingStore
         var order=request.OrderBy switch {"net-desc"=>"NetUntaxed DESC","net-asc"=>"NetUntaxed ASC",
             "label"=>"Label ASC","profit-desc"=>"Profit DESC","quantity-desc"=>"Quantity DESC",
             _=>throw new SalesReportingValidationException("El orden no es válido.")};
+        var comparison=ComparisonRange(request);
+        var comparisonSql=comparison is null?$"SELECT {ExplorerMeasures} FROM #Activity a WHERE 1=0;":$"""
+            SELECT {ExplorerMeasures} {ComparisonSource(ExplorerSource)}
+              AND EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=COALESCE(CONVERT(nvarchar(36),a.CustomerId),N'unattributed'));
+            """;
         await using var command=new SqlCommand($"""
             {ImpactUniverseSql}
-            SELECT COALESCE(CONVERT(nvarchar(36),a.CustomerId),N'unattributed') GroupKey,MAX(d.CustomerName) Label,
+            SELECT COALESCE(CONVERT(nvarchar(36),a.CustomerId),N'unattributed') GroupKey,d.CustomerName GroupLabel,
+              {FinancialActivityColumns} INTO #Activity {ExplorerSource};
+            SELECT a.GroupKey,MAX(a.GroupLabel) Label,
               {ExplorerMeasures},COUNT_BIG(CASE WHEN a.MovementType=N'Sale' AND a.UntaxedAmount>0 THEN 1 END) PositiveSaleLines
-            INTO #Current {ExplorerSource} GROUP BY a.CustomerId OPTION(RECOMPILE);
+            INTO #Current FROM #Activity a GROUP BY a.GroupKey;
             SELECT universe.GroupKey,universe.Label,
               COALESCE(currentValue.Documents,0) Documents,COALESCE(currentValue.Customers,0) Customers,
               COALESCE(currentValue.Quantity,0) Quantity,COALESCE(currentValue.GrossSales,0) GrossSales,
@@ -61,16 +68,15 @@ public sealed partial class SqlSalesReportingStore
               OR (@Activity=N'without-purchase' AND (BoughtInPeriod=1 OR GroupKey=N'unattributed'));
             SELECT * FROM #Candidates ORDER BY {order},GroupKey OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             SELECT {ExplorerMeasures},(SELECT COUNT_BIG(*) FROM #Candidates) TotalGroups,MAX(a.ProjectedAt) ProjectedThrough
-            {ExplorerSource} AND EXISTS(SELECT 1 FROM #Candidates selected
-              WHERE selected.GroupKey=COALESCE(CONVERT(nvarchar(36),a.CustomerId),N'unattributed')) OPTION(RECOMPILE);
-            SELECT {ExplorerMeasures} {ComparisonSource(ExplorerSource)} AND @HasComparison=1
-              AND EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=COALESCE(CONVERT(nvarchar(36),a.CustomerId),N'unattributed')) OPTION(RECOMPILE);
+            FROM #Activity a WHERE EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=a.GroupKey);
+            {comparisonSql}
             """,connection);
         AddExplorerParameters(command,user,request with {Search=null});
+        command.Parameters["@WholeActivity"].Value=!HasLineScope(request.Filter)&&request.WaiterPartyId is null;
         var search=string.IsNullOrWhiteSpace(request.Search)?null:request.Search.Trim();
-        command.Parameters.AddWithValue("@CustomerSearch",search is null?DBNull.Value:$"%{search.Replace("~","~~").Replace("%","~%").Replace("_","~_").Replace("[","~[")}%");
-        command.Parameters.AddWithValue("@RequiredSupplier",(object?)requiredSupplierId??DBNull.Value);
-        command.Parameters.AddWithValue("@Activity",request.CustomerActivity);
+        Text(command,"@CustomerSearch",search is null?null:$"%{search.Replace("~","~~").Replace("%","~%").Replace("_","~_").Replace("[","~[")}%",322);
+        Identifier(command,"@RequiredSupplier",requiredSupplierId);
+        Text(command,"@Activity",request.CustomerActivity,16);
         await using var reader=await ExecuteExplorerReaderAsync(command,user.BusinessId,cancellationToken);await reader.ReadAsync(cancellationToken);
         var universe=reader.GetInt64(0);var buyers=reader.GetInt64(1);
         var impact=new SalesReportImpactOverview(universe,buyers,universe-buyers,Percent(buyers,universe),
@@ -81,7 +87,6 @@ public sealed partial class SqlSalesReportingStore
         await reader.NextResultAsync(cancellationToken);await reader.ReadAsync(cancellationToken);
         var totalCount=reader.GetInt64(reader.GetOrdinal("TotalGroups"));var totals=ReadExplorerMeasures(reader,0);var through=NullableDate(reader,reader.GetOrdinal("ProjectedThrough"));
         await reader.NextResultAsync(cancellationToken);await reader.ReadAsync(cancellationToken);
-        var comparison=ComparisonRange(request);
         return new(rows,request.Page,request.PageSize,totalCount,totals,through,
             HasLineScope(request.Filter),[],[],Impact:impact,
             Comparison:comparison is null?null:new(comparison.Value.From,comparison.Value.To,ReadExplorerMeasures(reader,0)));

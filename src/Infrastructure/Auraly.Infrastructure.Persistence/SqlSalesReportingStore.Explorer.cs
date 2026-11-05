@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.RegularExpressions;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -94,6 +95,15 @@ public sealed partial class SqlSalesReportingStore
         CASE WHEN @WholeDocuments=1 THEN metadata.RoundingAdjustmentAmount END OriginalRounding
         """;
 
+    private const string FinancialActivityColumns="""
+        a.OriginalSaleDocumentId,a.ItemKind,a.CustomerId,a.Quantity,a.GrossAmount,a.DiscountAmount,
+        a.UntaxedAmount,a.TaxAmount,a.TotalAmount,a.RecognizedCostAmount,a.MovementType,a.ProjectedAt,a.MissingCostLines
+        """;
+    private const string ActivityColumns=FinancialActivityColumns+"""
+        ,a.FactId,a.SourceDocumentId,a.SourceDocumentType,a.SourceLineNumber,a.ProductId,a.OccurredAt,
+        a.TaxCode,a.TaxRate,d.DocumentNumber,d.DocumentType
+        """;
+
     public async Task<SalesReportExplorerPage> ExploreAsync(SalesReportingUserIdentity user,
         SalesReportExplorerRequest request,CancellationToken cancellationToken)
     {
@@ -137,11 +147,14 @@ public sealed partial class SqlSalesReportingStore
         var composition=productScope?" AND (@ProductComposition IS NULL OR COALESCE(a.CompositionKind,N'Unknown')=@ProductComposition)":"";
         // Product eligibility and participation use the complete filtered period, independent of drill/page.
         var productCohort=productScope?$"""
+            SELECT {key} GroupKey,{label} GroupLabel,{ActivityColumns},
+              CONVERT(bit,CASE WHEN 1=1 {drill} AND (@Document IS NULL OR a.OriginalSaleDocumentId=@Document) THEN 1 ELSE 0 END) WithinDrill
+            INTO #ProductActivity {ExplorerSource.Replace(",NULL,@Document,@WholeActivity)",",NULL,NULL,@WholeActivity)",StringComparison.Ordinal).Replace(" AND (@Document IS NULL OR a.OriginalSaleDocumentId=@Document)","",StringComparison.Ordinal)}
+              AND a.ItemKind=N'Product' {composition};
             SELECT a.ProductId,SUM(a.UntaxedAmount) NetUntaxed,
               CASE WHEN COUNT_BIG(*)=COUNT_BIG(a.RecognizedCostAmount) THEN SUM(a.UntaxedAmount-a.RecognizedCostAmount) END Profit,
               COUNT_BIG(CASE WHEN a.MovementType=N'Return' THEN 1 END) ReturnLines
-            INTO #ProductCohort {ExplorerSource.Replace(",NULL,@Document,@WholeActivity)",",NULL,NULL,@WholeActivity)",StringComparison.Ordinal).Replace(" AND (@Document IS NULL OR a.OriginalSaleDocumentId=@Document)","",StringComparison.Ordinal)}
-              AND a.ItemKind=N'Product' {composition} GROUP BY a.ProductId OPTION(RECOMPILE);
+            INTO #ProductCohort FROM #ProductActivity a GROUP BY a.ProductId;
             -- Compare the exact ratio by cross multiplication; avoid rounded division at a range boundary.
             DELETE #ProductCohort WHERE (@ProductMarginFrom IS NOT NULL AND (Profit IS NULL OR NetUntaxed=0
                 OR (NetUntaxed>0 AND Profit*100<@ProductMarginFrom*NetUntaxed)
@@ -160,25 +173,57 @@ public sealed partial class SqlSalesReportingStore
             "profit-desc"=>"Profit DESC", "quantity-desc"=>"Quantity DESC",
             _=>throw new SalesReportingValidationException("El orden no es válido.")
         };
-        await using var command=new SqlCommand(productCohort+$"""
-            SELECT {key} GroupKey,{label} GroupLabel,a.FactId,a.SourceDocumentId,a.SourceDocumentType,
-              a.OriginalSaleDocumentId,a.SourceLineNumber,a.ItemKind,a.CustomerId,a.Quantity,a.GrossAmount,a.DiscountAmount,
-              a.UntaxedAmount,a.TaxAmount,a.TotalAmount,a.RecognizedCostAmount,a.MovementType,a.OccurredAt,a.ProjectedAt,
-              a.TaxCode,a.TaxRate,d.DocumentNumber,d.DocumentType,a.MissingCostLines
-            INTO #Activity {source} OPTION(RECOMPILE);
-            SELECT DISTINCT SourceDocumentId,SourceDocumentType INTO #MovementKeys FROM #Activity;
-            CREATE UNIQUE CLUSTERED INDEX IX_MovementKeys ON #MovementKeys(SourceDocumentId,SourceDocumentType);
+        var activity=productScope?"""
+            SELECT a.* INTO #Activity FROM #ProductActivity a
+            WHERE a.WithinDrill=1 AND EXISTS(SELECT 1 FROM #ProductCohort eligible WHERE eligible.ProductId=a.ProductId);
+            """:$"SELECT {key} GroupKey,{label} GroupLabel,{ActivityColumns} INTO #Activity {source};";
+        // Closed panels keep their result-set contract without compiling their fact joins.
+        var comparisonSql=comparison is null?$"SELECT {ExplorerMeasures} FROM #Activity a WHERE 1=0;":
+            $"SELECT {ExplorerMeasures} {ComparisonSource(source)};";
+        var taxSql=request.DocumentId is null?"""
+            SELECT CAST(NULL AS nvarchar(16)) TaxCode,CAST(NULL AS decimal(9,6)) TaxRate,
+              CAST(0 AS decimal(19,4)) Base,CAST(0 AS decimal(19,4)) Tax,CAST(0 AS decimal(19,4)) Total WHERE 1=0;
+            """:"""
+            SELECT a.TaxCode,a.TaxRate,SUM(a.UntaxedAmount),SUM(a.TaxAmount),SUM(a.TotalAmount)
+            FROM #Activity a GROUP BY a.TaxCode,a.TaxRate ORDER BY a.TaxCode,a.TaxRate;
+            """;
+        var includePayments=request.DocumentId is not null&&!lineScope&&string.IsNullOrWhiteSpace(request.Search);
+        var paymentSql=includePayments?"""
+            SELECT payment.MovementType,payment.MethodCode,SUM(payment.Amount)
+            FROM reporting.SalesReportPaymentFacts payment
+            WHERE payment.TenantId=@TenantId AND payment.BusinessId=@BusinessId
+              AND payment.BusinessLocalDate BETWEEN @From AND @To
+              AND EXISTS(SELECT 1 FROM #MovementKeys selected WHERE selected.SourceDocumentId=payment.SourceDocumentId AND selected.SourceDocumentType=payment.SourceDocumentType)
+            GROUP BY payment.MovementType,payment.MethodCode;
+            """:"""
+            SELECT CAST(NULL AS nvarchar(32)) MovementType,CAST(NULL AS nvarchar(32)) MethodCode,
+              CAST(0 AS decimal(19,4)) Amount WHERE 1=0;
+            """;
+        var movementKeysSql=lineScope?
+            "SELECT TOP(0) SourceDocumentId,SourceDocumentType INTO #MovementKeys FROM #Activity;":
+            "SELECT DISTINCT SourceDocumentId,SourceDocumentType INTO #MovementKeys FROM #Activity;";
+        var moneySql=lineScope?"""
+            SELECT TOP(0) a.SourceDocumentId,a.SourceDocumentType,a.OriginalSaleDocumentId,
+              CONVERT(decimal(19,4),0) RoundingAdjustmentAmount,CONVERT(decimal(19,4),0) OfficialTotal,
+              CONVERT(decimal(19,4),0) RestaurantTipAmount INTO #DocumentMoney FROM #Activity a;
+            """:"""
             SELECT m.SourceDocumentId,m.SourceDocumentType,m.OriginalSaleDocumentId,m.RoundingAdjustmentAmount,
               m.OfficialTotal,m.RestaurantTipAmount INTO #DocumentMoney
             FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
-            WHERE @WholeDocuments=1 AND EXISTS(SELECT 1 FROM #MovementKeys selected
-              WHERE selected.SourceDocumentId=m.SourceDocumentId AND selected.SourceDocumentType=m.SourceDocumentType)
-            OPTION(RECOMPILE);
-            SELECT a.GroupKey,MAX(a.GroupLabel) Label,{groupMeasures},
-              MAX(CONVERT(nvarchar(36),a.FactId)) FactKey,MAX(a.ItemKind) ItemKind,
-              MAX(a.DocumentNumber) DocumentNumber,MAX(a.DocumentType) DocumentType,MAX(a.OccurredAt) OccurredAt,MAX(a.MovementType) MovementType
-            INTO #Groups FROM #Activity a GROUP BY a.GroupKey;
-            SELECT * INTO #Page FROM #Groups ORDER BY {order},GroupKey
+            WHERE EXISTS(SELECT 1 FROM #MovementKeys selected
+              WHERE selected.SourceDocumentId=m.SourceDocumentId AND selected.SourceDocumentType=m.SourceDocumentType);
+            """;
+        await using var command=new SqlCommand(productCohort+$"""
+            {activity}
+            {movementKeysSql}
+            CREATE UNIQUE CLUSTERED INDEX IX_MovementKeys ON #MovementKeys(SourceDocumentId,SourceDocumentType);
+            {moneySql}
+            SELECT grouped.* INTO #Page FROM(
+              SELECT a.GroupKey,MAX(a.GroupLabel) Label,{groupMeasures},
+                MAX(CONVERT(nvarchar(36),a.FactId)) FactKey,MAX(a.ItemKind) ItemKind,
+                MAX(a.DocumentNumber) DocumentNumber,MAX(a.DocumentType) DocumentType,MAX(a.OccurredAt) OccurredAt,MAX(a.MovementType) MovementType
+              FROM #Activity a GROUP BY a.GroupKey
+            ) grouped ORDER BY {order},GroupKey
               OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             SELECT g.GroupKey,g.Label,g.Documents,g.Customers,g.Quantity,g.GrossSales,g.Discounts,g.Returns,
               g.NetUntaxed,g.Tax,g.NetTotal,g.RecognizedCost,g.Profit,g.MissingCostLines,g.FactKey,g.ItemKind,
@@ -200,31 +245,25 @@ public sealed partial class SqlSalesReportingStore
                 AND EXISTS(SELECT 1 FROM #Page selected WHERE selected.GroupKey=CONVERT(nvarchar(36),m.OriginalSaleDocumentId))
               GROUP BY m.OriginalSaleDocumentId) money
               ON money.OriginalSaleDocumentId=COALESCE(@Document,TRY_CONVERT(uniqueidentifier,g.GroupKey))
-            ORDER BY {order},GroupKey OPTION(RECOMPILE);
-            SELECT {ExplorerMeasures},(SELECT COUNT_BIG(*) FROM #Groups) TotalGroups,
+            ORDER BY {order},GroupKey;
+            SELECT {ExplorerMeasures},COUNT_BIG(DISTINCT a.GroupKey) TotalGroups,
               MAX(a.ProjectedAt) ProjectedThrough FROM #Activity a;
-            SELECT a.TaxCode,a.TaxRate,SUM(a.UntaxedAmount),SUM(a.TaxAmount),SUM(a.TotalAmount)
-            FROM #Activity a WHERE @Lines=1 GROUP BY a.TaxCode,a.TaxRate ORDER BY a.TaxCode,a.TaxRate OPTION(RECOMPILE);
-            SELECT payment.MovementType,payment.MethodCode,SUM(payment.Amount)
-            FROM reporting.SalesReportPaymentFacts payment
-            WHERE @Payments=1 AND payment.TenantId=@TenantId AND payment.BusinessId=@BusinessId
-              AND payment.BusinessLocalDate BETWEEN @From AND @To
-              AND EXISTS(SELECT 1 FROM #MovementKeys selected WHERE selected.SourceDocumentId=payment.SourceDocumentId AND selected.SourceDocumentType=payment.SourceDocumentType)
-            GROUP BY payment.MovementType,payment.MethodCode OPTION(RECOMPILE);
+            {taxSql}
+            {paymentSql}
             SELECT CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.RoundingAdjustmentAmount),0) END,
               CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.RestaurantTipAmount),0) END,
               CASE WHEN @WholeDocuments=1 THEN COALESCE(SUM(m.OfficialTotal),0) END
             FROM #DocumentMoney m;
-            SELECT {ExplorerMeasures} {ComparisonSource(source)} AND @HasComparison=1 OPTION(RECOMPILE);
+            {comparisonSql}
             SELECT {DocumentSnapshotColumns} FROM reporting.SalesReportDocuments metadata
             WHERE metadata.DocumentId=@Document AND metadata.TenantId=@TenantId AND metadata.BusinessId=@BusinessId
-              AND EXISTS(SELECT 1 FROM #Groups);
+              AND EXISTS(SELECT 1 FROM #Activity);
             """+(productScope?"SELECT COUNT_BIG(*),COALESCE(SUM(NetUntaxed),0),CASE WHEN COUNT_BIG(*)=COUNT_BIG(Profit) THEN COALESCE(SUM(Profit),0) END FROM #ProductCohort;":""),connection);
         if(productScope)
         {
             var products=request.Products??new();
-            command.Parameters.AddWithValue("@ProductComposition",(object?)products.CompositionKind??DBNull.Value);
-            command.Parameters.AddWithValue("@ProductReturns",products.ReturnActivity);
+            Text(command,"@ProductComposition",products.CompositionKind,16);
+            Text(command,"@ProductReturns",products.ReturnActivity,16);
             foreach(var (name,value) in new[]{("@ProductMarginFrom",products.MarginFrom),("@ProductMarginTo",products.MarginTo)})
             {var parameter=command.Parameters.Add(name,SqlDbType.Decimal);parameter.Precision=19;parameter.Scale=6;parameter.Value=(object?)value??DBNull.Value;}
         }
@@ -232,7 +271,6 @@ public sealed partial class SqlSalesReportingStore
         command.Parameters["@WholeActivity"].Value=!lineScope&&dimension is "document" or "billed-by" or "customer" or "seller" or "warehouse" or "table" or "day" or "month" or "hour";
         command.Parameters.AddWithValue("@WholeDocuments",!lineScope);
         command.Parameters.AddWithValue("@DocumentGroups",dimension=="document");
-        command.Parameters.AddWithValue("@Payments",request.DocumentId is not null&&!lineScope&&string.IsNullOrWhiteSpace(request.Search));
         var items=new List<SalesReportExplorerRow>();
         await using var reader=await ExecuteExplorerReaderAsync(command,user.BusinessId,cancellationToken);
         while(await reader.ReadAsync(cancellationToken))
@@ -280,14 +318,14 @@ public sealed partial class SqlSalesReportingStore
     {
         AddFilter(command,user,request.Filter);
         AddSelections(command,request.Filter);
-        for(var index=0;index<(request.DrillPath?.Count??0);index++)command.Parameters.AddWithValue($"@PathKey{index}",request.DrillPath![index].Key);
+        for(var index=0;index<(request.DrillPath?.Count??0);index++)Text(command,$"@PathKey{index}",request.DrillPath![index].Key,80);
         command.Parameters.AddWithValue("@WholeActivity",false);
-        command.Parameters.AddWithValue("@BilledBy",(object?)request.BilledByUserId??DBNull.Value);
-        command.Parameters.AddWithValue("@Waiter",(object?)request.WaiterPartyId??DBNull.Value);
-        command.Parameters.AddWithValue("@Document",(object?)request.DocumentId??DBNull.Value);
+        Identifier(command,"@BilledBy",request.BilledByUserId);
+        Identifier(command,"@Waiter",request.WaiterPartyId);
+        Identifier(command,"@Document",request.DocumentId);
         var search=string.IsNullOrWhiteSpace(request.Search)?null:request.Search.Trim();
-        command.Parameters.AddWithValue("@Search",search is null?DBNull.Value:$"%{search.Replace("~","~~").Replace("%","~%").Replace("_","~_").Replace("[","~[")}%");
-        command.Parameters.AddWithValue("@DrillKey",(object?)request.DrillKey??DBNull.Value);
+        Text(command,"@Search",search is null?null:$"%{search.Replace("~","~~").Replace("%","~%").Replace("_","~_").Replace("[","~[")}%",322);
+        Text(command,"@DrillKey",request.DrillKey,80);
         command.Parameters.AddWithValue("@Skip",(request.Page-1)*request.PageSize);
         command.Parameters.AddWithValue("@Take",request.PageSize);
         command.Parameters.AddWithValue("@Lines",request.DocumentId is not null);
@@ -332,18 +370,36 @@ public sealed partial class SqlSalesReportingStore
 
     private static async Task<SqlDataReader> ExecuteExplorerReaderAsync(SqlCommand command,Guid businessId,CancellationToken cancellationToken)
     {
+        // Mode flags and optional-filter presence select a bounded query shape
+        // (whole documents, lines, active filters). Fold those branches without recompiling on
+        // every read; identities, dates and selected values remain parameters.
+        var query=Regex.Replace(command.CommandText,@"(@\w+)\s+IS\s+(NOT\s+)?NULL\b",match=>
+        {
+            if(!command.Parameters.Contains(match.Groups[1].Value))return match.Value;
+            var absent=command.Parameters[match.Groups[1].Value].Value is DBNull;
+            return absent!=match.Groups[2].Success?"(1=1)":"(1=0)";
+        });
+        query=Regex.Replace(query,@"@\w+\b",match=>
+        {
+            if(!command.Parameters.Contains(match.Value))return match.Value;
+            var parameter=command.Parameters[match.Value];
+            if(parameter.Value is DBNull)return "NULL";
+            return parameter.SqlDbType==SqlDbType.Bit&&parameter.Value is bool value
+                ?(value?"CONVERT(bit,1)":"CONVERT(bit,0)"):match.Value;
+        });
         // One bounded SQL batch owns the page, independent aggregates and detail cuts.
-        // The business lock freezes Reporting writers for this cut without holding
-        // serializable range locks across other tenants' projection rows.
+        // IntentShared is compatible with projection writers and other readers.
+        // It only excludes explicit rebuilds; normal queries read committed
+        // projections without waiting for the tenant's processing queue.
         command.CommandText="SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL READ COMMITTED; BEGIN TRY BEGIN TRANSACTION;\n"+
             SqlSalesReportingProcessor.TransactionLockSql+"\n"+"""
             IF EXISTS(SELECT 1 FROM reporting.SalesReportingCheckpoints WHERE BusinessId=@BusinessId AND RebuildInProgress=1)
               OR EXISTS(SELECT 1 FROM reporting.SalesReportDocuments WHERE BusinessId=@BusinessId AND ProjectionVersion<@CurrentProjectionVersion)
               OR EXISTS(SELECT 1 FROM reporting.PurchaseReportDocuments WHERE BusinessId=@BusinessId AND ProjectionVersion<@CurrentProjectionVersion)
               THROW 51619,N'La proyección requiere completar su reconstrucción antes de consultar cifras.',1;
-            """+"\n"+SelectionTableSql+"\n"+command.CommandText+"\nCOMMIT TRANSACTION; END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK TRANSACTION; THROW; END CATCH;";
+            """+"\n"+SelectionTableSql+"\n"+query+"\nCOMMIT TRANSACTION; END TRY BEGIN CATCH IF @@TRANCOUNT>0 ROLLBACK TRANSACTION; THROW; END CATCH;";
         command.Parameters.AddWithValue("@ReportingLockResource",SqlSalesReportingProcessor.ReportingLockResource(businessId));
-        command.Parameters.AddWithValue("@ReportingLockMode","Exclusive");
+        command.Parameters.Add("@ReportingLockMode",SqlDbType.VarChar,32).Value="IntentShared";
         command.Parameters.AddWithValue("@CurrentProjectionVersion",SqlSalesReportingProjectionWriter.ProjectionVersion);
         try{return await command.ExecuteReaderAsync(cancellationToken);}
         catch(SqlException error) when(error.Number is 51619 or 51620)

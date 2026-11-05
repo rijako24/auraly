@@ -30,14 +30,14 @@ public sealed partial class SqlSalesReportingStore
             )
             SELECT Code,MAX(Label) Label INTO #FilterOptions FROM candidates
             WHERE Code IS NOT NULL AND Code<>N'unattributed' AND Label IS NOT NULL
-              AND (@OptionSearch IS NULL OR Label LIKE @OptionSearch ESCAPE N'~') GROUP BY Code OPTION(RECOMPILE);
+              AND (@OptionSearch IS NULL OR Label LIKE @OptionSearch ESCAPE N'~') GROUP BY Code;
             SELECT Code,Label FROM #FilterOptions ORDER BY Label,Code OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             SELECT COUNT_BIG(*) FROM #FilterOptions;
             """,connection);
         AddExplorerParameters(command,user,new(filter,Page:request.Page,PageSize:request.PageSize));
         command.Parameters.AddWithValue("@IncludePurchases",request.IncludePurchases);
         var search=string.IsNullOrWhiteSpace(request.Search)?null:request.Search.Trim();
-        command.Parameters.AddWithValue("@OptionSearch",search is null?DBNull.Value:$"%{search.Replace("~","~~").Replace("%","~%").Replace("_","~_").Replace("[","~[")}%");
+        Text(command,"@OptionSearch",search is null?null:$"%{search.Replace("~","~~").Replace("%","~%").Replace("_","~_").Replace("[","~[")}%",322);
         var items=new List<SalesReportOption>();await using var reader=await ExecuteExplorerReaderAsync(command,user.BusinessId,cancellationToken);
         while(await reader.ReadAsync(cancellationToken))items.Add(new(reader.GetString(0),reader.GetString(1)));
         await reader.NextResultAsync(cancellationToken);await reader.ReadAsync(cancellationToken);

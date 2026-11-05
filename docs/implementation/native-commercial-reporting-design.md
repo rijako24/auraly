@@ -609,8 +609,11 @@ por fecha de movimiento. No distribuye dinero del documento entre líneas.
 
 Los lectores se ejecutan en dos comandos como máximo: autorización y un lote
 SQL para página, agregados y detalle. El resumen agrupa sus resultsets en ese
-mismo límite. Un bloqueo de aplicación por sede fija el corte contra escrituras
-de Reporting; no bloquea el motor operacional ni rangos de otros tenants.
+mismo límite. El bloqueo de aplicación por sede protege únicamente frente a
+reconstrucciones explícitas; es compatible con las escrituras normales del
+motor de Reporting. Las consultas reutilizan su actividad filtrada ya leída
+para filas y agregados; los movimientos posteriores aparecen al consultar de
+nuevo. No bloquea el motor operacional ni rangos de otros tenants.
 El explorador materializa una vez los importes oficiales y el redondeo de los
 movimientos seleccionados; la página y el total reutilizan ese conjunto numérico.
 La carga descriptiva de la página compila las ramas aplicables y sigue después
@@ -651,6 +654,76 @@ se suman entre grupos. Resumen identifica los comprobantes emitidos en el perío
 Ventas lista los originales con movimientos, incluidos originales antiguos con
 devoluciones actuales. Los gráficos comerciales del resumen usan venta neta
 sin impuestos; pagos conserva importes declarados netos de reembolsos.
+
+### Lectura y carga del resumen
+
+El POST de resumen acepta `includeBreakdowns`, opcional y desactivado para los
+clientes anteriores. Cuando se solicita, la misma respuesta incluye hora, medios
+de pago, vendedores, productos, proveedores y bodegas. Conserva los límites de
+presentación de esos paneles y comparte el corte transaccional con las tarjetas.
+La pantalla tiene un único propietario de carga para esa respuesta: no solicita
+seis desgloses adicionales. El contexto de sede/catálogos conserva su carga
+independiente. Pagos permanece vacío bajo un filtro de líneas; no se distribuye
+dinero documental entre productos, categorías, proveedores o meseros.
+
+El lector reutiliza la actividad filtrada para página y agregados. Rentabilidad
+forma su portafolio sobre el período completo una vez y aplica después el
+recorrido al detalle, sin cambiar la base de participación. Impacto reutiliza
+ese conjunto para compradores y totales; sin filtros de líneas usa el grano
+documental existente. Proveedores conserva compras y ventas separadas, reutiliza
+sus hechos de venta filtrados y prepara el período anterior sólo cuando se pide.
+Los bloques cerrados de comparación, pagos e impuestos mantienen sus resultsets
+compatibles sin preparar las uniones que no se van a consultar.
+
+Los parámetros opcionales conservan tipos SQL estables. El lector especializa
+las banderas booleanas y la presencia o ausencia de filtros que determinan la
+forma de la consulta; fechas, identidades y valores seleccionados siguen
+parametrizados. Esto permite podar
+ramas inactivas y reutilizar planes, sin forzar recompilación en cada lectura ni
+guardar resultados que puedan quedar desactualizados. Se conserva la protección
+de reconstrucción por sede, la validación de versión y el máximo de dos comandos SQL por
+consulta. Las consultas normales no esperan a la
+cola de procesamiento: leen lo confirmado y los movimientos posteriores aparecen
+al volver a consultar. Se usa `READ COMMITTED` con la configuración existente de
+la base; no se habilita otro nivel de aislamiento, caché de resultados, tabla ni
+proyección paralela.
+Las tarjetas y gráficas del resumen se derivan de la misma actividad filtrada.
+Impacto y proveedores materializan sólo sus campos financieros y claves de
+agrupación. Los identificadores de línea, impuestos desglosados y nombres de
+comprobante quedan en el explorador que realmente los necesita para el detalle.
+El resumen reutiliza una agrupación temporal por comprobante y sus dimensiones
+para tarjetas, horas, vendedores, bodegas y selección de pagos; producto y
+proveedor conservan la actividad por línea. Ambos niveles usan las medidas
+canónicas, incluidos costo desconocido, devoluciones y precisión de origen.
+En el recurso de aplicación existente, los lectores usan `IntentShared`,
+compatible con otros lectores y con `Shared` del processor. Sólo se conserva la
+exclusión ante `Exclusive` de una reconstrucción explícita, para no mostrar un
+conjunto que está siendo borrado y repuesto. La regresión comprueba el recurso
+canónico y lecturas completas mientras otro lector o escritor conserva su lock.
+El frontend propaga cancelación al cambiar filtros y conserva el plazo
+de timeout, incluso durante la lectura del cuerpo de la respuesta.
+
+El índice existente `IX_SalesReportLineFacts_Business_Date` incluye también
+`ProductName`, `SupplierId`, `SupplierName` y `BusinessLocalHour`, los atributos congelados que usan
+los rankings y agrupaciones habituales. El plan del ensayo de volumen recorría
+1.005.000 hechos para devolver 42.586 del período al no tener esa cobertura.
+La cobertura evita exigir búsquedas de la fila completa por cada hecho del
+período y permite elegir el acceso por sede y fecha. No incorpora otra tabla,
+proyección ni índice paralelo; las categorías y otros detalles mantienen su
+alcance filtrado en la consulta canónica.
+El índice existente `IX_SalesReportDocuments_Business_Customer_Date` cubre
+tenant, nombre congelado, venta sin impuestos y filtros de vendedor, bodega,
+usuario, tipo de comprobante y mesa. Permite agrupar el universo
+histórico en orden de cliente, evitando el hash que derramaba a disco en la
+prueba de integración, sin agregar otro índice ni un consolidado nuevo.
+
+Los importes visibles de las cinco vistas comparten formato COP de hasta dos
+decimales. Ese formato no redondea datos persistidos, cálculos ni exportaciones.
+La regresión modifica el costo en `0,0001` y exige la misma utilidad exacta
+en resumen, ventas, productos, impacto comercial y proveedores.
+Si el benchmark incumple un presupuesto, obtiene sus planes reales después
+de terminar todas las mediciones; el diagnóstico no corre en paralelo con
+las muestras ni cambia sus límites.
 
 ### Evidencia local del 2026-11-04
 

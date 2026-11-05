@@ -50,7 +50,8 @@ public sealed record SalesReportFilter(
     }
 }
 
-public sealed record SalesReportSummaryRequest(SalesReportFilter Filter, DateOnly? ComparisonFrom = null, DateOnly? ComparisonTo = null);
+public sealed record SalesReportSummaryRequest(SalesReportFilter Filter, DateOnly? ComparisonFrom = null, DateOnly? ComparisonTo = null,
+    bool IncludeBreakdowns = false);
 public sealed record SalesReportBreakdownRequest(SalesReportFilter Filter, string Dimension, int Limit = 100);
 
 public sealed record SalesReportTotals(
@@ -67,7 +68,13 @@ public sealed record SalesReportSummary(
     SalesReportTotals Current, SalesReportTotals? Comparison,
     decimal? NetSalesChangePercent, IReadOnlyList<SalesReportTrendPoint> Trend,
     DateTimeOffset? ProjectedThrough, long CustomerCount = 0, decimal AverageTicket = 0,
-    decimal ReturnRatePercent = 0, bool HasLineScope = false,decimal ExactNetTotal = 0,decimal? RoundingAdjustment = null);
+    decimal ReturnRatePercent = 0, bool HasLineScope = false,decimal ExactNetTotal = 0,decimal? RoundingAdjustment = null,
+    SalesReportSummaryBreakdowns? Breakdowns = null);
+
+public sealed record SalesReportSummaryBreakdowns(
+    IReadOnlyList<SalesReportBreakdownRow> Hourly,IReadOnlyList<SalesReportBreakdownRow> Payments,
+    IReadOnlyList<SalesReportBreakdownRow> Sellers,IReadOnlyList<SalesReportBreakdownRow> Products,
+    IReadOnlyList<SalesReportBreakdownRow> Suppliers,IReadOnlyList<SalesReportBreakdownRow> Warehouses);
 
 public sealed record SalesTodayOverview(
     DateOnly BusinessDate, SalesReportTotals Totals, long CustomerCount,

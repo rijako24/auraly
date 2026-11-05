@@ -69,6 +69,7 @@ CREATE INDEX [IX_SalesReportDocuments_Business_Date]
 GO
 CREATE INDEX [IX_SalesReportDocuments_Business_Customer_Date]
   ON [reporting].[SalesReportDocuments]([BusinessId],[CustomerId],[BusinessLocalDate] DESC,[DocumentId] DESC)
+  INCLUDE([TenantId],[CustomerName],[UntaxedAmount],[SellerId],[WarehouseId],[BilledByUserId],[DocumentType],[TableId])
   WHERE [CustomerId] IS NOT NULL;
 GO
 -- Rebuild gates must seek the version range, without looking up every document.
@@ -146,7 +147,8 @@ CREATE INDEX [IX_SalesReportLineFacts_Business_Date]
   INCLUDE([ProductId],[SellerId],[CustomerId],[WarehouseId],[Quantity],[UntaxedAmount],[TaxAmount],
           [TotalAmount],[RecognizedCostAmount],[MovementType],
           [TenantId],[SourceDocumentId],[SourceDocumentType],[SourceLineNumber],[OriginalSaleDocumentId],
-          [OccurredAt],[ProjectedAt],[GrossAmount],[DiscountAmount],[TaxCode],[TaxRate],[CostAvailable]);
+          [OccurredAt],[ProjectedAt],[GrossAmount],[DiscountAmount],[TaxCode],[TaxRate],[CostAvailable],
+          [ProductName],[SupplierId],[SupplierName],[BusinessLocalHour]);
 GO
 CREATE INDEX [IX_SalesReportLineFacts_Business_Product_Date]
   ON [reporting].[SalesReportLineFacts]([BusinessId],[ProductId],[BusinessLocalDate] DESC,[FactId] DESC)

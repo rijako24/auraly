@@ -1,5 +1,6 @@
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -8,6 +9,52 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(SalesReportingSliceCollection.Name)]
 public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Readers_do_not_wait_for_projection_writers_and_still_respect_explicit_rebuilds()
+    {
+        using var scope=fixture.CreateScope();
+        var reporting=scope.ServiceProvider.GetRequiredService<SalesReportingService>();
+        var user=new SalesReportingUserIdentity(fixture.UserId,fixture.TenantId,fixture.BusinessId,
+            new HashSet<string>{SalesReportingPermissionCodes.Read,SalesReportingPermissionCodes.ReadAll});
+        var request=new SalesReportExplorerRequest(new(new(2026,7,27),new(2026,7,27)));
+        string? readerMode=null,readerResource=null;
+        var resource=SqlSalesReportingProcessor.ReportingLockResource(fixture.BusinessId);
+        SalesReportExplorerPage baseline;
+        using(var counter=new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,beforeExecute:command=>
+            {
+                if(command.Parameters.Contains("@ReportingLockMode"))
+                {
+                    readerMode=(string)command.Parameters["@ReportingLockMode"].Value;
+                    readerResource=(string)command.Parameters["@ReportingLockResource"].Value;
+                }
+            }))
+            baseline=await reporting.ExploreAsync(user,request);
+        Assert.Equal(resource,readerResource);Assert.NotNull(readerMode);
+        await using var holder=new SqlConnection(fixture.ConnectionString);
+        await using var probe=new SqlConnection(fixture.ConnectionString);
+        await holder.OpenAsync();await probe.OpenAsync();
+        foreach(var mode in new[]{readerMode,"Shared","Exclusive"})
+        {
+            await using var held=(SqlTransaction)await holder.BeginTransactionAsync();
+            await using var hold=new SqlCommand("""
+                DECLARE @result int;
+                EXEC @result=sys.sp_getapplock @Resource=@Resource,@LockMode=@Mode,@LockOwner=N'Transaction',@LockTimeout=0;
+                SELECT @result;
+                """,holder,held);
+            hold.Parameters.AddWithValue("@Resource",resource);hold.Parameters.AddWithValue("@Mode",mode);
+            Assert.True(Convert.ToInt32(await hold.ExecuteScalarAsync())>=0);
+            await using var probing=(SqlTransaction)await probe.BeginTransactionAsync();
+            await using var compatibility=new SqlCommand("SELECT APPLOCK_TEST(N'public',@Resource,@Mode,N'Transaction');",probe,probing);
+            compatibility.Parameters.AddWithValue("@Resource",resource);compatibility.Parameters.AddWithValue("@Mode",readerMode);
+            Assert.Equal(mode=="Exclusive"?0:1,Convert.ToInt32(await compatibility.ExecuteScalarAsync()));
+            await probing.RollbackAsync();
+            if(mode!="Exclusive")
+                Assert.Equal(baseline.Totals,(await reporting.ExploreAsync(user,request)).Totals);
+            await held.RollbackAsync();
+        }
+    }
+
     [Fact]
     public async Task Projection_only_explorer_reconciles_returns_services_charges_filtered_details_and_customer_universe()
     {
@@ -62,6 +109,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
             INSERT reporting.SalesReportPaymentFacts(SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
               BusinessLocalDate,MovementType,MethodCode,Amount,ProjectedAt)
             VALUES(@Invoice,N'SalesInvoice',1,@Tenant,@Business,'20261101',N'Payment',N'Cash',400,SYSDATETIMEOFFSET()),
+              (@Historical,N'SalesInvoice',1,@Tenant,@Business,'20260901',N'Payment',N'Cash',119,SYSDATETIMEOFFSET()),
               (@Return,N'SalesReturn',1,@Tenant,@Business,'20261103',N'Refund',N'Cash',-119,SYSDATETIMEOFFSET()),
               (@Service,N'ServiceInvoice',1,@Tenant,@Business,'20261102',N'Payment',N'Cash',59.5,SYSDATETIMEOFFSET());
             UPDATE reporting.SalesReportDocuments SET TotalAmount=400,CollectedAmount=400,RoundingAdjustmentAmount=38.2 WHERE DocumentId=@Invoice;
@@ -92,6 +140,7 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
               UnknownCostDocumentCount,CreditSales,Collected,Refunded,ProjectionVersion,UpdatedAt)
             SELECT @Business,Date,N'COP',Documents,Sold,Returned,Gross,Discount,Returns,Net,Tax,Official,Cost,Profit,UnknownCost,0,Collected,Refunded,5,SYSDATETIMEOFFSET()
             FROM(VALUES
+              (CONVERT(date,'20260901'),1,1,0,100,0,0,100,19,119,60,40,0,119,0),
               (CONVERT(date,'20261101'),1,3,0,330,10,0,320,41.8,400,180,140,0,400,0),
               (CONVERT(date,'20261102'),1,0,0,50,0,0,50,9.5,59.5,0,0,1,59.5,0),
               (CONVERT(date,'20261103'),0,0,1,0,0,100,-100,-19,-119,-60,-40,0,0,119)
@@ -221,6 +270,51 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
         Assert.Equal(all.Totals.NetTotal,macro.ExactNetTotal);Assert.Equal(all.OfficialTotal,macro.Current.NetTotalSales);
         Assert.Equal(all.RoundingAdjustment,macro.RoundingAdjustment);Assert.Equal(all.Totals.RecognizedCost,macro.Current.NetRecognizedCost);
         Assert.Equal(all.Totals.Profit,macro.Current.GrossProfit);Assert.Equal(all.Totals.MarginPercent,macro.Current.GrossMarginPercent);
+        // One summary request owns every panel; charts retain the existing
+        // breakdown semantics, including services, charges and historical returns.
+        foreach(var chartFilter in new[]{filter,filter with {CustomerIds=[customerA]},
+            filter with {SupplierIds=[supplierA,supplierB]},filter with {WaiterPartyIds=[waiterA]},
+            filter with {From=new(2026,12,1),To=new(2026,12,2)}})
+        {
+            var expected=await reporting.GetSummaryAsync(user,chartFilter,new(2026,9,1),new(2026,9,30));
+            SalesReportSummary bundled;
+            using(var counter=new InventoryBalanceProcessingTests.CommandCounter(connection.Database))
+            {
+                bundled=await reporting.GetSummaryAsync(user,chartFilter,new(2026,9,1),new(2026,9,30),includeBreakdowns:true);
+                Assert.Equal(2,counter.Count);
+            }
+            Assert.Equal(expected.Current,bundled.Current);Assert.Equal(expected.Comparison,bundled.Comparison);
+            Assert.Equal(expected.Trend.ToArray(),bundled.Trend.ToArray());Assert.Equal(expected.CustomerCount,bundled.CustomerCount);
+            var charts=Assert.IsType<SalesReportSummaryBreakdowns>(bundled.Breakdowns);
+            foreach(var (dimension,limit,rows) in new[]{("hour",25,charts.Hourly),("seller",8,charts.Sellers),
+                ("product",8,charts.Products),("supplier",8,charts.Suppliers),("warehouse",8,charts.Warehouses)})
+                Assert.Equal((await reporting.GetBreakdownAsync(user,chartFilter,dimension,limit)).ToArray(),rows.ToArray());
+            if(bundled.HasLineScope)Assert.Empty(charts.Payments);
+            else Assert.Equal((await reporting.GetBreakdownAsync(user,chartFilter,"payment-method",20)).ToArray(),charts.Payments.ToArray());
+        }
+        // Presentation rounds money; the reporting calculation must retain all
+        // four source decimals, including after aggregating daily cost.
+        await using(var precision=new SqlCommand("""
+            UPDATE reporting.SalesReportLineFacts SET RecognizedCostAmount=RecognizedCostAmount+@Delta
+            WHERE BusinessId=@Business AND SourceDocumentId=@Invoice AND SourceLineNumber=1;
+            UPDATE reporting.SalesReportDocuments SET RecognizedCostAmount=RecognizedCostAmount+@Delta
+            WHERE BusinessId=@Business AND DocumentId=@Invoice;
+            UPDATE reporting.SalesReportDailyTotals SET NetRecognizedCost=NetRecognizedCost+@Delta,GrossProfit=GrossProfit-@Delta
+            WHERE BusinessId=@Business AND BusinessLocalDate='20261101';
+            """,connection))
+        {
+            precision.Parameters.AddWithValue("@Business",business);precision.Parameters.AddWithValue("@Invoice",invoice);
+            var delta=precision.Parameters.AddWithValue("@Delta",0.0001m);Assert.Equal(3,await precision.ExecuteNonQueryAsync());
+            try
+            {
+                var preciseFilter=filter with {SupplierIds=[supplierA]};
+                foreach(var charts in new[]{false,true})
+                    Assert.Equal(39.9999m,(await reporting.GetSummaryAsync(user,preciseFilter,null,null,includeBreakdowns:charts)).Current.GrossProfit);
+                foreach(var (module,groupBy) in new[]{("sales","document"),("products","product"),("impact","customer"),("supplier","supplier")})
+                    Assert.Equal(39.9999m,(await reporting.ExploreAsync(user,new(preciseFilter,Module:module,GroupBy:groupBy))).Totals.Profit);
+            }
+            finally{delta.Value=-0.0001m;Assert.Equal(3,await precision.ExecuteNonQueryAsync());}
+        }
         foreach(var dimension in new[]{"document","customer","seller","supplier","billed-by","warehouse","waiter","table","area","category-line","category-group","subgroup","product","day","month"})
         {
             var grouped=await reporting.ExploreAsync(user,new(filter,GroupBy:dimension,PageSize:200));

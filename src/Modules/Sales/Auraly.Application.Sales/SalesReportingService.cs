@@ -11,7 +11,7 @@ public interface ISalesReportingStore
         CancellationToken cancellationToken);
     Task<SalesReportSummary> GetSummaryAsync(SalesReportingUserIdentity user,
         SalesReportFilter filter, DateOnly? comparisonFrom, DateOnly? comparisonTo,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,bool includeBreakdowns=false);
     Task<IReadOnlyList<SalesReportBreakdownRow>> GetBreakdownAsync(
         SalesReportingUserIdentity user, SalesReportFilter filter, string dimension,
         int limit, CancellationToken cancellationToken);
@@ -71,12 +71,12 @@ public sealed class SalesReportingService(ISalesReportingStore store)
 
     public Task<SalesReportSummary> GetSummaryAsync(SalesReportingUserIdentity user,
         SalesReportFilter filter, DateOnly? comparisonFrom, DateOnly? comparisonTo,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,bool includeBreakdowns=false)
     {
         Demand(user); Validate(filter);
         if (comparisonFrom.HasValue != comparisonTo.HasValue || comparisonTo < comparisonFrom)
             throw new SalesReportingValidationException("The comparison range is invalid.");
-        return store.GetSummaryAsync(user, filter, comparisonFrom, comparisonTo, cancellationToken);
+        return store.GetSummaryAsync(user, filter, comparisonFrom, comparisonTo, cancellationToken,includeBreakdowns);
     }
 
     public Task<IReadOnlyList<SalesReportBreakdownRow>> GetBreakdownAsync(
