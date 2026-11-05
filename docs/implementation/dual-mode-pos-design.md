@@ -316,6 +316,11 @@ adicionales por tarjeta ni inventario local. La búsqueda local consume esa mism
 proyección en SQLite; catálogo y familia no tienen un sincronizador independiente.
 El modo viaja por el snapshot/stream de configuración ya existente.
 
+El constructor primario de `PosCatalogItem` es el contrato de deserialización JSON;
+la sobrecarga de compatibilidad se reserva a llamadas C#. El transporte conserva
+precio, impuestos, composición, identidad de inventario y presentación opcional.
+Los catálogos anteriores sin presentación mantienen sus valores predeterminados.
+
 El catálogo visible tiene un propietario de consulta, búsqueda con espera de 250 ms,
 cancelación de solicitudes obsoletas y paginación explícita. Agregar una prenda usa
 la respuesta autoritativa del comando de captura; no recarga catálogo o borrador.

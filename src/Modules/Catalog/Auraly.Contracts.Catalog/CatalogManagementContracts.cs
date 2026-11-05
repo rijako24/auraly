@@ -137,11 +137,11 @@ public sealed record CatalogDeviceIdentity(
     Guid BusinessId,
     Guid WarehouseId);
 
-[method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record ProductPresentation(string? ImageUrl, Guid? FamilyProductId,
     Guid? ProductColorId, string? ColorName, Guid? ProductSizeId, string? SizeName);
 public sealed record PosCatalogCategory(Guid CategoryId, string Name);
 
+[method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record PosCatalogItem(
     Guid ProductId,
     string ProductCode,
