@@ -1076,7 +1076,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=ss.BusinessId AND pr.IsActive=1
               AND (pr.Amount>0 OR p.IsGenericProduct=1)
-            OUTER APPLY catalog.ProductPresentation(@TenantId,p.ProductId) presentation
+            OUTER APPLY catalog.ProductPresentation(p.TenantId,p.ProductId) presentation
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
             LEFT JOIN dbo.ProductLinks inventoryLink
               ON inventoryLink.TenantId=p.TenantId

@@ -1,6 +1,5 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Auraly.Contracts.Catalog;
 
 namespace Auraly.Foundation.Tests;
@@ -43,80 +42,48 @@ public sealed class CatalogBootstrapIntegrityTests
         Assert.True(CatalogBootstrapIntegrity.IsValid(received.Items, received.IntegrityHash));
     }
 
-    [Fact]
-    public void Existing_catalog_json_without_store_presentation_preserves_operational_values()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Current_product_message_rejects_omission_of_any_field(bool webDefaults)
     {
-        const string json = """
-            {"productId":"10000000-0000-0000-0000-000000000001","productCode":"OLD-1",
-             "name":"Producto existente","baseUnitCode":"UND","taxCode":"01","taxRate":19,
-             "unitPrice":25000,"currencyCode":"COP","isActive":true,"barcodes":["770000000001"],
-             "identifiers":[],"unitCost":12000,"managesStock":false,
-             "isWeighable":true,"allowsFractionalSale":true,"hasIngredients":true,"isCombo":false,
-             "inventoryProductId":"10000000-0000-0000-0000-000000000002","inventoryFactor":12}
-            """;
-
-        var product = JsonSerializer.Deserialize<PosCatalogItem>(json,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
-
-        Assert.NotNull(product);
-        Assert.Equal("OLD-1", product.ProductCode);
-        Assert.Equal(25_000m, product.UnitPrice);
-        Assert.Equal(12_000m, product.UnitCost);
-        Assert.Equal(19m, product.TaxRate);
-        Assert.False(product.ManagesStock);
-        Assert.Equal(12m, product.InventoryFactor);
-        Assert.Null(product.Presentation);
-        Assert.Equal(Guid.Parse("10000000-0000-0000-0000-000000000002"), product.InventoryProductId);
-        Assert.True(product.IsWeighable);
-        Assert.True(product.AllowsFractionalSale);
-        Assert.True(product.HasIngredients);
-        Assert.False(product.IsCombo);
-    }
-
-    [Fact]
-    public void Digest_remains_compatible_when_inventory_fields_are_added_to_the_contract()
-    {
-        var inventoryProductId = Guid.NewGuid();
-        var item = Item(inventoryProductId, 12m);
-        var legacyWireItem = new
+        var options = new JsonSerializerOptions(webDefaults
+            ? JsonSerializerDefaults.Web : JsonSerializerDefaults.General);
+        var product = JsonSerializer.SerializeToNode(Item(Guid.NewGuid(), 12m), options)!.AsObject();
+        Assert.Equal(31, product.Count);
+        foreach (var field in product.Select(property => property.Key).ToArray())
         {
-            item.ProductId,
-            item.ProductCode,
-            item.Reference,
-            item.Name,
-            item.BaseUnitCode,
-            item.TaxCode,
-            item.TaxRate,
-            item.UnitPrice,
-            item.CurrencyCode,
-            item.IsActive,
-            item.IsWeighable,
-            item.AllowsFractionalSale,
-            item.Scale,
-            item.Barcodes,
-            item.Identifiers,
-            item.UnitCost,
-            item.ManagesStock,
-            item.CategoryName,
-            item.ProductCategoryId,
-            item.ProductBrandId,
-            item.ProductCategoryAncestorIds,
-            item.AverageUnitCost,
-            item.LatestUnitCost,
-            item.TargetMarginPercent,
-        };
-        var legacyDigest = Convert.ToHexString(SHA256.HashData(
-                Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[] { legacyWireItem }))))
-            .ToLowerInvariant();
-
-        Assert.Equal(legacyDigest, CatalogBootstrapIntegrity.Compute([item]));
-        Assert.True(CatalogBootstrapIntegrity.IsValid([item], legacyDigest));
-        Assert.True(CatalogBootstrapIntegrity.IsValid([item with { HasIngredients = true }], legacyDigest));
-        Assert.True(CatalogBootstrapIntegrity.IsValid([item with { IsCombo = true }], legacyDigest));
+            var incomplete = (JsonObject)product.DeepClone();
+            Assert.True(incomplete.Remove(field));
+            var exception = Assert.Throws<JsonException>(() =>
+                JsonSerializer.Deserialize<PosCatalogItem>(incomplete.ToJsonString(), options));
+            Assert.Contains(field, exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     [Fact]
-    public void Validation_rejects_a_change_to_the_stable_catalog_core()
+    public void Integrity_protects_inventory_composition_and_presentation_as_well_as_financial_values()
+    {
+        var item = Item(Guid.NewGuid(), 12m);
+        var digest = CatalogBootstrapIntegrity.Compute([item]);
+        var changes = new[]
+        {
+            item with { InventoryProductId = Guid.NewGuid() },
+            item with { InventoryFactor = 6m },
+            item with { IsGenericProduct = true },
+            item with { IsIngredient = true },
+            item with { HasIngredients = true },
+            item with { IsCombo = true },
+            item with { Presentation = new("https://example.test/product.png", Guid.NewGuid(), null, null, null, null) },
+            item with { UnitCost = item.UnitCost + 1m },
+            item with { UnitPrice = item.UnitPrice + 1m }
+        };
+        Assert.True(CatalogBootstrapIntegrity.IsValid([item], digest));
+        Assert.All(changes, changed => Assert.False(CatalogBootstrapIntegrity.IsValid([changed], digest)));
+    }
+
+    [Fact]
+    public void Validation_rejects_a_changed_product_or_invalid_digest()
     {
         var item = Item(Guid.NewGuid(), 1m);
         var digest = CatalogBootstrapIntegrity.Compute([item]);

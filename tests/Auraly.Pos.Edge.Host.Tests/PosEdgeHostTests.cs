@@ -852,10 +852,13 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
         Assert.NotNull(active);
         Assert.Empty(active!.Lines);
-        var products = await Client.GetFromJsonAsync<CatalogSearchPageContract>(
+        var products = await Client.GetFromJsonAsync<OnlineSalesProductPage>(
             "/edge/v1/catalog/products?search=Product&take=20");
-        Assert.Single(products!.Items);
-        Assert.Equal("P-1", products.Items[0].ProductCode);
+        var listedProduct = Assert.Single(products!.Items);
+        Assert.Equal("P-1", listedProduct.ProductCode);
+        Assert.Equal(100m, listedProduct.UnitPrice);
+        Assert.Equal(19m, listedProduct.TaxRate);
+        Assert.Equal("Base", listedProduct.PriceSource);
 
 
         var capture = await Client.PostAsJsonAsync(
@@ -1965,11 +1968,6 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         foreach (var key in _environmentKeys)
             Environment.SetEnvironmentVariable(key, null);
     }
-
-    private sealed record CatalogSearchPageContract(
-        IReadOnlyList<PosCatalogItem> Items,
-        bool HasMore,
-        int? NextOffset);
 
     private sealed record CustomerSearchPageContract(
         IReadOnlyList<PosCustomerView> Items,

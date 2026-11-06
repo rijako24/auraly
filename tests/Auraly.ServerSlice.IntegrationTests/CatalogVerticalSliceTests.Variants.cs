@@ -158,6 +158,24 @@ public sealed partial class CatalogVerticalSliceTests
         var sameDraft = (await reopened.Content.ReadFromJsonAsync<OnlineSalesDraft>())!;
         Assert.Equal(draft.DraftId, sameDraft.DraftId);
         Assert.Equal(draft.Version, sameDraft.Version);
+
+        using var device = fixture.CreateClient();
+        device.DefaultRequestHeaders.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString());
+        device.DefaultRequestHeaders.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        var scope = $"businessId={fixture.BusinessId}&warehouseId={fixture.WarehouseId}";
+        using var started = await device.PostAsync($"/api/pos/v1/catalog/sync-sessions?{scope}", null);
+        started.EnsureSuccessStatusCode();
+        var session = (await started.Content.ReadFromJsonAsync<CatalogSyncSessionResponse>())!;
+        using var downloaded = await device.GetAsync(
+            $"/api/pos/v1/catalog/sync-sessions/{session.SessionId}/pages?{scope}&pageSize=500");
+        downloaded.EnsureSuccessStatusCode();
+        var bootstrap = (await downloaded.Content.ReadFromJsonAsync<CatalogBootstrapPage>())!;
+        Assert.True(CatalogBootstrapIntegrity.IsValid(bootstrap.Items, bootstrap.IntegrityHash));
+        var localChild = Assert.Single(bootstrap.Items, product => product.ProductId == child.ProductId);
+        Assert.Equal(root.ProductId, localChild.Presentation!.FamilyProductId);
+        Assert.Equal(color.Id, localChild.Presentation.ProductColorId);
+        Assert.Equal(size.Id, localChild.Presentation.ProductSizeId);
+        Assert.Equal(item.UnitPrice, localChild.UnitPrice);
     }
 
     private static async Task<ProductVariantOption> CreateVariantOptionAsync(HttpClient admin, string attribute, string name)

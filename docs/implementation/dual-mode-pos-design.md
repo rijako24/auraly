@@ -316,11 +316,13 @@ adicionales por tarjeta ni inventario local. La búsqueda local consume esa mism
 proyección en SQLite; catálogo y familia no tienen un sincronizador independiente.
 El modo viaja por el snapshot/stream de configuración ya existente.
 
-El constructor primario de `PosCatalogItem` es el contrato de deserialización JSON;
-la sobrecarga de compatibilidad se reserva a llamadas C#. El transporte conserva
-precio, impuestos, composición, identidad de inventario y presentación opcional.
-Los mensajes anteriores a Tiendas conservan sus precios, costos, impuestos e
-identidad de inventario aunque todavía no incluyan la presentación opcional.
+El constructor primario de `PosCatalogItem` define el único contrato JSON vigente.
+La descarga debe incluir todos sus campos; un dato opcional puede tener valor
+nulo, pero omitir su campo invalida el mensaje. No se sustituyen campos ausentes
+por costos cero, flags predeterminados ni otro formato de producto.
+El digest de integridad cubre el producto completo, incluida presentación,
+composición e identidad/factor de inventario. API y Edge deben publicarse con
+este mismo contrato y digest; no se acepta el digest parcial anterior.
 
 El catálogo visible tiene un propietario de consulta, búsqueda con espera de 250 ms,
 cancelación de solicitudes obsoletas y paginación explícita. Agregar una prenda usa
@@ -336,11 +338,14 @@ en entorno controlado, separado de carga de imágenes. El alta/cambio de cantida
 cobro e impresión conservan los presupuestos y validaciones existentes. La prueba
 local verifica además familias de más de una página y persistencia tras reinicio.
 
-Al actualizar una caja que aún no tenga la columna local de presentación, la
-migración invalida una sola vez su snapshot de catálogo y el sincronizador
-existente lo reconstruye. Las ventas, borradores y outbox se preservan y la
-promoción del snapshot sigue siendo atómica. Esto es necesario para obtener
-imágenes y familias de fichas previas, que no generarían por sí solas un delta.
+La preparación verifica todas las columnas del producto vigente en las tablas
+local y de descarga. Si falta alguna, el catálogo deja de estar listo; se aplican
+las ampliaciones de esquema existentes y el sincronizador canónico descarga el
+catálogo actual completo. Una estructura que no puede completarse con esas
+ampliaciones falla explícitamente y permanece inválida. No hay un modo alterno
+para operar con otro formato. Las ventas, borradores y outbox se preservan y la
+promoción del snapshot sigue siendo atómica. La comprobación usa las columnas
+del mismo writer y no agrega lecturas por producto ni viajes de red por campo.
 La recarga consulta los datos vigentes del producto y repuebla los atributos
 registrados; no se completa la actualización dejando vacíos los valores que ya
 existen en el servidor. Color y talla conservan su asignación explícita: crear
