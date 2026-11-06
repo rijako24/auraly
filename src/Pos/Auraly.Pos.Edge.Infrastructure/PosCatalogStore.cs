@@ -33,7 +33,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         command.CommandText = Schema;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await EnsureProgressStateAsync(connection, cancellationToken);
-        await EnsureProductFlagsAsync(connection, cancellationToken);
+        await EnsureProductSchemaAsync(connection, cancellationToken);
         await InitializePricingAsync(connection, cancellationToken);
     }
 
@@ -397,7 +397,8 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             .ToArray();
         command.Parameters.AddRange(parameters);
         command.CommandText = $"""
-            SELECT ProductId,COALESCE(InventoryProductId,ProductId),InventoryFactor,ManagesStock
+            SELECT ProductId,COALESCE(InventoryProductId,ProductId),InventoryFactor,
+                   CASE WHEN ManagesStock=1 OR HasIngredients=1 OR IsCombo=1 THEN 1 ELSE 0 END
             FROM PosCatalogProducts
             WHERE IsActive=1 AND ProductId IN ({string.Join(',', parameters.Select(value => value.ParameterName))});
             """;
@@ -656,8 +657,11 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
 
     private static SqliteParameter P(string name, object? value) => new(name, value ?? DBNull.Value);
 
-    private static async Task EnsureProductFlagsAsync(SqliteConnection connection, CancellationToken ct)
+    private static async Task EnsureProductSchemaAsync(SqliteConnection connection, CancellationToken ct)
     {
+        var requiredColumns = ProductColumnNames.Split(',',
+            StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var preparationInvalidated = false;
         foreach (var table in new[] { "PosCatalogProducts", "PosCatalogStagingProducts" })
         {
             var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -667,88 +671,46 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 await using var reader = await info.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct)) columns.Add(reader.GetString(1));
             }
-            if (table == "PosCatalogProducts" && !columns.Contains("PresentationJson"))
+            if (!preparationInvalidated && requiredColumns.Any(column => !columns.Contains(column)))
             {
                 await using var invalidate = connection.CreateCommand();
                 invalidate.CommandText = "UPDATE PosCatalogState SET Status='Invalid',SessionId=NULL,NextPageCursor=NULL WHERE StateId=1 AND Status<>'Empty';";
                 await invalidate.ExecuteNonQueryAsync(ct);
+                preparationInvalidated = true;
             }
 
-            foreach (var column in new[] { "IsWeighable", "AllowsFractionalSale" })
+            var statements = new List<string>();
+            void EnsureColumn(string name, string definition)
             {
-                if (columns.Contains(column)) continue;
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0;";
-                await alter.ExecuteNonQueryAsync(ct);
+                if (columns.Add(name))
+                    statements.Add($"ALTER TABLE {table} ADD COLUMN {name} {definition};");
             }
-            if (!columns.Contains("UnitCost"))
-            {
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN UnitCost TEXT NOT NULL DEFAULT '0';";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            if (!columns.Contains("ManagesStock"))
-            {
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN ManagesStock INTEGER NOT NULL DEFAULT 1;";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            if (!columns.Contains("CategoryName"))
-            {
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN CategoryName TEXT NULL;";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            foreach (var column in new[] { "ProductCategoryId", "ProductBrandId", "ProductCategoryAncestorIds", "TargetMarginPercent", "PresentationJson", "FamilyProductId" })
-            {
-                if (columns.Contains(column)) continue;
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} TEXT NULL;";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            foreach (var column in new[] { "AverageUnitCost", "LatestUnitCost" })
-            {
-                if (columns.Contains(column)) continue;
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT '0';";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            if (!columns.Contains("IsGenericProduct"))
-            {
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN IsGenericProduct INTEGER NOT NULL DEFAULT 0;";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            foreach (var classificationColumn in new[] { "HasIngredients", "IsCombo" })
-            {
-                if (columns.Contains(classificationColumn)) continue;
-                await using var classification = connection.CreateCommand();
-                classification.CommandText = $"ALTER TABLE {table} ADD COLUMN {classificationColumn} INTEGER NOT NULL DEFAULT 0;";
-                await classification.ExecuteNonQueryAsync(ct);
-            }
-            if (!columns.Contains("IsIngredient"))
-            {
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN IsIngredient INTEGER NOT NULL DEFAULT 0;";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            if (!columns.Contains("InventoryProductId"))
-            {
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN InventoryProductId TEXT NULL;";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            if (!columns.Contains("InventoryFactor"))
-            {
-                await using var alter = connection.CreateCommand();
-                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN InventoryFactor TEXT NOT NULL DEFAULT '1';";
-                await alter.ExecuteNonQueryAsync(ct);
-            }
-            await using (var index = connection.CreateCommand())
-            {
-                index.CommandText = $"CREATE INDEX IF NOT EXISTS IX_{table}_InventoryProductId ON {table}(InventoryProductId); CREATE INDEX IF NOT EXISTS IX_{table}_Family ON {table}(FamilyProductId,Name,ProductId); CREATE INDEX IF NOT EXISTS IX_{table}_Category ON {table}(ProductCategoryId,Name,ProductId);";
-                await index.ExecuteNonQueryAsync(ct);
-            }
+
+            foreach (var column in new[] { "IsWeighable", "AllowsFractionalSale", "IsGenericProduct",
+                         "IsIngredient", "HasIngredients", "IsCombo" })
+                EnsureColumn(column, "INTEGER NOT NULL DEFAULT 0");
+            foreach (var column in new[] { "UnitCost", "AverageUnitCost", "LatestUnitCost" })
+                EnsureColumn(column, "TEXT NOT NULL DEFAULT '0'");
+            EnsureColumn("ManagesStock", "INTEGER NOT NULL DEFAULT 1");
+            foreach (var column in new[] { "CategoryName", "ProductCategoryId", "ProductBrandId",
+                         "ProductCategoryAncestorIds", "TargetMarginPercent", "InventoryProductId",
+                         "PresentationJson", "FamilyProductId" })
+                EnsureColumn(column, "TEXT NULL");
+            EnsureColumn("InventoryFactor", "TEXT NOT NULL DEFAULT '1'");
+
+            var missing = requiredColumns.Where(column => !columns.Contains(column)).ToArray();
+            if (missing.Length > 0)
+                throw new InvalidDataException(
+                    $"El catálogo local no cumple la estructura vigente ({table}); faltan: {string.Join(", ", missing)}.");
+
+            statements.Add($"CREATE INDEX IF NOT EXISTS IX_{table}_InventoryProductId ON {table}(InventoryProductId);");
+            statements.Add($"CREATE INDEX IF NOT EXISTS IX_{table}_Family ON {table}(FamilyProductId,Name,ProductId);");
+            statements.Add($"CREATE INDEX IF NOT EXISTS IX_{table}_Category ON {table}(ProductCategoryId,Name,ProductId);");
+            if (table == "PosCatalogProducts")
+                statements.Add("CREATE INDEX IF NOT EXISTS IX_PosCatalogProducts_Search ON PosCatalogProducts(ProductCode,Reference,Name);");
+            await using var apply = connection.CreateCommand();
+            apply.CommandText = string.Join(Environment.NewLine, statements);
+            await apply.ExecuteNonQueryAsync(ct);
         }
     }
 
@@ -887,6 +849,5 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
           ProductId TEXT NOT NULL,Type TEXT NOT NULL,Value TEXT NOT NULL,
           PRIMARY KEY(ProductId,Type,Value),
           FOREIGN KEY(ProductId) REFERENCES PosCatalogStagingProducts(ProductId) ON DELETE CASCADE);
-        CREATE INDEX IF NOT EXISTS IX_PosCatalogProducts_Search ON PosCatalogProducts(ProductCode,Reference,Name);
         """;
 }

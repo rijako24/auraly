@@ -6,8 +6,29 @@ namespace Auraly.Foundation.Tests;
 
 public sealed partial class PosCatalogStoreTests
 {
-    [Fact]
-    public async Task Legacy_catalog_requests_one_bootstrap_and_preserves_sales_until_atomic_promotion()
+    public static IEnumerable<object[]> RequiredCurrentProductColumns()
+    {
+        var fields = new (string Name, bool Additive)[]
+        {
+            ("ProductId", false), ("ProductCode", false), ("Reference", false), ("Name", false),
+            ("BaseUnitCode", false), ("TaxCode", false), ("TaxRate", false), ("UnitPrice", false),
+            ("UnitCost", true), ("ManagesStock", true), ("CurrencyCode", false), ("IsActive", false),
+            ("IsWeighable", true), ("AllowsFractionalSale", true), ("ScaleJson", false), ("ScalePrefix", false),
+            ("CategoryName", true), ("ProductCategoryId", true), ("ProductBrandId", true),
+            ("ProductCategoryAncestorIds", true), ("AverageUnitCost", true), ("LatestUnitCost", true),
+            ("TargetMarginPercent", true), ("InventoryProductId", true), ("InventoryFactor", true),
+            ("IsGenericProduct", true), ("IsIngredient", true), ("HasIngredients", true), ("IsCombo", true),
+            ("PresentationJson", true), ("FamilyProductId", true)
+        };
+        foreach (var table in new[] { "PosCatalogProducts", "PosCatalogStagingProducts" })
+            foreach (var field in fields)
+                yield return [table, field.Name, field.Additive];
+    }
+
+    [Theory]
+    [MemberData(nameof(RequiredCurrentProductColumns))]
+    public async Task Every_required_column_is_checked_before_the_current_catalog_can_be_ready(
+        string table, string column, bool additive)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-store-upgrade-{Guid.NewGuid():N}.db");
         var connectionString = $"Data Source={path}";
@@ -23,35 +44,51 @@ public sealed partial class PosCatalogStoreTests
             {
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
-                command.CommandText = """
-                    ALTER TABLE PosCatalogProducts DROP COLUMN PresentationJson;
+                var removeColumn = column == "ProductId"
+                    ? $"ALTER TABLE {table} RENAME COLUMN ProductId TO RemovedProductId;"
+                    : $"ALTER TABLE {table} DROP COLUMN {column};";
+                command.CommandText = $"""
+                    DROP INDEX IF EXISTS IX_{table}_InventoryProductId;
+                    DROP INDEX IF EXISTS IX_{table}_Family;
+                    DROP INDEX IF EXISTS IX_{table}_Category;
+                    DROP INDEX IF EXISTS IX_PosCatalogProducts_Search;
+                    {removeColumn}
                     CREATE TABLE Invoices(DocumentId TEXT PRIMARY KEY);
                     INSERT INTO Invoices VALUES('existing-sale');
                     """;
                 await command.ExecuteNonQueryAsync();
             }
             var upgraded = new PosCatalogStore(connectionString);
-            await upgraded.InitializeAsync();
-            Assert.Equal("Invalid", (await upgraded.StatusAsync()).Status);
-            var updatedProduct = Product() with
+            if (additive)
+                await upgraded.InitializeAsync();
+            else
             {
-                UnitCost = 7_000m,
-                Presentation = new("https://example.test/coffee.png", Product().ProductId,
-                    Guid.NewGuid(), "Rojo", Guid.NewGuid(), "500 g")
-            };
-            var refreshSession = session with { SessionId = Guid.NewGuid(), HighWaterMark = 8 };
-            await upgraded.BeginBootstrapAsync(refreshSession);
-            await upgraded.ApplyBootstrapPageAsync(Page(refreshSession, [updatedProduct], false, null));
-            await upgraded.PromoteBootstrapAsync();
-            var loaded = await upgraded.GetByProductIdAsync(updatedProduct.ProductId);
-            Assert.NotNull(loaded);
-            Assert.Equal(updatedProduct.Presentation, loaded.Presentation);
-            Assert.Equal(updatedProduct.UnitPrice, loaded.UnitPrice);
-            Assert.Equal(updatedProduct.UnitCost, loaded.UnitCost);
-            Assert.Equal(updatedProduct.TaxRate, loaded.TaxRate);
-            Assert.Equal(8, (await upgraded.StatusAsync()).Cursor);
-            await upgraded.InitializeAsync();
-            Assert.Equal("Ready", (await upgraded.StatusAsync()).Status);
+                var exception = await Assert.ThrowsAsync<InvalidDataException>(() => upgraded.InitializeAsync());
+                Assert.Contains(column, exception.Message, StringComparison.Ordinal);
+            }
+            Assert.Equal("Invalid", (await upgraded.StatusAsync()).Status);
+            if (additive)
+            {
+                var updatedProduct = Product() with
+                {
+                    UnitCost = 7_000m,
+                    Presentation = new("https://example.test/coffee.png", Product().ProductId,
+                        Guid.NewGuid(), "Rojo", Guid.NewGuid(), "500 g")
+                };
+                var refreshSession = session with { SessionId = Guid.NewGuid(), HighWaterMark = 8 };
+                await upgraded.BeginBootstrapAsync(refreshSession);
+                await upgraded.ApplyBootstrapPageAsync(Page(refreshSession, [updatedProduct], false, null));
+                await upgraded.PromoteBootstrapAsync();
+                var loaded = await upgraded.GetByProductIdAsync(updatedProduct.ProductId);
+                Assert.NotNull(loaded);
+                Assert.Equal(updatedProduct.Presentation, loaded.Presentation);
+                Assert.Equal(updatedProduct.UnitPrice, loaded.UnitPrice);
+                Assert.Equal(updatedProduct.UnitCost, loaded.UnitCost);
+                Assert.Equal(updatedProduct.TaxRate, loaded.TaxRate);
+                Assert.Equal(8, (await upgraded.StatusAsync()).Cursor);
+                await upgraded.InitializeAsync();
+                Assert.Equal("Ready", (await upgraded.StatusAsync()).Status);
+            }
             await using (var connection = new SqliteConnection(connectionString))
             {
                 await connection.OpenAsync();

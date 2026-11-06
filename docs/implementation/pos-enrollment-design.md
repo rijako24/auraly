@@ -103,10 +103,16 @@ automáticos. Los fallos permanentes de identidad, compatibilidad o validación 
 se disfrazan como problemas transitorios.
 
 El digest de cada página de catálogo se calcula exclusivamente mediante
-`CatalogBootstrapIntegrity`. Protege el núcleo estable del contrato vendible y
-permite evolución aditiva del DTO sin romper el bootstrap entre una API y una
-caja actualizadas en distinto orden; Edge valida por separado los campos
-extendidos antes de persistirlos.
+`CatalogBootstrapIntegrity` y cubre todos los campos del contrato vigente,
+incluidos composición, inventario y presentación. Cada campo debe estar presente
+en el mensaje, aunque su valor de negocio pueda ser nulo. La API y Edge deben
+usar el mismo contrato y digest al habilitar la preparación; no hay un formato
+alterno ni aceptación del digest parcial anterior. La estructura de las dos
+tablas locales de productos se comprueba contra todas las columnas del writer.
+Una estructura incompleta impide mantener el catálogo en `Ready` y exige la
+descarga completa mediante el sincronizador existente después de completar las
+ampliaciones de esquema admitidas. Una estructura inválida o un mensaje
+incompleto fallan explícitamente; no activan reenrolamiento ni valores supuestos.
 
 Los detalles técnicos completos permanecen en los logs locales. La salud y el
 historial consumidos por la interfaz nunca exponen `ServerUrl`, hostnames,
