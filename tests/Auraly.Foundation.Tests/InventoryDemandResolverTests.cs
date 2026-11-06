@@ -5,6 +5,23 @@ namespace Auraly.Foundation.Tests;
 public sealed class InventoryDemandResolverTests
 {
     [Fact]
+    public void A_composition_reserves_all_its_components_or_none_for_later_lines()
+    {
+        var first = Guid.NewGuid(); var second = Guid.NewGuid();
+        var meal = Guid.NewGuid(); var later = Guid.NewGuid();
+        var allocations = InventoryDemandResolver.AllocateWholeLines(
+        [
+            new(meal, meal, first, 2m, 2m, true),
+            new(meal, meal, second, 1m, 2m, true),
+            new(later, first, first, 1m, 4m, true)
+        ], new Dictionary<Guid, decimal> { [first] = 4m, [second] = 1m });
+        Assert.False(allocations[0].CanReserve);
+        Assert.False(allocations[1].CanReserve);
+        Assert.True(allocations[2].CanReserve);
+        Assert.Equal(4m, allocations[2].AvailableInventoryQuantity);
+    }
+
+    [Fact]
     public void Groups_parent_and_linked_presentations_in_the_parent_unit()
     {
         var root = Guid.NewGuid();

@@ -1220,69 +1220,18 @@ public sealed partial class SqlOnlineSalesDraftStore(
         CancellationToken ct)
     {
         if (state.WarehouseAllowsNegativeStock) return;
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            DECLARE @InventoryProductId UNIQUEIDENTIFIER;
-            DECLARE @SelectedFactor DECIMAL(19,6);
-            DECLARE @ManagesStock BIT;
-            SELECT @InventoryProductId=COALESCE(link.ParentProductId,p.ProductId),
-                   @SelectedFactor=COALESCE(NULLIF(link.InventoryFactor,0),1),
-                   @ManagesStock=CAST(CASE WHEN p.ManageStock=1 OR link.ProductLinkId IS NOT NULL
-                                           THEN 1 ELSE 0 END AS BIT)
-            FROM dbo.Products p
-            LEFT JOIN dbo.ProductLinks link
-              ON link.TenantId=p.TenantId AND link.ChildProductId=p.ProductId
-             AND link.SharesInventory=1 AND link.IsActive=1
-            WHERE p.ProductId=@ProductId
-              AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
-
-            DECLARE @Available DECIMAL(19,6)=COALESCE((
-              SELECT balance.QuantityOnHand
-              FROM dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
-              WHERE balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
-                AND balance.ProductId=@InventoryProductId),0);
-            SELECT @InventoryProductId,@SelectedFactor,@ManagesStock,@Available;
-
-            SELECT line.SalesDraftLineId,line.ProductId,line.Quantity,
-                   COALESCE(lineLink.ParentProductId,line.ProductId),
-                   COALESCE(NULLIF(lineLink.InventoryFactor,0),1),
-                   CAST(CASE WHEN lineProduct.ManageStock=1 OR lineLink.ProductLinkId IS NOT NULL
-                             THEN 1 ELSE 0 END AS BIT)
-            FROM dbo.SalesDraftLines line WITH (UPDLOCK,HOLDLOCK)
-            JOIN dbo.Products lineProduct ON lineProduct.ProductId=line.ProductId
-            LEFT JOIN dbo.ProductLinks lineLink
-              ON lineLink.TenantId=lineProduct.TenantId AND lineLink.ChildProductId=line.ProductId
-             AND lineLink.SharesInventory=1 AND lineLink.IsActive=1
-            WHERE line.SalesDraftId=@DraftId
-              AND COALESCE(lineLink.ParentProductId,line.ProductId)=@InventoryProductId
-              AND (@ExcludedLineId IS NULL OR line.SalesDraftLineId<>@ExcludedLineId);
-            """;
-        command.Parameters.AddRange([
-            P("@BusinessId", state.BusinessId), P("@WarehouseId", state.WarehouseId),
-            P("@DraftId", draftId), P("@ProductId", productId),
-            P("@ExcludedLineId", excludedLineId)
-        ]);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct))
+        var demand = await ReadDraftInventoryDemandsAsync(connection,transaction,state,draftId,
+            productId,excludedLineId,selectedQuantity,ct);
+        var selected = InventoryDemandResolver.AllocateWholeLines(demand.Lines,demand.Available)
+            .Where(allocation => allocation.Line.LineId==Guid.Empty).ToArray();
+        if (selected.Length==0 && state.SourceOrderId is null)
             throw new OnlineSalesDraftValidationException("El producto ya no está disponible.");
-        var inventoryProductId = reader.GetGuid(0);
-        var selectedFactor = reader.GetDecimal(1);
-        var managesStock = reader.GetBoolean(2);
-        var available = reader.GetDecimal(3);
-        var demandLines = new List<InventoryDemandLine>();
-        await reader.NextResultAsync(ct);
-        while (await reader.ReadAsync(ct))
-            demandLines.Add(new(
-                reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(3),
-                reader.GetDecimal(4), reader.GetDecimal(2), reader.GetBoolean(5)));
-        demandLines.Add(new(
-            Guid.Empty, productId, inventoryProductId, selectedFactor,
-            selectedQuantity, managesStock));
-        var demand = InventoryDemandResolver.Resolve(demandLines).SingleOrDefault();
-        if (demand is not null && available < demand.RequiredInventoryQuantity)
-            throw new OnlineSalesDraftValidationException(
-                $"Inventario insuficiente. Disponible: {Invariant(InventoryDemandResolver.InProductUnits(available, selectedFactor))}.");
+        if (selected.Any(allocation => !allocation.CanReserve))
+        {
+            var available = selected.Min(allocation => InventoryDemandResolver.InProductUnits(
+                allocation.AvailableInventoryQuantity,allocation.Line.InventoryFactor));
+            throw new OnlineSalesDraftValidationException($"Inventario insuficiente. Disponible: {Invariant(Math.Max(0,available))}.");
+        }
     }
 
     private static async Task<OnlineSalesDraft> ReadDraftAsync(

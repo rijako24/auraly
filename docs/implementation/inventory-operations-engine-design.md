@@ -5,6 +5,18 @@
 
 ## Scope
 
+Sales composition consumption (2026-11-05) reuses the same document engine and
+`SqlInventoryLedgerWriter`. `inventory.ProductConsumption` selects the managed
+finished product, linked inventory, or the immutable components of a product
+without its own stock. Availability reads use the same selection; the shared
+`InventoryDemandResolver` allocates all components of a sale line atomically.
+Component quantities scale with sold quantities and shared demands accumulate.
+The sales acceptance transaction freezes only composition version references in
+the existing durable payload row; invoice requests and their hashes are unchanged.
+The sales handler records recognized line costs and component movements in its
+existing operational transaction. The restaurant design owns the channel and
+offline acceptance details.
+
 This slice connects four inventory documents end to end:
 
 - stock count (`StockCount`, Auraly prefix `CTI`);

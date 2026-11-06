@@ -13,6 +13,32 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
 {
+    [Theory]
+    [InlineData("Store")]
+    [InlineData("RestaurantBar")]
+    public async Task Web_only_modes_cannot_authorize_an_offline_register(string mode)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("UPDATE dbo.Businesses SET PointOfSaleMode=@Mode WHERE BusinessId=@Business", connection);
+        command.Parameters.AddWithValue("@Mode", mode);
+        command.Parameters.AddWithValue("@Business", fixture.BusinessId);
+        await command.ExecuteNonQueryAsync();
+        try
+        {
+            using var client = fixture.CreateAdminClient(CommercePermissionCodes.EnrolledDevicesEnroll);
+            using var response = await client.PostAsJsonAsync("/api/commerce/v1/pos/enrollments",
+                new CreatePosEnrollmentRequest(fixture.BusinessId, fixture.WarehouseId, "No enrolar modo web"));
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Contains("solo en la web", await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            command.Parameters["@Mode"].Value = "DirectSale";
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
     [Fact]
     public async Task Authorized_user_enrolls_and_same_installation_can_recover_a_lost_response()
     {

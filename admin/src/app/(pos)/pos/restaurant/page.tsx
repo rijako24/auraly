@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { apiClient } from "@/services/api/client";
-import { loadSalesWorkspaceBootstrap } from "@/services/pos/online-pos-bootstrap";
+import { loadSalesWorkspaceBootstrap, salesWorkspaceBootstrapHandoffKey, type SalesWorkspaceBootstrap } from "@/services/pos/online-pos-bootstrap";
 import { rememberedSalesWorkspaceKey, rememberSalesWorkspace, salesWorkspaceKey,
   selectSalesWorkspace,
   type SalesWorkspaceOption, type SalesWorkspaceContext } from "@/services/pos/online-pos-client";
@@ -13,6 +14,7 @@ import { RestaurantPosWorkspace } from "@/components/restaurant/restaurant-pos-w
 
 export default function RestaurantPosPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const hasHydrated = useAuthStore((state) => state.hasHydrated);
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
   const canEnter = permissions.includes("restaurant.attend") || permissions.includes("sales.create");
@@ -61,7 +63,12 @@ export default function RestaurantPosPage() {
     let active = true;
     setSelected(null);
     setLoading(true);
-    void loadSalesWorkspaceBootstrap().then((bootstrap) => {
+    const userId = useAuthStore.getState().user?.userId;
+    const tenantId = window.localStorage.getItem("selected_tenant_id");
+    const handoffKey = salesWorkspaceBootstrapHandoffKey(tenantId ?? "", userId ?? "");
+    const handoff = queryClient.getQueryData<SalesWorkspaceBootstrap>(handoffKey);
+    queryClient.removeQueries({ queryKey: handoffKey, exact: true });
+    void (handoff ? Promise.resolve(handoff) : loadSalesWorkspaceBootstrap()).then((bootstrap) => {
       if (!active) return;
       const activeBusinessId = selectedBusinessId ?? window.localStorage.getItem("selected_business_id");
       const restaurantOptions = bootstrap.options.filter((option) =>
@@ -81,7 +88,7 @@ export default function RestaurantPosPage() {
       }
     });
     return () => { active = false; };
-  }, [canEnter, hasHydrated, selectedBusinessId, router, select]);
+  }, [canEnter, hasHydrated, selectedBusinessId, router, select, queryClient]);
 
   if (!hasHydrated || !canEnter) return null;
   if (selected && (!selectedBusinessId || selected.businessId === selectedBusinessId))

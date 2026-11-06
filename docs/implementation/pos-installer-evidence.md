@@ -75,11 +75,13 @@ y [WINTRUST_FILE_INFO](https://learn.microsoft.com/en-us/windows/win32/api/wintr
 no contienen campos privados adicionales que desplacen `cbStruct`. La regresión
 ejerce `WinVerifyTrust` con un archivo sin firma y con el runtime firmado de .NET.
 
-El icono descarga a petición del usuario y muestra el progreso. SHA-256 y firma
-del publicador se verifican antes de guardar la descarga. Descargar confirma la
-actualización completa: el modal informa que Auraly se actualizará y reiniciará
-automáticamente. Al recibir la descarga verificada, el propietario de interfaz
-envía el comando de reinicio existente sin otra confirmación ni botón `Más tarde`.
+El icono abre una confirmación antes de descargar o instalar. El modal pregunta
+si se desea actualizar ahora y advierte que puede tardar unos minutos y que
+Auraly se reiniciará al finalizar. `Más tarde` cierra sin enviar comandos ni
+volver a consultar; sólo `Actualizar ahora` inicia la actualización completa.
+SHA-256 y firma del publicador se verifican antes de guardar la descarga. Al
+recibir la descarga verificada, el mismo propietario de interfaz envía el
+comando de reinicio existente, ya autorizado por esa confirmación inicial.
 Durante descarga, verificación y apertura del instalador el modal permanece abierto.
 Si la aplicación se cerró después de guardar la descarga y la instalación no
 terminó, al abrirla el icono permite retomarla sin descargarla otra vez. No se
@@ -93,7 +95,7 @@ Las instalaciones anteriores que no interpretaban los avisos requieren instalar
 una vez el paquete corregido: su interfaz y puente nativo están empaquetados
 localmente. Las siguientes actualizaciones usan este mismo flujo.
 
-La regresión nativa está en `Auraly.Desktop.Tests`; la interfaz, los errores y
+La regresión nativa está en `Auraly.Desktop.Tests`; la interfaz, la confirmación, los errores y
 la recuperación del aviso se verifican en `desktop-update.spec.ts`. La publicación
 continúa usando el instalador firmado y el pipeline de release canónicos.
 

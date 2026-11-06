@@ -271,7 +271,7 @@ export default function ProductsPage() {
     }
     setSavingProduct(true);
     try {
-      if (!businessId || !merchandisingEditorRef.current || !taxEditorRef.current)
+      if (!businessId || !merchandisingEditorRef.current || !taxEditorRef.current || !imageEditorRef.current)
         throw new Error("Espera a que termine de cargar la ficha del producto.");
       const merchandising = merchandisingEditorRef.current.getValue();
       if (form.isIngredient && merchandising.isGenericProduct)
@@ -284,7 +284,7 @@ export default function ProductsPage() {
       const taxes = taxEditorRef.current.getValue();
       const pricing = capabilities.catalogPricing ? pricingEditorRef.current!.getValue() : null;
       const supplier = capabilities.supplier ? supplierEditorRef.current!.getValue() : null;
-      const images = imageEditorRef.current ? await imageEditorRef.current.stage() : [];
+      const images = await imageEditorRef.current.stage();
       const aliases = recognitionEditorRef.current?.getValue().map((alias) => ({ alias })) ?? [];
       if (!merchandising.isGenericProduct && (!form.isIngredient || merchandising.manageInventory) && !recipeEditorRef.current)
         throw new Error("Espera a que termine de cargar la receta del producto.");

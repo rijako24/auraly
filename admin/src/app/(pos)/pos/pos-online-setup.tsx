@@ -59,6 +59,7 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
   const [fiscalError, setFiscalError] = useState<string | null>(null);
   const warehouses = useMemo(() => options.filter((option) => option.businessId === businessId), [businessId, options]);
   const selected = useMemo(() => warehouses.find((option) => option.warehouseId === warehouseId), [warehouseId, warehouses]);
+  const offlineAllowed = (selected?.pointOfSaleMode ?? "DirectSale") === "DirectSale";
 
   useEffect(() => {
     if (forcedDocumentType) {
@@ -137,11 +138,11 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
           <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
           <span><strong className="block text-white">Equipo enrolado</strong><span className="mt-1 block leading-5 text-emerald-100">Esta instalación trabaja con el motor local y recibe los cambios por sincronización.</span></span>
         </div>}
-        {edgeCapable && <label className={`flex items-start gap-3 rounded-2xl border p-4 text-sm transition ${prepareInstalled ? "border-teal-300/50 bg-teal-300/15" : "border-white/15 bg-[#102e33]"} ${canEnrollOffline && !configurationOffline ? "cursor-pointer" : "opacity-70"}`}>
+        {edgeCapable && offlineAllowed && <label className={`flex items-start gap-3 rounded-2xl border p-4 text-sm transition ${prepareInstalled ? "border-teal-300/50 bg-teal-300/15" : "border-white/15 bg-[#102e33]"} ${canEnrollOffline && !configurationOffline ? "cursor-pointer" : "opacity-70"}`}>
           <Checkbox className="mt-0.5 border-teal-200 data-[state=checked]:bg-teal-300 data-[state=checked]:text-[#071a1d]" checked={prepareInstalled} disabled={configurationOffline || !canEnrollOffline || busy} onCheckedChange={(checked) => setPrepareInstalled(checked === true)} />
           <span><strong className="block text-white">Preparar este equipo para trabajar sin conexión</strong><span className="mt-1 block leading-5 text-slate-300">Descarga usuarios, permisos, productos, clientes y precios. Después del enrolamiento la caja usa siempre el motor local sincronizado.</span>{enrollmentCapacity && <span className="mt-2 block text-xs text-teal-100">Cajas enroladas: {enrollmentCapacity.active} de {enrollmentCapacity.maximum}</span>}{canEnrollOffline && enrollmentCapacity && enrollmentCapacity.active >= enrollmentCapacity.maximum && <span className="mt-1 block text-xs text-teal-100">Esta instalación conserva numeración local para recuperar su caja. Una caja nueva requiere cupo disponible.</span>}{!canEnrollOffline && <span role="alert" className="mt-2 block font-semibold text-amber-100">{enrollmentUnavailableReason ?? "No es posible enrolar otra caja. Comunícate con el administrador."}</span>}</span>
         </label>}
-        <button onClick={() => void choose(edgeCapable && prepareInstalled ? "enroll" : "online")} disabled={(!selected && !configurationOffline) || (configurationOffline && !onCancel) || busy} className="h-12 w-full rounded-xl bg-teal-300 font-bold text-[#071a1d] disabled:opacity-35">{busy ? (prepareInstalled ? "Preparando equipo…" : "Entrando…") : "Continuar a ventas"}</button>
+        <button onClick={() => void choose(edgeCapable && offlineAllowed && prepareInstalled ? "enroll" : "online")} disabled={(!selected && !configurationOffline) || (configurationOffline && !onCancel) || busy} className="h-12 w-full rounded-xl bg-teal-300 font-bold text-[#071a1d] disabled:opacity-35">{busy ? (offlineAllowed && prepareInstalled ? "Preparando equipo…" : "Entrando…") : "Continuar a ventas"}</button>
       </div>}</div>
     </section></div>
   </main>;

@@ -1,6 +1,7 @@
 export type PosLaunchHealth = {
   status: string;
   identityReady: boolean;
+  pointOfSaleMode?: string;
 };
 
 export type EnrolledWorkspaceSnapshot = {
@@ -50,10 +51,12 @@ export function enrolledWorkspaceOption(
 export function resolvePosExecutionMode(
   hasInstalledApp: boolean,
   health: PosLaunchHealth | null,
+  onlineSiteSelected = false,
 ): "online" | "edge" | null {
-  if (!hasInstalledApp) return "online";
+  if (!hasInstalledApp || onlineSiteSelected) return "online";
   if (!health) return null;
-  return health.status === "EnrollmentRequired" ? "online" : "edge";
+  return health.status === "EnrollmentRequired" || health.pointOfSaleMode === "Store" ||
+    health.pointOfSaleMode === "RestaurantBar" ? "online" : "edge";
 }
 
 export function workspaceActivationMode(

@@ -14,7 +14,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 [Trait("EngineCertification", "Operational")]
-public sealed class ProductionVerticalSliceTests(ServerSliceFixture fixture, ITestOutputHelper output)
+public sealed partial class ProductionVerticalSliceTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
     [Fact]
     public async Task Published_price_and_cost_use_the_application_clock_even_when_sql_clock_is_behind()

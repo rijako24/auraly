@@ -24,7 +24,7 @@ public sealed record InventoryDemandAllocation(
 
 /// <summary>
 /// Canonical arithmetic for products that consume their own inventory or a
-/// linked parent's inventory. Data access supplies facts; every sales and order
+/// linked parent's inventory, ingredients or combo components. Data access supplies facts; every sales and order
 /// runtime groups and converts them here.
 /// </summary>
 public static class InventoryDemandResolver
@@ -68,18 +68,18 @@ public static class InventoryDemandResolver
         _ = Resolve(values);
         var remaining = availableByInventoryProduct.ToDictionary(pair => pair.Key, pair => pair.Value);
         var result = new List<InventoryDemandAllocation>(values.Length);
-        foreach (var line in values)
+        foreach (var group in values.GroupBy(line => line.LineId))
         {
-            if (!line.ManagesStock)
-            {
-                result.Add(new(line, 0m, 0m, true));
-                continue;
-            }
-            var available = remaining.GetValueOrDefault(line.InventoryProductId);
-            var required = line.RequiredInventoryQuantity;
-            var canReserve = available >= required;
-            result.Add(new(line, available, required, canReserve));
-            if (canReserve) remaining[line.InventoryProductId] = available - required;
+            var demands = Resolve(group);
+            var canReserve = demands.All(demand =>
+                remaining.GetValueOrDefault(demand.InventoryProductId) >= demand.RequiredInventoryQuantity);
+            foreach (var line in group)
+                result.Add(new(line,
+                    line.ManagesStock ? remaining.GetValueOrDefault(line.InventoryProductId) : 0m,
+                    line.ManagesStock ? line.RequiredInventoryQuantity : 0m,canReserve));
+            if (canReserve)
+                foreach (var demand in demands)
+                    remaining[demand.InventoryProductId] = remaining.GetValueOrDefault(demand.InventoryProductId) - demand.RequiredInventoryQuantity;
         }
         return result;
     }

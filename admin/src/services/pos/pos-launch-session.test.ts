@@ -177,3 +177,12 @@ test("exhausted DIAN quota blocks invoices but preserves ordinary receipts in bo
     assert.equal(posDocumentReadinessError("SalesInvoice", true, false, mode), dianQuotaExhaustedMessage);
   }
 });
+
+
+test("an installed app opens online stores and restaurants without changing the enrolled caja", () => {
+  for (const pointOfSaleMode of ["Store", "RestaurantBar"]) {
+    assert.equal(resolvePosExecutionMode(true, { status: "Ready", identityReady: true, pointOfSaleMode }), "online");
+  }
+  assert.equal(resolvePosExecutionMode(true, { status: "Ready", identityReady: true, pointOfSaleMode: "DirectSale" }, true), "online");
+  assert.equal(resolvePosExecutionMode(true, { status: "Ready", identityReady: true, pointOfSaleMode: "DirectSale" }), "edge");
+});

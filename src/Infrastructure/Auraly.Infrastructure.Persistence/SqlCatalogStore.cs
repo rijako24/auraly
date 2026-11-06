@@ -2,6 +2,7 @@ using System.Data;
 using System.Text.Json;
 using Auraly.Application.Catalog;
 using Auraly.Contracts.Catalog;
+using Auraly.Domain.Inventory;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Microsoft.Data.SqlClient;
 
@@ -796,39 +797,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
 
     public async Task<InventoryAvailabilityResponse> AvailabilityAsync(
         Guid deviceId, Guid tenantId, Guid businessId,
-        InventoryAvailabilityRequest request, CancellationToken ct)
-    {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT w.AllowNegativeStockSales,
-              COALESCE(balance.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
-            FROM dbo.EnrolledDevices d
-            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
-              AND b.TenantId=d.TenantId AND b.IsActive=1
-            JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId AND w.IsActive=1 AND w.UseForSales=1
-              AND w.BusinessId=b.BusinessId AND w.IsActive=1
-            JOIN dbo.Products p ON p.ProductId=@ProductId
-              AND p.TenantId=@TenantId
-            LEFT JOIN dbo.ProductLinks link
-              ON link.TenantId=p.TenantId AND link.ChildProductId=p.ProductId
-             AND link.SharesInventory=1 AND link.IsActive=1
-            LEFT JOIN dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
-              ON balance.BusinessId=@BusinessId AND balance.WarehouseId=w.WarehouseId
-             AND balance.ProductId=COALESCE(link.ParentProductId,p.ProductId)
-            WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1;
-            """;
-        command.Parameters.AddRange([P("@DeviceId", deviceId), P("@TenantId", tenantId), P("@BusinessId", businessId),
-            P("@WarehouseId", request.WarehouseId), P("@ProductId", request.ProductId)]);
-        await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct)) throw new CatalogForbiddenException("The warehouse is not assigned to this device.");
-        var allowsNegative = reader.GetBoolean(0);
-        var available = reader.GetDecimal(1);
-        return new InventoryAvailabilityResponse(request.ProductId, request.WarehouseId, request.Quantity, available,
-            !allowsNegative, allowsNegative || available >= request.Quantity,
-            allowsNegative ? "NotRequired" : available >= request.Quantity ? "Available" : "Insufficient");
-    }
+        InventoryAvailabilityRequest request, CancellationToken ct) =>
+        (await AvailabilityBatchAsync(deviceId,tenantId,businessId,
+            new(request.WarehouseId,request.OperationId,[new(request.ProductId,request.Quantity)]),ct)).Single();
 
     public async Task<IReadOnlyList<InventoryAvailabilityResponse>> AvailabilityBatchAsync(
         Guid deviceId, Guid tenantId, Guid businessId,
@@ -836,8 +807,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
+        await using var command = new SqlCommand("""
             WITH requested AS (
               SELECT CONVERT(INT,[key]) Ordinal,
                      TRY_CONVERT(UNIQUEIDENTIFIER,JSON_VALUE([value],'$.ProductId')) ProductId,
@@ -845,43 +815,54 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               FROM OPENJSON(@Items)
             )
             SELECT requested.ProductId,requested.Quantity,w.AllowNegativeStockSales,
-                   COALESCE(balance.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
+                   consumption.InventoryProductId,consumption.InventoryFactor,
+                   consumption.ManageStock,COALESCE(balance.QuantityOnHand,0)
             FROM dbo.EnrolledDevices d
-            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
-              AND b.TenantId=d.TenantId AND b.IsActive=1
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=d.TenantId AND b.IsActive=1
             JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId AND w.IsActive=1 AND w.UseForSales=1
               AND w.BusinessId=b.BusinessId
             CROSS JOIN requested
-            JOIN dbo.Products p ON p.ProductId=requested.ProductId AND p.TenantId=@TenantId
-            LEFT JOIN dbo.ProductLinks link
-              ON link.TenantId=p.TenantId AND link.ChildProductId=p.ProductId
-             AND link.SharesInventory=1 AND link.IsActive=1
-            LEFT JOIN dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
+            JOIN dbo.Products product ON product.ProductId=requested.ProductId AND product.TenantId=@TenantId
+            OUTER APPLY inventory.CurrentProductConsumption(@TenantId,requested.ProductId) consumption
+            LEFT JOIN dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
               ON balance.BusinessId=@BusinessId AND balance.WarehouseId=w.WarehouseId
-             AND balance.ProductId=COALESCE(link.ParentProductId,p.ProductId)
+             AND balance.ProductId=consumption.InventoryProductId
             WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1
-            ORDER BY requested.Ordinal;
-            """;
+            ORDER BY requested.Ordinal,consumption.ComponentLineNumber;
+            """,connection);
         command.Parameters.AddRange([
-            P("@DeviceId", deviceId), P("@TenantId", tenantId), P("@BusinessId", businessId),
-            P("@WarehouseId", request.WarehouseId), P("@Items", JsonSerializer.Serialize(request.Items))
+            P("@DeviceId",deviceId),P("@TenantId",tenantId),P("@BusinessId",businessId),
+            P("@WarehouseId",request.WarehouseId),P("@Items",JsonSerializer.Serialize(request.Items))
         ]);
-        var results = new List<InventoryAvailabilityResponse>(request.Items.Count);
+        var lines = new List<InventoryDemandLine>();
+        var available = new Dictionary<Guid,decimal>();
+        var found = new HashSet<Guid>();
+        var allowsNegative = false;
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            var productId = reader.GetGuid(0);
-            var quantity = reader.GetDecimal(1);
-            var allowsNegative = reader.GetBoolean(2);
-            var available = reader.GetDecimal(3);
-            results.Add(new InventoryAvailabilityResponse(
-                productId, request.WarehouseId, quantity, available,
-                !allowsNegative, allowsNegative || available >= quantity,
-                allowsNegative ? "NotRequired" : available >= quantity ? "Available" : "Insufficient"));
+            if (reader.IsDBNull(3))
+                throw new CatalogValidationException("La composición no está disponible para validar inventario.");
+            var productId = reader.GetGuid(0);var target = reader.GetGuid(3);
+            found.Add(productId);allowsNegative=reader.GetBoolean(2);
+            lines.Add(new(productId,productId,target,reader.GetDecimal(4),reader.GetDecimal(1),reader.GetBoolean(5)));
+            available.TryAdd(target,reader.GetDecimal(6));
         }
-        if (results.Count != request.Items.Count)
+        if (found.Count!=request.Items.Count)
             throw new CatalogForbiddenException("The warehouse or one of the products is not available to this device.");
-        return results;
+        var allocations = InventoryDemandResolver.AllocateWholeLines(lines,available)
+            .GroupBy(allocation => allocation.Line.LineId).ToDictionary(group => group.Key,group => group.ToArray());
+        return request.Items.Select(item =>
+        {
+            var product = allocations[item.ProductId];
+            var physical = product.Where(allocation => allocation.Line.ManagesStock).ToArray();
+            var quantity = physical.Length==0 ? 0m : physical.Min(allocation =>
+                InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,allocation.Line.InventoryFactor));
+            var required = !allowsNegative && physical.Length>0;
+            var valid = !required || product.All(allocation => allocation.CanReserve);
+            return new InventoryAvailabilityResponse(item.ProductId,request.WarehouseId,item.Quantity,quantity,
+                required,valid,!required ? "NotRequired" : valid ? "Available" : "Insufficient");
+        }).ToArray();
     }
 
     public async Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(

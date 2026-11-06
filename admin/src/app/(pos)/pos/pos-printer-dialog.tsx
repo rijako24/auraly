@@ -9,7 +9,6 @@ import {
   saveBrowserPrinterConfiguration,
   type PosPrintTemplateFormat,
   type PosPrinterConfiguration,
-  type RestaurantCommandPrinterProfile,
 } from "@/services/pos/pos-edge-client";
 import { completeInstalledPrinterConfiguration } from "@/services/pos/pos-printer-configuration";
 import { Button } from "@/components/ui/button";
@@ -21,18 +20,18 @@ import { loadPosInstaller, type PosInstaller } from "@/services/pos/pos-installe
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
 
 type PrinterConfigurationClient = Pick<PosEdgeClient,
-  "printerConfiguration" | "savePrinterConfiguration" | "readScaleWeight" |
-  "restaurantCommandPrinterProfiles" | "saveRestaurantCommandPrinterProfile" |
-  "deleteRestaurantCommandPrinterProfile">;
+  "printerConfiguration" | "savePrinterConfiguration" | "readScaleWeight">;
 
 export function PosPrinterDialog({
   client,
   onClose,
   browserOnly = false,
+  mode = "sales",
 }: {
   client: PrinterConfigurationClient | null;
   onClose: () => void;
   browserOnly?: boolean;
+  mode?: "sales" | "restaurant";
 }) {
   const [value, setValue] = useState<PosPrinterConfiguration | null>(null);
   const [printers, setPrinters] = useState<string[]>([]);
@@ -42,14 +41,9 @@ export function PosPrinterDialog({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [commandProfiles, setCommandProfiles] = useState<RestaurantCommandPrinterProfile[]>([]);
-  const [commandDraft, setCommandDraft] = useState<RestaurantCommandPrinterProfile>({
-    key: "", printerName: "", paperWidthMillimeters: 80, copies: 1, cut: true,
-  });
   const [installer, setInstaller] = useState<PosInstaller | null>(null);
   const [installerError, setInstallerError] = useState<string | null>(null);
   const modal = useRef<HTMLElement>(null);
-  const edgePrinterClient = client;
   usePosModalBehavior({ modalRef: modal, escapeDisabled: busy, onEscape: onClose });
 
   useEffect(() => {
@@ -87,40 +81,6 @@ export function PosPrinterDialog({
       .finally(() => active && setBusy(false));
     return () => { active = false; };
   }, [client]);
-
-  useEffect(() => {
-    if (!edgePrinterClient) return;
-    let active = true;
-    edgePrinterClient.restaurantCommandPrinterProfiles()
-      .then((profiles) => { if (active) setCommandProfiles(profiles); })
-      .catch((caught) => { if (active) setError(caught instanceof Error
-        ? caught.message : "No fue posible consultar las impresoras de comandas."); });
-    return () => { active = false; };
-  }, [edgePrinterClient]);
-
-  async function saveCommandProfile() {
-    if (!edgePrinterClient) return;
-    setBusy(true); setError(null);
-    try {
-      await edgePrinterClient.saveRestaurantCommandPrinterProfile(commandDraft);
-      setCommandProfiles(await edgePrinterClient.restaurantCommandPrinterProfiles());
-      setFeedback(`Perfil ${commandDraft.key} guardado en este equipo.`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible guardar el perfil.");
-    } finally { setBusy(false); }
-  }
-
-  async function deleteCommandProfile(key: string) {
-    if (!edgePrinterClient) return;
-    setBusy(true); setError(null);
-    try {
-      await edgePrinterClient.deleteRestaurantCommandPrinterProfile(key);
-      setCommandProfiles(await edgePrinterClient.restaurantCommandPrinterProfiles());
-      setFeedback(`Perfil ${key} eliminado de este equipo.`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible eliminar el perfil.");
-    } finally { setBusy(false); }
-  }
 
   useEffect(() => {
     if (client || browserOnly) return;
@@ -172,11 +132,13 @@ export function PosPrinterDialog({
               {browserOnly ? "Punto de venta web" : "Equipo local"}
             </p>
             <h2 id="peripherals-dialog-title" className="mt-1 flex items-center gap-2 text-xl font-bold">
-              <Printer className="h-5 w-5" /> Periféricos
+              <Printer className="h-5 w-5" /> {mode === "restaurant" ? "Periféricos de restaurante" : "Periféricos"}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
               {browserOnly
                 ? "Configura el formato de impresión del navegador para las facturas de esta caja."
+                : client && mode === "restaurant"
+                ? "Configura la impresión de las facturas de este restaurante en este computador."
                 : client
                 ? "La impresora y la balanza se configuran para este computador."
                 : "Puedes imprimir desde el navegador o instalar Auraly para usar los periféricos directamente."}
@@ -196,12 +158,7 @@ export function PosPrinterDialog({
               <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">{client?"Impresión directa por flujo":"Impresión desde el navegador"}</p><p className="mt-1 text-xs text-slate-600">{client?"Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.":"Sin Auraly, al emitir se abrirá el diálogo del navegador para escoger la impresora y confirmar el trabajo."}</p></div>
               <WorkflowPrinterCard title="Facturas" description="Facturas electrónicas y comprobantes emitidos desde el punto de venta o al facturar pedidos." workflow="invoices" value={value} printers={printers} direct={Boolean(client)} onChange={setValue}/>
               <WorkflowPrinterCard title="Pedidos" description="Pedidos impresos desde la vista administrativa, antes de facturarlos." workflow="orders" value={value} printers={printers} direct={Boolean(client)} onChange={setValue}/>
-              {edgePrinterClient && <section className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div><h3 className="font-semibold">Comandas de restaurante</h3><p className="text-xs text-slate-600">Este computador recibe e imprime automáticamente las comandas asignadas a sus perfiles. Usa la misma clave al configurar la comanda de la estación.</p></div>
-                {commandProfiles.map((profile) => <div key={profile.key} className="flex items-center gap-2 rounded-xl border bg-white p-2 text-sm"><div className="min-w-0 flex-1"><strong>{profile.key}</strong><span className="block truncate text-xs text-slate-600">{profile.printerName} · {profile.paperWidthMillimeters} mm</span></div><Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setCommandDraft(profile)}>Editar</Button><Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void deleteCommandProfile(profile.key)}>Quitar</Button></div>)}
-                <div className="grid gap-2 sm:grid-cols-2"><Field label="Clave del perfil"><Input maxLength={64} value={commandDraft.key} onChange={(event) => setCommandDraft({ ...commandDraft, key: event.target.value })} placeholder="COCINA"/></Field><Field label="Impresora Windows"><Select value={commandDraft.printerName || undefined} onValueChange={(printerName) => setCommandDraft({ ...commandDraft, printerName })}><SelectTrigger><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent>{printers.map((printer) => <SelectItem key={printer} value={printer}>{printer}</SelectItem>)}</SelectContent></Select></Field></div>
-                <div className="flex flex-wrap items-end gap-3"><Field label="Tirilla"><Select value={String(commandDraft.paperWidthMillimeters)} onValueChange={(width) => setCommandDraft({ ...commandDraft, paperWidthMillimeters: Number(width) as 58 | 80 })}><SelectTrigger className="w-28"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></Field><Field label="Copias"><Input className="w-20" type="number" min={1} max={3} value={commandDraft.copies} onChange={(event) => setCommandDraft({ ...commandDraft, copies: Number(event.target.value) })}/></Field><label className="flex h-10 items-center gap-2 text-sm"><Switch checked={commandDraft.cut} onCheckedChange={(cut) => setCommandDraft({ ...commandDraft, cut })}/>Corte</label><Button type="button" variant="outline" disabled={busy || !/^[A-Za-z0-9_-]{1,64}$/.test(commandDraft.key) || !commandDraft.printerName || commandDraft.copies < 1 || commandDraft.copies > 3} onClick={() => void saveCommandProfile()}>Guardar perfil</Button></div>
-              </section>}
+              {mode === "restaurant" && <section className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-4"><h3 className="font-semibold">Impresoras de las estaciones</h3><p className="text-sm text-slate-600">Selecciona la impresora, tirilla, copias y corte al configurar la comanda de cada estación.</p><a className="inline-flex font-semibold text-teal-700 underline" href="/dashboard/settings/restaurant#estaciones">Configurar estaciones y comandas</a></section>}
               {client&&!printers.length && (
                 <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
                   Windows no reporto impresoras instaladas. Instala el controlador y vuelve a abrir esta configuracion.
@@ -225,7 +182,7 @@ export function PosPrinterDialog({
                 <p className="mt-1 text-sm text-slate-600">Para imprimir sin abrir el diálogo del navegador, seleccionar las impresoras de este equipo y controlar corte o cajón compatibles, instala Auraly.</p>
                 {installer ? <a href={installer.downloadUrl} className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white"><Download className="h-4 w-4" />Instalar Auraly {installer.version}</a> : installerError ? <p className="mt-3 text-sm text-amber-700">{installerError}</p> : <p className="mt-3 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Consultando instalador…</p>}
               </section>}
-              {client&&<ScaleConfiguration
+              {client&&mode === "sales"&&<ScaleConfiguration
                   value={value.scale ?? defaultScale()}
                   serialPorts={serialPorts}
                   busy={busy}
@@ -240,7 +197,7 @@ export function PosPrinterDialog({
                     } finally { setBusy(false); }
                   }}
                 />}
-              {!client && <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              {!client && mode === "sales" && <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <h3 className="flex items-center gap-2 font-semibold text-slate-950"><Scale className="h-4 w-4" />Balanza</h3>
                 <p className="mt-1 text-sm text-slate-600">Para conectar y leer automáticamente una balanza debes instalar Auraly. Sin la aplicación, el peso se ingresa manualmente.</p>
               </section>}
@@ -252,7 +209,7 @@ export function PosPrinterDialog({
         <footer className="flex shrink-0 justify-end gap-2 border-t bg-white px-6 py-4">
           <button type="button" onClick={onClose} disabled={busy}
             className="h-10 rounded-xl border px-4 text-sm font-semibold">Cancelar</button>
-          <button type="button" onClick={() => void save()} disabled={busy || !value || !validPeripheralConfiguration(value, Boolean(client))}
+          <button type="button" onClick={() => void save()} disabled={busy || !value || !validPeripheralConfiguration(value, Boolean(client), mode)}
             className="flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white disabled:opacity-50">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Guardar
@@ -363,9 +320,11 @@ function defaultScale(): NonNullable<PosPrinterConfiguration["scale"]> {
   return { enabled: false, portName: "", baudRate: 9600, dataBits: 8, parity: "None", stopBits: "One", sendsRequest: false, requestText: "", startIndex: 0, length: 0, reverse: false, divideBy1000: false, timeoutMilliseconds: 2000 };
 }
 
-export function validPeripheralConfiguration(value: PosPrinterConfiguration, direct: boolean) {
+export function validPeripheralConfiguration(value: PosPrinterConfiguration, direct: boolean, mode: "sales" | "restaurant" = "sales") {
   if (!direct) return true;
-  if (!routePrinter(value, "invoices", value.posOutputFormat) || !routePrinter(value, "orders", value.orderOutputFormat)) return false;
+  if (!routePrinter(value, "invoices", value.posOutputFormat)) return false;
+  if (!routePrinter(value, "orders", value.orderOutputFormat)) return false;
+  if (mode === "restaurant") return true;
   if (!value.scale?.enabled) return true;
   return Boolean(value.scale.portName) && value.scale.baudRate > 0 &&
     value.scale.dataBits >= 5 && value.scale.dataBits <= 8 &&

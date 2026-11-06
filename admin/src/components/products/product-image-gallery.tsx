@@ -162,6 +162,7 @@ export const ProductImageEditor = forwardRef<ProductImageEditorHandle, { product
     useImperativeHandle(ref, () => ({
       stage: async () => {
         if (!businessId) throw new Error("Selecciona un negocio antes de guardar las imágenes.");
+        if (!query.isSuccess) throw new Error("Espera a que termine de cargar la galería de imágenes antes de guardar el producto.");
         const existing = remoteImages.map((image, index) => ({
           productImageId: image.productImageId,
           productOfferId: image.productOfferId ?? null,
@@ -209,7 +210,7 @@ export const ProductImageEditor = forwardRef<ProductImageEditorHandle, { product
         setPrimaryId(savedPrimaryId);
         await queryClient.invalidateQueries({ queryKey });
       },
-    }), [businessId, pending, primaryId, productId, queryClient, queryKey, remoteImages, removedIds]);
+    }), [businessId, pending, primaryId, productId, query.isSuccess, queryClient, queryKey, remoteImages, removedIds]);
 
     if (query.isLoading) return <div className="grid min-h-48 place-items-center rounded-2xl border bg-muted/10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
 

@@ -3,6 +3,7 @@ using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Domain.Inventory;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -314,7 +315,8 @@ public sealed partial class SqlPosSaleServerStore(
                         "The fiscal conflict changed while it was being recovered.");
             }
 
-            await EnqueueDocumentAsync(connection, transaction, command, cancellationToken);
+            await EnqueueDocumentAsync(connection, transaction, command, cancellationToken,
+                validateAvailability: false);
             await transaction.CommitAsync(cancellationToken);
         }
         catch (SqlException exception) when (exception.Number == 1205)
@@ -426,7 +428,8 @@ public sealed partial class SqlPosSaleServerStore(
                     connection,
                     transaction,
                     command,
-                    cancellationToken);
+                    cancellationToken,
+                    validateAvailability: true);
             }
 
 
@@ -739,8 +742,11 @@ public sealed partial class SqlPosSaleServerStore(
         SqlConnection connection,
         SqlTransaction transaction,
         StorePosSaleReceptionCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool validateAvailability)
     {
+        var composition = await ReadInventoryCompositionAsync(
+            connection, transaction, command, validateAvailability, cancellationToken);
         const string sql = """
             DECLARE @Assigned TABLE (ProcessingSequence BIGINT NOT NULL);
 
@@ -763,18 +769,20 @@ public sealed partial class SqlPosSaleServerStore(
             INSERT INTO dbo.DocumentProcessingPayloads
             (
                 DocumentId, DocumentType, BusinessId, ContractVersion,
-                PayloadJson, PayloadHash, AcceptedAt
+                PayloadJson, PayloadHash, AcceptedAt, InventoryCompositionJson
             )
             VALUES
             (
-                @DocumentId, @DocumentType, @BusinessId, 1,
-                @PayloadJson, @PayloadHash, @CreatedAt
+                @DocumentId, @DocumentType, @BusinessId, 2,
+                @PayloadJson, @PayloadHash, @CreatedAt,
+                @Composition
             );
             """;
 
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
         sqlCommand.Parameters.AddWithValue("@JobId", idGenerator.NewId());
         sqlCommand.Parameters.AddWithValue("@BusinessId", command.Request.BusinessId);
+        sqlCommand.Parameters.Add("@Composition", SqlDbType.NVarChar, -1).Value = (object?)composition ?? DBNull.Value;
         sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
         sqlCommand.Parameters.AddWithValue(
             "@DocumentType",
@@ -787,6 +795,66 @@ public sealed partial class SqlPosSaleServerStore(
             throw new DBConcurrencyException(
                 "The business sequence, durable job and immutable payload were not created atomically.");
         }
+    }
+
+    private static async Task<string?> ReadInventoryCompositionAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        StorePosSaleReceptionCommand command, bool validateAvailability,
+        CancellationToken cancellationToken)
+    {
+        await using var query = new SqlCommand("""
+            DECLARE @Composition nvarchar(max)=NULLIF((
+                SELECT frozen.* FROM inventory.SaleCompositionSnapshot(@TenantId,@DocumentId,@PayloadJson) frozen
+                ORDER BY frozen.LineNumber FOR JSON PATH,INCLUDE_NULL_VALUES),N'[]');
+            SELECT @Composition;
+            -- Revalidate the frozen version only for a new online confirmation.
+            -- Synchronization and recovery must preserve an already issued fact.
+            IF @ValidateAvailability=1 AND @SourceMode=N'Online' AND @Composition IS NOT NULL
+               AND EXISTS(SELECT 1 FROM OPENJSON(@Composition) WITH(ManageStock bit) frozen WHERE frozen.ManageStock=0)
+               AND EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND AllowNegativeStockSales=0)
+                SELECT input.ProductId,input.Quantity,target.InventoryProductId,target.InventoryFactor,
+                       COALESCE(balance.QuantityOnHand,0)
+                FROM OPENJSON(@PayloadJson,'$.lines') WITH
+                  (LineNumber int '$.lineNumber',ProductId uniqueidentifier '$.productId',Quantity decimal(19,6) '$.quantity') input
+                JOIN dbo.Products product ON product.ProductId=input.ProductId AND product.TenantId=@TenantId
+                LEFT JOIN OPENJSON(@Composition) WITH
+                  (LineNumber int,ManageStock bit,ProductRecipeVersionId uniqueidentifier) frozen
+                  ON frozen.LineNumber=input.LineNumber
+                CROSS APPLY inventory.ProductConsumption(@TenantId,input.ProductId,
+                    COALESCE(frozen.ManageStock,product.ManageStock),frozen.ProductRecipeVersionId) target
+                LEFT JOIN dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
+                  ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
+                 AND balance.ProductId=target.InventoryProductId
+                WHERE product.IsGenericProduct=0 AND target.ManageStock=1
+                  AND (@HasSourceOrder=0 OR target.IsComponent=1);
+            """, connection, transaction);
+        query.Parameters.AddWithValue("@TenantId", command.Request.TenantId);
+        query.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
+        query.Parameters.AddWithValue("@BusinessId", command.Request.BusinessId);
+        query.Parameters.AddWithValue("@WarehouseId", command.Request.WarehouseId);
+        query.Parameters.AddWithValue("@HasSourceOrder", command.Request.SourceOrderId is not null);
+        query.Parameters.AddWithValue("@ValidateAvailability", validateAvailability);
+        query.Parameters.AddWithValue("@SourceMode", command.Request.SourceMode);
+        query.Parameters.Add("@PayloadJson", SqlDbType.NVarChar, -1).Value = command.SnapshotJson;
+        await using var reader = await query.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        var composition = reader.IsDBNull(0) ? null : reader.GetString(0);
+        if (await reader.NextResultAsync(cancellationToken))
+        {
+            var lines = new List<InventoryDemandLine>();
+            var available = new Dictionary<Guid, decimal>();
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var target = reader.GetGuid(2);
+                lines.Add(new(Guid.Empty, reader.GetGuid(0), target,
+                    reader.GetDecimal(3), reader.GetDecimal(1), true));
+                available.TryAdd(target, reader.GetDecimal(4));
+            }
+            if (InventoryDemandResolver.Resolve(lines).Any(demand =>
+                demand.RequiredInventoryQuantity > available.GetValueOrDefault(demand.InventoryProductId)))
+                throw new PosSaleInvalidException("Inventario insuficiente para los ingredientes o componentes de la venta.");
+        }
+        return composition;
     }
 
     private static async Task EnsureAndLockBusinessCursorAsync(

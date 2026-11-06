@@ -296,10 +296,21 @@ producción. No se puede afirmar paridad online si el estado vive solo en React.
 
 El modo persistido de sede tiene tres opciones del catálogo `point-of-sale-mode`:
 Venta directa (`DirectSale`), Tiendas (`Store`) y Restaurante y bar (`RestaurantBar`).
-Tiendas cambia exclusivamente la presentación de venta directa. Comparte su mismo
-`SalesDraftId`/borrador SQLite, propietario, versión, idempotencia, captura por ID,
+Tiendas cambia exclusivamente la presentación web de venta directa. Comparte su
+`SalesDraftId` online, propietario, versión, idempotencia y captura por ID,
 cantidades, pausas, precios, cobro, emisión e impresión. No crea otro carrito,
-borrador, tabla de ventas, emisor ni API de confirmación.
+borrador, tabla de ventas, emisor ni API de confirmación. Tiendas y Restaurante
+funcionan en línea; únicamente Venta directa permite preparar una caja local
+para vender sin conexión. La aplicación instalada también puede abrir esas
+vistas en línea y usar sus impresoras, sin cambiar la caja SQLite enrolada.
+La proyección local del catálogo conserva sus metadatos compatibles, sin activar
+la presentación Tiendas en Edge.
+
+El consumo de ingredientes y combos pertenece al motor documental compartido,
+según la decisión de inventario de `restaurant-pos-design.md`, §7. La captura y
+facturación conservan sus contratos: producto y cantidad. La composición se
+resuelve en el motor; la disponibilidad multiplica y acumula componentes antes
+de confirmar una venta con política de no negativos.
 
 `/pos` mantiene una sola instancia del flujo de venta directa. Tiendas presenta
 las tarjetas, categorías y superficie de líneas extraídas del restaurante como
@@ -371,3 +382,55 @@ Rollback: devolver la sede a Venta directa mediante su actualización habitual;
 conserva el mismo borrador y los productos/atributos. El esquema es aditivo y
 puede permanecer durante la reversión de binarios. Una versión anterior de la
 UI debe recibir la sede ya en Venta directa antes de retirarse Tiendas.
+
+La navegación a Restaurante transfiere el bootstrap ya autorizado a su entrada
+mediante la caché de navegación por tenant y usuario, consumida una sola vez.
+Así no vuelve a consultar las mismas opciones durante esa transición. La sede
+activa prevalece sobre una venta directa recordada en la aplicación instalada.
+En Tiendas, el resumen y los documentos pendientes conservan su altura natural
+dentro del panel desplazable; las ventas pausadas y los pedidos no quedan
+debajo de un panel que intercepte sus botones.
+
+### Verificación de Tiendas y revisión posterior (2026-11-05)
+
+La sede local `Tiendas · prueba local` conserva nueve camisetas (S/M/L y tres
+colores) con imágenes, familia y stock propio. Se ejecutaron contra API y SQL
+reales los tres recorridos de `pos-store-real-local.spec.ts`: edición de ficha
+con talla/color/nombre manual, carga de imagen y familia, captura y cantidad,
+edición de línea, pausa/recuperación, faltante/exacto/cambio, emisión sin imprimir,
+y pedido guardado/recuperado/cobrado desde el mismo borrador. Todos aprobaron.
+La regresión fuerza una galería pendiente: guardar se detiene hasta tener su
+resultado, sin convertir una carga pendiente o fallida en una lista vacía que
+borre imágenes. Después comprueba que sus identidades se conservan al guardar.
+El editor mantiene su consulta propietaria; la validación no agrega un GET.
+
+Otros nueve recorridos automatizados aprobaron edición de sede sin 404, entrada
+web e instalada a Restaurante con una sola lectura de bootstrap, catálogo Tiendas
+sin refetch al capturar, pagos mixtos, configuración física/ambas por estación y
+confirmación del actualizador. La autorización se ejerció además con un cajero
+local sin `sales.drafts.restart`, sin caja preparada y con servidor disponible:
+clave incorrecta rechazada, secundaria válida aceptada y acción ejecutada.
+Esto no certifica entrega de una notificación a un teléfono ni papel físico.
+
+La auditoría revisó el diff completo: mismo borrador, servicios de catálogo,
+handler documental, writer de inventario, jobs y outboxes; sin otra API de
+facturación ni contrato público de venta. La disponibilidad y el consumo leen
+componentes por conjunto, multiplican/acumulan mediante el resolvedor compartido
+y preservan orden, tenant, permisos, versión e idempotencia. Las respuestas de
+configuración de impresora/comanda actualizan sus cachés sin segunda lectura;
+no se incorporó polling ni un propietario de carga oculto. El rollback del motor
+se rige por la condición de trabajos versión 2 de `restaurant-pos-design.md`.
+
+Evidencia de esta revisión: 89/89 integraciones SQL de venta, producción,
+enrolamiento y autorización; 114/114 pruebas Foundation seleccionadas;
+218/218 de caja local; 259/259 del POS web más sus 16 previas y 15/15 de edición
+de línea; ESLint de los archivos afectados y builds Release
+SQL/API y producción web aprobados. Una ejecución SQL aislada posterior verificó
+13/13 ventas de composición, incluida sincronización tras reinicio y versión
+congelada, con aserción de motor menor de dos segundos: 57,7–835,9 ms, media
+200,1 ms, sin otros builds o suites concurrentes. Las mediciones de la aplicación
+completa bajo presión de memoria fueron variables y no se usan como benchmark.
+La matriz adicional de 16 ventas reales en las sedes locales verificó el kardex
+exacto y reintento sin doble consumo en los tres modos web y Venta directa offline.
+Se ensayaron los 115 lotes de postdeployment sobre la copia local con rollback;
+el reporte final de DEV agrega las columnas de ventas sin reconstruir sus tablas.

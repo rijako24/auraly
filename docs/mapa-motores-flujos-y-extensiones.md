@@ -81,6 +81,13 @@ rutas y autorizaciones independientes.
 
 Para agregar un efecto: extender el contrato/handler correcto, elegir una política de valoración existente o modelar una nueva allí, agregar prueba de idempotencia/concurrencia y no tocar las tablas desde otro componente.
 
+Las ventas con receta o combo usan el mismo `SqlPosSaleDocumentHandler` y
+`SqlInventoryLedgerWriter` en todos los POS. `inventory.ProductConsumption`
+resuelve el inventario del terminado o sus componentes; la validación de
+disponibilidad comparte esa selección. Las referencias a versiones de composición
+se congelan dentro del trabajo documental existente, sin ampliar el contrato de
+facturación, crear otro writer ni otra cola.
+
 ## Precios comerciales
 
 Líneas del documento → `CommercePriceResolver` → `PriceChannelResolver` por

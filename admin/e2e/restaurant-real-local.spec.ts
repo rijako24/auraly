@@ -23,7 +23,7 @@ test("comandas vuelve al preparador compartido antes de abrir mesas", async ({ p
   await expect(page.getByRole("button", { name: "Periféricos" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cerrar sesión de venta" })).toBeVisible();
   await page.getByRole("button", { name: "Periféricos" }).click();
-  const peripherals = page.getByRole("dialog", { name: "Periféricos" });
+  const peripherals = page.getByRole("dialog", { name: "Periféricos de restaurante" });
   await expect(peripherals.getByText("Punto de venta web")).toBeVisible();
   await expect(peripherals.getByRole("link", { name: /Instalar Auraly/ })).toHaveCount(0);
   await peripherals.getByRole("button", { name: "Cerrar" }).click();

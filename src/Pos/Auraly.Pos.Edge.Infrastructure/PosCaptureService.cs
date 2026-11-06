@@ -244,7 +244,7 @@ public sealed class PosCaptureService(
         if (selectedFactor <= 0)
             throw new InvalidDataException("The selected product inventory factor must be positive.");
         var family = await catalog.InventoryFamilyAsync(inventoryProductId, cancellationToken);
-        var validationRequired = selectedProduct.ManagesStock ||
+        var validationRequired = selectedProduct.ManagesStock || selectedProduct.HasIngredients || selectedProduct.IsCombo ||
             inventoryProductId != selectedProduct.ProductId || family.Count > 1;
         var existingDemandLines = draft.Lines
             .Where(line => line.LineId != excludedLineId && family.ContainsKey(line.ProductId.Value))

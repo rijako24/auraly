@@ -58,26 +58,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await ValidateWorkSessionAsync(session, request, cancellationToken);
         var inventoryWarehouseId = await ResolveInventoryWarehouseAsync(
             session, request, cancellationToken);
-        var restaurantInventory = await ReadRestaurantInventoryPlanAsync(
-            session, request, cancellationToken);
-        var postings = request.Lines.OrderBy(line => line.LineNumber)
-            .Where(line => !line.IsGenericProductSnapshot).Select(line => new InventoryLedgerPosting(
-                request.BusinessId, inventoryWarehouseId, line.ProductId, request.DocumentId,
-                request.CommercialSnapshot.DocumentType, line.LineNumber, "Sale", -line.Quantity, null,
-                InventoryValuationMode.AverageCost, request.CommercialSnapshot.IssuedAt)).ToList();
-        if (restaurantInventory is not null)
-            postings.AddRange(restaurantInventory.Components.Select(component => new InventoryLedgerPosting(
-                request.BusinessId, inventoryWarehouseId, component.IngredientProductId,
-                request.DocumentId, request.CommercialSnapshot.DocumentType,
-                component.MovementLineNumber, "Sale", -component.Quantity, null,
-                InventoryValuationMode.AverageCost, request.CommercialSnapshot.IssuedAt)));
-        var inventoryResults = await _inventoryWriter.PostBatchAsync(
-            session, postings, cancellationToken);
-        await InsertLinesAsync(session, request, cancellationToken);
-        if (restaurantInventory is not null)
-            await PersistRestaurantInventoryCostsAsync(session, request,
-                postings, inventoryResults, restaurantInventory,
-                cancellationToken);
+        var inventory = await ReadSaleInventoryPlanAsync(session,request,inventoryWarehouseId,cancellationToken);
+        var inventoryResults = await _inventoryWriter.PostBatchAsync(session,inventory.Postings,cancellationToken);
+        await InsertSaleLinesAndCostsAsync(session,request,inventory.Postings,inventoryResults,inventory,cancellationToken);
 
         await SqlExpenseStore.AcceptInvoiceChargesAsync(session.Connection, session.Transaction,
             request, _taxation, _idGenerator, _timeProvider.GetUtcNow(), cancellationToken);
@@ -122,10 +105,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 request.CommercialSnapshot.IssuedAt, persisted)], cancellationToken);
     }
 
-    private static async Task InsertLinesAsync(
+    private static SqlCommand CreateInsertLinesCommand(
         SqlDocumentProcessingSessionAccessor.Session session,
-        PosSaleUploadRequest request,
-        CancellationToken cancellationToken)
+        PosSaleUploadRequest request)
     {
         const string sql = """
             INSERT INTO dbo.SalesDocumentLines
@@ -185,15 +167,16 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             ) supplier
             WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               AND (input.AddedByUserId IS NULL OR addedBy.UserId IS NOT NULL);
+            IF @@ROWCOUNT<>@LineCount
+                THROW 51024,'The immutable attribution for every sale line could not be captured.',1;
             """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@DocumentType",request.CommercialSnapshot.DocumentType);
         command.Parameters.AddWithValue("@LinesJson", JsonSerializer.Serialize(request.Lines));
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != request.Lines.Count)
-            throw new InvalidOperationException(
-                "The immutable attribution for every sale line could not be captured.");
+        command.Parameters.AddWithValue("@LineCount", request.Lines.Count);
+        return command;
     }
 
     private static async Task<Guid> ResolveInventoryWarehouseAsync(

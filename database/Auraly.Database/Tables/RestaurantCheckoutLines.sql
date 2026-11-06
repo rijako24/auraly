@@ -34,7 +34,7 @@ CREATE TABLE [sales].[RestaurantRecipeConsumptionLines]
         PRIMARY KEY ([DocumentId],[MovementLineNumber]),
     CONSTRAINT [FK_RestaurantRecipeConsumptionLines_CheckoutLine]
         FOREIGN KEY ([DocumentId],[SaleLineNumber])
-        REFERENCES [sales].[RestaurantCheckoutLines] ([DocumentId],[LineNumber]),
+        REFERENCES [dbo].[SalesDocumentLines] ([DocumentId],[LineNumber]),
     CONSTRAINT [FK_RestaurantRecipeConsumptionLines_Ingredient]
         FOREIGN KEY ([IngredientProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_RestaurantRecipeConsumptionLines_Quantity]

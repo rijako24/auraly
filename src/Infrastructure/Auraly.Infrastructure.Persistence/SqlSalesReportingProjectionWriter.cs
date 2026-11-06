@@ -468,7 +468,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                    CASE WHEN sourceLine.AttributionSnapshotVersion>0
                         THEN sourceLine.SupplierNameSnapshot ELSE supplier.Name END,
                    batch.Quantity,batch.Gross,batch.Discount,batch.Untaxed,batch.Tax,
-                   batch.Total,COALESCE(restaurant.RecognizedCostAmount,-valuation.ValueChange,
+                   batch.Total,COALESCE(sourceLine.RecognizedCostAmount,restaurant.RecognizedCostAmount,-valuation.ValueChange,
                      CASE WHEN sourceLine.IsGenericProductSnapshot=1 THEN CONVERT(decimal(19,4),ROUND(sourceLine.UnitCostSnapshot*batch.Quantity,4)) END,0),
                    @Version,@ProjectedAt,restaurant.WaiterPartyIdSnapshot,restaurant.WaiterNameSnapshot,
                    batch.UnitCode,sourceLine.TaxCode,sourceLine.TaxRate,COALESCE(sourceLine.CompositionKindSnapshot,frozenComposition.CompositionKind),
@@ -477,10 +477,10 @@ public sealed partial class SqlSalesReportingProjectionWriter(
                      consumption.Quantity,consumption.RecognizedCostAmount
                      FROM sales.RestaurantRecipeConsumptionLines consumption
                      LEFT JOIN catalog.ProductCompositionComponents component
-                       ON component.ProductRecipeVersionId=restaurant.ProductRecipeVersionId
+                       ON component.ProductRecipeVersionId=COALESCE(sourceLine.ProductRecipeVersionId,restaurant.ProductRecipeVersionId)
                        AND component.IngredientProductId=consumption.IngredientProductId
                      WHERE consumption.DocumentId=@DocumentId AND consumption.SaleLineNumber=batch.LineNumber FOR JSON PATH,INCLUDE_NULL_VALUES),
-                   CONVERT(BIT,CASE WHEN restaurant.RecognizedCostAmount IS NOT NULL OR valuation.ValueChange IS NOT NULL OR (sourceLine.IsGenericProductSnapshot=1 AND sourceLine.UnitCostSnapshot IS NOT NULL) THEN 1 ELSE 0 END),
+                   CONVERT(BIT,CASE WHEN sourceLine.RecognizedCostAmount IS NOT NULL OR restaurant.RecognizedCostAmount IS NOT NULL OR valuation.ValueChange IS NOT NULL OR (sourceLine.IsGenericProductSnapshot=1 AND sourceLine.UnitCostSnapshot IS NOT NULL) THEN 1 ELSE 0 END),
                    sourceLine.CategoryHierarchySnapshotJson
             FROM OPENJSON(@Lines) WITH
               (FactId uniqueidentifier,LineNumber int,ProductId uniqueidentifier,
@@ -493,7 +493,7 @@ public sealed partial class SqlSalesReportingProjectionWriter(
               ON restaurant.DocumentId=sourceLine.DocumentId
              AND restaurant.LineNumber=sourceLine.LineNumber
             LEFT JOIN catalog.ProductCompositionVersions frozenComposition
-              ON frozenComposition.ProductRecipeVersionId=restaurant.ProductRecipeVersionId AND frozenComposition.TenantId=@TenantId
+              ON frozenComposition.ProductRecipeVersionId=COALESCE(sourceLine.ProductRecipeVersionId,restaurant.ProductRecipeVersionId) AND frozenComposition.TenantId=@TenantId
             LEFT JOIN dbo.InventoryMovements valuation ON valuation.BusinessId=@BusinessId AND valuation.DocumentId=@DocumentId
               AND valuation.DocumentType=@DocumentType AND valuation.LineNumber=batch.LineNumber AND valuation.MovementType=N'Sale'
             INNER JOIN dbo.Products p ON p.ProductId=sourceLine.ProductId

@@ -80,6 +80,9 @@ public sealed class PosEnrollmentService(
             user.TenantId, request with { DeviceName = deviceName }, cancellationToken)
             ?? throw new PosEnrollmentForbiddenException(
                 "La sede o bodega no pertenece a la empresa autenticada.");
+        if (workspace.PointOfSaleMode != "DirectSale")
+            throw new PosEnrollmentValidationException(
+                "Esta sede funciona solo en la web. Solo Venta directa permite preparar una caja sin conexión.");
         var codeBytes = RandomNumberGenerator.GetBytes(32);
         var code = Convert.ToBase64String(codeBytes)
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');

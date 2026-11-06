@@ -49,7 +49,7 @@ public sealed class SqlPosEnrollmentStore(
     {
         const string sql = """
             SELECT b.BusinessId,b.Name,w.WarehouseId,w.Code,w.Name,
-                   w.AllowNegativeStockSales
+                   w.AllowNegativeStockSales,b.PointOfSaleMode
             FROM dbo.Businesses b
             JOIN dbo.Warehouses w
               ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
@@ -369,7 +369,7 @@ public sealed class SqlPosEnrollmentStore(
                     AND production.IsActive=1
               ) THEN 1 ELSE 0 END),e.ReusesDevice,b.Address,b.Phone
             FROM dbo.PosEnrollmentSessions e WITH (UPDLOCK,HOLDLOCK)
-            JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.IsActive=1
+            JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.IsActive=1 AND b.PointOfSaleMode=N'DirectSale'
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
             LEFT JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
               ON fs.BusinessId=e.BusinessId AND fs.DocumentType=N'SalesInvoice'
@@ -547,7 +547,7 @@ public sealed class SqlPosEnrollmentStore(
         new(
             reader.GetGuid(0), reader.GetString(1),
             reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
-            reader.GetBoolean(5));
+            reader.GetBoolean(5),reader.GetString(6));
 
     private static void Add(SqlCommand command, string name, object value) =>
         command.Parameters.AddWithValue(name, value);

@@ -286,11 +286,11 @@ CentralAuditPolicy actual usa whitelist EF y no garantiza auditoría comercial c
 
 En Productos, checkbox **Es ingrediente**: “Se utiliza en recetas y no está disponible para venta directa”. Sigue visible en compras, administración e inventario. El catálogo de venta online excluye ingredientes de mosaicos, búsqueda, favoritos y códigos; Sales valida adición directa por ID. No desactivar el producto globalmente para ocultarlo.
 
-La clasificación de ingrediente es del producto compartido por tenant: antes de activarla, Catalog comprueba borradores, pedidos, cuentas y rutas de **todas** las sedes afectadas. No reclasificar automáticamente fichas históricas. Una sede configurada como Venta directa no recibe reglas gastronómicas por compartir la ficha.
+La clasificación de ingrediente es del producto compartido por tenant: antes de activarla, Catalog comprueba borradores, pedidos, cuentas y rutas de **todas** las sedes afectadas. No reclasificar automáticamente fichas históricas. Una sede configurada como Venta directa no recibe mesas ni comandas por compartir la ficha.
 
 **Alcance de estación:** `Products` conserva una sola ficha y clasificación por tenant. La asignación de un `ProductId` a una estación es únicamente una ruta operativa por sede: una hamburguesa puede enviarse a cocinas diferentes en sedes distintas sin duplicar ni redefinir el producto. Los precios publicados conservan el alcance por sede que ya tenían; la ruta de comanda no cambia precios ni inventario.
 
-**Avance de implementación:** la ficha global ya tiene `IsIngredient` con valor inicial falso, edición en Productos y respuesta de catálogo compatible con clientes antiguos. La búsqueda y adición online de venta directa y de mesas lo excluyen en servidor; los pedidos online tampoco lo ofrecen ni aceptan por ID. La ruta a estación rechaza ingredientes. El catálogo de caja local descarga el campo independiente `IsIngredient` sin alterar `IsActive`; la caja filtra ingredientes en búsqueda, lector y adición por ID. La clasificación se bloquea si el producto aparece en borradores, pedidos, cuentas o rutas. Ya existe edición y publicación versionada de receta, y la operación manual de producción sobre el motor de inventario; aún falta la descarga de componentes y su costo al facturar un producto sin stock propio. Estas piezas parciales no habilitan el despliegue gastronómico.
+**Avance de implementación:** la ficha global ya tiene `IsIngredient` con valor inicial falso, edición en Productos y respuesta de catálogo compatible con clientes antiguos. La búsqueda y adición online de venta directa y de mesas lo excluyen en servidor; los pedidos online tampoco lo ofrecen ni aceptan por ID. La ruta a estación rechaza ingredientes. El catálogo de caja local descarga el campo independiente `IsIngredient` sin alterar `IsActive`; la caja filtra ingredientes en búsqueda, lector y adición por ID. La clasificación se bloquea si el producto aparece en borradores, pedidos, cuentas o rutas. Existen edición y publicación versionada de receta, producción manual y consumo de componentes con su costo reconocido mediante el motor documental compartido, según la regla siguiente.
 
 La clasificación se proyecta del lado servidor en los catálogos de venta compatibles. La caja local conserva su enrolamiento y descarga todos los productos con `IsIngredient` propio; ese campo no cambia `IsActive`. El delta se emite para todas las sedes del tenant. La versión local que entiende el campo filtra ingredientes al buscar, escanear y agregar. Una caja desconectada conserva el último catálogo y puede aceptar ventas con información anterior hasta reconectarse; este límite de sincronización debe quedar visible en la operación y probarse, sin prometer revocación instantánea offline. Los binarios locales anteriores que ignoran el campo necesitan actualizarse para aplicar el filtro; el formato histórico de facturas y su conciliación permanecen iguales.
 
@@ -306,7 +306,7 @@ No desmarcar ingrediente en recetas activas sin resolver dependencias. Cambios q
 
 ### Regla única de consumo
 
-**Ampliación funcional acordada el 2026-11-04, pendiente de implementación:** la
+**Ampliación funcional acordada el 2026-11-04:** la
 ficha distingue dos listas de composición: **Ingredientes** y **Combo**. Son
 mutuamente excluyentes: una versión activa del producto puede tener ingredientes
 o productos de combo, nunca ambos. Ingredientes conserva la selección exclusiva
@@ -415,7 +415,49 @@ preparaciones comerciales anteriores ya hayan sido recalculadas.
 
 No hay modo adicional ni dos interruptores independientes. Los ingredientes pueden seguir controlando su propio stock para compras y otros movimientos. Al enviar una incorporación a comanda se guarda su modalidad `ManageStock` y la versión de receta aplicable. Si `ManageStock` cambia mientras esa incorporación está abierta, la facturación y la confirmación de pérdida se detienen hasta restablecer la modalidad enviada; la recepción y el procesamiento de la factura vuelven a comprobarla para cubrir cambios concurrentes. Cambiar una receta conserva la versión enviada. Así no se producen dobles salidas ni ventas sin el inventario esperado.
 
-**Frontera de canales:** un producto de modalidad Ingredientes de la receta solo puede venderse por el flujo restaurante online con origen gastronómico servidor verificado. La API de ventas normales, pedidos, POS online y demás capturas no compatibles rechazan **ese ProductId** antes de emitir, aunque un cliente omita filtros visuales. Ninguna venta normal puede descontar cero por vender un terminado sin stock propio. Antes de habilitar la modalidad se revisan drafts, pedidos, reservas y trabajos pendientes; referencias activas incompatibles bloquean el cambio hasta resolución explícita. El enrolamiento de caja local no se bloquea y su elegibilidad se actualiza al sincronizar; la ventana desconectada se trata conforme al límite explicado arriba. La regla aplica también al cambiar la sede a Venta directa: cuentas aceptadas conservan su procesamiento, pero el producto no queda habilitado silenciosamente para venta normal. No se reutiliza un SKU histórico de venta normal para este cambio sin resolver sus consumidores y saldos.
+**Consumo compartido acordado el 2026-11-05:** esta regla de inventario aplica a
+Venta directa web, Tiendas web, Restaurante web y Venta directa en caja local.
+Tiendas y Restaurante no habilitan enrolamiento para trabajar sin conexión.
+La venta conserva producto y cantidad en el contrato de facturación existente;
+no decide ni envía qué componentes descargar. `SqlPosSaleDocumentHandler`
+resuelve los movimientos mediante `inventory.ProductConsumption` y los entrega
+en un lote al mismo `SqlInventoryLedgerWriter`.
+
+Al aceptar el trabajo del motor, `DocumentProcessingPayloads` conserva solamente
+línea, modalidad de inventario y referencia a la versión publicada de las líneas
+con composición. No duplica sus componentes ni agrega datos a la factura pública
+o a su hash. Una línea sin composición no añade ese dato interno. Restaurante
+conserva la versión de la incorporación; Venta directa y Tiendas fijan la vigente
+al aceptar la venta. Una venta Edge desconectada fija esa referencia cuando el
+servidor la recibe al sincronizar. Publicar otra receta no cambia un trabajo ya
+aceptado ni repite su consumo. Cambiar la modalidad o las unidades requeridas por
+un trabajo pendiente se rechaza desde el catálogo, dentro de su transacción.
+
+La disponibilidad usa la misma resolución: cantidad vendida por cantidad de cada
+componente, sumando demandas compartidas de la venta. Cada línea requiere todos
+sus componentes cuando la bodega prohíbe negativos; se vuelve a comprobar antes
+de aceptar el cobro. Sin conexión no se promete conocer el saldo del servidor;
+el hecho local confirmado conserva el orden y la política del motor al sincronizar.
+
+El costo reconocido y la versión quedan en `SalesDocumentLines`. La tabla histórica
+`sales.RestaurantRecipeConsumptionLines` se reutiliza para el detalle de consumo
+de todos los canales, vinculada a esa línea de venta; no aparece otro kardex ni
+otra tabla de trabajos. El campo de costo de `RestaurantCheckoutLines` conserva
+su proyección compatible y el mismo writer. Se enriquecen sólo los trabajos
+anteriores aún pendientes; las ventas completadas no se reinterpretan.
+
+La aceptación agrega una lectura SQL por conjunto para fijar referencias y, si
+corresponde, leer saldos bloqueados. `InventoryDemandResolver` multiplica y agrupa
+esa demanda; SQL entrega hechos, sin otra fórmula de disponibilidad. Captura,
+validación completa y disponibilidad del dispositivo mantienen una consulta por
+lote, independiente del número de componentes. Las líneas, sus costos reconocidos
+y el detalle de componentes se persisten en un único comando SQL de la
+transacción existente, sin una escritura adicional por línea. El procesamiento mantiene el
+umbral local de dos segundos; se mide separado de emisión, impresión y builds.
+El esquema y el motor se actualizan juntos. Antes de volver a un motor anterior
+deben terminar los trabajos nuevos de composiciones: ese binario no interpreta
+las referencias internas de versión 2 y podría omitir componentes. No se borra
+el dato histórico ni se recalculan ventas completadas durante un rollback.
 
 ### Producción mínima en un paso
 
@@ -433,7 +475,7 @@ Disponibilidad de captura consulta InventoryBalances según terminado o ingredie
 
 Costo reconocido por SqlInventoryLedgerWriter en su secuencia, con InventoryValuationCalculator. Costo del plato por receta es suma de sus componentes valorados; no precio de menú ni otra fórmula UI. Guardar asignación de cantidades/costo reconocido por detalle aunque el writer consolide movimientos de ingredientes. PosSaleLineContract ya exige DocumentUnitCost: el valor de aceptación usa la valoración vigente y se congela para contrato/idempotencia, pero el costo reconocido final se toma del movimiento procesado, **sin mutar después el payload aceptado ni su hash**. En la misma transacción operacional se vinculan movimientos de componentes y costo real a la línea de venta; contabilidad y reporting canónicos consumen esa fuente confirmada en restaurante, evitando margen ficticio por costo cero del terminado o costo provisional. Los documentos normales conservan su fuente actual. Precisión/redondeos canónicos con residuo determinista. V1 no capitaliza mano de obra/indirectos mediante recetas; siguen sus gastos actuales.
 
-La adaptación de receta se resuelve desde snapshot servidor de origen gastronómico. Documentos normales sin dicho origen conservan efecto vigente. Cambiar la receta después no modifica costo histórico, devoluciones o pérdidas.
+La adaptación de receta se resuelve desde la referencia interna del trabajo documental; restaurante conserva además el origen gastronómico. Cambiar la receta después no modifica el costo histórico ni los consumos confirmados. Las devoluciones y pérdidas conservan sus propietarios y reglas vigentes.
 
 ## 8. Estaciones, comandas, push e impresión
 
@@ -443,7 +485,7 @@ La adaptación de receta se resuelve desde snapshot servidor de origen gastronó
 
 Estación: código/nombre, negocio, orden, activación, preparación/retiro y objetivo de tiempo. El producto mantiene una sola ficha ProductId por tenant; su estación es una **asignación operativa ProductId + BusinessId**, sin copiar producto, precio o categoría ni cambiar las demás sedes. Nombre corto de comanda puede ser de esa asignación. Categoría facilita asignación inicial, pero se persiste destino por negocio/producto. **Sin asignación, la incorporación es Directa:** no tiene botón de envío, se ajusta o retira antes de cobrar y se factura junto con el resto de la mesa. Una ruta configurada cuya estación/comanda esté inactiva sigue siendo un error de configuración y bloquea el envío; no se transforma silenciosamente en Directa. La clasificación se congela al incorporar para que cambios posteriores de ruta no modifiquen el destino de una venta abierta.
 
-Comanda de estación: nombre, estación, modalidad, accesos/dispositivos, aviso y vínculo a equipo/perfil de impresora. Una activa por estación/negocio. El servidor guarda la identidad del equipo enrolado y la clave del perfil de comanda; el nombre Windows de la impresora, ancho 58/80 mm, copias, corte y plantilla pertenecen a la configuración local de Printing de ese equipo. `PosPrinterConfigurationStore` hoy conserva facturas y pedidos en un archivo local: se extiende con perfiles **nuevos** de comanda por clave, sin reinterpretar sus campos existentes. El formulario de Comanda administra el vínculo y consulta la capacidad del equipo; el formulario local de Printing administra el perfil físico. Cambiar impresora no exige editar productos.
+Comanda de estación: nombre, estación, modalidad, accesos/dispositivos, aviso y vínculo a equipo/perfil de impresora. Una activa por estación/negocio. El servidor guarda la identidad del equipo enrolado y la clave del perfil de comanda; el nombre Windows de la impresora, ancho 58/80 mm, copias, corte y plantilla pertenecen a la configuración local de Printing de ese equipo. `PosPrinterConfigurationStore` hoy conserva facturas y pedidos en un archivo local: se extiende con perfiles **nuevos** de comanda por clave, sin reinterpretar sus campos existentes. El formulario de Comanda administra el vínculo y, desde la aplicación del equipo que imprime, configura directamente impresora Windows, ancho, copias y corte mediante el store local existente. La clave interna es estable por estación y no se solicita al usuario. Los periféricos generales de venta directa no administran comandas. Cambiar impresora no exige editar productos.
 
 La impresión es opcional por estación: la comanda virtual siempre se conserva y el receptor solo crea trabajo físico si hay equipo/perfil activo para esa estación. La falta de impresora no bloquea el envío ni abre un diálogo de impresión en POS o tablet. La salida automática usa el receptor Windows autorizado en segundo plano; el navegador no llama a `window.print()` ni muestra una vista previa al recibir comandas. Las observaciones se congelan por incorporación y se imprimen debajo de su producto respectivo; cantidades con indicaciones distintas mantienen líneas separadas.
 
@@ -746,3 +788,5 @@ La comparación interna de medios al emitir usa igualdad de campos de
 JSON para dinero; continúan verificándose medio, importe, referencia, franquicia,
 aprobación, cuenta, notas, efectivo entregado y ajuste. Esta corrección puntual no
 cambia el contrato, los recibos idempotentes ni los efectos de facturación.
+
+La entrada en línea de la aplicación instalada respeta la sede seleccionada, igual que el navegador. Una sede Tiendas o Restaurante usa el servidor y puede utilizar las impresoras locales sin preparar una caja SQLite; no cambia la identidad, el borrador ni la cola de la caja de venta directa ya enrolada.

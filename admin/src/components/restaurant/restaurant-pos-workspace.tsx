@@ -24,6 +24,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useBodyScrollLock } from "@/hooks/use-body-scroll-lock";
 import { closePrintPreview, OnlinePosClient, openHalfLetterPrintPreview,
   type SalesWorkspaceOption } from "@/services/pos/online-pos-client";
+import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
 import type { PosPaymentInput, PosSaleDocumentType,
   PosPrintTemplateFormat } from "@/services/pos/pos-edge-client";
 import { restaurantMasterApi, type RestaurantTable } from "@/services/api/restaurant-master";
@@ -102,6 +103,10 @@ export function RestaurantPosWorkspace({ option }: {
   const [busy, setBusy] = useState(false);
   const [addingProductId, setAddingProductId] = useState<string | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
+  const [edgeToken, setEdgeToken] = useState<string | null>(null);
+  useEffect(() => { setEdgeToken(readEdgeTokenFromLaunch()); }, []);
+  const printerClient = useMemo(() => edgeToken
+    ? new PosEdgeClient(edgeToken, readEdgeUserSession()) : null, [edgeToken]);
   const [noteAdditionId, setNoteAdditionId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
   const [cancelAdditionId, setCancelAdditionId] = useState<string | null>(null);
@@ -141,8 +146,8 @@ export function RestaurantPosWorkspace({ option }: {
       workSessionId: option.workSessionId,
     }, connectedUser.userId,
     [connectedUser.firstName, connectedUser.lastName].filter(Boolean).join(" ") ||
-      connectedUser.username || "Cajero");
-  }, [connectedUser, option]);
+      connectedUser.username || "Cajero", edgeToken);
+  }, [connectedUser, option, edgeToken]);
 
   const rooms = useQuery({ queryKey: [...scope, "rooms"],
     queryFn: () => restaurantMasterApi.rooms(1) });
@@ -920,7 +925,7 @@ export function RestaurantPosWorkspace({ option }: {
       onClose={() => { if (!busy) { setCheckoutPreview(null); setCheckoutKey(null); setCollectionSummary(null); } }}
       onCapture={captureCollection} onReverse={reverseCollection}
       onFinalize={completeCheckout}/>}
-    {printerOpen && <PosPrinterDialog client={null} browserOnly onClose={() => setPrinterOpen(false)}/>}
+    {printerOpen && <PosPrinterDialog client={printerClient} browserOnly={!printerClient} mode="restaurant" onClose={() => setPrinterOpen(false)}/>}
     {pendingTable && <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Identificar mesero">
       <div className="w-full max-w-lg rounded-[2rem] border bg-card p-5 shadow-2xl sm:p-7">
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Atención de mesa</p><h2 className="mt-1 text-2xl font-bold">Mesa {pendingTable.code}</h2><p className="mt-1 text-sm text-muted-foreground">{canOpenWithoutWaiter ? "Entra con tu usuario para consultar la cuenta. Si seleccionas un mesero, los productos nuevos quedarán a su nombre." : "Selecciona quién va a tomar este pedido."}</p></div><Button variant="ghost" onClick={() => setPendingTable(null)}>Cerrar</Button></div>

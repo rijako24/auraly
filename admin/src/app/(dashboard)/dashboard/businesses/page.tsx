@@ -31,7 +31,7 @@ export default function BusinessesPage() {
     { accessorKey: "isActive", header: "Estado", cell: ({ row }) => <Badge variant={row.original.isActive ? "default" : "secondary"}>{row.original.isActive ? "Activo" : "Inactivo"}</Badge> },
     { accessorKey: "tenant", header: "Tenant", cell: ({ row }) => row.original.tenant?.name ?? "—" },
     { accessorKey: "createdAt", header: "Creado", cell: ({ row }) => formatDate(row.original.createdAt) },
-    { id: "actions", cell: ({ row }) => { const b = row.original; return (<DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link href={`/dashboard/businesses/${b.businessId}`}><Eye className="mr-2 h-4 w-4" />Ver</Link></DropdownMenuItem><DropdownMenuItem asChild><Link href={`/dashboard/businesses/${b.businessId}/edit`}><Pencil className="mr-2 h-4 w-4" />Editar</Link></DropdownMenuItem></DropdownMenuContent></DropdownMenu>); } },
+    { id: "actions", cell: ({ row }) => { const b = row.original; return (<DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Acciones de ${b.name}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link href={`/dashboard/businesses/${b.businessId}`}><Eye className="mr-2 h-4 w-4" />Ver</Link></DropdownMenuItem><DropdownMenuItem asChild><Link href={`/dashboard/businesses/${b.businessId}`}><Pencil className="mr-2 h-4 w-4" />Editar</Link></DropdownMenuItem></DropdownMenuContent></DropdownMenu>); } },
   ], []);
 
   const cardRenderer = (item: Business) => (

@@ -88,6 +88,7 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
   const restarting = update?.status === "restarting";
   const busy = downloading || restarting;
   const available = update?.status === "available" || update?.status === "error";
+  const ready = update?.status === "ready" || update?.status === "restart-error";
   const send = (action: "download" | "restart") => currentWebView()?.postMessage({ type: desktopUpdateAction(action) });
   const download = async () => {
     // The published installer can change while the app remains open. Refresh
@@ -98,8 +99,6 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
   };
   const activate = () => {
     setOpen(true);
-    if (available) void download();
-    if (update?.status === "ready") send("restart");
   };
 
   return <UpdateContext.Provider value={{ update: visibleUpdate, activate }}>
@@ -108,13 +107,17 @@ export function DesktopUpdateProvider({ children }: { children: ReactNode }) {
       <DialogContent showClose={!busy}>
         <DialogHeader>
           <DialogTitle>Actualización de Auraly{update?.version ? ` · ${update.version}` : ""}</DialogTitle>
-          <DialogDescription>{update?.message}</DialogDescription>
+          <DialogDescription>{!busy && (available || ready)
+            ? "¿Deseas actualizar Auraly ahora? La actualización puede tardar unos minutos. Al finalizar, Auraly se reiniciará automáticamente."
+            : update?.message}</DialogDescription>
         </DialogHeader>
+        {(update?.status === "error" || update?.status === "restart-error") && <p role="alert" className="text-sm text-destructive">{update.message}</p>}
         {downloading && <Progress aria-label="Progreso de descarga" value={update?.progress ?? 0} />}
         {busy && <p className="text-sm text-muted-foreground">Al terminar la descarga y verificación, Auraly se actualizará y reiniciará automáticamente.</p>}
         <DialogFooter>
-          {!busy && <Button variant="outline" onClick={() => setOpen(false)}>Cerrar</Button>}
-          {available && <Button onClick={() => void download()}><Download className="mr-2 size-4" />{update?.status === "error" ? "Reintentar descarga" : "Descargar"}</Button>}
+          {!busy && <Button variant="outline" onClick={() => setOpen(false)}>Más tarde</Button>}
+          {available && <Button onClick={() => void download()}><Download className="mr-2 size-4" />{update?.status === "error" ? "Reintentar descarga" : "Actualizar ahora"}</Button>}
+          {update?.status === "ready" && <Button onClick={() => send("restart")}><RefreshCw className="mr-2 size-4" />Actualizar ahora</Button>}
           {update?.status === "check-error" && <Button onClick={() => { void checkAgain.current?.(); }}>Reintentar consulta</Button>}
           {update?.status === "restart-error" && <Button onClick={() => send("restart")}><RefreshCw className="mr-2 size-4" />Reintentar instalación</Button>}
           {restarting && <Button disabled><RefreshCw className="mr-2 size-4 animate-spin" />Abriendo instalador…</Button>}

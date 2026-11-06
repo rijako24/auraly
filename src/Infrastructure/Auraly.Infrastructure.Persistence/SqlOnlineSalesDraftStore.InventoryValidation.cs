@@ -31,79 +31,75 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid draftId,
         CancellationToken cancellationToken)
     {
-        // A seller order already owns its stock in the PED warehouse. The
-        // canonical document processor consumes that reservation atomically.
-        if (state.SourceOrderId is not null)
-            return new OnlineSalesInventoryValidation(true, true, []);
         if (state.WarehouseAllowsNegativeStock)
             return new OnlineSalesInventoryValidation(true, true, []);
+        var demand = await ReadDraftInventoryDemandsAsync(connection,transaction,state,draftId,null,null,0m,cancellationToken);
+        var issues = InventoryDemandResolver.AllocateWholeLines(demand.Lines,demand.Available)
+            .Where(allocation => !allocation.CanReserve)
+            .GroupBy(allocation => allocation.Line.LineId)
+            .Select(group =>
+            {
+                var line = group.First().Line;
+                var detail = demand.Details[line.LineId];
+                return new OnlineSalesInventoryIssue(line.LineId,line.ProductId,detail.Code,detail.Description,
+                    line.Quantity,Math.Max(0m,decimal.Round(group.Min(allocation =>
+                        InventoryDemandResolver.InProductUnits(allocation.AvailableInventoryQuantity,
+                            allocation.Line.InventoryFactor)),6)));
+            }).ToArray();
+        return new OnlineSalesInventoryValidation(issues.Length == 0,true,issues);
+    }
 
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT line.SalesDraftLineId,line.ProductId,line.ProductCode,line.Description,
-                   line.Quantity,COALESCE(link.InventoryFactor,1),
-                   COALESCE(link.ParentProductId,line.ProductId) InventoryProductId,
-                   inventoryProduct.ManageStock,COALESCE(balance.QuantityOnHand,0),line.Position
-            FROM dbo.SalesDraftLines line WITH(UPDLOCK,HOLDLOCK)
-            JOIN dbo.Products product
-              ON product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-             AND product.ProductId=line.ProductId
-            LEFT JOIN dbo.ProductLinks link
-              ON link.TenantId=product.TenantId AND link.ChildProductId=line.ProductId
-             AND link.SharesInventory=1 AND link.IsActive=1
-            JOIN dbo.Products inventoryProduct
-              ON inventoryProduct.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
-             AND inventoryProduct.ProductId=COALESCE(link.ParentProductId,line.ProductId)
+    private sealed record DraftInventoryDemands(
+        IReadOnlyList<InventoryDemandLine> Lines,
+        IReadOnlyDictionary<Guid,(string Code,string Description)> Details,
+        IReadOnlyDictionary<Guid,decimal> Available);
+
+    private static async Task<DraftInventoryDemands> ReadDraftInventoryDemandsAsync(
+        SqlConnection connection,SqlTransaction transaction,DraftState state,Guid draftId,
+        Guid? selectedProductId,Guid? excludedLineId,decimal selectedQuantity,CancellationToken ct)
+    {
+        await using var command = new SqlCommand("""
+            DECLARE @TenantId uniqueidentifier=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
+            WITH candidates AS
+            (
+                SELECT line.SalesDraftLineId LineId,line.ProductId,line.ProductCode,line.Description,line.Quantity,line.Position
+                FROM dbo.SalesDraftLines line WITH(UPDLOCK,HOLDLOCK)
+                WHERE line.SalesDraftId=@DraftId AND (@ExcludedLineId IS NULL OR line.SalesDraftLineId<>@ExcludedLineId)
+                UNION ALL
+                SELECT CONVERT(uniqueidentifier,'00000000-0000-0000-0000-000000000000'),product.ProductId,
+                    COALESCE(product.ProductCode,product.Sku,N''),product.Name,@SelectedQuantity,2147483647
+                FROM dbo.Products product WHERE product.TenantId=@TenantId AND product.ProductId=@SelectedProductId
+            )
+            SELECT candidate.LineId,candidate.ProductId,candidate.ProductCode,candidate.Description,candidate.Quantity,
+                   consumption.InventoryFactor,consumption.InventoryProductId,consumption.ManageStock,
+                   COALESCE(balance.QuantityOnHand,0)
+            FROM candidates candidate
+            OUTER APPLY inventory.CurrentProductConsumption(@TenantId,candidate.ProductId) consumption
             LEFT JOIN dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
               ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
-             AND balance.ProductId=inventoryProduct.ProductId
-            WHERE line.SalesDraftId=@DraftId
-            ORDER BY line.Position,line.SalesDraftLineId;
-            """;
+             AND balance.ProductId=consumption.InventoryProductId
+            -- An order already reserved its managed sale products in PED. Recipe components were not reserved.
+            WHERE @SourceOrderId IS NULL OR consumption.IsComponent=1 OR consumption.InventoryProductId IS NULL
+            ORDER BY candidate.Position,candidate.LineId,consumption.ComponentLineNumber;
+            """,connection,transaction);
         command.Parameters.AddRange([
-            P("@BusinessId", state.BusinessId),
-            P("@WarehouseId", state.WarehouseId),
-            P("@DraftId", draftId)
+            P("@BusinessId",state.BusinessId),P("@WarehouseId",state.WarehouseId),P("@DraftId",draftId),
+            P("@SelectedProductId",selectedProductId),P("@ExcludedLineId",excludedLineId),
+            P("@SelectedQuantity",selectedQuantity),P("@SourceOrderId",state.SourceOrderId)
         ]);
-
         var lines = new List<InventoryDemandLine>();
-        var lineDetails = new Dictionary<Guid, (string Code, string Description)>();
-        var availableByInventoryProduct = new Dictionary<Guid, decimal>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
+        var details = new Dictionary<Guid,(string,string)>();
+        var available = new Dictionary<Guid,decimal>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
         {
-            var lineId = reader.GetGuid(0);
-            var inventoryProductId = reader.GetGuid(6);
-            lines.Add(new InventoryDemandLine(
-                lineId,
-                reader.GetGuid(1),
-                inventoryProductId,
-                reader.GetDecimal(5),
-                reader.GetDecimal(4),
-                reader.GetBoolean(7)));
-            lineDetails[lineId] = (reader.GetString(2), reader.GetString(3));
-            availableByInventoryProduct.TryAdd(inventoryProductId, reader.GetDecimal(8));
+            if (reader.IsDBNull(6))
+                throw new OnlineSalesDraftValidationException("La composición del producto no está disponible para validar inventario.");
+            var lineId = reader.GetGuid(0);var target = reader.GetGuid(6);
+            lines.Add(new(lineId,reader.GetGuid(1),target,reader.GetDecimal(5),reader.GetDecimal(4),reader.GetBoolean(7)));
+            details[lineId]=(reader.GetString(2),reader.GetString(3));
+            available.TryAdd(target,reader.GetDecimal(8));
         }
-
-        var issues = InventoryDemandResolver.AllocateWholeLines(lines, availableByInventoryProduct)
-            .Where(allocation => !allocation.CanReserve)
-            .Select(allocation =>
-            {
-                var detail = lineDetails[allocation.Line.LineId];
-                return new OnlineSalesInventoryIssue(
-                    allocation.Line.LineId,
-                    allocation.Line.ProductId,
-                    detail.Code,
-                    detail.Description,
-                    allocation.Line.Quantity,
-                    Math.Max(0, decimal.Round(
-                        InventoryDemandResolver.InProductUnits(
-                            allocation.AvailableInventoryQuantity,
-                            allocation.Line.InventoryFactor),
-                        6)));
-            })
-            .ToArray();
-        return new OnlineSalesInventoryValidation(issues.Length == 0, true, issues);
+        return new(lines,details,available);
     }
 }

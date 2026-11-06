@@ -194,7 +194,8 @@ public sealed partial class SqlPosSaleServerStore
                         "La factura aceptada cambió durante su recuperación.");
             }
 
-            await EnqueueDocumentAsync(connection, transaction, recovery, cancellationToken);
+            await EnqueueDocumentAsync(connection, transaction, recovery, cancellationToken,
+                validateAvailability: false);
             var stored = await FindInternalAsync(connection, transaction,
                 request.BusinessId, request.DocumentId, recovery.IdempotencyKey,
                 cancellationToken)

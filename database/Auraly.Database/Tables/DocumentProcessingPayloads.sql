@@ -7,6 +7,7 @@ CREATE TABLE [dbo].[DocumentProcessingPayloads]
     [PayloadJson] NVARCHAR(MAX) NOT NULL,
     [PayloadHash] BINARY(32) NOT NULL,
     [AcceptedAt] DATETIMEOFFSET(7) NOT NULL,
+    [InventoryCompositionJson] NVARCHAR(MAX) NULL,
     CONSTRAINT [PK_DocumentProcessingPayloads]
         PRIMARY KEY CLUSTERED ([DocumentId], [DocumentType]),
     CONSTRAINT [FK_DocumentProcessingPayloads_Jobs]
@@ -17,7 +18,9 @@ CREATE TABLE [dbo].[DocumentProcessingPayloads]
     CONSTRAINT [CK_DocumentProcessingPayloads_Version]
         CHECK ([ContractVersion] > 0),
     CONSTRAINT [CK_DocumentProcessingPayloads_Json]
-        CHECK (ISJSON([PayloadJson]) = 1)
+        CHECK (ISJSON([PayloadJson]) = 1),
+    CONSTRAINT [CK_DocumentProcessingPayloads_InventoryComposition]
+        CHECK ([InventoryCompositionJson] IS NULL OR ISJSON([InventoryCompositionJson]) = 1)
 );
 
 GO

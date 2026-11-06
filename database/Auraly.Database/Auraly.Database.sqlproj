@@ -31,6 +31,9 @@
     <Build Include="Schemas\Billing.sql" />
     <Build Include="Functions\TenantDianQuotaSnapshot.sql" />
     <Build Include="Functions\ProductCompositionCost.sql" />
+    <Build Include="Functions\SaleCompositionSnapshot.sql" />
+    <Build Include="Functions\ProductInventoryConsumption.sql" />
+    <Build Include="Functions\CurrentProductInventoryConsumption.sql" />
     <Build Include="Functions\ProductPresentation.sql" />
     <Build Include="Functions\ProductPriceCostBasis.sql" />
     <Build Include="Functions\SalesReportActivity.sql" />

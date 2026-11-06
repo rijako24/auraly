@@ -7,7 +7,7 @@ async function nativeStatus(page: Page, status: string) {
   }, status);
 }
 
-test("application update downloads, verifies and restarts automatically without another confirmation", async ({ page }) => {
+test("application update asks before downloading or resuming installation, then verifies and restarts", async ({ page }) => {
   test.setTimeout(150_000);
   let manifestReads = 0;
   await page.route("**/api/commerce/v1/pos/installer", route => {
@@ -58,6 +58,15 @@ test("application update downloads, verifies and restarts automatically without 
   expect(manifestReads).toBe(1);
   await download.click();
   const dialog = page.getByRole("dialog", { name: "Actualización de Auraly · 0.1.0-rc235" });
+  await expect(dialog.getByText(/¿Deseas actualizar Auraly ahora\?/)).toBeVisible();
+  await expect(dialog.getByText(/puede tardar unos minutos/)).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("test-download-requests"))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem("test-restart-requests"))).toBeNull();
+  await dialog.getByRole("button", { name: "Más tarde" }).click();
+  await expect(dialog).toBeHidden();
+  expect(manifestReads).toBe(1);
+  await download.click();
+  await dialog.getByRole("button", { name: "Actualizar ahora" }).click();
   await expect(dialog.getByRole("progressbar", { name: "Progreso de descarga" })).toBeVisible();
   await expect(dialog.getByText(/se actualizará y reiniciará automáticamente/)).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Cerrar|Close|Más tarde|Reiniciar ahora/ })).toHaveCount(0);
@@ -84,8 +93,14 @@ test("application update downloads, verifies and restarts automatically without 
   expect(await page.evaluate(() => localStorage.getItem("test-restart-requests"))).toBe("2");
   await resume.click();
   await expect(dialog).toBeVisible({ timeout: 30_000 });
+  await expect(dialog.getByText(/puede tardar unos minutos/)).toBeVisible();
   expect(manifestReads).toBe(2);
   expect(await page.evaluate(() => localStorage.getItem("test-download-requests"))).toBe("2");
+  expect(await page.evaluate(() => localStorage.getItem("test-restart-requests"))).toBe("2");
+  await dialog.getByRole("button", { name: "Más tarde" }).click();
+  await expect(dialog).toBeHidden();
+  await resume.click();
+  await dialog.getByRole("button", { name: "Actualizar ahora" }).click();
   await expect(dialog.getByRole("button", { name: "Abriendo instalador…" })).toBeDisabled();
   expect(await page.evaluate(() => localStorage.getItem("test-restart-requests"))).toBe("3");
   await expect(dialog.getByRole("button", { name: /Más tarde|Reiniciar ahora/ })).toHaveCount(0);

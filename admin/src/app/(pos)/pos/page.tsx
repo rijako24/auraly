@@ -71,7 +71,7 @@ import {
   readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
 import {
-  loadSalesWorkspaceBootstrap,
+  salesWorkspaceBootstrapHandoffKey, loadSalesWorkspaceBootstrap,
   type SalesWorkspaceBootstrap,
 } from "@/services/pos/online-pos-bootstrap";
 import {
@@ -394,11 +394,9 @@ export default function PosPage() {
       maximum: bootstrap.maximumEnrolledDevices,
       reason: bootstrap.enrollmentUnavailableReason,
     });
-    // An enrolled caja always keeps the site from its local identity.
-    const options = readEdgeTokenFromLaunch()
-      ? bootstrap.options
-      : scopePosWorkspacesToBusiness(bootstrap.options,
-          useBusinessContextStore.getState().selectedBusinessId);
+    // Online entry respects the same selected site in the browser and installed app.
+    const options = scopePosWorkspacesToBusiness(bootstrap.options,
+      useBusinessContextStore.getState().selectedBusinessId);
     setOnlineOptions(options);
     setOnlineTenantName(bootstrap.tenantName.trim());
     setOnlineUserName(displayName);
@@ -653,11 +651,32 @@ export default function PosPage() {
       setSetupError(null);
       try {
         const edgeToken = readEdgeTokenFromLaunch();
+        let preloadedBootstrap: SalesWorkspaceBootstrap | null = null;
         if (edgeToken) {
           if (active) setEdgeEnrollmentToken(edgeToken);
+          const edgeClient = new PosEdgeClient(edgeToken, readEdgeUserSession());
+          let health: Awaited<ReturnType<PosEdgeClient["health"]>>;
           try {
-            const edgeClient = new PosEdgeClient(edgeToken, readEdgeUserSession());
-            let health = await edgeClient.health();
+            health = await edgeClient.health();
+          } catch {
+            if (active) {
+              setClient(edgeClient);
+              setEdgeLoginState("preparing");
+              setEdgeLoginError(
+                "El servicio local está reiniciando. Auraly volverá a conectarse automáticamente.",
+              );
+            }
+            return;
+          }
+          const selectedBusinessId = useBusinessContextStore.getState().selectedBusinessId;
+          let onlineSiteSelected = false;
+          if (selectedBusinessId && selectedBusinessId !== health.businessId) {
+            preloadedBootstrap = await loadSalesWorkspaceBootstrap();
+            onlineSiteSelected = preloadedBootstrap.options.some(option =>
+              option.businessId === selectedBusinessId &&
+              (option.pointOfSaleMode === "Store" || option.pointOfSaleMode === "RestaurantBar"));
+          }
+          if (resolvePosExecutionMode(true, health, onlineSiteSelected) === "edge") {
             recoverableLocalNumbering.current = health.recoverableLocalNumbering === true;
             if (health.userId && !health.workSessionId) {
               const session = await edgeClient.openWorkSession();
@@ -709,33 +728,22 @@ export default function PosPage() {
               if (readinessError) setError(readinessError);
             }
 
-            if (resolvePosExecutionMode(true, health) === "edge") {
-              if (active) {
-                initialEdgeHealth.current = { client: edgeClient, health };
-                setEdgeLoginState(
-                  !health.identityReady || isPosPreparationPending(health.status)
-                    ? "preparing"
-                    : health.status === "LoginRequired"
-                      ? "required"
-                      : null,
-                );
-                setClient(edgeClient);
-              }
-              return;
-            }
-          } catch {
             if (active) {
-              setClient(new PosEdgeClient(edgeToken, readEdgeUserSession()));
-              setEdgeLoginState("preparing");
-              setEdgeLoginError(
-                "El servicio local está reiniciando. Auraly volverá a conectarse automáticamente.",
+              initialEdgeHealth.current = { client: edgeClient, health };
+              setEdgeLoginState(
+                !health.identityReady || isPosPreparationPending(health.status)
+                  ? "preparing"
+                  : health.status === "LoginRequired"
+                    ? "required"
+                    : null,
               );
+              setClient(edgeClient);
             }
             return;
           }
         }
 
-        const serverBootstrap = await loadSalesWorkspaceBootstrap();
+        const serverBootstrap = preloadedBootstrap ?? await loadSalesWorkspaceBootstrap();
         if (!active) return;
         setEdgeEnrollmentRequired(Boolean(edgeToken));
         const { displayName, options: available } =
@@ -745,16 +753,14 @@ export default function PosPage() {
           return;
         }
         const remembered = rememberedSalesWorkspaceKey();
-        if (!shouldAutoActivateRememberedWorkspace(remembered)) return;
+        if (!shouldAutoActivateRememberedWorkspace(remembered) &&
+            !available.every(option => option.pointOfSaleMode === "RestaurantBar")) return;
         const selected = available.find(
           (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
-        );
+        ) ?? (available.every(option => option.pointOfSaleMode === "RestaurantBar") ? available[0] : undefined);
         if (selected) {
-          if (selected.pointOfSaleMode === "RestaurantBar" && edgeToken) {
-            setSetupError("Restaurante y bar requiere la pantalla online. Abre Punto de venta en el navegador sin la caja local.");
-            return;
-          }
           if (selected.pointOfSaleMode === "RestaurantBar") {
+            queryClient.setQueryData(salesWorkspaceBootstrapHandoffKey(serverBootstrap.tenantId, serverBootstrap.userId), serverBootstrap);
             router.replace("/pos/restaurant");
             return;
           }
@@ -786,7 +792,7 @@ export default function PosPage() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [queryClient, router]);
 
   useEffect(() => {
     if (!client) return;
@@ -2826,8 +2832,6 @@ export default function PosPage() {
   async function activateOnline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
     setSetupError(null);
     if (option.pointOfSaleMode === "RestaurantBar") {
-      if (edgeEnrollmentToken)
-        throw new Error("Restaurante y bar requiere la pantalla online sin caja local.");
       rememberSalesWorkspace(option);
       window.localStorage.setItem("selected_business_id", option.businessId);
       router.push("/pos/restaurant");
@@ -3109,7 +3113,7 @@ export default function PosPage() {
     );
   }
 
-  const isStore = workstation.pointOfSaleMode === "Store";
+  const isStore = client?.mode === "online" && workstation.pointOfSaleMode === "Store";
 
   function renderQuantityInput(line: PosDraftLine) {
     return (
@@ -3710,7 +3714,7 @@ export default function PosPage() {
 
           {showCashChange && lastSettlement ? (
             <section
-              className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
+              className={`relative flex min-h-0 ${isStore ? "shrink-0" : "flex-1"} overflow-hidden rounded-2xl border border-emerald-300 bg-emerald-50 p-4 shadow-sm`}
               role="status"
               aria-live="assertive"
             >
@@ -3746,7 +3750,7 @@ export default function PosPage() {
               </div>
             </section>
           ) : (
-          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <section className={`flex min-h-0 ${isStore ? "shrink-0" : "flex-1"} flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm`}>
             <div
               role="tablist"
               aria-label="Documentos pendientes"
