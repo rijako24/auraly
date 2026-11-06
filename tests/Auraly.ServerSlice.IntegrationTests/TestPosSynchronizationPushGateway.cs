@@ -13,41 +13,41 @@ internal sealed class TestPosSynchronizationPushGateway
     public void FailNext(Guid businessId, string stream, long afterCursor) =>
         Interlocked.Exchange(ref failNext, new FailureTarget(businessId, stream, afterCursor));
 
-    public Uri CreateClientAccessUri(
+    public Task<Uri> CreateClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid deviceId,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return new Uri(
+        return Task.FromResult(new Uri(
             $"wss://push.auraly.test/client/hubs/auraly_pos" +
-            $"?tenant={tenantId:D}&business={businessId:D}&device={deviceId:D}");
+            $"?tenant={tenantId:D}&business={businessId:D}&device={deviceId:D}"));
     }
 
-    public Uri CreateUserClientAccessUri(
+    public Task<Uri> CreateUserClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return new Uri(
+        return Task.FromResult(new Uri(
             $"wss://push.auraly.test/client/hubs/auraly_pos" +
-            $"?tenant={tenantId:D}&business={businessId:D}&user={userId:D}");
+            $"?tenant={tenantId:D}&business={businessId:D}&user={userId:D}"));
     }
 
-    public Uri CreateRestaurantCommandsClientAccessUri(
+    public Task<Uri> CreateRestaurantCommandsClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return new Uri(
+        return Task.FromResult(new Uri(
             $"wss://push.auraly.test/client/hubs/auraly_pos" +
             $"?tenant={tenantId:D}&business={businessId:D}&user={userId:D}" +
-            "&stream=RestaurantCommands");
+            "&stream=RestaurantCommands"));
     }
 
     public Task SendAsync(

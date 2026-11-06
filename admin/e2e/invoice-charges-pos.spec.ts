@@ -40,7 +40,14 @@ test("cargos POS: proveedor único, valor manual, total autoritativo y eliminaci
   });
   await page.goto("/pos");
   await expect(page.locator("#pos-scanner")).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Cargos de facturación Shift + F8", exact: true })).toBeEnabled();
+  const chargesButton = page.getByRole("button", { name: "Cargos de facturación", exact: true });
+  await expect(chargesButton).toBeEnabled();
+  expect(await chargesButton.innerText()).toBe("");
+  const customerBox = await page.getByRole("button", { name: "Buscar cliente", exact: true }).boundingBox();
+  const chargesBox = await chargesButton.boundingBox();
+  expect(chargesBox!.x).toBeGreaterThan(customerBox!.x + customerBox!.width);
+  expect(chargesBox!.y).toBe(customerBox!.y);
+  expect(chargesBox!.width).toBeLessThanOrEqual(44);
   const readsBefore = draftReads;
   await page.keyboard.press("Shift+F8");
   const modal = page.getByRole("dialog", { name: "Cargos de facturación" });

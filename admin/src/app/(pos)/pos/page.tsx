@@ -13,7 +13,9 @@ import {
   LogOut,
   Package,
   PencilLine,
+  Plus,
   Printer,
+  ReceiptText,
   RotateCcw,
   Save,
   Settings2,
@@ -777,6 +779,10 @@ export default function PosPage() {
             );
             tenantsApi.preparePrintBrandingForWorkspaceEntry();
             if (!active) return;
+            setWorkstation(current => ({
+              ...current,
+              pointOfSaleMode: context.pointOfSaleMode ?? "DirectSale",
+            }));
             setClient(onlineClient);
           }
         }
@@ -1362,7 +1368,9 @@ export default function PosPage() {
         !discountOpen &&
         !confirmation
       ) {
-        if (productSearchOpen) {
+        if (client?.mode === "online" && workstation.pointOfSaleMode === "Store") {
+          document.getElementById("store-product-search")?.focus();
+        } else if (productSearchOpen) {
           setPriceVerifierMode((current) => !current);
           focusProductSearch();
         } else {
@@ -3114,6 +3122,18 @@ export default function PosPage() {
   }
 
   const isStore = client?.mode === "online" && workstation.pointOfSaleMode === "Store";
+  const customerSelector = <button type="button" disabled={!salesReady || busy}
+    onClick={() => setCustomerSearchOpen(true)} aria-label="Buscar cliente" title="Buscar cliente · F7"
+    className={`flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 px-3 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40 ${isStore ? "h-11" : "h-10 justify-center"}`}>
+    <UserRound className="h-4 w-4 shrink-0" />
+    <span className="truncate">{isStore ? selectedCustomer?.name ?? "Consumidor final" : "Buscar cliente"}</span>
+    <span className={`${isStore ? "ml-auto" : ""} shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs`}>{POS_ACTION_SHORTCUTS.customerSearch}</span>
+  </button>;
+  const chargesAction = <button type="button" disabled={!draft?.lines.length || busy} onClick={() => setChargesOpen(true)}
+    aria-label="Cargos de facturación" title="Cargos de facturación · Shift + F8"
+    className={`flex shrink-0 items-center justify-center rounded-xl border border-auraly-accent/40 bg-white/5 transition hover:bg-white/10 disabled:opacity-40 ${isStore ? "h-11 w-11" : "h-10 w-10"}`}>
+    <ReceiptText className="h-5 w-5" aria-hidden="true" />
+  </button>;
 
   function renderQuantityInput(line: PosDraftLine) {
     return (
@@ -3329,8 +3349,9 @@ export default function PosPage() {
         </div>
       )}
 
-      <section className={`grid min-h-[calc(100vh-3.5rem)] grid-cols-1 gap-3 p-3 xl:h-[calc(100vh-3.5rem)] xl:min-h-0 ${isStore ? "lg:grid-cols-[minmax(330px,30%)_minmax(0,70%)] lg:grid-rows-[minmax(200px,1fr)_auto]" : "xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]"}`}>
-        <div className={`flex min-w-0 flex-col gap-3 xl:min-h-0 ${isStore ? "lg:overflow-y-auto" : ""}`}>
+      <section className={`grid min-h-[calc(100dvh-3.5rem)] grid-cols-1 gap-3 p-3 ${isStore ? "md:h-[calc(100dvh-3.5rem)] md:min-h-0 md:grid-cols-[minmax(330px,0.9fr)_minmax(0,2fr)]" : "xl:h-[calc(100vh-3.5rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]"}`}>
+        <div className={isStore ? "flex min-h-0 min-w-0 flex-col gap-3 md:overflow-y-auto" : "contents"}>
+        <div className={`flex min-w-0 flex-col gap-3 ${isStore ? "shrink-0" : "xl:min-h-0"}`}>
           <form
             onSubmit={capture}
             className={`relative overflow-hidden rounded-2xl border bg-white p-3 shadow-sm transition-all duration-300 ${scanRejection.phase !== "idle" ? "border-red-500 shadow-lg shadow-red-200/70 ring-4 ring-red-300/50" : "border-teal-900/10"} ${scanRejection.phase === "animating" ? "pos-scan-rejected" : ""}`}
@@ -3341,10 +3362,10 @@ export default function PosPage() {
             >
               <span className="flex items-center gap-2">
                 <Barcode className="h-5 w-5 text-teal-700" />
-                Escanea o escribe un código
+                {isStore ? "Escanea un código" : "Escanea o escribe un código"}
               </span>
               {scanRejection.phase === "idle" ? (
-                <span className="text-xs font-normal text-slate-500">Enter para agregar</span>
+                <span className="shrink-0 text-xs font-normal text-slate-500">{isStore ? "Enter agrega" : "Enter para agregar"}</span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1 text-xs font-bold uppercase tracking-wide text-white shadow-sm">
                   <XCircle className="h-3.5 w-3.5" />
@@ -3352,7 +3373,7 @@ export default function PosPage() {
                 </span>
               )}
             </label>
-            <div className={`flex gap-2 ${isStore ? "flex-wrap" : ""}`}>
+            <div className="flex gap-2">
               <input
                 ref={scanner}
                 id="pos-scanner"
@@ -3382,18 +3403,19 @@ export default function PosPage() {
                 disabled={busy || !salesReady}
                 autoComplete="off"
                 inputMode="text"
-                className={`h-14 min-w-0 flex-1 ${isStore ? "basis-full" : ""} rounded-xl border-2 px-4 text-xl font-semibold tracking-wide outline-none transition disabled:opacity-50 ${scanRejection.phase !== "idle" ? "border-red-600 bg-white text-red-950 focus:border-red-600 focus:ring-4 focus:ring-red-500/20" : "border-teal-700/25 bg-slate-50 focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"}`}
-                placeholder="Código de barras, interno o referencia"
+                className={`min-w-0 flex-1 ${isStore ? "h-11 px-3 text-base" : "h-14 px-4 text-xl tracking-wide"} rounded-xl border-2 font-semibold outline-none transition disabled:opacity-50 ${scanRejection.phase !== "idle" ? "border-red-600 bg-white text-red-950 focus:border-red-600 focus:ring-4 focus:ring-red-500/20" : "border-teal-700/25 bg-slate-50 focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"}`}
+                placeholder={isStore ? "Código o referencia" : "Código de barras, interno o referencia"}
                 aria-describedby="capture-state"
               />
               <button
                 type="submit"
                 disabled={!scan.trim() || busy || !salesReady}
-                className="min-h-11 min-w-28 rounded-xl bg-teal-700 px-5 font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:cursor-not-allowed disabled:opacity-50"
+                title={isStore ? "Agregar producto · Enter" : undefined}
+                className={`${isStore ? "h-11 w-11 shrink-0" : "min-h-11 min-w-28 px-5"} rounded-xl bg-teal-700 font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:cursor-not-allowed disabled:opacity-50`}
               >
-                {busy ? <Loader2 className="mx-auto animate-spin" /> : "Agregar"}
+                {busy ? <Loader2 className="mx-auto animate-spin" /> : isStore ? <><Plus className="mx-auto h-5 w-5"/><span className="sr-only">Agregar</span></> : "Agregar"}
               </button>
-              <button
+              {!isStore && <button
                 type="button"
                 onClick={() => { setPriceVerifierMode(false); setProductSearchOpen(true); }}
                 disabled={busy || !salesReady}
@@ -3401,7 +3423,7 @@ export default function PosPage() {
               >
                 <Search className="h-4 w-4" />
                 Buscar <span className="rounded bg-teal-50 px-1.5 py-0.5 text-xs">{POS_ACTION_SHORTCUTS.productSearch}</span>
-              </button>
+              </button>}
             </div>
             {scanRejection.phase !== "idle" && (
               <div className="mt-2 flex items-center gap-2 rounded-xl border border-red-200 bg-gradient-to-r from-red-50 to-rose-50 px-3 py-2 text-sm text-red-900" role="alert">
@@ -3427,11 +3449,11 @@ export default function PosPage() {
           </form>
 
           <details open={isStore ? undefined : true} className="shrink-0 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-            <summary className={isStore ? "cursor-pointer px-2 py-2 text-sm font-semibold" : "hidden"}>Acciones de la venta</summary>
-          <div className="flex flex-wrap items-center justify-between gap-2" aria-label="Acciones de la venta">
-            <p className="hidden pl-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 sm:block">
+            <summary className={isStore ? "cursor-pointer px-2 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500" : "hidden"}>Acciones de captura</summary>
+          <div className="flex flex-wrap items-center justify-between gap-2" aria-label="Acciones de captura">
+            {!isStore && <p className="hidden pl-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 sm:block">
               Acciones de captura
-            </p>
+            </p>}
             <div className={`grid w-full grid-cols-2 gap-2 ${isStore ? "" : "sm:ml-auto sm:w-auto xl:grid-cols-5"}`}>
               <button type="button" disabled={!draft?.lines.length || busy}
                 onClick={() => void openDiscount()}
@@ -3474,7 +3496,8 @@ export default function PosPage() {
           </div>
           </details>
 
-          <div className="flex min-h-[360px] flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm xl:min-h-0">
+          <div role={isStore ? "region" : undefined} aria-label={isStore ? "Productos de la venta" : undefined}
+            className={`flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${isStore ? "min-h-[180px] max-h-[45dvh] shrink-0" : "min-h-[360px] flex-1 xl:min-h-0"}`}>
             <div className="flex min-h-0 flex-1 flex-col overflow-auto">
               {isStore ? <div className="space-y-2 p-3">{draft?.lines.map(line => (
                 <PosSaleItemCard key={line.lineId} className={selectedLineId === line.lineId ? "ring-2 ring-primary/30" : ""}
@@ -3583,14 +3606,14 @@ export default function PosPage() {
             {!draft?.lines.length && (
               <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-6 text-center">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(13,148,136,0.10),transparent_52%)]" />
-                <div className="relative grid h-20 w-20 place-items-center rounded-full border border-teal-200 bg-teal-50 shadow-[0_0_0_12px_rgba(20,184,166,0.05)]">
+                <div className={`relative grid shrink-0 ${isStore ? "h-12 w-12" : "h-20 w-20 shadow-[0_0_0_12px_rgba(20,184,166,0.05)]"} place-items-center rounded-full border border-teal-200 bg-teal-50`}>
                   <Barcode className="h-9 w-9 text-teal-700" />
                 </div>
-                <p className="relative mt-6 text-xl font-bold tracking-tight text-slate-900">Lista para vender</p>
+                <p className={`relative ${isStore ? "mt-3 text-base" : "mt-6 text-xl"} font-bold tracking-tight text-slate-900`}>Lista para vender</p>
                 <p className="relative mt-1 max-w-md text-sm text-slate-500">
-                  Escanea el primer producto o abre la búsqueda. El lector queda preparado para continuar sin usar el mouse.
+                  {isStore ? "Selecciona un producto del catálogo o escanea su código." : "Escanea el primer producto o abre la búsqueda. El lector queda preparado para continuar sin usar el mouse."}
                 </p>
-                <div className="relative mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-semibold">
+                <div className={isStore ? "hidden" : "relative mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-semibold"}>
                   <span className="rounded-full border border-teal-200 bg-white px-3 py-1.5 text-teal-800">Lector activo</span>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · {POS_ACTION_SHORTCUTS.productSearch}</span>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">
@@ -3607,10 +3630,10 @@ export default function PosPage() {
           </div>
         </div>
 
-        <aside className={`flex min-h-0 flex-col gap-3 ${isStore ? "lg:col-start-1 lg:row-start-2 lg:max-h-[45dvh] lg:overflow-y-auto" : "xl:overflow-hidden"}`}>
-          <section className={`shrink-0 rounded-2xl bg-auraly-background p-4 text-auraly-text shadow-lg ${showCashChange ? "xl:basis-[54%]" : ""}`}>
-            <div className="mb-3 flex items-center justify-between">
-              <div>
+        <aside className={`flex min-h-0 flex-col gap-3 ${isStore ? "shrink-0" : "xl:overflow-hidden"}`}>
+          <section className={`shrink-0 rounded-2xl bg-auraly-background ${isStore ? "p-3" : "p-4"} text-auraly-text shadow-lg ${showCashChange ? "xl:basis-[54%]" : ""}`}>
+            <div className={`flex items-center justify-between gap-2 ${isStore ? "mb-2" : "mb-3"}`}>
+              {isStore ? customerSelector : <div>
                 <p className="text-xs uppercase tracking-[0.16em] text-auraly-secondary">Venta actual</p>
                 <p className="mt-1 text-sm font-medium">
                   {selectedCustomer?.name ?? "Consumidor final"}
@@ -3632,35 +3655,25 @@ export default function PosPage() {
                     Pedido recuperado · ocupado por esta sesión
                   </p>
                 )}
-              </div>
-              <span className="rounded-lg bg-white/10 px-2 py-1 text-xs">
+              </div>}
+              {isStore && chargesAction}
+              <span className="shrink-0 rounded-lg bg-white/10 px-2 py-1 text-xs">
                 {draft?.lines.length ?? 0} líneas
               </span>
             </div>
-            <button
-              type="button"
-              disabled={!salesReady || busy}
-              onClick={() => setCustomerSearchOpen(true)}
-              title="Buscar cliente"
-              className="mb-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
-            >
-              <UserRound className="h-4 w-4" />
-              Buscar cliente
-              <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">{POS_ACTION_SHORTCUTS.customerSearch}</span>
-            </button>
-            <button type="button" disabled={!draft?.lines.length || busy} onClick={() => setChargesOpen(true)}
-              className="mb-3 flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 px-3 py-2 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40">
-              Cargos de facturación <span className="rounded bg-white/10 px-1.5 py-0.5 text-xs">Shift + F8</span>
-            </button>
+            {!isStore && <div className="mb-3 flex items-center gap-2">{customerSelector}{chargesAction}</div>}
+            {isStore && draft?.sourceOrderId && <p className="mb-2 text-xs font-semibold text-amber-200">Pedido recuperado · ocupado por esta sesión</p>}
             {(draft?.charges?.length ?? 0) > 0 && <div className="mb-3 space-y-2 rounded-xl bg-white/5 p-3 text-xs">{draft?.charges?.map(charge => <div key={charge.appliedChargeId} className="flex items-start justify-between gap-2"><div><b>{charge.name}</b><p className="text-auraly-secondary">{charge.invoicedAmount > 0 ? "Incluido en factura" : "Gasto"}</p></div><span className="whitespace-nowrap">{money.format(charge.amount)}</span></div>)}</div>}
-            <dl className="space-y-2 text-sm">
+            <dl className={`space-y-2 text-sm ${isStore ? "mb-2" : ""}`}>
               <TotalRow label="Subtotal" value={draft?.untaxedAmount ?? 0} />
               <TotalRow label="Total impuestos" value={draft?.taxAmount ?? 0} />
               {(saleSettlement?.withholdingTotal ?? 0) > 0 && <>
                 <TotalRow label="Total bruto" value={saleSettlement?.grossAmount ?? draft?.payableAmount ?? 0} />
                 <TotalRow label="Retenciones" value={-(saleSettlement?.withholdingTotal ?? 0)} />
               </>}
-              <div className="border-t border-white/15 pt-3">
+            </dl>
+            <dl>
+              <div className={`border-t border-white/15 ${isStore ? "flex items-center justify-between gap-2 pt-2" : "pt-3"}`}>
                 <dt className="text-sm text-auraly-secondary">Neto por cobrar</dt>
                 <dd className="text-right text-3xl font-bold tracking-tight text-auraly-light">
                   {money.format(roundToNearestHundred(saleSettlement?.netAmount ?? draft?.payableAmount ?? 0))}
@@ -3692,7 +3705,7 @@ export default function PosPage() {
               >
                 <Save className="h-4 w-4 shrink-0" />
                 <span className="truncate">Pausar venta</span>
-                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">{POS_ACTION_SHORTCUTS.pauseSale}</span>
+                <span className={isStore ? "sr-only" : "shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold"}>{POS_ACTION_SHORTCUTS.pauseSale}</span>
               </button>
 
               <button
@@ -3706,7 +3719,7 @@ export default function PosPage() {
               >
                 <ClipboardList className="h-4 w-4 shrink-0" />
                 <span className="truncate">{draft?.sourceOrderId ? "Guardar cambios" : "Guardar pedido"}</span>
-                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">{POS_ACTION_SHORTCUTS.saveOrder}</span>
+                <span className={isStore ? "sr-only" : "shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold"}>{POS_ACTION_SHORTCUTS.saveOrder}</span>
               </button>
             </div>
 
@@ -3874,6 +3887,7 @@ export default function PosPage() {
           </section>
           )}
         </aside>
+        </div>
         {isStore && <PosStoreCatalog key={`${workstation.businessId}:${workstation.warehouseId}`} client={client} scopeKey={`${workstation.businessId}:${workstation.warehouseId}`} customerId={draft?.customerId ?? null} ready={salesReady && !!workstation.workSessionId} disabled={busy || !salesReady} onSelect={captureSelectedProduct} />}
       </section>
 

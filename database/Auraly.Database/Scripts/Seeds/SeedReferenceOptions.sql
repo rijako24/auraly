@@ -12,6 +12,11 @@ DECLARE @Source TABLE
 );
 
 INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder) VALUES
+('76610001-0000-0000-0000-000000000001',N'restaurant-station-kind',N'Preparation',N'Preparación',NULL,10),
+('76610001-0000-0000-0000-000000000002',N'restaurant-station-kind',N'Pickup',N'Retiro',NULL,20),
+('76610002-0000-0000-0000-000000000001',N'restaurant-command-mode',N'Virtual',N'Solo pantalla',NULL,10),
+('76610002-0000-0000-0000-000000000002',N'restaurant-command-mode',N'Both',N'Pantalla e impresora',NULL,20),
+('76610002-0000-0000-0000-000000000003',N'restaurant-command-mode',N'Physical',N'Solo impresora',NULL,30),
 ('76600006-0000-0000-0000-000000000001',N'sales-report-product-returns',N'all',N'Todos los productos',NULL,10),
 ('76600006-0000-0000-0000-000000000002',N'sales-report-product-returns',N'with-returns',N'Con devoluciones en el período',NULL,20),
 ('76600006-0000-0000-0000-000000000003',N'sales-report-product-returns',N'without-returns',N'Sin devoluciones en el período',NULL,30),

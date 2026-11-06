@@ -440,3 +440,57 @@ aprobaron en SQL aislado. La simulación de una línea anterior a esta ampliaci�
 deja también `RecognizedCostAmount` nulo, porque esa columna no existía: conserva
 la comprobación de costo por kardex y la de costo genérico explícitamente
 desconocido. No se cambia el contrato, el cálculo ni los datos reales del reporte.
+
+### Ajuste de espacio y entrada de Tiendas (2026-11-06)
+
+El tipo de sede se copia del contexto autorizado antes de presentar el cliente
+online. La entrada automática a Tiendas no muestra transitoriamente la tabla de
+Venta directa ni agrega una consulta para conocer ese tipo.
+
+Desde 768 px, captura, líneas y resumen comparten una columna desplazable y el
+catálogo permanece a su lado. Las líneas conservan un mínimo de 180 px y un
+máximo de 45dvh: no compiten con el resumen mediante dos filas que puedan
+comprimirlas a cero. Código y Agregar ocupan una sola fila. Tiendas usa únicamente
+el buscador del catálogo, también con F1; cliente conserva un solo selector,
+subtotal/impuestos permanecen visibles y Cargos es un botón de icono junto al
+cliente, antes del número de líneas. Acciones de captura conserva la tipografía
+de Venta directa (mayúsculas, tamaño y espaciado) en su único título expandible.
+Venta directa también muestra Cargos como botón de icono a la derecha de Buscar
+cliente, en la misma fila. Conserva nombre accesible, tooltip con Shift + F8,
+habilitación y el único handler de cargos existente; no agrega consultas.
+El acceso a familia es un botón de ojo dentro de la tarjeta, a la derecha del
+precio, separado del botón de agregar para evitar capturas al consultar tallas.
+Se conservan los mismos comandos y atajos de captura,
+edición, cobro, pausa y pedidos.
+
+La regresión de navegador observa el DOM durante una apertura con sesión lenta,
+comprueba ausencia de la tabla de Venta directa y verifica visibilidad y acceso
+real por toque a cantidades en 1280×720, 1536×864, 1024×768 y 938×868. Conserva
+las aserciones de una carga inicial de catálogo, sin refetch al agregar o cambiar
+cantidad, y ausencia de desbordamiento horizontal en móvil.
+
+Verificación del ajuste visual posterior (2026-11-06): build de producción y
+lint de los archivos afectados aprobados; 2/2 recorridos de captura de Tiendas y
+cargos de Venta directa verifican posición/tamaño del icono, totales visibles,
+tipografía, acceso por teclado, comandos originales y conteos de lecturas.
+La ficha real de la camiseta azul pasó 1/1 comprobando que portada y miniatura
+tienen píxeles cargados, sin conformarse con que exista el elemento `img`.
+El pago real local a 1037×520 muestra sus cinco medios y enfoca el valor en
+efectivo; faltante bloquea y exacto/cambio habilitan confirmar. Esa comprobación
+no emitió una venta ni cambió la API o el flujo de facturación.
+
+Las imágenes de productos se suben mediante el servicio canónico de medios y
+se almacenan como rutas relativas en el contenedor privado del tenant. El
+resolver obtiene la cuenta y la firma de la configuración del ambiente; no
+convierte DEV en un servidor de imágenes para otros ambientes ni incorpora
+URLs de demostración en la aplicación. La carga de una URL externa conserva
+su requisito HTTPS. Para demostrar la independencia del almacenamiento, la
+prueba real de DEV subió y leyó 24 imágenes de productos DEMO desde su propia
+cuenta Blob y comprobó los bytes descargados. La prueba equivalente en
+producción requiere una sesión autorizada de ese ambiente y no implica
+publicar código en producción.
+
+La captura, cargos, guardado e impresión conservan sus propietarios, permisos,
+versiones, idempotencia y fronteras. Las modificaciones de presentación no
+agregan lecturas, polling ni recursos ocultos consultando. La reversión visual
+sigue siendo compatible con los contratos actuales.

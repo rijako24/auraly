@@ -31,10 +31,16 @@ async function setup(page: Page) {
   let productRoute: Record<string, unknown> | null = null;
   let roomReads = 0;
   let tableReads = 0;
+  let stationReads = 0;
+  let configurationReads = 0;
+  const stationWrites: string[] = [];
+  const configurations = new Map<string, Record<string, unknown>>();
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
     if (path.endsWith("/auth/me")) return json(route, user);
+    if (path.endsWith("/reference-options/restaurant-station-kind")) return json(route, [{ id: "preparation", code: "Preparation", label: "Preparación" }, { id: "pickup", code: "Pickup", label: "Retiro" }]);
+    if (path.endsWith("/reference-options/restaurant-command-mode")) return json(route, [{ id: "virtual", code: "Virtual", label: "Solo pantalla" }, { id: "both", code: "Both", label: "Pantalla e impresora" }, { id: "physical", code: "Physical", label: "Solo impresora" }]);
     if (path.endsWith("/execution-context/tenants")) return json(route, [{ tenantId, name: "Empresa de prueba" }]);
     if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Restaurante prueba", pointOfSaleMode: "RestaurantBar" }]);
     if (path.endsWith("/execution-context/access")) return json(route, { tenantId, businessId, roles: user.roles, permissions });
@@ -63,13 +69,35 @@ async function setup(page: Page) {
     }
     if (path.endsWith("/commerce/v1/restaurant/stations")) {
       if (method === "POST") {
+        stationWrites.push("create");
         const station = { ...route.request().postDataJSON(), isActive: true,
           rowVersion: "AAAAAAAAAAA=" };
         stations.push(station);
         return json(route, station, 201);
       }
+      stationReads++;
       return json(route, { items: stations, page: 1, pageSize: 100,
         totalCount: stations.length });
+    }
+    if (/\/restaurant\/stations\/[^/]+\/command-configuration$/.test(path)) {
+      const stationId = path.split("/").at(-2)!;
+      const station = stations.find(item => item.stationId === stationId)!;
+      const value = configurations.get(stationId) ?? { stationId, name: station.name, mode: "Virtual", printerDeviceId: null, printerProfileKey: null, rowVersion: "command-v1" };
+      if (method === "PUT") {
+        expect(station.isActive).toBe(true);
+        stationWrites.push("command");
+        const saved = { ...value, ...route.request().postDataJSON(), rowVersion: "command-v2" };
+        configurations.set(stationId, saved);
+        return json(route, saved);
+      }
+      configurationReads++;
+      return json(route, value);
+    }
+    if (/\/restaurant\/stations\/[^/]+$/.test(path) && method === "PUT") {
+      stationWrites.push("update");
+      const station = stations.find(item => item.stationId === path.split("/").at(-1))!;
+      Object.assign(station, route.request().postDataJSON(), { rowVersion: "station-v2" });
+      return json(route, station);
     }
     if (path.endsWith(`/businesses/${businessId}/products`)) return json(route, {
       items: [{ productId, businessId, name: "Hamburguesa", productCode: "HAM-01", isActive: true }],
@@ -111,8 +139,75 @@ async function setup(page: Page) {
     return json(route, []);
   });
   return { rooms, tables, stations, route: () => productRoute,
-    reads: () => ({ roomReads, tableReads }) };
+    stationWrites, reads: () => ({ roomReads, tableReads, stationReads, configurationReads }) };
 }
+
+test("crea y edita estación y comanda sin pedir código y actualiza solo la página cuyo orden cambió", async ({ page }) => {
+  const data = await setup(page);
+  await page.goto("/dashboard/settings/restaurant#estaciones");
+  await page.getByRole("button", { name: "Nueva estación", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Nueva estación", exact: true });
+  await expect(dialog.getByLabel("Código", { exact: true })).toHaveCount(0);
+  await dialog.getByLabel("Nombre", { exact: true }).fill("Barra unificada");
+  await expect(dialog.getByLabel("Nombre de la comanda")).toHaveValue("Barra unificada");
+  await dialog.getByLabel("Meta (min)").fill("1");
+  await dialog.getByRole("button", { name: "Guardar estación", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("button", { name: "Editar estación Barra unificada", exact: true })).toBeVisible();
+  expect(data.stations).toHaveLength(1);
+  expect(data.stations[0].code).toBe(String(data.stations[0].stationId).replaceAll("-", ""));
+  expect(data.stationWrites).toEqual(["create"]);
+  expect(data.reads().configurationReads).toBe(0);
+  await page.getByRole("button", { name: "Editar estación Barra unificada", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Editar estación Barra unificada", exact: true });
+  await editor.getByLabel("Nombre", { exact: true }).fill("Barra principal");
+  await editor.getByLabel("Nombre de la comanda").fill("Pedidos de barra");
+  await editor.getByRole("button", { name: "Guardar estación", exact: true }).click();
+  await expect(editor).toBeHidden();
+  await expect(page.getByRole("button", { name: "Editar estación Barra principal", exact: true })).toBeVisible();
+  expect(data.stationWrites).toEqual(["create", "update", "command"]);
+  expect(data.reads()).toMatchObject({ stationReads: 3, configurationReads: 1 });
+});
+
+test("un error al crear estación conserva los datos y muestra el motivo concreto", async ({ page }) => {
+  const data = await setup(page);
+  await page.route("**/api/commerce/v1/restaurant/stations", route => route.request().method() === "POST"
+    ? json(route, { detail: "La sede no está disponible para crear estaciones." }, 400)
+    : route.fallback());
+  await page.goto("/dashboard/settings/restaurant#estaciones");
+  await page.getByRole("button", { name: "Nueva estación", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Nueva estación", exact: true });
+  await dialog.getByLabel("Nombre", { exact: true }).fill("COCINA2");
+  await dialog.getByRole("button", { name: "Guardar estación", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("La sede no está disponible para crear estaciones.");
+  await expect(dialog.getByLabel("Nombre", { exact: true })).toHaveValue("COCINA2");
+  expect(data.stations).toHaveLength(0);
+});
+
+test("guarda la comanda antes de desactivar la estación y permite reactivarla en el mismo editor", async ({ page }) => {
+  const data = await setup(page);
+  const stationId = "66666666-6666-6666-6666-666666666666";
+  data.stations.push({ stationId, businessId, code: "COCINA", name: "Cocina", sortOrder: 0,
+    kind: "Preparation", targetMinutes: null, isActive: true, rowVersion: "station-v1" });
+  await page.goto("/dashboard/settings/restaurant#estaciones");
+  await page.getByRole("button", { name: "Editar estación Cocina", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Nombre de la comanda").fill("Comanda renovada");
+  await dialog.getByRole("switch", { name: "Estación activa", exact: true }).click();
+  await dialog.getByRole("button", { name: "Guardar estación", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(data.stationWrites).toEqual(["command", "update"]);
+  expect(data.stations[0].isActive).toBe(false);
+  await page.getByRole("button", { name: "Editar estación Cocina", exact: true }).click();
+  await expect(dialog.getByLabel("Nombre de la comanda")).toBeDisabled();
+  await dialog.getByRole("switch", { name: "Estación activa", exact: true }).click();
+  await dialog.getByLabel("Nombre de la comanda").fill("Comanda activa");
+  await dialog.getByRole("button", { name: "Guardar estación", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(data.stationWrites).toEqual(["command", "update", "update", "command"]);
+  expect(data.stations[0].isActive).toBe(true);
+  expect(data.reads()).toMatchObject({ stationReads: 1, configurationReads: 1 });
+});
 
 test("crea salón y mesa, edita sin perder el formulario y funciona en claro/oscuro", async ({ page }) => {
   const data = await setup(page);
@@ -138,7 +233,7 @@ test("crea salón y mesa, edita sin perder el formulario y funciona en claro/osc
   expect(data.tables).toHaveLength(1);
   expect(data.tables[0].capacity).toBe(6);
   await page.getByRole("button", { name: "Nueva estación" }).click();
-  await page.getByLabel("Código", { exact: true }).fill("COCINA");
+  await expect(page.getByLabel("Código", { exact: true })).toHaveCount(0);
   await page.getByLabel("Nombre", { exact: true }).fill("Cocina principal");
   await page.getByRole("button", { name: "Guardar estación" }).click();
   await expect(page.getByText("Cocina principal")).toBeVisible();
@@ -154,7 +249,7 @@ test("crea salón y mesa, edita sin perder el formulario y funciona en claro/osc
   await expect(routing.getByText("Cocina principal", { exact: true })).toBeVisible();
   await expect(routing.getByLabel("Buscar y agregar producto")).toBeFocused();
   expect(data.route()?.stationId).toBe(data.stations[0].stationId);
-  expect(data.reads()).toEqual({ roomReads: 1, tableReads: 1 });
+  expect(data.reads()).toEqual({ roomReads: 1, tableReads: 1, stationReads: 2, configurationReads: 0 });
   await page.screenshot({ path: "../tmp/restaurant-master-light.png", fullPage: true });
   await page.evaluate(() => document.documentElement.classList.add("dark"));
   await page.screenshot({ path: "../tmp/restaurant-master-dark.png", fullPage: true });

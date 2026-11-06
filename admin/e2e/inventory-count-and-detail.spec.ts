@@ -154,6 +154,129 @@ test.describe("conteo y detalle de inventario", () => {
     await expect(pendingRecount).toBeFocused();
   });
 
+  for (const editing of [false, true]) {
+    test(`producto repetido: sumar, restar y reemplazar en conteo y reconteo, borrador=${editing}`, async ({ page }) => {
+      const countId = "11111111-1111-1111-1111-111111111111";
+      const draftId = "22222222-2222-2222-2222-222222222222";
+      const productId = "44444444-4444-4444-4444-444444444444";
+      const warehouseId = "66666666-6666-6666-6666-666666666666";
+      const product = { productId, productCode: "PRD-1", reference: "7701", productName: "Arroz", unitCode: "EA", quantityOnHand: 7, averageUnitCost: 1800, saleUnitPrice: 2500 };
+      const draft = { draftId, name: "Captura repetida", ownerUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", status: "Ready", version: 2,
+        createdAt: "2026-08-25T12:00:00Z", updatedAt: "2026-08-25T12:10:00Z", captureStage: "Count",
+        lines: [{ productId, productCode: "PRD-1", productName: "Arroz", systemQuantity: 7, initialQuantity: 2, verificationQuantity: null, pendingReason: null }] };
+      const detail = { inventoryPhysicalCountId: countId, warehouseId, warehouseName: "Principal", scopeType: "General", reasonCode: "PHYSICAL_COUNT", notes: null,
+        baseInventorySequence: 30, status: "Open", createdByUserId: draft.ownerUserId, createdAt: draft.createdAt, startedAt: draft.createdAt,
+        reviewStartedAt: null, closedAt: null, finalInventoryOperationId: null, finalDocumentNumber: null, drafts: [draft] };
+      let productReads = 0;
+      const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
+      await page.route(/\/api\/commerce\/v1\/inventory\/warehouses(?:\?.*)?$/, route => route.fulfill({ json: [{ warehouseId, code: "MAIN", name: "Principal" }] }));
+      await page.route(/\/api\/commerce\/v1\/inventory\/reasons(?:\?.*)?$/, route => route.fulfill({ json: [{ inventoryReasonId: "77777777-7777-7777-7777-777777777777", operationType: "StockCount", code: "PHYSICAL_COUNT", name: "Conteo físico", isActive: true }] }));
+      await page.route(/\/api\/commerce\/v1\/inventory\/products(?:\?.*)?$/, route => {
+        productReads++;
+        const searchingNew = new URL(route.request().url()).searchParams.get("search") === "Harina";
+        return route.fulfill({ json: { items: [searchingNew ? { ...product, productId: "55555555-5555-5555-5555-555555555555", productName: "Harina" } : product], page: 1, pageSize: 10, totalCount: 1, totalPages: 1 } });
+      });
+      await page.route(/\/api\/commerce\/v1\/inventory\/physical-count-drafts(?:\?.*)?$/, route => route.fulfill({ json: { items: [{ inventoryPhysicalCountId: countId, draftId, name: draft.name, warehouseId, warehouseName: "Principal", scopeType: "General", ownerUserId: draft.ownerUserId, status: "Ready", canReconcile: true, version: 2, productCount: 1, countedProductCount: 1, updatedAt: draft.updatedAt }], page: 1, pageSize: 20, totalCount: 1, totalPages: 1 } }));
+      await page.route(`**/api/commerce/v1/inventory/physical-counts/${countId}`, route => route.fulfill({ json: detail }));
+      await page.route("**/api/commerce/v1/inventory/physical-counts", route => {
+        writes.push({ path: "create", body: route.request().postDataJSON() });
+        return route.fulfill({ status: 201, json: { ...detail, drafts: [{ ...draft, version: 1, lines: [] }] } });
+      });
+      await page.route(`**/api/commerce/v1/inventory/physical-counts/${countId}/drafts/${draftId}`, route => {
+        const body = route.request().postDataJSON();
+        writes.push({ path: "save", body });
+        return route.fulfill({ json: { ...detail, drafts: [{ ...draft, ...body, version: 3 }] } });
+      });
+      await page.goto("/dashboard/inventory");
+      if (editing) {
+        await page.getByRole("tab", { name: "Operaciones" }).click();
+        await page.getByRole("button", { name: "Inventarios", exact: true }).click();
+        await page.getByRole("tab", { name: "Borradores", exact: true }).click();
+        await page.getByRole("button", { name: "Editar", exact: true }).click();
+      } else await page.getByRole("button", { name: "Nueva operación", exact: true }).click();
+      const operation = page.getByRole("dialog", { name: editing ? "Editar borrador" : "Nueva operación", exact: true, includeHidden: true });
+      const search = operation.getByRole("textbox", { name: "Buscar producto", exact: true });
+      const count = operation.getByRole("textbox", { name: "Contar Arroz", exact: true, includeHidden: true });
+      const recount = operation.getByRole("textbox", { name: "Recontar Arroz", exact: true, includeHidden: true });
+      const modal = page.getByRole("dialog", { name: "Actualizar cantidad", exact: true });
+      if (!editing) {
+        await search.fill("7701");
+        await expect(operation.getByRole("option", { name: /Arroz/ })).toBeVisible();
+        await search.press("Enter");
+        await expect(count).toBeFocused();
+        await count.fill("2");
+        await count.press("Enter");
+      }
+      async function scan() {
+        await search.fill("7701");
+        await expect(operation.getByRole("option", { name: /Arroz/ })).toBeVisible();
+        await search.press("Enter");
+        await expect(modal.getByRole("tab", { name: "Sumar", exact: true })).toHaveAttribute("aria-selected", "true");
+        await expect(modal.getByRole("textbox")).toBeFocused();
+        await expect(modal.getByRole("button", { name: "Aplicar", exact: true })).toBeDisabled();
+      }
+      async function change(action: "Sumar" | "Restar" | "Recontar", quantity: string, expected: string, stage: "Count" | "Recount") {
+        await scan();
+        if (action !== "Sumar") await modal.getByRole("tab", { name: action, exact: true }).click();
+        const readsBefore = productReads;
+        await modal.getByRole("textbox").fill(quantity);
+        await modal.getByRole("textbox").press("Enter");
+        await expect(modal).toBeHidden();
+        await expect(stage === "Count" ? count : recount).toHaveValue(expected);
+        await expect(search).toBeFocused();
+        await expect(operation.getByRole("table").getByRole("row")).toHaveCount(2);
+        expect(productReads).toBe(readsBefore);
+        expect(writes).toHaveLength(0);
+      }
+      await change("Sumar", "3", "5", "Count");
+      await change("Restar", "2", "3", "Count");
+      await change("Recontar", "4", "4", "Count");
+      await scan();
+      await modal.getByRole("tab", { name: "Restar", exact: true }).click();
+      await modal.getByRole("textbox").fill("5");
+      await expect(modal.getByRole("alert")).toContainText("Puedes restar como máximo 4");
+      await modal.getByRole("textbox").press("Enter");
+      await expect(modal).toBeVisible();
+      await expect(count).toHaveValue("4");
+      await modal.getByRole("textbox").fill("4");
+      await modal.getByRole("textbox").press("Enter");
+      await expect(modal).toBeHidden();
+      await expect(count).toHaveValue("0");
+      await change("Recontar", "2", "2", "Count");
+      await operation.getByRole("button", { name: "Recontar", exact: true }).click();
+      await expect(count).toBeDisabled();
+      await change("Sumar", "3", "3", "Recount");
+      await expect(count).toHaveValue("2");
+      await change("Restar", "1", "2", "Recount");
+      await change("Recontar", "0", "0", "Recount");
+      await change("Sumar", "0.1", "0.1", "Recount");
+      await change("Sumar", "0.2", "0.3", "Recount");
+      await scan();
+      await modal.getByRole("textbox").fill("-1");
+      await expect(modal.getByRole("button", { name: "Aplicar", exact: true })).toBeDisabled();
+      await modal.getByRole("button", { name: "Cancelar", exact: true }).click();
+      await expect(search).toBeFocused();
+      await expect(recount).toHaveValue("0.3");
+      await search.fill("Harina");
+      await operation.getByRole("option", { name: /Harina/ }).click();
+      await expect(page.getByText("El reconteo solo permite productos incluidos en este conteo.", { exact: true })).toBeVisible();
+      await expect(operation.getByRole("table").getByRole("row")).toHaveCount(2);
+      await expect(search).toBeFocused();
+      if (!editing) {
+        await operation.getByRole("combobox", { name: "Motivo" }).click();
+        await page.getByRole("option", { name: "Conteo físico", exact: true }).click();
+      }
+      await operation.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+      const saveDialog = page.getByRole("dialog", { name: "Guardar borrador", exact: true });
+      await saveDialog.getByRole("textbox", { name: "Nombre del borrador" }).fill(draft.name);
+      await saveDialog.getByRole("button", { name: "Guardar", exact: true }).click();
+      await expect(saveDialog).toBeHidden();
+      expect(writes.map(write => write.path)).toEqual(editing ? ["save"] : ["create", "save"]);
+      expect(writes.at(-1)!.body).toMatchObject({ captureStage: "Recount", readyForReconciliation: true,
+        lines: [{ productId, initialQuantity: 2, verificationQuantity: 0.3, pendingReason: null }] });
+    });
+  }
+
   test("historial abre detalle con motivo y todas las lineas", async ({ page }) => {
     const documentId = "55555555-5555-5555-5555-555555555555";
     await page.route(/\/api\/commerce\/v1\/inventory\/operations\?.*/, async (route) => {

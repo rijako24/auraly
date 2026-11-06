@@ -118,13 +118,13 @@ public static class PosApprovalApi
             ClaimsPrincipal principal, Guid userId, PosApprovalService service, CancellationToken cancellationToken) =>
         { await service.RevokeCredentialForUserAsync(principal.ToPosApprovalIdentity(), userId, cancellationToken); return Results.NoContent(); });
 
-        group.MapPost("/synchronization/negotiate", (
+        group.MapPost("/synchronization/negotiate", async (
             ClaimsPrincipal principal,
             IPosSynchronizationPushGateway gateway,
             CancellationToken cancellationToken) =>
         {
             var identity = principal.ToPosApprovalIdentity();
-            var uri = gateway.CreateUserClientAccessUri(
+            var uri = await gateway.CreateUserClientAccessUriAsync(
                 identity.TenantId,
                 identity.BusinessId,
                 identity.UserId,

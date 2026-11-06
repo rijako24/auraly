@@ -10,7 +10,7 @@ public static class PosSynchronizationApi
     {
         endpoints.MapPost(
                 "/api/pos/v1/synchronization/negotiate",
-                (HttpContext context,
+                async (HttpContext context,
                     IPosSynchronizationPushGateway gateway,
                     Guid businessId,
                     CancellationToken cancellationToken) =>
@@ -22,7 +22,7 @@ public static class PosSynchronizationApi
                     var deviceId = RequiredGuid(
                         context.User,
                         PosAuthenticationDefaults.DeviceIdClaim);
-                    var uri = gateway.CreateClientAccessUri(
+                    var uri = await gateway.CreateClientAccessUriAsync(
                         tenantId,
                         businessId,
                         deviceId,

@@ -86,7 +86,7 @@ public static class FiscalConfigurationApi
         {
             var user = context.User.ToFiscalConfigurationUser();
             await service.GetAsync(user, businessId, ct);
-            var uri = gateway.CreateUserClientAccessUri(
+            var uri = await gateway.CreateUserClientAccessUriAsync(
                 user.TenantId, businessId, user.UserId, ct);
             return new PosSynchronizationNegotiationResponse(
                 uri, DateTimeOffset.UtcNow.AddMinutes(15));

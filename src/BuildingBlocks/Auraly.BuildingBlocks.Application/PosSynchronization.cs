@@ -49,19 +49,19 @@ public sealed record PosSynchronizationInvalidation(
 
 public interface IPosSynchronizationPushGateway
 {
-    Uri CreateClientAccessUri(
+    Task<Uri> CreateClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid deviceId,
         CancellationToken cancellationToken = default);
 
-    Uri CreateUserClientAccessUri(
+    Task<Uri> CreateUserClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid userId,
         CancellationToken cancellationToken = default);
 
-    Uri CreateRestaurantCommandsClientAccessUri(
+    Task<Uri> CreateRestaurantCommandsClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid userId,

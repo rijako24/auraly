@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.Catalog;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -8,6 +9,44 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class RestaurantMasterTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Station_creation_uses_active_catalog_options_and_accepts_its_default_command()
+    {
+        using var client = fixture.CreateAdminClient("businesses.update");
+        var kinds = await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/restaurant-station-kind");
+        var modes = await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/restaurant-command-mode");
+        Assert.Contains(kinds!, option => option.Code == "Preparation" && option.Label == "Preparación");
+        Assert.Contains(modes!, option => option.Code == "Virtual" && option.Label == "Solo pantalla");
+        var id = Guid.NewGuid();
+        using var created = await client.PostAsJsonAsync("/api/commerce/v1/restaurant/stations",
+            new CreateRestaurantStationRequest(id, fixture.BusinessId, id.ToString("N"), "Cocina unificada", 0, "Preparation", 1));
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var command = await client.GetFromJsonAsync<RestaurantCommandConfiguration>($"/api/commerce/v1/restaurant/stations/{id}/command-configuration");
+        Assert.Equal("Virtual", command!.Mode);
+        Assert.Equal("Cocina unificada", command.Name);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var optionState = new SqlCommand("UPDATE reference.Options SET IsActive=@Active WHERE CatalogCode=N'restaurant-station-kind' AND Code=N'Pickup';", connection);
+        var active = optionState.Parameters.Add("@Active", System.Data.SqlDbType.Bit);
+        try
+        {
+            active.Value = false;
+            await optionState.ExecuteNonQueryAsync();
+            var rejectedId = Guid.NewGuid();
+            using var rejected = await client.PostAsJsonAsync("/api/commerce/v1/restaurant/stations",
+                new CreateRestaurantStationRequest(rejectedId, fixture.BusinessId, rejectedId.ToString("N"), "Retiro inactivo", 0, "Pickup", null));
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+            await using var count = new SqlCommand("SELECT COUNT(*) FROM sales.RestaurantStations WHERE StationId=@Id;", connection);
+            count.Parameters.AddWithValue("@Id", rejectedId);
+            Assert.Equal(0, Convert.ToInt32(await count.ExecuteScalarAsync()));
+        }
+        finally
+        {
+            active.Value = true;
+            await optionState.ExecuteNonQueryAsync();
+        }
+    }
+
     [Fact]
     public async Task Floor_plan_saves_scoped_tables_and_rejects_stale_or_foreign_positions()
     {

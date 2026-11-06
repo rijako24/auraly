@@ -177,3 +177,25 @@ El navegador consulta la decisión por la API local autenticada y ejecuta la
 acción pendiente con el mismo identificador de autorización. No se agrega una
 descarga de catálogo ni un sondeo de red. La regresión del host comprueba que
 el evento despierta al suscriptor local.
+
+## Incidente de autorización móvil y grupos de Azure (2026-11-06)
+
+En DEV se confirmó entrega Web Push a un iPhone en segundo plano y decisión
+Remote persistida desde ese teléfono. El perfil Supervisor predeterminado no
+recibe `pos.approvals.authorize` por la política del seed: la prueba utiliza un
+perfil adicional explícito, asignado únicamente al usuario de QA y su sede.
+No se amplían los roles operativos predeterminados.
+
+La caja abría el WebSocket y el servidor publicaba el stream Approvals, pero el
+token negociado no contenía `webpubsub.group`. Azure.Messaging.WebPubSub 1.6.0
+descarta `groups` en `GetClientAccessUri` síncrono con TokenCredential; está
+documentado en [Azure SDK #63292](https://github.com/Azure/azure-sdk-for-net/issues/63292).
+`AzureWebPubSubSynchronizationGateway` conserva el mismo propietario, scopes,
+roles y duración, pero negocia con `GetClientAccessUriAsync`. Su puerto y los
+adaptadores HTTP esperan esa operación y propagan cancelación. No se agregan
+sondeos, grupos alternos, credenciales compartidas ni reenvíos de operaciones.
+
+La regresión usa el SDK real con TokenCredential y un transporte HTTP de prueba:
+los tres scopes (usuario, dispositivo y comandas) deben enviar exactamente sus
+grupos autorizados, roles, usuario y 15 minutos de vigencia, en un solo viaje.
+Los tres casos reprodujeron la pérdida de grupos antes del cambio.

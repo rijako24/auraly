@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { login } from "./support/auth";
 
-test("Editar sede opens its existing editable configuration", async ({ page }) => {
+test("Editar sede abre el modal completo sin cambiar de página", async ({ page }) => {
   await login(page, undefined, 60_000);
   const listing = page.waitForResponse(response => response.request().method() === "GET"
     && /\/api\/businesses(?:\?|$)/.test(response.url()));
@@ -12,8 +12,10 @@ test("Editar sede opens its existing editable configuration", async ({ page }) =
   expect(business).toBeTruthy();
   await page.getByRole("button", { name: `Acciones de ${business.name}`, exact: true }).click();
   await page.getByRole("menuitem", { name: "Editar", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/dashboard/businesses/${business.businessId}$`));
-  await expect(page.getByRole("heading", { name: business.name, exact: true })).toBeVisible();
-  await expect(page.getByText("Tipo de operación", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/dashboard\/businesses$/);
+  const dialog = page.getByRole("dialog", { name: "Editar sede", exact: true });
+  await expect(dialog.getByRole("textbox", { name: "Nombre", exact: true })).toHaveValue(business.name);
+  await expect(dialog.getByRole("button", { name: "Guardar", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Cancelar", exact: true })).toBeVisible();
   await expect(page.getByText("This page could not be found.", { exact: true })).toHaveCount(0);
 });

@@ -2,11 +2,15 @@ import { expect, test } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
 
-for (const mode of ["Physical", "Both"] as const) {
-  test(`la estación configura directamente su impresora en modo ${mode}`, async ({ page, baseURL }) => {
+for (const { mode, failCommandOnce, creating } of [
+  { mode: "Physical", failCommandOnce: false, creating: false }, { mode: "Both", failCommandOnce: false, creating: false },
+  { mode: "Both", failCommandOnce: true, creating: false }, { mode: "Physical", failCommandOnce: false, creating: true },
+  { mode: "Both", failCommandOnce: true, creating: true },
+] as const) {
+  test(`la estación configura directamente su impresora en modo ${mode}, reintento=${failCommandOnce}, nueva=${creating}`, async ({ page, baseURL }) => {
     const tenantId = "11111111-1111-1111-1111-111111111111";
     const businessId = "22222222-2222-2222-2222-222222222222";
-    const stationId = "33333333-3333-3333-3333-333333333333";
+    let stationId = "33333333-3333-3333-3333-333333333333";
     const deviceId = "44444444-4444-4444-4444-444444444444";
     const user = { userId: "55555555-5555-5555-5555-555555555555", tenantId,
       username: "qa", roles: ["Administrador"], permissions: ["dashboard.read", "business_config.read", "businesses.update"] };
@@ -19,6 +23,7 @@ for (const mode of ["Physical", "Both"] as const) {
     }, { user, tenantId, businessId });
     let profileReads = 0;
     let configurationReads = 0;
+    let stationCreated = false;
     const writes: string[] = [];
     await page.route("**/api/**", async route => {
       const path = new URL(route.request().url()).pathname;
@@ -27,11 +32,27 @@ for (const mode of ["Physical", "Both"] as const) {
       else if (path.endsWith("/execution-context/tenants")) value = [{ tenantId, name: "QA" }];
       else if (path.endsWith("/execution-context/businesses")) value = [{ tenantId, businessId, name: "Restaurante" }];
       else if (path.endsWith("/execution-context/access")) value = { tenantId, businessId, roles: user.roles, permissions: user.permissions };
-      else if (path.endsWith("/restaurant/stations")) value = { items: [{ stationId, businessId, code: "COCINA", name: "Cocina", kind: "Preparation", isActive: true }], page: 1, pageSize: 100, totalCount: 1 };
+      else if (path.endsWith("/reference-options/restaurant-station-kind")) value = [{ id: "preparation", code: "Preparation", label: "Preparación" }, { id: "pickup", code: "Pickup", label: "Retiro" }];
+      else if (path.endsWith("/reference-options/restaurant-command-mode")) value = [{ id: "virtual", code: "Virtual", label: "Solo pantalla" }, { id: "both", code: "Both", label: "Pantalla e impresora" }, { id: "physical", code: "Physical", label: "Solo impresora" }];
+      else if (path.endsWith("/restaurant/stations")) {
+        if (route.request().method() === "POST") {
+          const request = route.request().postDataJSON();
+          stationId = request.stationId;
+          expect(request.code).toBe(stationId.replaceAll("-", ""));
+          stationCreated = true;
+          writes.push("station");
+          value = { ...request, isActive: true, rowVersion: "station-v1" };
+        } else {
+          const items = creating && !stationCreated ? [] : [{ stationId, businessId, code: "COCINA", name: "Cocina", sortOrder: 0, kind: "Preparation", targetMinutes: null, isActive: true, rowVersion: "station-v1" }];
+          value = { items, page: 1, pageSize: 100, totalCount: items.length };
+        }
+      }
       else if (path.endsWith("/command-configuration")) {
         const configuration = { stationId, name: "Cocina", mode: "Virtual", printerDeviceId: null, printerProfileKey: null, rowVersion: "v1" };
         if (route.request().method() === "PUT") {
           writes.push("command");
+          if (failCommandOnce && writes.filter(write => write === "command").length === 1)
+            return route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: "La comanda cambió. Recarga antes de guardar." }) });
           const request = route.request().postDataJSON();
           expect(request).toMatchObject({ mode, printerDeviceId: deviceId, printerProfileKey: stationId });
           value = { ...configuration, ...request, rowVersion: "v2" };
@@ -53,20 +74,26 @@ for (const mode of ["Physical", "Both"] as const) {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
     });
     await page.goto("/dashboard/settings/restaurant#estaciones");
-    await page.getByRole("button", { name: "Configurar comanda Cocina" }).click();
-    const dialog = page.getByRole("dialog", { name: "Comanda de Cocina" });
+    await page.getByRole("button", { name: creating ? "Nueva estación" : "Editar estación Cocina", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: creating ? "Nueva estación" : "Editar estación Cocina", exact: true });
+    if (creating) await dialog.getByLabel("Nombre", { exact: true }).fill("Cocina");
+    await expect(dialog.getByLabel("Código", { exact: true })).toHaveCount(0);
     await expect(dialog.getByText("Perfil de impresora", { exact: true })).toHaveCount(0);
     expect(profileReads).toBe(0);
-    await dialog.getByRole("combobox").first().click();
+    await dialog.getByRole("combobox", { name: "Salida de comanda" }).click();
     await page.getByRole("option", { name: mode === "Both" ? "Pantalla e impresora" : "Solo impresora", exact: true }).click();
     await dialog.getByRole("combobox", { name: "Impresora Windows" }).click();
     await page.getByRole("option", { name: "EPSON Cocina" }).click();
     await dialog.getByRole("combobox", { name: "Tamaño de tirilla" }).click();
     await page.getByRole("option", { name: "58 mm" }).click();
     await dialog.getByLabel("Copias", { exact: true }).fill("2");
-    await dialog.getByRole("button", { name: "Guardar comanda", exact: true }).click();
+    await dialog.getByRole("button", { name: "Guardar estación", exact: true }).click();
+    if (failCommandOnce) {
+      await expect(dialog.getByRole("alert")).toContainText("La impresora quedó guardada");
+      await dialog.getByRole("button", { name: "Guardar estación", exact: true }).click();
+    }
     await expect(dialog).toBeHidden();
-    expect(writes).toEqual(["printer", "command"]);
+    expect(writes).toEqual([...(creating ? ["station"] : []), "printer", "command", ...(failCommandOnce ? ["command"] : [])]);
     expect(profileReads).toBe(1);
     expect(configurationReads).toBe(1);
   });

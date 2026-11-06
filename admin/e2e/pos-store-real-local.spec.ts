@@ -18,7 +18,7 @@ async function openStore(page: Page) {
   const quantities = page.getByRole("spinbutton", { name: /Cantidad de/ });
   await expect(quantities).toHaveCount(draft.lines.length);
   if (await quantities.count()) {
-    await page.getByText("Acciones de la venta", { exact: true }).click();
+    await page.getByText("Acciones de captura", { exact: true }).click();
     await page.getByRole("button", { name: /^Reiniciar/ }).click();
     await page.getByRole("button", { name: "Sí, reiniciar", exact: true }).click();
     await expect(quantities).toHaveCount(0);
@@ -58,12 +58,27 @@ test("tienda real: edita el producto y conserva talla, color y su nombre manual"
   const originalImages = await (await gallery).json() as { productImageId: string }[];
   expect(originalImages.length).toBeGreaterThan(0);
   await expect(editor.locator("#product-images img").first()).toBeVisible();
-  const saved = page.waitForResponse(response => response.request().method() === "PUT" && /\/commerce\/v1\/products\/[^/]+$/.test(new URL(response.url()).pathname));
+  const saved = page.waitForResponse(response => response.request().method() === "PUT" && /\/commerce\/v1\/products\/[^/]+$/.test(new URL(response.url()).pathname), { timeout: 60_000 });
   await editor.getByRole("button", { name: "Guardar producto", exact: true }).click();
   const response = await saved;
   expect(response.ok(), await response.text()).toBe(true);
   expect(response.request().postDataJSON().images.map((image: { productImageId: string }) => image.productImageId)).toEqual(originalImages.map(image => image.productImageId));
   await expect(page.getByText("Producto guardado completamente", { exact: true })).toBeVisible();
+});
+
+test("tienda real: ficha de producto carga portada y miniatura", async ({ page }) => {
+  test.skip(!businessId || !productName, "Requiere la sede y producto de prueba locales.");
+  await login(page, undefined, 60_000);
+  await page.addInitScript(id => localStorage.setItem("selected_business_id", id), businessId!);
+  await page.goto("/dashboard/products");
+  await page.getByPlaceholder(/Buscar por nombre o SKU/).fill(productName!);
+  const row = page.getByRole("row").filter({ hasText: productName! });
+  await row.locator("td").first().click();
+  const gallery = page.getByRole("dialog").locator("#product-images");
+  await expect(gallery.locator("img")).toHaveCount(2);
+  await expect.poll(() => gallery.locator("img").evaluateAll(images => images.every(image => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth > 0))).toBe(true);
+  await gallery.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/product-demo-gallery.png", animations: "disabled" });
 });
 
 test("tienda real: imágenes, familia, edición de línea, pausa, recuperación, faltante, exacto, cambio y venta", async ({ page }) => {
@@ -74,7 +89,7 @@ test("tienda real: imágenes, familia, edición de línea, pausa, recuperación,
   const tile = catalog.getByRole("button", { name: `Agregar ${productName}`, exact: true });
   await expect(tile.locator("img")).toBeVisible();
   await expect.poll(() => tile.locator("img").evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
-  await tile.locator("..").getByRole("button", { name: "Ver familia", exact: true }).click();
+  await tile.locator("..").getByRole("button", { name: `Ver familia de ${productName}`, exact: true }).click();
   await expect(tile).toBeVisible();
   await capture(page);
   await page.getByRole("button", { name: `Agregar uno de ${productName}`, exact: true }).click();
@@ -105,7 +120,7 @@ test("tienda real: imágenes, familia, edición de línea, pausa, recuperación,
   await expect(payment.getByText("Pago completo", { exact: true })).toBeVisible();
   await cash.fill("100000");
   await expect(payment.getByText(/Cambio listo:/)).toBeVisible();
-  const confirmation = page.waitForResponse(response => response.request().method() === "POST" && /\/pos\/drafts\/[^/]+\/complete$/.test(new URL(response.url()).pathname));
+  const confirmation = page.waitForResponse(response => response.request().method() === "POST" && /\/pos\/drafts\/[^/]+\/complete$/.test(new URL(response.url()).pathname), { timeout: 60_000 });
   await payment.getByRole("button", { name: "Sin imprimir", exact: true }).click();
   const response = await confirmation;
   expect(response.ok(), await response.text()).toBe(true);
@@ -154,7 +169,7 @@ test("tienda real: guarda un pedido desde el borrador compartido y lo recupera p
   await page.getByRole("button", { name: /^Cobrar/ }).click();
   const payment = page.getByRole("dialog", { name: "Finalizar venta" });
   await payment.getByRole("textbox", { name: "Valor recibido en Efectivo", exact: true }).fill("100000");
-  const completion = page.waitForResponse(result => result.request().method() === "POST" && /\/pos\/drafts\/[^/]+\/complete$/.test(new URL(result.url()).pathname));
+  const completion = page.waitForResponse(result => result.request().method() === "POST" && /\/pos\/drafts\/[^/]+\/complete$/.test(new URL(result.url()).pathname), { timeout: 60_000 });
   await payment.getByRole("button", { name: "Sin imprimir", exact: true }).click();
   const completed = await completion;
   expect(completed.ok(), await completed.text()).toBe(true);

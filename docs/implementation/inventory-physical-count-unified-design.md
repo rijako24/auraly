@@ -25,6 +25,48 @@ agregar el alcance ni un campo permanente con el nombre del borrador. Cada
 producto elegido entra a la grilla, el foco pasa a `Contar` y, al confirmar la
 cantidad con Enter, vuelve al buscador para capturar el siguiente producto.
 
+Si se vuelve a seleccionar un producto ya incluido, se conserva su única fila y
+se abre **Actualizar cantidad**, con tres acciones: **Sumar** (seleccionada por
+defecto), **Restar** y **Recontar** (reemplazar por la cantidad digitada). Por
+ejemplo, 2 más 3 queda en 5. Restar admite como máximo la cantidad registrada;
+puede dejarla en cero. Recontar también admite cero. El diálogo muestra la
+cantidad actual y el resultado antes de aplicar. Enter aplica y devuelve el
+foco al mismo buscador de código de barras; cancelar conserva el valor anterior.
+La acción modifica únicamente la columna de la etapa activa: conteo o reconteo.
+Un reconteo aún sin registrar parte de cero, sin tomar como base el conteo.
+Alta y edición de borradores comparten esta interacción y su única grilla.
+
+La selección reutiliza el buscador paginado canónico (10 productos por página).
+Abrir y aplicar el diálogo no consulta ni escribe en la API: actualiza la captura
+existente y su recuperación local; guardar/aplicar conserva los comandos
+canónicos y sus cantidades finales. Presupuesto de interfaz: foco en cantidad
+en menos de 500 ms después de seleccionar un resultado ya cargado, y cero viajes
+de red adicionales al aplicar, independientemente del número de filas capturadas.
+Las operaciones usan la precisión de seis decimales del conteo persistido.
+
+Verificación local (2026-11-06): la regresión falló en la compilación anterior
+porque no existía el diálogo; después pasaron 5/5 recorridos de navegador,
+incluidos alta, edición, rechazo de resta excesiva/negativos, cero, decimales,
+cancelación, foco, fila única y persistencia de las dos columnas. TypeScript,
+lint de archivos afectados y build de producción aprobados. Contra API/SQL
+locales, una captura real de prueba conservó conteo 8 y reconteo 4 en una sola
+línea, guardada con HTTP 200, sin aplicar cambios a existencias. Las siete
+aperturas medidas del modal tardaron entre 31 y 95 ms hasta enfocar cantidad,
+sin builds ni suites concurrentes. Se revisó la presentación en 1366×900 y
+390×844. Las pruebas cuentan lecturas de productos y escrituras para comprobar
+que ajustar cantidades no produce I/O adicional.
+
+Auditoría posterior: una sola interacción de captura compartida por alta y
+edición; el estado de líneas sigue perteneciendo a cada formulario y usa su
+recuperación local existente. No se cambian APIs, tablas, permisos, versiones,
+idempotencia ni propietarios de persistencia/movimientos. Los tabs son acciones
+de edición de la cantidad, no un catálogo de negocio paralelo. El producto
+repetido conserva identidad, saldo base y las cantidades de la otra etapa.
+No hay polling, consultas por fila, lecturas de vistas ocultas ni refetch después
+del modal. La API sigue validando cantidades finales no negativas y el motor
+canónico sigue siendo el único que aplica inventario. Los cambios previos de
+Tiendas, estaciones y sincronización se conservaron.
+
 `Aplicar inventario` genera directamente un documento canónico `StockCount`.
 `Guardar borrador` abre entonces —y sólo entonces— la solicitud del nombre, crea
 un inventario de alcance general y conserva en segundo plano todos los productos
@@ -50,7 +92,8 @@ borrador seleccionado por una conciliación activa queda inmutable.
 
 La vista de conteo es lineal y conserva su etapa en el servidor. Inicialmente
 sólo `Contar` está habilitado. La acción `Recontar` inicia la segunda lectura,
-impide agregar productos nuevos, enfoca el primer producto sin reconteo y
+impide agregar productos nuevos, permite buscar los ya incluidos para actualizar
+su reconteo, enfoca el primer producto sin reconteo y
 deshabilita la primera columna. Quitar una captura sí está permitido en ambas
 etapas. Al
 reabrir, el borrador restaura `Contar` o `Recontar` y enfoca el primer campo sin

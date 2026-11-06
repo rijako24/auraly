@@ -29,7 +29,7 @@ public static class RestaurantAccountApi
                     throw new RestaurantAccountForbiddenException(
                         "No tienes permiso para recibir comandas de esta sede.");
                 return Results.Ok(new PosSynchronizationNegotiationResponse(
-                    gateway.CreateRestaurantCommandsClientAccessUri(
+                    await gateway.CreateRestaurantCommandsClientAccessUriAsync(
                         actor.TenantId, actor.BusinessId, actor.UserId, ct),
                     DateTimeOffset.UtcNow.AddMinutes(15),
                     [PosSynchronizationGroups.RestaurantCommands(

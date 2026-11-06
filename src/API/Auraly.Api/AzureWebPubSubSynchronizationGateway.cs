@@ -11,12 +11,12 @@ public sealed class AzureWebPubSubSynchronizationGateway(
 {
     private static readonly TimeSpan AccessDuration = TimeSpan.FromMinutes(15);
 
-    public Uri CreateClientAccessUri(
+    public Task<Uri> CreateClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid deviceId,
         CancellationToken cancellationToken = default) =>
-        CreateAccessUri(
+        CreateAccessUriAsync(
             deviceId,
             [
                 PosSynchronizationGroups.Business(tenantId, businessId),
@@ -24,12 +24,12 @@ public sealed class AzureWebPubSubSynchronizationGateway(
             ],
             cancellationToken);
 
-    public Uri CreateUserClientAccessUri(
+    public Task<Uri> CreateUserClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid userId,
         CancellationToken cancellationToken = default) =>
-        CreateAccessUri(
+        CreateAccessUriAsync(
             userId,
             [
                 PosSynchronizationGroups.Business(tenantId, businessId),
@@ -37,12 +37,12 @@ public sealed class AzureWebPubSubSynchronizationGateway(
             ],
             cancellationToken);
 
-    public Uri CreateRestaurantCommandsClientAccessUri(
+    public Task<Uri> CreateRestaurantCommandsClientAccessUriAsync(
         Guid tenantId,
         Guid businessId,
         Guid userId,
         CancellationToken cancellationToken = default) =>
-        CreateAccessUri(
+        CreateAccessUriAsync(
             userId,
             [PosSynchronizationGroups.RestaurantCommands(tenantId, businessId)],
             cancellationToken);
@@ -58,11 +58,14 @@ public sealed class AzureWebPubSubSynchronizationGateway(
             filter: null,
             new RequestContext { CancellationToken = cancellationToken });
 
-    private Uri CreateAccessUri(
+    private Task<Uri> CreateAccessUriAsync(
         Guid userId,
         IReadOnlyList<string> groups,
         CancellationToken cancellationToken) =>
-        client.GetClientAccessUri(
+        // SDK 1.6.0 drops groups on its synchronous TokenCredential path.
+        // Keep negotiation asynchronous so managed identity clients join their
+        // authorized groups as soon as the connection opens.
+        client.GetClientAccessUriAsync(
             expiresAfter: AccessDuration,
             userId: userId.ToString("D"),
             roles: groups.Select(group => $"webpubsub.joinLeaveGroup.{group}"),

@@ -1,4 +1,5 @@
 using Auraly.Contracts.Sales;
+using Auraly.Application.Catalog;
 
 namespace Auraly.Application.Sales;
 
@@ -68,7 +69,7 @@ public sealed class RestaurantMasterValidationException(string message) : Except
 public sealed class RestaurantMasterConflictException(string message) : Exception(message);
 
 public sealed class RestaurantMasterService(
-    IRestaurantMasterStore store, TimeProvider time)
+    IRestaurantMasterStore store, TimeProvider time, ReferenceOptionService options)
 {
     public Task<RestaurantMasterPage<RestaurantRoom>> RoomsAsync(
         RestaurantMasterActor actor, int page, int pageSize, CancellationToken ct)
@@ -172,7 +173,7 @@ public sealed class RestaurantMasterService(
         return store.PrintDevicesAsync(actor, ct);
     }
 
-    public Task<RestaurantCommandConfiguration> UpdateCommandConfigurationAsync(
+    public async Task<RestaurantCommandConfiguration> UpdateCommandConfigurationAsync(
         RestaurantMasterActor actor, Guid stationId,
         UpdateRestaurantCommandConfigurationRequest request,
         CancellationToken ct)
@@ -189,7 +190,8 @@ public sealed class RestaurantMasterService(
                  request.PrinterProfileKey.Trim().Length > 64)))
             throw new RestaurantMasterValidationException(
                 "La comanda y su impresora no están configuradas correctamente.");
-        return store.UpdateCommandConfigurationAsync(actor, stationId,
+        await RequireOptionAsync("restaurant-command-mode", request.Mode, ct);
+        return await store.UpdateCommandConfigurationAsync(actor, stationId,
             request with { Name = request.Name.Trim(),
                 PrinterProfileKey = Normalize(request.PrinterProfileKey) },
             DecodeVersion(request.RowVersion), time.GetUtcNow(), ct);
@@ -249,24 +251,28 @@ public sealed class RestaurantMasterService(
         return store.StationsAsync(actor, page, pageSize, ct);
     }
 
-    public Task<RestaurantStation> CreateStationAsync(
+    public async Task<RestaurantStation> CreateStationAsync(
         RestaurantMasterActor actor, CreateRestaurantStationRequest request, CancellationToken ct)
     {
         DemandConfigure(actor, request.BusinessId);
         ValidateStation(request.StationId, request.Code, request.Name,
             request.SortOrder, request.Kind, request.TargetMinutes);
-        return store.CreateStationAsync(actor, request with
+        await Task.WhenAll(
+            RequireOptionAsync("restaurant-station-kind", request.Kind, ct),
+            RequireOptionAsync("restaurant-command-mode", "Virtual", ct));
+        return await store.CreateStationAsync(actor, request with
         { Code = request.Code.Trim(), Name = request.Name.Trim() }, time.GetUtcNow(), ct);
     }
 
-    public Task<RestaurantStation> UpdateStationAsync(
+    public async Task<RestaurantStation> UpdateStationAsync(
         RestaurantMasterActor actor, Guid stationId, UpdateRestaurantStationRequest request,
         CancellationToken ct)
     {
         DemandConfigure(actor, actor.BusinessId);
         ValidateStation(stationId, request.Code, request.Name,
             request.SortOrder, request.Kind, request.TargetMinutes);
-        return store.UpdateStationAsync(actor, stationId, request with
+        await RequireOptionAsync("restaurant-station-kind", request.Kind, ct);
+        return await store.UpdateStationAsync(actor, stationId, request with
         { Code = request.Code.Trim(), Name = request.Name.Trim() },
             DecodeVersion(request.RowVersion), time.GetUtcNow(), ct);
     }
@@ -311,6 +317,12 @@ public sealed class RestaurantMasterService(
             throw new RestaurantMasterValidationException("Producto inválido.");
         return store.DeleteProductRouteAsync(actor, productId,
             DecodeVersion(rowVersion), time.GetUtcNow(), ct);
+    }
+
+    private async Task RequireOptionAsync(string catalogCode, string code, CancellationToken ct)
+    {
+        if (!(await options.ListAsync(catalogCode, ct)).Any(option => option.Code == code))
+            throw new RestaurantMasterValidationException("Selecciona una opción activa del catálogo de estación o comanda.");
     }
 
     private static void ValidateStation(Guid id, string code, string name,

@@ -253,7 +253,6 @@ export function PhysicalCountCreationForm({
     queryKey: ["inventory-reasons", businessId, "StockCount"],
     queryFn: () => inventoryApi.reasons({ operationType: "StockCount" }),
   });
-  const selectedIds = useMemo(() => new Set(lines.map(line => line.productId)), [lines]);
   const hasCountedProduct = lines.some(line => validNumber(line.count));
   const countsComplete = lines.length > 0 && lines.every(line => validNumber(line.count));
   const recountsComplete = lines.length > 0 && lines.every(line => validNumber(line.recount));
@@ -354,17 +353,6 @@ export function PhysicalCountCreationForm({
     }
   }
 
-  function addProduct(product: InventoryProductItem) {
-    setLines(current => current.some(line => line.productId === product.productId)
-      ? current
-      : [...current, fromProduct(product)]);
-    window.requestAnimationFrame(() => {
-      const input = countRefs.current.get(product.productId);
-      input?.focus();
-      input?.select();
-    });
-  }
-
   const saveDraft = useMutation({
     mutationFn: async () => {
       const created = await inventoryApi.createPhysicalCount({
@@ -452,18 +440,11 @@ export function PhysicalCountCreationForm({
         <p className="text-sm text-muted-foreground">{captureStage === "Count" ? "Solo Contar está activo. Al agregar un producto, el foco pasa a su cantidad." : "Solo Recontar está activo. Completa la segunda lectura antes de aplicar."}</p>
       </CardHeader>
       <CardContent className="space-y-4 pt-5">
-        <ProductPicker
+        <CountCaptureProducts
           businessId={businessId}
           warehouseId={warehouse}
-          selectedProductIds={selectedIds}
-          disabled={!warehouse || captureStage === "Recount" || apply.isPending || saveDraft.isPending}
-          onSelect={addProduct}
-          label="Buscar producto"
-          inputId={pickerId}
-        />
-        <CountCaptureTable
           lines={lines}
-          disabled={apply.isPending || saveDraft.isPending}
+          disabled={!warehouse || apply.isPending || saveDraft.isPending}
           captureStage={captureStage}
           countRefs={countRefs}
           recountRefs={recountRefs}
@@ -651,7 +632,6 @@ export function PhysicalCountDraftEditForm({
   const [captureStage, setCaptureStage] = useState<CountCaptureStage>("Count");
   const countRefs = useRef(new Map<string, HTMLInputElement>());
   const recountRefs = useRef(new Map<string, HTMLInputElement>());
-  const selectedIds = useMemo(() => new Set(lines.map(line => line.productId)), [lines]);
   const hasCountedProduct = lines.some(line => validNumber(line.count));
   const countsComplete = lines.length > 0 && lines.every(line => validNumber(line.count));
   const recountsComplete = lines.length > 0 && lines.every(line => validNumber(line.recount));
@@ -672,15 +652,6 @@ export function PhysicalCountDraftEditForm({
       if (input) { input.focus(); input.select(); }
     }));
   }, [draft]);
-
-  function addProduct(product: InventoryProductItem) {
-    setLines(current => current.some(line => line.productId === product.productId) ? current : [...current, fromProduct(product)]);
-    window.requestAnimationFrame(() => {
-      const input = countRefs.current.get(product.productId);
-      input?.focus();
-      input?.select();
-    });
-  }
 
   const save = useMutation({
     mutationFn: () => inventoryApi.savePhysicalCountDraft(value!.count.inventoryPhysicalCountId, draft!.draftId, {
@@ -769,8 +740,7 @@ export function PhysicalCountDraftEditForm({
         <p className="text-sm text-muted-foreground">Mientras estás contando puedes agregar productos. Al iniciar el reconteo, el alcance queda bloqueado para conservar la trazabilidad.</p>
       </CardHeader>
       <CardContent className="space-y-4 pt-5">
-        <ProductPicker businessId={businessId} warehouseId={value.count.warehouseId} selectedProductIds={selectedIds} disabled={!canCapture || captureStage === "Recount" || save.isPending || apply.isPending} onSelect={addProduct} label="Buscar producto" inputId={pickerId} />
-        <CountCaptureTable lines={lines} disabled={!canCapture || save.isPending || apply.isPending} captureStage={captureStage} countRefs={countRefs} recountRefs={recountRefs} onChange={setLines} />
+        <CountCaptureProducts businessId={businessId} warehouseId={value.count.warehouseId} lines={lines} disabled={!canCapture || save.isPending || apply.isPending || discard.isPending} captureStage={captureStage} countRefs={countRefs} recountRefs={recountRefs} onChange={setLines} />
       </CardContent>
     </Card>
     <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
@@ -801,7 +771,9 @@ export function PhysicalCountDraftEditForm({
   </div>;
 }
 
-function CountCaptureTable({
+function CountCaptureProducts({
+  businessId,
+  warehouseId,
   lines,
   disabled,
   captureStage,
@@ -809,6 +781,8 @@ function CountCaptureTable({
   recountRefs,
   onChange,
 }: {
+  businessId: string;
+  warehouseId: string;
   lines: CountCaptureLine[];
   disabled: boolean;
   captureStage: CountCaptureStage;
@@ -816,6 +790,49 @@ function CountCaptureTable({
   recountRefs: React.MutableRefObject<Map<string, HTMLInputElement>>;
   onChange: (lines: CountCaptureLine[]) => void;
 }) {
+  const selectedIds = useMemo(() => new Set(lines.map(line => line.productId)), [lines]);
+  const [adjustingProductId, setAdjustingProductId] = useState<string | null>(null);
+  const [operation, setOperation] = useState<"add" | "subtract" | "replace">("add");
+  const [quantity, setQuantity] = useState("");
+  const quantityRef = useRef<HTMLInputElement>(null);
+  const adjustingLine = lines.find(line => line.productId === adjustingProductId);
+  const currentQuantity = adjustingLine ? (captureStage === "Count" ? adjustingLine.count : adjustingLine.recount) : "";
+  const baseQuantity = currentQuantity.trim() === "" ? 0 : numeric(currentQuantity);
+  const amount = numeric(quantity);
+  const nextQuantity = operation === "replace" ? amount
+    : Number((operation === "add" ? baseQuantity + amount : baseQuantity - amount).toFixed(6));
+  const quantityError = !validNumber(quantity) ? "Ingresa una cantidad válida, mayor o igual a cero."
+    : operation !== "replace" && !validNumber(String(baseQuantity)) ? "La cantidad actual no es válida. Usa Recontar para reemplazarla."
+    : operation === "subtract" && amount > baseQuantity ? `Puedes restar como máximo ${fmt(baseQuantity)}.`
+    : !Number.isFinite(nextQuantity) ? "La cantidad está fuera del rango permitido." : null;
+
+  function focusPicker() {
+    const input = document.getElementById(pickerId) as HTMLInputElement | null;
+    input?.focus();
+    input?.select();
+  }
+  function selectProduct(product: InventoryProductItem) {
+    if (lines.some(line => line.productId === product.productId)) {
+      setOperation("add");
+      setQuantity("");
+      setAdjustingProductId(product.productId);
+    } else if (captureStage === "Recount") {
+      toast.error("El reconteo solo permite productos incluidos en este conteo.");
+      window.requestAnimationFrame(focusPicker);
+    } else {
+      onChange([...lines, fromProduct(product)]);
+      window.requestAnimationFrame(() => {
+        const input = countRefs.current.get(product.productId);
+        input?.focus();
+        input?.select();
+      });
+    }
+  }
+  function applyQuantity() {
+    if (disabled || !adjustingLine || quantityError) return;
+    update(adjustingLine.productId, captureStage === "Count" ? { count: String(nextQuantity) } : { recount: String(nextQuantity) });
+    setAdjustingProductId(null);
+  }
   function update(productId: string, values: Partial<CountCaptureLine>) {
     onChange(lines.map(line => line.productId === productId ? { ...line, ...values } : line));
   }
@@ -828,13 +845,17 @@ function CountCaptureTable({
       const input = pending ? recountRefs.current.get(pending.productId) : undefined;
       input?.focus();
       input?.select();
+      if (!input) focusPicker();
       return;
     }
     const input = document.getElementById(pickerId) as HTMLInputElement | null;
     input?.focus();
     input?.select();
   }
-  return <div className="overflow-x-auto rounded-2xl border">
+  return <>
+    <ProductPicker businessId={businessId} warehouseId={warehouseId} selectedProductIds={selectedIds}
+      disabled={disabled || Boolean(adjustingProductId)} onSelect={selectProduct} label="Buscar producto" inputId={pickerId} />
+    <div className="overflow-x-auto rounded-2xl border">
     <table className="w-full min-w-[820px] text-sm">
       <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
         <tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-right">Existencia sistema</th><th className="px-4 py-3 text-right">Contar</th><th className="px-4 py-3 text-right">Recontar</th><th className="w-14" /></tr>
@@ -849,7 +870,35 @@ function CountCaptureTable({
         </tr>)}
       </tbody>
     </table>
-  </div>;
+    </div>
+    <Dialog open={Boolean(adjustingLine)} onOpenChange={open => { if (!open) setAdjustingProductId(null); }}>
+      <DialogContent className="max-w-md" onOpenAutoFocus={event => { event.preventDefault(); quantityRef.current?.focus(); }}
+        onCloseAutoFocus={event => { event.preventDefault(); window.requestAnimationFrame(focusPicker); }}>
+        <DialogHeader><DialogTitle>Actualizar cantidad</DialogTitle>
+          <DialogDescription>{adjustingLine?.productName} · {captureStage === "Count" ? "Conteo" : "Reconteo"}</DialogDescription></DialogHeader>
+        <p className="text-sm">{captureStage === "Count" ? "Conteo actual" : "Reconteo actual"}: <strong>{currentQuantity.trim() === "" ? "Sin registrar" : fmt(baseQuantity)}</strong></p>
+        <form className="space-y-4" onSubmit={event => { event.preventDefault(); applyQuantity(); }}>
+          <Tabs value={operation} onValueChange={value => { setOperation(value as typeof operation); window.requestAnimationFrame(() => { quantityRef.current?.focus(); quantityRef.current?.select(); }); }}>
+            <TabsList className="grid w-full grid-cols-3" aria-label="Acción sobre la cantidad">
+              <TabsTrigger value="add">Sumar</TabsTrigger><TabsTrigger value="subtract">Restar</TabsTrigger><TabsTrigger value="replace">Recontar</TabsTrigger>
+            </TabsList>
+            <TabsContent value={operation} className="space-y-3 pt-2">
+              <Field label={operation === "add" ? "Cantidad a sumar" : operation === "subtract" ? "Cantidad a restar" : "Nueva cantidad"}>
+                <Input ref={quantityRef} inputMode="decimal" value={quantity} onChange={event => setQuantity(event.target.value)}
+                  aria-invalid={Boolean(quantity.trim() && quantityError)} aria-describedby="count-quantity-feedback" autoComplete="off" />
+              </Field>
+              <div id="count-quantity-feedback" aria-live="polite">
+                {quantity.trim() && quantityError ? <p role="alert" className="text-sm text-destructive">{quantityError}</p>
+                  : quantity.trim() && <p className="text-sm text-muted-foreground">{captureStage === "Count" ? "El conteo" : "El reconteo"} quedará en <strong>{fmt(nextQuantity)}</strong>.</p>}
+              </div>
+            </TabsContent>
+          </Tabs>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setAdjustingProductId(null)}>Cancelar</Button>
+            <Button type="submit" disabled={disabled || Boolean(quantityError)}>Aplicar</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  </>;
 }
 
 function ReconciliationTable({ products, valuation }: { products: InventoryReconciliationProduct[]; valuation: "cost" | "average" }) {

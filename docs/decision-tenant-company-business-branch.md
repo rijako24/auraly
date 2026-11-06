@@ -49,6 +49,27 @@ sede, incluso si una validación de aplicación falla.
 
 ## Configuración del POS
 
+La administración de sedes comparte un único modal para crear, consultar y
+editar. Consultar mantiene los campos en solo lectura y ofrece **Editar**;
+crear y editar mantienen un borrador en memoria y escriben únicamente al
+confirmar **Crear** o **Guardar**. **Cancelar** descarta ese borrador. Nombre,
+dirección, correo, teléfono y configuración operativa usan el contrato
+canónico de `BusinessAdminService`; no hay guardados al cambiar un campo.
+Las rutas anteriores de nueva sede y detalle abren ese mismo modal sobre el
+listado, conservando los enlaces existentes.
+
+El listado es el propietario de su página y entrega su fila al modal sin
+otro GET de detalle. La respuesta de una edición actualiza el detalle y las
+filas en caché, además de la proyección autorizada del selector de sede.
+Solo cambia de página mediante una lectura cuando el nombre altera el orden
+o el correo altera una búsqueda activa. Crear requiere una lectura de la
+página visible y otra de las sedes autorizadas, porque el comando no devuelve
+la pertenencia a esos conjuntos. El selector de origen de precios comparte
+la caché paginada de sedes, consulta únicamente al abrirse y busca en servidor
+en páginas de veinte; no descarga todas las sedes para filtrar después.
+La regresión del modal comprueba los viajes de red y que **Ver → Editar** no
+envía un comando por la acción predeterminada del botón.
+
 El instalador de Auraly POS es único, firmado y versionado. No se compila un
 binario distinto por cliente.
 

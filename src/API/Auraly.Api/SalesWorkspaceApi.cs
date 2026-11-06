@@ -70,7 +70,7 @@ public static class SalesWorkspaceApi
                 if (!authorized)
                     throw new SalesWorkspaceForbiddenException(
                         "La sede no pertenece a la empresa autenticada o no está disponible para ventas.");
-                var uri = gateway.CreateUserClientAccessUri(
+                var uri = await gateway.CreateUserClientAccessUriAsync(
                     identity.TenantId, businessId, identity.UserId, ct);
                 return Results.Ok(new PosSynchronizationNegotiationResponse(
                     uri, DateTimeOffset.UtcNow.AddMinutes(15)));
