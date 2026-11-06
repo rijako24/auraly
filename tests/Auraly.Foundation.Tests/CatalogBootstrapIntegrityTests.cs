@@ -44,13 +44,15 @@ public sealed class CatalogBootstrapIntegrityTests
     }
 
     [Fact]
-    public void Legacy_catalog_json_without_presentation_keeps_its_product_defaults()
+    public void Existing_catalog_json_without_store_presentation_preserves_operational_values()
     {
         const string json = """
             {"productId":"10000000-0000-0000-0000-000000000001","productCode":"OLD-1",
              "name":"Producto existente","baseUnitCode":"UND","taxCode":"01","taxRate":19,
              "unitPrice":25000,"currencyCode":"COP","isActive":true,"barcodes":["770000000001"],
-             "identifiers":[]}
+             "identifiers":[],"unitCost":12000,"managesStock":false,
+             "isWeighable":true,"allowsFractionalSale":true,"hasIngredients":true,"isCombo":false,
+             "inventoryProductId":"10000000-0000-0000-0000-000000000002","inventoryFactor":12}
             """;
 
         var product = JsonSerializer.Deserialize<PosCatalogItem>(json,
@@ -59,13 +61,15 @@ public sealed class CatalogBootstrapIntegrityTests
         Assert.NotNull(product);
         Assert.Equal("OLD-1", product.ProductCode);
         Assert.Equal(25_000m, product.UnitPrice);
-        Assert.True(product.ManagesStock);
-        Assert.Equal(1m, product.InventoryFactor);
+        Assert.Equal(12_000m, product.UnitCost);
+        Assert.Equal(19m, product.TaxRate);
+        Assert.False(product.ManagesStock);
+        Assert.Equal(12m, product.InventoryFactor);
         Assert.Null(product.Presentation);
-        Assert.Null(product.InventoryProductId);
-        Assert.False(product.IsWeighable);
-        Assert.False(product.AllowsFractionalSale);
-        Assert.False(product.HasIngredients);
+        Assert.Equal(Guid.Parse("10000000-0000-0000-0000-000000000002"), product.InventoryProductId);
+        Assert.True(product.IsWeighable);
+        Assert.True(product.AllowsFractionalSale);
+        Assert.True(product.HasIngredients);
         Assert.False(product.IsCombo);
     }
 

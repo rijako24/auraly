@@ -33,6 +33,25 @@ public sealed partial class PosCatalogStoreTests
             var upgraded = new PosCatalogStore(connectionString);
             await upgraded.InitializeAsync();
             Assert.Equal("Invalid", (await upgraded.StatusAsync()).Status);
+            var updatedProduct = Product() with
+            {
+                UnitCost = 7_000m,
+                Presentation = new("https://example.test/coffee.png", Product().ProductId,
+                    Guid.NewGuid(), "Rojo", Guid.NewGuid(), "500 g")
+            };
+            var refreshSession = session with { SessionId = Guid.NewGuid(), HighWaterMark = 8 };
+            await upgraded.BeginBootstrapAsync(refreshSession);
+            await upgraded.ApplyBootstrapPageAsync(Page(refreshSession, [updatedProduct], false, null));
+            await upgraded.PromoteBootstrapAsync();
+            var loaded = await upgraded.GetByProductIdAsync(updatedProduct.ProductId);
+            Assert.NotNull(loaded);
+            Assert.Equal(updatedProduct.Presentation, loaded.Presentation);
+            Assert.Equal(updatedProduct.UnitPrice, loaded.UnitPrice);
+            Assert.Equal(updatedProduct.UnitCost, loaded.UnitCost);
+            Assert.Equal(updatedProduct.TaxRate, loaded.TaxRate);
+            Assert.Equal(8, (await upgraded.StatusAsync()).Cursor);
+            await upgraded.InitializeAsync();
+            Assert.Equal("Ready", (await upgraded.StatusAsync()).Status);
             await using (var connection = new SqliteConnection(connectionString))
             {
                 await connection.OpenAsync();
@@ -40,11 +59,6 @@ public sealed partial class PosCatalogStoreTests
                 command.CommandText = "SELECT COUNT(*) FROM Invoices WHERE DocumentId='existing-sale';";
                 Assert.Equal(1L, await command.ExecuteScalarAsync());
             }
-            await upgraded.BeginBootstrapAsync(session);
-            await upgraded.ApplyBootstrapPageAsync(Page(session, [Product()], false, null));
-            await upgraded.PromoteBootstrapAsync();
-            await upgraded.InitializeAsync();
-            Assert.Equal("Ready", (await upgraded.StatusAsync()).Status);
         }
         finally
         {

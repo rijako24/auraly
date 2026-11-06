@@ -319,7 +319,8 @@ El modo viaja por el snapshot/stream de configuración ya existente.
 El constructor primario de `PosCatalogItem` es el contrato de deserialización JSON;
 la sobrecarga de compatibilidad se reserva a llamadas C#. El transporte conserva
 precio, impuestos, composición, identidad de inventario y presentación opcional.
-Los catálogos anteriores sin presentación mantienen sus valores predeterminados.
+Los mensajes anteriores a Tiendas conservan sus precios, costos, impuestos e
+identidad de inventario aunque todavía no incluyan la presentación opcional.
 
 El catálogo visible tiene un propietario de consulta, búsqueda con espera de 250 ms,
 cancelación de solicitudes obsoletas y paginación explícita. Agregar una prenda usa
@@ -340,6 +341,13 @@ migración invalida una sola vez su snapshot de catálogo y el sincronizador
 existente lo reconstruye. Las ventas, borradores y outbox se preservan y la
 promoción del snapshot sigue siendo atómica. Esto es necesario para obtener
 imágenes y familias de fichas previas, que no generarían por sí solas un delta.
+La recarga consulta los datos vigentes del producto y repuebla los atributos
+registrados; no se completa la actualización dejando vacíos los valores que ya
+existen en el servidor. Color y talla conservan su asignación explícita: crear
+sus catálogos no permite inferir valores para productos que nunca los tuvieron.
+La promoción del catálogo copia columnas por nombre, tanto en la tabla de
+productos como en códigos e identificadores; no depende del orden físico que
+dejen las migraciones de SQLite.
 Las aperturas posteriores conservan el cursor incremental normal. Las señales
 push se agrupan con el notificador compartido y no se añade polling.
 
