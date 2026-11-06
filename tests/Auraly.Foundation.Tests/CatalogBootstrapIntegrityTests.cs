@@ -7,6 +7,72 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class CatalogBootstrapIntegrityTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Bootstrap_json_preserves_the_full_product_contract_and_presentation(bool webDefaults)
+    {
+        var item = Item(Guid.NewGuid(), 12m) with
+        {
+            IsWeighable = true,
+            AllowsFractionalSale = true,
+            HasIngredients = true,
+            Presentation = new("https://example.test/product.png", Guid.NewGuid(),
+                Guid.NewGuid(), "Azul", Guid.NewGuid(), "M")
+        };
+        var page = new CatalogBootstrapPage(Guid.NewGuid(), 42, null, false,
+            CatalogBootstrapIntegrity.Compute([item]), [item]);
+        var options = new JsonSerializerOptions(webDefaults
+            ? JsonSerializerDefaults.Web : JsonSerializerDefaults.General);
+
+        var received = JsonSerializer.Deserialize<CatalogBootstrapPage>(
+            JsonSerializer.Serialize(page, options), options);
+
+        Assert.NotNull(received);
+        var product = Assert.Single(received.Items);
+        Assert.Equal(JsonSerializer.Serialize(item, options), JsonSerializer.Serialize(product, options));
+        Assert.Equal(item.UnitPrice, product.UnitPrice);
+        Assert.Equal(item.UnitCost, product.UnitCost);
+        Assert.Equal(item.TaxRate, product.TaxRate);
+        Assert.True(product.IsWeighable);
+        Assert.True(product.AllowsFractionalSale);
+        Assert.True(product.HasIngredients);
+        Assert.Equal(item.InventoryProductId, product.InventoryProductId);
+        Assert.Equal(12m, product.InventoryFactor);
+        Assert.Equal(item.Presentation, product.Presentation);
+        Assert.True(CatalogBootstrapIntegrity.IsValid(received.Items, received.IntegrityHash));
+    }
+
+    [Fact]
+    public void Existing_catalog_json_without_store_presentation_preserves_operational_values()
+    {
+        const string json = """
+            {"productId":"10000000-0000-0000-0000-000000000001","productCode":"OLD-1",
+             "name":"Producto existente","baseUnitCode":"UND","taxCode":"01","taxRate":19,
+             "unitPrice":25000,"currencyCode":"COP","isActive":true,"barcodes":["770000000001"],
+             "identifiers":[],"unitCost":12000,"managesStock":false,
+             "isWeighable":true,"allowsFractionalSale":true,"hasIngredients":true,"isCombo":false,
+             "inventoryProductId":"10000000-0000-0000-0000-000000000002","inventoryFactor":12}
+            """;
+
+        var product = JsonSerializer.Deserialize<PosCatalogItem>(json,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.NotNull(product);
+        Assert.Equal("OLD-1", product.ProductCode);
+        Assert.Equal(25_000m, product.UnitPrice);
+        Assert.Equal(12_000m, product.UnitCost);
+        Assert.Equal(19m, product.TaxRate);
+        Assert.False(product.ManagesStock);
+        Assert.Equal(12m, product.InventoryFactor);
+        Assert.Null(product.Presentation);
+        Assert.Equal(Guid.Parse("10000000-0000-0000-0000-000000000002"), product.InventoryProductId);
+        Assert.True(product.IsWeighable);
+        Assert.True(product.AllowsFractionalSale);
+        Assert.True(product.HasIngredients);
+        Assert.False(product.IsCombo);
+    }
+
     [Fact]
     public void Digest_remains_compatible_when_inventory_fields_are_added_to_the_contract()
     {

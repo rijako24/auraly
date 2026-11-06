@@ -166,16 +166,17 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
                 $"The local catalog contains {status.ProcessedProducts} of {status.TotalProducts} required products. A new bootstrap is required.");
         }
 
-        await ExecuteAsync(connection, transaction, """
+        // Upgraded SQLite tables may have a different physical column order.
+        await ExecuteAsync(connection, transaction, $"""
             DELETE FROM PosCatalogBarcodes;
             DELETE FROM PosCatalogIdentifiers;
             DELETE FROM PosCatalogProducts;
-            INSERT INTO PosCatalogProducts
-              SELECT * FROM PosCatalogStagingProducts;
-            INSERT INTO PosCatalogBarcodes
-              SELECT * FROM PosCatalogStagingBarcodes;
-            INSERT INTO PosCatalogIdentifiers
-              SELECT * FROM PosCatalogStagingIdentifiers;
+            INSERT INTO PosCatalogProducts ({ProductColumnNames})
+              SELECT {ProductColumnNames} FROM PosCatalogStagingProducts;
+            INSERT INTO PosCatalogBarcodes (ProductId,Value)
+              SELECT ProductId,Value FROM PosCatalogStagingBarcodes;
+            INSERT INTO PosCatalogIdentifiers (ProductId,Type,Value)
+              SELECT ProductId,Type,Value FROM PosCatalogStagingIdentifiers;
             DELETE FROM PosCatalogStagingBarcodes;
             DELETE FROM PosCatalogStagingIdentifiers;
             DELETE FROM PosCatalogStagingProducts;
@@ -522,9 +523,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         });
         await ExecuteAsync(connection, transaction, $"""
             INSERT INTO {products}
-              (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
-               ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent,
-               InventoryProductId,InventoryFactor,IsGenericProduct,IsIngredient,HasIngredients,IsCombo,PresentationJson,FamilyProductId)
+              ({ProductColumnNames})
             SELECT
               json_extract(value,'$.ProductId'),json_extract(value,'$.ProductCode'),json_extract(value,'$.Reference'),json_extract(value,'$.Name'),
               json_extract(value,'$.BaseUnitCode'),json_extract(value,'$.TaxCode'),json_extract(value,'$.TaxRate'),json_extract(value,'$.UnitPrice'),
@@ -777,6 +776,13 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
             await upgrade.ExecuteNonQueryAsync(cancellationToken);
         }
     }
+
+    private const string ProductColumnNames = """
+        ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,
+        CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix,CategoryName,
+        ProductCategoryId,ProductBrandId,ProductCategoryAncestorIds,AverageUnitCost,LatestUnitCost,TargetMarginPercent,
+        InventoryProductId,InventoryFactor,IsGenericProduct,IsIngredient,HasIngredients,IsCombo,PresentationJson,FamilyProductId
+        """;
 
     private const string ProductColumns = """
         ProductId TEXT PRIMARY KEY,
