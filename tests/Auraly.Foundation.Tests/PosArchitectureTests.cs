@@ -47,7 +47,7 @@ public sealed class PosArchitectureTests
         var bootstrapStart = page.IndexOf(
             "const bootstrap = async () =>", StringComparison.Ordinal);
         var bootstrapCall = page.IndexOf(
-            "const serverBootstrap = await loadSalesWorkspaceBootstrap();",
+            "const serverBootstrap = preloadedBootstrap ?? await loadSalesWorkspaceBootstrap();",
             bootstrapStart,
             StringComparison.Ordinal);
         var onlineClientCreation = page.IndexOf(
@@ -57,6 +57,10 @@ public sealed class PosArchitectureTests
 
         Assert.True(bootstrapStart >= 0, "The POS bootstrap was not found.");
         Assert.True(bootstrapCall > bootstrapStart, "The fresh workspace bootstrap call was not found.");
+        Assert.Contains("let preloadedBootstrap: SalesWorkspaceBootstrap | null = null;",
+            page[bootstrapStart..bootstrapCall], StringComparison.Ordinal);
+        Assert.Contains("preloadedBootstrap = await loadSalesWorkspaceBootstrap();",
+            page[bootstrapStart..bootstrapCall], StringComparison.Ordinal);
         Assert.True(onlineClientCreation > bootstrapCall, "The online client was not rebuilt from the fresh bootstrap.");
         Assert.DoesNotContain("cachedOnlineClient", page, StringComparison.Ordinal);
     }

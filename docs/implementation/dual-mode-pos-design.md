@@ -422,7 +422,7 @@ no se incorporó polling ni un propietario de carga oculto. El rollback del moto
 se rige por la condición de trabajos versión 2 de `restaurant-pos-design.md`.
 
 Evidencia de esta revisión: 89/89 integraciones SQL de venta, producción,
-enrolamiento y autorización; 114/114 pruebas Foundation seleccionadas;
+enrolamiento y autorización; 1063/1063 de la suite Foundation completa;
 218/218 de caja local; 259/259 del POS web más sus 16 previas y 15/15 de edición
 de línea; ESLint de los archivos afectados y builds Release
 SQL/API y producción web aprobados. Una ejecución SQL aislada posterior verificó
