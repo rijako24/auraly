@@ -1,5 +1,7 @@
 using Azure.Storage;
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Azure;
 using Auraly.Platform.Application.Identity.Services;
 using Auraly.Platform.Application.Services;
 using Auraly.Platform.Domain.Entities;
@@ -13,6 +15,49 @@ namespace Auraly.Platform.Tests.Identity;
 
 public sealed class ProductImageTenantStorageTests
 {
+    [Theory]
+    [InlineData("devstore")]
+    [InlineData("prodstore")]
+    public async Task Product_page_signs_fifty_images_with_one_delegation_request_and_no_blob_reads(string account)
+    {
+        var tenantId = Guid.NewGuid();
+        var secondTenantId = Guid.NewGuid();
+        var service = new Mock<BlobServiceClient>(MockBehavior.Strict,
+            new Uri($"https://{account}.blob.core.windows.net"), new BlobClientOptions());
+        service.SetupGet(client => client.Uri).Returns(new Uri($"https://{account}.blob.core.windows.net"));
+        service.Setup(client => client.GetBlobContainerClient(It.IsAny<string>()))
+            .Returns((string container) => new BlobContainerClient(new Uri($"https://{account}.blob.core.windows.net/{container}")));
+        service.Setup(client => client.GetUserDelegationKeyAsync(
+                It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Response.FromValue(BlobsModelFactory.UserDelegationKey(
+                Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), DateTimeOffset.UtcNow.AddMinutes(-5),
+                DateTimeOffset.UtcNow.AddHours(1), "b", "2020-12-06", Convert.ToBase64String(new byte[32])), Mock.Of<Response>()));
+        var resolver = new BlobMediaUrlResolver(service.Object, NullLogger<BlobMediaUrlResolver>.Instance);
+        var references = Enumerable.Range(0, 50).Select(index => $"products/{index}/photo.png").ToArray();
+        var result = await resolver.ResolveTenantBatchAsync(tenantId, references);
+        var second = await resolver.ResolveTenantBatchAsync(secondTenantId, references);
+        Assert.Equal(50, result.Count);
+        foreach (var reference in references)
+        {
+            Assert.StartsWith($"https://{account}.blob.core.windows.net/tenant-{tenantId:N}/{reference}?", result[reference]);
+            Assert.StartsWith($"https://{account}.blob.core.windows.net/tenant-{secondTenantId:N}/{reference}?", second[reference]);
+        }
+        service.Verify(client => client.GetUserDelegationKeyAsync(
+            It.IsAny<DateTimeOffset?>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Empty_and_external_image_pages_do_not_request_storage_credentials()
+    {
+        var service = new Mock<BlobServiceClient>(MockBehavior.Strict);
+        var resolver = new BlobMediaUrlResolver(service.Object, NullLogger<BlobMediaUrlResolver>.Instance);
+        Assert.Empty(await resolver.ResolveTenantBatchAsync(Guid.NewGuid(), []));
+        const string external = "https://example.test/photo.png";
+        var urls = await resolver.ResolveTenantBatchAsync(Guid.NewGuid(), [external, external]);
+        Assert.Equal(external, Assert.Single(urls).Value);
+        service.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task Tenant_image_resolver_signs_the_tenant_container_without_a_blob_read()
     {

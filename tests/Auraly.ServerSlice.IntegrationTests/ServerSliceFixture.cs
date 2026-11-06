@@ -1562,6 +1562,13 @@ internal sealed class TestBlobStorageService : IBlobStorageService
 
 internal sealed class TestMediaUrlResolver : IMediaUrlResolver
 {
+    public Task<IReadOnlyDictionary<string, string>> ResolveTenantBatchAsync(
+        Guid tenantId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyDictionary<string, string>>(mediaRefs.Distinct(StringComparer.Ordinal)
+            .ToDictionary(reference => reference,
+                reference => Uri.TryCreate(reference, UriKind.Absolute, out var uri) && uri.Scheme == "https"
+                    ? reference : $"https://media.auraly.test/tenant/{tenantId:D}/{reference}", StringComparer.Ordinal));
+
     public Task<string> ResolveAsync(
         Guid businessId,
         string mediaRef,

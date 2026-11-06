@@ -33,8 +33,28 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
     public async Task<string> ResolveTenantAsync(Guid tenantId, string mediaRef, CancellationToken ct = default)
         => await ResolveFromContainerAsync($"tenant-{tenantId:N}".ToLowerInvariant(), mediaRef, false, ct);
 
+    public async Task<IReadOnlyDictionary<string, string>> ResolveTenantBatchAsync(
+        Guid tenantId, IReadOnlyCollection<string> mediaRefs, CancellationToken ct = default)
+    {
+        var containerName = $"tenant-{tenantId:N}".ToLowerInvariant();
+        var references = mediaRefs.Distinct(StringComparer.Ordinal).ToArray();
+        UserDelegationKey? key = null;
+        // Prepare the credential once; signing each item performs no Blob I/O.
+        if (references.Any(reference => !Uri.TryCreate(reference, UriKind.Absolute, out var uri) || uri.Scheme != "https") &&
+            !_blobServiceClient.GetBlobContainerClient(containerName).GetBlobClient("products/").CanGenerateSasUri)
+            key = await GetDelegationKeyAsync(ct);
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var reference in references)
+        {
+            ct.ThrowIfCancellationRequested();
+            result.Add(reference, await ResolveFromContainerAsync(containerName, reference, false, ct, key));
+        }
+        return result;
+    }
+
     private async Task<string> ResolveFromContainerAsync(
-        string containerName, string mediaRef, bool verifyExists, CancellationToken ct)
+        string containerName, string mediaRef, bool verifyExists, CancellationToken ct,
+        UserDelegationKey? preparedKey = null)
     {
         if (string.IsNullOrWhiteSpace(mediaRef))
             throw new ArgumentException("MediaRef no puede estar vacío", nameof(mediaRef));
@@ -71,7 +91,7 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
             // App Service authenticates to Blob Storage with managed identity. A
             // user delegation SAS lets the browser read the same private blob.
             var startsOn = DateTimeOffset.UtcNow.AddMinutes(-5);
-            var key = await GetDelegationKeyAsync(ct);
+            var key = preparedKey ?? await GetDelegationKeyAsync(ct);
             var sas = new BlobSasBuilder
             {
                 BlobContainerName = containerName,

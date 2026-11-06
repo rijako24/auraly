@@ -14,6 +14,7 @@ using Auraly.Contracts.Authorization;
 using Auraly.Application.Orders;
 using Auraly.Contracts.Orders;
 using Auraly.Domain.Inventory;
+using Auraly.Platform.Application.Services;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -22,7 +23,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider time,
-    SqlInventoryOperationStore inventoryOperations) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
+    SqlInventoryOperationStore inventoryOperations,
+    IMediaUrlResolver mediaUrls) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
     IOnlineSalesHistoryStore, IOrderCancellationStore, IRestaurantProductCatalog
 {
     public async Task<OnlineSalesDraft> GetOrCreateActiveAsync(

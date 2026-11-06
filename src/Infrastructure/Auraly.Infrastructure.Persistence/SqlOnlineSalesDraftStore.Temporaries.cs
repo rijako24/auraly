@@ -120,6 +120,9 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (request.PublicPriceOnly)
         {
             var publicItems = candidates.Select(candidate => candidate.Product).ToArray();
+            await reader.DisposeAsync();
+            await connection.CloseAsync();
+            publicItems = await ResolveProductImagesAsync(user.TenantId, publicItems, cancellationToken);
             return new(publicItems, hasMore,
                 hasMore ? request.Skip + publicItems.Length : null);
         }
@@ -195,7 +198,27 @@ public sealed partial class SqlOnlineSalesDraftStore
                 PromotionDiscount = price.DiscountAmount
             };
         }).ToArray();
+        await reader.DisposeAsync();
+        await connection.CloseAsync();
+        items = await ResolveProductImagesAsync(user.TenantId, items, cancellationToken);
         return new(items, hasMore, hasMore ? request.Skip + items.Length : null);
+    }
+
+    private async Task<OnlineSalesProduct[]> ResolveProductImagesAsync(
+        Guid tenantId, OnlineSalesProduct[] items, CancellationToken ct)
+    {
+        var references = items.SelectMany(item => new[] { item.ImageUrl, item.Presentation?.ImageUrl })
+            .Where(reference => !string.IsNullOrWhiteSpace(reference))
+            .Select(reference => reference!).Distinct(StringComparer.Ordinal).ToArray();
+        if (references.Length == 0) return items;
+        var resolved = await mediaUrls.ResolveTenantBatchAsync(tenantId, references, ct);
+        string? Url(string? reference) => string.IsNullOrWhiteSpace(reference) ? null : resolved[reference];
+        return items.Select(item => item with
+        {
+            ImageUrl = Url(item.ImageUrl),
+            Presentation = item.Presentation is { } presentation
+                ? presentation with { ImageUrl = Url(presentation.ImageUrl) } : null
+        }).ToArray();
     }
 
     private sealed record SearchProductCandidate(

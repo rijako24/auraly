@@ -132,6 +132,16 @@ public sealed partial class CatalogVerticalSliceTests
         opened.EnsureSuccessStatusCode();
         var draft = (await opened.Content.ReadFromJsonAsync<OnlineSalesDraft>())!;
         var browseRequest = new SearchOnlineSalesRequest(context, Take: 1, FamilyProductId: child.ProductId);
+        foreach (var product in new[] { root, child })
+        {
+            using var photo = await admin.PutAsJsonAsync($"/api/commerce/v1/products/{product.ProductId}", request with
+            {
+                ProductCode = product.ProductCode, Name = product.Name,
+                Link = product.ProductId == child.ProductId ? new(root.ProductId, false, null, false, null) : null,
+                Images = [new ProductImageInput(Guid.NewGuid(), null, $"products/{product.ProductId:N}/photo.png", null, 0, true)]
+            });
+            photo.EnsureSuccessStatusCode();
+        }
         using var firstResponse = await admin.PostAsJsonAsync("/api/commerce/v1/pos/catalog/products/search", browseRequest);
         firstResponse.EnsureSuccessStatusCode();
         var first = (await firstResponse.Content.ReadFromJsonAsync<OnlineSalesProductPage>())!;
@@ -140,11 +150,18 @@ public sealed partial class CatalogVerticalSliceTests
         Assert.Equal(root.ProductId, item.Presentation!.FamilyProductId);
         Assert.Equal(color.Id, item.Presentation.ProductColorId);
         Assert.Equal(size.Name, item.Presentation.SizeName);
+        Assert.Equal($"https://media.auraly.test/tenant/{fixture.TenantId:D}/products/{item.ProductId:N}/photo.png", item.ImageUrl);
+        Assert.Equal(item.ImageUrl, item.Presentation.ImageUrl);
         using var nextResponse = await admin.PostAsJsonAsync("/api/commerce/v1/pos/catalog/products/search", browseRequest with { Skip = 1 });
         nextResponse.EnsureSuccessStatusCode();
         var next = (await nextResponse.Content.ReadFromJsonAsync<OnlineSalesProductPage>())!;
         Assert.False(next.HasMore);
         Assert.NotEqual(item.ProductId, Assert.Single(next.Items).ProductId);
+        Assert.Equal(Assert.Single(next.Items).ImageUrl, Assert.Single(next.Items).Presentation!.ImageUrl);
+        using var publicResponse = await admin.PostAsJsonAsync("/api/commerce/v1/pos/catalog/products/search", browseRequest with { PublicPriceOnly = true });
+        publicResponse.EnsureSuccessStatusCode();
+        var publicPage = (await publicResponse.Content.ReadFromJsonAsync<OnlineSalesProductPage>())!;
+        Assert.Equal(item.ImageUrl, Assert.Single(publicPage.Items).ImageUrl);
         using var regularResponse = await admin.PostAsJsonAsync("/api/commerce/v1/pos/drafts/products/search",
             new SearchOnlineSalesRequest(context, Search: item.ProductCode));
         regularResponse.EnsureSuccessStatusCode();

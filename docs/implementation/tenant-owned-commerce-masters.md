@@ -28,6 +28,13 @@ Las imágenes de producto se guardan en el contenedor privado
 son compartidas por todas las sedes del tenant. Las URL HTTPS externas se
 conservan sin copia. El logo de impresión conserva su flujo propio.
 
+La búsqueda paginada de productos del POS, compartida por Venta directa,
+Tiendas y Restaurante, resuelve esas referencias antes de responder mediante
+`IMediaUrlResolver.ResolveTenantBatchAsync`. Firma únicamente las imágenes de
+la página, después de cerrar la lectura SQL; no consulta Blob por producto.
+La identidad administrada obtiene una sola clave de delegación compartida y
+cacheada para firmar el lote. No se persisten firmas SAS ni URLs de otro ambiente.
+
 `BusinessId` en un documento o proyección operativa indica dónde ocurrió la
 operación; no cambia la propiedad del maestro referenciado. Un canal pertenece
 al tenant y aplica automáticamente en todas sus sedes actuales y futuras.
