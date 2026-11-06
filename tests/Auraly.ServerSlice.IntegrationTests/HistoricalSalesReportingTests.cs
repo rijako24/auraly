@@ -80,6 +80,8 @@ public sealed class HistoricalSalesReportingTests(ServerSliceFixture fixture)
             WHERE report.SourceDocumentId=@Document;
             UPDATE reporting.SalesReportingJobs SET SourcePayloadHash=@Hash WHERE SourceDocumentId=@Document;
             UPDATE dbo.SalesDocuments SET PayloadHash=@Hash WHERE DocumentId=@Document;
+            -- Historical lines predate the recognized-cost column as well.
+            UPDATE dbo.SalesDocumentLines SET RecognizedCostAmount=NULL WHERE DocumentId=@Document;
             IF @Generic=1 UPDATE dbo.SalesDocumentLines SET UnitCostSnapshot=NULL WHERE DocumentId=@Document;
             """;
         source.Parameters.AddWithValue("@Payload", payload); source.Parameters.AddWithValue("@Hash", hash);

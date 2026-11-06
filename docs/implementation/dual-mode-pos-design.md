@@ -434,3 +434,9 @@ La matriz adicional de 16 ventas reales en las sedes locales verificó el kardex
 exacto y reintento sin doble consumo en los tres modos web y Venta directa offline.
 Se ensayaron los 115 lotes de postdeployment sobre la copia local con rollback;
 el reporte final de DEV agrega las columnas de ventas sin reconstruir sus tablas.
+
+Compatibilidad histórica, 2026-11-06: los tres casos de reconstrucción de costos
+aprobaron en SQL aislado. La simulación de una línea anterior a esta ampliación
+deja también `RecognizedCostAmount` nulo, porque esa columna no existía: conserva
+la comprobación de costo por kardex y la de costo genérico explícitamente
+desconocido. No se cambia el contrato, el cálculo ni los datos reales del reporte.
