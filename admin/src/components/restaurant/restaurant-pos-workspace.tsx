@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, CakeSlice, ChefHat, CircleCheck, Clock3,
   ClipboardList, Coffee, DoorOpen,
   Fish, GlassWater, List, Map as MapIcon, MessageSquareText, FileText, LayoutGrid,
-  Minus, Plus, Printer, Salad, Sandwich, Search, Settings2, Soup, Tags, Trash2, UserRound, UserRoundPen, UtensilsCrossed,
+  Minus, Plus, Printer, Salad, Sandwich, Search, Settings2, Soup, Tags, Trash2, UserRound, UtensilsCrossed,
   type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { RestaurantPaymentDialog } from "@/components/restaurant/restaurant-payment-dialog";
@@ -43,6 +43,7 @@ import { restaurantAccountApi, type RestaurantAccountDraft,
   type RestaurantTableOccupancy } from
   "@/services/api/restaurant-account";
 import { inventoryApi } from "@/services/api/inventory";
+import { posReceiptTypographyCss } from "@/services/pos/pos-receipt-style";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency", currency: "COP", maximumFractionDigits: 0,
@@ -710,20 +711,24 @@ export function RestaurantPosWorkspace({ option }: {
         <td>${line.quantity}</td><td>${money.format(line.total)}</td></tr>`).join("");
       renderServerPrintDocument(printWindow, `<!doctype html><html lang="es"><head>
         <meta charset="utf-8"><title>Precuenta · Mesa ${escapePrebillText(bill.tableCode)}</title>
-        <style>body{font:14px system-ui,sans-serif;color:#182628;max-width:80mm;margin:0 auto;padding:20px}
-        h1{font-size:24px;margin:5px 0}h2{font-size:18px;margin:0 0 16px}
-        table{width:100%;border-collapse:collapse}td{padding:8px 2px;border-bottom:1px dashed #aaa;vertical-align:top}
-        td:nth-child(2),td:nth-child(3){text-align:right;white-space:nowrap}
-        small{display:block;color:#667;font-size:10px}.total{display:flex;justify-content:space-between;
-        font-size:20px;font-weight:800;margin-top:18px}.meta{color:#667;font-size:11px}
-        @media print{body{padding:0}}</style></head><body>
-        <h1>Mesa ${escapePrebillText(bill.tableCode)}</h1>
-        <h2>Precuenta · No es factura</h2><div class="meta">${new Date(bill.printedAt).toLocaleString("es-CO")}
-        · Revisión ${bill.accountVersion}</div>
-        <table><tbody>${rows}</tbody></table>
-        <div class="total"><span>Consumo</span><span>${money.format(bill.total)}</span></div>
+        <style>*{box-sizing:border-box}${posReceiptTypographyCss}
+        body{font:12px/1.4 ui-monospace,Consolas,monospace;color:#111;background:#fff;max-width:80mm;margin:0 auto;padding:12px}
+        header{border-bottom:1px dashed #555;padding-bottom:8px}
+        h1{font:700 18px/1.3 Arial,sans-serif;margin:0 0 3px}h2{font-size:13px;margin:0 0 6px}
+        table{width:100%;border-collapse:collapse;margin-top:8px}th{font-size:10px;text-align:left;border-bottom:1px dashed #555}
+        th,td{padding:5px 2px;vertical-align:top}td{border-bottom:1px dashed #aaa;overflow-wrap:anywhere}
+        th:nth-child(n+2),td:nth-child(n+2){text-align:right;white-space:nowrap}
+        tr{break-inside:avoid}small{display:block;font-size:10px}
+        .totals{margin-top:8px;break-inside:avoid}.total{display:flex;justify-content:space-between;gap:12px;margin:5px 0}
+        .total span:last-child{white-space:nowrap;text-align:right}.grand-total{border-block:1px dashed #555;padding:8px 0;font-size:15px;font-weight:800}
+        .meta{font-size:10px}@media print{body{padding:0}}</style></head><body>
+        <header><h1>Mesa ${escapePrebillText(bill.tableCode)}</h1>
+        <h2>Precuenta</h2><div class="meta">${new Date(bill.printedAt).toLocaleString("es-CO")}<br>
+        Revisión ${bill.accountVersion}</div></header>
+        <table><thead><tr><th scope="col">Producto</th><th scope="col">Cant.</th><th scope="col">Valor</th></tr></thead><tbody>${rows}</tbody></table>
+        <section class="totals"><div class="total"><span>Consumo</span><span>${money.format(bill.total)}</span></div>
         <div class="total"><span>Propina voluntaria sugerida (${bill.suggestedTipPercent} %)</span><span>${money.format(bill.suggestedTipAmount)}</span></div>
-        <div class="total"><span>Total sugerido</span><span>${money.format(bill.total + bill.suggestedTipAmount)}</span></div>
+        <div class="total grand-total"><span>Total sugerido</span><span>${money.format(bill.total + bill.suggestedTipAmount)}</span></div></section>
         <p class="meta">La propina es voluntaria. Puedes aceptarla, cambiarla o no pagarla.</p>
         </body></html>`);
       printWindow.focus();
@@ -851,7 +856,6 @@ export function RestaurantPosWorkspace({ option }: {
           <Printer className="h-4 w-4"/><span className="hidden md:inline">Periféricos</span>
         </Button>
         {permissions.includes("restaurant.commands.read") && <Button asChild variant="outline" size="sm" className="h-11 w-11 rounded-xl p-0 sm:w-auto sm:px-3"><Link href="/restaurant/commands?from=pos" onClick={leaveWorkspace} aria-label="Comandas" title="Comandas"><ChefHat className="h-4 w-4"/><span className="hidden sm:inline">Comandas</span></Link></Button>}
-        {permissions.includes("orders.read") && <Button variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-xl" aria-label="Ver pedidos" title="Pedidos" disabled={busy || !!pendingSend} onClick={() => setOrdersOpen(true)}><ClipboardList className="h-4 w-4"/></Button>}
         <ThemeToggle className="h-11 w-11 rounded-xl"/></div>
       {draft && <nav aria-label="Vista de la mesa" className="grid w-full grid-cols-2 gap-2 lg:hidden"><Button variant={mobileSection === "products" ? "default" : "outline"} className="min-h-12" onClick={() => setMobileSection("products")}>Productos</Button><Button variant={mobileSection === "account" ? "default" : "outline"} className="min-h-12" onClick={() => setMobileSection("account")}>Cuenta · {groups.reduce((sum, item) => sum + item.quantity, 0)}</Button></nav>}
     </header>
@@ -900,11 +904,11 @@ export function RestaurantPosWorkspace({ option }: {
       <div className="grid gap-4 lg:grid-cols-[minmax(300px,30%)_minmax(0,70%)]">
         <aside className={`${mobileSection !== "account" ? "hidden lg:flex" : "flex"} h-auto min-h-0 flex-col self-start overflow-visible rounded-[2rem] border bg-card shadow-sm lg:sticky lg:top-[min(6rem,calc(100dvh_-_var(--restaurant-account-min-height,25rem)_-_2rem))] lg:h-[calc(100dvh-8rem)] lg:min-h-[25rem] lg:overflow-hidden`}>
           <div ref={accountHeader} className="shrink-0 border-b p-4">
-            <div className="flex min-w-0 items-center justify-between gap-2"><h2 className="shrink-0 text-xl font-bold">Mesa {selectedTable?.code}</h2><p className="truncate text-xs font-semibold text-primary">{selectedTable?.roomId ? roomNames.get(selectedTable.roomId) : "Cuenta abierta"}</p></div>
-            <div className="mt-2 flex items-center justify-between gap-2"><div className="min-w-0">
-              <p className="truncate text-sm font-semibold">Responsable: {draft.account.responsibleUserName || (draft.account.responsibleUserId === connectedUser?.userId ? [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username : "Mesero asignado")}</p>
+            <div className="flex min-w-0 items-center justify-between gap-2"><div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1"><h2 className="max-w-full truncate text-xl font-bold" title={`Mesa ${selectedTable?.code}`}>Mesa {selectedTable?.code}</h2><p className="truncate text-xs font-semibold text-primary">{selectedTable?.roomId ? roomNames.get(selectedTable.roomId) : "Cuenta abierta"}</p></div>{permissions.includes("orders.read") && <Button variant="outline" className="h-10 shrink-0 gap-2 rounded-xl px-3" aria-label="Ver pedidos" disabled={busy || !!pendingSend} onClick={() => setOrdersOpen(true)}><ClipboardList className="h-4 w-4"/>Pedidos</Button>}</div>
+            <div className="mt-2 flex items-center justify-between gap-2"><div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-normal">Mesero: {draft.account.responsibleUserName || (draft.account.responsibleUserId === connectedUser?.userId ? [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username : "Mesero asignado")}</p>
               {draft.account.responsibleUserId !== (attention?.waiterUserId ?? connectedUser?.userId) && <p className="mt-0.5 truncate text-xs text-muted-foreground">Atendiendo ahora: {attention ? activeWaiterName || "Mesero identificado" : [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username || "Usuario conectado"}</p>}
-            </div>{canOpenWithoutWaiter && selectedTable && <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 rounded-xl" aria-label="Cambiar mesero" title="Cambiar mesero" disabled={busy || !!pendingSend} onClick={() => selectTable(selectedTable, true)}><UserRoundPen className="h-4 w-4"/></Button>}</div>
+            </div>{canOpenWithoutWaiter && selectedTable && <Button variant="outline" className="h-10 shrink-0 rounded-xl px-3 font-normal" disabled={busy || !!pendingSend} onClick={() => selectTable(selectedTable, true)}>Cambiar mesero</Button>}</div>
             <div className="mt-2 grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-2 border-t pt-2 text-sm">
               <Button type="button" variant="outline" className="h-11 w-full min-w-0 justify-start gap-2 rounded-xl px-3" title={draft.account.customerName || "Consumidor final"} aria-label={`Buscar cliente: ${draft.account.customerName || "Consumidor final"}`} disabled={busy || !!pendingSend} onClick={() => setCustomerOpen(true)}><UserRound className="h-4 w-4 shrink-0 text-primary"/><span className="truncate">{draft.account.customerName || "Consumidor final"}</span></Button>
               <Button type="button" variant="outline" className="h-11 w-full min-w-0 justify-start gap-2 rounded-xl px-3" title={draft.account.priceChannelName ?? "Precio de mesa"} aria-label={`Canal de precio: ${draft.account.priceChannelName ?? "Sin canal"}`} disabled={!canSelectPriceChannel || busy || !!pendingSend || draft.account.customerPriceChannelLocked} onClick={() => { setChannelSearch(""); setChannelSearchTerm(""); setChannelPage(0); setChannelOpen(true); }}><Tags className="h-4 w-4 shrink-0 text-primary"/><span className="truncate">{draft.account.priceChannelName ?? "Precio de mesa"}</span></Button>

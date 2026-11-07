@@ -52,7 +52,7 @@ test("restaurante real conserva cliente, dos ítems e impresión directa de prec
   const print = page.frameLocator('iframe[aria-hidden="true"]');
   await expect(print.locator("html")).toHaveAttribute("data-print-requested", "1");
   await expect(print.locator("h1")).toHaveText(`Mesa ${code}`);
-  await expect(print.locator("h2")).toHaveText("Precuenta · No es factura");
+  await expect(print.locator("h2")).toHaveText("Precuenta");
   await expect(print.locator("tbody tr")).toHaveCount(2);
   expect(page.context().pages()).toHaveLength(1);
   await page.locator('iframe[aria-hidden="true"]').evaluate(element =>
