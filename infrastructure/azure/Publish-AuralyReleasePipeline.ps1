@@ -773,8 +773,12 @@ if ($productionDatabaseCutover) {
     Assert-LastExitCode 'No se pudo detener la API anterior; no se publicará la base de datos'
     & az functionapp stop --resource-group $configuration.ResourceGroup --name $configuration.Function --output none
     Assert-LastExitCode 'No se pudo detener el Worker anterior; no se publicará la base de datos'
-    $apiState = Invoke-AzJson -Arguments @('webapp','show','--resource-group',$configuration.ResourceGroup,'--name',$configuration.Api,'--query','not_null(state,properties.state)','--output','json')
-    $workerState = Invoke-AzJson -Arguments @('functionapp','show','--resource-group',$configuration.ResourceGroup,'--name',$configuration.Function,'--query','not_null(state,properties.state)','--output','json')
+    # Read the JSON instead of passing a function expression through az.cmd:
+    # Windows cmd treats unquoted JMESPath parentheses as shell syntax.
+    $apiInfo = Invoke-AzJson -Arguments @('webapp','show','--resource-group',$configuration.ResourceGroup,'--name',$configuration.Api,'--output','json')
+    $workerInfo = Invoke-AzJson -Arguments @('functionapp','show','--resource-group',$configuration.ResourceGroup,'--name',$configuration.Function,'--output','json')
+    $apiState = if ($null -ne $apiInfo.state) { $apiInfo.state } else { $apiInfo.properties.state }
+    $workerState = if ($null -ne $workerInfo.state) { $workerInfo.state } else { $workerInfo.properties.state }
     if ($apiState -ne 'Stopped' -or $workerState -ne 'Stopped') {
         throw 'No se confirmó la detención de ambos escritores anteriores; no se publicará la base de datos.'
     }

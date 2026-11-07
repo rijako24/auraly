@@ -409,10 +409,29 @@ Además:
 
 ## Reversión
 
-- Function y API: volver a desplegar los ZIP de la última versión aprobada y restaurar su `Release__Version`.
+- Function y API: solo se puede volver a una versión compatible con el esquema y los snapshots ya aceptados. Después del corte de cartera/bancos no se reinician escritores anteriores que creen obligaciones sin vínculo o utilicen el auxiliar compartido. Un fallo mantiene detenidos los hosts afectados y requiere corregir hacia adelante con binarios compatibles; nunca se reinicia automáticamente el paquete viejo.
 - Admin: revertir en `main` el cambio defectuoso y dejar que el workflow publique el commit de reversión.
 - Base de datos: no existe rollback destructivo automático. Antes de cambios incompatibles, verificar Point-in-Time Restore y preparar una migración compensatoria. `DropObjectsNotInSource=False` protege objetos no presentes en el DACPAC, pero no reemplaza un plan de datos.
 - Infraestructura: corregir Bicep y volver a desplegar incrementalmente después de `WhatIf`; no borrar el resource group como mecanismo de rollback.
+
+### Condiciones para promover el corte de cartera y bancos
+
+El ensayo físico del 7 de noviembre está documentado en
+`docs/implementation/accounting-operational-design.md`. La copia temporal se
+eliminó después de conciliar datos y probar el sistema desde la pantalla.
+No se reinicia contabilidad ni se recalculan obligaciones históricas para publicar.
+
+Antes de una promoción autorizada a PROD:
+
+- Usar el mismo release inmutable y alcance que terminaron correctamente en DEV, con sus checks de calidad y regresión; no recompilarlo para producción.
+- Confirmar nuevamente la recuperación a un punto en el tiempo. La consulta de solo lectura del 7 de noviembre confirmó producción en línea con siete días de retención; no constituye una restauración ejecutada.
+- Registrar importes y estados de CxC/CxP, pagos, aplicaciones e histórico contable antes del corte y conciliarlos después, distinguiendo únicamente operaciones nuevas demostrables. Conservar pagadas las obligaciones ya saldadas.
+- Pasar el preflight canónico de copia de imágenes al almacenamiento del tenant del ambiente. El usuario aplazó la prueba real de subida/lectura en producción; la entrega de DEV no la certifica.
+- Detener ambos escritores antiguos antes de migrar mediante el pipeline; iniciar solo los paquetes compatibles y verificar versión, salud con acceso SQL y los recorridos comerciales/financieros del tenant afectado.
+- Conservar explícita la limitación de las diez partidas bancarias históricas sin banco demostrable: permanecen en el mayor, pero su conciliación bancaria histórica requiere resolver la atribución. No repartirlas automáticamente ni presentar una conciliación parcial como completa.
+
+La aprobación para DEV no autoriza ejecutar esta promoción. Ningún ensayo ni
+HTTP de salud constituye una garantía de ausencia absoluta de fallos.
 
 ## Archivos operativos
 

@@ -15,6 +15,8 @@ public sealed class ReleasePackagingTests
         Assert.True(stop >= 0 && verify > stop && deploy > verify && failure > deploy && start > failure);
         Assert.Contains("--restart false", script, StringComparison.Ordinal);
         Assert.Contains("--async false --track-status false", script, StringComparison.Ordinal);
+        Assert.Contains("$appJson | ConvertFrom-Json", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("not_null(", script, StringComparison.Ordinal);
         Assert.DoesNotContain("finally", script, StringComparison.Ordinal);
         foreach (var caller in new[]
                  {

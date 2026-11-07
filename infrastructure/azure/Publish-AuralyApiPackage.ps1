@@ -14,9 +14,11 @@ if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
 # Stop the process first and wait for extraction, not application startup.
 & az webapp stop --resource-group $ResourceGroup --name $AppName --output none
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo detener la API antes de reemplazar sus archivos.' }
-$state = & az webapp show --resource-group $ResourceGroup --name $AppName `
-    --query 'not_null(state,properties.state)' --output tsv
-if ($LASTEXITCODE -ne 0 -or "$state".Trim() -ne 'Stopped') {
+$appJson = & az webapp show --resource-group $ResourceGroup --name $AppName --output json
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo consultar el estado de la API.' }
+$app = $appJson | ConvertFrom-Json
+$state = if ($null -ne $app.state) { $app.state } else { $app.properties.state }
+if ("$state".Trim() -ne 'Stopped') {
     throw 'No se confirmó la detención de la API; no se reemplazarán sus archivos.'
 }
 & az webapp deploy --resource-group $ResourceGroup --name $AppName `
