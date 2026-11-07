@@ -7,7 +7,9 @@ on:
 
 jobs:
   backend:
-    runs-on: windows-latest
+    # Keep SQL latency gates on the same fixed Windows generation used to build
+    # immutable releases; a floating image is not a stable performance baseline.
+    runs-on: windows-2022
     env:
       AURALY_TEST_SQLSERVER: '(localdb)\MSSQLLocalDB'
     steps:

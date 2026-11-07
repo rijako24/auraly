@@ -47,6 +47,24 @@ an application-level convenience endpoint, not another writer: it idempotently
 orchestrates the existing start and confirm contracts and still enters the same
 ordered document engine and `SqlInventoryLedgerWriter` path.
 
+## Balance search read model
+
+`SqlInventoryQueryStore` continues to read the current projection through
+`dbo.InventoryBalancesSearch`. Its existing product barcode index keeps
+`ProductId, IsActive` as keys and includes `TenantId, Barcode`, covering the
+product-scoped search predicate. This prevents repeated tenant-wide barcode
+scans and base-row lookups while preserving the same result, scope and single
+stored-procedure round trip. Inventory acceptance, balances and ledger writers
+are unchanged.
+
+On 2026-11-07 the covering projection was tested against the migrated production
+copy in DEV inside a transaction that was rolled back. The existing procedure
+returned identical result fingerprints for an absent term and an existing
+barcode. Three baseline samples had maxima of 3,450.6/3,577.5 ms; p95 of twenty
+measured samples per case after the index extension was 161.9/163.1 ms. The application's command
+timeout was not changed. These are measurements of that isolated copy, not a
+measured production p95.
+
 ## Count semantics
 
 Starting a count freezes `BaseInventorySequence` and `SystemQuantityAtBase` per

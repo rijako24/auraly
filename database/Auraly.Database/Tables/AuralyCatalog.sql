@@ -28,7 +28,10 @@ CREATE TABLE [dbo].[ProductBarcodes] (
     CONSTRAINT [UQ_ProductBarcodes_Tenant_Barcode] UNIQUE ([TenantId], [Barcode])
 );
 GO
-CREATE INDEX [IX_ProductBarcodes_Product] ON [dbo].[ProductBarcodes] ([ProductId], [IsActive]);
+-- Product-scoped searches must evaluate the barcode without scanning all of a
+-- tenant's barcode keys or looking up the base row for each candidate product.
+CREATE INDEX [IX_ProductBarcodes_Product] ON [dbo].[ProductBarcodes] ([ProductId], [IsActive])
+    INCLUDE ([TenantId], [Barcode]);
 GO
 
 CREATE TABLE [dbo].[ProductIdentifiers] (
