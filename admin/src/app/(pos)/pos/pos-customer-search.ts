@@ -1,15 +1,21 @@
-import type { PosCustomer, PosCustomerSearchPage } from "@/services/pos/pos-edge-client";
+import type { PosCustomer } from "@/services/pos/pos-edge-client";
 
-export type SelectableCustomer = PosCustomer & { partySiteId: string };
+export type PosCustomerSearchOption = Pick<PosCustomer,
+  "customerId" | "partySiteId" | "siteName" | "siteAddress" | "name" | "identification">;
+export type PosCustomerSearchResults = {
+  items: PosCustomerSearchOption[]; hasMore: boolean; nextOffset: number | null;
+};
 
-export function selectableCustomerPage(page: PosCustomerSearchPage): {
-  items: SelectableCustomer[];
+export function selectableCustomerPage<T extends PosCustomerSearchOption>(page: {
+  items: T[]; hasMore: boolean; nextOffset: number | null;
+}, requireSite = true): {
+  items: T[];
   omittedWithoutSite: number;
   hasMore: boolean;
   nextOffset: number | null;
 } {
   const items = page.items.filter(
-    (customer): customer is SelectableCustomer => Boolean(customer.partySiteId),
+    (customer) => !requireSite || Boolean(customer.partySiteId),
   );
   return {
     ...page,

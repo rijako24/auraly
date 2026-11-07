@@ -56,6 +56,15 @@ Las consultas son paginadas en servidor y combinan número, cliente, producto, e
 
 Recuperar es una hidratación literal, no una reprificación ni una revalidación del catálogo. Solo una mutación comercial posterior de la línea vuelve a invocar el coordinador común y aplica las reglas vigentes.
 
+La captura debe estar vacía tanto en web como en SQLite, aunque sus productos
+provengan de otro pedido. La UI deshabilita recuperar y el writer lo valida bajo
+la transacción existente. Un rechazo no borra líneas ni libera el reclamo del
+pedido actual; en web la liberación de otros reclamos ocurre solamente al importar
+con éxito, en esa misma transacción. La compensación verifica el borrador activo
+antes de liberar un reclamo adquirido por un intento fallido, para no liberar el
+de un intento concurrente que sí terminó. Son operaciones por conjunto, sin
+consultas adicionales por línea ni cambios del contrato de facturación o esquema.
+
 Desde el POS, `Guardar pedido` exige cliente. Si el borrador todavía no lo tiene,
 abre primero el selector; seleccionar el cliente pasa por el motor canónico de
 precios para aplicar su lista o canal y solamente después guarda el pedido con el

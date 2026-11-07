@@ -118,6 +118,7 @@ type OrdersWorkspaceProps = {
   routeOptions?: Array<{ routeId: string; name: string }>;
   source?: number;
   activeOrderId?: string | null;
+  recoveryBlockedReason?: string | null;
 };
 
 type InvoiceProgress = {
@@ -157,6 +158,7 @@ export function OrdersWorkspace({
   routeOptions = [],
   source,
   activeOrderId,
+  recoveryBlockedReason,
 }: OrdersWorkspaceProps) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CommerceOrderPage | null>(null);
@@ -325,14 +327,13 @@ export function OrdersWorkspace({
   }
 
   async function recover(order: CommerceOrderListItem) {
-    if (!onRecover) return;
+    if (!onRecover || recoveryBlockedReason) return;
     setWorking(true);
     setError(null);
     setNotice(null);
     try {
       await onRecover(order);
       setNotice(`Pedido ${order.orderNumber} llevado a la venta.`);
-      await refresh();
     } catch (caught) {
       setError(orderOperationErrorMessage(caught, "No fue posible recuperar el pedido."));
     } finally {
@@ -592,6 +593,7 @@ export function OrdersWorkspace({
           </Button>
         )}
       </div>
+      {onRecover && recoveryBlockedReason && <p role="status" className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">{recoveryBlockedReason}</p>}
 
       {!compact && filtersExpanded && (
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -873,10 +875,10 @@ export function OrdersWorkspace({
                     <div className={`${compact ? "" : "col-start-3 row-start-1 self-start xl:col-auto xl:row-auto xl:self-auto"} flex shrink-0 items-center justify-end gap-1.5`}>
                       <button
                         type="button"
-                        disabled={!availability.canRecover || !onRecover || working}
+                        disabled={!availability.canRecover || !onRecover || working || Boolean(recoveryBlockedReason)}
                         onClick={() => void recover(order)}
                         className="flex h-9 min-w-9 items-center justify-center gap-2 rounded-lg bg-teal-50 px-2 text-sm font-bold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
-                        title={`${availability.actionLabel} ${order.orderNumber}`}
+                        title={recoveryBlockedReason ?? `${availability.actionLabel} ${order.orderNumber}`}
                         aria-label={`${availability.actionLabel} ${order.orderNumber}`}
                       >
                         <RotateCcw className="h-4 w-4" />

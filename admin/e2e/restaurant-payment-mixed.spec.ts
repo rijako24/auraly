@@ -18,6 +18,9 @@ const respond = (route: Route, value: unknown) => route.fulfill({
 test.use({ serviceWorkers: "block" });
 
 test("muestra lo pagado, cobra solo el saldo y combina tarjeta, efectivo y propina", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.print = () => document.documentElement.setAttribute("data-print-requested", "1");
+  });
   const user = { userId, tenantId, tenantKey: "E2E", username: "cajero",
     firstName: "Caja", lastName: "Prueba", roles: ["Cajero"],
     permissions: ["sales.create", "restaurant.tables.open_without_waiter"] };
@@ -145,20 +148,26 @@ test("muestra lo pagado, cobra solo el saldo y combina tarjeta, efectivo y propi
 
   await page.goto("/pos/restaurant");
   await page.getByRole("button", { name: /M-01/ }).click();
-  const popupPromise = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Imprimir", exact: true }).click();
-  const prebill = await popupPromise;
-  await expect(prebill.getByText("Propina voluntaria sugerida (10 %)"))
-    .toBeVisible();
-  await prebill.close();
+  const prebill = page.frameLocator('iframe[aria-hidden="true"]');
+  await expect(prebill.locator("html")).toHaveAttribute("data-print-requested", "1");
+  await expect(prebill.getByRole("heading", { name: "Mesa M-01", includeHidden: true })).toHaveCount(1);
+  await expect(prebill.locator("body")).toContainText("Propina voluntaria sugerida (10 %)");
+  const prebillBody = await prebill.locator("body").textContent();
+  expect(prebillBody?.match(/Precuenta/g)).toHaveLength(1);
+  await expect(prebill.locator("button")).toHaveCount(0);
+  expect(page.context().pages()).toHaveLength(1);
+  await page.locator('iframe[aria-hidden="true"]').evaluate(element =>
+    (element as HTMLIFrameElement).contentWindow?.dispatchEvent(new Event("afterprint")));
+  await expect(page.locator('iframe[aria-hidden="true"]')).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Preparar precuenta" })).toHaveCount(0);
   suggestedTipPercent = 0;
-  const zeroTipPopup = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Imprimir", exact: true }).click();
-  const zeroTipPrebill = await zeroTipPopup;
-  await expect(zeroTipPrebill.getByText("Propina voluntaria sugerida (0 %)"))
-    .toBeVisible();
-  await zeroTipPrebill.close();
+  await expect(prebill.locator("html")).toHaveAttribute("data-print-requested", "1");
+  await expect(prebill.locator("body")).toContainText("Propina voluntaria sugerida (0 %)");
+  await page.locator('iframe[aria-hidden="true"]').evaluate(element =>
+    (element as HTMLIFrameElement).contentWindow?.dispatchEvent(new Event("afterprint")));
+  await expect(page.locator('iframe[aria-hidden="true"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Facturar mesa" }).click();
   const payment = page.getByRole("dialog", { name: "Cobrar mesa" });
   await expect(payment.getByText("Por cobrar").locator("..")).toContainText("40.000");

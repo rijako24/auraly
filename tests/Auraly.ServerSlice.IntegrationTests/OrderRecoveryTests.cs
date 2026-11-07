@@ -1632,7 +1632,7 @@ public sealed class OrderRecoveryTests(
     }
 
     [Fact]
-    public async Task Recovering_an_order_replaces_the_active_claim_for_the_work_session()
+    public async Task Recovering_an_order_preserves_an_occupied_capture_and_its_claim()
     {
         var userId = Guid.NewGuid();
         var replacementUserId = Guid.NewGuid();
@@ -1688,22 +1688,65 @@ public sealed class OrderRecoveryTests(
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesRestartDraft,
             OrderPermissionCodes.Read,
             OrderPermissionCodes.Recover);
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
-
-        await RecoverAsync(client, userId, workSession.WorkSessionId, firstOrderId, draft);
+        var recoveryKey = Guid.NewGuid().ToString("N");
+        await RecoverAsync(client, userId, workSession.WorkSessionId, firstOrderId, draft, recoveryKey);
+        // A retry of the completed command returns its original result without importing again.
+        await RecoverAsync(client, userId, workSession.WorkSessionId, firstOrderId, draft, recoveryKey);
         draft = await OpenDraftAsync(client, workSession.WorkSessionId);
-
-        // Recuperar el mismo pedido renueva su reclamo sin abrir uno adicional.
-        await RecoverAsync(client, userId, workSession.WorkSessionId, firstOrderId, draft);
+        foreach (var targetOrderId in new[] { firstOrderId, secondOrderId })
+        {
+            using var blockedRequest = new HttpRequestMessage(HttpMethod.Post,
+                $"/api/commerce/v1/orders/{targetOrderId:D}/recover")
+            {
+                Content = JsonContent.Create(new RecoverOrderIntoSaleRequest(
+                    workSession.WorkSessionId, userId, draft.DraftId, draft.Version))
+            };
+            blockedRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var blocked = await client.SendAsync(blockedRequest);
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, blocked.StatusCode);
+            var unchanged = await OpenDraftAsync(client, workSession.WorkSessionId);
+            Assert.Equal(firstOrderId, unchanged.SourceOrderId);
+            Assert.Equal(draft.Version, unchanged.Version);
+            Assert.Equal(draft.Lines, unchanged.Lines);
+        }
         Assert.Equal(
             new[] { firstOrderId },
             await ActiveClaimOrderIdsAsync(userId, workSession.WorkSessionId));
 
+        // Explicitly empty the capture; a different order can then be recovered.
+        using (var resetRequest = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/reset")
+        {
+            Content = JsonContent.Create(new ResetOnlineSalesDraftRequest(draft.Version))
+        })
+        {
+            resetRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var reset = await client.SendAsync(resetRequest);
+            Assert.True(reset.IsSuccessStatusCode, await reset.Content.ReadAsStringAsync());
+        }
         draft = await OpenDraftAsync(client, workSession.WorkSessionId);
-        await RecoverAsync(client, userId, workSession.WorkSessionId, secondOrderId, draft);
+        Assert.Empty(draft.Lines);
+        async Task<System.Net.HttpStatusCode> ConcurrentRecoveryAsync()
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post,
+                $"/api/commerce/v1/orders/{secondOrderId:D}/recover")
+            {
+                Content = JsonContent.Create(new RecoverOrderIntoSaleRequest(
+                    workSession.WorkSessionId, userId, draft.DraftId, draft.Version))
+            };
+            request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var response = await client.SendAsync(request);
+            Assert.Contains(response.StatusCode, new[] { System.Net.HttpStatusCode.OK,
+                System.Net.HttpStatusCode.BadRequest, System.Net.HttpStatusCode.Conflict });
+            return response.StatusCode;
+        }
+        var concurrentResults = await Task.WhenAll(ConcurrentRecoveryAsync(), ConcurrentRecoveryAsync());
+        Assert.Single(concurrentResults, status => status == System.Net.HttpStatusCode.OK);
 
         Assert.Equal(
             new[] { secondOrderId },
@@ -1805,7 +1848,8 @@ public sealed class OrderRecoveryTests(
         Guid userId,
         Guid workSessionId,
         Guid orderId,
-        OnlineSalesDraft draft)
+        OnlineSalesDraft draft,
+        string? idempotencyKey = null)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
@@ -1817,7 +1861,7 @@ public sealed class OrderRecoveryTests(
                 draft.DraftId,
                 draft.Version))
         };
-        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+        request.Headers.Add("Idempotency-Key", idempotencyKey ?? Guid.NewGuid().ToString("N"));
         using var response = await client.SendAsync(request);
         Assert.True(
             response.IsSuccessStatusCode,

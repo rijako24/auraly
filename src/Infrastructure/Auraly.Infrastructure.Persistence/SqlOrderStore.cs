@@ -759,37 +759,44 @@ public sealed class SqlOrderStore(
         OrderActor actor,
         Guid orderId,
         Guid workSessionId,
+        bool onlyIfUnused,
         CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        var affected = await ExecuteAsync(connection, null, """
-            UPDATE dbo.OrderClaims
-            SET ReleasedAt=@Now
-            WHERE OrderId=@OrderId AND BusinessId=@BusinessId
-              AND WorkSessionId=@WorkSessionId AND UserId=@UserId
-              AND ReleasedAt IS NULL;
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        var affected = await ExecuteAsync(connection, transaction, """
+            DECLARE @InUse bit=0;
+            IF @OnlyIfUnused=1
+                SELECT @InUse=CASE WHEN SourceOrderId=@OrderId THEN 1 ELSE 0 END
+                FROM dbo.SalesDrafts WITH(UPDLOCK,HOLDLOCK)
+                WHERE BusinessId=@BusinessId AND WorkSessionId=@WorkSessionId
+                  AND UserId=@UserId AND Status=N'Active';
+            IF @InUse=0
+                UPDATE dbo.OrderClaims
+                SET ReleasedAt=@Now
+                WHERE OrderId=@OrderId AND BusinessId=@BusinessId
+                  AND WorkSessionId=@WorkSessionId AND UserId=@UserId
+                  AND ReleasedAt IS NULL;
             """,
             [
                 P("@Now", time.GetUtcNow()), P("@OrderId", orderId),
                 P("@BusinessId", actor.BusinessId), P("@WorkSessionId", workSessionId),
-                P("@UserId", actor.UserId)
+                P("@UserId", actor.UserId), P("@OnlyIfUnused", onlyIfUnused)
             ],
             cancellationToken);
-        if (affected == 0)
+        if (affected <= 0 && !onlyIfUnused)
             throw new OrderConflictException(
                 "No existe una recuperación activa del pedido para esta sesión.");
+        await transaction.CommitAsync(cancellationToken);
     }
 
-    public async Task ReleaseOtherClaimsAsync(
-        OrderActor actor,
-        Guid retainedOrderId,
-        Guid workSessionId,
-        CancellationToken cancellationToken)
-    {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await ExecuteAsync(connection, null, """
+    internal static Task ReleaseOtherClaimsAsync(SqlConnection connection,
+        SqlTransaction? transaction, Guid businessId, Guid workSessionId,
+        Guid userId, Guid retainedOrderId, DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(connection, transaction, """
             UPDATE dbo.OrderClaims
             SET ReleasedAt=@Now
             WHERE BusinessId=@BusinessId
@@ -797,12 +804,11 @@ public sealed class SqlOrderStore(
               AND OrderId<>@RetainedOrderId AND ReleasedAt IS NULL;
             """,
             [
-                P("@Now", time.GetUtcNow()), P("@BusinessId", actor.BusinessId),
-                P("@WorkSessionId", workSessionId), P("@UserId", actor.UserId),
+                P("@Now", now), P("@BusinessId", businessId),
+                P("@WorkSessionId", workSessionId), P("@UserId", userId),
                 P("@RetainedOrderId", retainedOrderId)
             ],
             cancellationToken);
-    }
 
     public async Task<OrderEmissionRetry> PrepareEmissionRetryAsync(
         OrderActor actor,

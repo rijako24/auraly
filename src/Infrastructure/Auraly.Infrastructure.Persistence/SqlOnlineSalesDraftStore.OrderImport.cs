@@ -44,15 +44,15 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         DemandActiveVersion(state, request.ExpectedVersion);
         var draftLineCount = await CountDraftLinesAsync(
             connection, transaction, draftId, cancellationToken);
-        if (draftLineCount != 0 && state.SourceOrderId is null)
+        if (draftLineCount != 0)
             throw new OnlineSalesDraftValidationException(
-                "Pausa o reinicia la venta actual antes de recuperar un pedido.");
+                "Termina o reinicia la captura actual antes de recuperar un pedido.");
 
         if (state.SourceOrderId is not null)
             await ExecuteAsync(
                 connection,
                 transaction,
-                "DELETE sales.InvoiceChargeDraftSelections WHERE DraftId=@DraftId; DELETE dbo.SalesDraftLines WHERE SalesDraftId=@DraftId;",
+                "DELETE sales.InvoiceChargeDraftSelections WHERE DraftId=@DraftId;",
                 [P("@DraftId", draftId)],
                 cancellationToken);
 
@@ -165,6 +165,9 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
             draftId,
             request.ExpectedVersion,
             cancellationToken);
+        await SqlOrderStore.ReleaseOtherClaimsAsync(connection, transaction,
+            state.BusinessId, state.WorkSessionId, user.UserId, request.SourceOrderId,
+            time.GetUtcNow(), cancellationToken);
         await SaveReceiptAsync(
             connection,
             transaction,

@@ -352,7 +352,6 @@ public sealed partial class PosDraftStore
                 WHERE draft.BusinessId=@BusinessId AND draft.WarehouseId=@WarehouseId
                   AND draft.DeviceId=@DeviceId AND draft.WorkSessionId=@WorkSessionId
                   AND draft.UserId=@UserId AND draft.Status='Active'
-                  AND draft.SourceOrderId IS NULL
                   AND EXISTS(SELECT 1 FROM PosDraftLines line WHERE line.DraftId=draft.DraftId);
                 """;
             guard.Parameters.AddRange([

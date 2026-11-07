@@ -592,10 +592,10 @@ export class OnlinePosClient implements PosClient {
       );
       for (let index = 0; index < rendered.htmlDocuments.length; index += 1) {
         const preview = openHalfLetterPrintPreview();
+        renderServerPrintDocument(preview, rendered.htmlDocuments[index]);
         const completed = index < rendered.htmlDocuments.length - 1
           ? waitForBrowserPrint(preview)
           : null;
-        renderServerPrintDocument(preview, rendered.htmlDocuments[index]);
         if (completed) await completed;
       }
     }
@@ -1731,7 +1731,6 @@ export function openHalfLetterPrintPreview(): Window | null {
     return null;
   }
   browserPrintFrames.set(target, frame);
-  target.addEventListener("afterprint", () => closePrintPreview(target), { once: true });
   return target;
 }
 
@@ -1753,10 +1752,16 @@ function waitForBrowserPrint(preview: Window | null): Promise<void> {
     preview.addEventListener("afterprint", () => resolve(), { once: true }));
 }
 
-function renderServerPrintDocument(preview: Window | null, html: string): void {
+function openBrowserPrintDocument(preview: Window): void {
+  // document.open() clears window listeners; bind completion to the new document.
+  preview.document.open();
+  preview.addEventListener("afterprint", () => closePrintPreview(preview), { once: true });
+}
+
+export function renderServerPrintDocument(preview: Window | null, html: string): void {
   if (!preview)
     throw new Error("El navegador bloqueó la vista previa de impresión.");
-  preview.document.open();
+  openBrowserPrintDocument(preview);
   preview.document.write(html.replace(
     "</body>",
     "<script>addEventListener('load',()=>setTimeout(()=>window.print(),150));</script></body>",
@@ -1807,7 +1812,7 @@ async function renderSharedSalesDocument(
       format, paperWidthMillimeters, businessName: context.businessName, autoPrint,
     }) },
   );
-  preview.document.open();
+  openBrowserPrintDocument(preview);
   preview.document.write(rendered.html);
   preview.document.close();
 }

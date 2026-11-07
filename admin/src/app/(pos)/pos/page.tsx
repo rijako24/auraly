@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowDownToLine,
   ArrowUpFromLine,
   Banknote,
@@ -40,6 +41,7 @@ import {
 } from "@/lib/default-start-route";
 import { realtimeReconnectDelay } from "@/lib/realtime-reconnect-policy";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
+import { captureRecoveryBlockedReason } from "@/components/orders/order-availability";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
 import { orderOperationErrorMessage } from "@/services/orders/order-http-error";
@@ -147,7 +149,7 @@ import {
   removingLastRecoveredOrderLineCancelsOrder,
   shouldSaveOrderAfterCustomerSelection,
 } from "./pos-order-save-availability";
-import { consumeOrderRecoveryUrl } from "./pos-order-recovery-url";
+import { consumeOrderRecoveryUrl, isOrderRecoveryWorkspace } from "./pos-order-recovery-url";
 import { completedOrderRecoveryPresentation } from "./pos-order-recovery-presentation";
 import { isOnlinePosTransportFailure, posOperationErrorMessage } from "./pos-operation-error";
 import { capturedLineAfterAddition, shouldOpenGenericProductPricing } from "./pos-capture-presentation";
@@ -497,7 +499,9 @@ export default function PosPage() {
   const storeLinesViewport = useRef<HTMLDivElement>(null);
   const storeLinesContent = useRef<HTMLDivElement>(null);
   const isStore = client?.mode === "online" && workstation.pointOfSaleMode === "Store";
+  const isRestaurantOrder = client?.mode === "online" && workstation.pointOfSaleMode === "RestaurantBar";
   const customerPending = Boolean(draft?.customerId && !selectedCustomer);
+  const recoveryBlockedReason = captureRecoveryBlockedReason(draft?.lines.length ?? 0);
   const firstStoreLineId = draft?.lines[0]?.lineId;
   const secondStoreLineId = draft?.lines[1]?.lineId;
   useEffect(() => {
@@ -571,7 +575,8 @@ export default function PosPage() {
   });
   // Online commands own their connectivity result: attempt the canonical API
   // and show its real error instead of blocking on a stale health snapshot.
-  const salesReady = client?.mode === "online" ? Boolean(client) : edgeReady;
+  const salesReady = client?.mode === "online"
+    ? Boolean(client) && (!isRestaurantOrder || Boolean(draft?.sourceOrderId)) : edgeReady;
 
   const revealLine = useCallback((lineId: string | null) => {
     if (!lineId) return;
@@ -626,12 +631,13 @@ export default function PosPage() {
   );
 
   const recoverOrderOnline = useCallback(async (orderId: string) => {
+    if (recoveryBlockedReason) throw new Error(recoveryBlockedReason);
     const { orderClient, recovered } = await runOnlineOrderRequest(async () => {
       const online = await getOrderClient();
       return { orderClient: online, recovered: await online.recoverOrder(orderId) };
     });
     return { orderClient, recovered };
-  }, [getOrderClient]);
+  }, [getOrderClient, recoveryBlockedReason]);
 
   const saveDraftAsOnlineOrder = useCallback(async (value: PosDraft) => {
     return runOnlineOrderRequest(async () => {
@@ -672,7 +678,7 @@ export default function PosPage() {
   useEffect(() => {
     // The store drawer owns its order page only while open; no hidden counter
     // requests or auxiliary page are needed for its icon-only entry point.
-    if (isStore) return;
+    if (isStore || isRestaurantOrder) return;
     if (!client) {
       setOrdersCount(0);
       return;
@@ -688,7 +694,7 @@ export default function PosPage() {
         if (active) setOrdersCount(0);
       });
     return () => { active = false; };
-  }, [client, isStore, loadOrders, ordersRefreshVersion, sidePanel]);
+  }, [client, isStore, isRestaurantOrder, loadOrders, ordersRefreshVersion, sidePanel]);
 
   useEffect(() => {
     let active = true;
@@ -807,7 +813,7 @@ export default function PosPage() {
           (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
         ) ?? (available.every(option => option.pointOfSaleMode === "RestaurantBar") ? available[0] : undefined);
         if (selected) {
-          if (selected.pointOfSaleMode === "RestaurantBar") {
+          if (selected.pointOfSaleMode === "RestaurantBar" && !isOrderRecoveryWorkspace(window.location.href)) {
             queryClient.setQueryData(salesWorkspaceBootstrapHandoffKey(serverBootstrap.tenantId, serverBootstrap.userId), serverBootstrap);
             router.replace("/pos/restaurant");
             return;
@@ -815,6 +821,7 @@ export default function PosPage() {
           window.localStorage.setItem("selected_business_id", selected.businessId);
           const context = await selectSalesWorkspace(selected);
           if (active) {
+            if (context.pointOfSaleMode === "RestaurantBar") setSidePanel("orders");
             const onlineClient = new OnlinePosClient(
               context,
               serverBootstrap.userId,
@@ -1011,7 +1018,8 @@ export default function PosPage() {
         if (!hydrated) {
           const [current, pending, numbers] = await Promise.all([
             client.activeDraft(),
-            client.temporaries(),
+            client.mode === "online" && health.pointOfSaleMode === "RestaurantBar"
+              ? Promise.resolve([]) : client.temporaries(),
             client.nextNumbers(documentType),
           ]);
           if (!active) return;
@@ -1097,7 +1105,7 @@ export default function PosPage() {
 
   useEffect(() => {
     if (!client || !edgeReady || !draft || busy || typeof window === "undefined") return;
-    const recoveryRequest = consumeOrderRecoveryUrl(window.location.href);
+    const recoveryRequest = consumeOrderRecoveryUrl(window.location.href, isRestaurantOrder);
     const orderId = recoveryRequest.orderId;
     if (!orderId || recoveredOrderFromUrl.current === orderId) return;
     recoveredOrderFromUrl.current = orderId;
@@ -1130,7 +1138,7 @@ export default function PosPage() {
         setBusy(false);
         focusScanner();
       });
-  }, [busy, client, draft, edgeReady, focusScanner, recoverOrderOnline]);
+  }, [busy, client, draft, edgeReady, focusScanner, isRestaurantOrder, recoverOrderOnline]);
 
   useEffect(() => {
     if (!client || !draft?.sourceOrderId || busy) return;
@@ -1237,6 +1245,7 @@ export default function PosPage() {
   }, [busy, client, draft, focusScanner, refreshTemporaries]);
 
   const requestPauseSale = useCallback(async () => {
+    if (isRestaurantOrder) return;
     const customerName = temporaryNameForCustomer(selectedCustomer);
     if (!customerName) {
       setTemporaryName("");
@@ -1245,7 +1254,7 @@ export default function PosPage() {
       return;
     }
     await persistTemporary(customerName, "");
-  }, [persistTemporary, selectedCustomer]);
+  }, [isRestaurantOrder, persistTemporary, selectedCustomer]);
 
   const saveOrder = useCallback(async () => {
     if (!client || !draft?.lines.length || busy) return;
@@ -1641,6 +1650,10 @@ export default function PosPage() {
 
   async function captureValue(value: string, requestedQuantity?: number): Promise<boolean> {
     if (!client || !value || busy) return false;
+    if (isRestaurantOrder && !draft?.sourceOrderId) {
+      setError("Recupera un pedido para continuar o vuelve a Restaurante.");
+      return false;
+    }
     if (!salesReady) {
       setError(
         client.mode === "online"
@@ -2216,7 +2229,7 @@ export default function PosPage() {
     }
   }
 
-  async function selectCustomer(customer: PosCustomer | null) {
+  async function selectCustomer(customer: Pick<PosCustomer, "customerId" | "partySiteId"> | null) {
     if (!client || !draft || busy) return;
     setBusy(true);
     setPricingTransition(true);
@@ -2332,6 +2345,7 @@ export default function PosPage() {
 
   async function recoverTemporary(id: string) {
     if (!client) return;
+    if (recoveryBlockedReason) { setError(recoveryBlockedReason); return; }
     setBusy(true);
     let requiresResolution = false;
     try {
@@ -2405,6 +2419,7 @@ export default function PosPage() {
 
   async function openPayment() {
     if (!client || !draft?.lines.length || busy) return;
+    if (isRestaurantOrder && !draft.sourceOrderId) return;
     if (customerPending) {
       setError("Selecciona el cliente de la venta antes de cobrar.");
       return;
@@ -2533,6 +2548,9 @@ export default function PosPage() {
       setPaymentOpen(false);
       setSaleSettlement(null);
 
+      const nextAction = isRestaurantOrder
+        ? "Recupera otro pedido o vuelve a Restaurante."
+        : "Nueva venta lista.";
       const printAfterCompletedSale = async () => {
         try {
           if (result.printCompletion) {
@@ -2559,7 +2577,7 @@ export default function PosPage() {
           }
           if (result.printCompletion) {
             setMessage(
-              `${result.issuedSale.documentNumber} emitida e impresa. Nueva venta lista.`,
+              `${result.issuedSale.documentNumber} emitida e impresa. ${nextAction}`,
             );
           }
         } catch (printFailure) {
@@ -2583,10 +2601,10 @@ export default function PosPage() {
             : "emitida; impresión enviada";
       setMessage(
         settlement.change > 0
-          ? `${result.issuedSale.documentNumber} ${issuedLabel}. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`
+          ? `${result.issuedSale.documentNumber} ${issuedLabel}. Entregar ${money.format(settlement.change)} de cambio. ${nextAction}`
           : effectiveDocumentType === "SalesInvoice"
-            ? `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`
-            : `${result.issuedSale.documentNumber} ${issuedLabel}. Pago registrado. Nueva venta lista.`,
+            ? `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. ${nextAction}`
+            : `${result.issuedSale.documentNumber} ${issuedLabel}. Pago registrado. ${nextAction}`,
       );
     } catch (caught) {
       closePrintPreview(localPrintPreview);
@@ -2901,7 +2919,7 @@ export default function PosPage() {
 
   async function activateOnline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
     setSetupError(null);
-    if (option.pointOfSaleMode === "RestaurantBar") {
+    if (option.pointOfSaleMode === "RestaurantBar" && !isOrderRecoveryWorkspace(window.location.href)) {
       rememberSalesWorkspace(option);
       window.localStorage.setItem("selected_business_id", option.businessId);
       router.push("/pos/restaurant");
@@ -2941,6 +2959,7 @@ export default function PosPage() {
     try {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectSalesWorkspace(option, workspaceChanging);
+      if (context.pointOfSaleMode === "RestaurantBar") setSidePanel("orders");
       const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName, edgeEnrollmentToken, false, onlineTenantName);
       tenantsApi.preparePrintBrandingForWorkspaceEntry();
       setDraft(null);
@@ -3279,9 +3298,9 @@ export default function PosPage() {
             <div
               role="tablist"
               aria-label="Documentos pendientes"
-              className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1"
+              className={`mb-4 grid gap-1 rounded-xl bg-slate-100 p-1 ${isRestaurantOrder ? "grid-cols-1" : "grid-cols-2"}`}
             >
-              <button
+              {!isRestaurantOrder && <button
                 type="button"
                 role="tab"
                 aria-selected={sidePanel === "temporaries"}
@@ -3297,7 +3316,7 @@ export default function PosPage() {
                 <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
                   {temporaries.length}
                 </span>
-              </button>
+              </button>}
               <button
                 type="button"
                 role="tab"
@@ -3317,7 +3336,7 @@ export default function PosPage() {
               </button>
             </div>
 
-            {sidePanel === "temporaries" ? (
+            {sidePanel === "temporaries" && !isRestaurantOrder ? (
               <div className="min-h-0 flex-1 overflow-auto">
                 <div className="mb-3">
                   <p className="font-semibold text-slate-900">Ventas en espera</p>
@@ -3368,10 +3387,11 @@ export default function PosPage() {
               </div>
             ) : !ordersExpanded ? (
               <OrdersWorkspace
-                key={isStore ? "store-orders" : `compact-orders-${ordersRefreshVersion}`}
+                key={isStore || isRestaurantOrder ? "drawer-orders" : `compact-orders-${ordersRefreshVersion}`}
                 compact
                 initialStatus="Available"
                 activeOrderId={draft?.sourceOrderId}
+                recoveryBlockedReason={recoveryBlockedReason}
                 loadPage={loadOrders}
                 loadDetail={loadOrder}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
@@ -3401,8 +3421,12 @@ export default function PosPage() {
 
   return (
     <main className={`min-h-screen bg-[#eef3f3] text-slate-950 ${isStore ? "" : "xl:h-screen xl:overflow-hidden"}`}>
-      <header className={`flex min-h-14 items-center justify-between bg-auraly-background py-2.5 text-auraly-text shadow-lg ${isStore ? "flex-wrap gap-2 px-3 md:flex-nowrap md:gap-4 md:px-5" : "gap-4 px-5"}`}>
+      <header className={`flex min-h-14 items-center justify-between bg-auraly-background py-2.5 text-auraly-text shadow-lg ${isStore || isRestaurantOrder ? "flex-wrap gap-2 px-3 md:flex-nowrap md:gap-4 md:px-5" : "gap-4 px-5"}`}>
         <div className="flex items-center gap-2">
+          {isRestaurantOrder && <>
+            <button type="button" aria-label="Volver a restaurante" title="Volver a restaurante" disabled={busy} onClick={() => router.push("/pos/restaurant")} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-300/20 text-sky-100"><ArrowLeft className="h-4 w-4"/></button>
+            <button type="button" aria-label="Ver pedidos" title="Pedidos" disabled={busy} onClick={() => { setSidePanel("orders"); setStoreDocumentsOpen(true); }} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-300/20 text-sky-100"><ClipboardList className="h-4 w-4"/></button>
+          </>}
           {(canOpenAdministrativeMenu || client.mode === "edge") && (
             <PosExitMenuButton
               target={posAdministrativeMenuTarget(cloudAuthenticated && (
@@ -3636,7 +3660,12 @@ export default function PosPage() {
 
           <div className={isStore ? "relative shrink-0" : "contents"}>
           <details open={isStore ? undefined : true} className="shrink-0 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-            <summary className={isStore ? "cursor-pointer py-2 pl-2 pr-24 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500" : "hidden"}>Acciones de captura</summary>
+            <summary className={isStore ? "relative cursor-pointer py-2 pl-2 pr-24 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500" : "hidden"}>Acciones de captura
+              {isStore && <span className="absolute inset-y-0 right-0 flex items-center gap-1">
+                <button type="button" title="Ventas en espera" aria-label="Ver ventas en espera" className="flex h-8 min-w-9 items-center justify-center gap-1 rounded-lg border bg-slate-50 px-2 text-teal-800 hover:bg-teal-50" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setSidePanel("temporaries"); setStoreDocumentsOpen(true); }}><Clock3 className="h-4 w-4"/>{temporaries.length > 0 && <span className="text-xs font-semibold">{temporaries.length}</span>}</button>
+                <button type="button" title="Pedidos" aria-label="Ver pedidos" className="grid h-8 w-9 place-items-center rounded-lg border bg-slate-50 text-teal-800 hover:bg-teal-50" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setSidePanel("orders"); setStoreDocumentsOpen(true); }}><ClipboardList className="h-4 w-4"/></button>
+              </span>}
+            </summary>
           <div className="flex flex-wrap items-center justify-between gap-2" aria-label="Acciones de captura">
             {!isStore && <p className="hidden pl-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 sm:block">
               Acciones de captura
@@ -3682,10 +3711,6 @@ export default function PosPage() {
             </div>
           </div>
           </details>
-          {isStore && <div className="absolute right-2 top-1.5 flex gap-1">
-            <button type="button" title="Ventas en espera" aria-label="Ver ventas en espera" className="flex h-8 min-w-9 items-center justify-center gap-1 rounded-lg border bg-slate-50 px-2 text-teal-800 hover:bg-teal-50" onClick={() => { setSidePanel("temporaries"); setStoreDocumentsOpen(true); }}><Clock3 className="h-4 w-4"/>{temporaries.length > 0 && <span className="text-xs font-semibold">{temporaries.length}</span>}</button>
-            <button type="button" title="Pedidos" aria-label="Ver pedidos" className="grid h-8 w-9 place-items-center rounded-lg border bg-slate-50 text-teal-800 hover:bg-teal-50" onClick={() => { setSidePanel("orders"); setStoreDocumentsOpen(true); }}><ClipboardList className="h-4 w-4"/></button>
-          </div>}
           </div>
 
           <div role={isStore ? "region" : undefined} aria-label={isStore ? "Productos de la venta" : undefined}
@@ -3827,7 +3852,7 @@ export default function PosPage() {
           <section className={`shrink-0 rounded-2xl bg-auraly-background ${isStore ? "p-3" : "p-4"} text-auraly-text shadow-lg ${showCashChange ? "xl:basis-[54%]" : ""}`}>
             <div className={`flex items-center justify-between gap-2 ${isStore ? "mb-2" : "mb-3"}`}>
               {isStore ? customerSelector : <div>
-                <p className="text-xs uppercase tracking-[0.16em] text-auraly-secondary">Venta actual</p>
+                <p className="text-xs uppercase tracking-[0.16em] text-auraly-secondary">{isRestaurantOrder ? "Pedido sin mesa" : "Venta actual"}</p>
                 <p className="mt-1 text-sm font-medium">
                   {selectedCustomer?.name ?? (draft?.customerId ? "Cliente de la venta" : "Consumidor final")}
                 </p>
@@ -3880,7 +3905,7 @@ export default function PosPage() {
             )}
             <button
               type="button"
-              disabled={!draft?.lines.length || busy || customerPending}
+              disabled={!draft?.lines.length || busy || customerPending || !salesReady}
               onClick={openPayment}
               className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-auraly-accent px-4 text-base font-bold text-auraly-background transition hover:bg-auraly-light disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -3888,8 +3913,8 @@ export default function PosPage() {
               <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">{POS_ACTION_SHORTCUTS.payment}</span>
             </button>
 
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <button
+            <div className={`mt-2 grid gap-2 ${isRestaurantOrder ? "grid-cols-1" : "grid-cols-2"}`}>
+              {!isRestaurantOrder && <button
                 type="button"
                 disabled={!draft?.lines.length || Boolean(draft?.sourceOrderId) || busy}
                 onClick={() => void requestPauseSale()}
@@ -3899,7 +3924,7 @@ export default function PosPage() {
                 <Save className="h-4 w-4 shrink-0" />
                 <span className="truncate">Pausar venta</span>
                 <span className={isStore ? "sr-only" : "shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold"}>{POS_ACTION_SHORTCUTS.pauseSale}</span>
-              </button>
+              </button>}
 
               <button
                 type="button"
@@ -3961,15 +3986,15 @@ export default function PosPage() {
                 </p>
               </div>
             </section>
-          ) : pendingDocumentsPanel)}
+          ) : !isRestaurantOrder ? pendingDocumentsPanel : null)}
         </aside>
         </div>
         {isStore && <PosStoreCatalog key={`${workstation.businessId}:${workstation.warehouseId}`} client={client} scopeKey={`${workstation.businessId}:${workstation.warehouseId}`} customerId={draft?.customerId ?? null} completedSaleId={lastSettlement?.documentId ?? null} ready={salesReady && !!workstation.workSessionId} disabled={busy || !salesReady} onSelect={captureSelectedProduct} />}
       </section>
 
-      {isStore && <Sheet open={storeDocumentsOpen} onOpenChange={setStoreDocumentsOpen}>
+      {(isStore || isRestaurantOrder) && <Sheet open={storeDocumentsOpen} onOpenChange={setStoreDocumentsOpen}>
         <SheetContent className="flex w-full min-h-0 flex-col p-4 sm:max-w-xl" onCloseAutoFocus={event => { event.preventDefault(); focusScanner(); }}>
-          <SheetHeader className="pr-8"><SheetTitle>Ventas y pedidos</SheetTitle><SheetDescription>Recupera una venta en espera o un pedido para continuar en esta caja.</SheetDescription></SheetHeader>
+          <SheetHeader className="pr-8"><SheetTitle>{isRestaurantOrder ? "Pedidos" : "Ventas y pedidos"}</SheetTitle><SheetDescription>{isRestaurantOrder ? "Recupera un pedido para facturarlo sin mesa." : "Recupera una venta en espera o un pedido para continuar en esta caja."}</SheetDescription></SheetHeader>
           {storeDocumentsOpen && pendingDocumentsPanel}
         </SheetContent>
       </Sheet>}
@@ -4000,6 +4025,7 @@ export default function PosPage() {
               key={`expanded-orders-${ordersRefreshVersion}`}
               initialStatus="Available"
               activeOrderId={draft?.sourceOrderId}
+              recoveryBlockedReason={recoveryBlockedReason}
               loadPage={loadOrders}
               loadDetail={loadOrder}
               onRecover={(order) => recoverPosOrder(order.orderId)}
@@ -4069,10 +4095,8 @@ export default function PosPage() {
         <PosCustomerSearchDialog
           busy={busy}
           connected={serverConnected}
-          onCountries={customerCountries}
-          onDivisions={customerDivisions}
-          onCities={customerCities}
-          onCreate={createCustomer}
+          creation={{ onCountries: customerCountries, onDivisions: customerDivisions,
+            onCities: customerCities, onCreate: createCustomer }}
           onSearch={searchCustomers}
           onSelect={selectCustomer}
           onCancel={() => {

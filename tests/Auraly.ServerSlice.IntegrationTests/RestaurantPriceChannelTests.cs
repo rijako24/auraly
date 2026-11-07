@@ -1,16 +1,115 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using Auraly.Contracts.Parties;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
+using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class RestaurantPriceChannelTests(ServerSliceFixture fixture)
+public sealed class RestaurantPriceChannelTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Channel_search_filters_active_tenant_options_before_paging()
+    {
+        var otherTenantId = Guid.NewGuid();
+        var prefix = $"PAGE-{Guid.NewGuid():N}"[..16];
+        string previousMode;
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var setup = new SqlCommand("""
+                SELECT PointOfSaleMode FROM dbo.Businesses WHERE BusinessId=@BusinessId;
+                UPDATE dbo.Businesses SET PointOfSaleMode=N'RestaurantBar'
+                WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
+                INSERT dbo.Tenants(TenantId,Name,Email)
+                VALUES(@OtherTenantId,N'Isolated channel test',CONCAT(@Prefix,N'@test.local'));
+                WITH digits(n) AS (SELECT n FROM (VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)) d(n)),
+                numbers(n) AS (SELECT a.n*100+b.n*10+c.n+1 FROM digits a CROSS JOIN digits b CROSS JOIN digits c)
+                INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,Strategy,IsActive,CreatedAt)
+                SELECT NEWID(),@TenantId,CONCAT(@Prefix,N'-',n),
+                    CONCAT(@Prefix,N' ',RIGHT(CONCAT(N'0000',n),4)),N'TieredProductPrice',1,SYSDATETIMEOFFSET()
+                FROM numbers;
+                INSERT dbo.PriceChannels(PriceChannelId,TenantId,Code,Name,Strategy,IsActive,CreatedAt)
+                VALUES(NEWID(),@TenantId,CONCAT(@Prefix,N'-OFF'),CONCAT(@Prefix,N' 0000 inactive'),N'TieredProductPrice',0,SYSDATETIMEOFFSET()),
+                    (NEWID(),@OtherTenantId,CONCAT(@Prefix,N'-FOREIGN'),CONCAT(@Prefix,N' 0000 foreign'),N'TieredProductPrice',1,SYSDATETIMEOFFSET());
+                """, connection);
+            setup.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            setup.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            setup.Parameters.AddWithValue("@OtherTenantId", otherTenantId);
+            setup.Parameters.AddWithValue("@Prefix", prefix);
+            previousMode = (string)(await setup.ExecuteScalarAsync())!;
+        }
+        try
+        {
+            using var client = fixture.CreateAdminClient("restaurant.price_channels.select");
+            const string path = "/api/commerce/v1/restaurant/price-channels";
+            var first = await client.GetFromJsonAsync<RestaurantPriceChannelOption[]>(
+                $"{path}?search={prefix}&skip=0&take=21");
+            var next = await client.GetFromJsonAsync<RestaurantPriceChannelOption[]>(
+                $"{path}?search={prefix}&skip=20&take=21");
+            Assert.Equal(21, first!.Length);
+            Assert.Equal(21, next!.Length);
+            Assert.Equal($"{prefix} 0001", first[0].Name);
+            Assert.Equal($"{prefix} 0021", next[0].Name);
+            Assert.Empty(first.Take(20).Select(item => item.PriceChannelId)
+                .Intersect(next.Take(20).Select(item => item.PriceChannelId)));
+            var filtered = await client.GetFromJsonAsync<RestaurantPriceChannelOption[]>(
+                $"{path}?search={prefix}%201000&skip=0&take=21");
+            var filteredItem = Assert.Single(filtered!);
+            Assert.Equal($"{prefix} 1000", filteredItem.Name);
+            var byCode = await client.GetFromJsonAsync<RestaurantPriceChannelOption[]>(
+                $"{path}?search={prefix}-1000&skip=0&take=21");
+            Assert.Equal(filteredItem.PriceChannelId, Assert.Single(byCode!).PriceChannelId);
+            using var invalid = await client.GetAsync($"{path}?skip=-1&take=101");
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+            using var waiter = fixture.CreateAdminClient("restaurant.attend");
+            using var denied = await waiter.GetAsync($"{path}?skip=0&take=21");
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            foreach (var (label, query) in new[] {
+                ("first", $"search={prefix}&skip=0&take=21"),
+                ("next", $"search={prefix}&skip=20&take=21"),
+                ("filtered", $"search={prefix}%201000&skip=0&take=21") })
+            {
+                var samples = new List<double>();
+                for (var attempt = 0; attempt < 10; attempt++)
+                {
+                    var watch = Stopwatch.StartNew();
+                    using var response = await client.GetAsync($"{path}?{query}");
+                    response.EnsureSuccessStatusCode();
+                    await response.Content.ReadAsStringAsync();
+                    samples.Add(watch.Elapsed.TotalMilliseconds);
+                }
+                samples.Sort();
+                var p95 = samples[(int)Math.Ceiling(samples.Count * .95) - 1];
+                output.WriteLine($"1,000 channels, {label}: p95 {p95:F1} ms, one SQL command/page, <=21 rows.");
+                Assert.True(p95 < 1000, $"{label}: p95 {p95:F1} ms exceeds 1,000 ms.");
+            }
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var cleanup = new SqlCommand("""
+                DELETE dbo.PriceChannels WHERE (TenantId=@TenantId OR TenantId=@OtherTenantId)
+                    AND LEFT(Code,LEN(@Prefix))=@Prefix;
+                DELETE dbo.Tenants WHERE TenantId=@OtherTenantId;
+                UPDATE dbo.Businesses SET PointOfSaleMode=@Mode
+                    WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
+                """, connection);
+            cleanup.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            cleanup.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            cleanup.Parameters.AddWithValue("@OtherTenantId", otherTenantId);
+            cleanup.Parameters.AddWithValue("@Prefix", prefix);
+            cleanup.Parameters.AddWithValue("@Mode", previousMode);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
     [Fact]
     public async Task Selected_channel_reprices_existing_items_and_customer_channel_takes_priority()
     {

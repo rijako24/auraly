@@ -309,6 +309,26 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
+    public async Task Recovered_order_does_not_replace_another_recovered_order_with_products()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var orderId = Guid.NewGuid();
+            var active = await store.ImportOrderAsync(scope, orderId, "PED-102",
+                Guid.NewGuid(), Guid.NewGuid(), null, [Line(2m)]);
+            foreach (var target in new[] { orderId, Guid.NewGuid() })
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    store.ImportOrderAsync(scope, target, "PED-103", Guid.NewGuid(),
+                        Guid.NewGuid(), null, [Line(1m)]));
+
+            var unchanged = await store.GetOrCreateActiveAsync(scope);
+            Assert.Equal(active.DraftId, unchanged.DraftId);
+            Assert.Equal(orderId, unchanged.SourceOrderId);
+            Assert.Equal(2m, Assert.Single(unchanged.Lines).Quantity);
+        });
+    }
+
+    [Fact]
     public async Task Only_an_unpriced_generic_line_can_be_discarded_without_sensitive_authorization()
     {
         await WithStoreAsync(async (store, _, scope, _) =>

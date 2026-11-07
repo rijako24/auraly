@@ -13,35 +13,35 @@ import type {
   PosCountry,
   PosCreateCustomerInput,
   PosCustomer,
-  PosCustomerSearchPage,
 } from "@/services/pos/pos-edge-client";
 import { usePosModalBehavior } from "./use-pos-modal-behavior";
-import { selectableCustomerPage } from "./pos-customer-search";
+import { selectableCustomerPage, type PosCustomerSearchOption, type PosCustomerSearchResults } from "./pos-customer-search";
 
 export function PosCustomerSearchDialog({
   busy,
   connected,
   onSearch,
   onSelect,
-  onCountries,
-  onDivisions,
-  onCities,
-  onCreate,
+  creation,
+  requireSite = true,
   onCancel,
 }: {
   busy: boolean;
   connected: boolean;
-  onSearch: (term: string, skip: number) => Promise<PosCustomerSearchPage>;
-  onSelect: (customer: PosCustomer | null) => Promise<void>;
-  onCountries: () => Promise<PosCountry[]>;
-  onDivisions: (countryId: string) => Promise<PosAdministrativeDivision[]>;
-  onCities: (divisionId: string) => Promise<PosCity[]>;
-  onCreate: (input: PosCreateCustomerInput) => Promise<PosCustomer>;
+  onSearch: (term: string, skip: number) => Promise<PosCustomerSearchResults>;
+  onSelect: (customer: PosCustomerSearchOption | null) => Promise<void>;
+  requireSite?: boolean;
+  creation?: {
+    onCountries: () => Promise<PosCountry[]>;
+    onDivisions: (countryId: string) => Promise<PosAdministrativeDivision[]>;
+    onCities: (divisionId: string) => Promise<PosCity[]>;
+    onCreate: (input: PosCreateCustomerInput) => Promise<PosCustomer>;
+  };
   onCancel: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [term, setTerm] = useState("");
-  const [results, setResults] = useState<PosCustomer[]>([]);
+  const [results, setResults] = useState<PosCustomerSearchOption[]>([]);
   const [selected, setSelected] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
@@ -49,6 +49,7 @@ export function PosCustomerSearchDialog({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
+  const loadingMoreVersion = useRef<number | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const modal = useRef<HTMLElement>(null);
   const resultButtons = useRef(new Map<number, HTMLButtonElement>());
@@ -68,31 +69,32 @@ export function PosCustomerSearchDialog({
     const version = ++requestVersion.current;
     const timer = window.setTimeout(() => {
       setLoading(true);
+      setLoadingMore(false);
       setError(null);
       void onSearch(term.trim(), 0)
         .then((page) => {
           if (requestVersion.current !== version) return;
-          const selectable = selectableCustomerPage(page);
+          const selectable = selectableCustomerPage(page, requireSite);
           setResults(selectable.items);
           setSelected(0);
           setHasMore(selectable.hasMore);
           setNextOffset(selectable.nextOffset);
           if (!selectable.items.length && selectable.omittedWithoutSite)
-            setError("Los clientes sincronizados no tienen una sede operativa disponible.");
+            setError("Los clientes no tienen una sede operativa disponible.");
         })
         .catch(() => {
           if (requestVersion.current !== version) return;
           setResults([]);
           setHasMore(false);
           setNextOffset(null);
-          setError("No fue posible consultar los clientes sincronizados.");
+          setError("No fue posible consultar los clientes.");
         })
         .finally(() => {
           if (requestVersion.current === version) setLoading(false);
         });
     }, term.trim() ? 180 : 0);
-    return () => window.clearTimeout(timer);
-  }, [creating, onSearch, term]);
+    return () => { window.clearTimeout(timer); requestVersion.current = version + 1; };
+  }, [creating, onSearch, requireSite, term]);
 
   usePosModalBehavior({
     modalRef: modal,
@@ -102,23 +104,29 @@ export function PosCustomerSearchDialog({
   });
 
   const loadMore = useCallback(async () => {
-    if (busy || loading || loadingMore || !hasMore || nextOffset === null) return;
+    const version = requestVersion.current;
+    if (busy || loading || loadingMore || loadingMoreVersion.current === version ||
+        !hasMore || nextOffset === null) return;
+    loadingMoreVersion.current = version;
     setLoadingMore(true);
     try {
       const page = await onSearch(term.trim(), nextOffset);
-      const selectable = selectableCustomerPage(page);
+      if (requestVersion.current !== version) return;
+      const selectable = selectableCustomerPage(page, requireSite);
       setResults((current) => {
-        const known = new Set(current.map((customer) => customer.partySiteId));
-        return [...current, ...selectable.items.filter((customer) => !known.has(customer.partySiteId))];
+        const key = (customer: PosCustomerSearchOption) => customer.partySiteId ?? customer.customerId;
+        const known = new Set(current.map(key));
+        return [...current, ...selectable.items.filter((customer) => !known.has(key(customer)))];
       });
       setHasMore(selectable.hasMore);
       setNextOffset(selectable.nextOffset);
     } catch {
-      setError("No fue posible cargar más clientes.");
+      if (requestVersion.current === version) setError("No fue posible cargar más clientes.");
     } finally {
-      setLoadingMore(false);
+      if (loadingMoreVersion.current === version) loadingMoreVersion.current = null;
+      if (requestVersion.current === version) setLoadingMore(false);
     }
-  }, [busy, hasMore, loading, loadingMore, nextOffset, onSearch, term]);
+  }, [busy, hasMore, loading, loadingMore, nextOffset, onSearch, requireSite, term]);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" data-pos-focus-surface="modal">
@@ -133,19 +141,19 @@ export function PosCustomerSearchDialog({
               {creating ? "Se guarda en Auraly Server y queda disponible inmediatamente en esta venta." : "Busca por nombre o identificación. La selección recalcula los precios."}
             </p>
           </div>
-          <button type="button" onClick={onCancel} aria-label="Cerrar búsqueda" className="grid h-10 w-10 place-items-center rounded-lg text-slate-500 hover:bg-slate-100">
+          <button type="button" disabled={busy} onClick={onCancel} aria-label="Cerrar búsqueda" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-slate-100">
             <X className="h-5 w-5" />
           </button>
         </header>
 
-        {creating ? (
+        {creating && creation ? (
           <PosCustomerCreateForm
             busy={busy}
-            onCountries={onCountries}
-            onDivisions={onDivisions}
-            onCities={onCities}
+            onCountries={creation.onCountries}
+            onDivisions={creation.onDivisions}
+            onCities={creation.onCities}
             onCreate={async (input) => {
-              const customer = await onCreate(input);
+              const customer = await creation.onCreate(input);
               await onSelect(customer);
             }}
             onBack={() => setCreating(false)}
@@ -155,7 +163,7 @@ export function PosCustomerSearchDialog({
             <div className="p-5 pb-3">
               <label className="relative block">
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-                <input ref={searchInput} autoFocus value={term} onChange={(event) => setTerm(event.target.value)}
+                <input ref={searchInput} autoFocus value={term} onChange={(event) => { setLoading(true); setTerm(event.target.value); }}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowDown" && results.length) {
                       event.preventDefault();
@@ -167,7 +175,7 @@ export function PosCustomerSearchDialog({
                       focusResult(results.length - 1);
                       return;
                     }
-                    if (event.key === "Enter" && results[selected]) {
+                    if (event.key === "Enter" && results[selected] && !loading && !busy) {
                       event.preventDefault();
                       void onSelect(results[selected]);
                     }
@@ -176,13 +184,13 @@ export function PosCustomerSearchDialog({
                   placeholder="Nombre o identificación" />
                 {loading && <span className="pointer-events-none absolute right-4 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center" role="status" aria-label="Cargando clientes"><Loader2 className="h-5 w-5 animate-spin text-teal-700" /></span>}
               </label>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className={`mt-3 grid gap-2 ${creation ? "sm:grid-cols-2" : ""}`}>
                 <button type="button" disabled={busy} onClick={() => void onSelect(null)} className="flex h-11 items-center gap-3 rounded-xl border border-slate-200 px-4 text-left font-semibold text-slate-700 hover:bg-slate-50">
                   <UserRoundX className="h-5 w-5 text-slate-500" /> Consumidor final
                 </button>
-                <button type="button" disabled={busy || !connected} onClick={() => setCreating(true)} title={connected ? "Crear cliente" : "Requiere conexión con Auraly Server"} className="flex h-11 items-center gap-3 rounded-xl border border-teal-200 px-4 text-left font-semibold text-teal-800 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50">
+                {creation && <button type="button" disabled={busy || !connected} onClick={() => setCreating(true)} title={connected ? "Crear cliente" : "Requiere conexión con Auraly Server"} className="flex h-11 items-center gap-3 rounded-xl border border-teal-200 px-4 text-left font-semibold text-teal-800 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-50">
                   <Plus className="h-5 w-5" /> Nuevo cliente
-                </button>
+                </button>}
               </div>
               {!connected && <p className="mt-2 text-xs text-amber-700">Puedes buscar clientes sincronizados sin conexión. Para crear uno nuevo se requiere Auraly Server.</p>}
             </div>
@@ -191,7 +199,7 @@ export function PosCustomerSearchDialog({
               if (list.scrollHeight - list.scrollTop - list.clientHeight < 100) void loadMore();
             }}>
               {results.map((customer, index) => (
-                <button key={customer.partySiteId!} type="button" disabled={busy}
+                <button key={customer.partySiteId ?? customer.customerId} type="button" disabled={busy || loading}
                   ref={(element) => { if (element) resultButtons.current.set(index, element); else resultButtons.current.delete(index); }}
                   onFocus={() => { setSelected(index); if (index === results.length - 1) void loadMore(); }}
                   onKeyDown={(event) => {
@@ -207,9 +215,9 @@ export function PosCustomerSearchDialog({
                     }
                   }}
                   onMouseEnter={() => setSelected(index)} onClick={() => void onSelect(customer)}
-                  className={`grid w-full grid-cols-[minmax(0,1fr)_180px] items-center gap-4 border-b border-slate-100 px-3 py-3 text-left outline-none ${selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : "hover:bg-slate-50"}`}>
+                  className={`grid w-full grid-cols-[minmax(0,1fr)_minmax(0,35%)] items-center gap-3 border-b border-slate-100 px-3 py-3 text-left outline-none ${selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : "hover:bg-slate-50"}`}>
                   <span className="min-w-0"><strong className="block truncate text-slate-900">{customer.siteName ? `${customer.name} · ${customer.siteName}` : customer.name}</strong>{customer.siteAddress&&<small className="block truncate text-slate-500">{customer.siteAddress}</small>}</span>
-                  <span className="text-right text-sm tabular-nums text-slate-600">{customer.identification}</span>
+                  <span className="break-words text-right text-sm tabular-nums text-slate-600">{customer.identification}</span>
                 </button>
               ))}
               {!loading && !results.length && !error && <p className="grid min-h-40 place-items-center text-sm text-slate-500">No encontramos clientes.</p>}

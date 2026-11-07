@@ -33,3 +33,12 @@ test("keeps valid synchronized customer sites when a legacy customer has no site
   assert.equal(page.hasMore, true);
   assert.equal(page.nextOffset, 2);
 });
+
+test("restaurant can select a party role while the server resolves its primary site", () => {
+  const page = selectableCustomerPage({
+    items: [{ customerId: "customer-1", name: "Cliente de mesa", identification: "100" }],
+    hasMore: false, nextOffset: null,
+  }, false);
+  assert.equal(page.items[0].customerId, "customer-1");
+  assert.equal(page.omittedWithoutSite, 0);
+});

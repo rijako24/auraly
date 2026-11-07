@@ -299,8 +299,8 @@ export const restaurantAccountApi = {
   occupancy: () => apiClient.get<RestaurantTableOccupancy[]>(
     "/commerce/v1/restaurant/occupancy", undefined,
     { cache: "no-store" }),
-  priceChannels: () => apiClient.get<RestaurantPriceChannelOption[]>(
-    "/commerce/v1/restaurant/price-channels", undefined,
+  priceChannels: (params: { search?: string; skip: number; take: number }) => apiClient.get<RestaurantPriceChannelOption[]>(
+    "/commerce/v1/restaurant/price-channels", params,
     { cache: "no-store" }),
   changePriceChannel: (accountId: string,
     priceChannelId: string | null, expectedVersion: number) =>

@@ -56,6 +56,13 @@ Un mismo componente y una misma API paginada alimentan:
 - el modo expandido dentro del POS;
 - el módulo propio `/dashboard/orders`.
 
+Restaurante ofrece la misma bandeja dentro de un panel lateral del encabezado.
+Recuperar abre el contexto online de pedidos sin mesa en `/pos?workspace=orders`;
+reutiliza claim y borrador actuales, conserva el cliente/sede al refrescar y solo
+habilita captura y cobro para un pedido recuperado. La emisión mantiene
+`OrderInvoiceLinks` y deja `SalesDocuments.TableId` nulo. Volver regresa al POS de
+mesas; no se agrega una cuenta de restaurante ni se copia el pedido a ella.
+
 La bandeja compacta muestra los pedidos disponibles más recientes con número,
 cliente, hora, total y cantidad de líneas. Cada tarjeta se puede expandir para
 ver el detalle sin abandonar la facturación.
@@ -94,8 +101,8 @@ la interfaz y siempre actúa sobre un solo pedido.
 Requiere:
 
 - pedido disponible;
-- borrador POS vacío, o confirmación explícita para pausar primero la venta
-  actual;
+- borrador POS vacío: una captura con productos bloquea recuperar pedidos y
+  ventas pausadas; el usuario debe terminarla, pausarla o vaciarla previamente;
 - conexión con el servidor;
 - claim durable para caja y usuario.
 
@@ -103,6 +110,13 @@ El servidor copia el snapshot del pedido al borrador activo y conserva el
 vínculo `OrderId`/`OrderItemId`. No recalcula el pedido con los datos actuales
 del producto o cliente. Cerrar y reabrir facturación conserva el borrador y el
 vínculo.
+
+La misma restricción se aplica si la captura ya proviene de otro pedido, incluso
+si se intenta importar nuevamente el mismo pedido con una operación nueva. El
+reintento con la misma clave idempotente devuelve el resultado original. La
+importación y la liberación de otros reclamos de la sesión comparten transacción;
+un intento rechazado conserva la captura y el reclamo que la respalda. Su limpieza
+solo libera un reclamo si ningún borrador activo de esa sesión lo utiliza.
 
 ## Facturar seleccionados
 

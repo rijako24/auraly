@@ -84,8 +84,9 @@ public static class RestaurantAccountApi
                 await service.OccupancyAsync(Actor(context), ct))));
         group.MapGet("/price-channels", async (
             HttpContext context, RestaurantAccountService service,
+            string? search, int? skip, int? take,
             CancellationToken ct) => await Handle(async () => Results.Ok(
-                await service.PriceChannelsAsync(Actor(context), ct))));
+                await service.PriceChannelsAsync(Actor(context), search, skip ?? 0, take ?? 50, ct))));
         group.MapGet("/command-cards", async (
             HttpContext context, RestaurantAccountService service,
             Guid? stationId, string? state, string? tableCode, int? page,

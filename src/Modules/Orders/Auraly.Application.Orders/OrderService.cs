@@ -46,12 +46,7 @@ public interface IOrderStore
         OrderActor actor,
         Guid orderId,
         Guid workSessionId,
-        CancellationToken cancellationToken);
-
-    Task ReleaseOtherClaimsAsync(
-        OrderActor actor,
-        Guid retainedOrderId,
-        Guid workSessionId,
+        bool onlyIfUnused,
         CancellationToken cancellationToken);
 
     Task<OrderEmissionRetry> PrepareEmissionRetryAsync(
@@ -178,23 +173,18 @@ public sealed class OrderService(
             actor,
             orderId,
             request.WorkSessionId,
+            onlyIfUnused: false,
             cancellationToken);
     }
 
-    public Task ReleaseOtherClaimsAsync(
-        OrderActor actor,
-        Guid retainedOrderId,
-        Guid workSessionId,
-        Guid userId,
-        CancellationToken cancellationToken = default)
+    internal Task ReleaseFailedRecoveryClaimAsync(
+        OrderActor actor, Guid orderId, ReleaseOrderClaimRequest request,
+        CancellationToken cancellationToken)
     {
         Demand(actor, OrderPermissionCodes.Recover);
-        ValidateActorRequest(actor, retainedOrderId, workSessionId, userId);
-        return orders.ReleaseOtherClaimsAsync(
-            actor,
-            retainedOrderId,
-            workSessionId,
-            cancellationToken);
+        ValidateActorRequest(actor, orderId, request.WorkSessionId, request.UserId);
+        return orders.ReleaseClaimAsync(actor, orderId, request.WorkSessionId,
+            onlyIfUnused: true, cancellationToken);
     }
 
     public async Task<OrderEmissionRetry> RetryEmissionAsync(

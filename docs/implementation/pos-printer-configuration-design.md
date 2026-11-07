@@ -83,6 +83,12 @@ documento renderizado cuando la aplicación instalada imprime directamente.
 7. Una falla de impresión no renumera ni elimina la venta; permite reimpresión
    desde el snapshot original.
 
+El navegador comparte un único ciclo de iframe para comprobantes y precuentas:
+se registra el cierre por `afterprint` después de `document.open()`, porque esa
+operación elimina los listeners de la ventana anterior. La espera entre páginas
+se registra después de escribir el documento y antes de su impresión automática.
+Al cerrar o cancelar el diálogo se retira el iframe, sin confirmar otra venta.
+
 ## Plantilla canónica
 
 Venta, entrada de dinero, salida de dinero, conteo de denominaciones y cierre conservan una sola

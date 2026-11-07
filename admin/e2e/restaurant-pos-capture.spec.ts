@@ -191,7 +191,7 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   expect(occupancyReads).toBe(occupancyReadsBeforeEntry);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await page.evaluate(() => document.body.style.removeProperty("min-height"));
-  await page.getByRole("button", { name: "Mesas" }).click();
+  await page.getByRole("button", { name: "Volver", exact: true }).click();
   await expect(page.getByRole("button", { name: /M-01/ }).getByText("Libre")).toBeVisible();
   await page.getByRole("button", { name: /M-01/ }).click();
   await page.getByRole("button", { name: "Mesero" }).click();
@@ -220,7 +220,7 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   await expect(page.getByRole("button", { name: /Eliminar producto pendiente Hamburguesa clásica/ })).toBeEnabled();
   await page.getByRole("button", { name: /Eliminar producto pendiente Hamburguesa clásica/ }).click();
   await expect(page.getByText("Toca un producto para empezar el pedido.")).toBeVisible();
-  await page.getByRole("button", { name: "Mesas" }).click();
+  await page.getByRole("button", { name: "Volver", exact: true }).click();
   await expect(page.getByRole("button", { name: /M-01/ }).getByText("Libre")).toBeVisible();
   await page.getByRole("button", { name: /M-01/ }).click();
   await page.getByRole("button", { name: "Mesero" }).click();
@@ -253,7 +253,7 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
     .locator("../..").getByText("1 unidad")).toBeVisible();
   await page.getByRole("button", { name: "Quitar uno de Gaseosa" }).click();
   await expect(page.getByText("Sin comanda · se cobra directamente")).toHaveCount(0);
-  await page.getByRole("button", { name: "Mesas" }).click();
+  await page.getByRole("button", { name: "Volver", exact: true }).click();
   await expect(page.getByRole("button", { name: /M-01/ }).getByText("Ocupada")).toBeVisible();
   expect(openings).toBe(1);
   await expect.poll(() => attentionEnded).toBe(true);

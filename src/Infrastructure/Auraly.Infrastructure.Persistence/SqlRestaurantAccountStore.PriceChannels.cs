@@ -8,19 +8,27 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlRestaurantAccountStore
 {
-    public async Task<IReadOnlyList<RestaurantPriceChannelOption>> PriceChannelsAsync(RestaurantAccountActor actor, CancellationToken ct)
+    public async Task<IReadOnlyList<RestaurantPriceChannelOption>> PriceChannelsAsync(
+        RestaurantAccountActor actor, string? search, int skip, int take, CancellationToken ct)
     {
         const string sql = """
             SELECT channel.PriceChannelId,channel.Name FROM dbo.PriceChannels channel
             JOIN dbo.Businesses business ON business.TenantId=channel.TenantId
             WHERE business.BusinessId=@BusinessId AND business.TenantId=@TenantId
               AND business.PointOfSaleMode=N'RestaurantBar' AND channel.IsActive=1
-            ORDER BY channel.Name,channel.PriceChannelId;
+              AND (@Search IS NULL OR CHARINDEX(@Search,channel.Name)>0
+                OR CHARINDEX(@Search,channel.Code)>0)
+            ORDER BY channel.Name,channel.PriceChannelId
+            OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand(sql, connection);
         AddScope(command, actor);
+        command.Parameters.Add("@Search", SqlDbType.NVarChar, 120).Value =
+            string.IsNullOrEmpty(search) ? DBNull.Value : search;
+        command.Parameters.Add("@Skip", SqlDbType.Int).Value = skip;
+        command.Parameters.Add("@Take", SqlDbType.Int).Value = take;
         var result = new List<RestaurantPriceChannelOption>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct)) result.Add(new(reader.GetGuid(0), reader.GetString(1)));

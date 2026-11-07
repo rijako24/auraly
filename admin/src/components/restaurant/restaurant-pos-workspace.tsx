@@ -3,26 +3,32 @@
 import { PosCategoryPill as CategoryPill, PosProductTile as ProductTile, PosSaleItemCard } from "@/components/pos/pos-catalog-presentation";
 
 import Link from "next/link";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, CakeSlice, ChefHat, CircleCheck, Clock3,
-  Coffee, DoorOpen,
+  ClipboardList, Coffee, DoorOpen,
   Fish, GlassWater, List, Map as MapIcon, MessageSquareText, FileText, LayoutGrid,
-  Minus, Plus, Printer, Salad, Sandwich, Search, Settings2, Soup, Trash2, UtensilsCrossed,
+  Minus, Plus, Printer, Salad, Sandwich, Search, Settings2, Soup, Tags, Trash2, UserRound, UserRoundPen, UtensilsCrossed,
   type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { RestaurantPaymentDialog } from "@/components/restaurant/restaurant-payment-dialog";
 import { RestaurantSessionClosure } from "@/components/restaurant/restaurant-session-closure";
 import { PosPrinterDialog } from "@/app/(pos)/pos/pos-printer-dialog";
 import { Button } from "@/components/ui/button";
-import { PartyRoleSelect } from "@/components/parties/party-role-select";
+import { PosCustomerSearchDialog } from "@/app/(pos)/pos/pos-customer-search-dialog";
+import { partiesApi } from "@/services/api/parties";
+import { OrdersWorkspace } from "@/components/orders/orders-workspace";
+import { captureRecoveryBlockedReason } from "@/components/orders/order-availability";
+import { loadCommerceOrders, loadCommerceOrder } from "@/services/orders/commerce-orders-client";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBodyScrollLock } from "@/hooks/use-body-scroll-lock";
-import { closePrintPreview, OnlinePosClient, openHalfLetterPrintPreview,
+import { closePrintPreview, OnlinePosClient, openHalfLetterPrintPreview, renderServerPrintDocument,
   type SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
 import type { PosPaymentInput, PosSaleDocumentType,
@@ -64,6 +70,7 @@ export function RestaurantPosWorkspace({ option }: {
   option: SalesWorkspaceOption & { workSessionId?: string };
 }) {
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
+  const router = useRouter();
   const connectedUser = useAuthStore((state) => state.user);
   const canAttend = permissions.includes("restaurant.attend");
   const canOpenWithoutWaiter = permissions.includes(
@@ -80,7 +87,18 @@ export function RestaurantPosWorkspace({ option }: {
   const [tablePage, setTablePage] = useState(1);
   const [draft, setDraft] = useState<RestaurantAccountDraft | null>(null);
   const [customerOpen, setCustomerOpen] = useState(false);
+  const [ordersOpen, setOrdersOpen] = useState(false);
   const [channelOpen, setChannelOpen] = useState(false);
+  const [channelSearch, setChannelSearch] = useState("");
+  const [channelSearchTerm, setChannelSearchTerm] = useState("");
+  const [channelPage, setChannelPage] = useState(0);
+  const accountHeader = useRef<HTMLDivElement>(null);
+  const accountLines = useRef<HTMLDivElement>(null);
+  const accountFooter = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setChannelSearchTerm(channelSearch.trim()), 180);
+    return () => window.clearTimeout(timer);
+  }, [channelSearch]);
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null);
   const [pendingTable, setPendingTable] = useState<RestaurantTable | null>(null);
   const [waiterUserId, setWaiterUserId] = useState("");
@@ -174,9 +192,20 @@ export function RestaurantPosWorkspace({ option }: {
   const categories = useQuery({ queryKey: [...scope, "categories", draft?.account.accountId],
     queryFn: () => restaurantAccountApi.categories(draft!.account.accountId, attention?.token),
     enabled: !!draft && canAdd });
-  const priceChannels = useQuery({ queryKey: [...scope, "price-channels"],
-    queryFn: () => restaurantAccountApi.priceChannels(),
-    enabled: canSelectPriceChannel && !!draft });
+  const channelWaitingForSearch = channelSearch.trim() !== channelSearchTerm;
+  const priceChannels = useQuery({ queryKey: [...scope, "price-channels", channelSearchTerm, channelPage],
+    queryFn: () => restaurantAccountApi.priceChannels({ search: channelSearchTerm || undefined,
+      skip: channelPage * 20, take: 21 }),
+    enabled: channelOpen && canSelectPriceChannel && !!draft &&
+      !draft.account.customerPriceChannelLocked && !channelWaitingForSearch });
+  const searchTableCustomers = useCallback(async (search: string, skip: number) => {
+    const page = await partiesApi.roleOptions({ role: "Customer", search: search || undefined,
+      page: Math.floor(skip / 20) + 1, pageSize: 20 });
+    const hasMore = page.page < page.totalPages;
+    return { items: page.items.map((customer) => ({ customerId: customer.roleId,
+      name: customer.displayName, identification: customer.identification ?? "" })),
+      hasMore, nextOffset: hasMore ? skip + 20 : null };
+  }, []);
   async function changeTableCustomer(customerId: string | null) {
     if (!draft) return;
     setBusy(true);
@@ -187,7 +216,6 @@ export function RestaurantPosWorkspace({ option }: {
       setDraft(updated);
       setCustomerOpen(false);
       setProductPage(0);
-      await queryClient.invalidateQueries({ queryKey: [...scope, "products", draft.account.accountId] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo cambiar el cliente.");
     } finally { setBusy(false); }
@@ -201,13 +229,12 @@ export function RestaurantPosWorkspace({ option }: {
       setDraft(updated);
       setChannelOpen(false);
       setProductPage(0);
-      await queryClient.invalidateQueries({ queryKey: [...scope, "products", draft.account.accountId] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No se pudo cambiar el canal.");
     } finally { setBusy(false); }
   }
   const products = useQuery({ queryKey: [...scope, "products", draft?.account.accountId,
-    categoryId, productSearch, productPage],
+    draft?.account.customerId, draft?.account.priceChannelId, categoryId, productSearch, productPage],
     queryFn: () => restaurantAccountApi.products(draft!.account.accountId, {
       search: productSearch.trim() || undefined,
       categoryId: productSearch.trim() ? undefined :
@@ -286,6 +313,34 @@ export function RestaurantPosWorkspace({ option }: {
     }
     return [...grouped.values()];
   }, [draft]);
+  const firstGroupId = groups[0]?.items[0]?.additionId;
+  const recoveryBlockedReason = captureRecoveryBlockedReason(groups.length);
+  const secondGroupId = groups[1]?.items[0]?.additionId;
+  useEffect(() => {
+    const lines = accountLines.current;
+    const header = accountHeader.current;
+    const footer = accountFooter.current;
+    const column = lines?.parentElement;
+    if (!lines || !header || !footer || !column) return;
+    const first = firstGroupId ? lines.children.item(0) : null;
+    const second = secondGroupId ? lines.children.item(1) : null;
+    const measure = () => {
+      const firstHeight = first?.getBoundingClientRect().height ?? 148;
+      const secondHeight = second?.getBoundingClientRect().height ?? firstHeight;
+      const style = getComputedStyle(lines);
+      const minimum = Math.ceil(firstHeight + secondHeight + Number.parseFloat(style.rowGap) +
+        Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom));
+      lines.style.minHeight = `${minimum}px`;
+      const columnMinimum = minimum + header.getBoundingClientRect().height +
+        footer.getBoundingClientRect().height + 2;
+      column.style.minHeight = `${columnMinimum}px`;
+      column.style.setProperty("--restaurant-account-min-height", `${columnMinimum}px`);
+    };
+    const observer = new ResizeObserver(measure);
+    for (const element of [first, second, header, footer]) if (element) observer.observe(element);
+    measure();
+    return () => observer.disconnect();
+  }, [openAccountId, firstGroupId, secondGroupId]);
   const estimatedTotal = groups.reduce((sum, group) => sum + group.amount, 0);
   const pendingCount = draft?.additions.filter((item) => item.status === "Pending").length ?? 0;
   const activeCancellations = cancellations.data?.filter((item) =>
@@ -301,7 +356,7 @@ export function RestaurantPosWorkspace({ option }: {
     item.additionId === cancelAdditionId && item.status === "Sent");
   const editingAddition = draft?.additions.find((item) =>
     item.additionId === noteAdditionId && item.status === "Pending" && !!item.stationId);
-  useBodyScrollLock(Boolean(cancellingAddition || editingAddition || pendingTable));
+  useBodyScrollLock(Boolean(cancellingAddition || editingAddition || pendingTable || customerOpen));
 
   async function saveNote() {
     if (!draft || !editingAddition || busy || pendingSend) return;
@@ -630,9 +685,9 @@ export function RestaurantPosWorkspace({ option }: {
         activeCancellations.length > 0 ||
         cancellations.isLoading || cancellations.isError ||
         draft.account.status !== "Open") return;
-    const printWindow = window.open("", "_blank", "width=440,height=720");
+    const printWindow = openHalfLetterPrintPreview();
     if (!printWindow) {
-      toast.error("Habilita la ventana de impresión para esta página.");
+      toast.error("No se pudo abrir la impresión. Inténtalo de nuevo.");
       return;
     }
     printWindow.document.body.textContent = "Preparando precuenta…";
@@ -642,7 +697,7 @@ export function RestaurantPosWorkspace({ option }: {
         draft.account.accountId, draft.account.version, attention?.token);
       printPrebill(bill, printWindow);
     } catch (error) {
-      printWindow.close();
+      closePrintPreview(printWindow);
       toast.error(error instanceof Error ? error.message :
         "No se pudo preparar la precuenta.");
     } finally { setBusy(false); }
@@ -653,34 +708,27 @@ export function RestaurantPosWorkspace({ option }: {
       const rows = bill.lines.map((line) => `<tr><td>${escapePrebillText(line.description)}
         <small>${escapePrebillText(line.addedByName)}</small></td>
         <td>${line.quantity}</td><td>${money.format(line.total)}</td></tr>`).join("");
-      printWindow.document.open();
-      printWindow.document.write(`<!doctype html><html lang="es"><head>
+      renderServerPrintDocument(printWindow, `<!doctype html><html lang="es"><head>
         <meta charset="utf-8"><title>Precuenta · Mesa ${escapePrebillText(bill.tableCode)}</title>
         <style>body{font:14px system-ui,sans-serif;color:#182628;max-width:80mm;margin:0 auto;padding:20px}
         h1{font-size:24px;margin:5px 0}h2{font-size:18px;margin:0 0 16px}
-        .tag{font-weight:800;letter-spacing:.16em;color:#087e75;font-size:11px}
-        .notice{border:2px solid #087e75;border-radius:8px;padding:10px;margin:14px 0;font-weight:700}
         table{width:100%;border-collapse:collapse}td{padding:8px 2px;border-bottom:1px dashed #aaa;vertical-align:top}
         td:nth-child(2),td:nth-child(3){text-align:right;white-space:nowrap}
         small{display:block;color:#667;font-size:10px}.total{display:flex;justify-content:space-between;
         font-size:20px;font-weight:800;margin-top:18px}.meta{color:#667;font-size:11px}
-        button{width:100%;padding:12px;margin-top:24px;border:0;border-radius:9px;background:#087e75;color:white;font-weight:700}
-        @media print{body{padding:0}button{display:none}}</style></head><body>
-        <div class="tag">AURALY · RESTAURANTE</div><h1>Mesa ${escapePrebillText(bill.tableCode)}</h1>
-        <h2>Precuenta</h2><div class="meta">${new Date(bill.printedAt).toLocaleString("es-CO")}
+        @media print{body{padding:0}}</style></head><body>
+        <h1>Mesa ${escapePrebillText(bill.tableCode)}</h1>
+        <h2>Precuenta · No es factura</h2><div class="meta">${new Date(bill.printedAt).toLocaleString("es-CO")}
         · Revisión ${bill.accountVersion}</div>
-        <div class="notice">Precuenta · No es factura</div>
         <table><tbody>${rows}</tbody></table>
         <div class="total"><span>Consumo</span><span>${money.format(bill.total)}</span></div>
         <div class="total"><span>Propina voluntaria sugerida (${bill.suggestedTipPercent} %)</span><span>${money.format(bill.suggestedTipAmount)}</span></div>
         <div class="total"><span>Total sugerido</span><span>${money.format(bill.total + bill.suggestedTipAmount)}</span></div>
         <p class="meta">La propina es voluntaria. Puedes aceptarla, cambiarla o no pagarla.</p>
-        <p class="meta">Confirma el pago en caja. La factura se emite al cobrar.</p>
-        <button onclick="window.print()">Imprimir precuenta</button></body></html>`);
-      printWindow.document.close();
+        </body></html>`);
       printWindow.focus();
     } catch (error) {
-      printWindow.close();
+      closePrintPreview(printWindow);
       toast.error(error instanceof Error ? error.message :
         "No se pudo preparar la precuenta.");
     }
@@ -784,7 +832,7 @@ export function RestaurantPosWorkspace({ option }: {
 
   return <main className="min-h-screen bg-[#f5f7f6] text-foreground dark:bg-[#0e1717]">
     <header className="sticky top-0 z-20 flex min-h-20 flex-col gap-2 border-b bg-background/95 px-3 py-2 shadow-sm backdrop-blur sm:px-7 lg:flex-row lg:items-center lg:justify-between lg:gap-3 lg:py-0">
-      <div className="flex w-full min-w-0 items-center gap-2 lg:w-auto lg:gap-3">{draft ? <Button variant="outline" className="h-11 w-11 shrink-0 rounded-xl p-0 sm:w-auto sm:px-4" onClick={() => backToTables()} aria-label="Volver a mesas"><ArrowLeft className="h-5 w-5 sm:mr-2"/><span className="hidden text-sm sm:inline">Volver a mesas</span></Button> : <Button asChild variant="outline" className="h-11 w-11 shrink-0 rounded-xl p-0 sm:w-auto sm:px-4" aria-label="Volver al menú"><Link href="/dashboard/restaurant" onClick={leaveWorkspace}><LayoutGrid className="h-5 w-5 sm:mr-2"/><span className="hidden sm:inline">Menú</span></Link></Button>}<div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><UtensilsCrossed className="h-6 w-6"/></div>
+      <div className="flex w-full min-w-0 items-center gap-2 lg:w-auto lg:gap-3">{draft ? <Button variant="outline" className="h-11 w-11 shrink-0 rounded-xl p-0 sm:w-auto sm:px-4" onClick={() => backToTables()} aria-label="Volver"><ArrowLeft className="h-5 w-5 sm:mr-2"/><span className="hidden text-sm sm:inline">Volver</span></Button> : <Button asChild variant="outline" className="h-11 w-11 shrink-0 rounded-xl p-0 sm:w-auto sm:px-4" aria-label="Volver al menú"><Link href="/dashboard/restaurant" onClick={leaveWorkspace}><LayoutGrid className="h-5 w-5 sm:mr-2"/><span className="hidden sm:inline">Menú</span></Link></Button>}<div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><UtensilsCrossed className="h-6 w-6"/></div>
         <div className="min-w-0"><p className="truncate text-[10px] font-bold uppercase tracking-[.16em] text-primary sm:text-[11px]">Auraly · Restaurante</p>
           <h1 className="truncate text-base font-bold leading-tight sm:text-xl">{option.businessName}</h1></div></div>
       <div className="flex w-full items-center justify-center gap-2 rounded-2xl border bg-card/70 p-1.5 shadow-sm sm:flex-wrap sm:justify-end sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none lg:w-auto lg:flex-nowrap">
@@ -803,6 +851,7 @@ export function RestaurantPosWorkspace({ option }: {
           <Printer className="h-4 w-4"/><span className="hidden md:inline">Periféricos</span>
         </Button>
         {permissions.includes("restaurant.commands.read") && <Button asChild variant="outline" size="sm" className="h-11 w-11 rounded-xl p-0 sm:w-auto sm:px-3"><Link href="/restaurant/commands?from=pos" onClick={leaveWorkspace} aria-label="Comandas" title="Comandas"><ChefHat className="h-4 w-4"/><span className="hidden sm:inline">Comandas</span></Link></Button>}
+        {permissions.includes("orders.read") && <Button variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-xl" aria-label="Ver pedidos" title="Pedidos" disabled={busy || !!pendingSend} onClick={() => setOrdersOpen(true)}><ClipboardList className="h-4 w-4"/></Button>}
         <ThemeToggle className="h-11 w-11 rounded-xl"/></div>
       {draft && <nav aria-label="Vista de la mesa" className="grid w-full grid-cols-2 gap-2 lg:hidden"><Button variant={mobileSection === "products" ? "default" : "outline"} className="min-h-12" onClick={() => setMobileSection("products")}>Productos</Button><Button variant={mobileSection === "account" ? "default" : "outline"} className="min-h-12" onClick={() => setMobileSection("account")}>Cuenta · {groups.reduce((sum, item) => sum + item.quantity, 0)}</Button></nav>}
     </header>
@@ -849,26 +898,25 @@ export function RestaurantPosWorkspace({ option }: {
       {(tables.data?.totalCount ?? 0) > 100 && <div className="mt-7 flex justify-center gap-3"><Button variant="outline" disabled={tablePage === 1} onClick={() => setTablePage((page) => page - 1)}>Anterior</Button><span className="self-center text-sm">Página {tablePage}</span><Button variant="outline" disabled={tablePage * 100 >= (tables.data?.totalCount ?? 0)} onClick={() => setTablePage((page) => page + 1)}>Siguiente</Button></div>}
     </section> : <section className="mx-auto max-w-[1700px] p-3 sm:p-5">
       <div className="grid gap-4 lg:grid-cols-[minmax(300px,30%)_minmax(0,70%)]">
-        <aside className={`${mobileSection !== "account" ? "hidden lg:flex" : "flex"} h-auto min-h-0 flex-col self-start overflow-visible rounded-[2rem] border bg-card shadow-sm lg:sticky lg:top-24 lg:h-[calc(100dvh-8rem)] lg:min-h-[25rem] lg:overflow-hidden`}>
-          <div className="shrink-0 border-b p-5">
-            <p className="text-xs font-bold uppercase tracking-widest text-primary">Cuenta abierta · {selectedTable?.roomId ? roomNames.get(selectedTable.roomId) : "Sin salón"}</p>
-            <h2 className="mt-1 text-2xl font-bold">Mesa {selectedTable?.code}</h2>
-            <div className="mt-3 flex items-center justify-between gap-2"><div className="min-w-0">
+        <aside className={`${mobileSection !== "account" ? "hidden lg:flex" : "flex"} h-auto min-h-0 flex-col self-start overflow-visible rounded-[2rem] border bg-card shadow-sm lg:sticky lg:top-[min(6rem,calc(100dvh_-_var(--restaurant-account-min-height,25rem)_-_2rem))] lg:h-[calc(100dvh-8rem)] lg:min-h-[25rem] lg:overflow-hidden`}>
+          <div ref={accountHeader} className="shrink-0 border-b p-4">
+            <div className="flex min-w-0 items-center justify-between gap-2"><h2 className="shrink-0 text-xl font-bold">Mesa {selectedTable?.code}</h2><p className="truncate text-xs font-semibold text-primary">{selectedTable?.roomId ? roomNames.get(selectedTable.roomId) : "Cuenta abierta"}</p></div>
+            <div className="mt-2 flex items-center justify-between gap-2"><div className="min-w-0">
               <p className="truncate text-sm font-semibold">Responsable: {draft.account.responsibleUserName || (draft.account.responsibleUserId === connectedUser?.userId ? [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username : "Mesero asignado")}</p>
-              <p className="mt-1 truncate text-xs text-muted-foreground">Atendiendo ahora: {attention ? activeWaiterName || draft.account.responsibleUserName || "Mesero identificado" : [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username || "Usuario conectado"}</p>
-            </div>{canOpenWithoutWaiter && selectedTable && <Button variant="outline" size="sm" className="min-h-11 shrink-0 rounded-xl" disabled={busy || !!pendingSend} onClick={() => selectTable(selectedTable, true)}>Cambiar mesero</Button>}</div>
-            <div className="mt-3 space-y-2 border-t pt-3 text-sm">
-              <div className="flex items-center justify-between gap-2"><p className="min-w-0 truncate"><span className="text-muted-foreground">Cliente:</span> <strong>{draft.account.customerName || "Consumidor final"}</strong></p><Button type="button" variant="ghost" size="sm" className="shrink-0 text-primary" disabled={busy || !!pendingSend} onClick={() => setCustomerOpen(true)}>{draft.account.customerId ? "Cambiar" : "Buscar"}</Button></div>
-              <div className="flex items-center justify-between gap-2"><p className="min-w-0 truncate"><span className="text-muted-foreground">Canal de precio:</span> <strong>{draft.account.priceChannelName ?? "Sin canal"}</strong></p>{canSelectPriceChannel && <Button type="button" variant="ghost" size="sm" className="shrink-0 text-primary" disabled={busy || !!pendingSend || draft.account.customerPriceChannelLocked || priceChannels.isLoading} onClick={() => setChannelOpen(true)}>Cambiar</Button>}</div>
-              {draft.account.customerPriceChannelLocked && <p className="text-xs text-muted-foreground">Este canal lo define el cliente seleccionado.</p>}
+              {draft.account.responsibleUserId !== (attention?.waiterUserId ?? connectedUser?.userId) && <p className="mt-0.5 truncate text-xs text-muted-foreground">Atendiendo ahora: {attention ? activeWaiterName || "Mesero identificado" : [connectedUser?.firstName, connectedUser?.lastName].filter(Boolean).join(" ") || connectedUser?.username || "Usuario conectado"}</p>}
+            </div>{canOpenWithoutWaiter && selectedTable && <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 rounded-xl" aria-label="Cambiar mesero" title="Cambiar mesero" disabled={busy || !!pendingSend} onClick={() => selectTable(selectedTable, true)}><UserRoundPen className="h-4 w-4"/></Button>}</div>
+            <div className="mt-2 grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-2 border-t pt-2 text-sm">
+              <Button type="button" variant="outline" className="h-11 w-full min-w-0 justify-start gap-2 rounded-xl px-3" title={draft.account.customerName || "Consumidor final"} aria-label={`Buscar cliente: ${draft.account.customerName || "Consumidor final"}`} disabled={busy || !!pendingSend} onClick={() => setCustomerOpen(true)}><UserRound className="h-4 w-4 shrink-0 text-primary"/><span className="truncate">{draft.account.customerName || "Consumidor final"}</span></Button>
+              <Button type="button" variant="outline" className="h-11 w-full min-w-0 justify-start gap-2 rounded-xl px-3" title={draft.account.priceChannelName ?? "Precio de mesa"} aria-label={`Canal de precio: ${draft.account.priceChannelName ?? "Sin canal"}`} disabled={!canSelectPriceChannel || busy || !!pendingSend || draft.account.customerPriceChannelLocked} onClick={() => { setChannelSearch(""); setChannelSearchTerm(""); setChannelPage(0); setChannelOpen(true); }}><Tags className="h-4 w-4 shrink-0 text-primary"/><span className="truncate">{draft.account.priceChannelName ?? "Precio de mesa"}</span></Button>
+              {draft.account.customerPriceChannelLocked && <p className="col-span-2 text-xs text-muted-foreground">Este canal lo define el cliente seleccionado.</p>}
             </div>
           </div>
-          <div className="flex-1 space-y-2 p-3 sm:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">{!groups.length && <div className="grid min-h-52 place-items-center text-center text-muted-foreground"><div><Coffee className="mx-auto h-8 w-8"/><p className="mt-3 text-sm">Toca un producto para empezar el pedido.</p></div></div>}
-            {groups.map((group, index) => <PosSaleItemCard key={`${group.productId}-${index}`}><div className="flex items-start justify-between gap-2"><div><strong className="text-base">{group.name}</strong><p className="mt-0.5 text-xs text-muted-foreground">{group.contributors.join(", ")}</p><p className={`mt-1 text-xs font-medium ${"text-muted-foreground"}`}>{group.sentQuantity > 0 && `${group.sentQuantity} enviadas · `}{group.pendingQuantity > 0 ? `${group.pendingQuantity} pendientes · ${group.stationName ?? "Sin estación"}` : group.sentQuantity > 0 ? group.stationName ?? "Estación no disponible" : "Sin comanda · se cobra directamente"}</p></div><span className="font-semibold">{money.format(group.amount)}</span></div>
+          <div ref={accountLines} role="region" aria-label="Productos de la mesa" className="flex min-h-[328px] flex-1 flex-col gap-2 p-3 sm:p-4 lg:overflow-y-auto lg:overscroll-contain">{!groups.length && <div className="grid min-h-52 place-items-center text-center text-muted-foreground"><div><Coffee className="mx-auto h-8 w-8"/><p className="mt-3 text-sm">Toca un producto para empezar el pedido.</p></div></div>}
+            {groups.map((group, index) => <PosSaleItemCard data-sale-item key={`${group.productId}-${index}`}><div className="flex items-start justify-between gap-2"><div><strong className="text-base">{group.name}</strong><p className="mt-0.5 text-xs text-muted-foreground">{group.contributors.join(", ")}</p><p className={`mt-1 text-xs font-medium ${"text-muted-foreground"}`}>{group.sentQuantity > 0 && `${group.sentQuantity} enviadas · `}{group.pendingQuantity > 0 ? `${group.pendingQuantity} pendientes · ${group.stationName ?? "Sin estación"}` : group.sentQuantity > 0 ? group.stationName ?? "Estación no disponible" : "Sin comanda · se cobra directamente"}</p></div><span className="font-semibold">{money.format(group.amount)}</span></div>
               <div className="mt-3 flex items-center justify-between"><span className="text-sm font-semibold">{group.quantity} {group.quantity === 1 ? "unidad" : "unidades"}</span>{canAdd && <div className="flex items-center gap-2">{group.stationId === null && <Button aria-label={`Quitar uno de ${group.name}`} variant="outline" size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { const lastDirect = group.items.filter((item) => item.status === "Direct").at(-1); if (lastDirect) void mutateProduct(group.productId, "remove", lastDirect.additionId); }}><Minus className="h-5 w-5"/></Button>}<Button aria-label={`Agregar uno de ${group.name}`} size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "plus")}><Plus className="h-5 w-5"/></Button></div>}</div>
               {group.stationId !== null && <div className="mt-3 space-y-2 border-t pt-3">{group.items.map((item, itemIndex) => <div key={item.additionId} className="flex items-start justify-between gap-2 rounded-xl bg-muted/50 px-3 py-2 text-sm"><div className="min-w-0"><p className="font-semibold">{item.quantity} × {group.name} <span className="font-normal text-muted-foreground">· {item.status === "Sent" ? "Enviada" : "Pendiente"}</span></p>{item.preparationNote && <p className="mt-1 whitespace-pre-wrap text-primary"><MessageSquareText className="mr-1 inline h-4 w-4"/>{item.preparationNote}</p>}{cancellationsByAddition.get(item.additionId) && <p className="mt-1 text-xs font-bold text-red-700 dark:text-red-300">Cancelación en revisión</p>}</div>{item.status === "Pending" && canAdd ? <div className="flex shrink-0 flex-wrap justify-end gap-2"><Button size="sm" variant="outline" className="min-h-10 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { setNoteAdditionId(item.additionId); setNoteText(item.preparationNote ?? ""); }}><MessageSquareText className="mr-1 h-4 w-4"/>{item.preparationNote ? "Editar" : "Observación"} <span className="sr-only">de la unidad {itemIndex + 1}</span></Button><Button size="icon" variant="outline" className="h-10 w-10 rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-900 dark:text-rose-300" aria-label={`Eliminar producto pendiente ${group.name}, incorporación ${itemIndex + 1}`} title="Eliminar producto pendiente" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "remove", item.additionId)}><Trash2 className="h-5 w-5"/></Button></div> : item.status === "Sent" && canAdd && !cancellationsByAddition.has(item.additionId) && <Button size="sm" variant="outline" className="min-h-10 shrink-0 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { setCancelAdditionId(item.additionId); setCancelQuantity(1); setCancelReasonCode(""); setCancelExplanation(""); setCancelRequestId(null); }}>Corregir</Button>}</div>)}</div>}
               {group.sentQuantity > 0 && group.pendingQuantity === 0 && canAdd && <p className="mt-2 text-xs text-muted-foreground">Toca + para agregar más y enviar una nueva comanda.</p>}{group.pending.length > 0 && canAdd && <Button className="mt-3 min-h-12 w-full rounded-xl bg-teal-600 font-bold text-white shadow-sm transition hover:bg-teal-700 hover:shadow-md dark:bg-teal-500 dark:text-slate-950 dark:hover:bg-teal-400" disabled={busy || !!pendingSend && pendingSend.additionId !== group.pending[0].additionId} onClick={() => void sendPending(group.pending[0].additionId)}><ChefHat className="mr-2 h-5 w-5"/>{group.pending.length > 1 ? `Enviar 1 de ${group.pending.length} cantidades pendientes` : "Enviar este producto"}</Button>}</PosSaleItemCard>)}</div>
-          <div className="shrink-0 border-t bg-card p-5">
+          <div ref={accountFooter} className="shrink-0 border-t bg-card p-4">
             <div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Consumo estimado</span><strong className="text-2xl">{money.format(estimatedTotal)}</strong></div>
             {canAdd && (pendingCount > 0 || pendingSend) && <Button className="mt-4 min-h-14 w-full rounded-2xl bg-teal-700 text-base font-bold text-white shadow-md shadow-teal-900/15 hover:bg-teal-800 dark:bg-teal-500 dark:text-slate-950 dark:hover:bg-teal-400" disabled={busy || !!pendingSend?.additionId} onClick={() => void sendPending()}><ChefHat className="mr-2 h-5 w-5"/>{pendingSend ? "Reintentar envío" : `Enviar pendientes · ${pendingCount}`}</Button>}
             {activeCancellations.length > 0 && <div className="mt-4 rounded-xl border border-amber-400/60 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"><p className="font-bold">{activeCancellations.length} cancelación(es) por resolver</p><p className="mt-1">La precuenta y la factura quedan en espera hasta confirmar el consumo.</p><Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => void refreshCancellations()}>Actualizar estado</Button></div>}
@@ -896,21 +944,35 @@ export function RestaurantPosWorkspace({ option }: {
         </div>
       </div>
     </section>}
-    <Dialog open={customerOpen} onOpenChange={setCustomerOpen}>
-      <DialogContent className="max-h-[85dvh] max-w-lg overflow-y-auto rounded-3xl">
-        <DialogHeader><DialogTitle>Cliente de la mesa</DialogTitle><DialogDescription>Busca por nombre o identificación. Su canal se aplicará a toda la cuenta.</DialogDescription></DialogHeader>
-        <PartyRoleSelect role="Customer" value={draft?.account.customerId ?? ""}
-          selectedOption={draft?.account.customerId ? { value: draft.account.customerId, label: draft.account.customerName || "Cliente" } : null}
-          placeholder="Buscar cliente" preload={customerOpen} disabled={busy}
-          onChange={(value) => void changeTableCustomer(value || null)}/>
-        {draft?.account.customerId && <Button variant="outline" className="min-h-12 justify-start" disabled={busy} onClick={() => void changeTableCustomer(null)}>Quitar cliente · consumidor final</Button>}
-      </DialogContent>
-    </Dialog>
+    <Sheet open={ordersOpen} onOpenChange={setOrdersOpen}>
+      <SheetContent className="flex min-h-0 w-full flex-col p-4 sm:max-w-xl">
+        <SheetHeader className="pr-8"><SheetTitle>Pedidos</SheetTitle><SheetDescription>Consulta y recupera un pedido para facturarlo sin mesa.</SheetDescription></SheetHeader>
+        {ordersOpen && <OrdersWorkspace compact showHeader={false} initialStatus="Available"
+          loadPage={loadCommerceOrders} loadDetail={loadCommerceOrder}
+          recoveryBlockedReason={recoveryBlockedReason}
+          onRecover={permissions.includes("orders.recover") && permissions.includes("sales.create")
+            ? async (order) => {
+              if (recoveryBlockedReason) throw new Error(recoveryBlockedReason);
+              backToTables();
+              router.push(`/pos?workspace=orders&recoverOrder=${encodeURIComponent(order.orderId)}`);
+            }
+            : undefined}/>}
+      </SheetContent>
+    </Sheet>
+    {customerOpen && <PosCustomerSearchDialog busy={busy} connected requireSite={false}
+      onSearch={searchTableCustomers} onSelect={(customer) => changeTableCustomer(customer?.customerId ?? null)}
+      onCancel={() => { if (!busy) setCustomerOpen(false); }}/>}
     <Dialog open={channelOpen} onOpenChange={setChannelOpen}>
-      <DialogContent className="max-w-md rounded-3xl"><DialogHeader><DialogTitle>Canal de precio</DialogTitle><DialogDescription>El cambio ajusta los productos de esta mesa antes de cobrar.</DialogDescription></DialogHeader>
-        <div className="space-y-2"><Button type="button" variant={draft?.account.priceChannelId ? "outline" : "default"} className="min-h-12 w-full justify-start rounded-xl" disabled={busy} onClick={() => void changeTableChannel(null)}>Sin canal · precio de mesa</Button>
-          {priceChannels.data?.map((channel) => <Button type="button" key={channel.priceChannelId} variant={draft?.account.priceChannelId === channel.priceChannelId ? "default" : "outline"} className="min-h-12 w-full justify-start rounded-xl" disabled={busy} onClick={() => void changeTableChannel(channel.priceChannelId)}>{channel.name}</Button>)}
+      <DialogContent className="flex max-h-[90dvh] w-[calc(100%_-_2rem)] max-w-lg flex-col overflow-hidden rounded-3xl"><DialogHeader><DialogTitle>Canal de precio</DialogTitle><DialogDescription>El cambio ajusta los productos de esta mesa antes de cobrar.</DialogDescription></DialogHeader>
+        <Input aria-label="Buscar canal de precio" placeholder="Nombre o código del canal" value={channelSearch} onChange={(event) => { setChannelSearch(event.target.value); setChannelPage(0); }}/>
+        <Button type="button" variant={draft?.account.priceChannelId ? "outline" : "default"} className="min-h-11 w-full shrink-0 justify-start rounded-xl" disabled={busy} onClick={() => void changeTableChannel(null)}>Sin canal · precio de mesa</Button>
+        <div className="min-h-0 space-y-2 overflow-y-auto" aria-label="Canales de precio">
+          {priceChannels.isFetching || channelWaitingForSearch ? <p role="status" className="py-6 text-center text-sm text-muted-foreground">Buscando canales…</p> : priceChannels.isError ? <div role="alert" className="py-4 text-sm text-destructive">No se pudieron cargar los canales.<Button variant="link" onClick={() => void priceChannels.refetch()}>Reintentar</Button></div> : <>
+            {priceChannels.data?.slice(0, 20).map((channel) => <Button type="button" key={channel.priceChannelId} variant={draft?.account.priceChannelId === channel.priceChannelId ? "default" : "outline"} className="min-h-11 w-full justify-start whitespace-normal break-words rounded-xl text-left" disabled={busy} onClick={() => void changeTableChannel(channel.priceChannelId)}>{channel.name}</Button>)}
+            {!priceChannels.data?.length && <p className="py-6 text-center text-sm text-muted-foreground">No encontramos canales.</p>}
+          </>}
         </div>
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t pt-3"><Button variant="outline" size="sm" className="px-2" disabled={busy || channelPage === 0 || priceChannels.isFetching || channelWaitingForSearch} onClick={() => setChannelPage((page) => page - 1)}>Anterior</Button><span className="whitespace-nowrap text-xs text-muted-foreground">Página {channelPage + 1}</span><Button variant="outline" size="sm" className="px-2" disabled={busy || priceChannels.isFetching || channelWaitingForSearch || (priceChannels.data?.length ?? 0) <= 20} onClick={() => setChannelPage((page) => page + 1)}>Siguiente</Button></div>
       </DialogContent>
     </Dialog>
     {editingAddition && <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Observación del producto"><div className="w-full max-w-lg rounded-[2rem] border bg-card p-6 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-primary">Indicación para preparación</p><h2 className="mt-1 text-xl font-bold">{editingAddition.description}</h2><p className="mt-1 text-sm text-muted-foreground">Esta observación corresponde solo a esta incorporación. Para indicaciones distintas, agrega otra unidad.</p><textarea autoFocus maxLength={500} value={noteText} onChange={(event) => setNoteText(event.target.value)} placeholder="Ej. Sin cebolla, salsa aparte…" className="mt-5 min-h-32 w-full resize-y rounded-2xl border bg-background p-4 text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"/><div className="mt-2 text-right text-xs text-muted-foreground">{noteText.length}/500</div><div className="mt-5 flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setNoteAdditionId(null)}>Cancelar</Button><Button disabled={busy || !!pendingSend} onClick={() => void saveNote()}>{busy ? "Guardando…" : "Guardar observación"}</Button></div></div></div>}

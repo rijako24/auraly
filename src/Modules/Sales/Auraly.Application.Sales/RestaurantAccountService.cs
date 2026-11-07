@@ -42,7 +42,7 @@ public interface IRestaurantAccountStore
     Task<RestaurantAccount?> GetAsync(RestaurantAccountActor actor,
         Guid accountId, CancellationToken ct);
     Task<IReadOnlyList<RestaurantPriceChannelOption>> PriceChannelsAsync(
-        RestaurantAccountActor actor, CancellationToken ct);
+        RestaurantAccountActor actor, string? search, int skip, int take, CancellationToken ct);
     Task<RestaurantAccountDraft> ChangePriceChannelAsync(
         RestaurantAccountActor actor, Guid accountId,
         ChangeRestaurantPriceChannelRequest request, DateTimeOffset now,
@@ -98,12 +98,14 @@ public sealed class RestaurantAccountService(
     private const string OpenWithoutWaiterPermission = "restaurant.tables.open_without_waiter";
     private const string SelectPriceChannelPermission = "restaurant.price_channels.select";
     public Task<IReadOnlyList<RestaurantPriceChannelOption>> PriceChannelsAsync(
-        RestaurantAccountActor actor, CancellationToken ct)
+        RestaurantAccountActor actor, string? search, int skip, int take, CancellationToken ct)
     {
         DemandIdentity(actor);
         if (!actor.Permissions.Contains(SelectPriceChannelPermission))
             throw new RestaurantAccountForbiddenException("No tienes permiso para seleccionar un canal de precios.");
-        return store.PriceChannelsAsync(actor, ct);
+        if (skip < 0 || take is < 1 or > 100 || search?.Length > 120)
+            throw new RestaurantAccountValidationException("La búsqueda o paginación del canal no es válida.");
+        return store.PriceChannelsAsync(actor, search?.Trim(), skip, take, ct);
     }
 
     public Task<RestaurantAccountDraft> ChangePriceChannelAsync(

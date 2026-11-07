@@ -113,6 +113,45 @@ En tablet vertical/teléfono: Mesas → Productos → Cuenta, con resumen y acci
 
 **Apariencia de Auraly, con modo luz y modo oscuro completos.** Reutilizar ThemeToggle/next-themes y los tokens semánticos de la aplicación; no tema exclusivo del restaurante ni configuración por mesa/negocio. En luz predominan blanco en cabecera, plano, cuenta, tarjetas y diálogos, con fondo gris muy suave, bordes discretos y acento verde azulado en acciones/selección. Evitar cabecera permanentemente oscura, grandes rellenos saturados y cuadrícula decorativa dominante en el plano de venta. En oscuro usar superficies diferenciadas y texto legible, sin invertir fotografías. Estados de mesa mantienen texto/iconos además de color. Cambiar tema conserva mesa, actor, cantidades, categoría y contexto; no exige recarga. Aplicar a POS, editor, comandas y diálogos. El menú público respeta la preferencia del visitante, sin publicar la preferencia privada del cajero.
 
+La cabecera de la cuenta reúne mesa y salón en una fila, presenta al responsable
+una sola vez cuando también está atendiendo y ofrece el cambio de mesero mediante
+un botón de icono identificado. Cliente y canal son botones compactos contiguos
+con el valor seleccionado y nombre accesible completo. La vuelta al plano se
+etiqueta **Volver**. La lista conserva espacio para dos tarjetas completas,
+medido sobre las dos primeras y sus acciones; si la altura disponible no alcanza,
+crece la columna y se conserva el desplazamiento exterior de la pantalla.
+
+El encabezado ofrece un icono **Pedidos** con el mismo panel lateral de Tiendas,
+sin ventas pausadas ni lecturas mientras esté cerrado. Su lista reutiliza
+`OrdersWorkspace` y la consulta paginada canónica. Consultar exige `orders.read`;
+recuperar para facturar exige además `orders.recover` y `sales.create`.
+La recuperación abre `/pos?workspace=orders&recoverOrder=…`, reutiliza el borrador,
+claim, edición, pagos y emisor existentes de Pedidos y conserva esa vista al
+refrescar. El acceso normal al POS restaurante sigue abriendo Mesas. Este contexto
+solo habilita captura/cobro mientras hay un pedido recuperado: tras facturarlo o
+liberarlo, permite recuperar otro o volver a Restaurante. No presenta Pausar venta.
+La factura lleva `SalesDocuments.TableId` nulo y conserva su origen por
+`SalesDrafts.SourceOrderId` y `OrderInvoiceLinks`, sin agregar campos o escritores.
+Esta facturación de pedidos existentes no amplía el flujo de preparación para
+llevar descrito más adelante.
+
+La búsqueda de clientes reutiliza `PosCustomerSearchDialog` de Venta directa y
+Tiendas. Restaurante obtiene opciones paginadas de `Parties.role-options` por rol
+Cliente; no requiere abrir una sesión financiera ni crear un borrador normal.
+Al elegir, el comando existente de Sales resuelve la sede principal y el canal
+autoritativo. La creación rápida de clientes continúa en los POS que ya la
+ofrecían; reutilizar su presentación no concede ese permiso al mesero.
+
+El selector de canales consulta únicamente mientras está abierto y autorizado:
+20 opciones visibles con una fila adicional para detectar la página siguiente,
+búsqueda por nombre o código y orden estable por nombre e ID. El endpoint
+existente conserva su respuesta de lista, acepta `search`, `skip` y `take`,
+limita `take` a 100 y usa 50 por defecto para clientes anteriores. Los filtros y
+el límite se aplican en SQL sobre canales activos del tenant, en un comando por
+página, sin cargar el catálogo completo ni contar por opción. El objetivo de la
+primera página, siguientes y búsqueda es p95 inferior a un segundo con 1.000
+canales, medido sin builds o pruebas concurrentes.
+
 ### Interacción
 
 - Producto simple agrega una unidad; sin mesa/cuenta activa solicita selección, sin agregar a una cuenta implícita.
@@ -262,7 +301,7 @@ Tras documento aceptado, recibo/vínculo durables y referencias de auditoría/co
 
 ### Precuenta y cobro
 
-Mesero imprime precuenta con referencia/QR, mesa, revisión, fecha/hora, líneas y total: **Precuenta · No es factura**. QR solo localiza cuenta para operador autorizado. No registra pago ni consume numeración fiscal. Lleva el dinero a caja, donde el cajero confirma el pago y factura. El mesero acumula ítems en el pedido/borrador de la mesa; la factura nace cuando la emite el cajero. **Con cantidades pendientes de envío, se bloquea la precuenta** y se ofrece Enviar pendientes o retirar esas cantidades; no se entrega al cliente una cuenta con ítems que cocina/barra aún no recibió. Imprimir la precuenta no abre caja automáticamente.
+Mesero imprime precuenta con referencia/QR, mesa, revisión, fecha/hora, líneas y total: **Precuenta · No es factura**. QR solo localiza cuenta para operador autorizado. No registra pago ni consume numeración fiscal. Lleva el dinero a caja, donde el cajero confirma el pago y factura. El mesero acumula ítems en el pedido/borrador de la mesa; la factura nace cuando la emite el cajero. **Con cantidades pendientes de envío, se bloquea la precuenta** y se ofrece Enviar pendientes o retirar esas cantidades; no se entrega al cliente una cuenta con ítems que cocina/barra aún no recibió. Imprimir la precuenta no abre caja automáticamente. La acción abre directamente el diálogo del navegador mediante el mismo iframe y renderer de impresión del POS; no abre una ventana adicional con otro botón para imprimir. El documento muestra la mesa y una sola leyenda **Precuenta · No es factura**, sin repetir títulos o marca fija.
 
 Usuario conectado con permiso de facturación toca mesa → Facturar → cobro táctil propio de restaurante. Inicialmente está seleccionado el saldo completo; también puede elegir cantidades de productos aún no cubiertas para recibir solo esa parte. Cada cobro parcial se registra de forma durable y auditable en la cuenta gastronómica, con productos/cantidades, medios, importe, cajero, sesión e idempotencia. No se llama al emisor de facturas ni se libera la mesa al guardar un cobro parcial. Al reabrir Facturar se ven primero las cantidades pendientes y debajo las ya pagadas (incluso del mismo producto parcialmente cubierto), los cobros recibidos y el saldo; el total para cobrar considera solo cantidades pendientes y no se cobra dos veces una misma cantidad. El último cobro aplica al medio de pago el ajuste al centenar del total de consumo mediante la misma política de Venta Directa; conserva el importe exacto de los productos y `RoundingAdjustment` por separado, mientras la propina se registra fuera de la venta. Al completar el saldo, se envía **una sola factura** con todos los productos y la suma de medios de pago mediante el emisor online vigente. El intento de emisión es idempotente: un fallo no borra cobros ni permite repetir la captura de dinero. El recibo final vincula el único documento con la mesa y sus cobros. Una cuenta con cobros parciales solo se puede cancelar tras revertir esos cobros, con auditoría y autorización.
 

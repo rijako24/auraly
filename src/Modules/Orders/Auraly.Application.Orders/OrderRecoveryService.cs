@@ -102,7 +102,7 @@ public sealed class OrderRecoveryService(
         }
         catch when (!importCompleted && prepared.ClaimAcquiredByThisAttempt)
         {
-            await orders.ReleaseClaimAsync(
+            await orders.ReleaseFailedRecoveryClaimAsync(
                 actor,
                 order.OrderId,
                 new ReleaseOrderClaimRequest(request.WorkSessionId, request.UserId),
@@ -149,7 +149,8 @@ public sealed class OrderRecoveryService(
                 "El pedido tiene productos sin equivalencia en el catálogo de Auraly.");
 
         var targetWasAlreadyClaimedBySession =
-            order.Claim?.IsOwnedByCurrentActor == true;
+            order.Claim?.IsOwnedByCurrentActor == true &&
+            order.Claim.WorkSessionId == workSessionId && order.Claim.UserId == userId;
         var claimAcquiredByThisAttempt = !targetWasAlreadyClaimedBySession;
         try
         {
@@ -157,21 +158,14 @@ public sealed class OrderRecoveryService(
             if (replaceOtherClaim)
                 await orders.ClaimReplacingOtherAsync(
                     actor, order.OrderId, claimRequest, cancellationToken);
-            else
+            else if (!targetWasAlreadyClaimedBySession)
                 await orders.ClaimAsync(
                     actor, order.OrderId, claimRequest, cancellationToken);
-            if (!replaceOtherClaim)
-                await orders.ReleaseOtherClaimsAsync(
-                    actor,
-                    order.OrderId,
-                    workSessionId,
-                    userId,
-                    cancellationToken);
             return new PreparedOrderRecovery(order, claimAcquiredByThisAttempt);
         }
         catch when (claimAcquiredByThisAttempt)
         {
-            await orders.ReleaseClaimAsync(
+            await orders.ReleaseFailedRecoveryClaimAsync(
                 actor,
                 order.OrderId,
                 new ReleaseOrderClaimRequest(workSessionId, userId),

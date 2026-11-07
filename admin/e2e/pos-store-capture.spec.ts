@@ -204,6 +204,14 @@ test("Tiendas reutiliza el borrador, la captura, las cantidades y el cobro de ve
     await page.screenshot({ path: `test-results/pos-store-${viewport.width}x${viewport.height}.png`, fullPage: true });
   }
   await expect(page.getByRole("heading", { name: "Ventas en espera", exact: true })).toHaveCount(0);
+  const actionsSummary = page.locator("summary").filter({ hasText: "Acciones de captura" });
+  const summaryBox = await actionsSummary.boundingBox();
+  for (const name of ["Ver ventas en espera", "Ver pedidos"]) {
+    const box = await page.getByRole("button", { name, exact: true }).boundingBox();
+    expect(Math.abs(box!.y + box!.height / 2 - summaryBox!.y - summaryBox!.height / 2), `${name} centrado con el encabezado`).toBeLessThanOrEqual(1);
+  }
+  const expanded = await actionsSummary.locator("..").getAttribute("open");
   await page.getByRole("button", { name: "Ver ventas en espera", exact: true }).click();
+  expect(await actionsSummary.locator("..").getAttribute("open")).toBe(expanded);
   await expect(page.getByRole("heading", { name: "Ventas y pedidos", exact: true })).toBeVisible();
 });

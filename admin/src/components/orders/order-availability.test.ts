@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getOrderAvailability } from "./order-availability";
+import { captureRecoveryBlockedReason, getOrderAvailability } from "./order-availability";
+
+test("la recuperación requiere una captura sin productos", () => {
+  assert.equal(captureRecoveryBlockedReason(0), null);
+  assert.match(captureRecoveryBlockedReason(1)!, /tiene productos/);
+  assert.match(captureRecoveryBlockedReason(4)!, /tiene productos/);
+});
 
 const claim = {
   claimId: "claim-1",

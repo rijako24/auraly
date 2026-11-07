@@ -1,5 +1,11 @@
 import type { CommerceOrderListItem } from "@/services/orders/commerce-orders-client";
 
+export function captureRecoveryBlockedReason(lineCount: number): string | null {
+  return lineCount > 0
+    ? "La captura tiene productos. Termínala o vacíala antes de recuperar."
+    : null;
+}
+
 type OrderAvailabilityInput = Pick<
   CommerceOrderListItem,
   "orderId" | "canInvoice" | "status" | "claim"
