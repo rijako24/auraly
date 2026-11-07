@@ -155,6 +155,27 @@ historical account. The SQL project builds with no diagnostics. This evidence
 does not certify commercial-only reconciliation or authorize a production
 deployment.
 
+The physical-copy production rehearsal on 2026-11-07 UTC did not complete.
+The canonical bank migration rejected two banks sharing legacy auxiliary
+`111005`, with posted history for both. This is the explicit-reconciliation
+case described in section 13.8 of `accounting-open-vouchers-design.md`; choosing
+one bank or rewriting old journal lines is not an automatic migration strategy.
+The independent canonical opening-link migration passed inside a rolled-back
+transaction for 813 posted receivables and 1,141 payables. This does not certify
+the failed overall deployment or permit starting the new readers prematurely.
+
+The before/after checks preserved all 814 receivables, 1,141 payables, payments,
+applications, journal entries and inventory, including paid/open states and
+outstanding amounts. Four added default accounts were distinguished from the
+87 original accounts, whose original-column fingerprint remained identical.
+The rehearsal also found four historical sales-line generic-product flags
+changed by `20260916_AddGenericProductMode.sql`: its backfill runs even when the
+snapshot column already exists. Restoring only those flags in the comparison
+projection reproduced the full original sales-line fingerprint, proving the
+other captured fields unchanged. This is evidence of a backfill defect, not
+permission to overwrite historical snapshots. No production writes or runtime
+functional acceptance were performed by this rehearsal.
+
 ### Portfolio payments and manual vouchers share their acceptance
 
 Source/job persistence now converges in `dbo.AccountingSourcesAccept`, called in

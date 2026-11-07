@@ -347,7 +347,15 @@ public sealed class PosArchitectureTests
         var header = page[headerStart..headerEnd];
 
         Assert.DoesNotContain("{temporaries.length} temporales", header, StringComparison.Ordinal);
-        Assert.DoesNotContain("Pedidos", header, StringComparison.Ordinal);
+        var restaurantActionsStart = header.IndexOf("{isRestaurantOrder && <>", StringComparison.Ordinal);
+        Assert.True(restaurantActionsStart >= 0);
+        var restaurantActionsEnd = header.IndexOf("</>}", restaurantActionsStart, StringComparison.Ordinal);
+        Assert.True(restaurantActionsEnd > restaurantActionsStart);
+        var restaurantActionsLength = restaurantActionsEnd + "</>}".Length - restaurantActionsStart;
+        var restaurantActions = header.Substring(restaurantActionsStart, restaurantActionsLength);
+        Assert.Contains("aria-label=\"Ver pedidos\"", restaurantActions, StringComparison.Ordinal);
+        Assert.DoesNotContain("En espera", restaurantActions, StringComparison.Ordinal);
+        Assert.DoesNotContain("Pedidos", header.Remove(restaurantActionsStart, restaurantActionsLength), StringComparison.Ordinal);
         Assert.Contains("role=\"tablist\"", page, StringComparison.Ordinal);
         Assert.Contains("setSidePanel(\"temporaries\")", page, StringComparison.Ordinal);
         Assert.Contains("setSidePanel(\"orders\")", page, StringComparison.Ordinal);
