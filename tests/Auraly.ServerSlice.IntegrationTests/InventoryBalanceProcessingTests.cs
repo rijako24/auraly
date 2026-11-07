@@ -323,6 +323,7 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
         private readonly Func<SqlCommand, bool>? commandFilter;
         private readonly Action<SqlCommand>? beforeExecute;
         private readonly Action<SqlCommand, double>? afterExecute;
+        private readonly Action<SqlCommand, Exception>? onCommandError;
         private readonly System.Collections.Concurrent.ConcurrentDictionary<SqlCommand, long> starts = new();
         private readonly System.Collections.Concurrent.ConcurrentBag<IDisposable> subscriptions = [];
         private readonly IDisposable allListeners;
@@ -331,26 +332,33 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
         public string? LastCommandText { get; private set; }
         public CommandCounter(string database, System.Diagnostics.ActivityTraceId? traceId = null,
             Func<SqlCommand, bool>? commandFilter = null, Action<SqlCommand>? beforeExecute = null,
-            Action<SqlCommand, double>? afterExecute = null)
+            Action<SqlCommand, double>? afterExecute = null, Action<SqlCommand, Exception>? onCommandError = null)
         {
             this.database = database;
             this.traceId = traceId;
             this.commandFilter = commandFilter;
             this.beforeExecute = beforeExecute;
             this.afterExecute = afterExecute;
+            this.onCommandError = onCommandError;
             allListeners = System.Diagnostics.DiagnosticListener.AllListeners.Subscribe(this);
         }
         public void OnNext(System.Diagnostics.DiagnosticListener listener)
         {
             if (listener.Name == "SqlClientDiagnosticListener")
                 subscriptions.Add(listener.Subscribe(this, name => name.EndsWith(".WriteCommandBefore", StringComparison.Ordinal) ||
-                    afterExecute is not null && (name.EndsWith(".WriteCommandAfter", StringComparison.Ordinal) || name.EndsWith(".WriteCommandError", StringComparison.Ordinal))));
+                    afterExecute is not null && (name.EndsWith(".WriteCommandAfter", StringComparison.Ordinal) || name.EndsWith(".WriteCommandError", StringComparison.Ordinal)) ||
+                    onCommandError is not null && name.EndsWith(".WriteCommandError", StringComparison.Ordinal)));
         }
         public void OnNext(KeyValuePair<string, object?> value)
         {
             if (traceId.HasValue && System.Diagnostics.Activity.Current?.TraceId != traceId.Value) return;
             if (!value.Key.EndsWith(".WriteCommandBefore", StringComparison.Ordinal))
             {
+                if (value.Key.EndsWith(".WriteCommandError", StringComparison.Ordinal) &&
+                    value.Value?.GetType().GetProperty("Command")?.GetValue(value.Value) is SqlCommand failed &&
+                    failed.Connection?.Database == database && (commandFilter is null || commandFilter(failed)) &&
+                    value.Value.GetType().GetProperty("Exception")?.GetValue(value.Value) is Exception exception)
+                    onCommandError?.Invoke(failed, exception);
                 if (value.Value?.GetType().GetProperty("Command")?.GetValue(value.Value) is SqlCommand completed &&
                     starts.TryRemove(completed, out var start))
                     afterExecute?.Invoke(completed, System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds);

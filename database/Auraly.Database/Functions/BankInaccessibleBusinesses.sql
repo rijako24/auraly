@@ -5,8 +5,7 @@ RETURNS TABLE
 AS RETURN
 (
     SELECT DISTINCT entry.BusinessId
-    FROM accounting.BankBookAccounts(@TenantId,@BankAccountId) account
-    JOIN dbo.AccountingEntryLines line ON line.AccountId=account.AccountId
+    FROM accounting.BankBookEntries(@TenantId,@BankAccountId) line
     JOIN dbo.AccountingEntries entry ON entry.EntryId=line.EntryId AND entry.TenantId=@TenantId
     WHERE NOT EXISTS(
         SELECT 1 FROM dbo.UserRoles assignment

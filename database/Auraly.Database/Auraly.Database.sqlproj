@@ -53,6 +53,7 @@
     <Build Include="Functions\ManualTreasuryMovements.sql" />
     <Build Include="Views\PortfolioPaymentOrigins.sql" />
     <Build Include="Functions\BankBookAccounts.sql" />
+    <Build Include="Functions\BankBookEntries.sql" />
     <Build Include="Functions\BankInaccessibleBusinesses.sql" />
     <Build Include="Functions\BankPostingAccount.sql" />
     <Build Include="Functions\ConfiguredPostingAccount.sql" />

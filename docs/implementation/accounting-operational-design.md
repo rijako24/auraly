@@ -155,6 +155,14 @@ historical account. The SQL project builds with no diagnostics. This evidence
 does not certify commercial-only reconciliation or authorize a production
 deployment.
 
+The release pipeline now requires API and Function in the same production
+database release, checks lease-signing configuration before downtime, stops both
+old hosts and verifies their stopped state before any database migration. Only
+the respective new package may start its host. A failed cutover does not restart
+old binaries. Six isolated command simulations cover DEV, complete production
+scope, API-only scope, missing worker, failed stop and an unconfirmed stopped
+state. These tests do not perform or authorize a production cutover.
+
 The physical-copy production rehearsal on 2026-11-07 UTC did not complete.
 The canonical bank migration rejected two banks sharing legacy auxiliary
 `111005`, with posted history for both. This is the explicit-reconciliation

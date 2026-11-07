@@ -77,6 +77,10 @@ public sealed class SqlBankReconciliationStore(
                 IF EXISTS(SELECT 1 FROM accounting.BankInaccessibleBusinesses(
                     @TenantId,@BankAccountId,@UserId,@ScopePermission))
                   THROW 51506,N'No tienes permiso de conciliación sobre todas las sedes que usan esta cuenta bancaria.',1;
+                IF EXISTS(SELECT 1 FROM accounting.BankBookEntries(@TenantId,@BankAccountId) book
+                  JOIN dbo.AccountingEntries entry ON entry.EntryId=book.EntryId
+                  WHERE book.HasBankAttribution=0 AND CAST(entry.OccurredAt AS date)<=@PeriodTo)
+                  THROW 51501,N'El auxiliar histórico compartido tiene partidas sin banco demostrable. Revisa su origen antes de conciliar; no se presenta un saldo parcial como completo.',1;
                 IF EXISTS(SELECT 1 FROM accounting.BankReconciliations WITH(UPDLOCK,HOLDLOCK)
                   WHERE TenantId=@TenantId AND BankAccountId=@BankAccountId
                     AND (FileSha256=@FileSha256 OR (PeriodFrom<=@PeriodTo AND PeriodTo>=@PeriodFrom)))
@@ -97,8 +101,9 @@ public sealed class SqlBankReconciliationStore(
                   JOIN accounting.BankAccounts priorBank ON priorBank.BankAccountId=prior.BankAccountId
                   JOIN dbo.AccountingEntries e ON e.TenantId=prior.TenantId
                     AND CAST(e.OccurredAt AS date)<=prior.PeriodTo AND e.PostedAt>lastClose.OccurredAt
-                  JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId AND l.AccountId IN(
-                    SELECT AccountId FROM accounting.BankBookAccounts(priorBank.TenantId,priorBank.BankAccountId))
+                  JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId AND EXISTS(
+                    SELECT 1 FROM accounting.BankBookEntries(priorBank.TenantId,priorBank.BankAccountId) book
+                    WHERE book.EntryId=l.EntryId AND book.LineNumber=l.LineNumber AND book.HasBankAttribution=1)
                   WHERE prior.TenantId=@TenantId AND prior.BankAccountId=@BankAccountId AND prior.Status=N'Closed')
                   THROW 51502,N'Una conciliación anterior recibió movimientos contables retroactivos. Reábrela y revísala antes de continuar.',1;
                 INSERT accounting.BankReconciliations
@@ -164,8 +169,9 @@ public sealed class SqlBankReconciliationStore(
                 SELECT @BookAmount=l.Debit-l.Credit FROM dbo.AccountingEntryLines l WITH(UPDLOCK,HOLDLOCK)
                   JOIN dbo.AccountingEntries e ON e.EntryId=l.EntryId
                   JOIN accounting.BankReconciliations r ON r.ReconciliationId=@ReconciliationId
-                WHERE l.EntryId=@EntryId AND l.LineNumber=@EntryLineNumber AND l.AccountId IN(
-                    SELECT AccountId FROM accounting.BankBookAccounts(r.TenantId,r.BankAccountId))
+                WHERE l.EntryId=@EntryId AND l.LineNumber=@EntryLineNumber AND EXISTS(
+                    SELECT 1 FROM accounting.BankBookEntries(r.TenantId,r.BankAccountId) book
+                    WHERE book.EntryId=l.EntryId AND book.LineNumber=l.LineNumber AND book.HasBankAttribution=1)
                   AND e.TenantId=r.TenantId AND CAST(e.OccurredAt AS date)<=r.PeriodTo;
                 IF @StatementAmount IS NULL OR @BookAmount IS NULL
                   THROW 51503,N'La línea bancaria o contable no pertenece a esta conciliación.',1;
@@ -227,7 +233,11 @@ public sealed class SqlBankReconciliationStore(
                     AND CAST(job.OccurredAt AS date)<=@To AND job.Status<>N'Posted'
                     AND (CHARINDEX(CONVERT(nvarchar(36),@BankAccountId),source.PayloadJson)>0
                       OR EXISTS(SELECT 1 FROM accounting.BankBookAccounts(@TenantId,@BankAccountId) account
-                        WHERE CHARINDEX(CONVERT(nvarchar(36),account.AccountId),source.PayloadJson)>0)))
+                        WHERE CHARINDEX(CONVERT(nvarchar(36),account.AccountId),source.PayloadJson)>0)
+                      OR EXISTS(SELECT 1 FROM accounting.BankAccounts bank
+                        WHERE bank.TenantId=@TenantId AND bank.BankAccountId=@BankAccountId
+                          AND bank.HistoricalAccountingAccountId IS NOT NULL
+                          AND CHARINDEX(CONVERT(nvarchar(36),bank.HistoricalAccountingAccountId),source.PayloadJson)>0)))
                   THROW 51505,N'Hay documentos contables pendientes que podrían afectar el corte.',1;
                 IF ABS(@Opening+COALESCE((SELECT SUM(Amount) FROM accounting.BankStatementLines WHERE ReconciliationId=@ReconciliationId),0)-@Closing)>.0001
                   THROW 51505,N'El saldo inicial, los movimientos del extracto y el saldo final no cuadran.',1;
@@ -237,16 +247,19 @@ public sealed class SqlBankReconciliationStore(
                   THROW 51505,N'Quedan movimientos del extracto sin conciliar.',1;
                 IF EXISTS(SELECT 1 FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
                   OUTER APPLY(SELECT SUM(a.Amount) Allocated FROM accounting.BankReconciliationAllocations a WHERE a.EntryId=l.EntryId AND a.EntryLineNumber=l.LineNumber AND a.ReversedAt IS NULL) x
-                  WHERE e.TenantId=@TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(@TenantId,@BankAccountId))
+                  WHERE e.TenantId=@TenantId AND EXISTS(SELECT 1 FROM accounting.BankBookEntries(@TenantId,@BankAccountId) book
+                    WHERE book.EntryId=l.EntryId AND book.LineNumber=l.LineNumber AND book.HasBankAttribution=1)
                     AND CAST(e.OccurredAt AS date)<=@To AND ABS(l.Debit-l.Credit)<>COALESCE(x.Allocated,0))
                   THROW 51505,N'Quedan movimientos contables de la cuenta bancaria sin conciliar.',1;
                 SET @BookClosing=COALESCE((SELECT SUM(l.Debit-l.Credit)
                   FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
-                  WHERE e.TenantId=@TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(@TenantId,@BankAccountId)) AND CAST(e.OccurredAt AS date)<=@To),0);
+                  WHERE e.TenantId=@TenantId AND EXISTS(SELECT 1 FROM accounting.BankBookEntries(@TenantId,@BankAccountId) book
+                    WHERE book.EntryId=l.EntryId AND book.LineNumber=l.LineNumber AND book.HasBankAttribution=1) AND CAST(e.OccurredAt AS date)<=@To),0);
                 IF ABS(@BookClosing-@Closing)>.0001 THROW 51505,N'El saldo del banco y el saldo contable no cuadran.',1;
                 SET @Cutoff=(SELECT MAX(e.PostedAt) FROM dbo.AccountingEntries e
                   JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
-                  WHERE e.TenantId=@TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(@TenantId,@BankAccountId)) AND CAST(e.OccurredAt AS date)<=@To);
+                  WHERE e.TenantId=@TenantId AND EXISTS(SELECT 1 FROM accounting.BankBookEntries(@TenantId,@BankAccountId) book
+                    WHERE book.EntryId=l.EntryId AND book.LineNumber=l.LineNumber AND book.HasBankAttribution=1) AND CAST(e.OccurredAt AS date)<=@To);
                 UPDATE accounting.BankReconciliations SET Status=N'Closed',ClosedByUserId=@UserId,ClosedAt=@Now,
                   UpdatedByUserId=@UserId,UpdatedAt=@Now WHERE ReconciliationId=@ReconciliationId;
                 INSERT accounting.BankReconciliationStatusEvents
@@ -301,6 +314,12 @@ public sealed class SqlBankReconciliationStore(
                     @TenantId,reconciliation.BankAccountId,@UserId,@ScopePermission) denied
                   WHERE reconciliation.ReconciliationId=@ReconciliationId AND reconciliation.TenantId=@TenantId)
                   THROW 51506,N'No tienes permiso de conciliación sobre todas las sedes que usan esta cuenta bancaria.',1;
+                IF EXISTS(SELECT 1 FROM accounting.BankReconciliations reconciliation
+                  CROSS APPLY accounting.BankBookEntries(reconciliation.TenantId,reconciliation.BankAccountId) book
+                  JOIN dbo.AccountingEntries entry ON entry.EntryId=book.EntryId
+                  WHERE reconciliation.ReconciliationId=@ReconciliationId AND reconciliation.TenantId=@TenantId
+                    AND book.HasBankAttribution=0 AND CAST(entry.OccurredAt AS date)<=reconciliation.PeriodTo)
+                  THROW 51505,N'El auxiliar histórico compartido tiene partidas sin banco demostrable. Revisa su origen antes de conciliar; no se presenta un saldo parcial como completo.',1;
                 """, connection, transaction))
             {
                 scope.Parameters.AddWithValue("@ReconciliationId", reconciliationId);
@@ -383,8 +402,9 @@ public sealed class SqlBankReconciliationStore(
             INTO #BankBookKeys
             FROM accounting.BankReconciliations r
             JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId AND b.TenantId=r.TenantId
-            JOIN dbo.AccountingEntryLines l ON l.AccountId IN(
-              SELECT AccountId FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId))
+            JOIN dbo.AccountingEntryLines l ON EXISTS(
+              SELECT 1 FROM accounting.BankBookEntries(b.TenantId,b.BankAccountId) book
+              WHERE book.EntryId=l.EntryId AND book.LineNumber=l.LineNumber AND book.HasBankAttribution=1)
             JOIN dbo.AccountingEntries e ON e.EntryId=l.EntryId AND e.TenantId=r.TenantId
               AND CAST(e.OccurredAt AS date)<=r.PeriodTo
             OUTER APPLY(SELECT SUM(Amount) Allocated,
@@ -523,32 +543,48 @@ public sealed class SqlBankReconciliationStore(
             WHERE EXISTS(SELECT 1 FROM accounting.BankInaccessibleBusinesses(
               @TenantId,visible.BankAccountId,@UserId,@ReadPermission));
             SELECT COUNT(*) {scope};
-            WITH SelectedHeaders AS(
-              SELECT r.ReconciliationId {scope}
-              ORDER BY {sortColumn} {direction},r.ReconciliationId
-              OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY
-            )
+            SELECT r.ReconciliationId INTO #SelectedHeaders {scope}
+            ORDER BY {sortColumn} {direction},r.ReconciliationId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            SELECT r.BankAccountId,MAX(r.PeriodTo) PeriodTo INTO #SelectedBanks
+            FROM #SelectedHeaders selected JOIN accounting.BankReconciliations r ON r.ReconciliationId=selected.ReconciliationId
+            GROUP BY r.BankAccountId;
+            -- Resolve attribution once per bank in the selected page. Joining
+            -- raw statement rows to repeated expanded book queries multiplies
+            -- their work before the final aggregate.
+            SELECT bank.BankAccountId,CAST(entry.OccurredAt AS date) OccurredOn,entry.PostedAt,
+              line.Debit-line.Credit Amount INTO #SelectedBankBook
+            FROM #SelectedBanks bank CROSS APPLY accounting.BankBookEntries(@TenantId,bank.BankAccountId) book
+            JOIN dbo.AccountingEntries entry ON entry.EntryId=book.EntryId AND entry.TenantId=@TenantId
+            JOIN dbo.AccountingEntryLines line ON line.EntryId=book.EntryId AND line.LineNumber=book.LineNumber
+            WHERE book.HasBankAttribution=1 AND CAST(entry.OccurredAt AS date)<=bank.PeriodTo;
+            CREATE CLUSTERED INDEX IX_SelectedBankBook ON #SelectedBankBook(BankAccountId,OccurredOn);
+            SELECT s.ReconciliationId,COUNT(*) LineCount,
+              SUM(CASE WHEN ABS(s.Amount)=COALESCE(x.Allocated,0) THEN 1 ELSE 0 END) MatchedLineCount,
+              SUM(s.Amount) MovementTotal INTO #StatementTotals
+            FROM #SelectedHeaders selected JOIN accounting.BankStatementLines s ON s.ReconciliationId=selected.ReconciliationId
+            OUTER APPLY(SELECT SUM(ra.Amount) Allocated FROM accounting.BankReconciliationAllocations ra
+              WHERE ra.StatementLineId=s.StatementLineId AND ra.ReversedAt IS NULL) x
+            GROUP BY s.ReconciliationId;
             SELECT r.ReconciliationId,r.BankAccountId,b.DisplayName,a.Code,a.Name,r.PeriodFrom,r.PeriodTo,
               r.OpeningBalance,r.ClosingBalance,r.FileName,CONVERT(varchar(64),r.FileSha256,2),r.Status,
-              COUNT(DISTINCT s.StatementLineId),COUNT(DISTINCT CASE WHEN ABS(s.Amount)=COALESCE(x.Allocated,0) THEN s.StatementLineId END),
-              COALESCE(SUM(s.Amount),0),
-              COALESCE((SELECT SUM(l.Debit-l.Credit) FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId WHERE e.TenantId=r.TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId)) AND CAST(e.OccurredAt AS date) BETWEEN r.PeriodFrom AND r.PeriodTo),0),
-              r.ClosingBalance-COALESCE((SELECT SUM(l.Debit-l.Credit) FROM dbo.AccountingEntries e JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId WHERE e.TenantId=r.TenantId AND l.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId)) AND CAST(e.OccurredAt AS date)<=r.PeriodTo),0),
-              CONVERT(bit,CASE WHEN r.Status=N'Closed' AND EXISTS(
-                SELECT 1 FROM dbo.AccountingEntries changed
-                JOIN dbo.AccountingEntryLines changedLine ON changedLine.EntryId=changed.EntryId AND changedLine.AccountId IN(SELECT AccountId FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId))
-                WHERE changed.TenantId=r.TenantId AND CAST(changed.OccurredAt AS date)<=r.PeriodTo
-                  AND changed.PostedAt>(SELECT MAX(ev.OccurredAt) FROM accounting.BankReconciliationStatusEvents ev WHERE ev.ReconciliationId=r.ReconciliationId AND ev.Status=N'Closed')) THEN 1 ELSE 0 END),
+              COALESCE(statement.LineCount,0),COALESCE(statement.MatchedLineCount,0),COALESCE(statement.MovementTotal,0),
+              COALESCE(movement.MovementTotal,0),r.ClosingBalance-COALESCE(totals.ClosingBalance,0),
+              CONVERT(bit,CASE WHEN r.Status=N'Closed' AND totals.LastPostedAt>lastClose.OccurredAt THEN 1 ELSE 0 END),
               r.RowVersion,r.UpdatedAt
-            FROM SelectedHeaders selected JOIN accounting.BankReconciliations r ON r.ReconciliationId=selected.ReconciliationId
+            FROM #SelectedHeaders selected JOIN accounting.BankReconciliations r ON r.ReconciliationId=selected.ReconciliationId
             JOIN accounting.BankAccounts b ON b.BankAccountId=r.BankAccountId
             OUTER APPLY(SELECT CASE WHEN COUNT(*)=1 THEN MAX(account.Code) END Code,
               CASE WHEN COUNT(*)=1 THEN MAX(account.Name) END Name
               FROM accounting.BankBookAccounts(b.TenantId,b.BankAccountId) linked
               JOIN dbo.AccountingAccounts account ON account.AccountId=linked.AccountId) a
-            LEFT JOIN accounting.BankStatementLines s ON s.ReconciliationId=r.ReconciliationId
-            OUTER APPLY(SELECT SUM(ra.Amount) Allocated FROM accounting.BankReconciliationAllocations ra WHERE ra.StatementLineId=s.StatementLineId AND ra.ReversedAt IS NULL)x
-            GROUP BY r.ReconciliationId,r.BankAccountId,b.BankAccountId,b.TenantId,b.DisplayName,a.Code,a.Name,r.PeriodFrom,r.PeriodTo,r.OpeningBalance,r.ClosingBalance,r.FileName,r.FileSha256,r.Status,r.RowVersion,r.UpdatedAt,r.TenantId,r.BusinessId
+            LEFT JOIN #StatementTotals statement ON statement.ReconciliationId=r.ReconciliationId
+            OUTER APPLY(SELECT SUM(book.Amount) ClosingBalance,MAX(book.PostedAt) LastPostedAt FROM #SelectedBankBook book
+              WHERE book.BankAccountId=r.BankAccountId AND book.OccurredOn<=r.PeriodTo) totals
+            OUTER APPLY(SELECT SUM(book.Amount) MovementTotal FROM #SelectedBankBook book
+              WHERE book.BankAccountId=r.BankAccountId AND book.OccurredOn BETWEEN r.PeriodFrom AND r.PeriodTo) movement
+            OUTER APPLY(SELECT MAX(ev.OccurredAt) OccurredAt FROM accounting.BankReconciliationStatusEvents ev
+              WHERE ev.ReconciliationId=r.ReconciliationId AND ev.Status=N'Closed') lastClose
             ORDER BY {sortColumn} {direction},r.ReconciliationId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
@@ -584,18 +620,30 @@ public sealed class SqlBankReconciliationStore(
         AccountingUserIdentity user, Guid? reconciliationId, string permission, CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT DISTINCT BankAccountId INTO #ScopeBanks
+            SELECT BankAccountId,MAX(PeriodTo) PeriodTo INTO #ScopeBanks
             FROM accounting.BankReconciliations
-            WHERE TenantId=@TenantId AND (@ReconciliationId IS NULL OR ReconciliationId=@ReconciliationId);
+            WHERE TenantId=@TenantId AND (@ReconciliationId IS NULL OR ReconciliationId=@ReconciliationId)
+            GROUP BY BankAccountId;
             SELECT CONVERT(bit,CASE WHEN EXISTS(
               SELECT 1 FROM #ScopeBanks bank
               CROSS APPLY accounting.BankInaccessibleBusinesses(@TenantId,bank.BankAccountId,@UserId,@Permission) denied
+            ) THEN 0 ELSE 1 END),CONVERT(bit,CASE WHEN EXISTS(
+              SELECT 1 FROM #ScopeBanks bank
+              CROSS APPLY accounting.BankBookEntries(@TenantId,bank.BankAccountId) book
+              JOIN dbo.AccountingEntries entry ON entry.EntryId=book.EntryId
+              WHERE book.HasBankAttribution=0 AND CAST(entry.OccurredAt AS date)<=bank.PeriodTo
             ) THEN 0 ELSE 1 END);
             """, connection, transaction);
         command.Parameters.AddWithValue("@ReconciliationId", (object?)reconciliationId ?? DBNull.Value);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@UserId", user.UserId);
         command.Parameters.AddWithValue("@Permission", permission);
-        return (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("La comprobación del alcance bancario no devolvió un resultado.");
+        if (!reader.GetBoolean(0)) return false;
+        if (!reader.GetBoolean(1))
+            throw new AccountingConflictException("El auxiliar histórico compartido tiene partidas sin banco demostrable. Revisa su origen antes de conciliar; no se presenta un saldo parcial como completo.");
+        return true;
     }
 }

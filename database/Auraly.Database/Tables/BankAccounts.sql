@@ -4,6 +4,8 @@ CREATE TABLE [accounting].[BankAccounts]
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     -- Compatibility column, cleared after migration. Runtime relationships belong to AccountingAccounts.BankAccountId.
     [AccountingAccountId] UNIQUEIDENTIFIER NULL,
+    -- Immutable provenance of a shared pre-cutover auxiliary; never a posting choice.
+    [HistoricalAccountingAccountId] UNIQUEIDENTIFIER NULL,
     [AccountTypeOptionId] UNIQUEIDENTIFIER NOT NULL,
     [BankName] NVARCHAR(120) NOT NULL,
     [AccountNumber] NVARCHAR(64) NOT NULL,
@@ -20,6 +22,8 @@ CREATE TABLE [accounting].[BankAccounts]
     CONSTRAINT [PK_BankAccounts] PRIMARY KEY CLUSTERED ([BankAccountId]),
     CONSTRAINT [FK_BankAccounts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_BankAccounts_AccountingAccount] FOREIGN KEY ([TenantId],[AccountingAccountId])
+      REFERENCES [dbo].[AccountingAccounts]([TenantId],[AccountId]),
+    CONSTRAINT [FK_BankAccounts_HistoricalAccountingAccount] FOREIGN KEY ([TenantId],[HistoricalAccountingAccountId])
       REFERENCES [dbo].[AccountingAccounts]([TenantId],[AccountId]),
     CONSTRAINT [FK_BankAccounts_AccountType] FOREIGN KEY ([AccountTypeOptionId]) REFERENCES [reference].[Options]([OptionId]),
     CONSTRAINT [FK_BankAccounts_CreatedBy] FOREIGN KEY ([CreatedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),

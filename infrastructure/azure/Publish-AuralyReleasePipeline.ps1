@@ -634,6 +634,10 @@ function Publish-Function {
             --parameters "@$parameterFile" `
             --output none
         Assert-LastExitCode 'OneDeploy de Function fallo'
+        if ($productionDatabaseCutover) {
+            & az functionapp start --resource-group $configuration.ResourceGroup --name $configuration.Function --output none
+            Assert-LastExitCode 'No se pudo iniciar el Worker nuevo después del corte de base de datos'
+        }
         Sync-FunctionRuntimeSettingsFromApi
         Sync-AndAssertFunctionTriggers -PackagePath $zip
 
@@ -716,6 +720,10 @@ function Publish-Api {
         --settings "Release__Version=$ReleaseVersion" `
         --output none
     Assert-LastExitCode 'No se pudo registrar Release__Version en API'
+    if ($productionDatabaseCutover) {
+        & az webapp start --resource-group $configuration.ResourceGroup --name $configuration.Api --output none
+        Assert-LastExitCode 'No se pudo iniciar la API nueva después del corte de base de datos'
+    }
 }
 
 function Publish-PosInstallerIfPresent {
@@ -774,6 +782,25 @@ if ($recordedComponents.Count -gt 0) {
     }
 }
 
+$productionDatabaseCutover = $Environment -eq 'prod' -and $selectedComponents -contains 'database'
+if ($productionDatabaseCutover -and
+    ($selectedComponents -notcontains 'api' -or $selectedComponents -notcontains 'function')) {
+    throw 'El corte de base de datos de producción exige publicar API y Worker compatibles en el mismo release.'
+}
+if ($selectedComponents -contains 'function') { Assert-OfflineLeaseSigningConfiguration }
+if ($productionDatabaseCutover) {
+    # A failed database cutover must never restart the old writers. Recovery is
+    # an explicit roll-forward with compatible binaries, not a finally restart.
+    & az webapp stop --resource-group $configuration.ResourceGroup --name $configuration.Api --output none
+    Assert-LastExitCode 'No se pudo detener la API anterior; no se publicará la base de datos'
+    & az functionapp stop --resource-group $configuration.ResourceGroup --name $configuration.Function --output none
+    Assert-LastExitCode 'No se pudo detener el Worker anterior; no se publicará la base de datos'
+    $apiState = Invoke-AzJson -Arguments @('webapp','show','--resource-group',$configuration.ResourceGroup,'--name',$configuration.Api,'--query','not_null(state,properties.state)','--output','json')
+    $workerState = Invoke-AzJson -Arguments @('functionapp','show','--resource-group',$configuration.ResourceGroup,'--name',$configuration.Function,'--query','not_null(state,properties.state)','--output','json')
+    if ($apiState -ne 'Stopped' -or $workerState -ne 'Stopped') {
+        throw 'No se confirmó la detención de ambos escritores anteriores; no se publicará la base de datos.'
+    }
+}
 if ($selectedComponents -contains 'database') {
     Publish-Database
     & (Join-Path $PSScriptRoot 'Sync-AuralySqlFirewall.ps1') -Environment $Environment
@@ -783,7 +810,6 @@ elseif ($selectedComponents -contains 'api') {
     Publish-Database -ValidateOnly
 }
 if ($selectedComponents -contains 'function') {
-    Assert-OfflineLeaseSigningConfiguration
     Publish-Function
 }
 if ($selectedComponents -contains 'api') { Publish-Api }

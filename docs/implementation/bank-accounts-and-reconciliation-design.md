@@ -1,5 +1,68 @@
 # Cuentas bancarias y conciliación mínima
 
+## Compatibilidad de auxiliares históricos compartidos aprobada el 2026-11-06
+
+El usuario autorizó conservar íntegro el auxiliar histórico compartido y usar
+auxiliares independientes para las operaciones nuevas. Esta decisión sustituye
+el rechazo absoluto de vínculos compartidos del corte de octubre; no autoriza
+reescribir asientos, importes, aplicaciones ni saldos, ni desplegar producción.
+La instrucción vigente autoriza terminar pruebas y publicar únicamente DEV;
+los límites de despliegue históricos de las secciones anteriores quedan
+sustituidos por esta instrucción para la entrega actual.
+
+La migración bancaria existente conserva el vínculo anterior compartido en
+`BankAccounts.HistoricalAccountingAccountId`, una referencia histórica nullable
+sin edición desde la API ni uso para seleccionar cuentas futuras. Fija banco y
+auxiliar originales en `AccountingPostingJobs.ResolvedBankAccountsJson` solo
+cuando la fuente aceptada y su asiento prueban la relación. Dos bancos del mismo
+documento que compartan el auxiliar permanecen sin atribución: no se decide por
+nombre, importe ni orden de las partidas. La relación actual sigue perteneciendo
+a `AccountingAccounts.BankAccountId` y a `accounting.BankPostingAccount`.
+
+Para cada banco activo sin auxiliar independiente se crea un auxiliar de
+compatibilidad a partir de las propiedades del anterior: naturaleza, alcance y
+padre explícito, sin inferir un padre desde el código. El código nuevo usa el
+primer sufijo numérico libre de dos cifras del código anterior, con asignación
+estable por ID de banco; si faltan espacio o códigos libres se rechaza el corte.
+Esta excepción conserva un padre nullable cuando el origen legado carece de él;
+no inventa una jerarquía. Su condición de retiro es configurar auxiliares con
+padre explícito por el PUC y retirar los auxiliares de compatibilidad para nuevas
+operaciones, conservando sus asientos. El auxiliar anterior compartido queda inactivo para
+nuevas selecciones, manteniendo identidad y todas sus partidas históricas.
+
+`accounting.BankBookEntries` extiende la lectura canónica del libro: une las
+partidas de auxiliares actuales con la atribución histórica probada en el trabajo
+contable. También identifica las partidas históricas sin banco demostrable,
+sin repartirlas. Permisos, páginas, totales, cruces y cierre reutilizan esa misma
+proyección. Si un corte contiene partidas sin atribución, la conciliación rechaza
+la lectura/importación o el cierre con causa explícita; nunca presenta un saldo
+parcial como completo. El mayor general sigue mostrando el histórico completo.
+Las reversiones de propina conservan el snapshot bancario de su asiento original
+sin seleccionar un banco o auxiliar actuales.
+
+No se crean otro saldo, libro físico, writer, motor, proceso de recuperación ni
+cola. La migración y la creación de auxiliares son transaccionales e idempotentes.
+El rollback requiere mantener lectores compatibles y los escritores antiguos
+detenidos. La excepción histórica no se utiliza para aceptar operaciones nuevas
+con un auxiliar compartido. Presupuesto: se conservan seis comandos por detalle
+y dos por listado, paginación en SQL y p95 menor de dos segundos en el escenario
+de 10.000 partidas/1.001 períodos sin cargas concurrentes.
+El resumen pagina primero los encabezados, materializa el libro una sola vez
+por banco de esa página y agrega las líneas del extracto antes de enriquecer el
+resultado. No cruza cada línea del extracto con las consultas expandidas del
+libro ni agrega viajes de red para reconstruir los mismos totales.
+
+Verificación local del 7 de noviembre: 12 regresiones SQL/API pasaron, incluyendo
+histórico compartido, replay de migración, aislamiento, permisos entre sedes,
+cierre, importes con cuatro decimales y snapshots genéricos. Con 10.000 partidas
+y 1.001 períodos en la instancia LocalDB del POS, 20 muestras por recorrido sin
+builds ni diagnóstico concurrentes dieron p95 de 1.081,4 ms en el primer detalle,
+1.168,8 ms en el siguiente y 1.439,5 ms filtrado, con seis comandos por detalle;
+los listados dieron 735,2 y 563,6 ms, con dos comandos por página. La preparación
+masiva del fixture tiene timeout independiente; no se amplió el presupuesto de
+las consultas ni los timeouts de la aplicación. Esta evidencia local no reemplaza
+el ensayo de migración ni declara publicada esta versión.
+
 > **Ampliación de diseño 2026-10-20, en implementación local, sin autorizar despliegue:**
 > la sección final sustituye el vínculo de un banco a un solo auxiliar por varios
 > auxiliares configurados. Las autorizaciones y evidencias siguientes pertenecen
@@ -426,13 +489,16 @@ cuentas desde todas las definiciones no es compatible con esas filas opcionales.
   y el participante de fijación excluyen esa nueva selección. Esto también
   conserva los asientos históricos previos al snapshot; sin asiento original
   completo, la anulación contable queda pendiente con causa visible.
-- `accounting.BankBookAccounts` es la proyección común de auxiliares bancarios
-  para lectura, permisos, cruces y cierre. Incluye auxiliares históricos inactivos
-  y excluye compensación de tarjetas y pasivos de tarjeta. No copia asientos.
-- La migración conserva únicamente vínculos anteriores inequívocos y prueba el
-  auxiliar de documentos históricos contabilizados contra su asiento. Un banco
-  compartido o una historia no demostrable bloquean la transición con un motivo;
-  no se reparten ni reclasifican saldos automáticamente.
+- `accounting.BankBookEntries` es la proyección común para lectura, permisos,
+  cruces y cierre. Reutiliza `BankBookAccounts` para auxiliares actuales e incluye
+  la atribución histórica probada según la compatibilidad aprobada al inicio de
+  este documento. Excluye compensación de tarjetas y pasivos; no copia asientos.
+- La migración prueba el auxiliar de documentos históricos contabilizados contra
+  su asiento. El vínculo compartido conserva su histórico y separa los auxiliares
+  futuros según la decisión de noviembre. Un vínculo contradictorio o una
+  referencia bancaria sin auxiliar original demostrable bloquean el corte;
+  las partidas sin referencia bancaria se conservan sin atribución y bloquean
+  la conciliación del período, sin repartir ni reclasificar saldos.
   Todo el paso es transaccional. Después de fijar la historia se vacían los
   valores inversos: conservarlos bloquearía una futura reasignación permitida
   de un auxiliar todavía sin uso. El esquema conserva la columna nullable para

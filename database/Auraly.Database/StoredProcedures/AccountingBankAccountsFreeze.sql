@@ -27,6 +27,29 @@ BEGIN
     WHERE job.AccountingEntryRequired=1 AND job.Status IN(N'Pending',N'AccountingPendingConfiguration')
       AND job.SourceDocumentType<>N'RestaurantTipReversal';
 
+    -- A reversal keeps the original bank attribution, including a shared
+    -- pre-cutover auxiliary. It does not resolve any current bank configuration.
+    UPDATE reversal SET ResolvedBankAccountsJson=original.ResolvedBankAccountsJson
+    FROM OPENJSON(@SourcesJson)
+      WITH(DocumentId uniqueidentifier,DocumentType nvarchar(64),BusinessId uniqueidentifier) input
+    JOIN dbo.AccountingPostingJobs reversal WITH(UPDLOCK,HOLDLOCK)
+      ON reversal.SourceDocumentId=input.DocumentId AND reversal.SourceDocumentType=input.DocumentType
+        AND reversal.BusinessId=input.BusinessId AND reversal.TenantId=@TenantId
+    JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=reversal.SourceDocumentId
+      AND source.SourceDocumentType=reversal.SourceDocumentType AND source.TenantId=reversal.TenantId
+        AND source.BusinessId=reversal.BusinessId
+    JOIN dbo.AccountingPostingJobs original ON original.SourceDocumentId=COALESCE(
+        TRY_CONVERT(uniqueidentifier,JSON_VALUE(source.PayloadJson,'$.CollectionId')),
+        TRY_CONVERT(uniqueidentifier,JSON_VALUE(source.PayloadJson,'$.collectionId')))
+      AND original.SourceDocumentType=N'RestaurantTip' AND original.TenantId=reversal.TenantId
+      AND original.BusinessId=reversal.BusinessId AND original.Status=N'Posted'
+    JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=original.SourceDocumentId
+      AND entry.SourceDocumentType=original.SourceDocumentType AND entry.TenantId=original.TenantId
+      AND entry.BusinessId=original.BusinessId AND entry.SourcePayloadHash=original.SourcePayloadHash
+    WHERE reversal.SourceDocumentType=N'RestaurantTipReversal' AND reversal.AccountingEntryRequired=1
+      AND reversal.Status IN(N'Pending',N'AccountingPendingConfiguration')
+      AND reversal.ResolvedBankAccountsJson IS NULL AND original.ResolvedBankAccountsJson IS NOT NULL;
+
     DECLARE @Resolved TABLE(JobId uniqueidentifier,BankAccountId uniqueidentifier,AccountId uniqueidentifier,
       PRIMARY KEY(JobId,BankAccountId));
     INSERT @Resolved

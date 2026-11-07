@@ -3,6 +3,23 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public void Production_database_cutover_stops_old_writers_and_requires_compatible_binaries()
+    {
+        var pipeline = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var cutover = pipeline.IndexOf("$productionDatabaseCutover =", StringComparison.Ordinal);
+        var stopApi = pipeline.IndexOf("az webapp stop", cutover, StringComparison.Ordinal);
+        var stopWorker = pipeline.IndexOf("az functionapp stop", cutover, StringComparison.Ordinal);
+        var stopped = pipeline.IndexOf("$apiState -ne 'Stopped' -or $workerState -ne 'Stopped'", cutover, StringComparison.Ordinal);
+        var publish = pipeline.IndexOf("    Publish-Database\n", cutover, StringComparison.Ordinal);
+        if (publish < 0) publish = pipeline.IndexOf("    Publish-Database\r\n", cutover, StringComparison.Ordinal);
+        Assert.True(cutover >= 0 && stopApi > cutover && stopWorker > stopApi && stopped > stopWorker && publish > stopped);
+        Assert.Contains("$Environment -eq 'prod' -and $selectedComponents -contains 'database'", pipeline, StringComparison.Ordinal);
+        Assert.Contains("$selectedComponents -notcontains 'api' -or $selectedComponents -notcontains 'function'", pipeline, StringComparison.Ordinal);
+        Assert.Contains("az webapp start", pipeline, StringComparison.Ordinal);
+        Assert.Contains("az functionapp start", pipeline, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Order_site_backfill_precedes_the_constraint_and_has_one_historical_owner()
     {
         var root = FindRepositoryRoot();

@@ -5,6 +5,8 @@ using System.Security.Cryptography;
 using System.Text;
 using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -62,15 +64,25 @@ public sealed class BankReconciliationPagingTests(ServerSliceFixture fixture, IT
         var rows = Enumerable.Range(1, 10_000).Select(n => new BankStatementLineImport(n,
             new DateOnly(2026, 9, 5), $"Extracto fila-{n:D5}", $"REF-{n:D5}", 1m, n)).ToArray();
         var file = Encoding.UTF8.GetBytes("Extracto aislado de prueba de paginación");
-        using (var imported = await client.PostAsJsonAsync("/api/commerce/v1/accounting/bank-reconciliations",
-            new ImportBankReconciliationRequest(id, bankId, new(2026, 9, 1), new(2026, 9, 30), 0m, 10_000m,
-                "extracto-volumen.csv", Convert.ToHexString(SHA256.HashData(file)), Convert.ToBase64String(file), rows)))
+        Exception? importFailure = null;
+        var importSteps = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var diagnosticScope = fixture.CreateScope();
+        using var errorLog = new ImportExceptionCapture(exception => importFailure = exception);
+        diagnosticScope.ServiceProvider.GetRequiredService<ILoggerFactory>().AddProvider(errorLog);
+        using (var importDiagnostics = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+            afterExecute: (command, milliseconds) => importSteps.Enqueue($"{milliseconds:F1} ms: {command.CommandText[..Math.Min(100, command.CommandText.Length)]}"),
+            onCommandError: (_, exception) => importFailure = exception))
         {
-            Assert.True(imported.StatusCode == HttpStatusCode.Created, await imported.Content.ReadAsStringAsync());
+            using var imported = await client.PostAsJsonAsync("/api/commerce/v1/accounting/bank-reconciliations",
+                new ImportBankReconciliationRequest(id, bankId, new(2026, 9, 1), new(2026, 9, 30), 0m, 10_000m,
+                    "extracto-volumen.csv", Convert.ToHexString(SHA256.HashData(file)), Convert.ToBase64String(file), rows));
+            Assert.True(imported.StatusCode == HttpStatusCode.Created,
+                $"{await imported.Content.ReadAsStringAsync()}\n{importFailure}\n{string.Join("\n", importSteps)}");
             var accepted = (await imported.Content.ReadFromJsonAsync<BankReconciliationDetailView>())!;
             Assert.Equal(50, accepted.StatementLines.Count);
             Assert.Equal(10_000, accepted.Paging.StatementCount);
         }
+        errorLog.Dispose();
         await using (var seed = new SqlCommand("""
             SET NOCOUNT ON; SET XACT_ABORT ON; BEGIN TRANSACTION;
             WITH D(N) AS(SELECT N FROM(VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)) digit(N))
@@ -102,6 +114,8 @@ public sealed class BankReconciliationPagingTests(ServerSliceFixture fixture, IT
             COMMIT TRANSACTION;
             """, connection))
         {
+            // Fixture creation is separate from the measured request budget.
+            seed.CommandTimeout = 120;
             seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             seed.Parameters.AddWithValue("@UserId", fixture.UserId);
@@ -173,5 +187,19 @@ public sealed class BankReconciliationPagingTests(ServerSliceFixture fixture, IT
             output.WriteLine($"10000 movements / 1001 periods, {sample.Name}: first {times[0]:F1} ms, p95 {p95:F1} ms, {sample.Commands} SQL/page.");
             Assert.True(p95<2000,$"{sample.Name} p95 {p95:F1} ms exceeds 2000 ms.");
         }
+    }
+
+    private sealed class ImportExceptionCapture(Action<Exception> capture) : ILoggerProvider, ILogger
+    {
+        private Action<Exception>? report = capture;
+        public ILogger CreateLogger(string categoryName) => this;
+        public bool IsEnabled(LogLevel logLevel) => report is not null && logLevel >= LogLevel.Error;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (IsEnabled(logLevel) && exception is not null) report?.Invoke(exception);
+        }
+        public void Dispose() => report = null;
     }
 }

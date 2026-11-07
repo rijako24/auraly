@@ -26,6 +26,12 @@ BEGIN
     ALTER TABLE dbo.SalesDraftLines
         ADD IsGenericProductSnapshot BIT NOT NULL
             CONSTRAINT DF_SalesDraftLines_IsGenericProductSnapshot DEFAULT 0;
+    -- Only the first introduction has no captured value to preserve. Compile
+    -- after adding the column; later publishes must not reread today's product.
+    EXEC sys.sp_executesql N'
+        UPDATE line SET IsGenericProductSnapshot=1
+        FROM dbo.SalesDraftLines line JOIN dbo.Products product ON product.ProductId=line.ProductId
+        WHERE product.IsGenericProduct=1;';
 END;
 GO
 
@@ -34,23 +40,11 @@ BEGIN
     ALTER TABLE dbo.OrderItems
         ADD IsGenericProductSnapshot BIT NOT NULL
             CONSTRAINT DF_OrderItems_IsGenericProductSnapshot DEFAULT 0;
+    EXEC sys.sp_executesql N'
+        UPDATE item SET IsGenericProductSnapshot=1
+        FROM dbo.OrderItems item JOIN dbo.Products product ON product.ProductId=item.ProductId
+        WHERE product.IsGenericProduct=1;';
 END;
-GO
-
-UPDATE item
-SET IsGenericProductSnapshot=1
-FROM dbo.OrderItems item
-INNER JOIN dbo.Products product ON product.ProductId=item.ProductId
-WHERE item.IsGenericProductSnapshot=0
-  AND product.IsGenericProduct=1;
-GO
-
-UPDATE line
-SET IsGenericProductSnapshot=1
-FROM dbo.SalesDraftLines line
-INNER JOIN dbo.Products product ON product.ProductId=line.ProductId
-WHERE line.IsGenericProductSnapshot=0
-  AND product.IsGenericProduct=1;
 GO
 
 IF COL_LENGTH(N'dbo.SalesDocumentLines',N'IsGenericProductSnapshot') IS NULL
@@ -58,13 +52,9 @@ BEGIN
     ALTER TABLE dbo.SalesDocumentLines
         ADD IsGenericProductSnapshot BIT NOT NULL
             CONSTRAINT DF_SalesDocumentLines_IsGenericProductSnapshot DEFAULT 0;
+    EXEC sys.sp_executesql N'
+        UPDATE line SET IsGenericProductSnapshot=1
+        FROM dbo.SalesDocumentLines line JOIN dbo.Products product ON product.ProductId=line.ProductId
+        WHERE product.IsGenericProduct=1;';
 END;
-GO
-
-UPDATE line
-SET IsGenericProductSnapshot=1
-FROM dbo.SalesDocumentLines line
-INNER JOIN dbo.Products product ON product.ProductId=line.ProductId
-WHERE line.IsGenericProductSnapshot=0
-  AND product.IsGenericProduct=1;
 GO

@@ -9,6 +9,34 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class AccountingVerticalSliceTests
 {
     [Fact]
+    public async Task Bank_summary_keeps_a_four_decimal_difference_without_rounding_it_to_zero()
+    {
+        await fixture.GrantReconciliationRolePermissionsAsync();
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.BankReconciliationRead, AccountingPermissionCodes.BankReconciliationManage);
+        var accountId = Guid.NewGuid();
+        var code = "11198" + RandomNumberGenerator.GetInt32(10_000_000, 100_000_000);
+        using (var account = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
+            new CreateAccountingAccountRequest(accountId, fixture.TenantId, code, "Banco de precisión", "Asset", true, false)))
+            account.EnsureSuccessStatusCode();
+        var typeId = await ScalarAsync<Guid>("SELECT OptionId FROM reference.Options WHERE CatalogCode=N'bank-account-type' AND Code=N'Checking';", Guid.Empty);
+        var bankId = Guid.NewGuid();
+        using (var bank = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bankId:D}",
+            new SaveBankAccountRequest(bankId, accountId, typeId, "Banco de precisión", bankId.ToString("N"), "Cuatro decimales", false, true, null)))
+            bank.EnsureSuccessStatusCode();
+        var file = Encoding.UTF8.GetBytes(bankId.ToString());
+        using var imported = await client.PostAsJsonAsync("/api/commerce/v1/accounting/bank-reconciliations",
+            new ImportBankReconciliationRequest(Guid.NewGuid(), bankId, new(2026, 9, 1), new(2026, 9, 30), 0m, .0001m,
+                "precision.csv", Convert.ToHexString(SHA256.HashData(file)), Convert.ToBase64String(file),
+                [new(1, new(2026, 9, 5), "Diferencia mínima", null, .0001m, .0001m)]));
+        Assert.True(imported.StatusCode == HttpStatusCode.Created, await imported.Content.ReadAsStringAsync());
+        var result = (await imported.Content.ReadFromJsonAsync<BankReconciliationDetailView>())!;
+        Assert.Equal(.0001m, result.Summary.Difference);
+        Assert.Equal(.0001m, result.Summary.StatementMovementTotal);
+        Assert.Equal(0m, result.Summary.BookMovementTotal);
+    }
+
+    [Fact]
     public async Task Bank_master_has_no_required_single_auxiliary_and_reads_its_links_from_the_PUC()
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
