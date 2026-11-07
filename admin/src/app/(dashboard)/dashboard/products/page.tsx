@@ -3,7 +3,7 @@
 import { KeyboardEvent, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BarChart3, ChevronDown, CircleDollarSign, Images, PackagePlus, Pencil, Power, SlidersHorizontal, Truck, X } from "lucide-react";
+import { ArrowLeft, BarChart3, ChevronDown, CircleDollarSign, FolderTree, Images, PackagePlus, Pencil, Power, SlidersHorizontal, Truck, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ProductLearningSection } from "@/components/products/product-learning-section";
@@ -48,6 +48,7 @@ import {
   ProductAliasResolutionMode,
   ProductAliasReviewAction,
   type Product,
+  type ProductCategory,
   type ProductAlias,
   productsApi,
 } from "@/services/api/products";
@@ -104,6 +105,11 @@ export default function ProductsPage() {
   const tenantId = useTenantContextStore((state) => state.selectedTenantId);
   const { viewMode, setViewMode } = useProductViewPreference(tenantId, userId);
   const [page, setPage] = useState(1);
+  const [exploreBy, setExploreBy] = useState("products");
+  const exploringProducts = exploreBy === "products";
+  const depth = exploringProducts ? undefined : Number(exploreBy);
+  const categoryLevels = ["Área", "Línea", "Grupo", "Subgrupo"];
+  const [exploredCategory, setExploredCategory] = useState<ProductCategory | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [includeInactive, setIncludeInactive] = useState(false);
@@ -117,7 +123,7 @@ export default function ProductsPage() {
   const [allowsFractionalSale, setAllowsFractionalSale] = useState<TriState>("all");
   const [isWeighable, setIsWeighable] = useState<TriState>("all");
   const [compositionFilter, setCompositionFilter] = useState("all");
-  const compositionKinds = useReferenceOptions("product-composition-kind");
+  const compositionKinds = useReferenceOptions("product-composition-kind", exploringProducts);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [modalMode, setModalMode] = useState<ModalMode>("details");
   const [form, setForm] = useState<ProductFormState>(emptyForm);
@@ -132,16 +138,24 @@ export default function ProductsPage() {
     isWeighable: triValue(isWeighable),
     hasIngredients: compositionFilter === "Ingredients" ? true : undefined,
     isCombo: compositionFilter === "Combo" ? true : undefined,
+  }, exploringProducts);
+  const categoryPage = useQuery({
+    queryKey: ["product-category-page", businessId, depth, page, search, includeInactive,
+      depth === 1 ? areaId : depth === 2 ? lineId : depth === 3 ? groupId : undefined],
+    queryFn: () => productsApi.browseCategories(businessId!, { page, pageSize: 20,
+      search: search || undefined, depth, includeInactive,
+      parentId: depth === 1 ? areaId : depth === 2 ? lineId : depth === 3 ? groupId : undefined }),
+    enabled: !!businessId && !exploringProducts,
   });
-  const categoriesQuery = useProductCategories(false);
-  const brandsQuery = useQuery({ queryKey: ["product-brands",businessId], queryFn: productMerchandisingApi.brands, staleTime: 5 * 60 * 1000 });
+  const categoriesQuery = useProductCategories(false, exploringProducts);
+  const brandsQuery = useQuery({ queryKey: ["product-brands",businessId], queryFn: productMerchandisingApi.brands, enabled: !!businessId && exploringProducts, staleTime: 5 * 60 * 1000 });
   const categories = categoriesQuery.data ?? [];
   const areas = categories.filter(item => item.depth === 0);
   const lines = categories.filter(item => item.depth === 1 && (!areaId || item.parentProductCategoryId === areaId));
   const groups = categories.filter(item => item.depth === 2 && (!lineId || item.parentProductCategoryId === lineId));
   const subgroups = categories.filter(item => item.depth === 3 && (!groupId || item.parentProductCategoryId === groupId));
   const activeFilterCount = [areaId, lineId, groupId, subgroupId, supplierId, brandId, compositionFilter !== "all" ? compositionFilter : undefined, managesInventory !== "all" ? managesInventory : undefined, allowsFractionalSale !== "all" ? allowsFractionalSale : undefined, isWeighable !== "all" ? isWeighable : undefined, includeInactive ? "including-inactive" : undefined].filter(Boolean).length;
-  const resetFilters = () => { setCompositionFilter("all"); setAreaId(undefined); setLineId(undefined); setGroupId(undefined); setSubgroupId(undefined); setSupplierId(undefined); setBrandId(undefined); setManagesInventory("all"); setAllowsFractionalSale("all"); setIsWeighable("all"); setIncludeInactive(false); setPage(1); };
+  const resetFilters = () => { setExploredCategory(null); setCompositionFilter("all"); setAreaId(undefined); setLineId(undefined); setGroupId(undefined); setSubgroupId(undefined); setSupplierId(undefined); setBrandId(undefined); setManagesInventory("all"); setAllowsFractionalSale("all"); setIsWeighable("all"); setIncludeInactive(false); setPage(1); };
   const configurationQuery = useProductConfiguration(selectedProduct?.productId);
   const rotationQuery = useQuery({
     queryKey: ["product-rotation", businessId, selectedProduct?.productId],
@@ -488,6 +502,25 @@ export default function ProductsPage() {
 
   if(reportRows)return <div className="space-y-4"><Button variant="ghost" onClick={()=>setReportRows(null)}><ArrowLeft className="mr-2 h-4 w-4"/>Volver a productos</Button><ReportViewer onClose={()=>setReportRows(null)} title="Productos" description={`${reportRows.length.toLocaleString("es-CO")} productos · orden alfabético`} fileName="productos" rows={reportRows} columns={[{key:"code",label:"Código interno"},{key:"description",label:"Descripción"},{key:"price",label:"Precio público",align:"right",format:(value,row)=>formatCurrency(Number(value),String(row.currency||"COP"))}]}/></div>;
 
+  function openCategory(category: ProductCategory) {
+    setExploredCategory(category);
+    setAreaId(category.depth === 0 ? category.productCategoryId : undefined);
+    setLineId(category.depth === 1 ? category.productCategoryId : undefined);
+    setGroupId(category.depth === 2 ? category.productCategoryId : undefined);
+    setSubgroupId(category.depth === 3 ? category.productCategoryId : undefined);
+    setExploreBy("products"); setPage(1); setSearch("");
+  }
+  const categoryColumns: ColumnDef<ProductCategory>[] = [
+    { accessorKey: "name", header: "Nombre", cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
+    { accessorKey: "path", header: "Ruta" },
+    { accessorKey: "depth", header: "Nivel", cell: ({ row }) => categoryLevels[row.original.depth] },
+  ];
+  const renderCategory = (category: ProductCategory) => <div className="space-y-3 p-4">
+    <FolderTree className="h-8 w-8 text-primary"/><div><p className="font-semibold">{category.name}</p>
+    <p className="mt-1 text-sm text-muted-foreground">{category.path}</p></div>
+    <Badge variant="secondary">{categoryLevels[category.depth]}</Badge><p className="text-sm text-primary">Ver productos →</p>
+  </div>;
+
   return (
     <div className="space-y-6">
       <div>
@@ -501,7 +534,18 @@ export default function ProductsPage() {
       </div>
 
 
-      <details className="group rounded-xl border bg-card">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-3">
+        <Label htmlFor="products-explore">Explorar por</Label>
+        <Select value={exploreBy} onValueChange={value => { setExploreBy(value); setPage(1); setSearch(""); }}>
+          <SelectTrigger id="products-explore" className="w-44"><SelectValue/></SelectTrigger>
+          <SelectContent><SelectItem value="products">Productos</SelectItem><SelectItem value="0">Áreas</SelectItem><SelectItem value="1">Líneas</SelectItem><SelectItem value="2">Grupos</SelectItem><SelectItem value="3">Subgrupos</SelectItem></SelectContent>
+        </Select>
+        {exploredCategory && <nav aria-label="Categoría explorada" className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+          <Button variant="link" className="h-auto p-0" onClick={() => { resetFilters(); setSearch(""); }}>Todos los productos</Button>
+          <span aria-hidden="true">›</span><span className="text-muted-foreground">{exploredCategory.path.replaceAll(" > ", " › ")}</span>
+        </nav>}
+      </div>
+      {exploringProducts && <details className="group rounded-xl border bg-card">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
           <span className="flex items-center gap-2 font-medium"><SlidersHorizontal className="h-4 w-4"/>Filtros {activeFilterCount > 0 && <Badge variant="secondary">{activeFilterCount} activos</Badge>}</span>
           <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180"/>
@@ -509,7 +553,7 @@ export default function ProductsPage() {
         <div className="space-y-5 border-t p-4">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="space-y-2"><Label>Composición</Label><Select value={compositionFilter} disabled={compositionKinds.isPending || compositionKinds.isError} onValueChange={value => { setCompositionFilter(value); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todas</SelectItem>{compositionKinds.data?.map(option => <SelectItem key={option.id} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></div>
-            {([['Área', areaId, areas, (value:string|undefined)=>{setAreaId(value);setLineId(undefined);setGroupId(undefined);setSubgroupId(undefined)}],['Línea', lineId, lines, (value:string|undefined)=>{setLineId(value);setGroupId(undefined);setSubgroupId(undefined)}],['Grupo', groupId, groups, (value:string|undefined)=>{setGroupId(value);setSubgroupId(undefined)}],['Subgrupo', subgroupId, subgroups, setSubgroupId]] as const).map(([label,value,options,onChange])=><div key={label} className="space-y-2"><Label>{label}</Label><Select value={value ?? "all"} onValueChange={next=>{onChange(next === "all" ? undefined : next);setPage(1)}}><SelectTrigger><SelectValue placeholder={`Todos los ${label.toLocaleLowerCase("es")}`}/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{options.map(option=><SelectItem key={option.productCategoryId} value={option.productCategoryId}>{option.name}</SelectItem>)}</SelectContent></Select></div>)}
+            {([['Área', areaId, areas, (value:string|undefined)=>{setAreaId(value);setLineId(undefined);setGroupId(undefined);setSubgroupId(undefined)}],['Línea', lineId, lines, (value:string|undefined)=>{setLineId(value);setGroupId(undefined);setSubgroupId(undefined)}],['Grupo', groupId, groups, (value:string|undefined)=>{setGroupId(value);setSubgroupId(undefined)}],['Subgrupo', subgroupId, subgroups, setSubgroupId]] as const).map(([label,value,options,onChange])=><div key={label} className="space-y-2"><Label>{label}</Label><Select value={value ?? "all"} onValueChange={next=>{setExploredCategory(null);onChange(next === "all" ? undefined : next);setPage(1)}}><SelectTrigger><SelectValue placeholder={`Todos los ${label.toLocaleLowerCase("es")}`}/></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{options.map(option=><SelectItem key={option.productCategoryId} value={option.productCategoryId}>{option.name}</SelectItem>)}</SelectContent></Select></div>)}
             <div className="space-y-2"><Label>Proveedor</Label><PartyRoleSelect role="Supplier" value={supplierId ?? "all"} leadingOptions={[{value:"all",label:"Todos"}]} placeholder="Buscar proveedor" onChange={value=>{setSupplierId(value === "all" ? undefined : value);setPage(1)}}/></div>
             <div className="space-y-2"><Label>Marca</Label><Select value={brandId ?? "all"} onValueChange={value=>{setBrandId(value === "all" ? undefined : value);setPage(1)}}><SelectTrigger><SelectValue placeholder="Todas"/></SelectTrigger><SelectContent><SelectItem value="all">Todas</SelectItem>{brandsQuery.data?.map(item=><SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>)}</SelectContent></Select></div>
           </div>
@@ -525,14 +569,15 @@ export default function ProductsPage() {
           Incluir inactivos
           </label><Button type="button" variant="ghost" disabled={activeFilterCount === 0} onClick={resetFilters}><X className="mr-2 h-4 w-4"/>Limpiar filtros</Button></div>
         </div>
-      </details>
+      </details>}
 
-      {isError ? (
+      {!exploringProducts ? (categoryPage.isError ? <div role="alert" className="rounded-xl border border-destructive/30 p-6 text-sm">No se pudieron cargar las categorías. <Button variant="link" onClick={() => categoryPage.refetch()}>Reintentar</Button></div> : <DataTable key={`categories-${exploreBy}`} columns={categoryColumns} data={categoryPage.data?.items ?? []} isLoading={categoryPage.isLoading || viewMode === null} isSearching={categoryPage.isFetching} page={categoryPage.data?.page} pageSize={categoryPage.data?.pageSize} pageCount={categoryPage.data?.totalPages} totalItems={categoryPage.data?.totalCount} onPaginationChange={setPage} onSearch={value => { setSearch(value); setPage(1); }} onRowClick={openCategory} searchKey="name" searchPlaceholder="Buscar categorías..." enableRowSelection={false} cardRenderer={renderCategory} listRenderer={renderCategory} listLayout="gallery" viewMode={viewMode ?? "table"} onViewModeChange={setViewMode} showColumnToggle={false}/>) : isError ? (
         <div className="rounded-xl border border-destructive/30 p-6 text-sm">
           No se pudo cargar el catálogo. <Button variant="link" onClick={() => refetch()}>Reintentar</Button>
         </div>
       ) : (
         <DataTable
+          key="products"
           columns={columns}
           data={data?.items ?? []}
           isLoading={isLoading || viewMode === null}

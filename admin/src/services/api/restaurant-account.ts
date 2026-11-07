@@ -53,6 +53,7 @@ export type RestaurantAccountAddition = {
   stationName: string | null;
   preparationNote: string | null;
   replacementOfCancellationId?: string | null;
+  coveredQuantity?: number;
 };
 
 export type RestaurantAccountDraft = {

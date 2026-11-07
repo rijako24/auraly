@@ -27,6 +27,8 @@ public interface IProductAdminService
         UpdateProductRequest request,
         CancellationToken ct = default);
 
+    Task<PagedResponse<ProductCategoryAdminDto>> GetCategoryPageAsync(Guid tenantId, Guid businessId,
+        PagedRequest request, int? depth, Guid? parentId, bool includeInactive = false, CancellationToken ct = default);
     Task<IReadOnlyList<ProductCategoryAdminDto>> GetCategoriesAsync(Guid tenantId, Guid businessId, bool includeInactive = false, CancellationToken ct = default);
 
     Task<ProductCategoryAdminDto> CreateCategoryAsync(Guid tenantId, Guid businessId, CreateProductCategoryRequest request, CancellationToken ct = default);

@@ -256,7 +256,15 @@ public sealed partial class SqlRestaurantAccountStore
                    CASE WHEN addition.Status=N'Sent' THEN card.StationName
                         ELSE station.Name END,
                    addition.PreparationNote,
-                   addition.ReplacementOfCancellationId
+                   addition.ReplacementOfCancellationId,
+                   COALESCE((SELECT SUM(allocation.Quantity)
+                     FROM sales.RestaurantCollectionAllocations allocation
+                     JOIN sales.RestaurantAccountCollections collection
+                       ON collection.CollectionId=allocation.CollectionId
+                      AND collection.AccountId=allocation.AccountId
+                      AND collection.Status=N'Captured'
+                     WHERE allocation.AccountId=addition.AccountId
+                       AND allocation.AdditionId=addition.AdditionId),0)
             FROM sales.RestaurantAccountAdditions addition
             LEFT JOIN sales.RestaurantProductRoutes route
               ON route.BusinessId=addition.BusinessId
@@ -297,7 +305,15 @@ public sealed partial class SqlRestaurantAccountStore
                    addition.AddedByUserId,addition.AddedByName,
                    addition.AddedAt,addition.Status,
                    NULL, NULL, addition.PreparationNote,
-                   addition.ReplacementOfCancellationId
+                   addition.ReplacementOfCancellationId,
+                   COALESCE((SELECT SUM(allocation.Quantity)
+                     FROM sales.RestaurantCollectionAllocations allocation
+                     JOIN sales.RestaurantAccountCollections collection
+                       ON collection.CollectionId=allocation.CollectionId
+                      AND collection.AccountId=allocation.AccountId
+                      AND collection.Status=N'Captured'
+                     WHERE allocation.AccountId=addition.AccountId
+                       AND allocation.AdditionId=addition.AdditionId),0)
             FROM sales.RestaurantAccountAdditions addition
             WHERE addition.AdditionId=@AdditionId
               AND addition.TenantId=@TenantId
@@ -330,7 +346,8 @@ public sealed partial class SqlRestaurantAccountStore
         reader.FieldCount > 18 && !reader.IsDBNull(18) ? reader.GetGuid(18) : null,
         reader.FieldCount > 19 && !reader.IsDBNull(19) ? reader.GetString(19) : null,
         reader.FieldCount > 20 && !reader.IsDBNull(20) ? reader.GetString(20) : null,
-        reader.FieldCount > 21 && !reader.IsDBNull(21) ? reader.GetGuid(21) : null);
+        reader.FieldCount > 21 && !reader.IsDBNull(21) ? reader.GetGuid(21) : null,
+        reader.GetDecimal(22));
 
     private static async Task AuditAdditionAsync(SqlConnection connection,
         SqlTransaction transaction, RestaurantAccountActor actor,

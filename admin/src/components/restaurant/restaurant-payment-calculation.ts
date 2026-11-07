@@ -1,3 +1,4 @@
+import { parseMoneyDraft } from "../../lib/money-input";
 import type { PosPaymentInput } from "@/services/pos/pos-edge-client";
 
 const round = (value: number) => Math.round(value * 10000) / 10000;
@@ -23,9 +24,9 @@ export function settleRestaurantPayment(total: number, rows: ReadonlyArray<{
 }>, cashTipIncluded = 0, roundingAdjustment = 0) {
   const payable = round(total + roundingAdjustment);
   const nonCashReceived = round(rows.filter((row) => row.methodCode !== "Cash")
-    .reduce((sum, row) => sum + (Number(row.amount) || 0), 0));
+    .reduce((sum, row) => sum + parseMoneyDraft(row.amount), 0));
   const cashTendered = round(rows.filter((row) => row.methodCode === "Cash")
-    .reduce((sum, row) => sum + (Number(row.amount) || 0), 0));
+    .reduce((sum, row) => sum + parseMoneyDraft(row.amount), 0));
   const cashSaleTendered = round(cashTendered - cashTipIncluded);
   const cashApplied = round(Math.min(Math.max(0, cashSaleTendered),
     Math.max(0, payable - nonCashReceived)));

@@ -12,6 +12,156 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Paid_units_are_protected_while_unpaid_units_remain_editable()
+    {
+        var waiterId = Guid.NewGuid();
+        using var waiter = fixture.CreateUserClient(waiterId, "restaurant.attend");
+        using var cashier = fixture.CreateAdminClient("businesses.update", "sales.create");
+        await RegisterWaiterAndModeAsync(waiterId, Guid.NewGuid());
+        try
+        {
+            var tableId = Guid.NewGuid();
+            using (var created = await cashier.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/tables",
+                new CreateRestaurantTableRequest(tableId, fixture.BusinessId,
+                    $"P-{tableId:N}"[..12])))
+                created.EnsureSuccessStatusCode();
+            using var opened = await waiter.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/accounts",
+                new OpenRestaurantAccountRequest(Guid.NewGuid(), tableId, fixture.WarehouseId));
+            opened.EnsureSuccessStatusCode();
+            var account = (await opened.Content.ReadFromJsonAsync<RestaurantAccount>())!;
+            var paidId = Guid.NewGuid();
+            var unpaidId = Guid.NewGuid();
+            using var added = await waiter.PostAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions",
+                new AddRestaurantAccountItemRequest(paidId, fixture.ProductId, 3, account.Version));
+            added.EnsureSuccessStatusCode();
+            var draft = (await added.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!;
+            var unit = draft.Additions.Single().PublicUnitPrice -
+                draft.Additions.Single().PromotionDiscountPerUnit;
+            using var other = await waiter.PostAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions",
+                new AddRestaurantAccountItemRequest(unpaidId, fixture.ProductId, 1, draft.Account.Version));
+            other.EnsureSuccessStatusCode();
+            draft = (await other.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!;
+            var sessionId = await fixture.OpenWebWorkSessionAsync();
+            using var captured = await CaptureAsync(cashier, account.AccountId,
+                new CaptureRestaurantCollectionRequest(Guid.NewGuid(), sessionId, draft.Account.Version,
+                    [new(paidId, 1)], [new("Cash", unit, null)]), Guid.NewGuid().ToString("N"));
+            captured.EnsureSuccessStatusCode();
+            var summary = (await captured.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
+            var version = summary.AccountVersion;
+            foreach (var quantity in new[] { 2m, 1m })
+            {
+                var change = new ChangeRestaurantAccountQuantityRequest(Guid.NewGuid(), quantity, version);
+                using var reduced = await waiter.PutAsJsonAsync(
+                    $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions/{paidId}/quantity", change);
+                reduced.EnsureSuccessStatusCode();
+                draft = (await reduced.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!;
+                version = draft.Account.Version;
+                Assert.Equal(1, draft.Additions.Single(item => item.AdditionId == paidId).CoveredQuantity);
+                using var replay = await waiter.PutAsJsonAsync(
+                    $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions/{paidId}/quantity", change);
+                replay.EnsureSuccessStatusCode();
+                Assert.Equal(version, (await replay.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!.Account.Version);
+            }
+            using (var blocked = await waiter.PutAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions/{paidId}/quantity",
+                new ChangeRestaurantAccountQuantityRequest(Guid.NewGuid(), 0, version)))
+            {
+                Assert.Equal(HttpStatusCode.BadRequest, blocked.StatusCode);
+                Assert.Contains("Este producto tiene un pago registrado", await blocked.Content.ReadAsStringAsync());
+            }
+            using var removed = await waiter.PutAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions/{unpaidId}/quantity",
+                new ChangeRestaurantAccountQuantityRequest(Guid.NewGuid(), 0, version));
+            removed.EnsureSuccessStatusCode();
+            draft = (await removed.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!;
+            Assert.Equal(version + 1, draft.Account.Version);
+            Assert.Equal("Cancelled", draft.Additions.Single(item => item.AdditionId == unpaidId).Status);
+            Assert.Equal("Direct", draft.Additions.Single(item => item.AdditionId == paidId).Status);
+            using var reversed = await cashier.PostAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/collections/{summary.Collections.Single().CollectionId}/reverse",
+                new ReverseRestaurantCollectionRequest(draft.Account.Version));
+            reversed.EnsureSuccessStatusCode();
+            var released = (await reversed.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
+            Assert.Empty(released.CoveredQuantities);
+            using var removeReleased = await waiter.PutAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions/{paidId}/quantity",
+                new ChangeRestaurantAccountQuantityRequest(Guid.NewGuid(), 0, released.AccountVersion));
+            removeReleased.EnsureSuccessStatusCode();
+            Assert.All((await removeReleased.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!.Additions,
+                item => Assert.Equal("Cancelled", item.Status));
+        }
+        finally { await RestoreModeAsync(); }
+    }
+
+    [Theory]
+    [InlineData("Cash", "Cash")]
+    [InlineData("Cash", "DebitCard")]
+    [InlineData("Cash", "CreditCard")]
+    [InlineData("DebitCard", "Cash")]
+    [InlineData("DebitCard", "DebitCard")]
+    [InlineData("DebitCard", "CreditCard")]
+    [InlineData("CreditCard", "Cash")]
+    [InlineData("CreditCard", "DebitCard")]
+    [InlineData("CreditCard", "CreditCard")]
+    public async Task Consumption_and_tip_methods_are_persisted_separately(string saleMethod, string tipMethod)
+    {
+        var waiterId = Guid.NewGuid();
+        using var waiter = fixture.CreateUserClient(waiterId, "restaurant.attend");
+        using var cashier = fixture.CreateAdminClient("businesses.update", "sales.create");
+        await RegisterWaiterAndModeAsync(waiterId, Guid.NewGuid());
+        try
+        {
+            var tableId = Guid.NewGuid();
+            using (var created = await cashier.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/tables",
+                new CreateRestaurantTableRequest(tableId, fixture.BusinessId,
+                    $"T-{tableId:N}"[..12])))
+                created.EnsureSuccessStatusCode();
+            using var opened = await waiter.PostAsJsonAsync(
+                "/api/commerce/v1/restaurant/accounts",
+                new OpenRestaurantAccountRequest(Guid.NewGuid(), tableId, fixture.WarehouseId));
+            opened.EnsureSuccessStatusCode();
+            var account = (await opened.Content.ReadFromJsonAsync<RestaurantAccount>())!;
+            using var added = await waiter.PostAsJsonAsync(
+                $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/additions",
+                new AddRestaurantAccountItemRequest(Guid.NewGuid(), fixture.ProductId, 2, account.Version));
+            added.EnsureSuccessStatusCode();
+            var draft = (await added.Content.ReadFromJsonAsync<RestaurantAccountDraft>())!;
+            var line = Assert.Single(draft.Additions);
+            var unit = line.PublicUnitPrice - line.PromotionDiscountPerUnit;
+            static OnlineSalesPayment Payment(string method, decimal amount, string approval) =>
+                new(method, amount, null,
+                    CardFranchiseCode: method == "Cash" ? null : "Visa",
+                    ApprovalNumber: method == "Cash" ? null : approval,
+                    TenderedAmount: method == "Cash" ? amount : null);
+            var request = new CaptureRestaurantCollectionRequest(Guid.NewGuid(),
+                await fixture.OpenWebWorkSessionAsync(), draft.Account.Version,
+                [new(line.AdditionId, 1)], [Payment(saleMethod, unit, "CONSUMO")],
+                Payment(tipMethod, 1000, "PROPINA"));
+            var key = Guid.NewGuid().ToString("N");
+            using var captured = await CaptureAsync(cashier, account.AccountId, request, key);
+            Assert.True(captured.IsSuccessStatusCode, await captured.Content.ReadAsStringAsync());
+            var result = (await captured.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!;
+            Assert.Equal(unit, result.Collected);
+            Assert.Equal(unit, result.Remaining);
+            Assert.Equal(1000, result.TipsCollected);
+            var collection = Assert.Single(result.Collections);
+            Assert.Equal(saleMethod, Assert.Single(collection.Payments).MethodCode);
+            Assert.Equal(unit, Assert.Single(collection.Payments).Amount);
+            Assert.Equal(tipMethod, collection.TipPayment!.MethodCode);
+            Assert.Equal(1000, collection.TipPayment.Amount);
+            using var replay = await CaptureAsync(cashier, account.AccountId, request, key);
+            replay.EnsureSuccessStatusCode();
+            Assert.Single((await replay.Content.ReadFromJsonAsync<RestaurantCollectionSummary>())!.Collections);
+        }
+        finally { await RestoreModeAsync(); }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -227,10 +377,15 @@ public sealed class RestaurantCheckoutTests(ServerSliceFixture fixture)
                         DocumentType: documentType)),
                 Guid.NewGuid().ToString("N")))
                 Assert.Equal(HttpStatusCode.BadRequest, blocked.StatusCode);
-            using (var blockedPrebill = await cashier.PostAsJsonAsync(
+            using (var pendingPrebill = await cashier.PostAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/prebill",
-                new PrintRestaurantPrebillRequest(2)))
-                Assert.Equal(HttpStatusCode.BadRequest, blockedPrebill.StatusCode);
+                new PrintRestaurantPrebillRequest(1)))
+            {
+                pendingPrebill.EnsureSuccessStatusCode();
+                var snapshot = (await pendingPrebill.Content.ReadFromJsonAsync<RestaurantPrebill>())!;
+                Assert.Equal(2, snapshot.AccountVersion);
+                Assert.Single(snapshot.Lines);
+            }
 
             SendRestaurantPendingResult sent;
             using (var send = await waiter.PostAsJsonAsync(

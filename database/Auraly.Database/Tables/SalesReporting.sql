@@ -53,7 +53,7 @@ CREATE TABLE [reporting].[SalesReportDocuments]
     CONSTRAINT [CK_SalesReportDocuments_Type] CHECK ([DocumentType] IN (N'SalesInvoice',N'SalesReceipt',N'ServiceInvoice')),
     CONSTRAINT [CK_SalesReportDocuments_Amounts] CHECK
       ([GrossAmount]>=0 AND [DiscountAmount]>=0 AND [UntaxedAmount]>=0 AND [TaxAmount]>=0 AND
-       [TotalAmount]>=0 AND [RoundingAdjustmentAmount]>-50 AND [RoundingAdjustmentAmount]<=50 AND
+       [TotalAmount]>=0 AND ([TableId] IS NOT NULL OR ([RoundingAdjustmentAmount]>-50 AND [RoundingAdjustmentAmount]<=50)) AND
        [CreditAmount]>=0 AND [CollectedAmount]>=0 AND [RestaurantTipAmount]>=0 AND
        [ReturnedUntaxedAmount]>=0 AND [ReturnedTaxAmount]>=0 AND [ReturnedTotalAmount]>=0 AND
        [RecognizedCostAmount]>=0 AND [ReturnedCostAmount]>=0),

@@ -406,6 +406,30 @@ public sealed partial class CatalogVerticalSliceTests(ServerSliceFixture fixture
             var categories = (await client.GetFromJsonAsync<List<Auraly.Platform.Application.Identity.DTOs.ProductCategoryAdminDto>>(
                 $"/api/v1/businesses/{fixture.BusinessId:D}/product-categories"))!;
             Assert.Equal([0, 1, 2, 3], ids.Select(id => categories.Single(item => item.ProductCategoryId == id).Depth));
+            foreach (var depth in Enumerable.Range(0, 4))
+            {
+                var parent = depth == 0 ? "" : $"&parentId={ids[depth - 1]:D}";
+                var result = (await client.GetFromJsonAsync<Auraly.Platform.Application.Common.DTOs.PagedResponse<Auraly.Platform.Application.Identity.DTOs.ProductCategoryAdminDto>>(
+                    $"/api/v1/businesses/{fixture.BusinessId:D}/product-categories/browse?depth={depth}&search=profundidad&page=1&pageSize=1{parent}"))!;
+                Assert.Equal(1, result.TotalCount);
+                var category = Assert.Single(result.Items);
+                Assert.Equal(ids[depth], category.ProductCategoryId);
+                Assert.Equal(depth, category.Depth);
+                Assert.StartsWith("Área profundidad", category.Path);
+            }
+            var paged = $"/api/v1/businesses/{fixture.BusinessId:D}/product-categories/browse?search=profundidad&pageSize=2";
+            var first = (await client.GetFromJsonAsync<Auraly.Platform.Application.Common.DTOs.PagedResponse<Auraly.Platform.Application.Identity.DTOs.ProductCategoryAdminDto>>(paged + "&page=1"))!;
+            var second = (await client.GetFromJsonAsync<Auraly.Platform.Application.Common.DTOs.PagedResponse<Auraly.Platform.Application.Identity.DTOs.ProductCategoryAdminDto>>(paged + "&page=2"))!;
+            Assert.Equal(4, first.TotalCount);
+            Assert.Equal(2, first.Items.Count);
+            Assert.Equal(2, second.Items.Count);
+            Assert.Empty(first.Items.Select(item => item.ProductCategoryId).Intersect(second.Items.Select(item => item.ProductCategoryId)));
+            using var denied = fixture.CreateAdminClient("sales.create");
+            using var forbidden = await denied.GetAsync(paged);
+            Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+            using var unknown = await client.GetAsync($"/api/v1/businesses/{Guid.NewGuid():D}/product-categories/browse");
+            Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+
         }
         finally
         {

@@ -41,14 +41,23 @@ public sealed partial class SqlRestaurantAccountStore
                 "La cuenta cambió. Revisa las cantidades antes de continuar.");
 
         const string readSql = """
-            SELECT Quantity,AllowsFractionalSale,Status
-            FROM sales.RestaurantAccountAdditions WITH (UPDLOCK,HOLDLOCK)
+            SELECT Quantity,AllowsFractionalSale,Status,
+                   COALESCE((SELECT SUM(allocation.Quantity)
+                     FROM sales.RestaurantCollectionAllocations allocation
+                     JOIN sales.RestaurantAccountCollections collection
+                       ON collection.CollectionId=allocation.CollectionId
+                      AND collection.AccountId=allocation.AccountId
+                      AND collection.Status=N'Captured'
+                     WHERE allocation.AccountId=addition.AccountId
+                       AND allocation.AdditionId=addition.AdditionId),0)
+            FROM sales.RestaurantAccountAdditions addition WITH (UPDLOCK,HOLDLOCK)
             WHERE AdditionId=@AdditionId AND AccountId=@AccountId
               AND TenantId=@TenantId AND BusinessId=@BusinessId;
             """;
         decimal oldQuantity;
         bool allowsFractional;
         string status;
+        decimal coveredQuantity;
         await using (var read = new SqlCommand(readSql, connection, transaction))
         {
             AddScope(read, actor);
@@ -61,10 +70,14 @@ public sealed partial class SqlRestaurantAccountStore
             oldQuantity = reader.GetDecimal(0);
             allowsFractional = reader.GetBoolean(1);
             status = reader.GetString(2);
+            coveredQuantity = reader.GetDecimal(3);
         }
         if (status is not ("Pending" or "Direct"))
             throw new RestaurantAccountConflictException(
                 "Un producto enviado a comanda requiere una corrección autorizada.");
+        if (request.Quantity < coveredQuantity)
+            throw new RestaurantAccountValidationException(
+                "Este producto tiene un pago registrado. Anula el cobro que lo incluye en “Cobros recibidos” antes de modificar las unidades pagadas.");
         if (request.Quantity >= oldQuantity ||
             (!allowsFractional &&
              request.Quantity != decimal.Truncate(request.Quantity)))

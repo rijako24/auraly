@@ -88,18 +88,33 @@ public static class PosPaymentRoundingPolicy
     public static decimal RoundedTotal(decimal netAmount) =>
         netAmount + Adjustment(netAmount);
 
+    public static bool IsValidAdjustment(decimal netAmount, IEnumerable<decimal> adjustments)
+    {
+        var values = adjustments.ToArray();
+        return values.Count(value => value != 0m) <= 1 &&
+            values.All(value => value is > -50m and <= 50m) &&
+            (values.Length == 0 || values.Sum() == Adjustment(netAmount));
+    }
+
     public static bool IsValid(
         decimal netAmount,
-        IEnumerable<PosSalePaymentContract> payments)
+        IEnumerable<PosSalePaymentContract> payments) => IsValid(netAmount, payments, null);
+
+    public static bool IsValid(
+        decimal netAmount,
+        IEnumerable<PosSalePaymentContract> payments,
+        decimal? recordedRestaurantAdjustment)
     {
+        // Only server-prepared restaurant receipts may supply their recorded
+        // aggregate. Ordinary online/edge sales retain the single-rounding rule.
         var values = payments.ToArray();
         var adjustment = values.Sum(payment => payment.RoundingAdjustment);
-        return values.Count(payment => payment.RoundingAdjustment != 0m) <= 1 &&
-            values.All(payment => payment.RoundingAdjustment is > -50m and <= 50m &&
-                payment.CollectedAmount > 0m &&
+        return (recordedRestaurantAdjustment.HasValue ||
+                IsValidAdjustment(netAmount, values.Select(payment => payment.RoundingAdjustment))) &&
+            values.All(payment => payment.CollectedAmount > 0m &&
                 (payment.TenderedAmount is null ||
                  payment.MethodCode == "Cash" && payment.TenderedAmount >= payment.CollectedAmount)) &&
-            (values.Length == 0 || adjustment == Adjustment(netAmount));
+            (values.Length == 0 || adjustment == (recordedRestaurantAdjustment ?? Adjustment(netAmount)));
     }
 }
 

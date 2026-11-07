@@ -107,6 +107,30 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
         return (items, count);
     }
 
+    public async Task<(IReadOnlyList<ProductCategory> Items, int TotalCount)> GetAdminPageAsync(
+        Guid businessId, int? depth, Guid? parentId, int page, int pageSize,
+        string? search, bool includeInactive, CancellationToken ct = default)
+    {
+        var query = _context.ProductCategories.AsNoTracking().Where(category =>
+            _context.Businesses.Any(business => business.BusinessId == businessId && business.TenantId == category.TenantId)
+            && (includeInactive || category.IsActive)
+            && (category.Parent == null || category.Parent.TenantId == category.TenantId)
+            && (category.Parent == null || category.Parent.Parent == null || category.Parent.Parent.TenantId == category.TenantId)
+            && (category.Parent == null || category.Parent.Parent == null || category.Parent.Parent.Parent == null || category.Parent.Parent.Parent.TenantId == category.TenantId));
+        if (depth.HasValue)
+            query = query.Where(category => (category.ParentProductCategoryId == null ? 0 :
+                category.Parent!.ParentProductCategoryId == null ? 1 :
+                category.Parent.Parent!.ParentProductCategoryId == null ? 2 : 3) == depth.Value);
+        if (parentId.HasValue) query = query.Where(category => category.ParentProductCategoryId == parentId);
+        if (!string.IsNullOrWhiteSpace(search)) query = query.Where(category => category.Name.Contains(search));
+        var count = await query.CountAsync(ct);
+        var items = await query.OrderBy(category => category.DisplayOrder).ThenBy(category => category.Name)
+            .ThenBy(category => category.ProductCategoryId).Skip((page - 1) * pageSize).Take(pageSize)
+            .Include(category => category.Parent).ThenInclude(parent => parent!.Parent).ThenInclude(parent => parent!.Parent)
+            .ToListAsync(ct);
+        return (items, count);
+    }
+
     public Task<ProductCategory> CreateAsync(ProductCategory category, CancellationToken ct = default)
     {
         _context.ProductCategories.Add(category);

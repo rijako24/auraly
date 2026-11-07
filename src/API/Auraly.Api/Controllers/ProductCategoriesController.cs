@@ -1,3 +1,4 @@
+using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Api.Authorization;
 using Auraly.Api.Extensions;
 using Microsoft.AspNetCore.Authorization;
@@ -19,6 +20,15 @@ public sealed class ProductCategoriesController(IProductAdminService service) : 
         [FromQuery] bool includeInactive = false,
         CancellationToken ct = default) =>
         Ok(await service.GetCategoriesAsync(User.GetTenantId(), businessId, includeInactive, ct));
+
+    [HttpGet("browse")]
+    [PermissionAuthorize("products.read")]
+    public async Task<ActionResult<PagedResponse<ProductCategoryAdminDto>>> Browse(
+        Guid businessId, [FromQuery] PagedRequest request, [FromQuery] int? depth = null,
+        [FromQuery] Guid? parentId = null, [FromQuery] bool includeInactive = false,
+        CancellationToken ct = default) =>
+        Ok(await service.GetCategoryPageAsync(User.GetTenantId(), businessId, request,
+            depth, parentId, includeInactive, ct));
 
     [HttpPost]
     [PermissionAuthorize("products.update")]

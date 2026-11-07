@@ -241,6 +241,24 @@ public sealed class ProductAdminService : IProductAdminService
         return category;
     }
 
+    public async Task<PagedResponse<ProductCategoryAdminDto>> GetCategoryPageAsync(
+        Guid tenantId, Guid businessId, PagedRequest request, int? depth,
+        Guid? parentId, bool includeInactive = false, CancellationToken ct = default)
+    {
+        await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        if (depth is < 0 or > 3) throw new DomainValidationException("Depth", "El nivel de categoría no es válido.");
+        var page = Math.Max(1, request.Page);
+        var pageSize = Math.Clamp(request.PageSize, 1, 50);
+        var (items, count) = await _unitOfWork.ProductCategories.GetAdminPageAsync(
+            businessId, depth, parentId, page, pageSize, request.Search?.Trim(), includeInactive, ct);
+        var ancestors = new Dictionary<Guid, ProductCategory>();
+        foreach (var item in items)
+            for (ProductCategory? category = item; category is not null; category = category.Parent)
+                if (!ancestors.TryAdd(category.ProductCategoryId, category)) break;
+        var mapped = MapCategoryTree(ancestors.Values.ToArray()).ToDictionary(item => item.ProductCategoryId);
+        return new(items.Select(item => mapped[item.ProductCategoryId]).ToArray(), count, page, pageSize);
+    }
+
     public async Task<IReadOnlyList<ProductCategoryAdminDto>> GetCategoriesAsync(
         Guid tenantId,
         Guid businessId,

@@ -125,10 +125,11 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                 Assert.Equal(HttpStatusCode.Conflict, noCommand.StatusCode);
             using (var prebill = await waiter.PostAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/prebill",
-                new PrintRestaurantPrebillRequest(2)))
+                new PrintRestaurantPrebillRequest(1)))
             {
                 prebill.EnsureSuccessStatusCode();
                 var printed = (await prebill.Content.ReadFromJsonAsync<RestaurantPrebill>())!;
+                Assert.Equal(2, printed.AccountVersion);
                 Assert.Equal(2, Assert.Single(printed.Lines).Quantity);
             }
             using (var replay = await waiter.PostAsJsonAsync(

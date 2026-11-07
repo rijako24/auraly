@@ -444,7 +444,9 @@ public sealed class ReceivePosSaleService(
             !PosPaymentRoundingPolicy.IsValid(
                 request.CommercialSnapshot.NetPayableAmount -
                     request.CommercialSnapshot.PayableRoundingAmount,
-                request.Payments) ||
+                request.Payments,
+                request.SourceMode == SaleSourceModes.Online && request.TableId is not null
+                    ? rounding : null) ||
             request.Payments.Any(payment =>
                 payment.Reference?.Length > 160 || payment.Notes?.Length > 500 ||
                 payment.CardFranchiseCode?.Length > 64 || payment.ApprovalNumber?.Length > 100 ||

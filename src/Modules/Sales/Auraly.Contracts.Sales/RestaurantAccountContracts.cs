@@ -101,7 +101,8 @@ public sealed record RestaurantAccountAddition(
     string AddedByName, DateTimeOffset AddedAt, string Status,
     Guid? StationId = null, string? StationName = null,
     string? PreparationNote = null,
-    Guid? ReplacementOfCancellationId = null);
+    Guid? ReplacementOfCancellationId = null,
+    decimal CoveredQuantity = 0);
 
 public sealed record RestaurantAccountDraft(
     RestaurantAccount Account,

@@ -187,8 +187,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             settlement.Withholding.NetAmount + settlement.Withholding.WithholdingTotal != payable)
             throw new OnlineSalesDraftConcurrencyException(
                 "El pedido cambió mientras se calculaban sus valores de facturación.");
-        var roundingAdjustment = PosPaymentRoundingPolicy.Adjustment(
-            settlement.Withholding.NetAmount);
+        var roundingAdjustment = source.TableId is not null
+            ? request.Payments.Sum(payment => payment.RoundingAdjustment)
+            : PosPaymentRoundingPolicy.Adjustment(settlement.Withholding.NetAmount);
         if (request.Payments.Sum(payment => payment.CollectedAmount) +
             (request.Credit?.Amount ?? 0m) !=
                 settlement.Withholding.NetAmount + roundingAdjustment)
@@ -209,7 +210,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
                 payment.TenderedAmount,
                 payment.RoundingAdjustment)).ToArray();
-        if (!PosPaymentRoundingPolicy.IsValid(settlement.Withholding.NetAmount, payments))
+        if (!PosPaymentRoundingPolicy.IsValid(settlement.Withholding.NetAmount, payments,
+                source.TableId is not null ? roundingAdjustment : null))
             throw new OnlineSalesDraftValidationException(
                 "El ajuste al peso no corresponde al total original de la venta.");
         var taxes = PosSaleTaxSummary.Calculate(

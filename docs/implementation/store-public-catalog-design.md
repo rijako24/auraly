@@ -1,6 +1,6 @@
 # Catálogo público de tiendas — propuesta para revisión
 
-Estado: **diseño, sin implementación ni publicación de enlaces**. El usuario pidió revisar la propuesta antes de implementar este catálogo. Las mejoras actuales de Productos y POS son independientes de esta propuesta.
+Estado: **diseño, sin implementación ni publicación de enlaces**. El usuario pidió revisar la propuesta antes de implementar este catálogo. Las mejoras actuales de Productos y POS son independientes de esta propuesta. La exploración administrativa por Productos, Áreas, Líneas, Grupos y Subgrupos sí forma parte de la implementación solicitada; no publica enlaces.
 
 ## Experiencia propuesta
 
@@ -75,3 +75,10 @@ Primera entrega propuesta: consulta y compartir. No incluye carrito, pedidos, ch
 ## Referencias de diseño
 
 La separación entre agrupación del catálogo y presentación visual sigue el patrón de [colecciones de Shopify](https://help.shopify.com/en/manual/products/collections). Los filtros de talla/color sobre la colección toman como referencia [storefront filtering de Shopify](https://help.shopify.com/en/manual/online-store/themes/customizing-themes/common-customizations/storefront-filters). La navegación ascendente por la jerarquía coincide con la función descrita por [Google para breadcrumbs](https://developers.google.com/search/docs/appearance/structured-data/breadcrumb). Son referencias para la propuesta, no funcionalidades ya implementadas en Auraly.
+
+
+## Exploración administrativa de Productos
+
+«Explorar por» inicia en Productos y cambia únicamente el conjunto explorado. Lista, tarjetas y galería reutilizan DataTable y la preferencia existente por usuario/tenant. Abrir una categoría aplica su filtro canónico de productos y muestra su ruta; no crea otra clasificación. Los filtros de productos conservan su comportamiento.
+
+El propietario continúa siendo ProductAdminService y ProductCategoryRepository. La lectura administrativa `/businesses/{businessId}/product-categories/browse` aplica tenant, negocio, nivel, padre, estado y búsqueda en SQL antes de ordenar y paginar (20 por defecto, máximo 50). Cuenta y página son consultas separadas; los tres padres máximos se cargan mediante joins en la misma lectura de la página y MapCategoryTree conserva la regla existente de profundidad/ruta. Se reutilizan tablas y autorizaciones de productos. Solo la vista activa consulta sus resultados; las categorías de dropdown y las marcas no se cargan mientras se explora el listado de categorías. Sin SQL/HTTP por categoría ni paginación de una descarga completa. Presupuesto de primera página y siguientes: tres consultas, incluida autorización del negocio, y p95 ≤ 800 ms sin diagnóstico concurrente; navegación y paginación se prueban por nivel, con 20/50 elementos y aislamiento de tenant.

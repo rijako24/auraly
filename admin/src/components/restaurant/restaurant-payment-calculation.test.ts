@@ -118,3 +118,23 @@ test("el efectivo puede cubrir solo la propina mientras la tarjeta cubre el cons
   ], 10_000), { cashTendered: 10_000, cashSaleTendered: 0,
     cashApplied: 0, due: 0, change: 0 });
 });
+
+
+test("el saldo con ajuste decimal acepta tarjeta exacta sin sumar la propina en efectivo al consumo", () => {
+  const payment = settleRestaurantPayment(7_540,
+    [{ methodCode: "DebitCard", amount: "7.545,60" }], 0, 5.6);
+  assert.equal(payment.due, 0);
+  assert.equal(payment.change, 0);
+  assert.equal(payment.cashTendered, 0);
+  assert.equal(settleRestaurantPayment(7_540,
+    [{ methodCode: "DebitCard", amount: "7.546" }], 0, 5.6).due, -0.4);
+});
+
+test("conserva los cuatro decimales monetarios y el cambio separado de la propina", () => {
+  assert.equal(settleRestaurantPayment(10.1234,
+    [{ methodCode: "DebitCard", amount: "10,1234" }]).due, 0);
+  const payment = settleRestaurantPayment(7_540,
+    [{ methodCode: "Cash", amount: "10.000" }], 1_000, 5.6);
+  assert.equal(payment.due, 0);
+  assert.equal(payment.change, 1_454.4);
+});

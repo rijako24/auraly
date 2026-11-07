@@ -465,18 +465,15 @@ public sealed class OnlineSalesCheckoutService(
                         RoundingAdjustment: cash.Sum(item =>
                             item.RoundingAdjustment)));
                 }
-                var expectedRounding = PosPaymentRoundingPolicy.Adjustment(
-                    settlement.Withholding.NetAmount);
-                if (storedPayments.Sum(item => item.RoundingAdjustment) !=
-                    expectedRounding)
-                    throw new OnlineSalesDraftValidationException(
-                        "Los cobros de esta mesa no incluyen el ajuste al peso. " +
-                        "Anula el último cobro y vuelve a recibirlo con el total redondeado.");
                 if (storedPayments.Count > 10 ||
                     !request.Payments.SequenceEqual(storedPayments))
                     throw new OnlineSalesDraftValidationException(
                         "Los medios de pago cambiaron. Actualiza el cobro de la mesa.");
             }
+            else if (!PosPaymentRoundingPolicy.IsValidAdjustment(settlement.Withholding.NetAmount,
+                request.Payments.Select(payment => payment.RoundingAdjustment)))
+                throw new OnlineSalesDraftValidationException(
+                    "El ajuste al centenar no corresponde al cobro de la mesa.");
             if (settlement.Context.HasBelowCostLine &&
                 !user.Permissions.Contains(CommercePermissionCodes.SalesBelowCost))
                 throw new OnlineSalesDraftForbiddenException(
@@ -686,7 +683,6 @@ public sealed class OnlineSalesCheckoutService(
         if (request.Payments.Any(payment =>
                 !PaymentMethods.Contains(payment.MethodCode) ||
                 payment.Amount <= 0 ||
-                payment.RoundingAdjustment is <= -50m or > 50m ||
                 payment.Amount + payment.RoundingAdjustment <= 0m ||
                 payment.Reference?.Length > 160 ||
                 payment.Notes?.Length > 500 ||

@@ -16,8 +16,10 @@ CREATE TABLE [dbo].[SalesPayments]
     CONSTRAINT [FK_SalesPayments_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesPayments_BankAccount] FOREIGN KEY ([BankAccountId]) REFERENCES [accounting].[BankAccounts] ([BankAccountId]),
     CONSTRAINT [CK_SalesPayments_Amount] CHECK ([PaymentNumber] > 0 AND [Amount] > 0),
+    -- A restaurant invoice consolidates adjustments from multiple recorded collections.
+    -- Per-collection bounds remain in the canonical payment policy before acceptance.
     CONSTRAINT [CK_SalesPayments_RoundingAdjustment] CHECK
-      ([RoundingAdjustment]>-50 AND [RoundingAdjustment]<=50 AND [Amount]+[RoundingAdjustment]>0),
+      ([Amount]+[RoundingAdjustment]>0),
     CONSTRAINT [CK_SalesPayments_TenderedAmount] CHECK
       ([TenderedAmount] IS NULL OR ([MethodCode]=N'Cash' AND [TenderedAmount]>=[Amount]+[RoundingAdjustment])),
     CONSTRAINT [CK_SalesPayments_CardData] CHECK (

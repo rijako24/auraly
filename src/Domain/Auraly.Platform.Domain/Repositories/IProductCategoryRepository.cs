@@ -40,6 +40,10 @@ public interface IProductCategoryRepository
         int pageSize,
         CancellationToken ct = default);
 
+    Task<(IReadOnlyList<ProductCategory> Items, int TotalCount)> GetAdminPageAsync(
+        Guid businessId, int? depth, Guid? parentId, int page, int pageSize,
+        string? search, bool includeInactive, CancellationToken ct = default);
+
     Task<ProductCategory> CreateAsync(ProductCategory category, CancellationToken ct = default);
     Task CreateManyAsync(IReadOnlyCollection<ProductCategory> categories, CancellationToken ct = default);
     Task<ProductCategory> UpdateAsync(ProductCategory category, CancellationToken ct = default);

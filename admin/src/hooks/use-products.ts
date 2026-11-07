@@ -8,21 +8,21 @@ import {
 } from "@/services/api/products";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-export function useProducts(params?: { page?: number; pageSize?: number; search?: string; includeInactive?: boolean } & import("@/services/api/products").ProductListFilters) {
+export function useProducts(params?: { page?: number; pageSize?: number; search?: string; includeInactive?: boolean } & import("@/services/api/products").ProductListFilters, enabled = true) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
     queryKey: ["products", businessId, params],
     queryFn: () => productsApi.list(businessId!, params),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 
-export function useProductCategories(includeInactive = false) {
+export function useProductCategories(includeInactive = false, enabled = true) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
     queryKey: ["product-categories", businessId, includeInactive],
     queryFn: () => productsApi.listCategories(businessId!, includeInactive),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 

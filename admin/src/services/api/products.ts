@@ -187,6 +187,8 @@ export const productsApi = {
     apiClient.put<CatalogProductDetail>(`/commerce/v1/products/${productId}`, request),
   getCatalog: (productId: string) => apiClient.get<CatalogProductDetail>(`/commerce/v1/products/${productId}`),
   rotation: (productId: string) => apiClient.get<ProductRotationDetail[]>(`/commerce/v1/products/${productId}/rotation`),
+  browseCategories: (businessId: string, params: PagedRequest & { depth?: number; parentId?: string; includeInactive?: boolean }) =>
+    apiClient.get<PagedResponse<ProductCategory>>(`/businesses/${businessId}/product-categories/browse`, withPagedDefaults({ ...params })),
   listCategories: (businessId: string, includeInactive = false) => apiClient.get<ProductCategory[]>(`/businesses/${businessId}/product-categories`, { includeInactive }),
   createCategory: (businessId: string, request: ProductCategoryPayload) => apiClient.post<ProductCategory>(`/businesses/${businessId}/product-categories`, request),
   updateCategory: (businessId: string, categoryId: string, request: ProductCategoryPayload) => apiClient.put<ProductCategory>(`/businesses/${businessId}/product-categories/${categoryId}`, request),

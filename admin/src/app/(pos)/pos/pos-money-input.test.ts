@@ -34,3 +34,13 @@ test("formats stored numeric values consistently", () => {
   assert.equal(formatMoneyValue(60_000), "60.000");
   assert.equal(formatMoneyValue(60_000.5), "60.000,50");
 });
+
+
+test("restaurant amounts retain four decimals without changing direct-sale defaults", () => {
+  assert.equal(formatMoneyValue(7_545.6, 4), "7.545,60");
+  assert.equal(formatMoneyValue(30_654.4, 4), "30.654,40");
+  assert.equal(formatMoneyValue(1.2345, 4), "1,2345");
+  assert.equal(formatMoneyDraft("7545,67891", 4), "7.545,6789");
+  assert.equal(parseMoneyDraft(formatMoneyValue(7_545.6789, 4)), 7_545.6789);
+  assert.equal(formatMoneyValue(1.2345), "1,23");
+});

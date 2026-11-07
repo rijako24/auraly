@@ -5,6 +5,7 @@ import { Banknote, Check, CheckCircle2, ChevronDown, CreditCard,
   FileText, Plus, ReceiptText, RotateCcw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { formatMoneyDraft, formatMoneyValue, parseMoneyDraft } from "@/lib/money-input";
 import { Input } from "@/components/ui/input";
 import { useBodyScrollLock } from "@/hooks/use-body-scroll-lock";
 import { finalRestaurantPayments, settleRestaurantPayment } from "@/components/restaurant/restaurant-payment-calculation";
@@ -19,7 +20,7 @@ import type { PosPaymentInput, PosSaleDocumentType,
 import { PAYMENT_PRINT_SHORTCUTS } from "@/app/(pos)/pos/pos-payment-keyboard";
 
 const money = new Intl.NumberFormat("es-CO", {
-  style: "currency", currency: "COP", maximumFractionDigits: 0,
+  style: "currency", currency: "COP", minimumFractionDigits: 0, maximumFractionDigits: 4,
 });
 const round = (value: number) => Math.round(value * 10000) / 10000;
 const methods = ["Cash", "DebitCard", "CreditCard", "Transfer"] as const;
@@ -28,7 +29,7 @@ type PaymentRow = { id: string; methodCode: Method; amount: string;
   reference: string; franchise: string; approval: string;
   bankAccountId: string };
 const newRow = (amount: number): PaymentRow => ({ id: crypto.randomUUID(),
-  methodCode: "Cash", amount: String(amount), reference: "", franchise: "",
+  methodCode: "Cash", amount: formatMoneyValue(amount, 4), reference: "", franchise: "",
   approval: "", bankAccountId: "" });
 
 export function RestaurantPaymentDialog({ draft, summary, client,
@@ -90,16 +91,14 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   })).filter((line) => line.quantity > 0), [available, quantities, selectionMode]);
   const selectedTotal = round(selection.reduce((sum, line) =>
     sum + line.quantity * line.unitPrice, 0));
-  const roundingAdjustment = round(roundToNearestHundred(summary.total) - summary.total);
-  const finalSelection = summary.remaining > 0 &&
-    round(selectedTotal - summary.remaining) === 0;
-  const currentAdjustment = finalSelection ? roundingAdjustment : 0;
+  const currentAdjustment = selectedTotal > 0
+    ? round(roundToNearestHundred(selectedTotal) - selectedTotal) : 0;
+  const remainingAdjustment = summary.remaining > 0
+    ? round(roundToNearestHundred(summary.remaining) - summary.remaining) : 0;
   const capturedAdjustment = round(summary.collections.reduce((sum, entry) =>
     sum + entry.payments.reduce((paymentSum, payment) =>
       paymentSum + (payment.roundingAdjustment ?? 0), 0), 0));
-  const missingRecordedAdjustment = summary.remaining === 0 &&
-    capturedAdjustment !== roundingAdjustment;
-  const actualTip = tipAmount.trim() === "" ? 0 : Number(tipAmount);
+  const actualTip = tipAmount.trim() === "" ? 0 : parseMoneyDraft(tipAmount);
   const tipBase = selectedTotal > 0 ? selectedTotal : summary.total;
   const invalidTip = !Number.isFinite(actualTip) || actualTip < 0 ||
     !Number.isInteger(actualTip) || actualTip > 1000000000;
@@ -109,7 +108,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   const separateCashTip = actualTip > 0 && !invalidTip &&
     tipRow.methodCode === "Cash" && cashTipIncluded === 0;
   const separateTipTendered = separateTipCashReceived.trim() === ""
-    ? NaN : Number(separateTipCashReceived);
+    ? NaN : parseMoneyDraft(separateTipCashReceived);
   const invalidSeparateTipTendered = separateCashTip &&
     (!Number.isFinite(separateTipTendered) ||
       separateTipTendered < actualTip);
@@ -131,6 +130,20 @@ export function RestaurantPaymentDialog({ draft, summary, client,
       (!tipRow.franchise || !tipRow.approval.trim()) ||
     tipRow.methodCode === "Transfer" &&
       (!tipRow.reference.trim() || accountingEnabled && !tipRow.bankAccountId));
+  const allocationBlockReason = due > 0
+    ? `Faltan ${money.format(due)} por asignar a los medios de pago.`
+    : due < 0 ? `Los medios de pago exceden el cobro por ${money.format(-due)}.` : null;
+  const missingTipCash = separateCashTip && invalidSeparateTipTendered
+    ? Math.max(0, actualTip - (Number.isFinite(separateTipTendered) ? separateTipTendered : 0))
+    : cashTipExceedsTendered ? cashTipIncluded - cashTendered : 0;
+  const displayedDue = missingTipCash > 0 ? round(Math.max(0, due) + missingTipCash) : due;
+  const displayedChange = round(change + separateTipChange);
+  const hasPaymentSelection = summary.remaining === 0 || selectedTotal > 0;
+  const paymentStatusLabel = !hasPaymentSelection ? "Selecciona productos" :
+    displayedDue > 0 ? "Faltan" : displayedDue < 0 ? "Excede" :
+      displayedChange > 0 ? "Cambio a entregar" : "Pago completo";
+  const paymentStatusAmount = !hasPaymentSelection || displayedDue === 0 && displayedChange === 0
+    ? null : money.format(displayedDue !== 0 ? Math.abs(displayedDue) : displayedChange);
   const captureBlockReason = summary.remaining <= 0
     ? otherSession ? "Esta mesa tiene cobros de otra sesión de caja. Revísalos antes de continuar."
       : invalidTip ? "Ingresa un valor de propina válido o déjalo en cero."
@@ -146,13 +159,9 @@ export function RestaurantPaymentDialog({ draft, summary, client,
       : cashTipExceedsTendered ? "El efectivo entregado no cubre la propina indicada."
       : incompleteTipDetails ? "Completa los datos del medio usado para la propina."
       : selectedTotal <= 0 ? "Selecciona los productos que vas a cobrar."
-        : !finalSelection && round(summary.remaining - selectedTotal +
-            roundingAdjustment) <= 0
-          ? "Selecciona más productos: el último pago debe superar el ajuste al peso."
-        : due > 0 ? `Faltan ${money.format(due)} por asignar a los medios de pago.`
-          : due < 0 ? `Los medios de pago exceden el cobro por ${money.format(-due)}.`
-            : incompletePaymentDetails ? "Completa los datos de tarjeta o transferencia."
-              : documentTypeBlockReason;
+        : selectedTotal + currentAdjustment <= 0 ? "El cobro redondeado debe ser mayor que cero. Selecciona más productos."
+        : allocationBlockReason ?? (incompletePaymentDetails
+          ? "Completa los datos de tarjeta o transferencia." : documentTypeBlockReason);
   const paymentLabels = useMemo(() => new Map(catalog.map((item) =>
     [item.code, item.label])), [catalog]);
   const canAddPaymentMethod = catalog.some((item) => item.code !== "Cash");
@@ -176,27 +185,24 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   }, [client]);
 
   useEffect(() => {
-    if (paymentRows.length || selectedTotal <= 0) return;
-    setPaymentRows([newRow(selectedTotal + currentAdjustment)]);
-  }, [paymentRows.length, selectedTotal, currentAdjustment]);
-
-  useEffect(() => {
     const previous = previousSuggestedCash.current;
     const previousTip = previousIncludedCashTip.current;
-    const suggested = selectedTotal + currentAdjustment + cashTipIncluded;
+    const suggested = round(selectedTotal + currentAdjustment + cashTipIncluded);
     previousSuggestedCash.current = suggested;
     previousIncludedCashTip.current = cashTipIncluded;
     setPaymentRows((rows) => {
-      if (rows.length === 1 && rows[0].methodCode === "Cash" &&
-          Number(rows[0].amount) === previous)
-        return [{ ...rows[0], amount: String(suggested) }];
+      // A new selection or a completed partial payment starts with its own balance.
+      if (!rows.length) return selectedTotal > 0 ? [newRow(suggested)] : rows;
+      if (rows.length === 1 && parseMoneyDraft(rows[0].amount) === previous)
+        return previous === suggested ? rows :
+          [{ ...rows[0], amount: formatMoneyValue(suggested, 4) }];
       const difference = cashTipIncluded - previousTip;
       const cashIndex = rows.findIndex((row) => row.methodCode === "Cash");
       if (!difference || cashIndex < 0) return rows;
       return rows.map((row, index) => index === cashIndex
-        ? { ...row, amount: String(round(Number(row.amount) + difference)) } : row);
+        ? { ...row, amount: formatMoneyValue(round(parseMoneyDraft(row.amount) + difference), 4) } : row);
     });
-  }, [selectedTotal, currentAdjustment, cashTipIncluded]);
+  }, [paymentRows.length, selectedTotal, currentAdjustment, cashTipIncluded]);
 
   function updateRow(id: string, patch: Partial<PaymentRow>) {
     setPaymentRows((rows) => rows.map((row) => row.id === id ?
@@ -212,8 +218,8 @@ export function RestaurantPaymentDialog({ draft, summary, client,
       actualTip > 0 && !invalidTip &&
       !paymentRows.some((item) => item.id !== row.id && item.methodCode === "Cash");
     updateRow(row.id, { methodCode, reference: "", franchise: "", approval: "",
-      bankAccountId: "", amount: String(round(Number(row.amount) +
-        (tipEnteringCash ? actualTip : 0) - (tipLeavingCash ? actualTip : 0))) });
+      bankAccountId: "", amount: formatMoneyValue(round(parseMoneyDraft(row.amount) +
+        (tipEnteringCash ? actualTip : 0) - (tipLeavingCash ? actualTip : 0)), 4) });
     previousIncludedCashTip.current = tipEnteringCash ? actualTip :
       tipLeavingCash ? 0 : cashTipIncluded;
   }
@@ -225,12 +231,12 @@ export function RestaurantPaymentDialog({ draft, summary, client,
     if (!method) return;
     setPaymentRows((rows) => {
       if (due > 0) return [...rows, { ...newRow(due), methodCode: method }];
-      const sourceIndex = rows.findIndex((row) => Number(row.amount) > 0);
+      const sourceIndex = rows.findIndex((row) => parseMoneyDraft(row.amount) > 0);
       if (sourceIndex < 0) return rows;
-      const share = round(Number(rows[sourceIndex].amount) / 2);
+      const share = round(parseMoneyDraft(rows[sourceIndex].amount) / 2);
       if (share <= 0) return rows;
       return [...rows.map((row, index) => index === sourceIndex
-        ? { ...row, amount: String(round(Number(row.amount) - share)) } : row),
+        ? { ...row, amount: formatMoneyValue(round(parseMoneyDraft(row.amount) - share), 4) } : row),
         { ...newRow(share), methodCode: method }];
     });
     setError("");
@@ -245,8 +251,8 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   function paymentInputs(): PosPaymentInput[] | null {
     if (!referencesReady || selectedTotal <= 0 || due !== 0 ||
         cashTipExceedsTendered ||
-        paymentRows.some((row) => !Number.isFinite(Number(row.amount)) ||
-          Number(row.amount) <= 0) ||
+        paymentRows.some((row) => !Number.isFinite(parseMoneyDraft(row.amount)) ||
+          parseMoneyDraft(row.amount) <= 0) ||
         paymentRows.filter((row) => row.methodCode === "Cash").length > 1) {
       setError("El pago debe cubrir exactamente los productos seleccionados.");
       return null;
@@ -254,7 +260,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
     const rows = paymentRows.filter((row) =>
       row.methodCode !== "Cash" || cashApplied > 0).map((row): PosPaymentInput => ({
       methodCode: row.methodCode,
-      amount: row.methodCode === "Cash" ? cashApplied : round(Number(row.amount)),
+      amount: row.methodCode === "Cash" ? cashApplied : round(parseMoneyDraft(row.amount)),
       reference: row.methodCode === "Transfer" ? row.reference.trim() || null : null,
       cardFranchiseCode: row.methodCode === "DebitCard" ||
         row.methodCode === "CreditCard" ? row.franchise || null : null,
@@ -339,7 +345,7 @@ export function RestaurantPaymentDialog({ draft, summary, client,
   }
 
   async function retryDocument() {
-    if (disabled || missingRecordedAdjustment) return;
+    if (disabled) return;
     setWorking(true);
     setError("");
     try {
@@ -364,15 +370,14 @@ export function RestaurantPaymentDialog({ draft, summary, client,
             <div className="col-span-2 sm:col-span-1"><Metric label="Total de la mesa" value={summary.total}/></div>
             <Metric label="Pagado" value={summary.collected + capturedAdjustment} accent="teal"/>
             <Metric label="Por cobrar" value={summary.remaining +
-              (summary.remaining > 0 ? roundingAdjustment : 0)} accent="amber"/>
+              remainingAdjustment} accent="amber"/>
           </div>
-          {roundingAdjustment !== 0 && <p className="mt-3 text-sm font-semibold text-slate-600 dark:text-slate-300">Ajuste al peso {roundingAdjustment > 0 ? "+" : ""}{money.format(roundingAdjustment)} · Total a pagar {money.format(summary.total + roundingAdjustment)}</p>}
-          {missingRecordedAdjustment && <p role="alert" className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Este cobro anterior se guardó sin el ajuste al peso. Anúlalo y vuelve a recibir el total redondeado antes de emitir el documento.</p>}
+          {capturedAdjustment !== 0 && <p className="mt-3 text-sm font-semibold text-slate-600 dark:text-slate-300">Ajustes de cobros recibidos: {money.format(capturedAdjustment)}</p>}
           {summary.tipsCollected > 0 && <p className="mt-3 text-sm font-semibold text-teal-800">Propinas recibidas aparte: {money.format(summary.tipsCollected)}</p>}
           {summary.remaining > 0 && <><div className="mt-7 flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xl font-bold">¿Qué productos paga ahora?</h3><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Puedes cobrar todo o seleccionar cantidades por persona.</p></div></div>
             <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-slate-200/70 p-1.5 dark:bg-slate-800" role="group" aria-label="Modo de cobro">
-              <ModeButton active={selectionMode === "all"} onClick={() => setSelectionMode("all")} label="Todo lo pendiente"/>
-              <ModeButton active={selectionMode === "choose"} onClick={() => { setSelectionMode("choose"); setQuantities({}); }} label="Elegir productos"/>
+              <ModeButton active={selectionMode === "all"} onClick={() => { setSelectionMode("all"); setPaymentRows([]); setError(""); }} label="Todo lo pendiente"/>
+              <ModeButton active={selectionMode === "choose"} onClick={() => { setSelectionMode("choose"); setQuantities({}); setPaymentRows([]); setError(""); }} label="Elegir productos"/>
             </div>
             <div className="mt-4 space-y-2"><h4 className="text-sm font-bold text-slate-600 dark:text-slate-300">Pendientes de pago</h4>{available.map(line => {
               const chosen = selectionMode === "all" ? line.remainingQuantity : quantities[line.additionId] ?? 0;
@@ -412,24 +417,32 @@ export function RestaurantPaymentDialog({ draft, summary, client,
                 onClick={() => setTipAmount(String(Math.round(tipBase * summary.suggestedTipPercent / 100)))}>
                 Sugerir {summary.suggestedTipPercent} % · {money.format(Math.round(tipBase * summary.suggestedTipPercent / 100))}</Button>}
               <Input id="restaurant-actual-tip" inputMode="decimal" className="mt-2 h-10 bg-white text-lg font-bold dark:bg-slate-900" placeholder="0" value={tipAmount}
-                onChange={(event) => { setTipAmount(event.target.value); setError(""); }} disabled={disabled}/>
+                onChange={(event) => { setTipAmount(formatMoneyDraft(event.target.value, 4)); setError(""); }} disabled={disabled}/>
               {actualTip > 0 && !invalidTip && <div className="mt-2 grid gap-2 sm:grid-cols-2"><div className="sm:col-span-2"><p className="mb-1 text-xs font-semibold text-slate-600 dark:text-slate-300">Medio de la propina</p><Select value={tipRow.methodCode} onValueChange={(value) => { setTipRow((row) => ({ ...row, methodCode: value as Method, reference: "", franchise: "", approval: "", bankAccountId: "" })); setSeparateTipCashReceived(""); }}>
                 <SelectTrigger aria-label="Medio de la propina" className="h-10 bg-white dark:bg-slate-900"><SelectValue/></SelectTrigger><SelectContent>{catalog.map((method) => <SelectItem key={method.code} value={method.code}>{method.label}</SelectItem>)}</SelectContent></Select></div>
                 {(tipRow.methodCode === "DebitCard" || tipRow.methodCode === "CreditCard") && <><Select value={tipRow.franchise} onValueChange={(value) => setTipRow((row) => ({ ...row, franchise: value }))}><SelectTrigger aria-label="Franquicia de la propina" className="h-12"><SelectValue placeholder="Franquicia"/></SelectTrigger><SelectContent>{franchises.map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select><Input aria-label="Aprobación de la propina" placeholder="Número de aprobación" value={tipRow.approval} onChange={(event) => setTipRow((row) => ({ ...row, approval: event.target.value }))}/></>}
                 {tipRow.methodCode === "Transfer" && <>{accountingEnabled && <Select value={tipRow.bankAccountId} onValueChange={(value) => setTipRow((row) => ({ ...row, bankAccountId: value }))}><SelectTrigger aria-label="Cuenta de la propina" className="h-12"><SelectValue placeholder="Cuenta bancaria"/></SelectTrigger><SelectContent>{banks.map((bank) => <SelectItem key={bank.bankAccountId} value={bank.bankAccountId}>{bank.displayName}</SelectItem>)}</SelectContent></Select>}<Input aria-label="Referencia de la propina" placeholder="Referencia de transferencia" value={tipRow.reference} onChange={(event) => setTipRow((row) => ({ ...row, reference: event.target.value }))}/></>}
-                {separateCashTip && <label className="block text-sm font-semibold">Efectivo entregado para la propina<Input inputMode="decimal" className="mt-1 h-12 bg-white text-lg font-bold dark:bg-slate-900" placeholder={String(actualTip)} value={separateTipCashReceived} onChange={(event) => { setSeparateTipCashReceived(event.target.value); setError(""); }}/></label>}
-                {separateTipChange > 0 && <p className="font-semibold text-teal-800 dark:text-teal-200">Cambio de la propina: {money.format(separateTipChange)}</p>}
+                {separateCashTip && <label className="block text-sm font-semibold">Efectivo entregado para la propina<Input inputMode="decimal" className="mt-1 h-12 bg-white text-lg font-bold dark:bg-slate-900" placeholder={formatMoneyValue(actualTip, 4)} value={separateTipCashReceived} onChange={(event) => { setSeparateTipCashReceived(formatMoneyDraft(event.target.value, 4)); setError(""); }}/></label>}
               </div>}
               {actualTip > 0 && <p className="mt-2 text-sm font-semibold">Consumo + propina: {money.format(selectedTotal + currentAdjustment + (invalidTip ? 0 : actualTip))}</p>}
             </div>
             {summary.remaining > 0 && <div className="mt-3 space-y-2">{paymentRows.map((row) => <div key={row.id} className="rounded-xl border bg-slate-50 p-3 dark:bg-slate-950"><div className="flex items-center gap-2"><Select value={row.methodCode} onValueChange={(value) => changePaymentMethod(row, value as Method)}><SelectTrigger aria-label="Medio de pago" className="h-11 flex-1 rounded-xl bg-white text-base dark:bg-slate-900"><SelectValue/></SelectTrigger><SelectContent>{catalog.map((method) => <SelectItem key={method.code} value={method.code} className="min-h-12 text-base">{method.label}</SelectItem>)}</SelectContent></Select><Button variant="ghost" size="icon" className="h-11 w-11 shrink-0 rounded-xl text-slate-500" disabled={paymentRows.length === 1} onClick={() => setPaymentRows((rows) => rows.filter((item) => item.id !== row.id))} aria-label="Quitar medio"><Trash2 className="h-5 w-5"/></Button></div>
-                <label className="mt-2 block text-sm font-semibold">{row.methodCode === "Cash" ? cashTipIncluded > 0 ? "Efectivo entregado (incluye propina)" : "Efectivo entregado" : "Valor cobrado por consumo"}<Input inputMode="decimal" className="mt-1 h-11 rounded-xl text-lg font-bold" value={row.amount} onChange={(event) => updateRow(row.id, { amount: event.target.value })}/></label>
+                <label className="mt-2 block text-sm font-semibold">{row.methodCode === "Cash" ? cashTipIncluded > 0 ? "Efectivo entregado (incluye propina)" : "Efectivo entregado" : "Valor cobrado por consumo"}<Input inputMode="decimal" className="mt-1 h-11 rounded-xl text-lg font-bold" value={row.amount} onChange={(event) => updateRow(row.id, { amount: formatMoneyDraft(event.target.value, 4) })}/></label>
                 {(row.methodCode === "DebitCard" || row.methodCode === "CreditCard") && <div className="mt-2 grid grid-cols-2 gap-2"><Select value={row.franchise} onValueChange={(value) => updateRow(row.id, { franchise: value })}><SelectTrigger aria-label="Franquicia" className="h-12 rounded-xl"><SelectValue placeholder="Franquicia de tarjeta"/></SelectTrigger><SelectContent>{franchises.map((item) => <SelectItem key={item.code} value={item.code} className="min-h-11">{item.label}</SelectItem>)}</SelectContent></Select><Input aria-label="Número de aprobación" className="h-12 rounded-xl" placeholder="Número de aprobación" value={row.approval} onChange={(event) => updateRow(row.id, { approval: event.target.value })}/></div>}
                 {row.methodCode === "Transfer" && <div className="mt-2 grid grid-cols-2 gap-2">{accountingEnabled && <Select value={row.bankAccountId} onValueChange={(value) => updateRow(row.id, { bankAccountId: value })}><SelectTrigger aria-label="Cuenta bancaria" className="h-12 rounded-xl"><SelectValue placeholder="Cuenta bancaria"/></SelectTrigger><SelectContent>{banks.map((bank) => <SelectItem key={bank.bankAccountId} value={bank.bankAccountId} className="min-h-11">{bank.displayName}</SelectItem>)}</SelectContent></Select>}<Input aria-label="Referencia de transferencia" className="h-12 rounded-xl" placeholder="Referencia de transferencia" value={row.reference} onChange={(event) => updateRow(row.id, { reference: event.target.value })}/></div>}
-              </div>)}<Button variant="outline" className="min-h-12 w-full rounded-xl" disabled={disabled || !referencesReady || !canAddPaymentMethod || paymentRows.length >= 10 || selectedTotal <= 0} onClick={addPaymentMethod}><Plus className="mr-2 h-5 w-5"/>Agregar otro medio</Button><div role="status" aria-label="Estado del pago" className="flex justify-between rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold dark:bg-slate-800"><span>{due > 0 ? "Falta" : due < 0 ? "Excede" : change > 0 ? "Cambio a entregar" : "Pago exacto"}</span><span>{money.format(due !== 0 ? Math.abs(due) : change > 0 ? change : selectedTotal + currentAdjustment)}</span></div></div>}
+              </div>)}<Button variant="outline" className="min-h-12 w-full rounded-xl" disabled={disabled || !referencesReady || !canAddPaymentMethod || paymentRows.length >= 10 || selectedTotal <= 0} onClick={addPaymentMethod}><Plus className="mr-2 h-5 w-5"/>Agregar otro medio</Button></div>}
           </div>
-          <footer className="shrink-0 border-t bg-white p-3 dark:bg-slate-900 sm:p-4">{error && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">{error}</p>}{captureBlockReason && captureBlockReason !== error && <p role="status" className="mb-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">{captureBlockReason}</p>}
-            {summary.remaining > 0 || actualTip > 0 ? <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!captureBlockReason || missingRecordedAdjustment} onClick={() => void receivePayment()}><Banknote className="mr-2 h-6 w-6"/>{summary.remaining === 0 ? "Guardar propina y emitir documento" : selectedTotal === summary.remaining ? `Cobrar y emitir ${documentType === "SalesInvoice" ? "factura" : "documento"}` : "Guardar este pago"}</Button> : <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!documentTypeBlockReason || otherSession || missingRecordedAdjustment} onClick={() => void retryDocument()}><CreditCard className="mr-2 h-6 w-6"/>Reintentar {documentType === "SalesInvoice" ? "factura" : "documento"} único</Button>}
+          <footer className="shrink-0 border-t bg-white p-3 dark:bg-slate-900 sm:p-4">
+            <div role="status" aria-live="polite" aria-atomic="true" aria-label="Estado del pago" className="mb-3 flex min-h-24 items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-950">
+              {hasPaymentSelection && displayedDue === 0 && displayedChange === 0
+                ? <CheckCircle2 aria-hidden="true" className="h-8 w-8 shrink-0 text-teal-700 dark:text-teal-300"/>
+                : <Banknote aria-hidden="true" className="h-8 w-8 shrink-0 text-slate-500 dark:text-slate-400"/>}
+              <div className="min-w-0 flex-1">
+                <p className={`${paymentStatusAmount === null ? "text-xl font-bold sm:text-2xl" : "text-base font-medium"} ${hasPaymentSelection && displayedDue === 0 ? "text-teal-800 dark:text-teal-200" : "text-slate-700 dark:text-slate-200"}`}>{paymentStatusLabel}</p>
+                {paymentStatusAmount !== null && <p className={`mt-1 break-words text-3xl font-extrabold tabular-nums sm:text-4xl ${displayedDue < 0 ? "text-red-700 dark:text-red-300" : displayedDue === 0 ? "text-teal-800 dark:text-teal-200" : "text-slate-950 dark:text-white"}`}>{paymentStatusAmount}</p>}
+              </div>
+            </div>{error && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">{error}</p>}{captureBlockReason && captureBlockReason !== error && captureBlockReason !== allocationBlockReason && <p role="status" className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">{captureBlockReason}</p>}
+            {summary.remaining > 0 || actualTip > 0 ? <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!captureBlockReason} onClick={() => void receivePayment()}><Banknote className="mr-2 h-6 w-6"/>{summary.remaining === 0 ? "Guardar propina y emitir documento" : selectedTotal === summary.remaining ? `Cobrar y emitir ${documentType === "SalesInvoice" ? "factura" : "documento"}` : "Guardar este pago"}</Button> : <Button className="min-h-16 w-full rounded-2xl bg-teal-700 text-lg font-bold text-white hover:bg-teal-800" disabled={disabled || !!documentTypeBlockReason || otherSession} onClick={() => void retryDocument()}><CreditCard className="mr-2 h-6 w-6"/>Reintentar {documentType === "SalesInvoice" ? "factura" : "documento"} único</Button>}
             <div className="mt-3" role="group" aria-label="Imprimir al finalizar"><p className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">Imprimir al finalizar</p><div className="flex flex-wrap gap-1.5">{PAYMENT_PRINT_SHORTCUTS.map(({ key, label, choice }) => <button key={key} type="button" aria-label={label} aria-pressed={printChoice === choice} disabled={disabled} onClick={() => setPrintChoice(choice)} className={`min-h-10 rounded-lg border px-2.5 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600/30 disabled:opacity-50 ${printChoice === choice ? "border-teal-600 bg-teal-50 text-teal-900 dark:bg-teal-950 dark:text-teal-200" : "border-slate-200 bg-slate-50 text-slate-600 hover:border-teal-300 hover:bg-teal-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"}`}><span className="font-bold text-teal-700 underline decoration-teal-500/60 decoration-2 underline-offset-4 dark:text-teal-300">{key}</span>{label.slice(1)}</button>)}</div></div>
           </footer>
         </aside>

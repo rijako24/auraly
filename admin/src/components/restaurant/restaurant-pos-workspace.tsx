@@ -524,6 +524,10 @@ export function RestaurantPosWorkspace({ option }: {
     if (direction === "remove" && !target) return;
     const nextQuantity = target?.status === "Direct"
       ? Math.max(0, target.quantity - 1) : 0;
+    if (target && nextQuantity < (target.coveredQuantity ?? 0)) {
+      toast.error("Este producto tiene un pago registrado. Anula el cobro que lo incluye en “Cobros recibidos” antes de modificar las unidades pagadas.");
+      return;
+    }
     if (direction === "plus") setAddingProductId(productId);
     setBusy(true);
     try {
@@ -546,8 +550,14 @@ export function RestaurantPosWorkspace({ option }: {
         toast.error("La atención terminó. Identifica al mesero de nuevo.");
         return;
       }
+      const status = typeof error === "object" && error !== null && "statusCode" in error
+        ? Number(error.statusCode) : null;
+      if (status !== null && status >= 400 && status < 500 && status !== 409) {
+        toast.error(error instanceof Error ? error.message : "No se pudo modificar el producto.");
+        return;
+      }
       try {
-        if (direction === "remove" && target) {
+        if (status !== 409 && direction === "remove" && target) {
           const replay = await restaurantAccountApi.changeQuantity(accountId,
             target.additionId, {
               changeId: operationId,
@@ -682,10 +692,7 @@ export function RestaurantPosWorkspace({ option }: {
   }
 
   async function preparePrebill() {
-    if (!draft || busy || pendingSend || pendingCount > 0 ||
-        activeCancellations.length > 0 ||
-        cancellations.isLoading || cancellations.isError ||
-        draft.account.status !== "Open") return;
+    if (!draft || busy || draft.account.status !== "Open") return;
     const printWindow = openHalfLetterPrintPreview();
     if (!printWindow) {
       toast.error("No se pudo abrir la impresión. Inténtalo de nuevo.");
@@ -739,6 +746,18 @@ export function RestaurantPosWorkspace({ option }: {
     }
   }
 
+  function applyCollectionSummary(updated: RestaurantCollectionSummary) {
+    setCollectionSummary(updated);
+    const covered = new Map(updated.coveredQuantities.map((item) =>
+      [item.additionId, item.quantity]));
+    setDraft((current) => current?.account.accountId === updated.accountId
+      ? { ...current, account: { ...current.account,
+          version: Math.max(current.account.version, updated.accountVersion) },
+          additions: current.additions.map((item) => ({ ...item,
+            coveredQuantity: covered.get(item.additionId) ?? 0 })) }
+      : current);
+  }
+
   async function captureCollection(
     allocations: RestaurantCollectionAllocation[],
     payments: PosPaymentInput[],
@@ -758,7 +777,7 @@ export function RestaurantPosWorkspace({ option }: {
         allocations, payments, tipPayment,
       }, collectionId);
     captureAttempt.current = null;
-    setCollectionSummary(updated);
+    applyCollectionSummary(updated);
     return updated;
   }
 
@@ -767,7 +786,7 @@ export function RestaurantPosWorkspace({ option }: {
       throw new Error("Vuelve a abrir el cobro de la mesa.");
     const updated = await restaurantAccountApi.reverseCollection(
       draft.account.accountId, collectionId, collectionSummary.accountVersion);
-    setCollectionSummary(updated);
+    applyCollectionSummary(updated);
   }
 
   async function completeCheckout(
@@ -917,20 +936,20 @@ export function RestaurantPosWorkspace({ option }: {
           </div>
           <div ref={accountLines} role="region" aria-label="Productos de la mesa" className="flex min-h-[328px] flex-1 flex-col gap-2 p-3 sm:p-4 lg:overflow-y-auto lg:overscroll-contain">{!groups.length && <div className="grid min-h-52 place-items-center text-center text-muted-foreground"><div><Coffee className="mx-auto h-8 w-8"/><p className="mt-3 text-sm">Toca un producto para empezar el pedido.</p></div></div>}
             {groups.map((group, index) => <PosSaleItemCard data-sale-item key={`${group.productId}-${index}`}><div className="flex items-start justify-between gap-2"><div><strong className="text-base">{group.name}</strong><p className="mt-0.5 text-xs text-muted-foreground">{group.contributors.join(", ")}</p><p className={`mt-1 text-xs font-medium ${"text-muted-foreground"}`}>{group.sentQuantity > 0 && `${group.sentQuantity} enviadas · `}{group.pendingQuantity > 0 ? `${group.pendingQuantity} pendientes · ${group.stationName ?? "Sin estación"}` : group.sentQuantity > 0 ? group.stationName ?? "Estación no disponible" : "Sin comanda · se cobra directamente"}</p></div><span className="font-semibold">{money.format(group.amount)}</span></div>
-              <div className="mt-3 flex items-center justify-between"><span className="text-sm font-semibold">{group.quantity} {group.quantity === 1 ? "unidad" : "unidades"}</span>{canAdd && <div className="flex items-center gap-2">{group.stationId === null && <Button aria-label={`Quitar uno de ${group.name}`} variant="outline" size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { const lastDirect = group.items.filter((item) => item.status === "Direct").at(-1); if (lastDirect) void mutateProduct(group.productId, "remove", lastDirect.additionId); }}><Minus className="h-5 w-5"/></Button>}<Button aria-label={`Agregar uno de ${group.name}`} size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "plus")}><Plus className="h-5 w-5"/></Button></div>}</div>
+              <div className="mt-3 flex items-center justify-between"><span className="text-sm font-semibold">{group.quantity} {group.quantity === 1 ? "unidad" : "unidades"}</span>{canAdd && <div className="flex items-center gap-2">{group.stationId === null && <Button aria-label={`Quitar uno de ${group.name}`} variant="outline" size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { const direct = group.items.filter((item) => item.status === "Direct"); const lastDirect = direct.filter((item) => item.quantity > (item.coveredQuantity ?? 0)).at(-1) ?? direct.at(-1); if (lastDirect) void mutateProduct(group.productId, "remove", lastDirect.additionId); }}><Minus className="h-5 w-5"/></Button>}<Button aria-label={`Agregar uno de ${group.name}`} size="icon" className="h-11 w-11 rounded-xl" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "plus")}><Plus className="h-5 w-5"/></Button></div>}</div>
               {group.stationId !== null && <div className="mt-3 space-y-2 border-t pt-3">{group.items.map((item, itemIndex) => <div key={item.additionId} className="flex items-start justify-between gap-2 rounded-xl bg-muted/50 px-3 py-2 text-sm"><div className="min-w-0"><p className="font-semibold">{item.quantity} × {group.name} <span className="font-normal text-muted-foreground">· {item.status === "Sent" ? "Enviada" : "Pendiente"}</span></p>{item.preparationNote && <p className="mt-1 whitespace-pre-wrap text-primary"><MessageSquareText className="mr-1 inline h-4 w-4"/>{item.preparationNote}</p>}{cancellationsByAddition.get(item.additionId) && <p className="mt-1 text-xs font-bold text-red-700 dark:text-red-300">Cancelación en revisión</p>}</div>{item.status === "Pending" && canAdd ? <div className="flex shrink-0 flex-wrap justify-end gap-2"><Button size="sm" variant="outline" className="min-h-10 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { setNoteAdditionId(item.additionId); setNoteText(item.preparationNote ?? ""); }}><MessageSquareText className="mr-1 h-4 w-4"/>{item.preparationNote ? "Editar" : "Observación"} <span className="sr-only">de la unidad {itemIndex + 1}</span></Button><Button size="icon" variant="outline" className="h-10 w-10 rounded-xl border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800 dark:border-rose-900 dark:text-rose-300" aria-label={`Eliminar producto pendiente ${group.name}, incorporación ${itemIndex + 1}`} title="Eliminar producto pendiente" disabled={busy || !!pendingSend} onClick={() => void mutateProduct(group.productId, "remove", item.additionId)}><Trash2 className="h-5 w-5"/></Button></div> : item.status === "Sent" && canAdd && !cancellationsByAddition.has(item.additionId) && <Button size="sm" variant="outline" className="min-h-10 shrink-0 rounded-xl" disabled={busy || !!pendingSend} onClick={() => { setCancelAdditionId(item.additionId); setCancelQuantity(1); setCancelReasonCode(""); setCancelExplanation(""); setCancelRequestId(null); }}>Corregir</Button>}</div>)}</div>}
               {group.sentQuantity > 0 && group.pendingQuantity === 0 && canAdd && <p className="mt-2 text-xs text-muted-foreground">Toca + para agregar más y enviar una nueva comanda.</p>}{group.pending.length > 0 && canAdd && <Button className="mt-3 min-h-12 w-full rounded-xl bg-teal-600 font-bold text-white shadow-sm transition hover:bg-teal-700 hover:shadow-md dark:bg-teal-500 dark:text-slate-950 dark:hover:bg-teal-400" disabled={busy || !!pendingSend && pendingSend.additionId !== group.pending[0].additionId} onClick={() => void sendPending(group.pending[0].additionId)}><ChefHat className="mr-2 h-5 w-5"/>{group.pending.length > 1 ? `Enviar 1 de ${group.pending.length} cantidades pendientes` : "Enviar este producto"}</Button>}</PosSaleItemCard>)}</div>
           <div ref={accountFooter} className="shrink-0 border-t bg-card p-4">
             <div className="flex items-center justify-between text-sm"><span className="text-muted-foreground">Consumo estimado</span><strong className="text-2xl">{money.format(estimatedTotal)}</strong></div>
             {canAdd && (pendingCount > 0 || pendingSend) && <Button className="mt-4 min-h-14 w-full rounded-2xl bg-teal-700 text-base font-bold text-white shadow-md shadow-teal-900/15 hover:bg-teal-800 dark:bg-teal-500 dark:text-slate-950 dark:hover:bg-teal-400" disabled={busy || !!pendingSend?.additionId} onClick={() => void sendPending()}><ChefHat className="mr-2 h-5 w-5"/>{pendingSend ? "Reintentar envío" : `Enviar pendientes · ${pendingCount}`}</Button>}
-            {activeCancellations.length > 0 && <div className="mt-4 rounded-xl border border-amber-400/60 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"><p className="font-bold">{activeCancellations.length} cancelación(es) por resolver</p><p className="mt-1">La precuenta y la factura quedan en espera hasta confirmar el consumo.</p><Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => void refreshCancellations()}>Actualizar estado</Button></div>}
+            {activeCancellations.length > 0 && <div className="mt-4 rounded-xl border border-amber-400/60 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"><p className="font-bold">{activeCancellations.length} cancelación(es) por resolver</p><p className="mt-1">La factura queda en espera hasta confirmar el consumo.</p><Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => void refreshCancellations()}>Actualizar estado</Button></div>}
             {canAdd && availableReworks.map((cancellation) => {
               const original = draft.additions.find((item) => item.additionId === cancellation.additionId);
               if (!original) return null;
               return <div key={cancellation.cancellationId} className="mt-3 rounded-xl border border-teal-300 bg-teal-50 p-3 text-sm text-teal-950 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-100"><p className="font-bold">{original.description} · {cancellation.quantity} cancelada(s)</p><p className="mt-1">El primer intento ya quedó registrado como pérdida. Puedes preparar otro sin cobrar ambos.</p><Button size="sm" variant="outline" className="mt-3 min-h-10 border-teal-500" disabled={busy || !!pendingSend} onClick={() => void reworkProduct(cancellation)}>Rehacer plato</Button></div>;
             })}
             {cancellations.isError && <p role="alert" className="mt-3 text-sm text-destructive">No se pudo verificar el estado de las cancelaciones. Vuelve a abrir la mesa.</p>}
-            {(canAdd || permissions.includes("sales.create")) && draft.account.status === "Open" && <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-muted/20 p-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-background text-primary shadow-sm"><FileText className="h-5 w-5"/></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Precuenta</p><p className="text-xs text-muted-foreground">Para mostrar al cliente · no es factura</p></div><Button size="sm" variant="outline" className="shrink-0 rounded-xl" disabled={busy || !!pendingSend || pendingCount > 0 || activeCancellations.length > 0 || cancellations.isLoading || cancellations.isError || !groups.length} onClick={() => void preparePrebill()}>Imprimir</Button></div>}
+            {(canAdd || permissions.includes("sales.create")) && draft.account.status === "Open" && <div className="mt-4 flex items-center gap-3 rounded-2xl border bg-muted/20 p-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-background text-primary shadow-sm"><FileText className="h-5 w-5"/></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Precuenta</p><p className="text-xs text-muted-foreground">Para mostrar al cliente · no es factura</p></div><Button size="sm" variant="outline" className="shrink-0 rounded-xl" disabled={busy || !groups.length} onClick={() => void preparePrebill()}>Imprimir</Button></div>}
             {permissions.includes("sales.create") && option.workSessionId && draft.account.status === "Open" && <Button className="mt-3 min-h-14 w-full justify-between rounded-2xl bg-slate-900 px-5 text-base font-bold text-white shadow-lg shadow-slate-900/15 hover:bg-slate-800 disabled:border disabled:border-dashed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500 disabled:opacity-100 disabled:shadow-none dark:bg-emerald-100 dark:text-emerald-950 dark:hover:bg-white dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-400" disabled={busy || !!pendingSend || pendingCount > 0 || activeCancellations.length > 0 || cancellations.isLoading || cancellations.isError || !groups.length} onClick={() => void openCheckout()}><span>Facturar mesa</span><ArrowRight className="h-5 w-5"/></Button>}
             {pendingCount > 0 && permissions.includes("sales.create") && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Envía o retira los pendientes antes de facturar.</p>}
             <p className="mt-2 text-xs text-muted-foreground">Solo los productos con estación se envían a comanda. Los demás se cobran directamente.</p>

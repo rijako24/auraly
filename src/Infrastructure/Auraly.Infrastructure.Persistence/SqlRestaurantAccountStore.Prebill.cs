@@ -18,30 +18,13 @@ public sealed partial class SqlRestaurantAccountStore
             .BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var account = await FindAsync(connection, transaction, actor,
             accountId, true, ct);
-        if (account is null || account.Status != "Open" ||
-            account.Version != expectedVersion)
+        if (account is null || account.Status != "Open")
             throw new RestaurantAccountConflictException(
-                "La cuenta cambió. Revisa sus productos antes de imprimir la precuenta.");
-        await using (var pending = new SqlCommand("""
-            SELECT TOP(1) 1 FROM sales.RestaurantCancellationRequests
-            WHERE TenantId=@TenantId AND BusinessId=@BusinessId
-              AND AccountId=@AccountId
-              AND Status IN(N'Requested',N'Confirmed');
-            """, connection, transaction))
-        {
-            AddScope(pending, actor);
-            pending.Parameters.AddWithValue("@AccountId", accountId);
-            if (await pending.ExecuteScalarAsync(ct) is not null)
-                throw new RestaurantAccountConflictException(
-                    "Resuelve la cancelación pendiente antes de imprimir la precuenta.");
-        }
+                "La cuenta ya no está abierta para imprimir la precuenta.");
         var draft = await LoadDraftAsync(connection, transaction, actor,
             accountId, ct) ?? throw new RestaurantAccountConflictException(
                 "La cuenta ya no está disponible.");
-        if (draft.Additions.Any(item => item.Status == "Pending"))
-            throw new RestaurantAccountValidationException(
-                "Envía o retira los productos pendientes antes de imprimir la precuenta.");
-        var lines = draft.Additions.Where(item => item.Status is "Sent" or "Direct")
+        var lines = draft.Additions.Where(item => item.Status is "Pending" or "Sent" or "Direct")
             .Select(item => new RestaurantPrebillLine(item.Description,
                 item.Quantity, item.PublicUnitPrice - item.PromotionDiscountPerUnit,
                 decimal.Round(item.Quantity *
@@ -71,7 +54,7 @@ public sealed partial class SqlRestaurantAccountStore
         await tableReader.DisposeAsync();
         var total = lines.Sum(line => line.Total);
         var prebill = new RestaurantPrebill(accountId, tableCode,
-            expectedVersion, now, lines, total, suggestedTipPercent,
+            account.Version, now, lines, total, suggestedTipPercent,
             decimal.Round(total * suggestedTipPercent / 100, 0,
                 MidpointRounding.AwayFromZero));
         await using var audit = new SqlCommand("""
@@ -88,7 +71,7 @@ public sealed partial class SqlRestaurantAccountStore
         audit.Parameters.Add("@Snapshot", SqlDbType.NVarChar, -1).Value =
             JsonSerializer.Serialize(new {
                 account.TableId, TableCode = tableCode,
-                AccountVersion = expectedVersion,
+                AccountVersion = account.Version,
                 prebill.Total, prebill.SuggestedTipPercent,
                 prebill.SuggestedTipAmount, LineCount = lines.Length,
                 actor.ConnectedUserId, actor.CredentialVerified

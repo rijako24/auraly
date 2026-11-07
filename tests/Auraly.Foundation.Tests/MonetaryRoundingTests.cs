@@ -25,6 +25,8 @@ public sealed class PosPaymentRoundingPolicyTests
     [InlineData("10749", "-49")]
     [InlineData("10750", "50")]
     [InlineData("10800", "0")]
+    [InlineData("7546", "-46")]
+    [InlineData("7550", "50")]
     public void Invoice_rounds_to_the_nearest_hundred(
         string total,
         string expectedAdjustment)
@@ -53,4 +55,14 @@ public sealed class PosPaymentRoundingPolicyTests
         Assert.Equal(10_500m, payment.CollectedAmount);
         Assert.Equal(invoiceTotal, payment.Amount);
     }
+    [Fact]
+    public void Recorded_partial_rounding_can_differ_from_rounding_the_whole_table()
+    {
+        var payment = new PosSalePaymentContract(1, "Cash", 15080m, null,
+            TenderedAmount: 15000m, RoundingAdjustment: -80m);
+        Assert.False(PosPaymentRoundingPolicy.IsValid(15080m, [payment]));
+        Assert.True(PosPaymentRoundingPolicy.IsValid(15080m, [payment], -80m));
+        Assert.False(PosPaymentRoundingPolicy.IsValid(15080m, [payment], -40m));
+    }
+
 }
