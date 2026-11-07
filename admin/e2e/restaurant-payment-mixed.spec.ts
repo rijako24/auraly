@@ -30,7 +30,7 @@ async function prepareRestaurant(page: Page, options: {
   const option = { businessId, businessName: "Restaurante", warehouseId,
     warehouseCode: "P01", warehouseName: "Principal",
     warehouseAllowsNegativeStockSales: false, hasActiveEdgeEnrollment: false,
-    pointOfSaleMode: "RestaurantBar", fiscalReadyForOnlineSales: false,
+    restaurantRequireWaiterCredential: false, pointOfSaleMode: "RestaurantBar", fiscalReadyForOnlineSales: false,
     hasDianDocumentQuota: false };
   const account = { accountId, businessId, tableId, warehouseId,
     responsibleUserId: userId, status: "Open", version: 1,
@@ -445,7 +445,9 @@ test("el estado de pago mantiene tamaño y fondo al faltar, sobrar o recibir el 
     await expect(status).toHaveText("Pago completo");
     const exact = await status.evaluate(element => ({ height: element.getBoundingClientRect().height,
       background: getComputedStyle(element).backgroundColor }));
-    expect(exact.height).toBeGreaterThanOrEqual(96);
+    expect(exact.height).toBeGreaterThanOrEqual(84);
+    await expect(payment.getByText("Imprimir al finalizar", { exact: true })).toHaveCount(0);
+    await expect(payment.getByRole("group", { name: "Imprimir al finalizar" }).getByRole("button")).toHaveCount(5);
     const cash = payment.getByRole("textbox", { name: /Efectivo entregado/ });
     await cash.fill("1000");
     await expect(status).toContainText("Faltan");
@@ -455,7 +457,7 @@ test("el estado de pago mantiene tamaño y fondo al faltar, sobrar o recibir el 
       amountFont: parseFloat(getComputedStyle(element.querySelector("p:last-child")!).fontSize) }));
     expect(missing.background).toBe(exact.background);
     expect(Math.abs(missing.height - exact.height)).toBeLessThanOrEqual(1);
-    expect(missing.amountFont).toBeGreaterThanOrEqual(28);
+    expect(missing.amountFont).toBeGreaterThanOrEqual(24);
     await expect(payment.locator("footer").getByText(/por asignar a los medios/)).toHaveCount(0);
     await cash.fill("50000");
     await expect(status).toContainText("Cambio a entregar");

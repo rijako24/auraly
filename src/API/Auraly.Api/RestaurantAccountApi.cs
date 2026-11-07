@@ -331,7 +331,7 @@ public static class RestaurantAccountApi
     {
         var token = context.Request.Headers["X-Restaurant-Attention"].ToString();
         return string.IsNullOrWhiteSpace(token)
-            ? Actor(context)
+            ? await attention.ConnectedActorAsync(Requester(context), ct)
             : await attention.ResolveActorAsync(Requester(context), token, ct);
     }
 

@@ -39,7 +39,7 @@ public sealed class RestaurantTipTests(ServerSliceFixture fixture)
         await accounting.ActivateAsync(accountingUser, new(new(2026, 1, 1), "COP", "ZeroDeclared"));
         await using (var setup = new SqlCommand("""
             UPDATE dbo.Businesses
-            SET PointOfSaleMode=N'RestaurantBar',RestaurantSuggestedTipPercent=10
+            SET RestaurantRequireWaiterCredential=0,PointOfSaleMode=N'RestaurantBar',RestaurantSuggestedTipPercent=10
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
             EXEC dbo.AccountingDefaultsProvision @TenantId=@TenantId,
                 @BusinessId=@BusinessId,@Now=@Now;

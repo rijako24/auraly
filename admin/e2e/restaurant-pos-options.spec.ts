@@ -12,13 +12,82 @@ const json = (route: Route, value: unknown, status = 200) => route.fulfill({
 });
 test.use({ serviceWorkers: "block" });
 
+for (const requireCredential of [true, false]) {
+test(requireCredential ? "la sede exige mesero y clave también al administrador antes de leer una cuenta"
+  : "la política vigente de meseros permite continuar si se quitó la exigencia de clave", async ({ page }) => {
+  const waiterId = "99999999-9999-9999-9999-999999999999";
+  const permissions = ["restaurant.attend", "restaurant.tables.open_without_waiter", "sales.create"];
+  const user = { userId, tenantId, username: "admin", firstName: "Administrador", roles: ["Administrador"], permissions };
+  const option = { businessId, businessName: "Restaurante", warehouseId, warehouseCode: "P01",
+    warehouseName: "Principal", pointOfSaleMode: "RestaurantBar", restaurantRequireWaiterCredential: true };
+  let draftReads = 0;
+  let waiterReads = 0;
+  let attentionStarts = 0;
+  await page.context().addCookies([{ name: "auth_token", value: "waiter-policy-test", url: baseUrl, httpOnly: true }]);
+  await page.addInitScript(({ user, tenantId, businessId }) => {
+    localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user }, version: 0 }));
+    localStorage.setItem("selected_tenant_id", tenantId);
+    localStorage.setItem("selected_business_id", businessId);
+  }, { user, tenantId, businessId });
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/auth/me")) return json(route, user);
+    if (path.endsWith("/execution-context/tenants")) return json(route, [{ tenantId, name: "Restaurante" }]);
+    if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Restaurante" }]);
+    if (path.endsWith("/execution-context/access")) return json(route, { tenantId, businessId, roles: user.roles, permissions });
+    if (path.endsWith("/pos/workspace/bootstrap")) return json(route, { tenantId, userId, options: [option] });
+    if (path.endsWith("/pos/workspace/select")) return json(route, option);
+    if (path.endsWith("/work-sessions/current")) return json(route, { businessId, userId, status: "Open" });
+    if (path.endsWith("/restaurant/rooms")) return json(route, { items: [], totalCount: 0 });
+    if (path.endsWith("/restaurant/tables")) return json(route, { items: [{ tableId, businessId, code: "P-01", capacity: 4, isActive: true }], totalCount: 1 });
+    if (path.endsWith("/restaurant/occupancy")) return json(route, [{ tableId, accountId, state: "Open", accountVersion: 1 }]);
+    if (path.endsWith("/restaurant/waiters")) {
+      waiterReads++;
+      return json(route, { requireCredential, restrictTableToWaiter: false,
+        items: [{ userId: waiterId, name: "Mesero prueba", shortName: "Mesero 1" }], page: 1, pageSize: 40, totalCount: 1 });
+    }
+    if (path.endsWith("/restaurant/attention")) {
+      attentionStarts++;
+      expect(route.request().postDataJSON()).toEqual({ tableId, waiterUserId: waiterId, ...(requireCredential ? { secret: "1234" } : {}) });
+      return json(route, { token: "verified-attention", tableId, waiterUserId: waiterId });
+    }
+    if (path.endsWith("/draft")) {
+      draftReads++;
+      expect(route.request().headers()["x-restaurant-attention"]).toBe("verified-attention");
+      return json(route, { account: { accountId, businessId, tableId, warehouseId,
+        status: "Open", version: 1, responsibleUserId: waiterId, responsibleUserName: "Mesero 1" }, additions: [] });
+    }
+    if (path.endsWith("/products")) return json(route, { items: [], hasMore: false, nextOffset: null });
+    return json(route, []);
+  });
+  await page.goto("/pos/restaurant");
+  expect(waiterReads).toBe(0);
+  await page.getByRole("button", { name: /P-01/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Identificar mesero" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Abrir mesa", exact: true })).toBeDisabled();
+  expect(draftReads).toBe(0);
+  await dialog.getByRole("button", { name: "Mesero 1", exact: true }).click();
+  if (requireCredential) {
+    await expect(dialog.getByRole("button", { name: "Abrir mesa", exact: true })).toBeDisabled();
+    await dialog.getByLabel("Tu clave").fill("1234");
+  } else await expect(dialog.getByLabel("Tu clave")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Abrir mesa", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Mesero: Mesero 1", { exact: true })).toBeVisible();
+  expect(waiterReads).toBe(1);
+  expect(attentionStarts).toBe(1);
+  expect(draftReads).toBe(1);
+});
+}
+
 test("compacta la cuenta, comparte clientes y pagina canales sin cargar vistas ocultas", async ({ page }) => {
   const permissions = ["restaurant.attend", "restaurant.tables.open_without_waiter", "restaurant.price_channels.select", "orders.read", "orders.recover", "sales.create"];
   const user = { userId, tenantId, tenantKey: "E2E", username: "caja", firstName: "Ana",
     lastName: "Gómez", roles: ["Administrador"], permissions };
   const option = { businessId, businessName: "Restaurante", warehouseId, warehouseCode: "P01",
     warehouseName: "Principal", warehouseAllowsNegativeStockSales: false,
-    hasActiveEdgeEnrollment: false, pointOfSaleMode: "RestaurantBar" };
+    hasActiveEdgeEnrollment: false, restaurantRequireWaiterCredential: false, pointOfSaleMode: "RestaurantBar" };
   const account = { accountId, businessId, tableId, warehouseId, responsibleUserId: userId,
     responsibleUserName: "Ana Gómez", status: "Open", version: 1,
     openedAt: "2026-11-06T12:00:00Z", updatedAt: "2026-11-06T12:00:00Z",

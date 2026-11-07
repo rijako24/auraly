@@ -7,6 +7,20 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlRestaurantAttentionStore(SqlServerConnectionFactory connections)
     : IRestaurantAttentionStore
 {
+    public async Task<bool> AllowsConnectedEntryAsync(RestaurantAttentionRequester requester, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT CONVERT(bit,CASE WHEN PointOfSaleMode<>N'RestaurantBar'
+                OR RestaurantRequireWaiterCredential=0 THEN 1 ELSE 0 END)
+            FROM dbo.Businesses
+            WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1;
+            """, connection);
+        Scope(command, requester);
+        return await command.ExecuteScalarAsync(ct) is true;
+    }
+
     private const string EligibleWaiter = """
         FROM dbo.AppUsers [user]
         JOIN parties.Waiters waiter

@@ -16,7 +16,8 @@ public sealed record SalesWorkspaceOption(
     bool FiscalReadyForEnrollment = false,
     bool HasDianDocumentQuota = false,
     IReadOnlyList<string>? FiscalWarningMessages = null,
-    string PointOfSaleMode = "DirectSale");
+    string PointOfSaleMode = "DirectSale",
+    bool RestaurantRequireWaiterCredential = true);
 
 public sealed record SalesWorkspaceBootstrap(
     Guid TenantId,
@@ -49,7 +50,8 @@ public sealed record SalesWorkspaceContext(
     string WarehouseCode,
     string WarehouseName,
     bool WarehouseAllowsNegativeStockSales,
-    string PointOfSaleMode = "DirectSale");
+    string PointOfSaleMode = "DirectSale",
+    bool RestaurantRequireWaiterCredential = true);
 
 public sealed record CreatePosEnrollmentRequest(
     Guid BusinessId,

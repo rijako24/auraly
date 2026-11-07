@@ -111,16 +111,19 @@ public sealed class RestaurantAttentionTests(ServerSliceFixture fixture)
                 Assert.Equal(HttpStatusCode.Forbidden, blockedOtherWaiter.StatusCode);
             using (var blockedTablet = await otherWaiter.GetAsync(
                 $"/api/commerce/v1/restaurant/accounts/{accountId}/draft"))
-                Assert.Equal(HttpStatusCode.NotFound, blockedTablet.StatusCode);
+                Assert.Equal(HttpStatusCode.Forbidden, blockedTablet.StatusCode);
             using (var blockedAddition = await otherWaiter.PostAsJsonAsync(
                 $"/api/commerce/v1/restaurant/accounts/{accountId}/additions",
                 new AddRestaurantAccountItemRequest(Guid.NewGuid(),
                     fixture.ProductId, 1, 2)))
-                Assert.Equal(HttpStatusCode.Conflict, blockedAddition.StatusCode);
+                Assert.Equal(HttpStatusCode.Forbidden, blockedAddition.StatusCode);
 
             using var directCashier = fixture.CreateUserClient(Guid.NewGuid(),
                 "sales.create", "restaurant.tables.open_without_waiter",
                 "pos.approvals.manage_credential");
+            using (var unverified = await directCashier.GetAsync(
+                $"/api/commerce/v1/restaurant/accounts/{accountId}/draft"))
+                Assert.Equal(HttpStatusCode.Forbidden, unverified.StatusCode);
             using (var credential = await directCashier.PutAsJsonAsync(
                 $"/api/commerce/v1/restaurant/waiters/{otherWaiterId}/secondary-credential",
                 new { secret = "5678" }))
@@ -134,8 +137,11 @@ public sealed class RestaurantAttentionTests(ServerSliceFixture fixture)
                 transfer = (await selected.Content
                     .ReadFromJsonAsync<RestaurantAttentionStarted>())!;
             }
-            var transferred = await directCashier.GetFromJsonAsync<RestaurantAccountDraft>(
-                $"/api/commerce/v1/restaurant/accounts/{accountId}/draft");
+            using var transferredResponse = await SendWithAttentionAsync(directCashier,
+                HttpMethod.Get, $"/api/commerce/v1/restaurant/accounts/{accountId}/draft",
+                transfer.Token);
+            transferredResponse.EnsureSuccessStatusCode();
+            var transferred = await transferredResponse.Content.ReadFromJsonAsync<RestaurantAccountDraft>();
             Assert.Equal(otherWaiterId, transferred!.Account.ResponsibleUserId);
             Assert.Equal(3, transferred.Account.Version);
             using (var addedAfterTransfer = await SendWithAttentionAsync(

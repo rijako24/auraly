@@ -118,6 +118,7 @@ export type SalesWorkspaceOption = {
   hasDianDocumentQuota?: boolean;
   fiscalWarningMessages?: string[];
   pointOfSaleMode?: "DirectSale" | "Store" | "RestaurantBar";
+  restaurantRequireWaiterCredential?: boolean;
 };
 
 export type SalesWorkspaceContext = Omit<

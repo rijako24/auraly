@@ -76,6 +76,8 @@ export function RestaurantPosWorkspace({ option }: {
   const canAttend = permissions.includes("restaurant.attend");
   const canOpenWithoutWaiter = permissions.includes(
     "restaurant.tables.open_without_waiter");
+  const requiresWaiterCredential = option.restaurantRequireWaiterCredential !== false;
+  const canEnterWithConnectedUser = canOpenWithoutWaiter && !requiresWaiterCredential;
   const canSelectPriceChannel = permissions.includes("restaurant.price_channels.select");
   const queryClient = useQueryClient();
   const scope = ["restaurant-pos", option.businessId] as const;
@@ -270,7 +272,7 @@ export function RestaurantPosWorkspace({ option }: {
       .includes(tableSearch.trim().toLocaleLowerCase("es"))),
   [tables.data, roomId, tableSearch]);
   const selectTable = (table: RestaurantTable, chooseWaiter = false) => {
-    if (canOpenWithoutWaiter && !chooseWaiter) {
+    if (canEnterWithConnectedUser && !chooseWaiter) {
       void openTable(table);
       return;
     }
@@ -475,7 +477,7 @@ export function RestaurantPosWorkspace({ option }: {
 
   async function beginAttention() {
     if (!pendingTable || busy) return;
-    if (!waiterUserId && canOpenWithoutWaiter) {
+    if (!waiterUserId && canEnterWithConnectedUser) {
       if (await openTable(pendingTable)) {
         if (attention) void restaurantAccountApi.endAttention(attention.token)
           .catch(() => undefined);
@@ -1013,11 +1015,11 @@ export function RestaurantPosWorkspace({ option }: {
     {printerOpen && <PosPrinterDialog client={printerClient} browserOnly={!printerClient} mode="restaurant" onClose={() => setPrinterOpen(false)}/>}
     {pendingTable && <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Identificar mesero">
       <div className="w-full max-w-lg rounded-[2rem] border bg-card p-5 shadow-2xl sm:p-7">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Atención de mesa</p><h2 className="mt-1 text-2xl font-bold">Mesa {pendingTable.code}</h2><p className="mt-1 text-sm text-muted-foreground">{canOpenWithoutWaiter ? "Entra con tu usuario para consultar la cuenta. Si seleccionas un mesero, los productos nuevos quedarán a su nombre." : "Selecciona quién va a tomar este pedido."}</p></div><Button variant="ghost" onClick={() => setPendingTable(null)}>Cerrar</Button></div>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Atención de mesa</p><h2 className="mt-1 text-2xl font-bold">Mesa {pendingTable.code}</h2><p className="mt-1 text-sm text-muted-foreground">{canEnterWithConnectedUser ? "Entra con tu usuario para consultar la cuenta. Si seleccionas un mesero, los productos nuevos quedarán a su nombre." : "Selecciona quién va a tomar este pedido."}</p></div><Button variant="ghost" onClick={() => setPendingTable(null)}>Cerrar</Button></div>
         <div className="mt-5 flex gap-2"><Input className="h-12" value={waiterSearch} onChange={(event) => setWaiterSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") setWaiterSearchTerm(waiterSearch.trim()); }} placeholder="Buscar mesero" aria-label="Buscar mesero" autoFocus /><Button variant="outline" className="min-h-12" onClick={() => setWaiterSearchTerm(waiterSearch.trim())}>Buscar</Button></div>
         <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">{waiters.isLoading && <p className="p-4 text-sm text-muted-foreground">Cargando meseros…</p>}{waiters.isError && <p role="alert" className="p-4 text-sm text-destructive">No se pudieron cargar los meseros.</p>}{waiters.data?.items.map((waiter) => <button key={waiter.userId} type="button" onClick={() => setWaiterUserId(waiter.userId)} className={`flex min-h-14 w-full items-center rounded-2xl border px-4 text-left font-semibold transition ${waiterUserId === waiter.userId ? "border-primary bg-primary/10 text-primary" : "hover:border-primary/50"}`}>{waiter.shortName || waiter.name}</button>)}</div>
         {waiterUserId && waiters.data?.requireCredential && <label className="mt-5 block text-sm font-medium">Tu clave<Input ref={waiterSecretInput} type="password" autoComplete="off" className="mt-2 h-14 text-center text-xl tracking-widest" value={waiterSecret} onChange={(event) => setWaiterSecret(event.target.value)} placeholder="Principal o secundaria" /></label>}
-        <Button className="mt-6 min-h-14 w-full text-base" disabled={busy || !canOpenWithoutWaiter && (!waiterUserId || waiters.isLoading) || !!waiterUserId && !!waiters.data?.requireCredential && !waiterSecret} onClick={() => void beginAttention()}>{busy ? "Abriendo…" : "Abrir mesa"}</Button>
+        <Button className="mt-6 min-h-14 w-full text-base" disabled={busy || !canEnterWithConnectedUser && (!waiterUserId || waiters.isLoading) || !!waiterUserId && (waiters.data?.requireCredential ?? requiresWaiterCredential) && !waiterSecret} onClick={() => void beginAttention()}>{busy ? "Abriendo…" : "Abrir mesa"}</Button>
       </div>
     </div>}
   </main>;

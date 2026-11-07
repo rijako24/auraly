@@ -46,8 +46,16 @@ async function setup(page: Page, readOnly = false) {
 }
 
 async function open(page: Page, action: "Ver" | "Editar", name = "Principal") {
-  await page.getByRole("button", { name: `Acciones de ${name}`, exact: true }).click();
-  await page.getByRole("menuitem", { name: action, exact: true }).click();
+  const menu = page.getByRole("button", { name: `Acciones de ${name}`, exact: true });
+  const card = page.getByRole("button", { name: "Ver detalle", exact: true }).first();
+  await expect(menu.or(card).first()).toBeVisible();
+  if (await menu.isVisible()) {
+    await menu.click();
+    await page.getByRole("menuitem", { name: action, exact: true }).click();
+  } else {
+    await card.click();
+    if (action === "Editar") await page.getByRole("dialog", { name: "Ver sede", exact: true }).getByRole("button", { name: "Editar", exact: true }).click();
+  }
   return page.getByRole("dialog", { name: action === "Ver" ? "Ver sede" : "Editar sede", exact: true });
 }
 
@@ -132,4 +140,37 @@ test("solo lectura no ofrece crear ni editar; las rutas previas abren el mismo m
   await expect(page).toHaveURL(/\/dashboard\/businesses$/);
   await expect(page.getByRole("button", { name: "Nueva sede", exact: true })).toHaveCount(0);
   expect(calls.writes).toHaveLength(0);
+});
+
+test("el formulario desplaza sus campos sin taparlos con los botones en pantallas pequeñas", async ({ page }) => {
+  await setup(page);
+  await page.goto("/dashboard/businesses");
+  for (const viewport of [{ width: 1366, height: 768 }, { width: 1024, height: 600 },
+    { width: 390, height: 844 }, { width: 320, height: 568 }]) {
+    await page.setViewportSize(viewport);
+    for (const mode of ["create", "view", "edit"] as const) {
+      if (mode === "create") await page.getByRole("button", { name: "Nueva sede", exact: true }).click();
+      else await open(page, mode === "view" ? "Ver" : "Editar");
+      const dialog = page.getByRole("dialog");
+      if (mode !== "view") {
+        await dialog.getByRole("combobox", { name: "Tipo de operación" }).click();
+        await page.getByRole("option", { name: "Restaurante y bar", exact: true }).click();
+      }
+      const body = dialog.getByRole("region", { name: "Formulario de sede" });
+      const footer = dialog.getByRole("button", { name: "Cancelar", exact: true }).locator("..");
+      const box = await dialog.boundingBox();
+      expect(box!.y).toBeGreaterThanOrEqual(0);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+      expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+      await dialog.getByRole("switch", { name: "Compartir precios y costos" }).scrollIntoViewIfNeeded();
+      const lastField = await dialog.getByRole("switch", { name: "Compartir precios y costos" }).boundingBox();
+      const actions = await footer.boundingBox();
+      expect(lastField!.y + lastField!.height).toBeLessThanOrEqual(actions!.y);
+      for (const button of await footer.getByRole("button").all()) await expect(button).toBeInViewport();
+      expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await dialog.getByLabel("Nombre", { exact: true }).scrollIntoViewIfNeeded();
+      await expect(dialog.getByLabel("Nombre", { exact: true })).toBeInViewport();
+      await dialog.getByRole("button", { name: "Cancelar", exact: true }).click();
+    }
+  }
 });

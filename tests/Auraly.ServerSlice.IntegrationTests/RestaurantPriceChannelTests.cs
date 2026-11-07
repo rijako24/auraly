@@ -24,7 +24,7 @@ public sealed class RestaurantPriceChannelTests(ServerSliceFixture fixture, ITes
             await connection.OpenAsync();
             await using var setup = new SqlCommand("""
                 SELECT PointOfSaleMode FROM dbo.Businesses WHERE BusinessId=@BusinessId;
-                UPDATE dbo.Businesses SET PointOfSaleMode=N'RestaurantBar'
+                UPDATE dbo.Businesses SET RestaurantRequireWaiterCredential=0,PointOfSaleMode=N'RestaurantBar'
                 WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
                 INSERT dbo.Tenants(TenantId,Name,Email)
                 VALUES(@OtherTenantId,N'Isolated channel test',CONCAT(@Prefix,N'@test.local'));
@@ -124,7 +124,7 @@ public sealed class RestaurantPriceChannelTests(ServerSliceFixture fixture, ITes
         {
             await connection.OpenAsync();
             await using var setup = new SqlCommand("""
-                UPDATE dbo.Businesses SET PointOfSaleMode=N'RestaurantBar'
+                UPDATE dbo.Businesses SET RestaurantRequireWaiterCredential=0,PointOfSaleMode=N'RestaurantBar'
                 WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
                 DECLARE @Base DECIMAL(19,4)=(SELECT TOP(1) Amount
                     FROM dbo.ProductPrices WHERE BusinessId=@BusinessId

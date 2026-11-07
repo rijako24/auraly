@@ -52,7 +52,7 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
                        INNER JOIN dbo.EnrolledDevices d
                          ON d.DeviceId=e.DeviceId AND d.IsActive=1
                        WHERE e.BusinessId=b.BusinessId AND e.RedeemedAt IS NOT NULL
-                   ) THEN 1 ELSE 0 END)
+                   ) THEN 1 ELSE 0 END),b.RestaurantRequireWaiterCredential
             FROM dbo.Businesses b
             INNER JOIN dbo.Warehouses w
               ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
@@ -71,7 +71,8 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
                 reader.GetGuid(0), reader.GetString(1),
                 reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
                 reader.GetBoolean(5), reader.GetBoolean(7),
-                PointOfSaleMode: reader.GetString(6)));
+                PointOfSaleMode: reader.GetString(6),
+                RestaurantRequireWaiterCredential: reader.GetBoolean(8)));
         }
         return rows;
     }
@@ -83,7 +84,7 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
     {
         const string sql = """
             SELECT b.BusinessId,b.Name,w.WarehouseId,w.Code,w.Name,
-                   w.AllowNegativeStockSales,b.PointOfSaleMode
+                   w.AllowNegativeStockSales,b.PointOfSaleMode,b.RestaurantRequireWaiterCredential
             FROM dbo.Businesses b
             INNER JOIN dbo.Warehouses w
               ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
@@ -103,6 +104,6 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
         return new SalesWorkspaceContext(
             reader.GetGuid(0), reader.GetString(1),
             reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
-            reader.GetBoolean(5),reader.GetString(6));
+            reader.GetBoolean(5),reader.GetString(6),reader.GetBoolean(7));
     }
 }

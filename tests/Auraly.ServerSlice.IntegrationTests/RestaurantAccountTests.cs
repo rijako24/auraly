@@ -92,11 +92,28 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                 product => product.ProductId == fixture.ProductId);
             if (seededProduct.ProductCategoryId is { } categoryId)
             {
-                Assert.Contains(categories, category =>
-                    category.CategoryId == categoryId);
+                await using var connection = new SqlConnection(fixture.ConnectionString);
+                await connection.OpenAsync();
+                await using var rootQuery = new SqlCommand("""
+                    WITH Ancestors AS (
+                        SELECT ProductCategoryId,ParentProductCategoryId FROM dbo.ProductCategories
+                        WHERE TenantId=@TenantId AND ProductCategoryId=@CategoryId
+                        UNION ALL
+                        SELECT parent.ProductCategoryId,parent.ParentProductCategoryId
+                        FROM dbo.ProductCategories parent JOIN Ancestors child
+                          ON parent.ProductCategoryId=child.ParentProductCategoryId
+                        WHERE parent.TenantId=@TenantId
+                    )
+                    SELECT ProductCategoryId FROM Ancestors WHERE ParentProductCategoryId IS NULL
+                    OPTION(MAXRECURSION 4);
+                    """, connection);
+                rootQuery.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+                rootQuery.Parameters.AddWithValue("@CategoryId", categoryId);
+                var areaId = (Guid)(await rootQuery.ExecuteScalarAsync())!;
+                Assert.Contains(categories, category => category.CategoryId == areaId);
                 var filtered = await waiter.GetFromJsonAsync<
                     OnlineSalesProductPage>(
-                    $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/products?search=P-E2E&categoryId={categoryId:D}&take=50");
+                    $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/products?search=P-E2E&categoryId={areaId:D}&take=50");
                 Assert.Contains(filtered!.Items,
                     product => product.ProductId == fixture.ProductId);
             }
@@ -364,7 +381,7 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
-            UPDATE dbo.Businesses SET PointOfSaleMode=@Mode
+            UPDATE dbo.Businesses SET RestaurantRequireWaiterCredential=0,PointOfSaleMode=@Mode
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);

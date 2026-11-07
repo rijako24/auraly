@@ -307,7 +307,7 @@ public sealed class RestaurantCancellationTests(ServerSliceFixture fixture)
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
-            UPDATE dbo.Businesses SET PointOfSaleMode=N'RestaurantBar'
+            UPDATE dbo.Businesses SET RestaurantRequireWaiterCredential=0,PointOfSaleMode=N'RestaurantBar'
             WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
             EXEC dbo.AccountingDefaultsProvision @TenantId=@TenantId,
                 @BusinessId=@BusinessId,@Now=@Now;

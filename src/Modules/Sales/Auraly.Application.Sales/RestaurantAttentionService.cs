@@ -38,6 +38,7 @@ public sealed record RestaurantAttentionStarted(
 
 public interface IRestaurantAttentionStore
 {
+    Task<bool> AllowsConnectedEntryAsync(RestaurantAttentionRequester requester, CancellationToken ct);
     Task<RestaurantWaiterPage> WaitersAsync(RestaurantAttentionRequester requester,
         string? search, int page, int pageSize, CancellationToken ct);
     Task<RestaurantAttentionCandidate?> CandidateAsync(
@@ -69,6 +70,16 @@ public sealed class RestaurantAttentionService(
     TimeProvider time)
 {
     private const int SecondaryIterations = 210_000;
+
+    public async Task<RestaurantAccountActor> ConnectedActorAsync(
+        RestaurantAttentionRequester requester, CancellationToken ct)
+    {
+        DemandConnectedAccess(requester);
+        if (!await store.AllowsConnectedEntryAsync(requester, ct))
+            throw new RestaurantAccountForbiddenException(
+                "Selecciona un mesero e ingresa su clave para entrar a la mesa.");
+        return new(requester.UserId, requester.TenantId, requester.BusinessId, requester.Permissions);
+    }
 
     public Task<RestaurantWaiterPage> WaitersAsync(
         RestaurantAttentionRequester requester, string? search, int page,

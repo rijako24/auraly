@@ -204,6 +204,12 @@ public sealed class RestaurantMasterTests(ServerSliceFixture fixture)
             "/api/commerce/v1/restaurant/rooms?page=1&pageSize=20");
         var tables = await client.GetFromJsonAsync<RestaurantMasterPage<RestaurantTable>>(
             "/api/commerce/v1/restaurant/tables?page=1&pageSize=20");
+        while (!rooms!.Items.Any(item => item.RoomId == roomId) && rooms.Page * rooms.PageSize < rooms.TotalCount)
+            rooms = await client.GetFromJsonAsync<RestaurantMasterPage<RestaurantRoom>>(
+                $"/api/commerce/v1/restaurant/rooms?page={rooms.Page + 1}&pageSize=20");
+        while (!tables!.Items.Any(item => item.TableId == tableId) && tables.Page * tables.PageSize < tables.TotalCount)
+            tables = await client.GetFromJsonAsync<RestaurantMasterPage<RestaurantTable>>(
+                $"/api/commerce/v1/restaurant/tables?page={tables.Page + 1}&pageSize=20");
         Assert.Contains(rooms!.Items, item => item.RoomId == roomId);
         Assert.Contains(tables!.Items, item => item.TableId == tableId);
         Assert.Equal(1, await CountAuditAsync(roomId, "RestaurantRoomCreated"));

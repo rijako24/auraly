@@ -24,7 +24,7 @@ export function BusinessDialog(props: Props) {
   const [saving, setSaving] = useState(false);
   const title = props.mode === "create" ? "Nueva sede" : props.mode === "edit" && props.canEdit ? "Editar sede" : "Ver sede";
   return <Dialog open onOpenChange={open => { if (!open && !saving) props.onClose(); }}>
-    <DialogContent className="flex max-h-[92dvh] max-w-3xl flex-col overflow-hidden p-0" onEscapeKeyDown={event => { if (saving) event.preventDefault(); }} onPointerDownOutside={event => { if (saving) event.preventDefault(); }}>
+    <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0" onEscapeKeyDown={event => { if (saving) event.preventDefault(); }} onPointerDownOutside={event => { if (saving) event.preventDefault(); }}>
       <DialogHeader className="shrink-0 border-b px-6 py-5"><DialogTitle>{title}</DialogTitle><DialogDescription>{props.mode === "view" ? "Consulta los datos y la configuración de esta sede. Pulsa Editar para cambiarlos." : "Completa los datos de la sede y guarda para aplicar los cambios."}</DialogDescription></DialogHeader>
       {props.mode === "create" && !props.canCreate ? <p role="alert" className="p-6">No tienes permiso para crear sedes.</p>
         : props.mode !== "create" && business.isPending ? <div role="status" className="p-10 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin"/>Cargando sede…</div>
@@ -73,8 +73,9 @@ function BusinessForm({ mode, business, canEdit, onEdit, onClose, onSaving }: Pr
     } catch (failure) { setError(failure instanceof Error ? failure.message : "No se pudo guardar la sede."); }
     finally { onSaving(false); }
   }
-  return <form onSubmit={save} className="flex min-h-0 flex-1 flex-col">
-    <fieldset disabled={pending} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+  return <form onSubmit={save} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div role="region" aria-label="Formulario de sede" className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+    <fieldset disabled={pending} className="min-w-0 space-y-5">
       <section className="grid gap-4 sm:grid-cols-2" aria-label="Datos de la sede">
         <Field label="Nombre" id="business-name"><Input id="business-name" required maxLength={200} readOnly={readOnly} value={form.name} onChange={event => set("name", event.target.value)}/></Field>
         <Field label="Correo" id="business-email"><Input id="business-email" type="email" required={mode === "create"} readOnly={readOnly} value={form.email} onChange={event => set("email", event.target.value)}/></Field>
@@ -105,6 +106,7 @@ function BusinessForm({ mode, business, canEdit, onEdit, onClose, onSaving }: Pr
       </section>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     </fieldset>
+    </div>
     <DialogFooter className="shrink-0 border-t px-6 py-4">
       <Button type="button" variant="outline" disabled={pending} onClick={onClose}>Cancelar</Button>
       {readOnly ? canEdit && <Button key="edit" type="button" onClick={event => { event.preventDefault(); onEdit(); }}><Pencil className="mr-2 h-4 w-4"/>Editar</Button>

@@ -35,7 +35,7 @@ test("abre una mesa sin plano, captura y corrige un producto desde la vista tác
   const option = { businessId, businessName: "Auraly Restaurante", warehouseId,
     warehouseCode: "P01", warehouseName: "Principal",
     warehouseAllowsNegativeStockSales: false, hasActiveEdgeEnrollment: false,
-    pointOfSaleMode: "RestaurantBar" };
+    restaurantRequireWaiterCredential: false, pointOfSaleMode: "RestaurantBar" };
   let accountId = "";
   let version = 0;
   let openings = 0;
@@ -279,7 +279,7 @@ test("el cajero conserva su sesión de trabajo al entrar a restaurante", async (
   const option = { businessId, businessName: "Auraly Restaurante", warehouseId,
     warehouseCode: "P01", warehouseName: "Principal",
     warehouseAllowsNegativeStockSales: false, hasActiveEdgeEnrollment: false,
-    pointOfSaleMode: "RestaurantBar" };
+    restaurantRequireWaiterCredential: false, pointOfSaleMode: "RestaurantBar" };
   let workSessions = 0;
   await page.route("**/api/**", (route) => {
     const path = new URL(route.request().url()).pathname;
