@@ -23,7 +23,8 @@ public record ProductDto(
     string? ProductCode = null,
     string? AreaName = null,
     string? Reference = null,
-    bool IsIngredient = false, bool HasIngredients = false, bool IsCombo = false);
+    bool IsIngredient = false, bool HasIngredients = false, bool IsCombo = false,
+    string? ImageUrl = null);
 
 public record UpdateProductStatusRequest(bool IsActive);
 public record UpdateProductRequest(

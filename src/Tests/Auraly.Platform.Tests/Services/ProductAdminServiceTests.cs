@@ -116,7 +116,7 @@ public sealed class ProductAdminServiceTests
             product,
             products,
             unitOfWork,
-            new ProductAdminService(unitOfWork.Object));
+            new ProductAdminService(unitOfWork.Object, Mock.Of<Auraly.Platform.Application.Services.IMediaUrlResolver>()));
     }
 
     private sealed record Fixture(

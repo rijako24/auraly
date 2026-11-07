@@ -28,6 +28,7 @@ export interface Product {
   isIngredient?: boolean;
   hasIngredients?: boolean;
   isCombo?: boolean;
+  imageUrl?: string | null;
   stockQuantity?: number | null;
   isActive: boolean;
   createdAt?: string;

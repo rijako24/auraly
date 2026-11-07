@@ -4,6 +4,7 @@ using Azure.Storage.Blobs.Models;
 using Azure;
 using Auraly.Platform.Application.Identity.Services;
 using Auraly.Platform.Application.Services;
+using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Repositories;
 using Auraly.Platform.Infrastructure.Services;
@@ -15,6 +16,32 @@ namespace Auraly.Platform.Tests.Identity;
 
 public sealed class ProductImageTenantStorageTests
 {
+    [Fact]
+    public async Task Product_list_resolves_only_page_covers_in_one_batch_without_reading_each_gallery()
+    {
+        var tenant = Guid.NewGuid(); var business = Guid.NewGuid(); var firstId = Guid.NewGuid();
+        var unit = CreateUnitOfWork(tenant, firstId, business);
+        const string reference = "https://example.test/cover.png";
+        var first = new Product { ProductId = firstId, TenantId = tenant, Name = "Primero", Images = [new ProductImage { MediaUrl = reference }] };
+        var second = new Product { ProductId = Guid.NewGuid(), TenantId = tenant, Name = "Segundo", Images = [new ProductImage { MediaUrl = reference }] };
+        var categories = new Mock<IProductCategoryRepository>();
+        categories.Setup(repository => repository.ListAsync(business, true, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        unit.UnitOfWork.SetupGet(value => value.ProductCategories).Returns(categories.Object);
+        unit.Products.Setup(repository => repository.GetPagedByBusinessIdAsync(business, 2, 20, null, false, It.IsAny<ProductListFilter>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((new Product[] { first, second }, 42));
+        var media = new Mock<IMediaUrlResolver>(MockBehavior.Strict);
+        media.Setup(value => value.ResolveTenantBatchAsync(tenant,
+                It.Is<IReadOnlyCollection<string>>(references => references.Count == 1 && references.Contains(reference)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string> { [reference] = reference });
+        var service = new ProductAdminService(unit.UnitOfWork.Object, media.Object);
+        var page = await service.GetPagedByBusinessIdAsync(tenant, business, new PagedRequest(2, 20));
+        Assert.Equal(42, page.TotalCount);
+        Assert.Equal(2, page.Items.Count);
+        Assert.All(page.Items, product => Assert.Equal(reference, product.ImageUrl));
+        media.VerifyAll();
+        unit.Products.Verify(repository => repository.GetImagesAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Theory]
     [InlineData("devstore")]
     [InlineData("prodstore")]

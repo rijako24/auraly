@@ -167,7 +167,12 @@ public sealed partial class ProductRepository : IProductRepository
             }
         }
         var totalCount = await query.CountAsync(ct);
-        var items = await query.OrderBy(product => product.Name).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        var items = await query.OrderBy(product => product.Name).ThenBy(product => product.ProductId)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Include(product => product.Images.Where(image => image.TenantId == tenantId && image.IsActive && image.ProductOfferId == null)
+                .OrderByDescending(image => image.IsPrimary).ThenBy(image => image.DisplayOrder)
+                .ThenBy(image => image.ProductImageId).Take(1))
+            .ToListAsync(ct);
         await ApplyPublishedPricesAsync(items, businessId, ct);
         await ApplyInventoryBalancesAsync(items, businessId, ct);
         return (items, totalCount);

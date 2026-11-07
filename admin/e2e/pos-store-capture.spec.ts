@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 test.use({ serviceWorkers: "block" });
 
 test("Tiendas reutiliza el borrador, la captura, las cantidades y el cobro de venta directa", async ({ page, baseURL }) => {
+  test.setTimeout(120_000);
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.addInitScript(() => {
     const state = window as unknown as { directSaleRendered?: boolean };
@@ -147,4 +148,62 @@ test("Tiendas reutiliza el borrador, la captura, las cantidades y el cobro de ve
   await expect(cashAmount).toBeInViewport();
   await expect(cashAmount).toBeFocused();
   await page.screenshot({ path: "test-results/pos-store-payment.png" });
+  await payment.getByRole("button", { name: /^Cerrar/ }).click();
+  await page.route("**/same-direct-sale-draft/items", async route => {
+    lines.push({ ...lines[0], lineId: "line-2", productId: "product-0", description: "Camiseta negra S", quantity: 1 });
+    lines.push({ ...lines[0], lineId: "line-3", description: "Tercera camiseta", quantity: 1 });
+    version++;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft()) });
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await catalog.getByRole("button", { name: "Agregar Camiseta negra S", exact: true }).click();
+  const saleLines = page.getByRole("region", { name: "Productos de la venta", exact: true });
+  await expect(saleLines.getByRole("spinbutton")).toHaveCount(3);
+  const footer = page.locator("aside").filter({ has: page.getByRole("button", { name: /^Cobrar/ }) });
+  const aligned = async () => {
+    const totals = await footer.boundingBox(); const products = await catalog.boundingBox();
+    return Math.abs(totals!.y + totals!.height - products!.y - products!.height);
+  };
+  await expect.poll(aligned).toBeLessThan(3);
+  for (const name of ["Cantidad de Camiseta negra M", "Cantidad de Camiseta negra S"]) {
+    const card = saleLines.locator(".rounded-2xl").filter({ has: page.getByRole("spinbutton", { name, exact: true }) });
+    await expect(card).toBeInViewport({ ratio: 1 });
+  }
+  await page.screenshot({ path: "test-results/pos-store-footer-anchored.png" });
+  await page.setViewportSize({ width: 1280, height: 580 });
+  await expect.poll(async () => {
+    const totals = await footer.boundingBox(); return totals!.y + totals!.height;
+  }).toBeGreaterThan(580);
+  const first = await saleLines.getByRole("spinbutton", { name: "Cantidad de Camiseta negra M", exact: true }).boundingBox();
+  const second = await saleLines.getByRole("spinbutton", { name: "Cantidad de Camiseta negra S", exact: true }).boundingBox();
+  expect(second!.y).toBeGreaterThan(first!.y + first!.height);
+  for (const viewport of [
+    { width: 1920, height: 1080 }, { width: 1536, height: 864 },
+    { width: 1366, height: 768 }, { width: 1280, height: 720 },
+    { width: 1024, height: 768 }, { width: 938, height: 868 },
+    { width: 768, height: 1024 }, { width: 390, height: 844 },
+    { width: 360, height: 740 }, { width: 320, height: 568 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const overflow = await page.evaluate(() => ({ fits: document.documentElement.scrollWidth <= innerWidth,
+      elements: Array.from(document.querySelectorAll("body *")).filter(element => {
+        const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.right > innerWidth + 1;
+      }).slice(0, 8).map(element => ({ tag: element.tagName, className: element.getAttribute("class"), parent: element.parentElement?.getAttribute("class"), right: element.getBoundingClientRect().right })) }));
+    expect(overflow.fits, `${viewport.width}x${viewport.height}: ${JSON.stringify(overflow.elements)}`).toBe(true);
+    await expect(saleLines.getByRole("spinbutton")).toHaveCount(3);
+    const linesBox = await saleLines.boundingBox();
+    for (const name of ["Cantidad de Camiseta negra M", "Cantidad de Camiseta negra S"]) {
+      const card = await saleLines.locator(".rounded-2xl").filter({ has: page.getByRole("spinbutton", { name, exact: true }) }).boundingBox();
+      expect(card!.y, `${viewport.width}x${viewport.height}: tarjeta dentro de la lista`).toBeGreaterThanOrEqual(linesBox!.y);
+      expect(card!.y + card!.height, `${viewport.width}x${viewport.height}: dos tarjetas completas`).toBeLessThanOrEqual(linesBox!.y + linesBox!.height);
+    }
+    if (viewport.width >= 768) await expect.poll(aligned).toBeLessThan(3);
+    const totals = await footer.boundingBox();
+    expect(totals!.y).toBeGreaterThanOrEqual(linesBox!.y + linesBox!.height);
+    await page.screenshot({ path: `test-results/pos-store-${viewport.width}x${viewport.height}.png`, fullPage: true });
+  }
+  await expect(page.getByRole("heading", { name: "Ventas en espera", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Ver ventas en espera", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Ventas y pedidos", exact: true })).toBeVisible();
 });

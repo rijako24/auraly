@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { PosCategoryPill, PosProductTile } from "./pos-catalog-presentation";
 import type { PosClient, PosCatalogProduct } from "@/services/pos/pos-edge-client";
 
-export function PosStoreCatalog({ client, scopeKey, customerId, disabled, ready, onSelect }: {
+export function PosStoreCatalog({ client, scopeKey, customerId, completedSaleId, disabled, ready, onSelect }: {
   client: PosClient; scopeKey: string; customerId: string | null; disabled: boolean; ready: boolean;
+  completedSaleId: string | null;
   onSelect: (product: PosCatalogProduct) => Promise<boolean>;
 }) {
   const [search, setSearch] = useState("");
@@ -18,10 +19,17 @@ export function PosStoreCatalog({ client, scopeKey, customerId, disabled, ready,
   const [family, setFamily] = useState<PosCatalogProduct | null>(null);
   const [page, setPage] = useState(0);
   const [addingId, setAddingId] = useState<string | null>(null);
+  const [handledSaleId, setHandledSaleId] = useState(completedSaleId);
+  const saleChanged = Boolean(completedSaleId && completedSaleId !== handledSaleId);
+  const resettingSearch = saleChanged && Boolean(search || term || page);
+  useEffect(() => {
+    if (!completedSaleId || completedSaleId === handledSaleId) return;
+    setSearch(""); setTerm(""); setPage(0); setHandledSaleId(completedSaleId);
+  }, [completedSaleId, handledSaleId]);
   useEffect(() => { const timer = setTimeout(() => { setTerm(search); setPage(0); }, 250); return () => clearTimeout(timer); }, [search]);
   const categories = useQuery({ queryKey: ["pos-store-categories", scopeKey], queryFn: () => client.catalogCategories(), enabled: ready, staleTime: 30_000, refetchOnWindowFocus: false });
   const products = useQuery({ queryKey: ["pos-store-products", scopeKey, customerId, term, categoryId, family?.productId, page],
-    queryFn: ({ signal }) => client.browseProducts(term, page * 50, customerId, categoryId, family?.productId ?? null, signal), enabled: ready, staleTime: 30_000, refetchOnWindowFocus: false });
+    queryFn: ({ signal }) => client.browseProducts(term, page * 50, customerId, categoryId, family?.productId ?? null, signal), enabled: ready && !resettingSearch, staleTime: 30_000, refetchOnWindowFocus: false });
   async function add(product: PosCatalogProduct) {
     if (disabled || addingId) return;
     setAddingId(product.productId);
@@ -34,7 +42,7 @@ export function PosStoreCatalog({ client, scopeKey, customerId, disabled, ready,
     {products.isLoading && <div role="status" className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-3">{Array.from({ length: 6 }, (_, index) => <div key={index} className="h-52 animate-pulse rounded-3xl bg-muted"/>)}<span className="sr-only">Cargando productos</span></div>}
     {products.isError && <div role="alert" className="mt-5 rounded-2xl border p-5">No pudimos cargar los productos. <Button variant="link" onClick={() => void products.refetch()}>Reintentar</Button></div>}
     {!products.isLoading && !products.isError && products.data?.items.length === 0 && <p className="py-16 text-center text-muted-foreground">No hay productos para esta búsqueda.</p>}
-    <div className="mt-5 grid grid-cols-1 gap-3 min-[430px]:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{products.data?.items.map(product => <div key={product.productId} className="flex min-w-0 flex-col gap-2"><PosProductTile fallbackIcon={ShoppingBag} product={product} disabled={disabled || !!addingId} loading={addingId === product.productId} onClick={() => void add(product)}
+    <div className="mt-5 grid grid-cols-1 gap-3 min-[430px]:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{products.data?.items.map(product => <div key={product.productId} className="flex min-w-0 flex-col gap-2"><PosProductTile fallbackIcon={ShoppingBag} imageFit="contain" product={product} disabled={disabled || !!addingId} loading={addingId === product.productId} onClick={() => void add(product)}
       onViewFamily={!family && product.presentation?.familyProductId ? () => { setFamily(product); setCategoryId(null); setSearch(""); setTerm(""); setPage(0); } : undefined}/>
       {(product.presentation?.colorName || product.presentation?.sizeName) && <p className="px-2 text-xs text-muted-foreground">{[product.presentation.colorName, product.presentation.sizeName].filter(Boolean).join(" · ")}</p>}
     </div>)}</div>

@@ -6,16 +6,19 @@ using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Catalog;
 using Auraly.Platform.Domain.Repositories;
+using Auraly.Platform.Application.Services;
 
 namespace Auraly.Platform.Application.Identity.Services;
 
 public sealed class ProductAdminService : IProductAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMediaUrlResolver _mediaUrls;
 
-    public ProductAdminService(IUnitOfWork unitOfWork)
+    public ProductAdminService(IUnitOfWork unitOfWork, IMediaUrlResolver mediaUrls)
     {
         _unitOfWork = unitOfWork;
+        _mediaUrls = mediaUrls;
     }
 
     public async Task<PagedResponse<ProductDto>> GetPagedByBusinessIdAsync(
@@ -60,8 +63,14 @@ public sealed class ProductAdminService : IProductAdminService
             return area?.Name;
         }
 
+        var imageReferences = items.Where(product => product.Images.Count > 0)
+            .ToDictionary(product => product.ProductId, product => product.Images.Single().MediaUrl);
+        var imageUrls = imageReferences.Count == 0
+            ? new Dictionary<string, string>()
+            : await _mediaUrls.ResolveTenantBatchAsync(tenantId, imageReferences.Values.Distinct(StringComparer.Ordinal).ToArray(), ct);
         return new PagedResponse<ProductDto>(
-            items.Select(product => MapToDto(product, ResolveArea(product.ProductCategoryId))).ToList(),
+            items.Select(product => MapToDto(product, ResolveArea(product.ProductCategoryId),
+                imageReferences.TryGetValue(product.ProductId, out var imageReference) ? imageUrls[imageReference] : null)).ToList(),
             totalCount,
             request.Page,
             request.PageSize);
@@ -387,7 +396,7 @@ public sealed class ProductAdminService : IProductAdminService
             throw new NotFoundException(nameof(Business), businessId);
     }
 
-    private static ProductDto MapToDto(Product p, string? areaName = null) => new(
+    private static ProductDto MapToDto(Product p, string? areaName = null, string? imageUrl = null) => new(
         p.ProductId,
         p.BusinessId,
         p.IntegrationConnectionId,
@@ -408,5 +417,5 @@ public sealed class ProductAdminService : IProductAdminService
         p.ProductCode,
         areaName,
         p.Reference,
-        p.IsIngredient, p.HasIngredients, p.IsCombo);
+        p.IsIngredient, p.HasIngredients, p.IsCombo, imageUrl);
 }

@@ -798,3 +798,25 @@ aprobación, cuenta, notas, efectivo entregado y ajuste. Esta corrección puntua
 cambia el contrato, los recibos idempotentes ni los efectos de facturación.
 
 La entrada en línea de la aplicación instalada respeta la sede seleccionada, igual que el navegador. Una sede Tiendas o Restaurante usa el servidor y puede utilizar las impresoras locales sin preparar una caja SQLite; no cambia la identidad, el borrador ni la cola de la caja de venta directa ya enrolada.
+
+En Tiendas, la captura comparte el borrador de Venta directa. Recuperar una venta
+pausada restaura también el cliente y su sede desde el identificador del borrador;
+la UI no presenta Consumidor final mientras exista un cliente pendiente de cargar.
+La lista de líneas conserva espacio para dos tarjetas completas. Cuando ese mínimo
+cabe, el cobro queda al fondo de su columna y las líneas desplazan su contenido;
+en ventanas menores la columna crece y el cobro continúa debajo. Los accesos de
+En espera y Pedidos abren un único panel lateral: sus listas no quedan montadas
+ocultas ni crean otra consulta para contadores.
+
+Una venta completada limpia el texto de búsqueda y vuelve a la primera página
+del catálogo de Tiendas. Cancelar o rechazar el cobro conserva la búsqueda. El
+catálogo recibe el ID del documento ya confirmado y actualiza su propio estado;
+no se remonta ni vuelve a cargar las categorías. Mientras aplica esa limpieza,
+no consulta productos con la búsqueda anterior y el cliente de la venta nueva.
+
+La regresión de navegador cubre cancelación y confirmación del cobro, recuperación
+del cliente con una sola lectura y diez tamaños entre 320×568 y 1920×1080.
+`pos-composition-inventory-real.spec.ts` vende desde cada una de las tres pantallas
+tres unidades de receta y de combo, con y sin inventario propio, y concilia los
+saldos antes y después en la bodega seleccionada. Las facturas se confirman desde
+la UI; las consultas de inventario sólo observan el resultado del motor canónico.

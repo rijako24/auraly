@@ -40,6 +40,7 @@ import {
 } from "@/lib/default-start-route";
 import { realtimeReconnectDelay } from "@/lib/realtime-reconnect-policy";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { localOrderDateValue, orderDayRange } from "@/services/orders/order-date-filter";
 import { orderOperationErrorMessage } from "@/services/orders/order-http-error";
 import {
@@ -492,6 +493,48 @@ export default function PosPage() {
   const [ordersRefreshVersion, setOrdersRefreshVersion] = useState(0);
   const [ordersCount, setOrdersCount] = useState(0);
   const [ordersExpanded, setOrdersExpanded] = useState(false);
+  const [storeDocumentsOpen, setStoreDocumentsOpen] = useState(false);
+  const storeLinesViewport = useRef<HTMLDivElement>(null);
+  const storeLinesContent = useRef<HTMLDivElement>(null);
+  const isStore = client?.mode === "online" && workstation.pointOfSaleMode === "Store";
+  const customerPending = Boolean(draft?.customerId && !selectedCustomer);
+  const firstStoreLineId = draft?.lines[0]?.lineId;
+  const secondStoreLineId = draft?.lines[1]?.lineId;
+  useEffect(() => {
+    const viewport = storeLinesViewport.current;
+    const content = storeLinesContent.current;
+    if (!isStore || !viewport || !content) return;
+    const capture = viewport.parentElement;
+    if (!capture) return;
+    const scanner = capture.children.item(0);
+    const actions = capture.children.item(1);
+    const column = capture.parentElement;
+    const footer = column?.lastElementChild;
+    const layout = column?.parentElement;
+    const first = content.children.item(0);
+    const second = content.children.item(1);
+    const measure = () => {
+      const firstHeight = first?.getBoundingClientRect().height ?? 148;
+      const secondHeight = second?.getBoundingClientRect().height ?? firstHeight;
+      const linesMinimum = Math.ceil(firstHeight + secondHeight + 32);
+      viewport.style.setProperty("--store-lines-min-height", `${linesMinimum}px`);
+      const gap = Number.parseFloat(getComputedStyle(capture).rowGap);
+      const captureMinimum = linesMinimum + (scanner?.getBoundingClientRect().height ?? 0) + (actions?.getBoundingClientRect().height ?? 0) + gap * 2;
+      capture.style.minHeight = `${captureMinimum}px`;
+      if (column && footer && layout) {
+        const layoutStyle = getComputedStyle(layout);
+        layout.style.minHeight = `${captureMinimum + footer.getBoundingClientRect().height + Number.parseFloat(getComputedStyle(column).rowGap) + Number.parseFloat(layoutStyle.paddingTop) + Number.parseFloat(layoutStyle.paddingBottom)}px`;
+      }
+    };
+    const observer = new ResizeObserver(measure);
+    if (first) observer.observe(first);
+    if (second) observer.observe(second);
+    if (scanner) observer.observe(scanner);
+    if (actions) observer.observe(actions);
+    if (footer) observer.observe(footer);
+    measure();
+    return () => observer.disconnect();
+  }, [isStore, edgeReady, firstStoreLineId, secondStoreLineId]);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<
     | { kind: "line"; lineId: string; productName: string; revalidateInventory: boolean }
@@ -627,6 +670,9 @@ export default function PosPage() {
   }, [client]);
 
   useEffect(() => {
+    // The store drawer owns its order page only while open; no hidden counter
+    // requests or auxiliary page are needed for its icon-only entry point.
+    if (isStore) return;
     if (!client) {
       setOrdersCount(0);
       return;
@@ -642,7 +688,7 @@ export default function PosPage() {
         if (active) setOrdersCount(0);
       });
     return () => { active = false; };
-  }, [client, loadOrders, ordersRefreshVersion, sidePanel]);
+  }, [client, isStore, loadOrders, ordersRefreshVersion, sidePanel]);
 
   useEffect(() => {
     let active = true;
@@ -2291,8 +2337,18 @@ export default function PosPage() {
     try {
       const recovered = await client.recoverTemporary(id);
       setDraft(recovered);
+      setSelectedCustomer(null);
+      setSelectedLineId(recovered.lines[0]?.lineId ?? null);
+      if (recovered.customerId) {
+        try {
+          setSelectedCustomer(await client.customer(recovered.customerId, recovered.customerPartySiteId));
+        } catch {
+          setError("Venta recuperada; no fue posible cargar el cliente. Selecciónalo de nuevo antes de cobrar.");
+        }
+      }
       requiresResolution = !(await validateCurrentInventory(recovered.draftId.value));
       await refreshTemporaries();
+      setStoreDocumentsOpen(false);
       setMessage(requiresResolution ? "Venta recuperada: corrige el inventario" : "Venta en espera recuperada");
     } catch (caught) {
       showError(caught);
@@ -2349,6 +2405,10 @@ export default function PosPage() {
 
   async function openPayment() {
     if (!client || !draft?.lines.length || busy) return;
+    if (customerPending) {
+      setError("Selecciona el cliente de la venta antes de cobrar.");
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
@@ -2776,6 +2836,7 @@ export default function PosPage() {
     }
   }
   function openOrders() {
+    setStoreDocumentsOpen(false);
     setOrdersExpanded(true);
   }
 
@@ -2794,6 +2855,7 @@ export default function PosPage() {
       : presentation.error);
     setSelectedLineId(presentation.selectedLineId);
     setOrdersExpanded(false);
+    setStoreDocumentsOpen(false);
     setSidePanel("orders");
     setOrdersRefreshVersion((current) => current + 1);
     setMessage(presentation.message);
@@ -3121,12 +3183,11 @@ export default function PosPage() {
     );
   }
 
-  const isStore = client?.mode === "online" && workstation.pointOfSaleMode === "Store";
   const customerSelector = <button type="button" disabled={!salesReady || busy}
     onClick={() => setCustomerSearchOpen(true)} aria-label="Buscar cliente" title="Buscar cliente · F7"
     className={`flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 px-3 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40 ${isStore ? "h-11" : "h-10 justify-center"}`}>
     <UserRound className="h-4 w-4 shrink-0" />
-    <span className="truncate">{isStore ? selectedCustomer?.name ?? "Consumidor final" : "Buscar cliente"}</span>
+    <span className="truncate">{isStore ? selectedCustomer?.name ?? (draft?.customerId ? "Cliente de la venta" : "Consumidor final") : "Buscar cliente"}</span>
     <span className={`${isStore ? "ml-auto" : ""} shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs`}>{POS_ACTION_SHORTCUTS.customerSearch}</span>
   </button>;
   const chargesAction = <button type="button" disabled={!draft?.lines.length || busy} onClick={() => setChargesOpen(true)}
@@ -3213,9 +3274,134 @@ export default function PosPage() {
     );
   }
 
+  const pendingDocumentsPanel = (
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div
+              role="tablist"
+              aria-label="Documentos pendientes"
+              className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sidePanel === "temporaries"}
+                onClick={() => setSidePanel("temporaries")}
+                className={`flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition ${
+                  sidePanel === "temporaries"
+                    ? "bg-white text-teal-800 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <Clock3 className="h-4 w-4" />
+                En espera
+                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
+                  {temporaries.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sidePanel === "orders"}
+                onClick={() => setSidePanel("orders")}
+                className={`flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition ${
+                  sidePanel === "orders"
+                    ? "bg-white text-teal-800 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                <ClipboardList className="h-4 w-4" />
+                Pedidos
+                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
+                   {ordersCount}
+                </span>
+              </button>
+            </div>
+
+            {sidePanel === "temporaries" ? (
+              <div className="min-h-0 flex-1 overflow-auto">
+                <div className="mb-3">
+                  <p className="font-semibold text-slate-900">Ventas en espera</p>
+                  <p className="text-xs text-slate-500">Pausadas para continuar después</p>
+                </div>
+                <div className="space-y-2">
+                  {temporaries.map((temporary) => (
+                    <article
+                      key={temporary.draftId.value}
+                      className="rounded-xl border border-slate-200 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{temporary.name}</p>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            {temporary.reference || "Sin referencia"} · {temporary.lines.length} líneas
+                          </p>
+                        </div>
+                        <p className="font-semibold tabular-nums">{money.format(temporary.payableAmount)}</p>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button type="button"
+                          onClick={() => void recoverTemporary(temporary.draftId.value)}
+                          disabled={Boolean(draft?.lines.length) || busy}
+                          className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 text-sm font-semibold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-45">
+                          <RotateCcw className="h-4 w-4" />
+                          Continuar
+                        </button>
+                        <button type="button"
+                          onClick={() => requestDeleteTemporary(
+                            temporary.draftId.value,
+                            temporary.name ?? "Venta sin nombre",
+                          )}
+                          disabled={busy}
+                          className="flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 text-sm font-semibold text-red-800 transition hover:bg-red-100 disabled:opacity-45">
+                          <Trash2 className="h-4 w-4" />
+                          Eliminar
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                  {!temporaries.length && (
+                    <p className="rounded-xl border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500">
+                      No hay ventas en espera.
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : !ordersExpanded ? (
+              <OrdersWorkspace
+                key={isStore ? "store-orders" : `compact-orders-${ordersRefreshVersion}`}
+                compact
+                initialStatus="Available"
+                activeOrderId={draft?.sourceOrderId}
+                loadPage={loadOrders}
+                loadDetail={loadOrder}
+                onRecover={(order) => recoverPosOrder(order.orderId)}
+                onPrintSelected={async (orders) =>
+                  printOrdersOnline(orders.map((order) => order.orderId))}
+                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges) =>
+                  invoicePosOrders(
+                    orders.map((order) => order.orderId),
+                    paymentMethodCode,
+                    documentType,
+                    printAfterInvoice,
+                    idempotencyKey,
+                    onProgress,
+                    undefined,
+                    charges,
+                  )
+                }
+                onLoadInvoiceCharges={(page) => client.invoiceCharges(page)}
+                onConfigurePrinting={() => setPrinterOpen(true)}
+                onCountChange={setOrdersCount}
+                onExpand={openOrders}
+              />
+            ) : null
+            }
+          </section>
+  );
+
   return (
-    <main className="min-h-screen bg-[#eef3f3] text-slate-950 xl:h-screen xl:overflow-hidden">
-      <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
+    <main className={`min-h-screen bg-[#eef3f3] text-slate-950 ${isStore ? "" : "xl:h-screen xl:overflow-hidden"}`}>
+      <header className={`flex min-h-14 items-center justify-between bg-auraly-background py-2.5 text-auraly-text shadow-lg ${isStore ? "flex-wrap gap-2 px-3 md:flex-nowrap md:gap-4 md:px-5" : "gap-4 px-5"}`}>
         <div className="flex items-center gap-2">
           {(canOpenAdministrativeMenu || client.mode === "edge") && (
             <PosExitMenuButton
@@ -3307,7 +3493,7 @@ export default function PosPage() {
             </button>
           )}
         </div>
-        <div className="flex min-w-0 items-center gap-3 text-sm">
+        <div className={`flex min-w-0 items-center gap-3 text-sm ${isStore ? "w-full md:w-auto" : ""}`}>
           <DesktopUpdateButton />
           {canChangeWorkspace ? (
             <button
@@ -3334,8 +3520,8 @@ export default function PosPage() {
               <span className="hidden lg:inline">Periféricos</span>
             </button>
           )}
-          <span className="h-4 w-px bg-white/20" aria-hidden="true" />
-          <span className="flex min-w-0 items-center gap-1.5 text-auraly-secondary">
+          <span className={`h-4 w-px bg-white/20 ${isStore ? "hidden sm:block" : ""}`} aria-hidden="true" />
+          <span className={`${isStore ? "hidden sm:flex" : "flex"} min-w-0 items-center gap-1.5 overflow-hidden text-auraly-secondary`}>
             <UserRound className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{workstation.userDisplayName}</span>
           </span>
@@ -3349,12 +3535,12 @@ export default function PosPage() {
         </div>
       )}
 
-      <section className={`grid min-h-[calc(100dvh-3.5rem)] grid-cols-1 gap-3 p-3 ${isStore ? "md:h-[calc(100dvh-3.5rem)] md:min-h-0 md:grid-cols-[minmax(330px,0.9fr)_minmax(0,2fr)]" : "xl:h-[calc(100vh-3.5rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]"}`}>
-        <div className={isStore ? "flex min-h-0 min-w-0 flex-col gap-3 md:overflow-y-auto" : "contents"}>
-        <div className={`flex min-w-0 flex-col gap-3 ${isStore ? "shrink-0" : "xl:min-h-0"}`}>
+      <section className={`grid min-h-[calc(100dvh-3.5rem)] grid-cols-1 gap-3 p-3 ${isStore ? "md:h-[calc(100dvh-3.5rem)] md:min-h-min md:grid-cols-[minmax(330px,0.9fr)_minmax(0,2fr)]" : "xl:h-[calc(100vh-3.5rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]"}`}>
+        <div className={isStore ? "flex min-h-min min-w-0 flex-col gap-3" : "contents"}>
+        <div className={`flex min-w-0 flex-col gap-3 ${isStore ? "min-h-0 flex-1" : "xl:min-h-0"}`}>
           <form
             onSubmit={capture}
-            className={`relative overflow-hidden rounded-2xl border bg-white p-3 shadow-sm transition-all duration-300 ${scanRejection.phase !== "idle" ? "border-red-500 shadow-lg shadow-red-200/70 ring-4 ring-red-300/50" : "border-teal-900/10"} ${scanRejection.phase === "animating" ? "pos-scan-rejected" : ""}`}
+            className={`relative shrink-0 overflow-hidden rounded-2xl border bg-white p-3 shadow-sm transition-all duration-300 ${scanRejection.phase !== "idle" ? "border-red-500 shadow-lg shadow-red-200/70 ring-4 ring-red-300/50" : "border-teal-900/10"} ${scanRejection.phase === "animating" ? "pos-scan-rejected" : ""}`}
           >
             <label
               htmlFor="pos-scanner"
@@ -3448,8 +3634,9 @@ export default function PosPage() {
             </p>}
           </form>
 
+          <div className={isStore ? "relative shrink-0" : "contents"}>
           <details open={isStore ? undefined : true} className="shrink-0 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-            <summary className={isStore ? "cursor-pointer px-2 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500" : "hidden"}>Acciones de captura</summary>
+            <summary className={isStore ? "cursor-pointer py-2 pl-2 pr-24 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500" : "hidden"}>Acciones de captura</summary>
           <div className="flex flex-wrap items-center justify-between gap-2" aria-label="Acciones de captura">
             {!isStore && <p className="hidden pl-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 sm:block">
               Acciones de captura
@@ -3495,11 +3682,17 @@ export default function PosPage() {
             </div>
           </div>
           </details>
+          {isStore && <div className="absolute right-2 top-1.5 flex gap-1">
+            <button type="button" title="Ventas en espera" aria-label="Ver ventas en espera" className="flex h-8 min-w-9 items-center justify-center gap-1 rounded-lg border bg-slate-50 px-2 text-teal-800 hover:bg-teal-50" onClick={() => { setSidePanel("temporaries"); setStoreDocumentsOpen(true); }}><Clock3 className="h-4 w-4"/>{temporaries.length > 0 && <span className="text-xs font-semibold">{temporaries.length}</span>}</button>
+            <button type="button" title="Pedidos" aria-label="Ver pedidos" className="grid h-8 w-9 place-items-center rounded-lg border bg-slate-50 text-teal-800 hover:bg-teal-50" onClick={() => { setSidePanel("orders"); setStoreDocumentsOpen(true); }}><ClipboardList className="h-4 w-4"/></button>
+          </div>}
+          </div>
 
           <div role={isStore ? "region" : undefined} aria-label={isStore ? "Productos de la venta" : undefined}
-            className={`flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${isStore ? "min-h-[180px] max-h-[45dvh] shrink-0" : "min-h-[360px] flex-1 xl:min-h-0"}`}>
+            ref={isStore ? storeLinesViewport : undefined}
+            className={`flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${isStore ? "min-h-[var(--store-lines-min-height,328px)] flex-1" : "min-h-[360px] flex-1 xl:min-h-0"}`}>
             <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-              {isStore ? <div className="space-y-2 p-3">{draft?.lines.map(line => (
+              {isStore ? <div ref={storeLinesContent} className="space-y-2 p-3">{draft?.lines.map(line => (
                 <PosSaleItemCard key={line.lineId} className={selectedLineId === line.lineId ? "ring-2 ring-primary/30" : ""}
                   ref={element => { if (element) lineRows.current.set(line.lineId, element); else lineRows.current.delete(line.lineId); }}>
                   <button type="button" className="flex w-full items-start justify-between gap-2 text-left" onClick={() => { setSelectedLineId(line.lineId); quantityInputs.current.get(line.lineId)?.focus(); }}>
@@ -3636,7 +3829,7 @@ export default function PosPage() {
               {isStore ? customerSelector : <div>
                 <p className="text-xs uppercase tracking-[0.16em] text-auraly-secondary">Venta actual</p>
                 <p className="mt-1 text-sm font-medium">
-                  {selectedCustomer?.name ?? "Consumidor final"}
+                  {selectedCustomer?.name ?? (draft?.customerId ? "Cliente de la venta" : "Consumidor final")}
                 </p>
                 {selectedCustomer && (
                   <p className="mt-0.5 text-xs text-auraly-secondary">
@@ -3687,7 +3880,7 @@ export default function PosPage() {
             )}
             <button
               type="button"
-              disabled={!draft?.lines.length || busy}
+              disabled={!draft?.lines.length || busy || customerPending}
               onClick={openPayment}
               className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-auraly-accent px-4 text-base font-bold text-auraly-background transition hover:bg-auraly-light disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -3723,11 +3916,17 @@ export default function PosPage() {
               </button>
             </div>
 
+            {isStore && showCashChange && lastSettlement && <div role="status" aria-live="assertive" className="relative mt-3 rounded-xl border border-emerald-300/30 bg-emerald-300/10 p-3 pr-10">
+              <button type="button" aria-label="Cerrar aviso de cambio" className="absolute right-2 top-2 rounded p-1" onClick={() => { setLastSettlement(null); focusScanner(); }}><X className="h-4 w-4"/></button>
+              <p className="text-xs font-semibold text-emerald-100">Entregar al cliente</p><p className="text-xl font-bold">Cambio {money.format(lastSettlement.change)}</p>
+              <button type="button" disabled={busy} className="mt-1 inline-flex items-center gap-2 text-xs underline" onClick={() => void reprintLastSale()}><Printer className="h-3 w-3"/>Reimprimir última factura</button>
+            </div>}
+
           </section>
 
-          {showCashChange && lastSettlement ? (
+          {!isStore && (showCashChange && lastSettlement ? (
             <section
-              className={`relative flex min-h-0 ${isStore ? "shrink-0" : "flex-1"} overflow-hidden rounded-2xl border border-emerald-300 bg-emerald-50 p-4 shadow-sm`}
+              className="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-emerald-300 bg-emerald-50 p-4 shadow-sm"
               role="status"
               aria-live="assertive"
             >
@@ -3762,134 +3961,18 @@ export default function PosPage() {
                 </p>
               </div>
             </section>
-          ) : (
-          <section className={`flex min-h-0 ${isStore ? "shrink-0" : "flex-1"} flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm`}>
-            <div
-              role="tablist"
-              aria-label="Documentos pendientes"
-              className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sidePanel === "temporaries"}
-                onClick={() => setSidePanel("temporaries")}
-                className={`flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition ${
-                  sidePanel === "temporaries"
-                    ? "bg-white text-teal-800 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Clock3 className="h-4 w-4" />
-                En espera
-                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
-                  {temporaries.length}
-                </span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sidePanel === "orders"}
-                onClick={() => setSidePanel("orders")}
-                className={`flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition ${
-                  sidePanel === "orders"
-                    ? "bg-white text-teal-800 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <ClipboardList className="h-4 w-4" />
-                Pedidos
-                <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
-                   {ordersCount}
-                </span>
-              </button>
-            </div>
-
-            {sidePanel === "temporaries" ? (
-              <div className="min-h-0 flex-1 overflow-auto">
-                <div className="mb-3">
-                  <p className="font-semibold text-slate-900">Ventas en espera</p>
-                  <p className="text-xs text-slate-500">Pausadas para continuar después</p>
-                </div>
-                <div className="space-y-2">
-                  {temporaries.map((temporary) => (
-                    <article
-                      key={temporary.draftId.value}
-                      className="rounded-xl border border-slate-200 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{temporary.name}</p>
-                          <p className="mt-0.5 text-xs text-slate-500">
-                            {temporary.reference || "Sin referencia"} · {temporary.lines.length} líneas
-                          </p>
-                        </div>
-                        <p className="font-semibold tabular-nums">{money.format(temporary.payableAmount)}</p>
-                      </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <button type="button"
-                          onClick={() => void recoverTemporary(temporary.draftId.value)}
-                          disabled={Boolean(draft?.lines.length) || busy}
-                          className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 text-sm font-semibold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-45">
-                          <RotateCcw className="h-4 w-4" />
-                          Continuar
-                        </button>
-                        <button type="button"
-                          onClick={() => requestDeleteTemporary(
-                            temporary.draftId.value,
-                            temporary.name ?? "Venta sin nombre",
-                          )}
-                          disabled={busy}
-                          className="flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 text-sm font-semibold text-red-800 transition hover:bg-red-100 disabled:opacity-45">
-                          <Trash2 className="h-4 w-4" />
-                          Eliminar
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                  {!temporaries.length && (
-                    <p className="rounded-xl border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500">
-                      No hay ventas en espera.
-                    </p>
-                  )}
-                </div>
-              </div>
-            ) : !ordersExpanded ? (
-              <OrdersWorkspace
-                key={`compact-orders-${ordersRefreshVersion}`}
-                compact
-                initialStatus="Available"
-                activeOrderId={draft?.sourceOrderId}
-                loadPage={loadOrders}
-                loadDetail={loadOrder}
-                onRecover={(order) => recoverPosOrder(order.orderId)}
-                onPrintSelected={async (orders) =>
-                  printOrdersOnline(orders.map((order) => order.orderId))}
-                onInvoiceSelected={(orders, documentType, paymentMethodCode, printAfterInvoice, idempotencyKey, onProgress, charges) =>
-                  invoicePosOrders(
-                    orders.map((order) => order.orderId),
-                    paymentMethodCode,
-                    documentType,
-                    printAfterInvoice,
-                    idempotencyKey,
-                    onProgress,
-                    undefined,
-                    charges,
-                  )
-                }
-                onLoadInvoiceCharges={(page) => client.invoiceCharges(page)}
-                onConfigurePrinting={() => setPrinterOpen(true)}
-                onCountChange={setOrdersCount}
-                onExpand={openOrders}
-              />
-            ) : null
-            }
-          </section>
-          )}
+          ) : pendingDocumentsPanel)}
         </aside>
         </div>
-        {isStore && <PosStoreCatalog key={`${workstation.businessId}:${workstation.warehouseId}`} client={client} scopeKey={`${workstation.businessId}:${workstation.warehouseId}`} customerId={draft?.customerId ?? null} ready={salesReady && !!workstation.workSessionId} disabled={busy || !salesReady} onSelect={captureSelectedProduct} />}
+        {isStore && <PosStoreCatalog key={`${workstation.businessId}:${workstation.warehouseId}`} client={client} scopeKey={`${workstation.businessId}:${workstation.warehouseId}`} customerId={draft?.customerId ?? null} completedSaleId={lastSettlement?.documentId ?? null} ready={salesReady && !!workstation.workSessionId} disabled={busy || !salesReady} onSelect={captureSelectedProduct} />}
       </section>
+
+      {isStore && <Sheet open={storeDocumentsOpen} onOpenChange={setStoreDocumentsOpen}>
+        <SheetContent className="flex w-full min-h-0 flex-col p-4 sm:max-w-xl" onCloseAutoFocus={event => { event.preventDefault(); focusScanner(); }}>
+          <SheetHeader className="pr-8"><SheetTitle>Ventas y pedidos</SheetTitle><SheetDescription>Recupera una venta en espera o un pedido para continuar en esta caja.</SheetDescription></SheetHeader>
+          {storeDocumentsOpen && pendingDocumentsPanel}
+        </SheetContent>
+      </Sheet>}
 
       {ordersExpanded && client && (
         <div className="fixed inset-0 z-50 flex flex-col bg-slate-50">
@@ -4262,6 +4345,7 @@ export default function PosPage() {
             onSubmit={saveTemporary}
             role="dialog"
             aria-modal="true"
+            aria-labelledby="pos-temporary-title"
             onKeyDown={(event) => {
               if (event.key !== "Escape" || busy) return;
               event.preventDefault();
@@ -4270,7 +4354,7 @@ export default function PosPage() {
             }}
             className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
           >
-            <h2 className="text-lg font-semibold">Pausar venta</h2>
+            <h2 id="pos-temporary-title" className="text-lg font-semibold">Pausar venta</h2>
             <p className="mt-1 text-sm text-slate-500">
               No asigna consecutivo fiscal ni genera movimientos.
             </p>

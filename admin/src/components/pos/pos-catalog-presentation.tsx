@@ -19,8 +19,8 @@ export function PosCategoryPill({ active, label, count, icon: Icon, onClick }: {
   </button>;
 }
 
-export function PosProductTile({ product, disabled, loading, onClick, onViewFamily, fallbackIcon: FallbackIcon = UtensilsCrossed }: {
-  product: Pick<PosCatalogProduct, "name" | "unitPrice" | "imageUrl">; fallbackIcon?: LucideIcon; disabled: boolean; loading: boolean; onClick: () => void; onViewFamily?: () => void;
+export function PosProductTile({ product, disabled, loading, onClick, onViewFamily, imageFit = "cover", fallbackIcon: FallbackIcon = UtensilsCrossed }: {
+  product: Pick<PosCatalogProduct, "name" | "unitPrice" | "imageUrl">; imageFit?: "cover" | "contain"; fallbackIcon?: LucideIcon; disabled: boolean; loading: boolean; onClick: () => void; onViewFamily?: () => void;
 }) {
   const [failedImage, setFailedImage] = useState<string | null>(null);
   return <div className="group relative min-h-52 overflow-hidden rounded-3xl border bg-background shadow-sm transition hover:-translate-y-0.5 hover:border-primary/70 hover:shadow-md">
@@ -29,7 +29,7 @@ export function PosProductTile({ product, disabled, loading, onClick, onViewFami
     <div className="relative grid min-h-32 aspect-[4/3] place-items-center overflow-hidden bg-gradient-to-br from-emerald-50 via-teal-50 to-slate-100 text-primary dark:from-emerald-950 dark:via-teal-950 dark:to-slate-900">
       {product.imageUrl && failedImage !== product.imageUrl
         // eslint-disable-next-line @next/next/no-img-element
-        ? <img src={product.imageUrl} alt="" className="h-full w-full object-cover transition duration-300 group-hover:scale-105" onError={() => setFailedImage(product.imageUrl ?? null)}/>
+        ? <img src={product.imageUrl} alt="" className={`h-full w-full transition duration-300 group-hover:scale-105 ${imageFit === "contain" ? "object-contain p-3" : "object-cover"}`} onError={() => setFailedImage(product.imageUrl ?? null)}/>
         : <FallbackIcon className="h-14 w-14 opacity-50" aria-hidden="true"/>}
       <span className="absolute right-3 top-3 grid h-10 w-10 place-items-center rounded-full bg-background/90 text-primary shadow">{loading ? <Loader2 className="h-5 w-5 animate-spin"/> : <Plus className="h-5 w-5"/>}</span>
     </div><div className="p-4"><p className="line-clamp-2 min-h-11 text-sm font-bold sm:text-base">{product.name}</p><p className={`mt-2 text-lg font-extrabold text-primary ${onViewFamily ? "pr-11" : ""}`}>{money.format(product.unitPrice)}</p></div>

@@ -122,10 +122,10 @@ export function PosCustomerSearchDialog({
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" data-pos-focus-surface="modal">
-      <section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <section ref={modal} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="pos-customer-search-title" className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <header className="flex items-start justify-between border-b border-slate-200 p-5">
           <div>
-            <h2 className="flex items-center gap-2 text-xl font-semibold">
+            <h2 id="pos-customer-search-title" className="flex items-center gap-2 text-xl font-semibold">
               <UserRound className="h-5 w-5 text-teal-700" />
               {creating ? "Crear cliente" : "Buscar cliente"}
             </h2>

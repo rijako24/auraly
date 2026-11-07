@@ -6,6 +6,7 @@ import {
   LayoutList,
   RotateCcw,
   Table2,
+  Images,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -23,6 +24,12 @@ import {
 import { DataTableFacetedFilter } from "./data-table-faceted-filter";
 
 export type ViewMode = "table" | "card" | "list";
+
+const presentationViews = [
+  { value: "table", label: "Tabla", icon: Table2 },
+  { value: "card", label: "Tarjetas", icon: LayoutGrid },
+  { value: "list", label: "Lista", icon: LayoutList },
+] as const;
 
 export interface FacetedFilterConfig {
   column: string;
@@ -46,6 +53,8 @@ export interface DataTableToolbarProps {
   onFacetedFilterChange?: (column: string, values: Set<string>) => void;
   viewMode?: ViewMode;
   onViewModeChange?: (mode: ViewMode) => void;
+  listLayout?: "rows" | "gallery";
+  showColumnToggle?: boolean;
   columnVisibilityOptions?: ColumnVisibilityOption[];
   columnVisibility?: Record<string, boolean>;
   onColumnVisibilityChange?: (visibility: Record<string, boolean>) => void;
@@ -69,6 +78,8 @@ export function DataTableToolbar({
   onFacetedFilterChange,
   viewMode = "table",
   onViewModeChange,
+  listLayout = "rows",
+  showColumnToggle = true,
   columnVisibilityOptions,
   columnVisibility = {},
   onColumnVisibilityChange,
@@ -123,37 +134,15 @@ export function DataTableToolbar({
           />
         ))}
         {onViewModeChange && (
-          <div className="flex items-center rounded-md border border-input p-1">
-            <Button
-              variant={viewMode === "table" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-8 px-2 sm:h-7"
-              onClick={() => onViewModeChange("table")}
-            >
-              <Table2 className="h-4 w-4" />
-              <span className="sr-only">Tabla</span>
-            </Button>
-            <Button
-              variant={viewMode === "card" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-8 px-2 sm:h-7"
-              onClick={() => onViewModeChange("card")}
-            >
-              <LayoutGrid className="h-4 w-4" />
-              <span className="sr-only">Tarjetas</span>
-            </Button>
-            <Button
-              variant={viewMode === "list" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-8 px-2 sm:h-7"
-              onClick={() => onViewModeChange("list")}
-            >
-              <LayoutList className="h-4 w-4" />
-              <span className="sr-only">Lista</span>
-            </Button>
+          <div className="flex items-center rounded-md border border-input p-1" role="group" aria-label="Vista de los resultados">
+            {presentationViews.map(view => { const {value} = view; const label = value === "list" && listLayout === "gallery" ? "Galería" : view.label; const Icon = value === "list" && listLayout === "gallery" ? Images : view.icon; return <Button key={value}
+              variant={viewMode === value ? "secondary" : "ghost"} size="sm" className="h-8 px-2 sm:h-7"
+              title={label} aria-label={label} aria-pressed={viewMode === value} onClick={() => onViewModeChange(value)}>
+              <Icon className="h-4 w-4"/><span className="sr-only">{label}</span>
+            </Button>; })}
           </div>
         )}
-        {(visibleColumns.length > 0 || table) &&
+        {showColumnToggle && (visibleColumns.length > 0 || table) &&
           (onColumnVisibilityChange || table) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

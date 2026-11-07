@@ -67,6 +67,8 @@ export interface DataTableProps<TData, TValue> {
   onViewModeChange?: (mode: ViewMode) => void;
   cardRenderer?: (item: TData) => React.ReactNode;
   listRenderer?: (item: TData) => React.ReactNode;
+  listLayout?: "rows" | "gallery";
+  showColumnToggle?: boolean;
   onExport?: () => void;
   enableRowSelection?: boolean;
   selectAllMatching?: boolean;
@@ -93,10 +95,12 @@ export function DataTable<TData, TValue>({
   onSearch,
   bulkActions = [],
   facetedFilters = [],
-  viewMode = "table",
+  viewMode,
   onViewModeChange,
   cardRenderer,
   listRenderer,
+  listLayout = "rows",
+  showColumnToggle = true,
   onExport,
   enableRowSelection = true,
   selectAllMatching = false,
@@ -243,7 +247,7 @@ export function DataTable<TData, TValue>({
     },
     manualPagination: !!onPaginationChange,
     manualSorting: !!onSortingChange,
-    pageCount: controlledPageCount ?? -1,
+    pageCount: controlledPageCount ?? (onPaginationChange ? -1 : undefined),
     manualFiltering: !!onSearch,
     getRowId,
   });
@@ -292,7 +296,11 @@ export function DataTable<TData, TValue>({
       ? data
       : filteredData;
 
-  const displayItems = currentViewData;
+  const displayItems = onPaginationChange ? currentViewData : table.getRowModel().rows.map(row => row.original);
+  const paginationControls = (!onPaginationChange || controlledPageCount !== undefined) && <DataTablePagination
+    pageIndex={table.getState().pagination.pageIndex} pageSize={table.getState().pagination.pageSize}
+    pageCount={table.getPageCount()} totalItems={totalItems ?? table.getFilteredRowModel().rows.length}
+    onPageChange={table.setPageIndex} onPageSizeChange={table.setPageSize}/>;
 
   return (
     <div className={cn("space-y-4", className)}>
@@ -307,6 +315,8 @@ export function DataTable<TData, TValue>({
         onFacetedFilterChange={handleFacetedFilterChange}
         viewMode={displayViewMode}
         onViewModeChange={handleViewModeChange}
+        listLayout={listLayout}
+        showColumnToggle={showColumnToggle}
         columnVisibility={columnVisibility}
         onColumnVisibilityChange={setColumnVisibility}
         onReset={handleReset}
@@ -429,16 +439,7 @@ export function DataTable<TData, TValue>({
               </TableBody>
             </Table>
           </div>
-          {(!onPaginationChange || controlledPageCount !== undefined) && (
-            <DataTablePagination
-              pageIndex={table.getState().pagination.pageIndex}
-              pageSize={table.getState().pagination.pageSize}
-              pageCount={table.getPageCount()}
-              totalItems={totalItems ?? table.getFilteredRowModel().rows.length}
-              onPageChange={table.setPageIndex}
-              onPageSizeChange={table.setPageSize}
-            />
-          )}
+          {paginationControls}
         </>
       ) : displayViewMode === "card" && cardRenderer ? (
         <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
@@ -454,7 +455,7 @@ export function DataTable<TData, TValue>({
           )}
         </div>
       ) : displayViewMode === "list" && listRenderer ? (
-        <div className="space-y-2">
+        <div className={listLayout === "gallery" ? "grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5" : "space-y-2"} aria-label={listLayout === "gallery" ? "Galería de resultados" : undefined}>
           {displayItems.map((item, idx) => (
             <React.Fragment key={idx}>
               {listRenderer(item)}
@@ -511,6 +512,7 @@ export function DataTable<TData, TValue>({
           </Table>
         </div>
       )}
+      {!isLoading && displayViewMode !== "table" && paginationControls}
     </div>
   );
 }

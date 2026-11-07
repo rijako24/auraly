@@ -125,6 +125,12 @@ La vista ofrece únicamente `Efectivo` y `Crédito`. `Efectivo` entra directamen
 
 La prevalidación masiva no reemplaza la validación transaccional. Cada pedido a crédito envía `OnlineSalesCreditTerms` al checkout de ventas existente, que vuelve a validar el saldo bajo bloqueo y genera la cuenta por cobrar por el canal canónico. No existe un writer ni una ruta de cartera específica para pedidos.
 
+Antes de la secuencia de emisión individual, `OrdersWorkspace` valida la selección
+completa una vez mediante `/orders/invoice/credit-validation`. La consulta agrupada
+pertenece al mismo propietario canónico de crédito; cada checkout conserva la
+validación transaccional del saldo. La regresión de navegador comprueba una
+prevalidación para todo el lote a crédito y ninguna para efectivo.
+
 El camino exitoso carga encabezados y líneas de toda la selección en una sola
 lectura acotada. Luego conserva la transacción independiente de cada pedido,
 pero reutiliza el borrador limpio que devuelve el checkout, el snapshot completo

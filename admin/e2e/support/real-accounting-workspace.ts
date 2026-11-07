@@ -5,14 +5,14 @@ import { proposedAccountingDate } from "../../src/lib/accounting-document-date";
 import { login } from "./auth";
 import type { AccountingAccount } from "../../src/services/api/accounting";
 
-export async function realAccountingContext(page: Page) {
+export async function realAccountingContext(page: Page, businessIdOverride?: string) {
   test.skip(process.env.AURALY_E2E_REAL_LOGIN !== "1", "Requiere la API local y una base aislada de pruebas.");
   for (const address of [test.info().project.use.baseURL, process.env.AURALY_API_URL]) {
     expect(address, "Esta prueba con escrituras requiere URLs locales explícitas.").toBeTruthy();
     expect(["127.0.0.1", "localhost"]).toContain(new URL(address!).hostname);
   }
   const tenantId = process.env.AURALY_E2E_TENANT_ID;
-  const businessId = process.env.AURALY_E2E_BUSINESS_ID;
+  const businessId = businessIdOverride ?? process.env.AURALY_E2E_BUSINESS_ID;
   expect(tenantId, "Indica el tenant de la base aislada en AURALY_E2E_TENANT_ID.").toBeTruthy();
   expect(businessId, "Indica la sede de la base aislada en AURALY_E2E_BUSINESS_ID.").toBeTruthy();
   const headers = { "X-Tenant-Id": tenantId!, "X-Business-Id": businessId! };

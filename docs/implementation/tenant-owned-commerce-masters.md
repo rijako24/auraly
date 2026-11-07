@@ -35,6 +35,13 @@ la página, después de cerrar la lectura SQL; no consulta Blob por producto.
 La identidad administrada obtiene una sola clave de delegación compartida y
 cacheada para firmar el lote. No se persisten firmas SAS ni URLs de otro ambiente.
 
+El listado administrativo de Productos incluye una sola portada activa por fila,
+seleccionada por imagen principal, orden e ID, sobre la página ya filtrada. El
+repositorio la incorpora en la misma consulta paginada y `ProductAdminService`
+resuelve sus referencias con ese mismo contrato por lote. Tabla, tarjetas y
+galería comparten datos, búsqueda y paginación; cambiar la vista no hace otra
+consulta. La preferencia visual se guarda por usuario y tenant en el navegador.
+
 `BusinessId` en un documento o proyección operativa indica dónde ocurrió la
 operación; no cambia la propiedad del maestro referenciado. Un canal pertenece
 al tenant y aplica automáticamente en todas sus sedes actuales y futuras.

@@ -115,7 +115,7 @@ public sealed partial class CatalogVerticalSliceTests
     {
         var (tax, _, _) = await ConfigureCatalogAsync();
         using var admin = fixture.CreateAdminClient(CatalogPermissionCodes.Create, CatalogPermissionCodes.Update,
-            CatalogPermissionCodes.Read, CatalogPermissionCodes.ManageCosts, CatalogPermissionCodes.ManagePrices, "sales.create");
+            CatalogPermissionCodes.Read, CatalogPermissionCodes.ManageCosts, CatalogPermissionCodes.ManagePrices, "sales.create", "products.read");
         var color = await CreateVariantOptionAsync(admin, "colors", "Azul");
         var size = await CreateVariantOptionAsync(admin, "sizes", "38 EU");
         var request = ProductRequest(tax, [new ProductPriceInput(12_500m)], []) with { Identifiers = [], Variant = new(color.Id, size.Id) };
@@ -138,7 +138,8 @@ public sealed partial class CatalogVerticalSliceTests
             {
                 ProductCode = product.ProductCode, Name = product.Name,
                 Link = product.ProductId == child.ProductId ? new(root.ProductId, false, null, false, null) : null,
-                Images = [new ProductImageInput(Guid.NewGuid(), null, $"products/{product.ProductId:N}/photo.png", null, 0, true)]
+                Images = [new ProductImageInput(Guid.NewGuid(), null, $"products/{product.ProductId:N}/secondary.png", null, 0, false),
+                    new ProductImageInput(Guid.NewGuid(), null, $"products/{product.ProductId:N}/photo.png", null, 10, true)]
             });
             photo.EnsureSuccessStatusCode();
         }
@@ -152,6 +153,11 @@ public sealed partial class CatalogVerticalSliceTests
         Assert.Equal(size.Name, item.Presentation.SizeName);
         Assert.Equal($"https://media.auraly.test/tenant/{fixture.TenantId:D}/products/{item.ProductId:N}/photo.png", item.ImageUrl);
         Assert.Equal(item.ImageUrl, item.Presentation.ImageUrl);
+        var productList = await admin.GetFromJsonAsync<Auraly.Platform.Application.Common.DTOs.PagedResponse<Auraly.Platform.Application.Identity.DTOs.ProductDto>>(
+            $"/api/v1/businesses/{fixture.BusinessId}/products?page=1&pageSize=1&search={Uri.EscapeDataString(child.Name)}");
+        var cardProduct = Assert.Single(productList!.Items);
+        Assert.Equal(child.ProductId, cardProduct.ProductId);
+        Assert.Equal($"https://media.auraly.test/tenant/{fixture.TenantId:D}/products/{child.ProductId:N}/photo.png", cardProduct.ImageUrl);
         using var nextResponse = await admin.PostAsJsonAsync("/api/commerce/v1/pos/catalog/products/search", browseRequest with { Skip = 1 });
         nextResponse.EnsureSuccessStatusCode();
         var next = (await nextResponse.Content.ReadFromJsonAsync<OnlineSalesProductPage>())!;

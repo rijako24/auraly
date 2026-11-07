@@ -7,6 +7,8 @@ import { ArrowLeft, BarChart3, ChevronDown, CircleDollarSign, Images, PackagePlu
 import { toast } from "sonner";
 
 import { ProductLearningSection } from "@/components/products/product-learning-section";
+import { ProductCover } from "@/components/products/product-cover";
+import { useProductViewPreference } from "@/components/products/product-view-preference";
 import { ProductCreateWorkspace, ProductFormSection } from "@/components/products/product-create-workspace";
 import { ProductOverview } from "@/components/products/product-overview";
 import { ProductRecipePanel, type ProductRecipeEditorHandle, type ProductCompositionDraft } from "@/components/products/product-recipe-panel";
@@ -52,6 +54,7 @@ import {
 import { productMerchandisingApi } from "@/services/api/product-merchandising";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { useCatalogDraft } from "@/hooks/use-catalog-draft";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { catalogDraftKey } from "@/lib/catalog-draft-store";
@@ -98,6 +101,8 @@ export default function ProductsPage() {
   const queryClient = useQueryClient();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const userId = useAuthStore((state) => state.user?.userId);
+  const tenantId = useTenantContextStore((state) => state.selectedTenantId);
+  const { viewMode, setViewMode } = useProductViewPreference(tenantId, userId);
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -428,6 +433,7 @@ export default function ProductsPage() {
       onClick={() => openDetails(product)}
       onKeyDown={(event) => handleCardKeyDown(event, product)}
     >
+      <ProductCover imageUrl={product.imageUrl} name={product.name}/>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="break-words font-semibold">{product.name}</h2>
@@ -468,6 +474,17 @@ export default function ProductsPage() {
       </div>
     </article>
   );
+
+  const renderProductGallery = (product: Product) => <article role="button" tabIndex={0} aria-label={`Ver ${product.name}`}
+    className="group cursor-pointer rounded-2xl border bg-card p-2 shadow-sm transition hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    onClick={() => openDetails(product)} onKeyDown={event => handleCardKeyDown(event, product)}>
+    <ProductCover imageUrl={product.imageUrl} name={product.name} gallery/>
+    <div className="space-y-1 p-2"><h2 className="line-clamp-2 min-h-10 text-sm font-semibold">{product.name}</h2>
+      <p className="truncate text-xs text-muted-foreground">{product.productCode ?? product.sku ?? product.reference}</p>
+      <p className="font-bold text-primary">{formatCurrency(product.unitPrice, product.currency || "COP")}</p>
+      {!product.isActive && <Badge variant="secondary">Inactivo</Badge>}
+    </div>
+  </article>;
 
   if(reportRows)return <div className="space-y-4"><Button variant="ghost" onClick={()=>setReportRows(null)}><ArrowLeft className="mr-2 h-4 w-4"/>Volver a productos</Button><ReportViewer onClose={()=>setReportRows(null)} title="Productos" description={`${reportRows.length.toLocaleString("es-CO")} productos · orden alfabético`} fileName="productos" rows={reportRows} columns={[{key:"code",label:"Código interno"},{key:"description",label:"Descripción"},{key:"price",label:"Precio público",align:"right",format:(value,row)=>formatCurrency(Number(value),String(row.currency||"COP"))}]}/></div>;
 
@@ -518,7 +535,7 @@ export default function ProductsPage() {
         <DataTable
           columns={columns}
           data={data?.items ?? []}
-          isLoading={isLoading}
+          isLoading={isLoading || viewMode === null}
           isSearching={isFetching}
           page={data?.page}
           pageSize={data?.pageSize}
@@ -531,6 +548,11 @@ export default function ProductsPage() {
           searchPlaceholder="Buscar por nombre o SKU en todos los productos..."
           enableRowSelection={false}
           cardRenderer={renderProductCard}
+          listRenderer={renderProductGallery}
+          listLayout="gallery"
+          viewMode={viewMode ?? "table"}
+          onViewModeChange={setViewMode}
+          showColumnToggle={false}
         />
       )}
 
