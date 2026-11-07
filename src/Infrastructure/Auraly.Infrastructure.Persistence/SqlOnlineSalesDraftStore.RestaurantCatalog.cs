@@ -26,27 +26,9 @@ public sealed partial class SqlOnlineSalesDraftStore
               AND account.Status=N'Open'
               AND (@CanOpenWithoutWaiter=1 OR waiter.PartyId IS NOT NULL);
 
-            SELECT category.ProductCategoryId,category.Name,
-                   COUNT(product.ProductId) ProductCount
-            FROM dbo.ProductCategories category
-            JOIN dbo.Products product
-              ON product.TenantId=category.TenantId
-             AND product.ProductCategoryId=category.ProductCategoryId
-             AND product.IsActive=1 AND product.IsIngredient=0
-            WHERE category.TenantId=@TenantId
-              AND category.IsActive=1 AND category.IsBrowsable=1
-              AND EXISTS(
-                SELECT 1 FROM dbo.ProductPrices price
-                WHERE price.BusinessId=@BusinessId
-                  AND price.ProductId=product.ProductId
-                  AND price.IsActive=1 AND (price.Amount>0 OR product.IsGenericProduct=1)
-                  AND price.ValidFrom<=SYSDATETIMEOFFSET()
-                  AND (price.ValidUntil IS NULL OR
-                       price.ValidUntil>SYSDATETIMEOFFSET()))
-            GROUP BY category.ProductCategoryId,category.Name,
-                     category.DisplayOrder
-            ORDER BY category.DisplayOrder,category.Name,
-                     category.ProductCategoryId;
+            SELECT ProductCategoryId,Name,ProductCount
+            FROM catalog.ActiveProductAreas(@TenantId)
+            ORDER BY DisplayOrder,Name,ProductCategoryId;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);

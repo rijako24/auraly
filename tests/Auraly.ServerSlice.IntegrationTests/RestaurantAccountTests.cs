@@ -85,6 +85,9 @@ public sealed class RestaurantAccountTests(ServerSliceFixture fixture)
                 IReadOnlyList<RestaurantMenuCategory>>(
                 $"/api/commerce/v1/restaurant/accounts/{account.AccountId}/categories");
             Assert.NotNull(categories);
+            var posAreas = await administrator.GetFromJsonAsync<List<Auraly.Contracts.Catalog.PosCatalogCategory>>(
+                "/api/commerce/v1/pos/catalog/categories");
+            Assert.Equal(posAreas!.Select(area => area.CategoryId), categories.Select(area => area.CategoryId));
             var seededProduct = products.Items.Single(
                 product => product.ProductId == fixture.ProductId);
             if (seededProduct.ProductCategoryId is { } categoryId)

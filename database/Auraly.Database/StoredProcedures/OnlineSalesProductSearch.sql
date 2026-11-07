@@ -65,6 +65,19 @@ BEGIN
     DECLARE @PageProducts TABLE(
       SortOrder INT NOT NULL PRIMARY KEY,ProductId UNIQUEIDENTIFIER NOT NULL,
       ProductPriceId UNIQUEIDENTIFIER NOT NULL);
+    DECLARE @CategoryFilter TABLE(ProductCategoryId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY);
+    IF @CategoryId IS NOT NULL
+    BEGIN
+      ;WITH CategoryTree AS (
+        SELECT ProductCategoryId FROM dbo.ProductCategories
+        WHERE TenantId=@TenantId AND ProductCategoryId=@CategoryId AND IsActive=1
+        UNION ALL
+        SELECT child.ProductCategoryId FROM dbo.ProductCategories child
+        JOIN CategoryTree parent ON child.ParentProductCategoryId=parent.ProductCategoryId
+        WHERE child.TenantId=@TenantId AND child.IsActive=1
+      )
+      INSERT @CategoryFilter SELECT ProductCategoryId FROM CategoryTree OPTION(MAXRECURSION 4);
+    END;
     ;WITH Ranked AS(
       SELECT ROW_NUMBER() OVER(ORDER BY CASE
                WHEN p.ProductCode=@Search OR p.Sku=@Search OR p.Reference=@Search OR EXISTS(
@@ -85,7 +98,7 @@ BEGIN
             WHERE family.TenantId=@TenantId AND family.ParentProductId=@FamilyRoot
               AND family.ChildProductId=p.ProductId AND family.IsActive=1)))) AND p.IsActive=1 AND p.IsIngredient=0
         AND (@ProductId IS NULL OR p.ProductId=@ProductId)
-        AND (@CategoryId IS NULL OR p.ProductCategoryId=@CategoryId)
+        AND (@CategoryId IS NULL OR p.ProductCategoryId IN(SELECT ProductCategoryId FROM @CategoryFilter))
         AND(@Search=N'' OR p.Name LIKE @Contains OR p.ProductCode LIKE @Prefix
           OR p.Sku LIKE @Prefix OR p.Reference LIKE @Prefix
           OR EXISTS(SELECT 1 FROM dbo.ProductBarcodes barcode

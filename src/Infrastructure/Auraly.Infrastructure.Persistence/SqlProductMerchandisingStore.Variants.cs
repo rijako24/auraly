@@ -11,9 +11,8 @@ public sealed partial class SqlProductMerchandisingStore
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
-            SELECT ProductCategoryId,Name FROM dbo.ProductCategories
-            WHERE TenantId=@TenantId AND IsActive=1 AND IsBrowsable=1
-              AND EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
+            SELECT ProductCategoryId,Name FROM catalog.ActiveProductAreas(@TenantId)
+            WHERE EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
             ORDER BY DisplayOrder,Name,ProductCategoryId;
             """, connection);
         command.Parameters.AddRange([P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId)]);

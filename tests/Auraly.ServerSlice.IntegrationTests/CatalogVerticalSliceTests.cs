@@ -441,6 +441,73 @@ public sealed partial class CatalogVerticalSliceTests(ServerSliceFixture fixture
     }
 
     [Fact]
+    public async Task Pos_areas_include_active_descendant_products_without_stock_or_branch_price_filters()
+    {
+        var area = Guid.NewGuid();
+        var line = Guid.NewGuid();
+        var group = Guid.NewGuid();
+        var subgroup = Guid.NewGuid();
+        var empty = Guid.NewGuid();
+        var oldCategory = await ScalarAsync<string>(
+            "SELECT COALESCE(CONVERT(varchar(36),ProductCategoryId),'') FROM dbo.Products WHERE ProductId=@Product;",
+            new SqlParameter("@Product", fixture.ProductId));
+        var priceId = await ScalarAsync<Guid>(
+            "SELECT ProductPriceId FROM dbo.ProductPrices WHERE BusinessId=@Business AND ProductId=@Product AND IsActive=1;",
+            new SqlParameter("@Business", fixture.BusinessId), new SqlParameter("@Product", fixture.ProductId));
+        await ExecuteAsync("""
+            INSERT dbo.ProductCategories(ProductCategoryId,TenantId,ParentProductCategoryId,Name,DisplayOrder,IsActive,IsBrowsable,CreatedAt)
+            VALUES(@Area,@Tenant,NULL,N'Área POS descendientes',0,1,0,SYSUTCDATETIME()),
+                  (@Line,@Tenant,@Area,N'Línea POS descendientes',0,1,0,SYSUTCDATETIME()),
+                  (@Group,@Tenant,@Line,N'Grupo POS descendientes',0,1,0,SYSUTCDATETIME()),
+                  (@Subgroup,@Tenant,@Group,N'Subgrupo POS descendientes',0,1,0,SYSUTCDATETIME()),
+                  (@Empty,@Tenant,NULL,N'Área POS vacía',0,1,1,SYSUTCDATETIME());
+            UPDATE dbo.Products SET ProductCategoryId=@Subgroup WHERE ProductId=@Product AND TenantId=@Tenant;
+            """, new SqlParameter("@Area", area), new SqlParameter("@Line", line),
+            new SqlParameter("@Group", group), new SqlParameter("@Subgroup", subgroup),
+            new SqlParameter("@Empty", empty), new SqlParameter("@Tenant", fixture.TenantId),
+            new SqlParameter("@Product", fixture.ProductId));
+        try
+        {
+            using var client = fixture.CreateAdminClient("sales.create");
+            var areas = (await client.GetFromJsonAsync<List<PosCatalogCategory>>("/api/commerce/v1/pos/catalog/categories"))!;
+            Assert.Contains(areas, item => item.CategoryId == area);
+            Assert.DoesNotContain(areas, item => new[] { line, group, subgroup, empty }.Contains(item.CategoryId));
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT ProductCount FROM catalog.ActiveProductAreas(@Tenant) WHERE ProductCategoryId=@Area;",
+                new SqlParameter("@Tenant", fixture.TenantId), new SqlParameter("@Area", area)));
+            Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM catalog.ActiveProductAreas(@Tenant);",
+                new SqlParameter("@Tenant", Guid.NewGuid())));
+            using var search = await client.PostAsJsonAsync("/api/commerce/v1/pos/drafts/products/search",
+                new Auraly.Contracts.Sales.SearchOnlineSalesRequest(
+                    new(fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId), "P-E2E", 0, 20, CategoryId: area));
+            search.EnsureSuccessStatusCode();
+            var page = (await search.Content.ReadFromJsonAsync<Auraly.Contracts.Sales.OnlineSalesProductPage>())!;
+            Assert.Contains(page.Items, item => item.ProductId == fixture.ProductId);
+            await ExecuteAsync("UPDATE dbo.ProductPrices SET IsActive=0 WHERE ProductPriceId=@Price;",
+                new SqlParameter("@Price", priceId));
+            areas = (await client.GetFromJsonAsync<List<PosCatalogCategory>>("/api/commerce/v1/pos/catalog/categories"))!;
+            Assert.Contains(areas, item => item.CategoryId == area);
+            await ExecuteAsync("UPDATE dbo.Products SET IsActive=0 WHERE ProductId=@Product;", new SqlParameter("@Product", fixture.ProductId));
+            areas = (await client.GetFromJsonAsync<List<PosCatalogCategory>>("/api/commerce/v1/pos/catalog/categories"))!;
+            Assert.DoesNotContain(areas, item => item.CategoryId == area);
+            await ExecuteAsync("UPDATE dbo.Products SET IsActive=1 WHERE ProductId=@Product;", new SqlParameter("@Product", fixture.ProductId));
+            await ExecuteAsync("UPDATE dbo.ProductCategories SET IsActive=0 WHERE ProductCategoryId=@Area;", new SqlParameter("@Area", area));
+            areas = (await client.GetFromJsonAsync<List<PosCatalogCategory>>("/api/commerce/v1/pos/catalog/categories"))!;
+            Assert.DoesNotContain(areas, item => item.CategoryId == area);
+        }
+        finally
+        {
+            await ExecuteAsync("""
+                UPDATE dbo.Products SET ProductCategoryId=TRY_CONVERT(uniqueidentifier,NULLIF(@Old,'')),IsActive=1 WHERE ProductId=@Product;
+                UPDATE dbo.ProductPrices SET IsActive=1 WHERE ProductPriceId=@Price;
+                DELETE dbo.ProductCategories WHERE ProductCategoryId IN(@Area,@Line,@Group,@Subgroup,@Empty);
+                """, new SqlParameter("@Old", oldCategory), new SqlParameter("@Product", fixture.ProductId), new SqlParameter("@Price", priceId),
+                new SqlParameter("@Area", area), new SqlParameter("@Line", line), new SqlParameter("@Group", group),
+                new SqlParameter("@Subgroup", subgroup), new SqlParameter("@Empty", empty));
+        }
+    }
+
+    [Fact]
     public async Task Product_creation_provisions_initial_unit_cost_without_inventory_value()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();

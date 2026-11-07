@@ -190,6 +190,8 @@ El mismo `ProductId` y el mismo inventario sirven a ambos modos; nunca se duplic
 
 **Para llevar no ocupa una mesa ficticia.** Una acción propia en el POS restaurante abre una orden online numerada por sede, con `TableId` nulo y el modo `Takeaway`. Comparte catálogo, captura, comanda opcional, cobros, WorkSession y emisión única de factura con restaurante; la sesión pertenece al cajero conectado. Un producto que requiere preparación conserva su ruta y comanda; un producto sin estación pasa directamente al cobro. La factura se crea una sola vez al completar los pagos y conserva mesa nula. El precio actual se aplica a las cuentas abiertas desde el plano, y el canal elegido para llevar solo a órdenes de ese modo. La venta directa actual y sus tenants conservan sus precios y contratos. Esta ampliación necesita su propio borrador/ticket online y pruebas de regresión antes de habilitarse; no se improvisa con la tabla de mesas ni se simula desde la pantalla de venta directa.
 
+Las pestañas de categorías del POS representan las **áreas activas del tenant con productos activos vendibles**, incluidos los clasificados en sus líneas, grupos o subgrupos. No hay una lista fija de nombres ni filtro por existencias o por sede para decidir qué áreas aparecen. `catalog.ActiveProductAreas` es la consulta compartida por restaurante y tiendas; los precios y la validación de venta conservan su contexto de sede. Al elegir un área, el buscador canónico incluye sus descendientes antes de paginar. `IsBrowsable` sigue gobernando el menú público; no oculta estas áreas internas del POS.
+
 ## 4. Estudio de salón: editor personalizable
 
 ### Inicio y composición
