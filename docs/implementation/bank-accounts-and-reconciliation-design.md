@@ -63,6 +63,15 @@ masiva del fixture tiene timeout independiente; no se amplió el presupuesto de
 las consultas ni los timeouts de la aplicación. Esta evidencia local no reemplaza
 el ensayo de migración ni declara publicada esta versión.
 
+El segundo ensayo físico de producción en DEV terminó el 7 de noviembre con
+el release inmutable `0.1.0-rc284`: se conservaron los 41 conjuntos protegidos,
+1.957 obligaciones y las 531 partidas originales del auxiliar compartido.
+Los recaudos de prueba usaron los auxiliares nuevos `11100501` y `11100502`,
+sin duplicación al repetir el comando. Las diez líneas históricas sin atribución
+probada permanecen intactas y bloquean esa conciliación bancaria histórica.
+La base temporal se eliminó después de la aceptación. El detalle de cartera y
+pruebas de pantalla pertenece a `accounting-operational-design.md`.
+
 > **Ampliación de diseño 2026-10-20, en implementación local, sin autorizar despliegue:**
 > la sección final sustituye el vínculo de un banco a un solo auxiliar por varios
 > auxiliares configurados. Las autorizaciones y evidencias siguientes pertenecen

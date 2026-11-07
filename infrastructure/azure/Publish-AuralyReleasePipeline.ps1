@@ -694,36 +694,14 @@ function Publish-Api {
     & az webapp config set --resource-group $configuration.ResourceGroup `
         --name $configuration.Api --startup-file 'if [ -f /home/site/wwwroot/start-api.sh ]; then exec bash /home/site/wwwroot/start-api.sh; else exec dotnet /home/site/wwwroot/Auraly.Api.dll; fi' --output none
     Assert-LastExitCode 'No se pudo configurar el runtime PDF de la API'
-    & az webapp deploy `
-        --resource-group $configuration.ResourceGroup `
-        --name $configuration.Api `
-        --src-path $zip `
-        --type zip `
-        --restart true `
-        --clean true `
-        --output none
-    $deployExitCode = $LASTEXITCODE
-    if ($deployExitCode -ne 0) {
-        $deploymentLog = & az webapp log deployment show `
-            --resource-group $configuration.ResourceGroup `
-            --name $configuration.Api `
-            --query "[-1].message" `
-            --output tsv 2>$null
-        if ($LASTEXITCODE -ne 0 -or "$deploymentLog" -notmatch 'Deployment successful') {
-            throw "El despliegue de API fallo y Kudu no confirmo exito (codigo $deployExitCode)."
-        }
-        Write-Warning 'Azure CLI perdio el seguimiento, pero Kudu confirmo Deployment successful.'
-    }
     & az webapp config appsettings set `
         --resource-group $configuration.ResourceGroup `
         --name $configuration.Api `
         --settings "Release__Version=$ReleaseVersion" `
         --output none
     Assert-LastExitCode 'No se pudo registrar Release__Version en API'
-    if ($productionDatabaseCutover) {
-        & az webapp start --resource-group $configuration.ResourceGroup --name $configuration.Api --output none
-        Assert-LastExitCode 'No se pudo iniciar la API nueva después del corte de base de datos'
-    }
+    & (Join-Path $PSScriptRoot 'Publish-AuralyApiPackage.ps1') `
+        -ResourceGroup $configuration.ResourceGroup -AppName $configuration.Api -PackagePath $zip
 }
 
 function Publish-PosInstallerIfPresent {

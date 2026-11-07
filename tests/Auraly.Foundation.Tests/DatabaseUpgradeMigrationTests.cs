@@ -15,7 +15,7 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.True(cutover >= 0 && stopApi > cutover && stopWorker > stopApi && stopped > stopWorker && publish > stopped);
         Assert.Contains("$Environment -eq 'prod' -and $selectedComponents -contains 'database'", pipeline, StringComparison.Ordinal);
         Assert.Contains("$selectedComponents -notcontains 'api' -or $selectedComponents -notcontains 'function'", pipeline, StringComparison.Ordinal);
-        Assert.Contains("az webapp start", pipeline, StringComparison.Ordinal);
+        Assert.Contains("Publish-AuralyApiPackage.ps1", pipeline, StringComparison.Ordinal);
         Assert.Contains("az functionapp start", pipeline, StringComparison.Ordinal);
     }
 

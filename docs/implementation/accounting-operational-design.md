@@ -163,7 +163,7 @@ old binaries. Six isolated command simulations cover DEV, complete production
 scope, API-only scope, missing worker, failed stop and an unconfirmed stopped
 state. These tests do not perform or authorize a production cutover.
 
-The physical-copy production rehearsal on 2026-11-07 UTC did not complete.
+The first physical-copy production rehearsal on 2026-11-07 UTC did not complete.
 The canonical bank migration rejected two banks sharing legacy auxiliary
 `111005`, with posted history for both. This is the explicit-reconciliation
 case described in section 13.8 of `accounting-open-vouchers-design.md`; choosing
@@ -183,6 +183,32 @@ projection reproduced the full original sales-line fingerprint, proving the
 other captured fields unchanged. This is evidence of a backfill defect, not
 permission to overwrite historical snapshots. No production writes or runtime
 functional acceptance were performed by this rehearsal.
+
+The second rehearsal on a fresh physical production copy in DEV completed on
+2026-11-07 UTC using immutable release `0.1.0-rc284`. All 35 pre-migrations and
+the DACPAC with production seed mode completed without table/column drops.
+The 41 protected data sets reconciled. All 815 original receivables and 1,142
+payables retained their amounts/statuses; all 1,368 fully paid positions remained
+paid. Browser tests then checked every original obligation through the API,
+paid/open screens, financial statements, cash customer collection, supplier
+payment, idempotent replay and bank collections through new auxiliaries
+`11100501`/`11100502`. A receipt sale from the POS reduced original stock by one
+and produced a balanced entry. Final reconciliation allowed only those explicit
+test effects; all 531 original shared-bank journal lines retained their exact
+original-column fingerprint. The legacy nullable payable functional-outstanding
+column is preserved, not treated as the live balance.
+
+Ten historical shared-bank lines lack provable bank attribution (seven account
+adjustments and three work-session reconciliations). They remain intact in the
+general ledger; historical bank reconciliation stays explicitly blocked until
+attribution is resolved, as required by the bank owner design. The temporary DEV
+database and its isolated runtime were removed after acceptance. This rehearsal
+performed no production writes or deployment. Actual production image upload/read
+was deferred by the user; the production release still must pass its canonical
+image-copy preflight. The later database change only covers the existing barcode
+index; post-deploy scripts and financial model remain equivalent to the rehearsed
+release, and that index was separately measured on the copy in a rolled-back
+transaction.
 
 ### Portfolio payments and manual vouchers share their acceptance
 

@@ -3,6 +3,32 @@ namespace Auraly.Foundation.Tests;
 public sealed class ReleasePackagingTests
 {
     [Fact]
+    public void Api_publication_stops_the_old_process_and_waits_for_extraction_before_starting()
+    {
+        var root = FindRepositoryRoot();
+        var script = File.ReadAllText(Path.Combine(root, "infrastructure", "azure", "Publish-AuralyApiPackage.ps1"));
+        var stop = script.IndexOf("az webapp stop", StringComparison.Ordinal);
+        var verify = script.IndexOf(".Trim() -ne 'Stopped'", StringComparison.Ordinal);
+        var deploy = script.IndexOf("az webapp deploy", StringComparison.Ordinal);
+        var failure = script.IndexOf("if ($LASTEXITCODE -ne 0)", deploy, StringComparison.Ordinal);
+        var start = script.IndexOf("az webapp start", StringComparison.Ordinal);
+        Assert.True(stop >= 0 && verify > stop && deploy > verify && failure > deploy && start > failure);
+        Assert.Contains("--restart false", script, StringComparison.Ordinal);
+        Assert.Contains("--async false --track-status false", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("finally", script, StringComparison.Ordinal);
+        foreach (var caller in new[]
+                 {
+                     Path.Combine(root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"),
+                     Path.Combine(root, ".github", "workflows", "deploy-dev-api-quick.yml")
+                 })
+        {
+            var source = File.ReadAllText(caller);
+            Assert.Contains("Publish-AuralyApiPackage.ps1", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("az webapp deploy", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void Release_zip_uses_a_commit_specific_reproducible_timestamp()
     {
         var script = File.ReadAllText(Path.Combine(
