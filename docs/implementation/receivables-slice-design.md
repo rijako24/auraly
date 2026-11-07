@@ -74,11 +74,24 @@ del servidor. El combo de filtro consulta directamente el directorio paginado de
 sedes activas: incluye sedes sin cartera y nunca se alimenta de la página de
 obligaciones.
 
-La consulta admite filtro por `PartySiteId` y búsqueda por nombre o código de
-sede, siempre paginada y con una sola consulta. El detalle devuelve ambos IDs y
+La lista de obligaciones admite filtro por `PartySiteId` y búsqueda por nombre
+o código de sede, siempre paginada y con dos comandos SQL. El primero materializa
+una sola vez las claves, importes y vencimientos filtrados para calcular los
+agregados; evita expandir los mismos joins de tercero y sede al sumar pagos. El
+segundo pagina las obligaciones antes de enriquecer los pagos de esa página.
+Ambos reutilizan `accounting.PortfolioAppliedAmounts`; no guardan otro saldo ni
+alteran aplicaciones, transacciones o asientos. El tab Clientes mantiene su
+consulta agrupada independiente. El detalle devuelve ambos IDs y
 el nombre visible. El documento fuente conserva el snapshot histórico; la
 cartera puede unir la `PartySite` actual para mostrar su nombre vigente, incluso
 si fue desactivada.
+
+La regresión local del 7 de noviembre de 2026 conserva 10.000 pagos y sus
+desaplicaciones, 20 muestras por camino y el presupuesto p95 de dos segundos.
+La primera y segunda página de CxC midieron 484,3 y 377,8 ms; los informes antes
+y después de desaplicar permanecieron por debajo de 494 ms. Los dos casos de
+CxC/CxP pasaron sin cambiar importes esperados, viajes SQL ni presupuestos. Son
+mediciones de la base aislada de pruebas, no un p95 medido en producción.
 
 ### Cupo, plazo y recaudo
 

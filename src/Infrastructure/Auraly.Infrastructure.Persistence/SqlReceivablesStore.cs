@@ -124,22 +124,24 @@ public sealed partial class SqlReceivablesStore(
             """;
         int count; decimal outstanding; decimal overdue; decimal original; decimal paidTotal;
         await using (var command = new SqlCommand($"""
-            WITH Filtered AS (
-              SELECT r.ReceivableId,r.OutstandingAmount,r.DueDate,r.OriginalAmount
+            SELECT r.ReceivableId,r.OutstandingAmount,r.DueDate,r.OriginalAmount
+            INTO #FilteredReceivables
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
             INNER JOIN dbo.Parties p ON p.PartyId=COALESCE(c.PartyId,r.PartyId)
             LEFT JOIN dbo.PartySites site ON site.PartySiteId=r.PartySiteId
-              WHERE {where}),
-            Paid AS (SELECT application.PositionId ReceivableId,SUM(application.Amount) PaidAmount
+            WHERE {where};
+            CREATE UNIQUE CLUSTERED INDEX IX_FilteredReceivables
+              ON #FilteredReceivables(ReceivableId);
+            WITH Paid AS (SELECT application.PositionId ReceivableId,SUM(application.Amount) PaidAmount
               FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Receivable') application
-              JOIN Filtered scoped ON scoped.ReceivableId=application.PositionId
+              JOIN #FilteredReceivables scoped ON scoped.ReceivableId=application.PositionId
               GROUP BY application.PositionId)
             SELECT COUNT(*),COALESCE(SUM(r.OutstandingAmount),0),
               COALESCE(SUM(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now
                 THEN r.OutstandingAmount ELSE 0 END),0),
               COALESCE(SUM(r.OriginalAmount),0),COALESCE(SUM(COALESCE(paid.PaidAmount,0)),0)
-            FROM Filtered r LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId;
+            FROM #FilteredReceivables r LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId;
             """, connection))
         {
             AddQuery(command, user, query, timeProvider.GetUtcNow());
