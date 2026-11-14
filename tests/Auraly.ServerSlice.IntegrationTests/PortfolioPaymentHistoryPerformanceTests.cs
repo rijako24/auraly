@@ -280,9 +280,17 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         foreach (var scenario in reportScenarios)
         {
             var samples = new List<double>();
+            await using var diagnosticCommand = new SqlCommand { Connection = connection };
             for (var sample = 0; sample <= 20; sample++)
             {
-                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                    beforeExecute: command =>
+                    {
+                        // Capture only the warmup in memory. Profiling a failed
+                        // read runs after all measured samples, never inside them.
+                        if (sample == 0 && command.CommandText.Contains("INTO #Report", StringComparison.Ordinal))
+                            CaptureReadCommand(command, diagnosticCommand);
+                    });
                 var timer = Stopwatch.StartNew();
                 var pageNumber = scenario.EndsWith('2') ? 2 : 1;
                 if (scenario.StartsWith("invoices"))
@@ -351,6 +359,11 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             }
             var p95 = samples.Order().ElementAt(18);
             output.WriteLine("{0} applied totals: {1}, p95={2:F1}ms; SQL={3}; 10000 payments/unapplications; 20 samples", position, scenario, p95, scenario.StartsWith("invoices")?3:2);
+            if (p95 >= 1000)
+            {
+                try { await CaptureReportFailureAsync(diagnosticCommand); }
+                catch (Exception diagnostic) { output.WriteLine($"Report diagnostics unavailable: {diagnostic.Message}"); }
+            }
             Assert.True(p95 < 1000, $"Applied totals exceeded their budget: {position}, {scenario}, p95 {p95:F1}ms.");
         }
         // The complete-export guard runs after the timed reads and must reject

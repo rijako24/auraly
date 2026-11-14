@@ -36,6 +36,24 @@ jobs:
         run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Isolation!=FreshProcess"
       - name: Run receipt latency in a fresh test process
         run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Isolation=FreshProcess"
+      - name: Collect failed SQL query plans
+        if: failure()
+        shell: pwsh
+        run: |
+          $diagnostics = Join-Path $env:RUNNER_TEMP 'sql-diagnostics'
+          New-Item -ItemType Directory -Path $diagnostics -Force | Out-Null
+          Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Filter 'auraly-*.sqlplan' -File |
+            Copy-Item -Destination $diagnostics
+      - name: Retain failed SQL diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: backend-sql-diagnostics-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sql-diagnostics
+            tests/Auraly.ServerSlice.IntegrationTests/bin/Release/net8.0/TestResults/portfolio-*-failure-*/**
+          retention-days: 7
+          if-no-files-found: ignore
 
   invoice-pdf-linux:
     runs-on: ubuntu-latest
