@@ -165,7 +165,7 @@ public sealed partial class PortfolioManualAdvanceTests
         using (var active = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
             new ActivateAccountingRequest(new(2026,1,1),"COP","ZeroDeclared")))
             Assert.True(active.IsSuccessStatusCode,await active.Content.ReadAsStringAsync());
-        var party = supplier ? fixture.SupplierPartyId : await CreateCustomerPartyAsync(true);
+        var party = supplier ? await CreateSelectionSupplierPartyAsync() : await CreateCustomerPartyAsync(true);
         var cash = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture,client);
         var advance = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture,client,
             supplier ? "1394" : "2394",supplier ? "Asset" : "Liability",supplier ? "SupplierAdvance" : "CustomerAdvance",supplier ? "Debit" : "Credit");
@@ -317,6 +317,7 @@ public sealed partial class PortfolioManualAdvanceTests
                 new("All",1,50,PartyId:party,VoucherTypeCode:paidType,EffectiveOn:new(2026,9,11)),default);
             Assert.Equal(1,reads.Count);
             Assert.Equal(new DateOnly(2027,9,11),positions.ReferenceDate);
+            Assert.Equal(2,positions.TotalCount);
             var invoiceRow = Assert.Single(positions.Items.Where(item => item.SubledgerId==receivable));
             Assert.Equal(1_000m,invoiceRow.OriginalAmount);
             Assert.Equal(100m,invoiceRow.PaidAmount);

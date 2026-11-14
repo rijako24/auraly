@@ -3,6 +3,29 @@ namespace Auraly.Foundation.Tests;
 public sealed class ReleasePackagingTests
 {
     [Fact]
+    public void Admin_contract_changes_do_not_publish_independently_on_push()
+    {
+        var workflow = File.ReadAllText(Path.Combine(FindRepositoryRoot(), ".github", "workflows",
+            "azure-static-web-apps-auraly.yml"));
+        Assert.DoesNotContain("\n  push:", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("github.event_name == 'push'", workflow, StringComparison.Ordinal);
+        Assert.Contains("workflow_dispatch:", workflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ci_and_release_run_the_receipt_benchmark_separately_without_omitting_tests()
+    {
+        var root = FindRepositoryRoot();
+        foreach (var path in new[] { Path.Combine(root, ".github", "workflows", "quality.yml"),
+                     Path.Combine(root, "infrastructure", "azure", "New-AuralyRelease.ps1") })
+        {
+            var source = File.ReadAllText(path);
+            Assert.Contains("Performance!=ManualPortfolioAcceptance", source, StringComparison.Ordinal);
+            Assert.Contains("Performance=ManualPortfolioAcceptance", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void Api_publication_stops_the_old_process_and_waits_for_extraction_before_starting()
     {
         var root = FindRepositoryRoot();
