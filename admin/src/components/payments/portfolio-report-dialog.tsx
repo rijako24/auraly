@@ -18,22 +18,21 @@ import { tenantsApi } from "@/services/api/tenants";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { formatCurrency } from "@/lib/utils";
-import { buildPortfolioReportExport, portfolioReportDate as formatDate } from "@/lib/portfolio-report-export";
+import { buildPortfolioReportExport, groupPortfolioReportRows, portfolioAgingBands, portfolioAgingBandLabel, portfolioReportDate as formatDate } from "@/lib/portfolio-report-export";
 import { proposedAccountingDate } from "@/lib/accounting-document-date";
 
 type Direction = "receivable" | "payable";
 type ReportMode = "detail" | "summary";
 type Row = ReceivablesReportItem | PayablesReportItem;
 type AgingAmounts = Pick<Row, "notDueAmount" | "overdue1To30Amount" | "overdue31To60Amount" | "overdue61To90Amount" | "overdueOver90Amount">;
-const ageBands = [
-  { key: "notDueAmount", label: "Al día" },
-  { key: "overdue1To30Amount", label: "1–30 días" },
-  { key: "overdue31To60Amount", label: "31–60 días" },
-  { key: "overdue61To90Amount", label: "61–90 días" },
-  { key: "overdueOver90Amount", label: "Más de 90 días" },
-] as const;
+const ageBands = portfolioAgingBands.map(([key,label,code,backgroundColor,color])=>({key,label,code,backgroundColor,color}));
 function ageLabel(amounts: AgingAmounts) {
-  return ageBands.find(band => amounts[band.key] > 0)?.label ?? "Sin saldo";
+  const band=ageBands.find(band => amounts[band.key] > 0);
+  return band ? portfolioAgingBandLabel(band.code) : "Sin saldo";
+}
+function ageStyle(amounts: AgingAmounts) {
+  const band=ageBands.find(band => amounts[band.key] > 0);
+  return band ? {backgroundColor:band.backgroundColor,color:band.color} : undefined;
 }
 type Props = {
   direction: Direction;
@@ -211,14 +210,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
     setCriteria(draft); setPage(1); setFilterError(null); setPrintHtml(null);
   }
 
-  const grouped = new Map<string, Row[]>();
-  if (mode === "detail") for (const item of items) {
-    const partyId = "customerId" in item ? item.customerId ?? item.partyId : item.supplierId;
-    const key = `${partyId}:${item.partySiteId}:${item.currencyCode}`;
-    const group = grouped.get(key) ?? [];
-    group.push(item);
-    grouped.set(key, group);
-  }
+  const grouped = groupPortfolioReportRows(mode === "detail" ? items : []);
 
   return <Dialog open onOpenChange={open => !open && onClose()}>
     <DialogContent className="flex h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] flex-col overflow-hidden p-0">
@@ -240,7 +232,9 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
           Mostrar detalle de {direction === "receivable" ? "abonos" : "pagos"}</label>}
         <label className="flex items-center gap-2 text-sm">Corte <span className="w-56"><DatePicker today={localToday} value={cutoff}
           onChange={value => { setCutoff(value); setPage(1); }} /></span></label>
-        <span className="ml-auto text-sm text-muted-foreground">{totalCount.toLocaleString("es-CO")} {mode === "detail" ? totalCount===1 ? "registro" : "registros" : totalCount===1 ? "grupo" : "grupos"}</span>
+        <span className="ml-auto text-sm text-muted-foreground">{mode === "detail" && report.data && "totalInvoiceCount" in report.data
+          ? `${report.data.totalInvoiceCount.toLocaleString("es-CO")} facturas en el filtro`
+          : `${totalCount.toLocaleString("es-CO")} ${mode === "detail" ? "registros" : "grupos"}`}</span>
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-white p-5 text-slate-950">
         {direction === "receivable" && <details className="rounded-xl border p-3">
@@ -287,7 +281,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
           <section className="rounded-xl border border-teal-100 bg-teal-50/50 p-4" aria-label="Edades de cartera">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-1"><h3 className="font-semibold text-teal-950">Edades de cartera</h3><p className="text-xs text-slate-600">Saldo pendiente a la fecha de corte · todos los documentos filtrados</p></div>
             {currencyTotals.map(total => <div key={total.currencyCode} className="mb-2 last:mb-0"><p className="mb-1 text-xs font-semibold text-teal-800">{total.currencyCode}</p><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-              {ageBands.map(band => <div key={band.key} className="rounded-lg border bg-white p-2"><span className="block text-xs text-slate-600">{band.label}</span><strong className="text-sm tabular-nums">{formatCurrency(total[band.key],total.currencyCode)}</strong></div>)}
+              {ageBands.map(band => <div key={band.key} className="rounded-lg p-2" style={{backgroundColor:band.backgroundColor,color:band.color}}><span className="block text-xs">{band.label}</span><strong className="text-sm tabular-nums">{formatCurrency(total[band.key],total.currencyCode)}</strong></div>)}
             </div></div>)}
           </section>
           {mode === "detail" ? <div className="space-y-5">
@@ -312,31 +306,39 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
                 {sortDirection === "asc" ? "Ascendente" : "Descendente"}
               </Button>}
             </div>
-            {Array.from(grouped.entries()).map(([key, group]) => {
-              const first = group[0];
+            {Array.from(grouped.entries()).map(([partyKey, sites]) => {
+              const first: Row = sites.values().next().value![0];
               const name = "customerName" in first ? first.customerName : first.supplierName;
               const employee = "customerId" in first && !first.customerId && !!first.partyId;
-              return <section key={key} className="overflow-hidden rounded-xl border">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-teal-50 px-4 py-3">
-                  <div><p className="text-[11px] font-semibold uppercase tracking-wide text-teal-700">{employee ? "Tercero" : direction === "receivable" ? "Cliente" : "Proveedor"}{!employee && ` · ${first.partySiteName ?? "Sin sede identificada"}`}</p><h3 className="text-base font-semibold text-teal-950">{name}</h3><p className="text-xs text-slate-600">Identificación {first.identification}</p></div>
-                  <span className="text-xs font-medium text-teal-800">{group.length} {group.length === 1 ? "registro" : "registros"} en esta página · {first.currencyCode}</span>
+              return <section key={partyKey} aria-label={name} className="overflow-hidden rounded-xl border-2 border-teal-700/30">
+                <header className="border-b bg-teal-800 px-4 py-4 text-white">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-teal-100">{employee ? "Tercero" : direction === "receivable" ? "Cliente" : "Proveedor"}</p>
+                  <h3 className="mt-1 text-xl font-bold">{name}</h3><p className="mt-1 text-sm">Identificación {first.identification}</p>
+                </header>
+                {Array.from(sites.entries()).map(([key, group]) => {
+                  const first: Row = group[0];
+                  const invoices = group.filter((item: Row) => !("customerId" in item && item.isCreditBalance));
+                  return <div key={key} className="border-b last:border-b-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-teal-50 px-4 py-3">
+                  <p className="text-sm font-semibold text-teal-950">{first.partySiteName ?? "Sin sede identificada"} · {first.currencyCode}</p>
+                  <span className="text-xs text-slate-600">{invoices.length}{"customerId" in first && first.groupTotals ? ` de ${first.groupTotals.invoiceCount}` : ""} {invoices.length === 1 ? "factura" : "facturas"} en esta página</span>
                   {"customerId" in first && <div className="w-full text-xs text-slate-600">
                     {first.legalName && first.legalName !== name && <p>Razón social: {first.legalName}</p>}
                     {[first.address,first.city,first.phone && `Tel. ${first.phone}`,first.email].filter(Boolean).join(" · ")}
                     <p>Cupo vigente: {first.creditLimit == null ? "Sin cupo definido" : formatCurrency(first.creditLimit,first.currencyCode)}</p>
                   </div>}
                 </div>
-                <div className="overflow-x-auto"><table className={`w-full ${direction === "receivable" ? "min-w-[1320px]" : "min-w-[1020px]"} text-sm`}>
+                {invoices.length > 0 ? <div className="overflow-x-auto"><table className={`w-full ${direction === "receivable" ? "min-w-[1320px]" : "min-w-[1020px]"} text-sm`}>
                   <thead className="bg-slate-50 text-left"><tr>
                     <th className="p-3">Documento</th><th className="p-3">Emisión</th><th className="p-3">Vencimiento</th>
                     {direction === "receivable" && <><th className="p-3 text-right">Plazo (días)</th><th className="p-3 text-right">Edad (días)</th><th className="p-3 text-right">Mora (días)</th></>}
                     <th className="p-3 text-right">Original</th><th className="p-3 text-right">{direction === "receivable" ? "Abonado" : "Pagado"}</th>
-                    <th className="p-3 text-right">Notas y ajustes</th><th className="p-3 text-right">Saldo pendiente</th><th className="p-3">Tramo</th>
+                    <th className="p-3 text-right">Notas y ajustes</th><th className="p-3 text-right">Saldo pendiente</th><th className="p-3">Edad de cartera</th>
                   </tr></thead>
-                  {group.map(item => <tbody key={("receivableId" in item ? item.receivableId : item.payableId) ?? item.documentNumber}>
+                  {invoices.map((item: Row) => <tbody key={("receivableId" in item ? item.receivableId : item.payableId) ?? item.documentNumber}>
                     <tr className="border-t">
                       <td className="p-3 font-semibold">{item.documentNumber ?? "Sin número"}
-                        {"customerId" in item && item.isCreditBalance && <CreditSummary {...item} currency={item.currencyCode}/>}</td>
+                        {"customerId" in item && item.internalDocumentNumber && <span className="mt-1 block text-xs font-normal text-slate-600">Referencia interna: {item.internalDocumentNumber}</span>}</td>
                       <td className="p-3 whitespace-nowrap">{item.issuedAt ? formatDate(item.issuedAt) : "—"}</td>
                       <td className="p-3 whitespace-nowrap">{item.dueDate ? formatDate(item.dueDate) : "—"}</td>
                       {"customerId" in item && <><td className="p-3 text-right tabular-nums">{item.termDays ?? "—"}</td><td className="p-3 text-right tabular-nums">{item.ageDays ?? "—"}</td><td className={`p-3 text-right tabular-nums ${(item.daysPastDue ?? 0) > 0 && item.outstandingAmount > 0 ? "font-semibold text-red-700" : ""}`}>{item.daysPastDue ?? "—"}</td></>}
@@ -344,7 +346,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
                       <td className="p-3 text-right tabular-nums">{formatCurrency(item.paidAmount,item.currencyCode,4)}</td>
                       <td className="p-3 text-right tabular-nums">{formatCurrency(item.otherImpact,item.currencyCode,4)}</td>
                       <td className="p-3 text-right font-semibold tabular-nums">{formatCurrency(item.outstandingAmount,item.currencyCode,4)}</td>
-                      <td className="p-3 whitespace-nowrap">{ageLabel(item)}</td>
+                      <td className="p-3 whitespace-nowrap"><span className="rounded-md px-2 py-1 text-xs font-semibold" style={ageStyle(item)}>{ageLabel(item)}</span></td>
                     </tr>
                     {includeApplications && !("customerId" in item && item.isCreditBalance) && <tr><td colSpan={direction === "receivable" ? 11 : 8} className="border-t bg-slate-50 px-6 py-3">
                       <p className="font-semibold text-slate-700">{employee ? "Recuperaciones de esta obligación" : direction === "receivable" ? "Abonos de esta factura" : "Pagos de esta obligación"}</p>
@@ -361,9 +363,14 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
                     <td className="p-3 text-right tabular-nums">{formatCurrency(first.groupTotals.paidAmount,first.currencyCode,4)}</td>
                     <td className="p-3 text-right tabular-nums">{formatCurrency(first.groupTotals.otherImpact,first.currencyCode,4)}</td>
                     <td className="p-3 text-right tabular-nums">{formatCurrency(first.groupTotals.outstandingAmount,first.currencyCode,4)}</td><td className="p-3" />
-                  </tr><tr><td colSpan={11} className="px-3 pb-3 text-xs font-normal">{ageBands.map(band => `${band.label}: ${formatCurrency(first.groupTotals![band.key],first.currencyCode)}`).join(" · ")}
-                    <CreditSummary {...first.groupTotals} currency={first.currencyCode}/></td></tr></tfoot>}
-                </table></div>
+                  </tr></tfoot>}
+                </table></div> : <p className="px-4 py-3 text-sm text-slate-600">No hay facturas en esta página.</p>}
+                {"customerId" in first && first.groupTotals && <div className="space-y-2 border-t bg-slate-50 p-4">
+                  {first.groupTotals.invoiceCount > 0 && <div className="flex flex-wrap gap-2 text-xs">{ageBands.map(band => <span key={band.key} className="rounded-md px-2 py-1" style={{backgroundColor:band.backgroundColor,color:band.color}}>{band.label}: <strong>{formatCurrency(first.groupTotals![band.key],first.currencyCode)}</strong></span>)}</div>}
+                  <CreditSummary {...first.groupTotals} currency={first.currencyCode}/>
+                </div>}
+                </div>;
+                })}
               </section>;
             })}
           </div> : <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-slate-100 text-left"><tr>

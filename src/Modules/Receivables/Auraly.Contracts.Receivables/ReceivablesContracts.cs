@@ -169,6 +169,7 @@ public sealed record ReceivablesReportItem(Guid? CustomerId, string CustomerName
     public decimal AvailableCredits { get; init; }
     public decimal NetAmount => OutstandingAmount - AvailableAdvances - AvailableCredits;
     public bool IsCreditBalance { get; init; }
+    public string? InternalDocumentNumber { get; init; }
     public int? TermDays { get; init; }
     public int? AgeDays { get; init; }
     // Signed calendar difference, as in the reference: negative means not yet due.

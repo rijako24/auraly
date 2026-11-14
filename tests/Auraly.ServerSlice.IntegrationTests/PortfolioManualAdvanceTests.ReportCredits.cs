@@ -81,6 +81,13 @@ public sealed partial class PortfolioManualAdvanceTests
         using(var invalid=await client.GetAsync(reportPath+"&templateVersion=999"))
             Assert.Equal(System.Net.HttpStatusCode.BadRequest,invalid.StatusCode);
         var complete=await service.PrintReportAsync(actor,query);
+        foreach(var invoice in complete.Items.Where(item=>item.ReceivableId.HasValue))
+        {
+            Assert.StartsWith("ASI",invoice.DocumentNumber);
+            Assert.StartsWith("REPORT-",invoice.InternalDocumentNumber);
+            var byReference=await service.ReportAsync(actor,query with {DocumentNumber=invoice.InternalDocumentNumber,PageSize=50});
+            Assert.Equal(invoice.ReceivableId,Assert.Single(byReference.Items.Where(item=>item.ReceivableId.HasValue)).ReceivableId);
+        }
         Assert.Equal(1,complete.Items.Count(item=>item.IsCreditBalance));
         Assert.Equal(2_000_000,complete.Items.Sum(item=>item.AvailableAdvances));
         Assert.All(complete.Items.Where(item=>item.ReceivableId.HasValue),item=>Assert.Equal(0,item.AvailableAdvances));
@@ -95,6 +102,10 @@ public sealed partial class PortfolioManualAdvanceTests
             var html=await printed.Content.ReadAsStringAsync();Assert.Contains("portfolio-v4",html);
             Assert.Contains("Anticipos disponibles",html);Assert.Contains("Neto comercial",html);
             Assert.Contains("2.000.000,00 COP",html);
+            Assert.Equal(1,System.Text.RegularExpressions.Regex.Matches(html,"<h2>").Count);
+            Assert.Contains("Edad de cartera",html);
+            Assert.Contains("age-old",html);
+            Assert.DoesNotContain("<strong>Anticipos y otros saldos a favor</strong>",html);
             if(!withDebt)Assert.Contains("Sin sede identificada",html);
         }
         if(!withDebt)

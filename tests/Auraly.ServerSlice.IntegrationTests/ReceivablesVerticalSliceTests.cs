@@ -958,6 +958,47 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
             $"/api/commerce/v1/receivables/report/print?consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=2");
         Assert.Contains("portfolio-v2",legacyPrint);
         Assert.DoesNotContain("Plazo (días)",legacyPrint);
+        // A fiscal number is a document identity, not the long CUFE or the
+        // internal sale number. Seed only the fiscal read model of this real
+        // synthetic sale; no provider or external delivery is involved.
+        var fiscalNumber = $"FE-{Guid.NewGuid():N}";
+        var cufe = new string('a', 96);
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await ExecuteAsync(connection, null, """
+                UPDATE dbo.FiscalDocuments SET FiscalNumber=@Fiscal,UniqueCode=@Cufe WHERE DocumentId=@Id;
+                IF @@ROWCOUNT=0
+                  INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
+                    AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
+                  SELECT SourceDocumentId,BusinessId,SourceDocumentType,N'Invoice',DocumentNumber,@Fiscal,N'CUFE',@Cufe,
+                    CreatedAt,N'Accepted',CreatedAt,CreatedAt FROM dbo.Receivables WHERE ReceivableId=@Receivable;
+                """, new SqlParameter("@Id", checkout.Receipt.DocumentId),
+                new SqlParameter("@Receivable", receivable.ReceivableId),
+                new SqlParameter("@Fiscal", fiscalNumber), new SqlParameter("@Cufe", cufe));
+        }
+        var identityPath = $"/api/commerce/v1/receivables/report?consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=4";
+        foreach (var number in new[] { fiscalNumber, checkout.Receipt.DocumentNumber })
+        {
+            var identified = (await client.GetFromJsonAsync<ReceivablesReportPage>(
+                identityPath + "&documentNumber=" + Uri.EscapeDataString(number)))!;
+            var invoice = Assert.Single(identified.Items, item => item.ReceivableId == receivable.ReceivableId);
+            Assert.Equal(fiscalNumber, invoice.DocumentNumber);
+            Assert.Equal(checkout.Receipt.DocumentNumber, invoice.InternalDocumentNumber);
+            Assert.Equal(compactInvoice.OutstandingAmount, invoice.OutstandingAmount);
+        }
+        var identifiedSearch = (await client.GetFromJsonAsync<ReceivablesReportPage>(
+            identityPath + "&search=" + fiscalNumber))!;
+        Assert.Equal(fiscalNumber, Assert.Single(identifiedSearch.Items,
+            item => item.ReceivableId == receivable.ReceivableId).DocumentNumber);
+        var fiscalPrint = await client.GetStringAsync(identityPath.Replace("/report?", "/report/print?", StringComparison.Ordinal));
+        Assert.Contains(fiscalNumber, fiscalPrint);
+        Assert.Contains(checkout.Receipt.DocumentNumber, fiscalPrint);
+        Assert.DoesNotContain(cufe, fiscalPrint);
+        var legacyIdentity = (await client.GetFromJsonAsync<ReceivablesReportPage>(
+            identityPath.Replace("templateVersion=4", "templateVersion=3", StringComparison.Ordinal)))!;
+        Assert.Equal(checkout.Receipt.DocumentNumber, Assert.Single(legacyIdentity.Items,
+            item => item.ReceivableId == receivable.ReceivableId).DocumentNumber);
         using (var exportResponse = await client.GetAsync(
                    $"/api/commerce/v1/receivables/report/export?page=1&pageSize=100&consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}"))
         {

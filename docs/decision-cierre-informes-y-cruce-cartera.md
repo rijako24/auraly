@@ -52,6 +52,37 @@ el informe sólo consulta sus fuentes y aplicaciones canónicas.
 
 ### Ampliación del informe de clientes del 2026-11-11
 
+#### Presentación aprobada del 2026-11-14
+
+El detallado actual de clientes (plantilla 4) presenta un bloque por tercero:
+nombre e identificación destacados, información de contacto disponible y tablas
+de sus facturas por sede/moneda, con encabezados de columnas repetidos. En cada
+factura hay una sola columna «Edad de cartera» (Sin vencer, 1–30, 31–60, 61–90,
+más de 90), además de edad y mora numéricas. Los cinco tramos conservan sus
+importes en el resumen del cliente/sede. Los colores pastel menta, amarillo,
+durazno, rosa y lavanda acompañan los textos; nunca sustituyen la clasificación
+del propietario ni cambian sus límites. Pantalla, PDF e impresión y Excel
+conservan el mismo alcance. Los anticipos y otros créditos aparecen una sola
+vez en el resumen, sin presentarse como facturas ficticias; un tercero con sólo
+crédito conserva su bloque visible.
+
+El número principal es el prefijo/consecutivo fiscal registrado en FiscalDocuments
+para la misma venta y sede; sin documento fiscal se conserva el número interno.
+Una obligación originada por comprobante manual presenta su AccountingEntries.EntryNumber.
+La referencia original se muestra aparte cuando difiere; el CUFE no es el número
+de factura. Los filtros exactos y la búsqueda admiten tanto el número principal
+como la referencia original antes de paginar y totalizar. Las plantillas 2/3
+conservan su identidad publicada. No se reescriben documentos ni movimientos.
+
+La agrupación visual sólo recorre la página ya seleccionada o la exportación
+explícita acotada. No suma filas para reconstruir subtotales ni trae toda la
+cartera al abrir el visor. Los subtotales siguen siendo los del conjunto filtrado
+devueltos por Receivables; los enlaces de identidad son de cardinalidad uno
+respaldada por las claves de FiscalDocuments y AccountingEntries. Se mantienen
+dos comandos SQL, el límite de exportación de 5.000 y el presupuesto p95 <1 s
+con 10.000 posiciones. Es un cambio de lectura/presentación: rollback retira
+estos consumidores, sin migración ni reparación financiera.
+
 #### Cierre de créditos disponibles — implementación 2026-11-13
 
 La plantilla 4 incorpora una fila de crédito por tercero/sede/moneda en el

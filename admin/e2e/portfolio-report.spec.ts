@@ -93,7 +93,24 @@ for (const direction of ["receivables", "payables"] as const) {
             totalNotDue:0,totalOverdue1To30:0,totalOverdue31To60:0,totalOverdue61To90:0,totalOverdueOver90:0,
             totalAvailableAdvances:15000,totalAvailableCredits:0,totalNetAmount:-15000};
         }
-        if (isExport && !creditOnly) {
+        if (!isPayable && url.searchParams.get("search") === "grupos") {
+          const first=(body as {items:Record<string,unknown>[]}).items[0];
+          const totals={invoiceCount:2,originalAmount:20000,paidAmount:5000,otherImpact:0,outstandingAmount:15000,
+            notDueAmount:0,overdue1To30Amount:7500,overdue31To60Amount:7500,overdue61To90Amount:0,overdueOver90Amount:0,
+            availableAdvances:2000,availableCredits:0,netAmount:13000};
+          const a={...first,documentNumber:"FE-1",internalDocumentNumber:"BTAX-1",groupTotals:totals};
+          const b={...first,customerId:"cus-2",customerName:"Cliente B",identification:"900200002",receivableId:"rec-b",documentNumber:"BTAX-2",
+            groupTotals:{...totals,invoiceCount:1,originalAmount:10000,paidAmount:2500,outstandingAmount:7500,
+              overdue31To60Amount:0,availableAdvances:0,netAmount:7500}};
+          body={items:[a,b,{...a,receivableId:"rec-a2",documentNumber:"ASI-1",internalDocumentNumber:null,
+            overdue1To30Amount:0,overdue31To60Amount:7500,daysPastDue:42},
+            {...a,receivableId:null,documentNumber:"Anticipos y otros saldos a favor",isCreditBalance:true,invoiceCount:0,
+              originalAmount:0,paidAmount:0,outstandingAmount:0,overdueAmount:0,overdue1To30Amount:0,availableAdvances:2000,netAmount:-2000}],
+            page:1,pageSize:50,totalCount:4,totalPages:1,totalInvoiceCount:3,totalOriginal:30000,totalPaid:7500,
+            totalOutstanding:22500,totalOverdue:22500,totalOtherImpact:0,totalNotDue:0,totalOverdue1To30:15000,
+            totalOverdue31To60:7500,totalOverdue61To90:0,totalOverdueOver90:0,totalAvailableAdvances:2000,totalAvailableCredits:0,totalNetAmount:20500};
+        }
+        if (isExport && !creditOnly && url.searchParams.get("search") !== "grupos") {
           const complete = body as { items: Record<string,unknown>[] };
           const first = complete.items[0];
           complete.items = Array.from({length:51},(_,index) => ({...first,documentNumber:`FAC-${index+1}`,
@@ -259,6 +276,36 @@ for (const direction of ["receivables", "payables"] as const) {
       const creditWorkbook=unzipSync(await readFile((await (await creditDownload).path())!));
       expect(strFromU8(creditWorkbook["xl/worksheets/sheet1.xml"])).toContain("-15000");
       await page.screenshot({path:test.info().outputPath("cartera-solo-anticipo.png"),fullPage:true});
+      await dialog.getByRole("textbox",{name:"Búsqueda general del informe"}).fill("grupos");
+      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      const clientA=dialog.getByRole("region",{name:"Cliente A",exact:true});
+      const clientB=dialog.getByRole("region",{name:"Cliente B",exact:true});
+      await expect(clientA.getByRole("heading",{name:"Cliente A",exact:true})).toHaveCount(1);
+      await expect(clientB.getByRole("heading",{name:"Cliente B",exact:true})).toHaveCount(1);
+      await expect(clientA.getByRole("columnheader",{name:"Documento",exact:true})).toHaveCount(1);
+      await expect(clientB.getByRole("columnheader",{name:"Documento",exact:true})).toHaveCount(1);
+      await expect(clientA.getByText("FE-1",{exact:true})).toBeVisible();
+      await expect(clientA.getByText("ASI-1",{exact:true})).toBeVisible();
+      await expect(clientA.getByText("Referencia interna: BTAX-1",{exact:true})).toBeVisible();
+      await expect(clientB.getByText("BTAX-2",{exact:true})).toBeVisible();
+      await expect(clientB.getByText("FE-1",{exact:true})).toHaveCount(0);
+      await expect(dialog.getByText("Anticipos y otros saldos a favor",{exact:true})).toHaveCount(0);
+      await expect(clientA.getByRole("row").filter({hasText:"FE-1"}).getByText("1–30 días",{exact:true}))
+        .toHaveCSS("background-color","rgb(255, 241, 194)");
+      await expect(clientA.getByRole("row").filter({hasText:"ASI-1"}).getByText("31–60 días",{exact:true}))
+        .toHaveCSS("background-color","rgb(255, 226, 204)");
+      const groupedDownload=page.waitForEvent("download");
+      await dialog.getByRole("button",{name:"Exportar Excel",exact:true}).click();
+      const groupedWorkbook=await groupedDownload;
+      await groupedWorkbook.saveAs(test.info().outputPath("cartera-por-cliente.xlsx"));
+      const groupedArchive=unzipSync(await readFile((await groupedWorkbook.path())!));
+      const groupedXml=Object.entries(groupedArchive).filter(([name])=>name.endsWith(".xml")).map(([,value])=>strFromU8(value)).join("\n");
+      expect(strFromU8(groupedArchive["xl/worksheets/sheet1.xml"]).match(/<mergeCell ref=/g)).toHaveLength(3);
+      expect(groupedXml).toContain("FFF1C2");expect(groupedXml).toContain("FFE2CC");
+      const groupedPdfDownload=page.waitForEvent("download");
+      await dialog.getByRole("button",{name:"Descargar PDF",exact:true}).click();
+      await (await groupedPdfDownload).saveAs(test.info().outputPath("cartera-por-cliente.pdf"));
+      await page.screenshot({path:test.info().outputPath("cartera-por-cliente-con-edades.png"),fullPage:true});
     }
   });
 }
