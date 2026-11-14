@@ -103,6 +103,7 @@ for (const direction of ["receivables", "payables"] as const) {
             groupTotals:{...totals,invoiceCount:1,originalAmount:10000,paidAmount:2500,outstandingAmount:7500,
               overdue31To60Amount:0,availableAdvances:0,netAmount:7500}};
           body={items:[a,b,{...a,receivableId:"rec-a2",documentNumber:"ASI-1",internalDocumentNumber:null,
+            issuedAt:"2026-09-01T12:00:00Z",dueDate:"2026-09-30T12:00:00Z",termDays:29,ageDays:71,
             overdue1To30Amount:0,overdue31To60Amount:7500,daysPastDue:42},
             {...a,receivableId:null,documentNumber:"Anticipos y otros saldos a favor",isCreditBalance:true,invoiceCount:0,
               originalAmount:0,paidAmount:0,outstandingAmount:0,overdueAmount:0,overdue1To30Amount:0,availableAdvances:2000,netAmount:-2000}],
@@ -284,7 +285,7 @@ for (const direction of ["receivables", "payables"] as const) {
       await expect(clientB.getByRole("heading",{name:"Cliente B",exact:true})).toHaveCount(1);
       await expect(clientA.getByRole("columnheader",{name:"Documento",exact:true})).toHaveCount(1);
       await expect(clientB.getByRole("columnheader",{name:"Documento",exact:true})).toHaveCount(1);
-      await expect(clientA.getByText("FE-1",{exact:true})).toBeVisible();
+      await expect(clientA.getByRole("cell",{name:"FE-1 Referencia interna: BTAX-1",exact:true})).toBeVisible();
       await expect(clientA.getByText("ASI-1",{exact:true})).toBeVisible();
       await expect(clientA.getByText("Referencia interna: BTAX-1",{exact:true})).toBeVisible();
       await expect(clientB.getByText("BTAX-2",{exact:true})).toBeVisible();
@@ -305,6 +306,8 @@ for (const direction of ["receivables", "payables"] as const) {
       const groupedPdfDownload=page.waitForEvent("download");
       await dialog.getByRole("button",{name:"Descargar PDF",exact:true}).click();
       await (await groupedPdfDownload).saveAs(test.info().outputPath("cartera-por-cliente.pdf"));
+      await dialog.getByText("Filtros del informe",{exact:true}).click();
+      await clientA.scrollIntoViewIfNeeded();
       await page.screenshot({path:test.info().outputPath("cartera-por-cliente-con-edades.png"),fullPage:true});
     }
   });

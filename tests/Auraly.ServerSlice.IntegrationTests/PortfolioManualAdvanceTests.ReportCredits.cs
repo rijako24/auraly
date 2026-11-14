@@ -102,7 +102,7 @@ public sealed partial class PortfolioManualAdvanceTests
             var html=await printed.Content.ReadAsStringAsync();Assert.Contains("portfolio-v4",html);
             Assert.Contains("Anticipos disponibles",html);Assert.Contains("Neto comercial",html);
             Assert.Contains("2.000.000,00 COP",html);
-            Assert.Equal(1,System.Text.RegularExpressions.Regex.Matches(html,"<h2>").Count);
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(html,"<h2>"));
             Assert.Contains("Edad de cartera",html);
             Assert.Contains("age-old",html);
             Assert.DoesNotContain("<strong>Anticipos y otros saldos a favor</strong>",html);

@@ -963,25 +963,22 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
         // synthetic sale; no provider or external delivery is involved.
         var fiscalNumber = $"FE-{Guid.NewGuid():N}";
         var cufe = new string('a', 96);
+        Assert.Equal(1, await CountAsync("FiscalDocuments", "DocumentId", checkout.Receipt.DocumentId));
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
             await connection.OpenAsync();
             await ExecuteAsync(connection, null, """
                 UPDATE dbo.FiscalDocuments SET FiscalNumber=@Fiscal,UniqueCode=@Cufe WHERE DocumentId=@Id;
-                IF @@ROWCOUNT=0
-                  INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
-                    AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
-                  SELECT SourceDocumentId,BusinessId,SourceDocumentType,N'Invoice',DocumentNumber,@Fiscal,N'CUFE',@Cufe,
-                    CreatedAt,N'Accepted',CreatedAt,CreatedAt FROM dbo.Receivables WHERE ReceivableId=@Receivable;
                 """, new SqlParameter("@Id", checkout.Receipt.DocumentId),
-                new SqlParameter("@Receivable", receivable.ReceivableId),
                 new SqlParameter("@Fiscal", fiscalNumber), new SqlParameter("@Cufe", cufe));
         }
-        var identityPath = $"/api/commerce/v1/receivables/report?consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=4";
+        var identityPath = $"/api/commerce/v1/receivables/report?page=1&pageSize=50&consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=4";
         foreach (var number in new[] { fiscalNumber, checkout.Receipt.DocumentNumber })
         {
-            var identified = (await client.GetFromJsonAsync<ReceivablesReportPage>(
-                identityPath + "&documentNumber=" + Uri.EscapeDataString(number)))!;
+            using var identifiedResponse = await client.GetAsync(
+                identityPath + "&documentNumber=" + Uri.EscapeDataString(number));
+            Assert.True(identifiedResponse.IsSuccessStatusCode, await identifiedResponse.Content.ReadAsStringAsync());
+            var identified = (await identifiedResponse.Content.ReadFromJsonAsync<ReceivablesReportPage>())!;
             var invoice = Assert.Single(identified.Items, item => item.ReceivableId == receivable.ReceivableId);
             Assert.Equal(fiscalNumber, invoice.DocumentNumber);
             Assert.Equal(checkout.Receipt.DocumentNumber, invoice.InternalDocumentNumber);
@@ -1677,6 +1674,7 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
             "AccountingEntries:SourceDocumentId",
             "AccountingSourceDocuments:SourceDocumentId",
             "AccountingPostingJobs:SourceDocumentId",
+            "FiscalDocuments:DocumentId",
             "CustomerPaymentApplications:PaymentId",
             "CustomerPaymentTenders:PaymentId",
             "CustomerPayments:PaymentId",

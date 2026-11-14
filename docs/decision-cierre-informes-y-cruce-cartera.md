@@ -9,7 +9,8 @@ del objetivo completo al final de esta sección.
 
 ## Cierre de presentación y saldos del 2026-11-09
 
-Esta sección prevalece sobre la presentación por bloques descrita más abajo.
+Este cierre y su actualización de presentación del 14-11-2026 prevalecen sobre
+las descripciones anteriores de la salida del informe.
 El propietario de recibos/anticipos es la sección 14 de
 [comprobantes abiertos](implementation/accounting-open-vouchers-design.md);
 el informe sólo consulta sus fuentes y aplicaciones canónicas.
@@ -82,6 +83,15 @@ respaldada por las claves de FiscalDocuments y AccountingEntries. Se mantienen
 dos comandos SQL, el límite de exportación de 5.000 y el presupuesto p95 <1 s
 con 10.000 posiciones. Es un cambio de lectura/presentación: rollback retira
 estos consumidores, sin migración ni reparación financiera.
+
+Validación local del incremento: compilación Release sin errores ni advertencias,
+build de Admin y lint dirigido; 14 pruebas de exportación/visor; los dos escenarios
+de navegador CxC/CxP, incluidos filtros, exportación completa, dos clientes,
+encabezados repetidos, colores y sólo anticipo; 42 regresiones de cartera,
+calendario y cortes, más la repetición satisfactoria del caso de venta/pago que
+comprueba identidad fiscal, referencia interna, ambos filtros y plantilla anterior.
+Se inspeccionaron el PDF generado y sus encabezados de continuación. Estas
+comprobaciones no sustituyen el gate completo ni la validación posterior en DEV.
 
 #### Cierre de créditos disponibles — implementación 2026-11-13
 
