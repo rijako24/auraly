@@ -4557,6 +4557,15 @@ La corrección de compatibilidad de InputVat no cierra el rediseño funcional.
 Se conserva la siguiente separación entre capacidades presentes y condiciones
 de salida pendientes; las pruebas de un incremento no certifican los demás.
 
+La captura compartida publica a su página el resultado al concluir la acción
+del usuario. Guardar borrador publica su respuesta; Guardar comprobante conserva
+internamente la respuesta intermedia del guardado y publica la respuesta de
+contabilización. La navegación a la URL definitiva no recrea el editor a mitad
+de esa acción ni lo deja mostrando Borrador después de recibir Pending o Posted.
+Se reutilizan esos resultados, sin otra lectura para reconstruirlos. El fallo
+de envío conserva el borrador dentro del editor y la actualización explícita
+consulta ese mismo identificador; no crea ni reenvía otro comprobante.
+
 | Área | Implementación presente | Pendiente de cierre |
 | --- | --- | --- |
 | Formas de pago | Maestro del tenant, selección paginada, varias formas del mismo tipo y resolución vigente al contabilizar | Campos comerciales/cargos ampliados de 14.1, restantes consumidores y certificación del cutover común web/Edge antes de activar contrato 2 |

@@ -1,6 +1,71 @@
 import { expect, test } from "@playwright/test";
-import type { AccountingOpenPosition, SaveVoucherDraft } from "../src/services/api/accounting";
+import type { AccountingOpenPosition, SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
 import { financialVoucherScenario, installFinancialVoucherContext } from "./support/financial-voucher";
+
+for (const receipt of [false, true]) for (const status of ["Pending", "Posted"] as const) {
+  test(`captura nueva ${receipt ? "de recibo" : "contable"} conserva el resultado ${status} al guardar y contabilizar`, async ({ page, baseURL }) => {
+    const scenario = financialVoucherScenario();
+    const accounts = [
+      { accountId: scenario.draft.lines[1].value.accountId, code: "110505", name: "Caja de prueba", accountType: "Asset", allowsPosting: true, requiresParty: false, isActive: true },
+      { accountId: scenario.draft.lines[0].value.accountId, code: "280505", name: "Anticipo de prueba", accountType: "Liability", allowsPosting: true, requiresParty: true, isActive: true },
+    ];
+    await installFinancialVoucherContext(page, baseURL!, scenario);
+    let stored: VoucherDraft | undefined;
+    let saves = 0, sends = 0, draftReads = 0;
+    await page.route("**/api/**", async route => {
+      const request = route.request(), path = new URL(request.url()).pathname;
+      if (path.endsWith("/accounting/account-options")) {
+        await route.fulfill({ json: { items: accounts, page: 1, pageSize: 10, totalCount: 2, totalPages: 1 } });
+      } else if (path.endsWith("/parties/role-options")) {
+        await route.fulfill({ json: { items: [{ partyId: scenario.draft.mainPartyId, roleId: scenario.draft.mainPartyId,
+          role: "Any", displayName: "Tercero de prueba", identification: "900123456" }], page: 1, pageSize: 10, totalCount: 1, totalPages: 1 } });
+      } else if (path.endsWith("/reference-options/accounting-document-status")) {
+        await route.fulfill({ json: [{ id: "created", code: "Created", label: "Borrador" },
+          { id: "pending", code: "Pending", label: "Enviado / pendiente" }, { id: "posted", code: "Posted", label: "Contabilizado" }] });
+      } else if (/\/accounting\/manual\/drafts\/[^/]+\/send$/.test(path)) {
+        sends++;
+        // Let the save-triggered URL transition finish before the posting
+        // response. It must not replace the editor with the intermediate draft.
+        await new Promise(resolve => setTimeout(resolve, 500));
+        stored = { ...stored!, status, sentAt: "2026-11-14T12:00:00Z", canEdit: false, canSend: false,
+          rowVersion: "AAAAAAAAAAM=", row: { ...stored!.row, status,
+            entryId: status === "Posted" ? "entry-1" : null, entryNumber: status === "Posted" ? "ASI-1" : null } };
+        await route.fulfill({ json: stored });
+      } else if (/\/accounting\/manual\/drafts\/[^/]+$/.test(path)) {
+        if (request.method() === "PUT") {
+          saves++;
+          const capture = request.postDataJSON() as SaveVoucherDraft;
+          stored = { ...scenario.draft, ...capture, status: "Created", sentAt: null, canSend: true,
+            rowVersion: "AAAAAAAAAAI=", lines: capture.lines.map(value => {
+              const account = accounts.find(item => item.accountId === value.accountId)!;
+              return { value, accountCode: account.code, accountName: account.name, partyName: "Tercero de prueba",
+                partyIdentification: "900123456", costCenterName: null };
+            }), row: { ...scenario.draft.row, sourceDocumentId: capture.documentId, status: "Created", voucherTypeCode: capture.voucherTypeCode } };
+        } else draftReads++;
+        await route.fulfill({ json: stored });
+      } else await route.fallback();
+    });
+    const basePath = receipt ? "/dashboard/cash-receipts" : "/dashboard/financial-traceability";
+    await page.goto(`${basePath}?new=1`);
+    await page.getByRole("textbox", { name: "Descripción", exact: true }).fill("Captura nueva de prueba");
+    await page.getByRole("combobox", { name: "Seleccionar tercero principal", exact: true }).click();
+    await page.getByRole("option", { name: /Tercero de prueba/ }).click();
+    for (const [index, account] of accounts.entries()) {
+      const row = page.getByRole("row", { name: `Partida ${index + 1}`, exact: true });
+      await row.getByRole("combobox", { name: "Seleccionar cuenta contable", exact: true }).click();
+      await page.getByPlaceholder("Buscar por código o nombre…").fill(account.code);
+      await page.getByRole("option", { name: `${account.code} · ${account.name}`, exact: true }).click();
+      await row.getByRole("textbox", { name: "Descripción de la partida", exact: true }).fill(account.name);
+      await row.getByRole("textbox", { name: index === 0 ? "Débito de la partida" : "Crédito de la partida", exact: true }).fill("20");
+    }
+    await page.getByRole("button", { name: "Guardar comprobante", exact: true }).click();
+    await expect(page.getByText(status === "Posted" ? "Contabilizado · Documento interno, sin envío a DIAN"
+      : "Enviado / pendiente · Documento interno, sin envío a DIAN", { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(`${baseURL}${basePath}?document=${stored!.documentId}`);
+    await expect(page.getByRole("button", { name: "Guardar comprobante", exact: true })).toHaveCount(0);
+    expect(saves).toBe(1); expect(sends).toBe(1); expect(draftReads).toBe(0);
+  });
+}
 
 for (const { posted, clone } of [{ posted: true, clone: false }, { posted: false, clone: false }, { posted: true, clone: true }]) test(`recibo nativo de cartera conserva su documento y consulta compartida ${clone ? "al clonar" : posted ? "con asiento" : "sin contabilidad activa"}`, async ({ page, baseURL }, testInfo) => {
   const scenario = financialVoucherScenario();
