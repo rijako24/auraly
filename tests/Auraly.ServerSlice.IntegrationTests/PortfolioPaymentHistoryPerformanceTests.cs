@@ -376,12 +376,38 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         var profileDirectory = await CaptureReportProfileAsync(originPlanCommand);
         Assert.NotNull(profileDirectory);
         var foundOrigins = false;
+        var foundIssueDates = false;
+        var foundDocumentNumbers = supplier;
         foreach (var file in Directory.EnumerateFiles(profileDirectory, "profile-*.json"))
         {
             using var profile = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(file));
             var operators = profile.RootElement.EnumerateArray().ToArray();
-            if (operators.Length == 0 || !operators[0].GetProperty("StmtText").GetString()!
-                    .Contains("FROM #PageApplications application", StringComparison.Ordinal)) continue;
+            if (operators.Length == 0) continue;
+            var statement = operators[0].GetProperty("StmtText").GetString()!;
+            if (!supplier && statement.Contains("INTO #DocumentCandidates", StringComparison.Ordinal))
+            {
+                foundDocumentNumbers = true;
+                var entryReads = operators.Where(item => item.GetProperty("StmtText").GetString() is { } text
+                    && text.Contains("OBJECT:", StringComparison.Ordinal)
+                    && text.Contains("[dbo].[AccountingEntries]", StringComparison.Ordinal)).ToArray();
+                Assert.NotEmpty(entryReads);
+                Assert.All(entryReads, item =>
+                    Assert.InRange(item.GetProperty("Rows").GetInt64(), 0, 10_000));
+            }
+            if (statement.Contains("accounting.PortfolioDocumentIssueDate(", StringComparison.Ordinal))
+            {
+                foundIssueDates = true;
+                var sourceReads = operators.Where(item => item.GetProperty("StmtText").GetString() is { } text
+                    && text.Contains("OBJECT:", StringComparison.Ordinal)
+                    && text.Contains("[dbo].[AccountingSourceDocuments]", StringComparison.Ordinal)).ToArray();
+                Assert.NotEmpty(sourceReads);
+                Assert.All(sourceReads, item =>
+                {
+                    Assert.Contains("Seek", item.GetProperty("PhysicalOp").GetString());
+                    Assert.InRange(item.GetProperty("Rows").GetInt64(), 0, 10_000);
+                });
+            }
+            if (!statement.Contains("FROM #PageApplications application", StringComparison.Ordinal)) continue;
             foundOrigins = true;
             var returned = operators[0].GetProperty("Rows").GetInt64();
             Assert.Equal(50, returned);
@@ -396,6 +422,8 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             });
         }
         Assert.True(foundOrigins, "The actual plan must include receipt identity enrichment.");
+        Assert.True(foundIssueDates, "The actual plan must include canonical issue-date lookups.");
+        Assert.True(foundDocumentNumbers, "The actual plan must include bounded document-number lookups.");
         // The complete-export guard runs after the timed reads and must reject
         // the full filtered set, rather than silently returning its first page.
         if (supplier)

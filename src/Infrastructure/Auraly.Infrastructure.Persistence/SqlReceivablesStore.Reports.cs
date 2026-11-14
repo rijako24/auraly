@@ -83,7 +83,11 @@ public sealed partial class SqlReceivablesStore
               LEFT JOIN dbo.Customers customer ON customer.CustomerId=r.CustomerId AND customer.TenantId=@TenantId
               LEFT JOIN dbo.FiscalDocuments fiscal ON @TemplateVersion>=4 AND fiscal.DocumentId=r.SourceDocumentId
                 AND fiscal.BusinessId=r.BusinessId AND fiscal.SourceDocumentType=r.SourceDocumentType AND fiscal.FiscalDocumentType=N'Invoice'
-              LEFT JOIN dbo.AccountingEntries entry ON @TemplateVersion>=4 AND r.SourceDocumentType=N'ManualAccountingVoucher'
+              -- Seek the complete unique source identity. A tenant-only index
+              -- plan otherwise reread unrelated entries for every obligation.
+              LEFT JOIN dbo.AccountingEntries entry
+                WITH(FORCESEEK(UQ_AccountingEntries_Source(SourceDocumentId,SourceDocumentType)))
+                ON @TemplateVersion>=4 AND r.SourceDocumentType=N'ManualAccountingVoucher'
                 AND entry.SourceDocumentId=r.SourceDocumentId AND entry.SourceDocumentType=r.SourceDocumentType
                 AND entry.BusinessId=r.BusinessId AND entry.TenantId=@TenantId
               WHERE r.BusinessId=@BusinessId AND r.CreatedAt<@Cutoff

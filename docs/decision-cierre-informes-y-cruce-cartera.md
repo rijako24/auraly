@@ -100,6 +100,22 @@ filtros y dos viajes de cada petición. Revertir estos dos lectores sólo restau
 el plan anterior; no requiere cambios de esquema ni modifica movimientos.
 Los umbrales y el gate completo de despliegue siguen siendo obligatorios.
 
+La misma búsqueda acotada de identidad se aplica a las filas ya seleccionadas
+de verificación de cierres. Los batches de lectura de esa página y de
+trazabilidad omiten mensajes intermedios de filas afectadas; conservan sus
+resultados, permisos y viajes existentes. El informe CxP materializa primero
+las obligaciones autorizadas y sus filtros, antes de buscar las fuentes
+inmutables y proyectar una sola fecha por identidad de fuente. La regresión
+comprueba que esas lecturas usan búsquedas por clave y no recorren fuentes
+ajenas al conjunto. En CxC, el número de comprobante se busca por la clave
+única completa de AccountingEntries: el perfil anterior recorría 420.000
+filas contables para 10.000 obligaciones aunque ninguna tuviera comprobante.
+La comprobación de volumen también limita las filas contables realmente
+leídas. No se añade índice, estado, writer, consulta por factura ni viaje SQL.
+Estos ajustes sólo cambian planes de lectura; revertirlos no modifica datos
+ni requiere migración. Las mediciones locales y el gate completo se vuelven
+a ejecutar antes de autorizar el despliegue.
+
 Validación local del incremento: compilación Release sin errores ni advertencias,
 build de Admin y lint dirigido; 14 pruebas de exportación/visor; los dos escenarios
 de navegador CxC/CxP, incluidos filtros, exportación completa, dos clientes,
