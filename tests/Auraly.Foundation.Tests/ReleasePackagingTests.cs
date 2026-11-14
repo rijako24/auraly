@@ -20,9 +20,12 @@ public sealed class ReleasePackagingTests
                      Path.Combine(root, "infrastructure", "azure", "New-AuralyRelease.ps1") })
         {
             var source = File.ReadAllText(path);
-            Assert.Contains("Performance!=ManualPortfolioAcceptance", source, StringComparison.Ordinal);
-            Assert.Contains("Performance=ManualPortfolioAcceptance", source, StringComparison.Ordinal);
+            Assert.Contains("Isolation!=FreshProcess", source, StringComparison.Ordinal);
+            Assert.Contains("Isolation=FreshProcess", source, StringComparison.Ordinal);
         }
+        var benchmark = File.ReadAllText(Path.Combine(root, "tests", "Auraly.ServerSlice.IntegrationTests",
+            "PortfolioManualPaymentPerformanceTests.cs"));
+        Assert.Contains("[Trait(\"Isolation\", \"FreshProcess\")]", benchmark, StringComparison.Ordinal);
     }
 
     [Fact]

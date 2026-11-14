@@ -120,9 +120,10 @@ automático anterior adelantó la captura que exige zona horaria al backend que
 todavía no la entregaba; ese estado intermedio no certifica el despliegue.
 
 CI y el constructor del release ejecutan todos los casos de integración en dos
-procesos consecutivos: `Performance!=ManualPortfolioAcceptance` y
-`Performance=ManualPortfolioAcceptance`. El segundo libera primero el host de
-regresión, que acumula objetos y recursos durante la suite completa. No se
+procesos consecutivos: `Isolation!=FreshProcess` y `Isolation=FreshProcess`.
+Solo el caso de 500 partidas/formas lleva esa marca; los otros seis del grupo
+de aceptación continúan en la regresión completa. El segundo proceso empieza
+después de liberar el host de regresión y su carga acumulada. No se
 omiten pruebas, aumentan tiempos ni eliminan las comprobaciones de presión de
 memoria, latencia o viajes SQL. El benchmark de centros de costo usa una base
 aislada que elimina el fixture; no borra 10.000 principales comprobando FKs

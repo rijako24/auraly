@@ -27,6 +27,7 @@ public sealed class PortfolioManualPaymentPerformanceCollection : ICollectionFix
 public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
     [Fact]
+    [Trait("Isolation", "FreshProcess")]
     public async Task Configured_receipts_resolve_one_or_ten_forms_in_one_batch_for_up_to_five_hundred_lines()
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,

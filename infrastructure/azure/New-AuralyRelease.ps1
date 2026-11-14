@@ -164,13 +164,13 @@ try {
     if ($LASTEXITCODE) { throw 'Las pruebas del actualizador de escritorio fallaron.' }
 
     & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
-        -c Release --no-build --filter 'Performance!=ManualPortfolioAcceptance' --logger 'console;verbosity=minimal'
+        -c Release --no-build --filter 'Isolation!=FreshProcess' --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'Las regresiones reales de API, pedidos y facturación fallaron.' }
 
     # Release the regression test host before measuring the large receipt. All
     # tests still run once; the benchmark retains its memory and latency gates.
     & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
-        -c Release --no-build --filter 'Performance=ManualPortfolioAcceptance' --logger 'console;verbosity=minimal'
+        -c Release --no-build --filter 'Isolation=FreshProcess' --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'El presupuesto de rendimiento de recibos no se cumplió.' }
 
     $functionPublish = Join-Path $publishPath 'function'

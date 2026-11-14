@@ -31,9 +31,9 @@ jobs:
       - run: dotnet test tests/Auraly.Pos.Edge.Host.Tests/Auraly.Pos.Edge.Host.Tests.csproj --no-build --configuration Release
       - run: dotnet test tests/Auraly.Desktop.Tests/Auraly.Desktop.Tests.csproj --no-build --configuration Release
       - name: Run integration regression
-        run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Performance!=ManualPortfolioAcceptance"
+        run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Isolation!=FreshProcess"
       - name: Run receipt latency in a fresh test process
-        run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Performance=ManualPortfolioAcceptance"
+        run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Isolation=FreshProcess"
 
   invoice-pdf-linux:
     runs-on: ubuntu-latest
