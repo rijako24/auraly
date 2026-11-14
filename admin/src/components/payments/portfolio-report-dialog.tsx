@@ -275,13 +275,13 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
         {report.isLoading && !invalidDates && <p className="flex items-center gap-2 py-8 text-sm"><Loader2 className="h-4 w-4 animate-spin" />Cargando informe…</p>}
         {report.isError && <p role="alert" className="rounded-xl border border-destructive/30 p-4 text-sm text-destructive">{report.error instanceof Error ? report.error.message : "No se pudo cargar el informe."} <Button variant="link" onClick={() => void report.refetch()}>Reintentar</Button></p>}
         {report.data && !invalidDates && <>
-          <div className="flex flex-wrap gap-3">{currencyTotals.map(total => <div key={total.currencyCode} className="min-w-56 flex-1 rounded-xl border bg-slate-50 p-3 text-sm"><strong>{total.currencyCode} · {total.invoiceCount} documentos</strong><p className="mt-1 text-slate-600">Original {formatCurrency(total.originalAmount,total.currencyCode)} · Pagado {formatCurrency(total.paidAmount,total.currencyCode)}{total.otherImpact !== 0 ? ` · Notas y ajustes ${formatCurrency(total.otherImpact,total.currencyCode)}` : ""}</p><p className="font-semibold">Saldo {formatCurrency(total.outstandingAmount,total.currencyCode)} · Vencido {formatCurrency(total.overdueAmount,total.currencyCode)}</p></div>)}</div>
+          <div className="flex flex-wrap gap-3">{currencyTotals.map(total => <div key={total.currencyCode} className="min-w-56 flex-1 rounded-xl border bg-slate-50 p-3 text-sm"><strong>{total.currencyCode} · {total.invoiceCount} documentos</strong><p className="mt-1 text-slate-600">Original {formatCurrency(total.originalAmount,total.currencyCode,4)} · Pagado {formatCurrency(total.paidAmount,total.currencyCode,4)}{total.otherImpact !== 0 ? ` · Notas y ajustes ${formatCurrency(total.otherImpact,total.currencyCode,4)}` : ""}</p><p className="font-semibold">Saldo {formatCurrency(total.outstandingAmount,total.currencyCode,4)} · Vencido {formatCurrency(total.overdueAmount,total.currencyCode,4)}</p></div>)}</div>
           {!("currencyTotals" in report.data) && <CreditSummary currency="COP" availableAdvances={report.data.totalAvailableAdvances}
             availableCredits={report.data.totalAvailableCredits} netAmount={report.data.totalNetAmount}/>}
           <section className="rounded-xl border border-teal-100 bg-teal-50/50 p-4" aria-label="Edades de cartera">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-1"><h3 className="font-semibold text-teal-950">Edades de cartera</h3><p className="text-xs text-slate-600">Saldo pendiente a la fecha de corte · todos los documentos filtrados</p></div>
             {currencyTotals.map(total => <div key={total.currencyCode} className="mb-2 last:mb-0"><p className="mb-1 text-xs font-semibold text-teal-800">{total.currencyCode}</p><div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-              {ageBands.map(band => <div key={band.key} className="rounded-lg p-2" style={{backgroundColor:band.backgroundColor,color:band.color}}><span className="block text-xs">{band.label}</span><strong className="text-sm tabular-nums">{formatCurrency(total[band.key],total.currencyCode)}</strong></div>)}
+              {ageBands.map(band => <div key={band.key} className="rounded-lg p-2" style={{backgroundColor:band.backgroundColor,color:band.color}}><span className="block text-xs">{band.label}</span><strong className="text-sm tabular-nums">{formatCurrency(total[band.key],total.currencyCode,4)}</strong></div>)}
             </div></div>)}
           </section>
           {mode === "detail" ? <div className="space-y-5">
@@ -325,7 +325,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
                   {"customerId" in first && <div className="w-full text-xs text-slate-600">
                     {first.legalName && first.legalName !== name && <p>Razón social: {first.legalName}</p>}
                     {[first.address,first.city,first.phone && `Tel. ${first.phone}`,first.email].filter(Boolean).join(" · ")}
-                    <p>Cupo vigente: {first.creditLimit == null ? "Sin cupo definido" : formatCurrency(first.creditLimit,first.currencyCode)}</p>
+                    <p>Cupo vigente: {first.creditLimit == null ? "Sin cupo definido" : formatCurrency(first.creditLimit,first.currencyCode,4)}</p>
                   </div>}
                 </div>
                 {invoices.length > 0 ? <div className="overflow-x-auto"><table className={`w-full ${direction === "receivable" ? "min-w-[1320px]" : "min-w-[1020px]"} text-sm`}>
@@ -366,7 +366,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
                   </tr></tfoot>}
                 </table></div> : <p className="px-4 py-3 text-sm text-slate-600">No hay facturas en esta página.</p>}
                 {"customerId" in first && first.groupTotals && <div className="space-y-2 border-t bg-slate-50 p-4">
-                  {first.groupTotals.invoiceCount > 0 && <div className="flex flex-wrap gap-2 text-xs">{ageBands.map(band => <span key={band.key} className="rounded-md px-2 py-1" style={{backgroundColor:band.backgroundColor,color:band.color}}>{band.label}: <strong>{formatCurrency(first.groupTotals![band.key],first.currencyCode)}</strong></span>)}</div>}
+                  {first.groupTotals.invoiceCount > 0 && <div className="flex flex-wrap gap-2 text-xs">{ageBands.map(band => <span key={band.key} className="rounded-md px-2 py-1" style={{backgroundColor:band.backgroundColor,color:band.color}}>{band.label}: <strong>{formatCurrency(first.groupTotals![band.key],first.currencyCode,4)}</strong></span>)}</div>}
                   <CreditSummary {...first.groupTotals} currency={first.currencyCode}/>
                 </div>}
                 </div>;
@@ -379,10 +379,10 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
             {hasOtherImpact && <th className="p-3 text-right">Notas y ajustes</th>}<th className="p-3 text-right">{sortButton("outstandingAmount", "Saldo")}</th>
           </tr></thead><tbody>{items.map((item, index) => <tr key={`${"customerId" in item ? item.customerId ?? item.partyId : item.supplierId}-${item.partySiteId}-${item.currencyCode}-${index}`} className="border-t">
             <td className="p-3"><strong>{"customerName" in item ? item.customerName : item.supplierName}</strong><span className="block text-xs text-slate-500">{item.identification} · {item.partySiteName ?? "Sin sede identificada"}</span>
-              <div className="mt-2 space-y-0.5 text-xs text-slate-600">{ageBands.filter(band => item[band.key] !== 0).map(band => <div key={band.key}>{band.label}: <strong>{formatCurrency(item[band.key],item.currencyCode)}</strong></div>)}</div></td>
-            <td className="p-3">{item.invoiceCount}</td><td className="p-3">{item.currencyCode}</td><td className="p-3 text-right tabular-nums">{formatCurrency(item.originalAmount,item.currencyCode)}</td>
-            <td className="p-3 text-right tabular-nums">{formatCurrency(item.paidAmount,item.currencyCode)}</td>{hasOtherImpact && <td className="p-3 text-right tabular-nums">{formatCurrency(item.otherImpact,item.currencyCode)}</td>}
-            <td className="p-3 text-right font-semibold tabular-nums">{formatCurrency(item.outstandingAmount,item.currencyCode)}
+              <div className="mt-2 space-y-0.5 text-xs text-slate-600">{ageBands.filter(band => item[band.key] !== 0).map(band => <div key={band.key}>{band.label}: <strong>{formatCurrency(item[band.key],item.currencyCode,4)}</strong></div>)}</div></td>
+            <td className="p-3">{item.invoiceCount}</td><td className="p-3">{item.currencyCode}</td><td className="p-3 text-right tabular-nums">{formatCurrency(item.originalAmount,item.currencyCode,4)}</td>
+            <td className="p-3 text-right tabular-nums">{formatCurrency(item.paidAmount,item.currencyCode,4)}</td>{hasOtherImpact && <td className="p-3 text-right tabular-nums">{formatCurrency(item.otherImpact,item.currencyCode,4)}</td>}
+            <td className="p-3 text-right font-semibold tabular-nums">{formatCurrency(item.outstandingAmount,item.currencyCode,4)}
               {"customerId" in item && <CreditSummary {...item} currency={item.currencyCode}/>}</td>
           </tr>)}</tbody></table></div>}
           {items.length === 0 && <p className="rounded-xl border p-8 text-center text-sm text-slate-500">No hay documentos para estos filtros.</p>}

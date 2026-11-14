@@ -100,16 +100,18 @@ for (const direction of ["receivables", "payables"] as const) {
             availableAdvances:2000,availableCredits:0,netAmount:13000};
           const a={...first,documentNumber:"FE-1",internalDocumentNumber:"BTAX-1",groupTotals:totals};
           const b={...first,customerId:"cus-2",customerName:"Cliente B",identification:"900200002",receivableId:"rec-b",documentNumber:"BTAX-2",
-            groupTotals:{...totals,invoiceCount:1,originalAmount:10000,paidAmount:2500,outstandingAmount:7500,
-              overdue31To60Amount:0,availableAdvances:0,netAmount:7500}};
+            originalAmount:10000.1234,outstandingAmount:7500.1234,overdueAmount:7500.1234,overdue1To30Amount:7500.1234,
+            groupTotals:{...totals,invoiceCount:1,originalAmount:10000.1234,paidAmount:2500,outstandingAmount:7500.1234,
+              overdue1To30Amount:7500.1234,
+              overdue31To60Amount:0,availableAdvances:0,netAmount:7500.1234}};
           body={items:[a,b,{...a,receivableId:"rec-a2",documentNumber:"ASI-1",internalDocumentNumber:null,
             issuedAt:"2026-09-01T12:00:00Z",dueDate:"2026-09-30T12:00:00Z",termDays:29,ageDays:71,
             overdue1To30Amount:0,overdue31To60Amount:7500,daysPastDue:42},
             {...a,receivableId:null,documentNumber:"Anticipos y otros saldos a favor",isCreditBalance:true,invoiceCount:0,
               originalAmount:0,paidAmount:0,outstandingAmount:0,overdueAmount:0,overdue1To30Amount:0,availableAdvances:2000,netAmount:-2000}],
-            page:1,pageSize:50,totalCount:4,totalPages:1,totalInvoiceCount:3,totalOriginal:30000,totalPaid:7500,
-            totalOutstanding:22500,totalOverdue:22500,totalOtherImpact:0,totalNotDue:0,totalOverdue1To30:15000,
-            totalOverdue31To60:7500,totalOverdue61To90:0,totalOverdueOver90:0,totalAvailableAdvances:2000,totalAvailableCredits:0,totalNetAmount:20500};
+            page:1,pageSize:50,totalCount:4,totalPages:1,totalInvoiceCount:3,totalOriginal:30000.1234,totalPaid:7500,
+            totalOutstanding:22500.1234,totalOverdue:22500.1234,totalOtherImpact:0,totalNotDue:0,totalOverdue1To30:15000.1234,
+            totalOverdue31To60:7500,totalOverdue61To90:0,totalOverdueOver90:0,totalAvailableAdvances:2000,totalAvailableCredits:0,totalNetAmount:20500.1234};
         }
         if (isExport && !creditOnly && url.searchParams.get("search") !== "grupos") {
           const complete = body as { items: Record<string,unknown>[] };
@@ -289,6 +291,8 @@ for (const direction of ["receivables", "payables"] as const) {
       await expect(clientA.getByText("ASI-1",{exact:true})).toBeVisible();
       await expect(clientA.getByText("Referencia interna: BTAX-1",{exact:true})).toBeVisible();
       await expect(clientB.getByText("BTAX-2",{exact:true})).toBeVisible();
+      await expect(clientB.getByText(/^1–30 días:\s*\$\s*7\.500,1234$/)).toBeVisible();
+      await expect(dialog.getByRole("region",{name:"Edades de cartera"}).getByText(/15\.000,1234/)).toBeVisible();
       await expect(clientB.getByText("FE-1",{exact:true})).toHaveCount(0);
       await expect(dialog.getByText("Anticipos y otros saldos a favor",{exact:true})).toHaveCount(0);
       await expect(clientA.getByRole("row").filter({hasText:"FE-1"}).getByText("1–30 días",{exact:true}))

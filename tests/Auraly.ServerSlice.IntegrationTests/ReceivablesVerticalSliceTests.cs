@@ -958,20 +958,10 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
             $"/api/commerce/v1/receivables/report/print?consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=2");
         Assert.Contains("portfolio-v2",legacyPrint);
         Assert.DoesNotContain("Plazo (días)",legacyPrint);
-        // A fiscal number is a document identity, not the long CUFE or the
-        // internal sale number. Seed only the fiscal read model of this real
-        // synthetic sale; no provider or external delivery is involved.
-        var fiscalNumber = $"FE-{Guid.NewGuid():N}";
-        var cufe = new string('a', 96);
-        Assert.Equal(1, await CountAsync("FiscalDocuments", "DocumentId", checkout.Receipt.DocumentId));
-        await using (var connection = new SqlConnection(fixture.ConnectionString))
-        {
-            await connection.OpenAsync();
-            await ExecuteAsync(connection, null, """
-                UPDATE dbo.FiscalDocuments SET FiscalNumber=@Fiscal,UniqueCode=@Cufe WHERE DocumentId=@Id;
-                """, new SqlParameter("@Id", checkout.Receipt.DocumentId),
-                new SqlParameter("@Fiscal", fiscalNumber), new SqlParameter("@Cufe", cufe));
-        }
+        // Exercise the identities returned by the canonical checkout itself,
+        // without changing its fiscal read model or immutable snapshot.
+        var fiscalNumber = Assert.IsType<string>(checkout.Receipt.FiscalNumber);
+        Assert.NotEqual(checkout.Receipt.DocumentNumber, fiscalNumber);
         var identityPath = $"/api/commerce/v1/receivables/report?page=1&pageSize=50&consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=4";
         foreach (var number in new[] { fiscalNumber, checkout.Receipt.DocumentNumber })
         {
@@ -991,7 +981,8 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
         var fiscalPrint = await client.GetStringAsync(identityPath.Replace("/report?", "/report/print?", StringComparison.Ordinal));
         Assert.Contains(fiscalNumber, fiscalPrint);
         Assert.Contains(checkout.Receipt.DocumentNumber, fiscalPrint);
-        Assert.DoesNotContain(cufe, fiscalPrint);
+        if (!string.IsNullOrWhiteSpace(checkout.Receipt.Cufe))
+            Assert.DoesNotContain(checkout.Receipt.Cufe, fiscalPrint);
         var legacyIdentity = (await client.GetFromJsonAsync<ReceivablesReportPage>(
             identityPath.Replace("templateVersion=4", "templateVersion=3", StringComparison.Ordinal)))!;
         Assert.Equal(checkout.Receipt.DocumentNumber, Assert.Single(legacyIdentity.Items,
@@ -1674,7 +1665,6 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
             "AccountingEntries:SourceDocumentId",
             "AccountingSourceDocuments:SourceDocumentId",
             "AccountingPostingJobs:SourceDocumentId",
-            "FiscalDocuments:DocumentId",
             "CustomerPaymentApplications:PaymentId",
             "CustomerPaymentTenders:PaymentId",
             "CustomerPayments:PaymentId",

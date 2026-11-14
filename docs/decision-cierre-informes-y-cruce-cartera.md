@@ -63,7 +63,9 @@ más de 90), además de edad y mora numéricas. Los cinco tramos conservan sus
 importes en el resumen del cliente/sede. Los colores pastel menta, amarillo,
 durazno, rosa y lavanda acompañan los textos; nunca sustituyen la clasificación
 del propietario ni cambian sus límites. Pantalla, PDF e impresión y Excel
-conservan el mismo alcance. Los anticipos y otros créditos aparecen una sola
+conservan el mismo alcance. Los resúmenes, edades y facturas muestran la misma
+precisión de hasta cuatro decimales, sin redondear los totales a pesos enteros.
+Los anticipos y otros créditos aparecen una sola
 vez en el resumen, sin presentarse como facturas ficticias; un tercero con sólo
 crédito conserva su bloque visible.
 
