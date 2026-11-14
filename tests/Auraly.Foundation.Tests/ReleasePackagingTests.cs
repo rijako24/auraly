@@ -22,6 +22,7 @@ public sealed class ReleasePackagingTests
             var source = File.ReadAllText(path);
             Assert.Contains("Isolation!=FreshProcess", source, StringComparison.Ordinal);
             Assert.Contains("Isolation=FreshProcess", source, StringComparison.Ordinal);
+            Assert.Contains("dotnet build-server shutdown", source, StringComparison.Ordinal);
         }
         var benchmark = File.ReadAllText(Path.Combine(root, "tests", "Auraly.ServerSlice.IntegrationTests",
             "PortfolioManualPaymentPerformanceTests.cs"));

@@ -24,6 +24,8 @@ jobs:
           "SQLPACKAGE_PATH=$HOME/.dotnet/tools/sqlpackage.exe" >> $env:GITHUB_ENV
       - run: dotnet restore Auraly.Commerce.sln --locked-mode
       - run: dotnet build Auraly.Commerce.sln --no-restore --configuration Release
+      - name: Release compiler resources before latency gates
+        run: dotnet build-server shutdown
       - name: Install pinned PDF browser
         shell: pwsh
         run: ./tests/Auraly.Foundation.Tests/bin/Release/net8.0/playwright.ps1 install --only-shell chromium

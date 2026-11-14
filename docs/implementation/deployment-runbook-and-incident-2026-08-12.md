@@ -125,7 +125,10 @@ Solo el caso de 500 partidas/formas lleva esa marca; los otros seis del grupo
 de aceptación continúan en la regresión completa. El segundo proceso empieza
 después de liberar el host de regresión y su carga acumulada. No se
 omiten pruebas, aumentan tiempos ni eliminan las comprobaciones de presión de
-memoria, latencia o viajes SQL. El benchmark de centros de costo usa una base
+memoria, latencia o viajes SQL. Ambos cierran los servidores de compilación
+antes de las pruebas, para no conservar los nodos MSBuild y el compilador de la
+solución mientras se miden SQL y las consultas locales de la aplicación.
+El benchmark de centros de costo usa una base
 aislada que elimina el fixture; no borra 10.000 principales comprobando FKs
 contra la historia financiera de escenarios ajenos. Los casos de anticipos que
 inspeccionan una página usan su propio proveedor, igual que los de clientes,
