@@ -294,8 +294,8 @@ test.describe("conteo y detalle de inventario", () => {
             reasonCode: "Conteo físico",
             status: "Processed",
             occurredAt: "2026-08-14T16:00:00Z",
-            lineCount: 2,
-            totalValueChange: 15000,
+            lineCount: 3,
+            totalValueChange: 10000,
           }],
           page: 1, pageSize: 50, totalCount: 1, totalPages: 1,
         }),
@@ -316,16 +316,17 @@ test.describe("conteo y detalle de inventario", () => {
           reasonDescription: "Conteo físico programado",
           conversionType: null,
           baseInventorySequence: 25,
-          notes: "Conteo de dos líneas",
+          notes: "Conteo de tres líneas",
           status: "Processed",
           occurredAt: "2026-08-14T16:00:00Z",
           createdAt: "2026-08-14T16:00:00Z",
           acceptedAt: "2026-08-14T16:01:00Z",
           processedAt: "2026-08-14T16:02:00Z",
-          totalValueChange: 15000,
+          totalValueChange: 10000,
           lines: [
-            { lineNumber: 1, direction: "COUNT", productId: "77777777-7777-7777-7777-777777777777", productCode: "PRD-000001", productName: "Aceite vegetal 3000 ml", quantity: 7, systemQuantityAtBase: 10, explicitUnitCost: null, allocationWeight: null, processedUnitCost: 5000, processedValue: -15000 },
-            { lineNumber: 2, direction: "COUNT", productId: "88888888-8888-8888-8888-888888888888", productCode: "PRD-000002", productName: "Aceite vegetal 1000 ml", quantity: 12, systemQuantityAtBase: 8, explicitUnitCost: null, allocationWeight: null, processedUnitCost: 5000, processedValue: 20000 },
+            { lineNumber: 1, direction: "COUNT", productId: "77777777-7777-7777-7777-777777777777", productCode: "PRD-000001", productName: "Aceite vegetal 3000 ml", quantity: 7, preCountQuantity: 7, systemQuantityAtBase: 10, explicitUnitCost: null, allocationWeight: null, processedUnitCost: 5000, processedValue: -15000 },
+            { lineNumber: 2, direction: "COUNT", productId: "88888888-8888-8888-8888-888888888888", productCode: "PRD-000002", productName: "Aceite vegetal 1000 ml", quantity: 12, preCountQuantity: 12, systemQuantityAtBase: 8, explicitUnitCost: null, allocationWeight: null, processedUnitCost: 5000, processedValue: 20000 },
+            { lineNumber: 3, direction: "COUNT", productId: "99999999-9999-9999-9999-999999999999", productCode: "PRD-000003", productName: "Producto sin base histórica", quantity: 5, preCountQuantity: 5, systemQuantityAtBase: null, explicitUnitCost: null, allocationWeight: null, processedUnitCost: 5000, processedValue: 5000 },
           ],
         }),
       });
@@ -341,6 +342,10 @@ test.describe("conteo y detalle de inventario", () => {
     await expect(detail.getByText("Conteo físico programado")).toBeVisible();
     await expect(detail.getByText("Aceite vegetal 3000 ml")).toBeVisible();
     await expect(detail.getByText("Aceite vegetal 1000 ml")).toBeVisible();
+    await expect(detail.getByRole("row").filter({ hasText: "Aceite vegetal 3000 ml" }).getByRole("cell", { name: "-3", exact: true })).toBeVisible();
+    await expect(detail.getByRole("row").filter({ hasText: "Aceite vegetal 1000 ml" }).getByRole("cell", { name: "+4", exact: true })).toBeVisible();
+    const unknown = detail.getByRole("row").filter({ hasText: "Producto sin base histórica" });
+    await expect(unknown.getByRole("cell", { name: "—", exact: true })).toHaveCount(2);
     await detail.getByRole("button", { name: "Cerrar" }).click();
     await expect(detail).toBeHidden();
   });

@@ -143,17 +143,17 @@ function InventoryDetailDialog({detail,onClose}:{detail?:InventoryOperationDetai
    </div>}
    <div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[850px] text-sm">
     <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-left">Movimiento</th>{isCount&&<th className="px-4 py-3 text-right">Existencia sistema</th>}<th className="px-4 py-3 text-right">{isCount?"Preconteo":"Saldo base"}</th><th className="px-4 py-3 text-right">{isCount?"Cantidad contada":"Cantidad"}</th>{isTransfer&&<><th className="px-4 py-3 text-right">Salió</th><th className="px-4 py-3 text-right">Entró</th></>}{isCount&&<th className="px-4 py-3 text-right">Diferencia</th>}<th className="px-4 py-3 text-right">Valor unitario</th><th className="px-4 py-3 text-right">Valor total</th></tr></thead>
-    <tbody className="divide-y">{detail.lines.map(line=><tr key={line.lineNumber}>
+    <tbody className="divide-y">{detail.lines.map(line=>{const difference=countDifference(line);return <tr key={line.lineNumber}>
      <td className="px-4 py-3"><p>{line.productName}</p><p className="text-xs text-muted-foreground">{line.productCode} · Línea {line.lineNumber}{isConversion&&line.conversionFactor!=null?` · factor ${fmt(line.conversionFactor)} · equivalente ${fmt(line.conversionEquivalentQuantity??0)}`:""}</p></td>
      <td className="px-4 py-3">{directionLabel(line.direction)}</td>
      {isCount&&<td className="px-4 py-3 text-right tabular-nums">{line.systemQuantityAtBase==null?"—":fmt(line.systemQuantityAtBase)}</td>}
      <td className="px-4 py-3 text-right tabular-nums">{isCount?(line.preCountQuantity==null?"—":fmt(line.preCountQuantity)):(line.systemQuantityAtBase==null?"—":fmt(line.systemQuantityAtBase))}</td>
      <td className="px-4 py-3 text-right tabular-nums">{line.quantity==null?"—":fmt(line.quantity)}</td>
      {isTransfer&&<><td className="px-4 py-3 text-right tabular-nums">{fmt(line.dispatchedQuantity??0)}</td><td className="px-4 py-3 text-right tabular-nums">{fmt(line.receivedQuantity??0)}</td></>}
-     {isCount&&<td className={`px-4 py-3 text-right font-semibold tabular-nums ${countDifference(line)>0?"text-emerald-700":countDifference(line)<0?"text-red-700":"text-muted-foreground"}`}>{countDifference(line)>0?"+":""}{fmt(countDifference(line))}</td>}
+     {isCount&&<td className={`px-4 py-3 text-right font-semibold tabular-nums ${difference!=null&&difference>0?"text-emerald-700":difference!=null&&difference<0?"text-red-700":"text-muted-foreground"}`}>{difference==null?"—":`${difference>0?"+":""}${fmt(difference)}`}</td>}
      <td className="px-4 py-3 text-right tabular-nums">{line.processedUnitCost==null?"Restringido":formatCurrency(line.processedUnitCost)}</td>
      <td className="px-4 py-3 text-right font-medium tabular-nums">{(isCount?line.processedUnitCost:line.processedValue)==null?"Restringido":formatCurrency(isCount?Math.abs(line.quantity??0)*(line.processedUnitCost??0):line.processedValue??0)}</td>
-    </tr>)}</tbody>
+    </tr>;})}</tbody>
    </table></div>
    {detail.notes&&<div className="rounded-2xl border bg-muted/30 p-4"><p className="text-xs font-medium uppercase text-muted-foreground">Observaciones</p><p className="mt-1">{detail.notes}</p></div>}
   </div>
@@ -161,7 +161,7 @@ function InventoryDetailDialog({detail,onClose}:{detail?:InventoryOperationDetai
  </DialogContent></Dialog><AccountingDocumentDialog documentId={showAccounting?detail.documentId:undefined} sourceLabel={detail.documentNumber??"Operación de inventario"} onClose={()=>setShowAccounting(false)}/></>;
 }
 function DetailCard({label,value}:{label:string;value:string}){return <div className="rounded-2xl border bg-muted/20 p-4"><p className="text-xs font-medium uppercase text-muted-foreground">{label}</p><p className="mt-1 text-sm">{value}</p></div>}
-function countDifference(line:InventoryOperationDetail["lines"][number]){return (line.quantity??0)-(line.preCountQuantity??0);}
+function countDifference(line:InventoryOperationDetail["lines"][number]){return line.quantity==null||line.systemQuantityAtBase==null?null:line.quantity-line.systemQuantityAtBase;}
 function directionLabel(value:string){return ({COUNT:"Conteo",ADJUSTMENT:"Ajuste",TRANSFER:"Traslado",INPUT:"Consumo",OUTPUT:"Producción",DAMAGE:"Avería",RECEIPT:"Recepción de compra"} as Record<string,string>)[value]??value;}
 
 function Metric({icon:Icon,label,value}:{icon:typeof Boxes;label:string;value:string}){return <Card><CardContent className="flex items-center gap-3 pt-6"><div className="rounded-xl bg-emerald-50 p-3 text-emerald-700"><Icon className="h-5 w-5"/></div><div><p className="text-sm text-muted-foreground">{label}</p><p className="text-2xl font-bold">{value}</p></div></CardContent></Card>}
