@@ -86,6 +86,20 @@ dos comandos SQL, el límite de exportación de 5.000 y el presupuesto p95 <1 s
 con 10.000 posiciones. Es un cambio de lectura/presentación: rollback retira
 estos consumidores, sin migración ni reparación financiera.
 
+El enriquecimiento de abonos CxC/CxP conserva `PortfolioPaymentOrigins` como
+única proyección de identidad. El perfil real del 14-11-2026 mostró que unir
+esa vista directamente podía recorrer 10.000 pagos para devolver las 50
+aplicaciones de una página de 25 facturas. La búsqueda correlacionada por
+PaymentId/tipo mantiene la página como límite: los perfiles de ambos lados
+mostraron 25 búsquedas por clave y las mismas 50 aplicaciones. TOP(1) expresa
+una cardinalidad respaldada por las claves primarias de pagos/borradores y
+UQ_AccountingEntries_Source; no escoge entre documentos duplicados ni crea
+otra numeración. La regresión de volumen comprueba las búsquedas y filas reales
+después de terminar todas sus muestras de latencia, además de los importes,
+filtros y dos viajes de cada petición. Revertir estos dos lectores sólo restaura
+el plan anterior; no requiere cambios de esquema ni modifica movimientos.
+Los umbrales y el gate completo de despliegue siguen siendo obligatorios.
+
 Validación local del incremento: compilación Release sin errores ni advertencias,
 build de Admin y lint dirigido; 14 pruebas de exportación/visor; los dos escenarios
 de navegador CxC/CxP, incluidos filtros, exportación completa, dos clientes,

@@ -181,8 +181,12 @@ public sealed partial class SqlPayablesStore
               CASE WHEN application.Amount<0 THEN CONCAT(N'Desaplicación de ',origin.DocumentNumber) ELSE origin.DocumentNumber END,application.AppliedAt,
               application.Amount
             FROM #PageApplications application
-            JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=application.PaymentId
-              AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=@BusinessId
+            -- PaymentId and kind identify one origin: payment/draft primary
+            -- keys and UQ_AccountingEntries_Source enforce that cardinality.
+            CROSS APPLY (SELECT TOP(1) receipt.DocumentNumber
+              FROM accounting.PortfolioPaymentOrigins receipt
+              WHERE receipt.PaymentId=application.PaymentId
+                AND receipt.SubledgerKind=N'Payable' AND receipt.BusinessId=@BusinessId) origin
             ORDER BY application.PositionId,application.AppliedAt,application.PaymentId,application.UnapplicationTransactionId;
             END
             ELSE

@@ -52,6 +52,7 @@ jobs:
           path: |
             ${{ runner.temp }}/sql-diagnostics
             tests/Auraly.ServerSlice.IntegrationTests/bin/Release/net8.0/TestResults/portfolio-*-failure-*/**
+            tests/Auraly.ServerSlice.IntegrationTests/bin/Release/net8.0/TestResults/portfolio-report-profile-*/**
           retention-days: 7
           if-no-files-found: ignore
 
