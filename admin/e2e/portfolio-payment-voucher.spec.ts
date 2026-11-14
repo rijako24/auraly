@@ -27,7 +27,7 @@ for (const catalogFailure of [false, true]) {
       let body: unknown = [];
       if (path === "/api/auth/me") body = user;
       else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Auraly" }];
-      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede de prueba" }];
+      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede de prueba", timeZone: "America/Bogota" }];
       else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
       else if (path.endsWith("/reference-options/payment-method")) {
         methodCatalogReads++;

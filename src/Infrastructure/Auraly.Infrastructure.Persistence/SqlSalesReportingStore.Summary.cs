@@ -33,22 +33,29 @@ public sealed partial class SqlSalesReportingStore
               a.RecognizedCostAmount,a.OriginalSaleDocumentId,a.CustomerId,a.MissingCostLines,a.ProjectedAt {chartColumns}
             INTO #Activity {ExplorerSource};
             """;
-        // Keep document dimensions separate from product/supplier detail. The
-        // same canonical measures preserve nullable cost and signed returns.
+        // Hour, seller and warehouse consume the same document grain. Collapse
+        // it once; sorting the wide activity separately for each panel repeats
+        // that work. Hash the fixed identity tuple instead of sorting labels.
         var documentColumns="a.SourceDocumentId,a.SourceDocumentType,a.OriginalSaleDocumentId,a.BusinessLocalDate,"+
-            "a.CustomerId,a.MovementType,a.ItemKind,a.BusinessLocalHour,a.SellerId,a.SellerName,a.WarehouseId,a.WarehouseName";
+            "a.CustomerId,a.MovementType,a.ItemKind,a.BusinessLocalHour,a.SellerId,a.WarehouseId";
         var documentSql=includeBreakdowns?$"""
-            WITH documents AS(SELECT {documentColumns},{ExplorerMeasures}
+            WITH documents AS(SELECT {documentColumns},MAX(a.SellerName) SellerName,MAX(a.WarehouseName) WarehouseName,
+                MAX(a.ProjectedAt) ProjectedAt,
+                {MeasuresSql("Quantity","GrossSales","Discounts","NetUntaxed","Tax","NetTotal","RecognizedCost","MissingCostLines")}
               FROM #Activity a GROUP BY {documentColumns})
             SELECT SourceDocumentId,SourceDocumentType,OriginalSaleDocumentId,BusinessLocalDate,
               CustomerId,MovementType,ItemKind,BusinessLocalHour,SellerId,SellerName,WarehouseId,WarehouseName,
               Quantity,GrossSales GrossAmount,Discounts DiscountAmount,NetUntaxed UntaxedAmount,Tax TaxAmount,
-              NetTotal TotalAmount,RecognizedCost RecognizedCostAmount,MissingCostLines
-            INTO #DocumentActivity FROM documents;
+              NetTotal TotalAmount,RecognizedCost RecognizedCostAmount,MissingCostLines,ProjectedAt
+            INTO #DocumentActivity FROM documents OPTION(HASH GROUP);
             """:"";
         var summaryActivity=includeBreakdowns?"#DocumentActivity":"#Activity";
-        var activitySummary=HasDimensionFilter(filter)||includeBreakdowns;
-        var source=activitySummary?activitySql+documentSql+$"""
+        var filteredSummary=HasDimensionFilter(filter);
+        var activitySummary=filteredSummary||includeBreakdowns;
+        // Adding charts does not invalidate the canonical unfiltered daily
+        // totals. Reuse that projection, just like the summary without charts;
+        // dimension-scoped totals still aggregate their exact filtered activity.
+        var source=(activitySummary?activitySql+documentSql:"")+(filteredSummary?$"""
             SELECT m.BusinessLocalDate,SUM(m.OfficialTotal) OfficialTotal INTO #Money
             FROM reporting.SalesReportDocumentMovements(@TenantId,@BusinessId,@From,@To) m
             WHERE @WholeDocuments=1 AND EXISTS(SELECT 1 FROM #Activity a WHERE a.SourceDocumentId=m.SourceDocumentId AND a.SourceDocumentType=m.SourceDocumentType)
@@ -78,7 +85,7 @@ public sealed partial class SqlSalesReportingStore
               CASE WHEN UnknownCostDocumentCount=0 THEN NetRecognizedCost END NetRecognizedCost,CreditSales,Collected,Refunded
             INTO #Summary FROM reporting.SalesReportDailyTotals
             WHERE BusinessId=@BusinessId AND BusinessLocalDate BETWEEN @From AND @To;
-            """;
+            """);
         var customerSource=activitySummary?"""
             SELECT COUNT_BIG(DISTINCT CustomerId) FROM #Activity
             WHERE MovementType=N'Sale' AND UntaxedAmount>0 AND BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo;
@@ -136,7 +143,7 @@ public sealed partial class SqlSalesReportingStore
         const string documents="FROM #DocumentActivity a WHERE a.BusinessLocalDate BETWEEN @CurrentFrom AND @CurrentTo";
         string Breakdown(string dimension,int limit)
         {
-            var (key,label)=ExplorerDimension(dimension);
+            var (key,label)=ExplorerDimension(dimension,rawIdentifiers:true);
             var documentDimension=dimension is SalesReportingDimensions.Hour or SalesReportingDimensions.Seller or SalesReportingDimensions.Warehouse;
             return LineBreakdownSql(documentDimension?documents:source,key,label.Replace("d.","a.",StringComparison.Ordinal),limit);
         }

@@ -62,14 +62,15 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
   const [showUnitCreate, setShowUnitCreate] = useState(false);
 
   useEffect(() => {
-    if (!initialDraft && config.data) {
-      const isGenericProduct = config.data.isGenericProduct ?? false;
-      setForm({ ...config.data, isGenericProduct, link: isGenericProduct ? null : config.data.link, linkedProducts: isGenericProduct ? [] : config.data.linkedProducts ?? [], conversionMaximumLossPercent: isGenericProduct ? null : config.data.conversionMaximumLossPercent });
-    }
+    if (!config.data) return;
+    const captured = initialDraft ?? config.data;
+    const isGenericProduct = captured.isGenericProduct ?? false;
+    // Family membership is edited from the principal. A recovered child draft
+    // must not restore an obsolete link or remove a newly assigned parent.
+    setForm({ ...captured, isGenericProduct, link: isGenericProduct ? null : config.data.link,
+      linkedProducts: isGenericProduct ? [] : captured.linkedProducts ?? [],
+      conversionMaximumLossPercent: isGenericProduct ? null : captured.conversionMaximumLossPercent });
   }, [config.data, initialDraft]);
-  useEffect(() => {
-    if (initialDraft) { const isGenericProduct = initialDraft.isGenericProduct ?? false; setForm({ ...initialDraft, isGenericProduct, link: isGenericProduct ? null : initialDraft.link, linkedProducts: isGenericProduct ? [] : initialDraft.linkedProducts ?? [], conversionMaximumLossPercent: isGenericProduct ? null : initialDraft.conversionMaximumLossPercent }); }
-  }, [initialDraft]);
   useEffect(() => { if (form) onDraftChange?.(form); }, [form, onDraftChange]);
 
   const chain = useMemo(
@@ -125,7 +126,8 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
 
   useImperativeHandle(ref, () => ({
     getValue: () => {
-      if (!form) throw new Error("Espera a que termine de cargar la configuración comercial.");
+      if (!form || config.isPending || config.isFetching || config.isError)
+        throw new Error("Espera a que termine de cargar la configuración comercial.");
       return {
         productCategoryId: form.productCategoryId,
         productBrandId: form.productBrandId,
@@ -160,7 +162,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
       };
     },
     save: async () => { await save.mutateAsync(); },
-  }), [form, save]);
+  }), [form, save, config.isPending, config.isFetching, config.isError]);
   const createBrand = useMutation({
     mutationFn: () => productMerchandisingApi.createBrand(newBrand.trim()),
     onSuccess: async (value) => {
@@ -180,11 +182,11 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
     },
   });
 
+  if (config.isError) {
+    return <section role="alert" className="rounded-2xl border border-destructive/30 p-6 text-sm text-destructive">No fue posible cargar la configuración comercial.</section>;
+  }
   if (config.isLoading || !form) {
     return <section className="rounded-2xl border p-6 text-sm text-muted-foreground">Cargando identidad comercial del producto…</section>;
-  }
-  if (config.isError) {
-    return <section className="rounded-2xl border border-destructive/30 p-6 text-sm text-destructive">No fue posible cargar la configuración comercial.</section>;
   }
 
   function setCategoryAt(depth: number, value: string) {

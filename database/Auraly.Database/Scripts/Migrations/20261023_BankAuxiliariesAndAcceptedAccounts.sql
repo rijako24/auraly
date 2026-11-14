@@ -43,15 +43,14 @@ CREATE TABLE #BankJobBatch(JobId uniqueidentifier PRIMARY KEY);
 WHILE 1=1
 BEGIN
   INSERT #BankJobBatch SELECT TOP(100) AccountingPostingJobId FROM dbo.AccountingPostingJobs
-  WHERE ResolvedBankAccountsJson IS NULL AND (@BankJobLastId IS NULL OR AccountingPostingJobId>@BankJobLastId)
+  WHERE Status=N'Posted' AND AccountingEntryRequired=1 AND ResolvedBankAccountsJson IS NULL
+    AND (@BankJobLastId IS NULL OR AccountingPostingJobId>@BankJobLastId)
   ORDER BY AccountingPostingJobId;
   IF @@ROWCOUNT=0 BREAK;
 
   UPDATE job SET ResolvedBankAccountsJson=COALESCE((
     SELECT reference.BankAccountId,
-      CASE WHEN job.AccountingEntryRequired=0 THEN NULL
-        WHEN job.Status<>N'Posted' THEN CASE WHEN bank.BankCount=1 THEN bank.AccountingAccountId END
-        WHEN EXISTS(SELECT 1 FROM dbo.AccountingEntries entry
+      CASE WHEN EXISTS(SELECT 1 FROM dbo.AccountingEntries entry
           JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId AND line.AccountId=bank.AccountingAccountId
           WHERE entry.SourceDocumentId=job.SourceDocumentId AND entry.SourceDocumentType=job.SourceDocumentType
             AND entry.TenantId=job.TenantId AND entry.BusinessId=job.BusinessId)
@@ -117,11 +116,11 @@ IF EXISTS(SELECT 1 FROM #FutureBanks bank WHERE NOT EXISTS(
   THROW 51734,N'No hay suficientes códigos PUC libres para separar los auxiliares bancarios. Configúralos antes del corte.',1;
 
 INSERT dbo.AccountingAccounts(AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,
-  IsActive,CreatedAt,ParentAccountId,FinancialFunction,BalanceSide,BusinessId,BankAccountId,PaymentMethodOptionId)
+  IsActive,CreatedAt,ParentAccountId,FinancialFunction,BalanceSide,LegacyBusinessId,BankAccountId,PaymentMethodOptionId)
 SELECT NEWID(),future.TenantId,code.Code,LEFT(CONCAT(original.Name,N' · ',bank.DisplayName),200),
   original.AccountType,original.AllowsPosting,original.RequiresParty,
   CONVERT(bit,CASE WHEN original.IsActive=1 AND future.BankIsActive=1 THEN 1 ELSE 0 END),SYSUTCDATETIME(),
-  original.ParentAccountId,N'Bank',N'Debit',original.BusinessId,future.BankAccountId,original.PaymentMethodOptionId
+  original.ParentAccountId,N'Bank',N'Debit',original.LegacyBusinessId,future.BankAccountId,original.PaymentMethodOptionId
 FROM #FutureBanks future JOIN #FutureCodes code ON code.TenantId=future.TenantId
   AND code.AccountingAccountId=future.AccountingAccountId AND code.CodeRank=future.BankRank
 JOIN dbo.AccountingAccounts original ON original.AccountId=future.AccountingAccountId AND original.TenantId=future.TenantId

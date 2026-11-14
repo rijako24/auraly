@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Domain.Time;
 using Microsoft.Extensions.Logging;
 using Auraly.Platform.Application.Configuration;
 using Auraly.Platform.Domain.Repositories;
@@ -47,7 +48,8 @@ public sealed class BusinessClock : IBusinessClock
         }
 
         requestedTimeZoneId ??= DefaultTimeZoneId;
-        var timeZone = BusinessTimeZoneResolver.Resolve(requestedTimeZoneId);
+        var timeZone = BusinessTimeZoneResolver.Resolve(
+            BusinessTimeZoneResolver.NormalizeConfiguredId(requestedTimeZoneId));
 
         if (!string.Equals(timeZone.Id, requestedTimeZoneId, StringComparison.OrdinalIgnoreCase)
             && timeZone.Id != BusinessTimeZoneResolver.DefaultIanaTimeZoneId)
@@ -59,7 +61,7 @@ public sealed class BusinessClock : IBusinessClock
                 businessId);
         }
 
-        var now = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), timeZone);
+        var now = BusinessCalendar.InZone(_timeProvider.GetUtcNow(), timeZone);
         var today = DateOnly.FromDateTime(now.DateTime);
 
         return new BusinessClockSnapshot(businessId, now, today, timeZone);

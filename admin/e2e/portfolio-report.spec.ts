@@ -1,7 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import { unzipSync, strFromU8 } from "fflate";
+
+test.use({timezoneId:"Pacific/Kiritimati"});
 
 for (const direction of ["receivables", "payables"] as const) {
   test(`${direction} consulta el informe por página sin traer toda la cartera`, async ({ page, baseURL }) => {
+    await page.clock.install({time:new Date("2026-11-11T14:00:00Z")});
     const tenantId = "11111111-1111-1111-1111-111111111111";
     const businessId = "22222222-2222-2222-2222-222222222222";
     const user = { userId: "33333333-3333-3333-3333-333333333333", tenantId,
@@ -15,20 +20,38 @@ for (const direction of ["receivables", "payables"] as const) {
     }, { user, businessId });
     const reportRequests: URL[] = [];
     const printRequests: URL[] = [];
+    const exportRequests: URL[] = [];
+    const logoSource = direction === "receivables" ? `data:image/png;base64,${(await readFile("public/brand/auraly-mark.png")).toString("base64")}` : null;
+    const legalName = direction === "receivables"
+      ? "COMERCIALIZADORA INTERNACIONAL DE PRODUCTOS DE CONSUMO MASIVO, IMPORTACIONES, EXPORTACIONES Y DISTRIBUCIONES INDUSTRIALES DEL NORTE Y DEL CARIBE COLOMBIANO SOCIEDAD POR ACCIONES SIMPLIFICADA"
+      : "Auraly Distribuciones";
+    let brandingReads = 0;
+    let recoverReport = false;
     await page.route("**/api/**", async route => {
       const url = new URL(route.request().url());
       const path = url.pathname;
+      if (direction === "receivables" && path.includes("/receivables/report"))
+        expect(url.searchParams.get("templateVersion")).toBe("4");
+      if ([`/api/commerce/v1/${direction}`, `/api/commerce/v1/${direction}/customers`,
+        `/api/commerce/v1/${direction}/suppliers`, `/api/commerce/v1/${direction}/report`,
+        `/api/commerce/v1/${direction}/report/print`, `/api/commerce/v1/${direction}/report/export`,
+        "/api/commerce/v1/receivable-payments", "/api/commerce/v1/payable-payments"].includes(path))
+        expect(url.searchParams.get("dateRangeVersion")).toBe("2");
       let body: unknown = [];
       if (path === "/api/auth/me") body = user;
+      else if (path.endsWith("/tenants/branding/print")) { brandingReads++; body = {tenantId,displayName:"Auraly",legalName,logoUrl:logoSource,nit:"900100001"}; }
       else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Auraly" }];
-      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Auraly" }];
+      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Auraly",timeZone:"America/Bogota" }];
       else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
       else if (path.endsWith(`/${direction}/report/print`)) {
         printRequests.push(url);
         return route.fulfill({ status: 200, contentType: "text/html",
           body: "<!doctype html><html lang=\"es\"><body><h1>Informe completo</h1></body></html>" });
-      } else if (path.endsWith(`/${direction}/report`)) {
-        reportRequests.push(url);
+      } else if (path.endsWith(`/${direction}/report`) || path.endsWith(`/${direction}/report/export`)) {
+        const isExport = path.endsWith("/export");
+        (isExport ? exportRequests : reportRequests).push(url);
+        if (!isExport && url.searchParams.get("search") === "error-consulta" && !recoverReport)
+          return route.fulfill({status:503,contentType:"application/problem+json",body:JSON.stringify({status:503,detail:"Fallo de consulta de prueba"})});
         const currentPage = Number(url.searchParams.get("page"));
         const isPayable = direction === "payables";
         body = {
@@ -36,20 +59,46 @@ for (const direction of ["receivables", "payables"] as const) {
             : { customerId: "cus-1", customerName: "Cliente A", receivableId: `rec-${currentPage}` }),
             identification: "900100001", partySiteId: "site-1", partySiteName: "Centro", currencyCode: "COP",
             invoiceCount: 1, originalAmount: 10000, paidAmount: 2500, outstandingAmount: 7500, otherImpact: 0,
-            overdueAmount: 0, notDueAmount: 7500, overdue1To30Amount: 0,
+            overdueAmount: 7500, notDueAmount: 0, overdue1To30Amount: 7500,
             overdue31To60Amount: 0, overdue61To90Amount: 0, overdueOver90Amount: 0,
-            documentNumber: `FAC-${currentPage}`, issuedAt: "2026-10-01T12:00:00Z",
+            documentNumber: url.searchParams.get("documentNumber") ?? `FAC-${currentPage}`, issuedAt: "2026-10-01T12:00:00Z",
+            ...(!isPayable ? {termDays:19,ageDays:41,daysPastDue:22,address:"Calle de prueba 123",city:"Bogotá",phone:"3001234567",creditLimit:500000,
+              groupTotals:{invoiceCount:51,originalAmount:510000,paidAmount:127500,otherImpact:0,outstandingAmount:382500,
+                notDueAmount:0,overdue1To30Amount:382500,overdue31To60Amount:0,overdue61To90Amount:0,overdueOver90Amount:0}} : {}),
             dueDate: "2026-10-20T12:00:00Z", applications: [{ documentNumber: "AB-1", appliedAt: "2026-10-05T12:00:00Z", amount: 2500 }] }],
           page: currentPage, pageSize: 50, totalCount: 51, totalPages: 2,
           ...(isPayable ? { currencyTotals: [{ currencyCode: "COP", invoiceCount: 51,
-            originalAmount: 510000, paidAmount: 127500, outstandingAmount: 382500, overdueAmount: 0, otherImpact: 0,
-            notDueAmount: 382500, overdue1To30Amount: 0, overdue31To60Amount: 0,
+            originalAmount: 510000, paidAmount: 127500, outstandingAmount: 382500, overdueAmount: 382500, otherImpact: 0,
+            notDueAmount: 0, overdue1To30Amount: 382500, overdue31To60Amount: 0,
             overdue61To90Amount: 0, overdueOver90Amount: 0 }] }
             : { totalInvoiceCount: 51, totalOriginal: 510000, totalPaid: 127500,
-              totalOutstanding: 382500, totalOverdue: 0, totalOtherImpact: 0,
-              totalNotDue: 382500, totalOverdue1To30: 0, totalOverdue31To60: 0,
+              totalOutstanding: 382500, totalOverdue: 382500, totalOtherImpact: 0,
+              totalNotDue: 0, totalOverdue1To30: 382500, totalOverdue31To60: 0,
               totalOverdue61To90: 0, totalOverdueOver90: 0 }),
         };
+        if (!isPayable && url.searchParams.get("search") === "sin-resultados")
+          body = {...body as Record<string,unknown>,items:[],totalCount:0,totalPages:0,totalInvoiceCount:0,
+            totalOriginal:0,totalPaid:0,totalOutstanding:0,totalOverdue:0,totalOtherImpact:0,
+            totalNotDue:0,totalOverdue1To30:0,totalOverdue31To60:0,totalOverdue61To90:0,totalOverdueOver90:0};
+        const creditOnly=!isPayable && url.searchParams.get("search")==="saldo-a-favor";
+        if (creditOnly) {
+          const credit={customerId:"credit-only",partyId:"credit-party",customerName:"Cliente sólo con anticipo",
+            identification:"12345",partySiteId:null,partySiteName:null,currencyCode:"COP",invoiceCount:0,
+            receivableId:null,documentNumber:"Anticipos y otros saldos a favor",issuedAt:null,dueDate:null,applications:[],
+            originalAmount:0,paidAmount:0,otherImpact:0,outstandingAmount:0,overdueAmount:0,
+            notDueAmount:0,overdue1To30Amount:0,overdue31To60Amount:0,overdue61To90Amount:0,overdueOver90Amount:0,
+            availableAdvances:15000,availableCredits:0,netAmount:-15000,isCreditBalance:true};
+          body={items:[{...credit,groupTotals:credit}],page:1,pageSize:50,totalCount:1,totalPages:1,
+            totalInvoiceCount:0,totalOriginal:0,totalPaid:0,totalOtherImpact:0,totalOutstanding:0,totalOverdue:0,
+            totalNotDue:0,totalOverdue1To30:0,totalOverdue31To60:0,totalOverdue61To90:0,totalOverdueOver90:0,
+            totalAvailableAdvances:15000,totalAvailableCredits:0,totalNetAmount:-15000};
+        }
+        if (isExport && !creditOnly) {
+          const complete = body as { items: Record<string,unknown>[] };
+          const first = complete.items[0];
+          complete.items = Array.from({length:51},(_,index) => ({...first,documentNumber:`FAC-${index+1}`,
+            [isPayable?"payableId":"receivableId"]:`document-${index+1}`}));
+        }
       } else if (path.endsWith(`/${direction}/customers`) || path.endsWith(`/${direction}/suppliers`)) {
         body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0,
           totalOutstanding: 0, totalOverdue: 0 };
@@ -57,6 +106,8 @@ for (const direction of ["receivables", "payables"] as const) {
         body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 };
       } else if (path.endsWith("/portfolio/parties/site-options")) {
         body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 };
+      } else if (path.endsWith("/portfolio/parties/role-options")) {
+        body = {items:[{partyId:"party-2",roleId:"customer-2",role:"Customer",displayName:"Cliente B",identification:"900200002"}],page:1,pageSize:10,totalCount:1,totalPages:1};
       }
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     });
@@ -71,27 +122,37 @@ for (const direction of ["receivables", "payables"] as const) {
     const dialog = page.getByRole("dialog", { name: direction === "receivables"
       ? "Informe de cuentas por cobrar" : "Informe de cuentas por pagar" });
     await expect(dialog.getByText("FAC-1", { exact: true })).toBeVisible();
+    await expect(dialog.getByText(/AB-1/)).toHaveCount(0);
+    expect(reportRequests[0].searchParams.get("includeApplications")).toBe("false");
+    expect(reportRequests[0].searchParams.get("cutoff")).toBe("2026-11-11");
+    await dialog.getByRole("checkbox", { name: direction === "receivables" ? "Mostrar detalle de abonos" : "Mostrar detalle de pagos" }).check();
     await expect(dialog.getByText(/AB-1/)).toBeVisible();
+    expect(reportRequests.at(-1)!.searchParams.get("includeApplications")).toBe("true");
     await expect(dialog.getByRole("heading", { name: direction === "receivables" ? "Cliente A" : "Proveedor A" })).toBeVisible();
-    const document = dialog.locator("article").filter({ hasText: "FAC-1" });
-    await expect(document.getByText("Saldo pendiente")).toBeVisible();
+    const document = dialog.locator("tbody").filter({ hasText: "FAC-1" });
+    await expect(dialog.getByText(legalName,{exact:true})).toBeVisible();
+    expect(await dialog.getByTestId("portfolio-report-header").evaluate(element=>element.getBoundingClientRect().height)).toBeLessThan(200);
+    await expect(dialog.getByRole("columnheader", { name: "Saldo pendiente", exact: true })).toBeVisible();
     await expect(document.getByText(/AB-1/)).toBeVisible();
-    await expect(document.getByText("Al día", { exact: true })).toBeVisible();
+    await expect(document.getByText("1–30 días", { exact: true })).toBeVisible();
     await expect(dialog.getByRole("region", { name: "Edades de cartera" })).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(document).toBeVisible();
-    expect(await document.evaluate(element => element.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+    expect(await dialog.evaluate(element => element.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+    expect(await dialog.getByTestId("portfolio-report-header").evaluate(element=>element.getBoundingClientRect().height)).toBeLessThan(300);
+    const tableViewport = dialog.locator("div.overflow-x-auto").first();
+    expect(await tableViewport.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
     await page.setViewportSize({ width: 1440, height: 1000 });
-    expect(reportRequests).toHaveLength(1);
+    expect(reportRequests).toHaveLength(2);
     expect(reportRequests[0].searchParams.get("pageSize")).toBe("50");
     expect(reportRequests[0].searchParams.get("search")).toBe("FAC");
     expect(reportRequests[0].searchParams.has("sortDirection")).toBe(false);
     await dialog.getByRole("button", { name: "Siguiente" }).click();
     await expect(dialog.getByText("FAC-2", { exact: true })).toBeVisible();
-    expect(reportRequests).toHaveLength(2);
-    expect(reportRequests[1].searchParams.get("page")).toBe("2");
+    expect(reportRequests).toHaveLength(3);
+    expect(reportRequests[2].searchParams.get("page")).toBe("2");
     await dialog.getByRole("button", { name: /Consolidado/ }).click();
-    await expect.poll(() => reportRequests.length).toBe(3);
+    await expect.poll(() => reportRequests.length).toBe(4);
     const summaryRequest = reportRequests.at(-1)!;
     expect(summaryRequest.searchParams.get("page")).toBe("1");
     expect(summaryRequest.searchParams.get("sortBy")).toBeNull();
@@ -110,5 +171,94 @@ for (const direction of ["receivables", "payables"] as const) {
     await expect.poll(() => reportRequests.at(-1)?.searchParams.get("sortBy")).toBe("originalAmount");
     await dialog.getByRole("button", { name: "Ascendente" }).click();
     await expect.poll(() => reportRequests.at(-1)?.searchParams.get("sortDirection")).toBe("desc");
+    const excelDownload = page.waitForEvent("download");
+    await dialog.getByRole("button", { name: "Exportar Excel", exact: true }).click();
+    const workbook = await excelDownload;
+    await workbook.saveAs(test.info().outputPath("cartera.xlsx"));
+    expect(workbook.suggestedFilename()).toMatch(/\.xlsx$/);
+    const archive = unzipSync(await readFile((await workbook.path())!));
+    expect(archive["xl/worksheets/sheet1.xml"]).toBeTruthy();
+    const workbookXml = Object.entries(archive).filter(([name])=>name.endsWith(".xml"))
+      .map(([,value])=>strFromU8(value)).join("\n");
+    expect(workbookXml).toContain("FAC-51");
+    expect(workbookXml).toContain("10000");
+    expect(workbookXml).toContain('formatCode="dd/mm/yyyy"');
+    expect(exportRequests).toHaveLength(1);
+    expect(exportRequests[0].searchParams.get("sortDirection")).toBe("desc");
+    expect(exportRequests[0].searchParams.get("search")).toBe("FAC");
+    expect(exportRequests[0].searchParams.get("includeApplications")).toBe("true");
+    const pdfDownload = page.waitForEvent("download");
+    await dialog.getByRole("button", { name: "Descargar PDF", exact: true }).click();
+    const pdf = await pdfDownload;
+    await pdf.saveAs(test.info().outputPath("cartera.pdf"));
+    expect(pdf.suggestedFilename()).toMatch(/\.pdf$/);
+    expect((await readFile((await pdf.path())!)).subarray(0,4).toString()).toBe("%PDF");
+    expect(exportRequests).toHaveLength(2);
+    expect(brandingReads).toBe(1);
+    if (direction === "receivables") {
+      await expect(dialog.getByRole("columnheader",{name:"Plazo (días)",exact:true})).toBeVisible();
+      await expect(dialog.getByRole("columnheader",{name:"Edad (días)",exact:true})).toBeVisible();
+      await expect(dialog.getByRole("columnheader",{name:"Mora (días)",exact:true})).toBeVisible();
+      await expect(dialog.getByText(/Calle de prueba 123/)).toBeVisible();
+      await expect(dialog.getByText("Subtotal cliente / sede · 51 documentos filtrados")).toBeVisible();
+      await dialog.getByText("Filtros del informe",{exact:true}).click();
+      const beforeDraft = reportRequests.length;
+      await dialog.getByRole("combobox",{name:"Cliente del informe"}).click();
+      await page.getByRole("option",{name:/Cliente B/}).click();
+      await dialog.getByRole("textbox",{name:"Factura exacta"}).fill("FAC-42");
+      await dialog.getByRole("spinbutton",{name:"Edad desde (días)"}).fill("40");
+      await dialog.getByRole("spinbutton",{name:"Edad hasta (días)"}).fill("42");
+      await dialog.getByRole("spinbutton",{name:"Mora desde (días)"}).fill("20");
+      await dialog.getByRole("spinbutton",{name:"Mora hasta (días)"}).fill("30");
+      for (const label of ["Emisión desde","Emisión hasta"]) {
+        await dialog.locator("label").filter({hasText:label}).getByRole("button").click();
+        await dialog.getByRole("button",{name:"Mes anterior",exact:true}).click();
+        await dialog.getByRole("button",{name:"1 de octubre de 2026",exact:true}).click();
+      }
+      expect(reportRequests).toHaveLength(beforeDraft);
+      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await expect(dialog.getByText("FAC-42",{exact:true})).toBeVisible();
+      expect(reportRequests).toHaveLength(beforeDraft+1);
+      const applied = reportRequests.at(-1)!;
+      for (const [key,value] of Object.entries({customerId:"customer-2",documentNumber:"FAC-42",issuedFrom:"2026-10-01",issuedTo:"2026-10-01",
+        minimumAgeDays:"40",maximumAgeDays:"42",minimumDaysPastDue:"20",maximumDaysPastDue:"30",page:"1"})) expect(applied.searchParams.get(key)).toBe(value);
+      await page.screenshot({path:test.info().outputPath("cartera-detallada-filtros.png"),fullPage:true});
+      await dialog.getByRole("button",{name:"Ver todos los clientes",exact:true}).click();
+      await expect.poll(()=>reportRequests.at(-1)?.searchParams.has("documentNumber")).toBe(false);
+      const all = reportRequests.at(-1)!;
+      for (const key of ["customerId","partySiteId","search","status","issuedFrom","issuedTo","minimumAgeDays","maximumAgeDays","minimumDaysPastDue","maximumDaysPastDue"]) expect(all.searchParams.has(key)).toBe(false);
+      const beforeInvalid = reportRequests.length;
+      await dialog.getByRole("spinbutton",{name:"Edad desde (días)"}).fill("20");
+      await dialog.getByRole("spinbutton",{name:"Edad hasta (días)"}).fill("10");
+      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await expect(dialog.getByRole("alert")).toContainText("Revisa los rangos");
+      expect(reportRequests).toHaveLength(beforeInvalid);
+      await dialog.getByRole("spinbutton",{name:"Edad desde (días)"}).fill("");
+      await dialog.getByRole("spinbutton",{name:"Edad hasta (días)"}).fill("");
+      await dialog.getByRole("textbox",{name:"Búsqueda general del informe"}).fill("sin-resultados");
+      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await expect(dialog.getByText("No hay documentos para estos filtros.",{exact:true})).toBeVisible();
+      await dialog.getByRole("textbox",{name:"Búsqueda general del informe"}).fill("error-consulta");
+      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await expect(dialog.getByRole("alert")).toContainText("Fallo de consulta de prueba");
+      const beforeRetry=reportRequests.length;
+      recoverReport=true;
+      await dialog.getByRole("button",{name:"Reintentar",exact:true}).click();
+      await expect(dialog.getByText("FAC-1",{exact:true})).toBeVisible();
+      expect(reportRequests).toHaveLength(beforeRetry+1);
+      const beforeCredit=reportRequests.length;
+      await dialog.getByRole("textbox",{name:"Búsqueda general del informe"}).fill("saldo-a-favor");
+      expect(reportRequests).toHaveLength(beforeCredit);
+      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await expect(dialog.getByText("Cliente sólo con anticipo",{exact:true})).toBeVisible();
+      await expect(dialog.getByText(/Neto comercial:.*-.*15/).first()).toBeVisible();
+      await expect(dialog.getByText(/Sin sede identificada/)).toBeVisible();
+      expect(reportRequests).toHaveLength(beforeCredit+1);
+      const creditDownload=page.waitForEvent("download");
+      await dialog.getByRole("button",{name:"Exportar Excel",exact:true}).click();
+      const creditWorkbook=unzipSync(await readFile((await (await creditDownload).path())!));
+      expect(strFromU8(creditWorkbook["xl/worksheets/sheet1.xml"])).toContain("-15000");
+      await page.screenshot({path:test.info().outputPath("cartera-solo-anticipo.png"),fullPage:true});
+    }
   });
 }

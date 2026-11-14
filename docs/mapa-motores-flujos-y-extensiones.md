@@ -23,7 +23,7 @@ Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos 
 | Nuevo documento fiscal DIAN | snapshot/regla del `FiscalProcessingCoordinator` y workers fiscales existentes | worker DIAN por módulo, tenant o tipo |
 | Nuevo asiento automático | política/regla del `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor` | asiento desde API o segundo posting service |
 | Nuevo efecto de CxC/CxP, pago, aplicación, crédito o anticipo | contrato y transacción del único `SqlAccountingPostingProcessor`; el trabajo congela si además requiere asiento | handler operacional, worker financiero adicional o job lateral |
-| Resolver auxiliares de un banco | PUC → `accounting.BankPostingAccount`; aceptación contable → `accounting.BankAccountsFreeze` fija la configuración en el trabajo existente; conciliación → `accounting.BankBookEntries` reutiliza `BankBookAccounts` y la atribución histórica probada del mismo trabajo | otro catálogo de tesorería, FK inverso editable, resolver de nuevo una cuenta ya aceptada o copiar saldos/asientos por sede |
+| Resolver auxiliares de un banco | PUC → `accounting.BankPostingAccount`; contabilización → `accounting.BankAccountsResolve` lee la configuración vigente dentro de la transacción; conciliación → `accounting.BankBookEntries` reutiliza `BankBookAccounts` y la atribución realmente aplicada del mismo trabajo | otro catálogo de tesorería, FK inverso editable, resolver de nuevo una operación terminada o copiar saldos/asientos por sede |
 | Nueva proyección de alto volumen | motor de reporting existente, con métrica, idempotencia, rebuild y benchmark documentados | consolidado preventivo o job por reporte |
 | Nueva opción de dropdown | seed/maestro → store de aplicación → endpoint de catálogo → `useReferenceOptions` | array `{value,label}`, switch de labels o prompt |
 | Nuevo endpoint | contrato/caso de uso de aplicación; adapter de persistencia en infraestructura | SQL o reglas de dominio en Minimal API |
@@ -150,18 +150,25 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
   conserva fuente, trabajo y modo congelados. El reintento explícito existente
   de fuentes históricas sin trabajo conserva su recuperación en Accounting;
   esa recuperación no se ejecuta desde aceptación ni desde un replay.
-  Los auxiliares de los nuevos medios nativos se fijan en los detalles de pago
-  existentes mediante `PortfolioPaymentAccountsFreeze`, llamado por esa
-  aceptación y el retry del mismo processor. `ConfiguredPostingAccount` y
-  `PaymentPostingCategory` comparten la resolución de configuración; no hay un
-  segundo motor ni un saldo de tesorería independiente. Los lectores históricos
-  y el corte están definidos en `accounting-open-vouchers-design.md`, 13.7.
-  Para los mappings generales, `AccountMappingsFreeze` fija identidades de
-  categorías en el mismo trabajo, una vez por sede/fecha del lote. Aceptación y
-  procesamiento pendiente lo reutilizan; `ResolvedPostingAccount` consume esa
-  selección tanto en las partidas automáticas como en la importación de cartera.
+  Por decisión del 2026-11-13, la aceptación no fija cuentas automáticas.
+  El mismo processor resuelve las categorías y los medios nativos al contabilizar
+  mediante `ConfiguredPostingAccount`, `PaymentPostingCategory` y
+  `BankAccountsResolve`. Respeta la vigencia correspondiente a la fecha fuente.
+  Un intento pendiente no reutiliza caches anteriores. El journal, el auxiliar
+  aplicado en cada tender y la evidencia de categorías/bancos se confirman en
+  la misma transacción. No hay un segundo motor ni saldo de tesorería.
+  Las cuentas explícitas y las de cierre de obligaciones originales conservan
+  su identidad; repetir un trabajo terminado no vuelve a resolver configuración.
+  El corte y rollback están en `accounting-open-vouchers-design.md`, 14.12.
   `ConfiguredPostingAccountIdentity` selecciona el override y
-  `PostingAccountReadiness` valida únicamente los auxiliares realmente usados.
+  `PostingAccountReadiness` protege únicamente los auxiliares realmente usados
+  y consume `PostingAccountEligibility`, el único predicado compartido con
+  diagnósticos sin bloqueo U. `RequiredPostingAccountReadiness` compone la
+  cobertura requerida por sede/fecha para defaults, habilitación y verificación
+  de despliegue; no selecciona un fallback ante un override inválido.
+  `PortfolioDocumentIssueDate` proyecta la fecha de emisión del contrato inmutable
+  para los listados e informes de cartera. No sustituye la fecha de aceptación
+  ni modifica las fuentes; los filtros de registro conservan su significado.
   Las anulaciones de propina toman sus cuentas y centros del asiento original,
   sin una segunda selección de banco ni reconstrucción de mappings históricos.
 - `accounting.PortfolioPaymentAccept` es el participante transaccional de pagos
@@ -200,13 +207,15 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
   el precio futuro. No llama al writer de inventario. La devolución posterior
   conserva su handler y su fuente inmutable; usa la decisión ya procesada para
   el saldo a favor y revierte la proporción del descuento en el asiento.
-  Los cruces sin dinero normalizados preparan sus destinos mediante
+  Los cruces sin dinero y ajustes explícitos por concepto normalizados preparan sus destinos mediante
   `ManualVoucherCreditTargets` en esa aceptación; `SourcePositionIndex` conserva
   la proyección derivada para `ObligationAvailability`, compartida con abonos.
   Su backfill usa el mismo recorrido acotado del índice de terceros. Solo el
   processor reduce saldos y registra transacciones/asiento: la reducción positiva
   de CxP/CxC comparte `PortfolioBalanceReductionSql` con pagos. Ese adaptador y
-  los ajustes individuales/de cierre usan `PortfolioBalanceChangesSql`, dentro
+  los ajustes individuales/de cierre usan `PortfolioBalanceChangesSql`; los
+  individuales y los incorporados en partidas comparten además
+  `ApplyPortfolioAdjustmentsAsync`, dentro
   del mismo processor y comando transaccional. La política de estado distingue
   abonos de ajustes sin duplicar la escritura de saldo. No crea pagos ni
   caja para representar el cruce. La desaplicación de abonos nativos/manuales
@@ -254,6 +263,13 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
   derivado por esa aceptación mediante `accounting.ManualVoucherPartyReferences`.
   El backfill de esquema comparte esa extracción y valida tenant. No existe una
   carga, edición, job o writer independiente de ese índice ni contiene saldos.
+- Catalog administra los conceptos financieros del tenant mediante
+  `FinancialConceptService` y `reference.FinancialConcepts`. El editor prepara
+  sus partidas y `AccountingVoucherFinancialValidation` conserva el propietario
+  de los efectos. `AccountingSourcesAccept` escribe únicamente la pertenencia
+  derivada en `SourceConceptIndex`, dentro de la aceptación existente. Las
+  bandejas y reportes filtran ese índice antes de paginar, sin otro motor,
+  worker o captura de dinero. Alcance y evidencia: diseño de comprobantes 14.8.
 
 ## Nómina
 
@@ -273,6 +289,34 @@ consulta el resultado, pero no duplica ni suplanta ese pipeline.
 - Contabilidad y fiscal se extienden por sus puntos canónicos; no se escriben
   asientos ni estados DIAN desde Payroll.
 - Diseño propietario: `decision-nomina-electronica-integrada.md`.
+- El auxilio contractual entra por `payroll.Employments` y el mismo
+  `PayrollCalculator`. Carga y guardado del cálculo se acotan a 500 contratos;
+  `SqlPayrollStore` inserta resultados y partidas por conjunto y comprueba la
+  versión laboral al guardar y aprobar (13.11). No añade otro calculador ni
+  escrituras por trabajador.
+- La selección editable usa `payroll.RunEmploymentInputs` dentro de la misma
+  transacción de cálculo. `payroll.EligibleRunEmployments` es la lectura común
+  de candidatos y cálculo; páginas de 50 con búsqueda en servidor. El comando
+  existente aplica todos/ninguno y cambios acotados, comprueba la versión del
+  run y devuelve el detalle autoritativo (13.12); no añade otro flujo de cálculo.
+- La edición de días en Novedades extiende ese mismo comando y entrada con
+  BaseWorkedDays. PayrollCalculator conserva una sola aritmética de ausencias;
+  el guardado individual reemplaza únicamente sus resultados y devuelve el
+  trabajador y totales en la transacción. ApplicableCalculationConcepts y las
+  funciones CalculationContextVersions/CalculationNoveltyVersions comparten las
+  fuentes vigentes para cálculo y aceptación (13.13, en validación).
+- El detalle y la aceptación del lote comparten `payroll.PayableRunEmployees`
+  para seleccionar el medio contractual congelado, causación Posted y netos
+  todavía pendientes. `SqlPayrollStore` conserva la transacción/PaymentLines;
+  fuente, job y posting permanecen en sus motores actuales. El comando devuelve
+  pendientes restantes y UI reutiliza la respuesta, sin refetch del workspace.
+  El selector paginado consulta PaymentMethods con uso Payroll. El resolvedor
+  de formas del processor obtiene la cuenta vigente y su extensión de hechos
+  de nómina carga en lote los auxiliares del asiento original (13.10); no
+  repite escrituras ni crea otro flujo de pago.
+  PaymentBatchPostingStatus deriva el resultado pagado del job Posted para
+  historial, replay y reportes; no se persiste otro estado ni se confunde
+  Confirmed con un pago contabilizado. Captura exige contabilidad Ready.
 
 ## Reporting
 
@@ -322,9 +366,17 @@ Flujo: `reference.Options`/maestro específico → seed o administración autori
 
 Los códigos son estables; label, descripción, activación y orden pertenecen a tabla. Un enum puede tipar códigos, pero no reemplaza la tabla cuando el usuario elige. Mapas de icono, color y layout pueden quedar en UI porque son presentación.
 
+Formas de pago del tenant: `reference.PaymentMethods` → `SqlPaymentMethodStore` /
+`PaymentMethodService` → `/api/commerce/v1/payment-methods` → maestro y captura
+existente. `reference.Options` conserva exclusivamente los tipos técnicos.
+`accounting.PaymentMethodAccountReadiness` especializa la política de auxiliares
+existente para este catálogo. El processor contable resuelve sus cuentas vigentes
+por lote al contabilizar; sólo el resultado aplicado conserva la cuenta utilizada.
+El catálogo no añade un writer financiero, una cola ni un flujo de pago.
+
 Catálogos iniciales: medios de pago, tipos de documento de venta, presentaciones de compra, tipos de operación de inventario y tipos de bot. Al tocar otro selector heredado, se agrega su slice completo en esta ruta; no se crea otro endpoint genérico ni otra lista local.
 
-Las personas no pasan por `reference.Options`: su propietario es el workspace de `Parties`. Los combos de clientes, proveedores, vendedores, transportadores, empleados, meseros, usuarios o cualquier tercero consumen `GET /api/commerce/v1/parties/role-options`, una proyección paginada mínima y aislada por tenant/business. Para un rol específico, la consulta une `Parties` únicamente con la tabla de ese rol; `Any` deduplica los identificadores de las tablas de roles activas. La respuesta retorna `PartyId`, ID del rol, nombre e identificación; proveedor agrega sólo política de soporte y plazo de pago porque sus formularios los necesitan. La página y el detalle administrativo continúan usando el read model completo de `Parties`, que no debe reutilizarse para dropdowns. El selector del **tipo de rol** (Cliente, Mesero, etc.) consume el catálogo global `party-role` de `reference.Options`; contiene definiciones y labels, nunca personas.
+Las personas no pasan por `reference.Options`: su propietario es el workspace de `Parties`. Los combos de clientes, proveedores, vendedores, transportadores, empleados, meseros, usuarios o cualquier tercero consumen `GET /api/commerce/v1/parties/role-options`, una proyección paginada mínima y aislada por tenant/business. Para un rol específico, la consulta une `Parties` únicamente con la tabla de ese rol; `Any` devuelve las identidades activas del tenant, incluso sin rol comercial, usando `PartyId` también como ID de selección. Así el recibo admite al pagador sin crear un Customer ficticio. `accounting.read` autoriza esa proyección Any, sin habilitar otros roles ni el workspace completo. La respuesta retorna `PartyId`, ID del rol, nombre e identificación; proveedor agrega sólo política de soporte y plazo de pago porque sus formularios los necesitan. La página y el detalle administrativo continúan usando el read model completo de `Parties`, que no debe reutilizarse para dropdowns. El selector del **tipo de rol** (Cliente, Mesero, etc.) consume el catálogo global `party-role` de `reference.Options`; contiene definiciones y labels, nunca personas.
 
 El alta de Mesero extiende `CommercialPartyRoleService`/`SqlCommercialPartyRoleStore` y su recibo canónico de creación. La especialización se guarda en `parties.Waiters` por tenant/Party; `PartyWorkspaceService`/`SqlPartyWorkspaceStore` editan su ficha compartida usando la versión de Party. No hay asignación ni habilitación comercial de Mesero por sede. Los usuarios y sus roles se vinculan manualmente por los servicios de Identity/Parties existentes; crear Mesero no asigna acceso ni reutiliza una cuenta por coincidencia de correo. Las tablas nuevas de este propietario usan el schema `parties`, sin mover las tablas heredadas ni aumentar la deuda de `dbo`.
 

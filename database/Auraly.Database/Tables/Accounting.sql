@@ -57,7 +57,7 @@ CREATE TABLE [dbo].[AccountingConfigurationProfileAccounts]
     [DisplayOrder] INT NOT NULL,
     CONSTRAINT [PK_AccountingConfigurationProfileAccounts] PRIMARY KEY CLUSTERED ([ProfileCode],[Category]),
     CONSTRAINT [FK_AccountingConfigurationProfileAccounts_Profile] FOREIGN KEY ([ProfileCode]) REFERENCES [dbo].[AccountingConfigurationProfiles]([ProfileCode]),
-    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'ContraRevenue',N'OrderDebit',N'OrderCredit')),
+    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'Cost',N'ContraRevenue',N'OrderDebit',N'OrderCredit')),
     CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Order] CHECK ([DisplayOrder]>0),
     CONSTRAINT [CK_AccountingConfigurationProfileAccounts_DefaultAccount] CHECK (
       ([AccountCode] IS NULL AND [AccountName] IS NULL)
@@ -126,19 +126,21 @@ CREATE TABLE [dbo].[AccountingAccounts]
     [FinancialFunction] NVARCHAR(64) NULL,
     [FunctionCatalog] NVARCHAR(64) NOT NULL CONSTRAINT [DF_AccountingAccounts_FunctionCatalog] DEFAULT N'accounting-financial-function',
     [BalanceSide] NVARCHAR(6) NULL,
-    [BusinessId] UNIQUEIDENTIFIER NULL,
+    -- Original association retained only as historical evidence for reviewed rollback.
+    -- Current PUC availability belongs to the tenant, independently of this value.
+    [LegacyBusinessId] UNIQUEIDENTIFIER NULL,
     [BankAccountId] UNIQUEIDENTIFIER NULL,
     [PaymentMethodOptionId] UNIQUEIDENTIFIER NULL REFERENCES [reference].[Options]([OptionId]),
     [ConfigurationLockedAt] DATETIMEOFFSET(7) NULL,
     CONSTRAINT [FK_AccountingAccounts_Parent] FOREIGN KEY ([TenantId],[ParentAccountId]) REFERENCES [dbo].[AccountingAccounts]([TenantId],[AccountId]),
-    CONSTRAINT [FK_AccountingAccounts_Business] FOREIGN KEY ([BusinessId],[TenantId]) REFERENCES [dbo].[Businesses]([BusinessId],[TenantId]),
+    CONSTRAINT [FK_AccountingAccounts_LegacyBusiness] FOREIGN KEY ([LegacyBusinessId],[TenantId]) REFERENCES [dbo].[Businesses]([BusinessId],[TenantId]),
     CONSTRAINT [FK_AccountingAccounts_Bank] FOREIGN KEY ([TenantId],[BankAccountId]) REFERENCES [accounting].[BankAccounts]([TenantId],[BankAccountId]),
     CONSTRAINT [CK_AccountingAccounts_BalanceSide] CHECK ([BalanceSide] IN(N'Debit',N'Credit')),
     CONSTRAINT [FK_AccountingAccounts_Function] FOREIGN KEY ([FunctionCatalog],[FinancialFunction]) REFERENCES [reference].[Options]([CatalogCode],[Code]),
     CONSTRAINT [CK_AccountingAccounts_FunctionCatalog] CHECK ([FunctionCatalog]=N'accounting-financial-function'),
     CONSTRAINT [CK_AccountingAccounts_Configuration] CHECK (
       ([FinancialFunction] IS NULL AND [BalanceSide] IS NULL AND [ParentAccountId] IS NULL
-        AND [BusinessId] IS NULL AND [BankAccountId] IS NULL AND [PaymentMethodOptionId] IS NULL)
+        AND [BankAccountId] IS NULL AND [PaymentMethodOptionId] IS NULL)
       OR ([FinancialFunction] IS NOT NULL AND [BalanceSide] IS NOT NULL)),
     CONSTRAINT [CK_AccountingAccounts_ControlParty] CHECK (
       [FinancialFunction] NOT IN(N'Receivable',N'Payable',N'SupplierAdvance',N'CustomerAdvance') OR [RequiresParty]=1),
@@ -151,15 +153,17 @@ CREATE TABLE [dbo].[AccountingAccounts]
     CONSTRAINT [UQ_AccountingAccounts_Tenant_Account] UNIQUE ([TenantId],[AccountId]),
     CONSTRAINT [UQ_AccountingAccounts_Tenant_Code] UNIQUE ([TenantId],[Code]),
     CONSTRAINT [FK_AccountingAccounts_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
-    CONSTRAINT [CK_AccountingAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'ContraRevenue',N'OrderDebit',N'OrderCredit'))
+    CONSTRAINT [CK_AccountingAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'Cost',N'ContraRevenue',N'OrderDebit',N'OrderCredit'))
 );
 GO
 
 CREATE INDEX [IX_AccountingAccounts_Parent] ON [dbo].[AccountingAccounts]([TenantId],[ParentAccountId]) WHERE [ParentAccountId] IS NOT NULL;
 GO
-CREATE INDEX [IX_AccountingAccounts_BankDimensions] ON [dbo].[AccountingAccounts]([TenantId],[BankAccountId],[BusinessId],[PaymentMethodOptionId]) INCLUDE([Code],[FinancialFunction],[IsActive]);
+-- Preserve the historical FK access path and its deployed identity through
+-- the column rename. New shared accounts have no historical association.
+CREATE INDEX [IX_AccountingAccounts_Business] ON [dbo].[AccountingAccounts]([TenantId],[LegacyBusinessId]) WHERE [LegacyBusinessId] IS NOT NULL;
 GO
-CREATE INDEX [IX_AccountingAccounts_Business] ON [dbo].[AccountingAccounts]([TenantId],[BusinessId]) WHERE [BusinessId] IS NOT NULL;
+CREATE INDEX [IX_AccountingAccounts_BankDimensions] ON [dbo].[AccountingAccounts]([TenantId],[BankAccountId],[PaymentMethodOptionId]) INCLUDE([Code],[FinancialFunction],[IsActive]);
 GO
 CREATE INDEX [IX_AccountingAccounts_PaymentMethod] ON [dbo].[AccountingAccounts]([TenantId],[PaymentMethodOptionId]) WHERE [PaymentMethodOptionId] IS NOT NULL;
 GO
@@ -167,7 +171,8 @@ GO
 CREATE TABLE [dbo].[AccountingCostCenters]
 (
     [CostCenterId] UNIQUEIDENTIFIER NOT NULL,
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [LegacyBusinessId] UNIQUEIDENTIFIER NULL,
     [Code] NVARCHAR(32) NOT NULL,
     [Name] NVARCHAR(160) NOT NULL,
     [ParentCostCenterId] UNIQUEIDENTIFIER NULL,
@@ -176,14 +181,15 @@ CREATE TABLE [dbo].[AccountingCostCenters]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_AccountingCostCenters] PRIMARY KEY CLUSTERED ([CostCenterId]),
-    CONSTRAINT [UQ_AccountingCostCenters_Business_Center] UNIQUE ([BusinessId],[CostCenterId]),
-    CONSTRAINT [UQ_AccountingCostCenters_Business_Code] UNIQUE ([BusinessId],[Code]),
-    CONSTRAINT [FK_AccountingCostCenters_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
-    CONSTRAINT [FK_AccountingCostCenters_Parent] FOREIGN KEY ([BusinessId],[ParentCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([BusinessId],[CostCenterId])
+    CONSTRAINT [UQ_AccountingCostCenters_Tenant_Center] UNIQUE ([TenantId],[CostCenterId]),
+    CONSTRAINT [UQ_AccountingCostCenters_Tenant_Code] UNIQUE ([TenantId],[Code]),
+    CONSTRAINT [FK_AccountingCostCenters_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+    CONSTRAINT [FK_AccountingCostCenters_LegacyBusiness] FOREIGN KEY ([LegacyBusinessId],[TenantId]) REFERENCES [dbo].[Businesses]([BusinessId],[TenantId]),
+    CONSTRAINT [FK_AccountingCostCenters_Parent] FOREIGN KEY ([TenantId],[ParentCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([TenantId],[CostCenterId])
 );
 GO
-CREATE UNIQUE INDEX [UX_AccountingCostCenters_Business_Default]
-    ON [dbo].[AccountingCostCenters]([BusinessId]) WHERE [IsDefault]=1 AND [IsActive]=1;
+CREATE UNIQUE INDEX [UX_AccountingCostCenters_Tenant_Default]
+    ON [dbo].[AccountingCostCenters]([TenantId]) WHERE [IsDefault]=1 AND [IsActive]=1;
 GO
 
 CREATE TABLE [dbo].[AccountingCostCenterAssignments]
@@ -193,17 +199,18 @@ CREATE TABLE [dbo].[AccountingCostCenterAssignments]
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [CostCenterId] UNIQUEIDENTIFIER NOT NULL,
     [OperationKind] NVARCHAR(32) NOT NULL,
-    [WarehouseId] UNIQUEIDENTIFIER NULL,
+    [LegacyWarehouseId] UNIQUEIDENTIFIER NULL,
     [IsActive] BIT NOT NULL CONSTRAINT [DF_AccountingCostCenterAssignments_IsActive] DEFAULT (1),
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_AccountingCostCenterAssignments] PRIMARY KEY ([AssignmentId]),
-    CONSTRAINT [UQ_AccountingCostCenterAssignments_Rule] UNIQUE ([BusinessId],[OperationKind],[WarehouseId]),
+    CONSTRAINT [UQ_AccountingCostCenterAssignments_Rule] UNIQUE ([BusinessId],[OperationKind]),
     CONSTRAINT [FK_AccountingCostCenterAssignments_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
-    CONSTRAINT [FK_AccountingCostCenterAssignments_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
-    CONSTRAINT [FK_AccountingCostCenterAssignments_Center] FOREIGN KEY ([BusinessId],[CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([BusinessId],[CostCenterId]),
-    CONSTRAINT [FK_AccountingCostCenterAssignments_Warehouse] FOREIGN KEY ([BusinessId],[WarehouseId]) REFERENCES [dbo].[Warehouses]([BusinessId],[WarehouseId]),
+    CONSTRAINT [FK_AccountingCostCenterAssignments_Business] FOREIGN KEY ([BusinessId],[TenantId]) REFERENCES [dbo].[Businesses]([BusinessId],[TenantId]),
+    CONSTRAINT [FK_AccountingCostCenterAssignments_Center] FOREIGN KEY ([TenantId],[CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([TenantId],[CostCenterId]),
+    CONSTRAINT [FK_AccountingCostCenterAssignments_LegacyWarehouse] FOREIGN KEY ([BusinessId],[LegacyWarehouseId]) REFERENCES [dbo].[Warehouses]([BusinessId],[WarehouseId]),
+    CONSTRAINT [CK_AccountingCostCenterAssignments_NoWarehouse] CHECK ([LegacyWarehouseId] IS NULL),
     CONSTRAINT [CK_AccountingCostCenterAssignments_Kind] CHECK ([OperationKind] IN (N'All',N'Sales',N'Purchasing',N'Expenses',N'Inventory'))
 );
 GO
@@ -397,24 +404,30 @@ CREATE TABLE [dbo].[AccountingPostingJobs]
     [CompletedAt] DATETIMEOFFSET(7) NULL,
     [ResolvedCostCenterId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    -- Accepted treasury configuration, with unresolved references retained as NULL.
-    -- Retrying may resolve missing accounts but never replaces an accepted account.
+    -- Bank attribution actually used by a completed journal. Historical accepted
+    -- metadata is preserved; pending attempts never use it as configuration.
     [ResolvedBankAccountsJson] NVARCHAR(MAX) NULL,
-    -- Immutable mapping identities from the accepted configuration. This is a
-    -- configuration snapshot, not a second ledger or editable account balance.
+    -- Category/account bindings actually used by a completed journal. Historical
+    -- snapshots remain evidence only, never configuration for pending attempts.
     [ResolvedAccountMappingsJson] NVARCHAR(MAX) NULL,
+    -- Result of the completed manual posting, identified by source line.
+    -- Contains only the form/account actually used, never configuration to replay.
+    [AppliedPaymentMethodsJson] NVARCHAR(MAX) NULL,
     CONSTRAINT [PK_AccountingPostingJobs] PRIMARY KEY CLUSTERED ([AccountingPostingJobId]),
     CONSTRAINT [UQ_AccountingPostingJobs_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [UQ_AccountingPostingJobs_Scope_Source_Job] UNIQUE
       ([TenantId],[BusinessId],[SourceDocumentId],[SourceDocumentType],[AccountingPostingJobId]),
     CONSTRAINT [FK_AccountingPostingJobs_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_AccountingPostingJobs_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
-    CONSTRAINT [FK_AccountingPostingJobs_ResolvedCostCenter] FOREIGN KEY ([BusinessId],[ResolvedCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([BusinessId],[CostCenterId]),
+    CONSTRAINT [FK_AccountingPostingJobs_ResolvedCostCenter] FOREIGN KEY ([TenantId],[ResolvedCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([TenantId],[CostCenterId]),
     CONSTRAINT [CK_AccountingPostingJobs_BankAccounts] CHECK ([ResolvedBankAccountsJson] IS NULL OR
       (ISJSON([ResolvedBankAccountsJson])=1 AND LEFT(LTRIM([ResolvedBankAccountsJson]),1)=N'[')),
     CONSTRAINT [CK_AccountingPostingJobs_AccountMappings] CHECK ([ResolvedAccountMappingsJson] IS NULL OR
       (ISJSON([ResolvedAccountMappingsJson])=1 AND LEFT(LTRIM([ResolvedAccountMappingsJson]),1)=N'[')),
     CONSTRAINT [CK_AccountingPostingJobs_Status] CHECK ([Status] IN (N'Pending',N'AccountingPendingConfiguration',N'CommercialEffectsApplied',N'Posted')),
+    CONSTRAINT [CK_AccountingPostingJobs_AppliedPaymentMethods] CHECK ([AppliedPaymentMethodsJson] IS NULL OR
+      ([Status] IN(N'CommercialEffectsApplied',N'Posted') AND ISJSON([AppliedPaymentMethodsJson])=1
+        AND LEFT(LTRIM([AppliedPaymentMethodsJson]),1)=N'[')),
     CONSTRAINT [CK_AccountingPostingJobs_Attempts] CHECK ([AttemptCount]>=0)
 );
 GO

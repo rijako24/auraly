@@ -27,7 +27,7 @@ for (const direction of ["receivables", "payables"] as const) {
       let body: unknown = [];
       if (path === "/api/auth/me") body = user;
       else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Auraly" }];
-      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede" }];
+      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede", timeZone: "America/Bogota" }];
       else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions };
       else if (path.endsWith("/reference-options/payment-method")) body = [{ id: "77777777-7777-7777-7777-777777777777", code: "Cash", label: "Efectivo", sortOrder: 1 }];
       else if (path.endsWith("/reference-options/accounting-manual-concept")) body = [{ id: "concept", code: "MANUAL_VOUCHER", label: "Comprobante manual" }];

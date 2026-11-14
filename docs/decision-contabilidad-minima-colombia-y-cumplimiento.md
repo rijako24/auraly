@@ -113,7 +113,7 @@ Las reglas se versionan por vigencia y pueden depender de tipo documental, categ
 
 ## 8. Centros de costos
 
-### Diseño mínimo cerrado — 2026-09-08
+### Diseño mínimo cerrado — actualizado el 2026-11-13
 
 Este alcance reemplaza la prioridad anterior por caja y las propuestas de ampliar
 dimensiones o repartir porcentajes. Es una decisión de implementación; las
@@ -121,21 +121,23 @@ correcciones descritas aquí aún no deben presentarse como desplegadas.
 
 Se conservan `AccountingCostCenters`, `AccountingCostCenterAssignments`,
 `AccountingPostingJobs.ResolvedCostCenterId` y las dimensiones de
-`AccountingEntryLines`. El centro pertenece a la sede (`BusinessId`), con código
-único, nombre libre y centro superior opcional. El contador organiza esos datos
-según su negocio; una bodega sólo es un filtro opcional de una regla existente.
+`AccountingEntryLines`. Por decisión expresa del usuario del 2026-11-13, el
+centro pertenece al tenant y se comparte entre todas sus sedes, igual que el PUC.
+Su código es único en la empresa, con nombre libre y centro superior opcional
+del mismo tenant. No se selecciona bodega al crear centros ni asignaciones.
 
 **Configuración mínima:**
 
 - Crear, editar código/nombre/centro superior y activar/desactivar centros en la
-  pantalla actual, con `accounting.configure`, scope de sede y concurrencia por
-  la versión existente. Validar padre activo de la misma sede y ausencia de ciclos.
+  pantalla actual, con `accounting.configure`, scope de empresa y concurrencia por
+  la versión existente. Validar padre activo del mismo tenant y ausencia de ciclos.
 - Conservar exactamente un centro predeterminado activo para que los procesos
   actuales sigan contabilizando sin nuevas preguntas. El contador puede renombrarlo
   o sustituirlo por otro en una transacción; `PRINCIPAL` no es una identidad
   inamovible. No se incorpora un modo adicional de operación sin centros.
-- Conservar los tipos de operación actuales del catálogo y su filtro opcional de
-  bodega. Permitir editar y desactivar las reglas desde la misma lista; cambiar
+- Conservar los tipos de operación actuales del catálogo. Las asignaciones se
+  configuran para la sede operativa y pueden elegir cualquier centro del tenant.
+  Permitir editar y desactivar las reglas desde la misma lista; cambiar
   de alcance no deja la regla anterior activa accidentalmente.
 - Desactivar un centro conserva su historia. Impedirlo mientras sea predeterminado,
   tenga hijos activos, reglas o conceptos/motivos activos que lo usarían en nuevas
@@ -148,9 +150,17 @@ según su negocio; una bodega sólo es un filtro opcional de una regla existente
 2. en una devolución, centro de la operación original para las partidas que revierte;
 3. centro explícito autorizado en los documentos que ya lo admiten o el centro del
    concepto/motivo congelado por ese documento;
-4. regla por operación y bodega, luego por operación sin bodega;
-5. regla de todas las operaciones y bodega, luego regla general sin bodega;
-6. predeterminado activo de la sede.
+4. regla por operación de la sede;
+5. regla general de la sede;
+6. predeterminado activo de la empresa.
+
+El corte versionado conserva las identidades y referencias históricas. Para DEV
+se aprobó conservar PRINCIPAL en AURALY y dar a los otros cuatro centros los
+códigos PRINCIPAL-BAR, PRINCIPAL-RESTBAR, PRINCIPAL-TIENDA y
+PRINCIPAL-TIENDA-DEV. La asignación general existente conserva el antiguo centro
+predeterminado de cada sede; no se fusionan centros ni se reescriben asientos.
+Otros códigos repetidos, múltiples predeterminados o reglas por bodega requieren
+revisión explícita antes del despliegue. No se elige una configuración ganadora.
 
 La resolución automática se fija una sola vez al primer intento contable, antes
 de evaluar período/mappings, y persiste también si esas validaciones dejan el
@@ -172,12 +182,13 @@ El saldo inicial y el acumulado aplican el mismo filtro. No se crea un tablero,
 proyección, consolidación jerárquica ni informe de rentabilidad nuevo en este alcance.
 
 **Fuera del alcance:** repartos porcentuales, reglas por cuenta/proyecto/empleado,
-centros compartidos entre sedes, calendarios de vigencia, nuevos tipos de operación,
+calendarios de vigencia, nuevos tipos de operación,
 campos o pasos obligatorios en POS/ventas/compras, y motores, tablas o colas paralelos.
 
 **Aceptación:** sustitución atómica del predeterminado; edición sin cambiar snapshots;
 reglas editables/desactivables desde UI; dependencias de desactivación visibles;
-rechazo de otra sede y de versiones obsoletas; venta/devolución en el mismo centro
+rechazo de otro tenant y de versiones obsoletas; uso desde otra sede del tenant;
+venta/devolución en el mismo centro
 aunque cambien reglas; pendiente/reintento con centro estable; reclasificación que
 no altera el saldo de la cuenta; auxiliar filtrado que concilia con sus líneas.
 El cambio requiere regresiones de aplicación/SQL/UI y actualización de los textos

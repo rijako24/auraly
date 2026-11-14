@@ -401,10 +401,10 @@
       },
       "Microsoft.AspNetCore.WebUtilities": {
         "type": "Transitive",
-        "resolved": "8.0.0",
-        "contentHash": "z1SXKg5Bk02VmrrOab1TO2yxkZIfL4RyrS+yCpwxcLTqJwImYhEttz3LYbl1gQebkAAvx2Fm4NVXmopxXeLZgw==",
+        "resolved": "8.0.34",
+        "contentHash": "y/PLrdK62JmGf41Aya+wWKpDlzZzqrtxvFAbM3GmjkoO91XE6X9ANUN4jLI5hP2vpQeKciOOnp61FJ4eVYEExQ==",
         "dependencies": {
-          "Microsoft.Net.Http.Headers": "8.0.0",
+          "Microsoft.Net.Http.Headers": "8.0.34",
           "System.IO.Pipelines": "8.0.0"
         }
       },
@@ -1022,8 +1022,8 @@
       },
       "Microsoft.Net.Http.Headers": {
         "type": "Transitive",
-        "resolved": "8.0.0",
-        "contentHash": "YlHqL8oWBX3H1LmdKUOxEMW8cVD8nUACEnE2Fu3Ze4k7mYf8yJ1o/uLqoequQV0GDupXyCBEzYhn7Zxdz7pqYQ==",
+        "resolved": "8.0.34",
+        "contentHash": "AckgYSh+GCocnuBb5Iij47bUSBve0nMNOsK5n5uks9ltYWeESo66NLeRp4cUX8KuA1Be1cIRiObf46BSuYSrWw==",
         "dependencies": {
           "Microsoft.Extensions.Primitives": "8.0.0"
         }
@@ -1155,6 +1155,11 @@
         "type": "Transitive",
         "resolved": "13.0.3",
         "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
+      },
+      "NodaTime": {
+        "type": "Transitive",
+        "resolved": "3.3.7",
+        "contentHash": "4Rc3zup1sZqtlcgkWZOsjoVbhm+RkDvxrFDJfIxi7nr32ZgzVW+zCTBr827+KG/4r5owpchUjqx8tO4K2ZtpOw=="
       },
       "NuGet.Frameworks": {
         "type": "Transitive",
@@ -2544,7 +2549,10 @@
         }
       },
       "auraly.buildingblocks.domain": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "NodaTime": "[3.3.7, )"
+        }
       },
       "auraly.buildingblocks.infrastructure": {
         "type": "Project",
@@ -2573,7 +2581,8 @@
       "auraly.commerce.accounting.contracts": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Catalog": "[1.0.0, )"
         }
       },
       "auraly.commerce.accounting.domain": {
@@ -3013,7 +3022,7 @@
           "Azure.Identity": "[1.17.2, )",
           "Azure.Messaging.ServiceBus": "[7.18.2, )",
           "Microsoft.ApplicationInsights.WorkerService": "[2.23.0, )",
-          "Microsoft.AspNetCore.WebUtilities": "[8.0.0, )",
+          "Microsoft.AspNetCore.WebUtilities": "[8.0.34, )",
           "Microsoft.Azure.Functions.Worker": "[1.23.0, )",
           "Microsoft.Azure.Functions.Worker.Extensions.Http": "[3.2.0, )",
           "Microsoft.Azure.Functions.Worker.Extensions.ServiceBus": "[5.22.0, )",

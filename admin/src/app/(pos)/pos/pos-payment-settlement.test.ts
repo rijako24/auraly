@@ -9,6 +9,32 @@ import {
   shouldShowCashChange,
 } from "./pos-payment-settlement";
 
+describe("administrative and configured settlement", () => {
+  it("rejects unexplained cash excess without changing POS sales", () => {
+    const payments=[{methodCode:"Cash",amount:110,reference:null}];
+    assert.equal(calculatePaymentSettlement(100,payments,false,{allowChange:false}).isValid,false);
+    assert.equal(calculatePaymentSettlement(100,payments,true,{allowChange:true}).isValid,true);
+  });
+  it("keeps two distinct configured cash forms separate", () => {
+    const result=calculatePaymentSettlement(100,[
+      {methodCode:"Cash",amount:30,reference:null,paymentMethodId:"cash-1"},
+      {methodCode:"Cash",amount:70,reference:null,paymentMethodId:"cash-2"},
+    ],false,{allowChange:false});
+    assert.equal(result.isValid,true);
+    assert.equal(result.appliedPayments.length,2);
+    assert.equal(result.change,0);
+  });
+  it("preserves four-decimal administrative balances and rejects even a small unexplained difference", () => {
+    const options = { allowChange: false, precision: 4 as const };
+    const exact = calculatePaymentSettlement(100.1234,[{methodCode:"Cash",amount:100.1234,reference:null}],false,options);
+    assert.equal(exact.isValid,true);
+    assert.equal(exact.appliedPayments[0].amount,100.1234);
+    assert.equal(exact.change,0);
+    for (const amount of [100.1233,100.1235])
+      assert.equal(calculatePaymentSettlement(100.1234,[{methodCode:"Cash",amount,reference:null}],false,options).isValid,false);
+  });
+});
+
 describe("handlePosPaymentAmountEnter", () => {
   it("does not invent another payment while the written total is incomplete", () => {
     let submitted = false;
@@ -77,6 +103,20 @@ describe("splitCreditCheckout", () => {
       ),
       /seleccionar un cliente/,
     );
+  });
+
+  it("keeps the configured credit form in financing without adding received money", () => {
+    const evidence = { paymentMethodId: "form-credit", paymentMethodVersion: 3,
+      paymentMethodCode: "CRE", paymentMethodName: "Crédito comercial", accountId: "account-receivable" };
+    const result = splitCreditCheckout([{ methodCode: "Credit", amount: 60, reference: null, ...evidence }], customer);
+    assert.deepEqual(result.payments, []);
+    assert.deepEqual(result.credit, { amount: 60, ...evidence });
+  });
+
+  it("preserves incomplete credit evidence for the authoritative validation", () => {
+    const result = splitCreditCheckout([{ methodCode: "Credit", amount: 60, reference: null, accountId: "orphan" }], customer);
+    assert.equal(result.credit?.accountId, "orphan");
+    assert.equal(result.credit?.paymentMethodId, undefined);
   });
 });
 

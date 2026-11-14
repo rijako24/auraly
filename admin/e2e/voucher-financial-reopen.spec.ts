@@ -158,6 +158,7 @@ for (const sample of [
   test(`agregar ${sample.kind} captura el abono contra su cuenta original y conserva la respuesta sin refetch`, async ({ page, baseURL }) => {
     if (sample.kind === "CustomerCredit") await page.setViewportSize({ width: 390, height: 844 });
     const scenario = financialVoucherScenario();
+    scenario.draft.voucherTypeCode = "Accounting";
     let draft = scenario.draft;
     let positionReads = 0, draftReads = 0, writes = 0;
     let failKinds = sample.kind === "Payable";

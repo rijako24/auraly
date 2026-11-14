@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\Catalog\Auraly.Contracts.Catalog\Auraly.Contracts.Catalog.csproj" />
     <ProjectReference Include="..\..\Taxation\Auraly.Commerce.Taxation.Contracts\Auraly.Commerce.Taxation.Contracts.csproj" />
   </ItemGroup>
 </Project>

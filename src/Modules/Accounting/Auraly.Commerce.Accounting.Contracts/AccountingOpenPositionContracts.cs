@@ -4,7 +4,7 @@ public sealed record AccountingOpenPositionQuery(
     string SubledgerKind, int Page, int PageSize, Guid? PartyId = null,
     Guid? AccountId = null, string? Search = null, DateOnly? DueFrom = null,
     DateOnly? DueTo = null, Guid? SubledgerId = null, Guid? CounterpartyRoleId = null, bool ManualSupportOnly = false,
-    DateOnly? EffectiveOn = null);
+    DateOnly? EffectiveOn = null, string? VoucherTypeCode = null);
 
 public sealed record AccountingOpenPosition(
     string SubledgerKind, Guid SubledgerId, Guid PartyId, string PartyName,
@@ -27,8 +27,9 @@ public sealed record AccountingOpenPosition(
     Guid? FinancialDiscountEarnedAccountId = null, string? FinancialDiscountEarnedAccountCode = null,
     string? FinancialDiscountEarnedAccountName = null,
     Guid? FinancialDiscountLostAccountId = null, string? FinancialDiscountLostAccountCode = null,
-    string? FinancialDiscountLostAccountName = null);
+    string? FinancialDiscountLostAccountName = null,
+    decimal? PaidAmount = null, decimal? OtherMovementsAmount = null, int? OverdueDays = null);
 
 public sealed record AccountingOpenPositionPage(
     IReadOnlyList<AccountingOpenPosition> Items, int Page, int PageSize,
-    int TotalCount, decimal TotalOutstandingAmount);
+    int TotalCount, decimal TotalOutstandingAmount, DateOnly? ReferenceDate = null);

@@ -286,6 +286,13 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
             Assert.Equal(expected.Current,bundled.Current);Assert.Equal(expected.Comparison,bundled.Comparison);
             Assert.Equal(expected.Trend.ToArray(),bundled.Trend.ToArray());Assert.Equal(expected.CustomerCount,bundled.CustomerCount);
             var charts=Assert.IsType<SalesReportSummaryBreakdowns>(bundled.Breakdowns);
+            if(chartFilter==filter)
+            {
+                Assert.Equal(new[]{supplierA.ToString(),supplierB.ToString(),"unattributed"}.Order(StringComparer.Ordinal),
+                    charts.Suppliers.Select(row=>row.Key=="unattributed"?row.Key:Guid.Parse(row.Key).ToString()).Order(StringComparer.Ordinal));
+                Assert.Equal(100m,charts.Suppliers.Single(row=>Guid.TryParse(row.Key,out var id)&&id==supplierA).NetUntaxedSales);
+                Assert.Equal(70m,charts.Suppliers.Single(row=>row.Key=="unattributed").NetUntaxedSales);
+            }
             foreach(var (dimension,limit,rows) in new[]{("hour",25,charts.Hourly),("seller",8,charts.Sellers),
                 ("product",8,charts.Products),("supplier",8,charts.Suppliers),("warehouse",8,charts.Warehouses)})
                 Assert.Equal((await reporting.GetBreakdownAsync(user,chartFilter,dimension,limit)).ToArray(),rows.ToArray());
@@ -339,6 +346,13 @@ public sealed class SalesReportExplorerTests(ServerSliceFixture fixture)
         var purchasesAndSales=await reporting.ExploreAsync(user,new(filter,Module:"supplier",PageSize:200));
         Assert.Equal(physical.Totals,purchasesAndSales.Totals);Reconcile(physical.Totals,physical.Items);Reconcile(purchasesAndSales.Totals,purchasesAndSales.Items);
         Assert.Equal(390000m,purchasesAndSales.Supplier!.NetPurchases);
+        foreach(var comparisonMode in new[]{"none","previous-period"})
+        {
+            var searched=await reporting.ExploreAsync(user,new(filter,Module:"supplier",Search:"Proveedor B",Comparison:comparisonMode));
+            Assert.Equal(1,searched.TotalCount);Assert.Equal(supplierB,Guid.Parse(Assert.Single(searched.Items).Key));
+            Assert.Equal(purchasesAndSales.Items.Single(row=>Guid.TryParse(row.Key,out var id)&&id==supplierB).Measures,searched.Totals);
+            Assert.Equal(0m,searched.Supplier!.NetPurchases);
+        }
         Assert.Equal(purchasesAndSales.Supplier.NetPurchases,purchasesAndSales.Items.Sum(row=>row.Supplier!.NetPurchases));
         Assert.Equal(purchasesAndSales.Supplier.PurchaseReceipts-purchasesAndSales.Supplier.PurchaseReturns,purchasesAndSales.Supplier.NetPurchases);
         Assert.Equal(all.Totals.NetUntaxed,physical.Totals.NetUntaxed+70m); // 50 service + 20 charge, explicitly outside the physical-product views.

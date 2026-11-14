@@ -29,11 +29,32 @@ public sealed partial class SqlAccountingPostingProcessor
               WITH(PaymentId uniqueidentifier '$');
             IF (SELECT COUNT(*) FROM @PaymentKeys)<>@PaymentCount
               THROW 51607,'The discounted payment batch is incomplete.',1;
-            SELECT COUNT(*) FROM dbo.SupplierPaymentApplications application
+            DECLARE @Decisions int=(SELECT COUNT(*) FROM dbo.SupplierPaymentApplications application
+              JOIN @PaymentKeys keyset ON keyset.PaymentId=application.PaymentId
+              WHERE application.FinancialDiscountAdjustment IS NOT NULL
+                AND application.FinancialDiscountAdjustment<>0);
+            SELECT @Decisions;
+            IF @Decisions=0 RETURN;
+            -- Restrict to this payment batch before expanding frozen discount
+            -- lines, returns and price-family/current-cost details. Separate
+            -- stages keep each plan bounded by the selected receipt identities.
+            SELECT application.PayableId,application.FinancialDiscountAdjustment,
+              receipt.GoodsReceiptId,receipt.WarehouseId,payment.SupplierId
+            INTO #DiscountOrigins
+            FROM dbo.SupplierPaymentApplications application
             JOIN @PaymentKeys keyset ON keyset.PaymentId=application.PaymentId
+            JOIN dbo.SupplierPayments payment ON payment.PaymentId=application.PaymentId AND payment.BusinessId=@BusinessId
+            JOIN dbo.Payables payable ON payable.PayableId=application.PayableId AND payable.BusinessId=@BusinessId
+              AND payable.SourceDocumentType=N'GoodsReceipt'
+            JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=payable.SourceDocumentId
+              AND receipt.BusinessId=@BusinessId AND receipt.SupplierId=payment.SupplierId
             WHERE application.FinancialDiscountAdjustment IS NOT NULL
               AND application.FinancialDiscountAdjustment<>0;
-            SELECT application.PayableId,application.FinancialDiscountAdjustment,receipt.GoodsReceiptId,
+            SELECT DISTINCT GoodsReceiptId INTO #DiscountReceiptKeys FROM #DiscountOrigins;
+            SELECT receipt.GoodsReceiptId,line.ReceiptLineNumber,line.EligibleLineAmount,line.EligibleQuantity
+            INTO #DiscountLines FROM #DiscountReceiptKeys receipt
+            CROSS APPLY accounting.GoodsReceiptFinancialDiscountLines(@BusinessId,receipt.GoodsReceiptId) line;
+            SELECT origin.PayableId,origin.FinancialDiscountAdjustment,origin.GoodsReceiptId,
               line.ReceiptLineNumber,original.ProductId,COALESCE(link.ParentProductId,original.ProductId),
               COALESCE(link.PriceFactor,CONVERT(decimal(19,6),1)),line.EligibleLineAmount,line.EligibleQuantity,
               COALESCE(preparation.CostBasisAmount,
@@ -42,17 +63,11 @@ public sealed partial class SqlAccountingPostingProcessor
                 latest.LatestUnitCost,price.CostBasisAmount,
                 CASE WHEN balance.QuantityOnHand>0 THEN balance.AverageUnitCost END,
                 original.RecognizedInventoryCostAmount/original.Quantity/COALESCE(link.PriceFactor,1)) CurrentCost
-            FROM dbo.SupplierPaymentApplications application
-            JOIN @PaymentKeys keyset ON keyset.PaymentId=application.PaymentId
-            JOIN dbo.SupplierPayments payment ON payment.PaymentId=application.PaymentId AND payment.BusinessId=@BusinessId
-            JOIN dbo.Payables payable ON payable.PayableId=application.PayableId AND payable.BusinessId=@BusinessId
-              AND payable.SourceDocumentType=N'GoodsReceipt'
-            JOIN dbo.GoodsReceipts receipt ON receipt.GoodsReceiptId=payable.SourceDocumentId
-              AND receipt.BusinessId=@BusinessId AND receipt.SupplierId=payment.SupplierId
+            FROM #DiscountOrigins origin
             JOIN dbo.Businesses business ON business.BusinessId=@BusinessId
             JOIN dbo.Tenants tenant ON tenant.TenantId=business.TenantId
-            CROSS APPLY accounting.GoodsReceiptFinancialDiscountLines(@BusinessId,receipt.GoodsReceiptId) line
-            JOIN dbo.GoodsReceiptLines original ON original.GoodsReceiptId=receipt.GoodsReceiptId
+            JOIN #DiscountLines line ON line.GoodsReceiptId=origin.GoodsReceiptId
+            JOIN dbo.GoodsReceiptLines original ON original.GoodsReceiptId=origin.GoodsReceiptId
               AND original.LineNumber=line.ReceiptLineNumber
             LEFT JOIN dbo.ProductLinks link ON link.TenantId=business.TenantId AND link.ChildProductId=original.ProductId
               AND link.SharesPrice=1 AND link.IsActive=1
@@ -61,12 +76,10 @@ public sealed partial class SqlAccountingPostingProcessor
             LEFT JOIN dbo.ProductPricePreparations preparation ON preparation.BusinessId=@BusinessId
               AND preparation.ProductId=price.ProductId AND preparation.Status=N'Pending'
             LEFT JOIN dbo.SupplierProductLatestCosts latest ON latest.BusinessId=@BusinessId
-              AND latest.SupplierId=payment.SupplierId AND latest.ProductId=price.ProductId
+              AND latest.SupplierId=origin.SupplierId AND latest.ProductId=price.ProductId
             LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId
-              AND balance.WarehouseId=receipt.WarehouseId AND balance.ProductId=price.ProductId
-            WHERE application.FinancialDiscountAdjustment IS NOT NULL
-              AND application.FinancialDiscountAdjustment<>0
-            ORDER BY application.PayableId,original.LineNumber;
+              AND balance.WarehouseId=origin.WarehouseId AND balance.ProductId=price.ProductId
+            ORDER BY origin.PayableId,original.LineNumber;
             """, connection, transaction);
         read.Parameters.AddWithValue("@BusinessId", businessId);
         read.Parameters.Add("@PaymentIds", SqlDbType.NVarChar, -1).Value = JsonSerializer.Serialize(paymentIds);

@@ -69,7 +69,7 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
     else if (path.endsWith("/expenses/options")) body = { concepts: [], suppliers: [], expenseAccounts: [], costCenters: [], purchaseEvidenceTypes: [] };
     else if (path.endsWith("/reference-options/expense-cancellation-reason")) body = [
@@ -97,7 +97,8 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
       body = { items: [expense], page: 1, pageSize: 25, totalCount: 1, totalPages: 1,
         grossTotal: 5000, withholdingTotal: 0, netPayableTotal: 5000 };
     } else if (path.endsWith("/payables")) body = { items: [payable], page: 1, pageSize: 20,
-      totalCount: 1, totalPages: 1, totalOutstanding: 5000, totalOverdue: 0 };
+      totalCount: 1, totalPages: 1, referenceDate: "2026-11-11", totalOutstanding: 5000, totalOverdue: 0,
+      currencyTotals: [{currencyCode:"COP",originalAmount:5000,paidAmount:0,adjustmentAmount:0,outstandingAmount:5000,overdueAmount:0}] };
     else if (path.endsWith("/parties/role-options")) body = { items: [{ role: "Supplier", roleId: supplierId,
       partyId: supplierId, displayName: expense.supplierName, identification: "PRUEBA-003" }],
       page: 1, totalPages: 1, totalCount: 1 };
@@ -137,7 +138,7 @@ test("gastos: filtros, origen, saldo y pago abren una sola ventana", async ({ pa
   const payment = page.getByRole("dialog", { name: "Pago a proveedores" });
   await expect(payment).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(1);
-  await expect(payment.getByText("GTO00-00000020")).toBeVisible();
+  await expect(payment.getByText("GTO00-00000020", { exact: true })).toBeVisible();
   await expect(payment.getByLabel("Abono para GTO00-00000020")).toHaveValue("5 000");
   await payment.getByRole("button", { name: "Ir a pagar" }).click();
   await expect(page.getByRole("dialog", { name: "Pago a proveedores" })).toBeVisible();

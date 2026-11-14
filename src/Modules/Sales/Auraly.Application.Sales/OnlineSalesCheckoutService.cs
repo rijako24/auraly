@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
@@ -107,7 +108,9 @@ public sealed record OnlineOrderCreditValidationIssue(
     string? CustomerIdentification,
     decimal RequestedAmount,
     decimal? AvailableCredit,
-    string Reason);
+    string Reason,
+    int? OverdueInvoiceCount = null,
+    int? MaximumOverdueInvoices = null);
 
 public interface IOnlineSaleWithholdingCalculator
 {
@@ -680,6 +683,12 @@ public sealed class OnlineSalesCheckoutService(
             (request.Payments.Count == 0 && request.Credit is null))
             throw new OnlineSalesDraftValidationException(
                 "La venta requiere pagos reales, saldo a crédito o ambos.");
+        if (!PaymentMethodEvidence.IsValidSet(request.Payments.Select(payment => new PaymentMethodEvidence(
+                payment.PaymentMethodId, payment.PaymentMethodVersion, payment.PaymentMethodCode,
+                payment.PaymentMethodName, payment.AccountId)).Concat(request.Credit is { } credit ?
+                [new PaymentMethodEvidence(credit.PaymentMethodId,credit.PaymentMethodVersion,
+                    credit.PaymentMethodCode,credit.PaymentMethodName,credit.AccountId)] : [])))
+            throw new OnlineSalesDraftValidationException("La identidad de las formas de pago no es válida.");
         if (request.Payments.Any(payment =>
                 !PaymentMethods.Contains(payment.MethodCode) ||
                 payment.Amount <= 0 ||
@@ -698,7 +707,7 @@ public sealed class OnlineSalesCheckoutService(
                 (payment.MethodCode != "Cash" || tendered < payment.Amount + payment.RoundingAdjustment)))
             throw new OnlineSalesDraftValidationException(
                 "El efectivo recibido debe corresponder al pago en efectivo y no puede ser menor al valor aplicado.");
-        if (request.Payments.Count(payment => payment.MethodCode == "Cash") > 1)
+        if (request.Payments.Count(payment => payment.MethodCode == "Cash" && payment.PaymentMethodId is null) > 1)
             throw new OnlineSalesDraftValidationException(
                 "La venta admite una sola línea de efectivo.");
         if (request.Credit is not null && request.Credit.Amount <= 0)

@@ -1,3 +1,4 @@
+import type { PaymentMethodCatalogSnapshot } from "@/services/api/payment-methods";
 import type { AddInvoiceCharge, AppliedInvoiceCharge, InvoiceChargePage } from "@/services/api/invoice-charges";
 import type { TenantBranding } from "@/services/api/tenants";
 import type { PortfolioPaymentReceipt } from "./pos-portfolio-payment-print";
@@ -298,6 +299,11 @@ export type PosDocumentNumberPreview = {
 export type PosNextNumbers = { document: PosDocumentNumberPreview; fiscal: PosFiscalNumberPreview };
 
 export type PosPaymentInput = {
+  paymentMethodId?: string | null;
+  paymentMethodVersion?: number | null;
+  paymentMethodCode?: string | null;
+  paymentMethodName?: string | null;
+  accountId?: string | null;
   methodCode: string;
   amount: number;
   roundingAdjustment?: number;
@@ -543,7 +549,8 @@ export type PosInventoryValidation = {
   wasValidated: boolean;
   issues: PosInventoryIssue[];
 };
-export type PosCreditTerms = { amount: number };
+export type PosCreditTerms = Pick<PosPaymentInput, "amount" | "paymentMethodId" | "paymentMethodVersion" |
+  "paymentMethodCode" | "paymentMethodName" | "accountId">;
 
 export type PosWorkSessionPaymentCount = {
   paymentMethodCode: string;
@@ -657,6 +664,7 @@ export type PosBankAccount = {
   accountTypeName:string;isPrimary:boolean;rowVersion:string;
 };
 export type PosSettlementConfiguration = {
+  paymentMethods?: PaymentMethodCatalogSnapshot | null;
   isAccountingEnabled: boolean;
   bankAccounts: PosBankAccount[];
 };

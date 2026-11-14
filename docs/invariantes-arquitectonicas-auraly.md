@@ -90,12 +90,44 @@ facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscale
 ## 5. Motor financiero-contable
 
 - Todo asiento automatico converge en `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor`.
+- Por decisión del 2026-11-13, toda cuenta automática se elige con la
+  configuración vigente al contabilizar y su intervalo efectivo para la fecha
+  del documento. Aceptar no congela esos mappings. Los intentos revertidos no
+  fijan cuentas para el siguiente; el resultado aplicado guarda solo sus
+  bindings usados. Las cuentas explícitas y los auxiliares originales de las
+  obligaciones que se cancelan se conservan. Replay de un trabajo terminado no
+  resuelve de nuevo ni cambia historia. No se reprocesan documentos antiguos
+  automáticamente como efecto de este cambio de política.
 - La cartera comercial sin contabilidad activa converge en esos mismos
   componentes, jobs y submayores. El modo del trabajo se congela al aceptar la
   fuente; activar contabilidad después no contabiliza retroactivamente el
   historial comercial.
-- Los recaudos de CxC y pagos de CxP usan un contrato nativo `payments[]`: una
-  factura admite varios medios; varias facturas admiten exactamente un medio.
+- Los recaudos de CxC y pagos de CxP usan un contrato nativo `payments[]`. La
+  implementación anterior admite varios medios por factura y uno para varias.
+  El objetivo del 2026-11-09 en la sección 14 de
+  `implementation/accounting-open-vouchers-design.md` admite hasta diez formas
+  del tenant también para varias facturas, con cutover
+  completo/versionado. Su sección 14.0 conserva la presentación de pagos POS,
+  pero exige el mismo catálogo por tenant y las reglas canónicas de cada
+  operación en administración y POS/Edge. Sus contratos/proyecciones se adaptan
+  coordinadamente; no se conserva un catálogo o validador financiero alterno.
+  Sus botones siguen representando tipos técnicos; dentro de cada tipo se
+  selecciona la forma del tenant sin truncar bancos/datáfonos a cinco opciones.
+  Por decisión expresa del usuario del 2026-11-09, las cuentas de esas formas
+  se resuelven por lote contra el catálogo vigente al contabilizar, dentro de
+  la transacción canónica. Un intento revertido no fija su configuración para
+  el siguiente. Una operación ya aplicada conserva su resultado y replay no
+  vuelve a resolver cuentas ni repite efectos. No se guarda una copia completa
+  de configuración de formas por operación.
+  La captura administrativa conserva Pagar / Ir a pagar y registra importes
+  sin vuelto/redondeo de venta; el POS conserva su captura de venta vigente.
+  Las diferencias se clasifican por concepto e importe explícitos; sólo elegir
+  Anticipo crea ese crédito. Ajuste al peso usa su partida/mapping y no un
+  anticipo automático. No se confirma una diferencia sin clasificar.
+  El recibo de caja admite cualquier tercero activo y representa una entrada
+  de dinero; no exige crear un rol de cliente. Las validaciones comerciales
+  corresponden a las obligaciones y anticipos que se vinculan, según la
+  decisión corregida de la sección 14.2 del diseño de comprobantes.
   `CustomerPaymentTenders` y `SupplierPaymentTenders` guardan una fila por medio,
   vinculada al encabezado correspondiente, como `SalesPayments` en facturación.
   Ambos conservan `WorkSessionId` cuando nacen en una sesión y el cierre lee los
@@ -106,8 +138,15 @@ facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscale
 - Un nuevo documento contabilizable agrega su regla de posting al motor existente y reutiliza `AccountingPostingJobs` y la unicidad por documento fuente.
 - Su fuente inmutable pertenece a `AccountingSourceDocuments`; el job contable no depende por FK de `DocumentProcessingJobs`.
 - `accounting.SourcePartyIndex` es un índice de lectura derivado de las fuentes manuales inmutables, sin importes ni edición independiente. Lo alimenta `AccountingSourcesAccept` en la misma aceptación; el backfill de esquema usa la misma función `accounting.ManualVoucherPartyReferences`. No tiene worker, cola, estado ni reparación en replay. Los nuevos lectores requieren completar ese backfill antes del corte.
+- Los conceptos de contrapartida y anticipo pertenecen al catálogo del tenant
+  `reference.FinancialConcepts`. Preparan partidas del comprobante existente;
+  su efecto lo determina la función del auxiliar y el normalizador canónico.
+  `accounting.SourceConceptIndex` conserva solamente pertenencia a la fuente
+  inmutable y su único writer es `AccountingSourcesAccept`. No guarda otro
+  saldo, no clasifica historia por nombres ni se repara durante replay. La
+  selección y sus límites están en la sección 14.8 del diseño de comprobantes.
 - `accounting.SourcePositionIndex` deriva exclusivamente los destinos e importes
-  de los cruces sin dinero y anulaciones de soporte aceptados. No es otro saldo ni captura: aceptación y
+  de los cruces sin dinero, ajustes explícitos por concepto y anulaciones de soporte aceptados. No es otro saldo ni captura: aceptación y
   backfill usan `ManualVoucherCreditTargets`, y `ObligationAvailability` calcula
   una sola reserva compartida con pagos/ajustes hasta identificar su transacción
   aplicada. No se escribe desde borradores, endpoints, replay o un job separado.
@@ -142,6 +181,35 @@ Se permiten varias colas cuando representan responsabilidades o stages diferente
   `SoftwareID`, PIN seguro y `TestSetId` se configuran y congelan por la familia
   de nómina.
 - Horarios de agenda no son registros laborales y no alimentan el cálculo.
+- El objetivo del 2026-11-09 de `decision-nomina-electronica-integrada.md`,
+  sección 13, reúne deducciones en Novedades y amplía perfiles/centros por línea
+  y pago por grupo transferencia/efectivo. No crea otro motor; pago exige
+  causación Posted y su cuenta original. Pendiente/confirmado no se muestran
+  como contabilizado/pagado por existir una fuente. La selección de grupos usa
+  `payroll.PayableRunEmployees` en detalle y aceptación del lote existente;
+  su alcance y los pendientes del resto del contrato están en las secciones
+  13.9–13.10. Las formas del tenant se resuelven al contabilizar en el processor
+  existente; el débito cancela el auxiliar del asiento de causación original.
+  PaymentBatchPostingStatus es la lectura compartida de pago aplicado: un lote
+  confirmado requiere job PayrollPayment Posted. Historial/reportes no derivan
+  pago de la reserva de integrantes y no persisten otro estado Paid.
+  No modifica la evidencia histórica del slice mínimo.
+- La condición contractual de auxilio se evalúa en `PayrollCalculator`, sin
+  duplicar las reglas de elegibilidad en UI o SQL. El cálculo conserva la
+  versión laboral, la comprueba al guardar y aprobar, y persiste por conjunto
+  dentro de la transacción del run; máximo 500 contratos por comando (13.11).
+  Un cambio contractual exige recalcular borradores; el replay aprobado
+  conserva su resultado y no vuelve a resolver ni escribir la liquidación.
+- La selección por liquidación pertenece a `payroll.RunEmploymentInputs` y
+  se confirma atómicamente con el cálculo existente. Candidatos paginados y
+  cálculo comparten `payroll.EligibleRunEmployments`; una selección de cliente
+  no sustituye elegibilidad, permisos ni versión del run (13.12).
+- Los días editables son entradas de esa misma liquidación, no cambios sobre
+  RunEmployees que el próximo cálculo pueda perder. La edición individual usa
+  el calculador y writer existentes; la respuesta autoritativa conserva los
+  demás trabajadores. Antes de aceptar se validan las huellas vigentes de
+  conceptos, novedades, autorizaciones y parámetros de cálculo; no incluyen
+  ni congelan cuentas o formas de pago (13.13, en validación).
 
 ## 7. Catalogos, tablas y dropdowns
 

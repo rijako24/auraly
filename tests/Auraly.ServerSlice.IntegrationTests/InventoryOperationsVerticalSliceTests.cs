@@ -1199,6 +1199,57 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal("Posted", await ScalarAsync<string>(
             "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'Damage'",
             documentId));
+        var snapshot = await ScalarAsync<string>(
+            "SELECT (SELECT * FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id FOR JSON PATH)", documentId);
+        await using var migrationConnection = new SqlConnection(fixture.ConnectionString);
+        await migrationConnection.OpenAsync();
+        await fixture.ApplyMigrationAsync("20260903_BackfillLegacyDamageWarehouses.sql", migrationConnection);
+        await fixture.ApplyMigrationAsync("20260903_BackfillLegacyDamageWarehouses.sql", migrationConnection);
+        Assert.Equal(snapshot, await ScalarAsync<string>(
+            "SELECT (SELECT * FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id FOR JSON PATH)", documentId));
+        Assert.Equal((7m, 5m, 35m), await BalanceAsync(fixture.WarehouseId, first));
+        Assert.Equal((8m, 7m, 56m), await BalanceAsync(fixture.WarehouseId, second));
+        Assert.Equal(2, await CountAsync("InventoryMovements", documentId));
+    }
+
+    [Fact]
+    public async Task Legacy_damage_migration_supports_the_previous_schema_and_replay_does_not_rewrite_the_operation()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        var id = Guid.NewGuid();
+        try
+        {
+            await using var command = new SqlCommand("""
+                ALTER TABLE dbo.InventoryOperations DROP CONSTRAINT CK_InventoryOperations_Destination;
+                ALTER TABLE dbo.InventoryOperations DROP COLUMN DamageDisposition;
+                INSERT dbo.InventoryOperations(InventoryOperationId,BusinessId,DocumentType,WarehouseId,OccurredAt,
+                  ReasonCode,ReasonDescription,Status,CreatedAt)
+                VALUES(@Id,@Business,N'Damage',@Warehouse,SYSDATETIMEOFFSET(),N'DAMAGE',N'Avería anterior',N'Draft',SYSDATETIMEOFFSET());
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@Id", id);
+            command.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            command.Parameters.AddWithValue("@Warehouse", fixture.WarehouseId);
+            await command.ExecuteNonQueryAsync();
+            await fixture.ApplyMigrationAsync("20260903_BackfillLegacyDamageWarehouses.sql", connection, transaction);
+            command.CommandText = """
+                SELECT COUNT(*) FROM dbo.InventoryOperations operation
+                JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=operation.DestinationWarehouseId
+                  AND warehouse.BusinessId=operation.BusinessId AND warehouse.Code=N'AVE'
+                WHERE operation.InventoryOperationId=@Id;
+                """;
+            Assert.Equal(1, (int)(await command.ExecuteScalarAsync())!);
+            command.CommandText = "SELECT RowVersion FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id";
+            var version = (byte[])(await command.ExecuteScalarAsync())!;
+            await fixture.ApplyMigrationAsync("20260903_BackfillLegacyDamageWarehouses.sql", connection, transaction);
+            Assert.Equal(version, (byte[])(await command.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            if (transaction.Connection is not null) await transaction.RollbackAsync();
+        }
     }
 
     [Fact]
@@ -1272,6 +1323,14 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             InventoryPermissionCodes.Adjust, InventoryPermissionCodes.Convert,
             InventoryPermissionCodes.Read, InventoryPermissionCodes.ReadCosts,
             InventoryPermissionCodes.ManageReasons);
+        // Reason configuration uses the shared tenant catalog, including the
+        // null/default case. Invalid selections remain validation errors and
+        // must never be accepted as an unscoped center reference.
+        using (var invalidReason = await client.PostAsJsonAsync(
+            "/api/commerce/v1/inventory/reasons", new SaveInventoryReasonRequest(
+                InventoryDocumentTypes.Conversion, "Merma con centro inválido", true, 900,
+                "OtherExpense", Guid.NewGuid(), true)))
+            Assert.Equal(HttpStatusCode.BadRequest, invalidReason.StatusCode);
         using var reasonResponse = await client.PostAsJsonAsync(
             "/api/commerce/v1/inventory/reasons",
             new SaveInventoryReasonRequest(

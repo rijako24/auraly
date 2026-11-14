@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, CircleDollarSign, KeyRound, ReceiptText, Scissors, X } from "lucide-react";
@@ -35,7 +35,7 @@ type RegisterSave = (key: string, handler: () => Promise<void>) => () => void;
 
 const creditMoney = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
-export type PartyCustomerCreditDraft = { enabled: boolean; limit: string; dueDays: string };
+export type PartyCustomerCreditDraft = { enabled: boolean; limit: string; dueDays: string; maximumOverdueInvoices?: string };
 
 export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave, initialDraft, onDraftChange }: { customerId: string; editing: boolean; registerSave: RegisterSave; initialDraft?: PartyCustomerCreditDraft; onDraftChange?: (draft: PartyCustomerCreditDraft) => void }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
@@ -47,31 +47,36 @@ export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave
   const [enabled, setEnabled] = useState(false);
   const [limit, setLimit] = useState("");
   const [dueDays, setDueDays] = useState("30");
+  const [maximumOverdueInvoices, setMaximumOverdueInvoices] = useState("");
   useEffect(() => {
     if (initialDraft) {
       setEnabled(initialDraft.enabled);
       setLimit(initialDraft.limit);
       setDueDays(initialDraft.dueDays);
+      setMaximumOverdueInvoices(initialDraft.maximumOverdueInvoices??"");
       return;
     }
     if (!profile.data) return;
     setEnabled(profile.data.isCreditEnabled);
     setLimit(profile.data.creditLimit == null ? "" : formatDecimalInput(String(profile.data.creditLimit), 0));
     setDueDays(String(profile.data.defaultDueDays));
+    setMaximumOverdueInvoices(profile.data.maximumOverdueInvoices==null?"":String(profile.data.maximumOverdueInvoices));
   }, [initialDraft, profile.data]);
   useEffect(() => {
-    if (initialDraft || profile.data) onDraftChange?.({ enabled, limit, dueDays });
-  }, [dueDays, enabled, initialDraft, limit, onDraftChange, profile.data]);
-  const save = async () => {
+    if (initialDraft || profile.data) onDraftChange?.({ enabled, limit, dueDays, maximumOverdueInvoices });
+  }, [dueDays, enabled, initialDraft, limit, maximumOverdueInvoices, onDraftChange, profile.data]);
+  const save = useCallback(async () => {
     if (!businessId || !canManage) return;
     const days = Number(dueDays);
     const parsedLimit = limit.trim() ? parseDecimalInput(limit) : null;
-    if (!Number.isInteger(days) || days < 0 || days > 3650 || (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 0)))
+    const maximum = maximumOverdueInvoices.trim()?Number(maximumOverdueInvoices):null;
+    if (!Number.isInteger(days) || days < 0 || days > 3650 || (maximum!=null&&(!Number.isSafeInteger(maximum)||maximum<0||maximum>2147483647)) || (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 0)))
       throw new Error("Revisa el cupo y el plazo de crédito.");
-    await receivablesApi.updateCreditProfile(customerId, { businessId, creditLimit: parsedLimit, defaultDueDays: days, isCreditEnabled: enabled });
-    await queryClient.invalidateQueries({ queryKey: ["customer-credit", businessId, customerId] });
-  };
-  useEffect(() => registerSave(`customer-credit-${customerId}`, save), [registerSave, customerId, businessId, canManage, enabled, limit, dueDays]);
+    const updated=await receivablesApi.updateCreditProfile(customerId, { businessId, creditLimit: parsedLimit, defaultDueDays: days,
+      isCreditEnabled: enabled, maximumOverdueInvoices: maximum });
+    queryClient.setQueryData(["customer-credit",businessId,customerId],updated);
+  }, [businessId, canManage, customerId, dueDays, enabled, limit, maximumOverdueInvoices, queryClient]);
+  useEffect(() => registerSave(`customer-credit-${customerId}`, save), [registerSave, customerId, save]);
 
   if (!canRead) return <PanelError text="No tienes permiso para consultar la configuración de cartera de este cliente." />;
   if (profile.isLoading) return <PanelLoading />;
@@ -81,18 +86,19 @@ export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave
       <div className="flex items-center gap-3"><span className="text-sm">Permite ventas a crédito</span><Switch checked={enabled} onCheckedChange={setEnabled} disabled={!editing || !canManage}/></div>
     </PanelHeader>
     <section className="grid gap-4 rounded-2xl border bg-muted/10 p-5 md:grid-cols-2">
-      {editing&&canManage?<CustomerCreditTermsFields enabled={enabled} limit={limit} dueDays={dueDays} onLimitChange={setLimit} onDueDaysChange={setDueDays}/>:<><CreditReadValue label="Cupo de crédito" value={profile.data.creditLimit == null ? "Sin límite configurado" : creditMoney.format(profile.data.creditLimit)} help="Límite máximo de saldo pendiente."/><CreditReadValue label="Vencimiento predeterminado (días)" value={`${profile.data.defaultDueDays} días`} help="Se suma a la fecha de la venta para calcular el vencimiento."/></>}
+      {editing&&canManage?<CustomerCreditTermsFields enabled={enabled} limit={limit} dueDays={dueDays} onLimitChange={setLimit} onDueDaysChange={setDueDays} maximumOverdueInvoices={maximumOverdueInvoices} onMaximumOverdueInvoicesChange={setMaximumOverdueInvoices}/>:<><CreditReadValue label="Cupo de crédito" value={profile.data.creditLimit == null ? "Sin límite configurado" : creditMoney.format(profile.data.creditLimit)} help="Límite máximo de saldo pendiente."/><CreditReadValue label="Vencimiento predeterminado (días)" value={`${profile.data.defaultDueDays} días`} help="Se suma a la fecha de la venta para calcular el vencimiento."/><CreditReadValue label="Máximo de facturas vencidas" value={profile.data.maximumOverdueInvoices==null?"Sin restricción por cantidad":String(profile.data.maximumOverdueInvoices)} help="El cupo monetario se valida por separado."/></>}
       <div><Label>Saldo pendiente</Label><p className="mt-2 text-lg font-semibold">{creditMoney.format(profile.data.outstandingAmount)}</p></div>
-      <div><Label>Cupo disponible</Label><p className="mt-2 text-lg font-semibold">{profile.data.availableCredit == null ? "Sin límite" : creditMoney.format(profile.data.availableCredit)}</p></div>
+      <div><Label>Cupo disponible</Label><p className="mt-2 text-lg font-semibold">{profile.data.availableCredit == null ? "Sin límite" : creditMoney.format(profile.data.availableCredit)}</p>{!!profile.data.pendingCreditAmount&&<p className="mt-1 text-xs text-muted-foreground">Incluye {creditMoney.format(profile.data.pendingCreditAmount)} de crédito aceptado pendiente de procesar.</p>}</div>
       {!canManage&&editing&&<p className="md:col-span-2 text-sm text-amber-700">Puedes editar la ficha, pero no las condiciones de cartera porque falta el permiso correspondiente.</p>}
     </section>
   </div>;
 }
 
-export function CustomerCreditTermsFields({ enabled, limit, dueDays, onLimitChange, onDueDaysChange }: { enabled: boolean; limit: string; dueDays: string; onLimitChange: (value: string) => void; onDueDaysChange: (value: string) => void }) {
+export function CustomerCreditTermsFields({ enabled, limit, dueDays, onLimitChange, onDueDaysChange, maximumOverdueInvoices, onMaximumOverdueInvoicesChange }: { enabled: boolean; limit: string; dueDays: string; onLimitChange: (value: string) => void; onDueDaysChange: (value: string) => void; maximumOverdueInvoices?:string;onMaximumOverdueInvoicesChange?:(value:string)=>void }) {
   return <>
     <div className="space-y-2"><Label>Cupo de crédito (COP)</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-semibold text-muted-foreground">$</span><Input className="pl-8 text-right tabular-nums" inputMode="numeric" value={limit} disabled={!enabled} onChange={(event)=>onLimitChange(formatDecimalInput(event.target.value,0))} placeholder="Sin límite"/></div><p className="text-xs text-muted-foreground">Vacío significa que no hay un límite monetario.</p></div>
     <div className="space-y-2"><Label>Vencimiento predeterminado (días)</Label><div className="relative"><Input className="pr-14 text-right tabular-nums" inputMode="numeric" value={dueDays} disabled={!enabled} onChange={(event)=>onDueDaysChange(event.target.value.replace(/\D/g,"").slice(0,4))}/><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">días</span></div><p className="text-xs text-muted-foreground">Se suma a la fecha de venta para calcular cuándo vence la cuenta por cobrar.</p></div>
+    {onMaximumOverdueInvoicesChange&&<div className="space-y-2"><Label htmlFor="credit-maximum-overdue">Máximo de facturas vencidas</Label><Input id="credit-maximum-overdue" inputMode="numeric" value={maximumOverdueInvoices??""} disabled={!enabled} placeholder="Sin restricción por cantidad" onChange={event=>onMaximumOverdueInvoicesChange(event.target.value.replace(/\D/g,"").slice(0,10))}/><p className="text-xs text-muted-foreground">Vacío: sin restricción por cantidad. Cero: no permite facturas vencidas al generar nuevo crédito.</p></div>}
     {!enabled&&<p className="rounded-xl border border-dashed bg-background p-3 text-sm text-muted-foreground md:col-span-2">Activa “Permite ventas a crédito” para configurar el cupo y el vencimiento.</p>}
   </>;
 }

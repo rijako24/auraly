@@ -266,21 +266,24 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             INSERT INTO dbo.SalesPayments
             (
                 DocumentId, PaymentNumber, MethodCode, Amount, RoundingAdjustment, TenderedAmount,
-                Reference, Notes, CardFranchiseCode, ApprovalNumber, BankAccountId, RegisteredAt
+                Reference, Notes, CardFranchiseCode, ApprovalNumber, BankAccountId, RegisteredAt,
+                PaymentMethodId,PaymentMethodVersion,PaymentMethodCode,PaymentMethodName,AccountId
             )
             SELECT
                 @DocumentId, input.PaymentNumber, input.MethodCode, input.Amount, input.RoundingAdjustment, input.TenderedAmount,
-                input.Reference, input.Notes, input.CardFranchiseCode, input.ApprovalNumber, input.BankAccountId, @RegisteredAt
+                input.Reference, input.Notes, input.CardFranchiseCode, input.ApprovalNumber, input.BankAccountId, @RegisteredAt,
+                input.PaymentMethodId,input.PaymentMethodVersion,input.PaymentMethodCode,input.PaymentMethodName,NULL
             FROM OPENJSON(@Payments) WITH(
               PaymentNumber int,MethodCode nvarchar(32),Amount decimal(19,4),RoundingAdjustment decimal(19,4),TenderedAmount decimal(19,4),
               Reference nvarchar(160),Notes nvarchar(500),CardFranchiseCode nvarchar(64),
-              ApprovalNumber nvarchar(100),BankAccountId uniqueidentifier) input
-            WHERE input.MethodCode<>N'Transfer' OR
+              ApprovalNumber nvarchar(100),BankAccountId uniqueidentifier,PaymentMethodId uniqueidentifier,
+              PaymentMethodVersion int,PaymentMethodCode nvarchar(64),PaymentMethodName nvarchar(160),AccountId uniqueidentifier) input
+            WHERE input.PaymentMethodId IS NOT NULL OR input.MethodCode<>N'Transfer' OR
               (@AccountingEnabled=0 AND input.BankAccountId IS NULL) OR
               (@AccountingEnabled=1 AND EXISTS(
                   SELECT 1 FROM accounting.BankAccounts bank
                   INNER JOIN dbo.Businesses business ON business.TenantId=bank.TenantId
-                  CROSS APPLY accounting.BankPostingAccount(bank.TenantId,@BusinessId,bank.BankAccountId) account
+                  CROSS APPLY accounting.BankPostingAccount(bank.TenantId,bank.BankAccountId) account
                   WHERE bank.BankAccountId=input.BankAccountId
                     AND business.BusinessId=@BusinessId AND bank.IsActive=1
                     AND account.AccountId IS NOT NULL));

@@ -29,7 +29,7 @@ test("guardar borrador conserva la captura y guardar comprobante contabiliza", a
     let body: unknown = [], status = 200;
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Empresa de prueba" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, permissions: user.permissions, roles: [] };
     else if (path.endsWith("/reference-options/accounting-manual-concept")) body = [{ id: "concept", code: "MANUAL_VOUCHER", label: "Comprobante manual" }];
     else if (path.endsWith("/reference-options/accounting-subledger-kind")) {
@@ -251,7 +251,7 @@ test("guardar borrador conserva la captura y guardar comprobante contabiliza", a
   await expect(page.getByText("Comprobante contabilizado: contenido inmutable.")).toBeVisible();
   await expect(page.getByLabel("Descripción", { exact: true })).toBeDisabled();
   await expect(page.getByLabel("Base de la partida", { exact: true }).first()).toBeDisabled();
-  expect(sends).toBe(3); expect(writes).toBe(2); expect(listReads).toBe(1); expect(draftReads).toBe(0);
+  expect(sends).toBe(3); expect(writes).toBe(2); expect(listReads).toBe(2); expect(draftReads).toBe(0);
   const sourceId = saved!.documentId;
   const sourceLineIds = new Set(saved!.lines.map(line => line.value.lineId));
   await page.getByRole("button", { name: "Anular comprobante", exact: true }).first().click();
@@ -274,10 +274,12 @@ test("guardar borrador conserva la captura y guardar comprobante contabiliza", a
   await expect(page.getByLabel("Descripción", { exact: true })).toHaveValue("Descripción editada");
   await expect(page.getByLabel("Base de la partida", { exact: true }).first()).toHaveValue("-123.4567");
   await expect(page.getByLabel("Base de la partida", { exact: true }).nth(1)).toHaveValue("0");
-  expect(sends).toBe(3); expect(writes).toBe(2); expect(listReads).toBe(1); expect(draftReads).toBe(0);
+  expect(sends).toBe(3); expect(writes).toBe(2); expect(listReads).toBe(2); expect(draftReads).toBe(0);
   await page.getByRole("button", { name: "Descartar borrador", exact: true }).first().click();
   const confirmation = page.getByRole("dialog", { name: "¿Descartar este borrador?" });
   await confirmation.getByRole("button", { name: "Descartar borrador" }).click();
   await expect(page).toHaveURL(/\/dashboard\/financial-traceability$/);
   expect(discards).toBe(1);
+  await expect(page.getByText("No hay documentos para estos filtros.", { exact: true })).toBeVisible();
+  expect(listReads).toBe(3);
 });

@@ -158,7 +158,7 @@ BEGIN
           ELSE N'No se aplicó el cruce: el importe supera el saldo disponible de la obligación o del saldo a favor, incluidas sus reservas.' END
         FROM @CreditPositions position
         JOIN(SELECT BusinessId,Kind,PositionId,SUM(Amount) Amount FROM @CreditTargets
-          WHERE EffectKind IN(N'CreditApplication',N'Cancellation') GROUP BY BusinessId,Kind,PositionId) requested
+          WHERE EffectKind IN(N'CreditApplication',N'Cancellation',N'Adjustment') GROUP BY BusinessId,Kind,PositionId) requested
           ON requested.BusinessId=position.BusinessId AND requested.Kind=position.Kind AND requested.PositionId=position.PositionId
         CROSS APPLY accounting.ObligationAvailability(position.BusinessId,position.Kind,position.PositionId,position.Outstanding,NULL) available
         WHERE available.SourceCancelled=1 OR available.PendingCancellationCount>0 OR requested.Amount>available.AvailableAmount
@@ -269,16 +269,6 @@ BEGIN
       AND job.SourceDocumentType=source.SourceDocumentType
       AND job.TenantId=source.TenantId AND job.BusinessId=source.BusinessId;
 
-    IF EXISTS(SELECT 1 FROM @Accepted)
-    BEGIN
-      DECLARE @BankSources nvarchar(max)=(SELECT accepted.DocumentId,accepted.DocumentType,input.BusinessId
-        FROM @Accepted accepted JOIN @Sources input ON input.DocumentId=accepted.DocumentId
-          AND input.DocumentType=accepted.DocumentType FOR JSON PATH);
-      EXEC accounting.BankAccountsFreeze @TenantId,@BankSources,@Now;
-      EXEC accounting.PortfolioPaymentAccountsFreeze @TenantId,@BankSources,@Now;
-      EXEC accounting.AccountMappingsFreeze @TenantId,@BankSources;
-    END;
-
     DECLARE @PartyReferences TABLE(DocumentId uniqueidentifier,DocumentType nvarchar(64),PartyId uniqueidentifier,
       PRIMARY KEY(DocumentId,DocumentType,PartyId));
     INSERT @PartyReferences
@@ -294,6 +284,20 @@ BEGIN
 
     INSERT accounting.SourcePartyIndex(PartyId,SourceDocumentId,SourceDocumentType)
     SELECT PartyId,DocumentId,DocumentType FROM @PartyReferences;
+
+    DECLARE @ConceptReferences TABLE(ConceptId uniqueidentifier,DocumentId uniqueidentifier,DocumentType nvarchar(64),
+      PRIMARY KEY(ConceptId,DocumentId,DocumentType));
+    INSERT @ConceptReferences
+    SELECT DISTINCT concept.FinancialConceptId,accepted.DocumentId,accepted.DocumentType
+    FROM @Accepted accepted JOIN @Sources input ON input.DocumentId=accepted.DocumentId AND input.DocumentType=accepted.DocumentType
+    CROSS APPLY OPENJSON(CASE WHEN accepted.DocumentType=N'ManualAccountingVoucher'
+      THEN JSON_QUERY(input.Payload,'$.FinancialEffects.Concepts') ELSE N'[]' END) WITH(FinancialConceptId uniqueidentifier) concept
+    WHERE concept.FinancialConceptId IS NOT NULL;
+    IF EXISTS(SELECT 1 FROM @ConceptReferences reference LEFT JOIN reference.FinancialConcepts concept
+      ON concept.FinancialConceptId=reference.ConceptId AND concept.TenantId=@TenantId WHERE concept.FinancialConceptId IS NULL)
+      THROW 51731,N'The financial concept is outside its acceptance scope.',1;
+    INSERT accounting.SourceConceptIndex(FinancialConceptId,SourceDocumentId,SourceDocumentType)
+      SELECT ConceptId,DocumentId,DocumentType FROM @ConceptReferences;
 
     INSERT accounting.SourcePositionIndex(SourceDocumentId,SourceDocumentType,TenantId,BusinessId,EffectId,
       SubledgerKind,SubledgerId,SourceLineId,Amount,EffectKind,ReversesTransactionId)

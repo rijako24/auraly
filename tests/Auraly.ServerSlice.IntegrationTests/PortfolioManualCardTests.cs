@@ -44,7 +44,7 @@ public sealed class PortfolioManualCardTests(ServerSliceFixture fixture)
         var liability = function == "CreditCardLiability";
         var card = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
             liability ? "2394" : "1394", liability ? "Liability" : "Asset", function,
-            liability ? "Credit" : "Debit", bankId, methodId, sharedAcrossBusinesses: true);
+            liability ? "Credit" : "Debit", bankId, methodId);
         var control = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
             supplier ? "2294" : "1393", supplier ? "Liability" : "Asset", supplier ? "Payable" : "Receivable", supplier ? "Credit" : "Debit");
         var counterpart = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,

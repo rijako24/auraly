@@ -8,8 +8,12 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class WorkSessionClosureLocalDatesTests(ServerSliceFixture fixture)
+public sealed class WorkSessionClosureLocalDatesTests(ServerSliceFixture fixture) : IAsyncLifetime
 {
+    private readonly List<Guid> readFixtureBusinesses = [];
+    public Task InitializeAsync() => Task.CompletedTask;
+    public Task DisposeAsync() => fixture.DeactivateReadFixtureBusinessesAsync(readFixtureBusinesses);
+
     [Theory]
     [InlineData("America/Bogota","2026-08-01","2026-08-01T04:59:59+00:00",false)]
     [InlineData("America/Bogota","2026-08-01","2026-08-02T02:30:00+00:00",true)]
@@ -60,6 +64,7 @@ public sealed class WorkSessionClosureLocalDatesTests(ServerSliceFixture fixture
     private async Task<Guid> SeedClosureAsync(string zone,DateTimeOffset closedAt)
     {
         var businessId=Guid.NewGuid(); var closureId=Guid.NewGuid();
+        readFixtureBusinesses.Add(businessId);
         await using var connection=new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         Assert.StartsWith("AuralyServerSlice_",connection.Database);

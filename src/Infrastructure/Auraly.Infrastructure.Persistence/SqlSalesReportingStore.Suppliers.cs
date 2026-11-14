@@ -25,25 +25,25 @@ public sealed partial class SqlSalesReportingStore
             SELECT TOP(0) GroupKey,Label,NetUntaxed Net,Customers Buyers INTO #PreviousSales FROM #Sales;
             SELECT TOP(0) GroupKey,Label,Net INTO #PreviousPurchases FROM #Purchases;
             """:$"""
-            SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
+            SELECT a.SupplierId SupplierKey,COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
               COALESCE(a.SupplierName,N'Sin proveedor atribuido') GroupLabel,{FinancialActivityColumns} INTO #PreviousActivity {ComparisonSource(source)};
-            SELECT a.GroupKey,MAX(a.GroupLabel) Label,SUM(a.UntaxedAmount) Net,
+            SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierKey),N'unattributed') GroupKey,MAX(a.GroupLabel) Label,SUM(a.UntaxedAmount) Net,
               COUNT_BIG(DISTINCT CASE WHEN a.MovementType=N'Sale' AND a.UntaxedAmount>0 THEN a.CustomerId END) Buyers
-            INTO #PreviousSales FROM #PreviousActivity a GROUP BY a.GroupKey;
+            INTO #PreviousSales FROM #PreviousActivity a GROUP BY a.SupplierKey;
             SELECT CONVERT(nvarchar(36),p.SupplierId) GroupKey,MAX(p.SupplierName) Label,SUM(p.FunctionalNetAmount) Net
             INTO #PreviousPurchases {ComparisonSource(PurchaseScope)} GROUP BY p.SupplierId;
             """;
         var comparisonSql=comparison is null?$"SELECT {ExplorerMeasures} FROM #Activity a WHERE 1=0;":$"""
             SELECT {ExplorerMeasures} FROM #PreviousActivity a
-            WHERE EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=a.GroupKey);
+            WHERE @SupplierSearch IS NULL OR EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=a.GroupKey);
             """;
         await using var command=new SqlCommand($"""
             {ImpactUniverseSql}
-            SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
+            SELECT a.SupplierId SupplierKey,COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed') GroupKey,
               COALESCE(a.SupplierName,N'Sin proveedor atribuido') GroupLabel,{FinancialActivityColumns}
             INTO #Activity {source};
-            SELECT a.GroupKey,MAX(a.GroupLabel) Label,{ExplorerMeasures}
-            INTO #Sales FROM #Activity a GROUP BY a.GroupKey;
+            SELECT COALESCE(CONVERT(nvarchar(36),a.SupplierKey),N'unattributed') GroupKey,MAX(a.GroupLabel) Label,{ExplorerMeasures}
+            INTO #Sales FROM #Activity a GROUP BY a.SupplierKey;
             SELECT CONVERT(nvarchar(36),p.SupplierId) GroupKey,MAX(p.SupplierName) Label,
               SUM(p.Quantity) Quantity,SUM(p.FunctionalNetAmount) Net,SUM(p.FunctionalTaxAmount) Tax,SUM(p.FunctionalTotalAmount) Total,MAX(p.ProjectedAt) ProjectedAt,
               SUM(CASE WHEN p.SourceDocumentType=N'GoodsReceipt' THEN p.FunctionalNetAmount ELSE 0 END) Receipts,
@@ -69,7 +69,9 @@ public sealed partial class SqlSalesReportingStore
             SELECT COUNT_BIG(*) KnownCustomers FROM #Universe;
             SELECT * FROM #Candidates ORDER BY {order},GroupKey OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
             SELECT {ExplorerMeasures},(SELECT COUNT_BIG(*) FROM #Candidates) TotalGroups,MAX(a.ProjectedAt) ProjectedThrough
-            FROM #Activity a WHERE EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=a.GroupKey);
+            -- Without a name search every activity group is already present in
+            -- #Candidates through #Sales. Only a search can remove those groups.
+            FROM #Activity a WHERE @SupplierSearch IS NULL OR EXISTS(SELECT 1 FROM #Candidates selected WHERE selected.GroupKey=a.GroupKey);
             SELECT COALESCE(SUM(PurchaseNet),0),COALESCE(SUM(PurchaseTax),0),COALESCE(SUM(PurchaseTotal),0),
               COALESCE(SUM(PurchaseQuantity),0),COALESCE(SUM(PreviousPurchases),0),MAX(ProjectedAt),
               COALESCE(SUM(PurchaseReceipts),0),COALESCE(SUM(PurchaseReturns),0) FROM #Candidates;

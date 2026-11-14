@@ -35,9 +35,8 @@ public sealed partial class SqlExpenseStore
               TaxTreatment nvarchar(32),WithholdingConceptCode nvarchar(32)) l
             LEFT JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=l.ConceptId AND c.BusinessId=@BusinessId AND c.IsActive=1
             JOIN dbo.AccountingAccounts a ON a.AccountId=COALESCE(c.ExpenseAccountId,l.ExpenseAccountId) AND a.TenantId=@TenantId
-              AND a.IsActive=1 AND a.AllowsPosting=1 AND a.AccountType=N'Expense'
-              AND (a.BusinessId IS NULL OR a.BusinessId=@BusinessId)
-            LEFT JOIN dbo.AccountingCostCenters cc ON cc.CostCenterId=l.CostCenterId AND cc.BusinessId=@BusinessId AND cc.IsActive=1
+              AND a.IsActive=1 AND a.AllowsPosting=1 AND a.AccountType IN(N'Expense',N'Cost')
+            LEFT JOIN dbo.AccountingCostCenters cc ON cc.CostCenterId=l.CostCenterId AND cc.TenantId=@TenantId AND cc.IsActive=1
             LEFT JOIN dbo.TaxProfiles t ON t.TaxProfileId=l.TaxProfileId AND t.TenantId=@TenantId AND t.IsActive=1 AND t.DianTaxCode=N'01'
             WHERE (l.ConceptId IS NULL OR c.ExpenseConceptId IS NOT NULL)
               AND (l.ConceptId IS NULL OR l.ExpenseAccountId IS NULL OR l.ExpenseAccountId=c.ExpenseAccountId)

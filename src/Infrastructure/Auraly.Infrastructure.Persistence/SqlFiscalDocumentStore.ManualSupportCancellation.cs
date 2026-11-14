@@ -87,7 +87,7 @@ public sealed partial class SqlFiscalDocumentStore
             FROM dbo.AccountingEntryLines line
             JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId
             LEFT JOIN dbo.Parties party ON party.PartyId=line.PartyId AND party.TenantId=@TenantId
-            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=line.CostCenterId AND center.BusinessId=@BusinessId
+            LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=line.CostCenterId AND center.TenantId=@TenantId
             WHERE line.EntryId=@EntryId ORDER BY line.LineNumber;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);

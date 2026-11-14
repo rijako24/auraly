@@ -108,6 +108,24 @@ test("cancelar descarta cambios; un error conserva el formulario y no guarda al 
   expect(data.calls).toMatchObject({ lists: 1, details: 0 });
 });
 
+test("cambiar la zona actualiza el contexto y su copia offline sin recargar listas", async ({ page }) => {
+  const { calls } = await setup(page);
+  await page.goto("/dashboard/businesses");
+  const editor = await open(page, "Editar");
+  await editor.getByLabel("Zona horaria", { exact: true }).fill("America/New_York");
+  await editor.getByRole("button", { name: "Guardar", exact: true }).click();
+  await expect(editor).toBeHidden();
+  expect(calls).toMatchObject({ lists: 1, details: 0, contexts: 1 });
+  expect(calls.writes).toEqual([{ method: "PUT", body: expect.objectContaining({ timeZone: "America/New_York" }) }]);
+  await expect.poll(() => page.evaluate(() => {
+    const key = Object.keys(localStorage).find(key => key.includes(":businesses:"));
+    return key ? JSON.parse(localStorage.getItem(key)!).find((item: { name: string }) => item.name === "Principal")?.timeZone : null;
+  })).toBe("America/New_York");
+  const reopened = await open(page, "Ver");
+  await expect(reopened.getByLabel("Zona horaria", { exact: true })).toHaveValue("America/New_York");
+  expect(calls).toMatchObject({ lists: 1, details: 0, contexts: 1 });
+});
+
 test("nueva sede usa el mismo modal, origen paginado y crear/cancelar", async ({ page }) => {
   const { calls } = await setup(page);
   await page.goto("/dashboard/businesses");

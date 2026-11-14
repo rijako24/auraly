@@ -84,7 +84,12 @@ public sealed record PosSaleCreditTerms(
     Guid CustomerId,
     decimal Amount,
     DateTimeOffset DueDate,
-    decimal? RemainingCredit = null);
+    decimal? RemainingCredit = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null);
 
 public sealed record CompletePosSaleResult(
     PosEdgeIssueResult IssuedSale,
@@ -323,7 +328,8 @@ public sealed class PosSaleCompletionService(
                     command.Credit.DueDate,
                     command.Credit.RemainingCredit,
                     command.SoldByName,
-                    draft.CustomerPartySiteId),
+                    draft.CustomerPartySiteId,command.Credit.PaymentMethodId,command.Credit.PaymentMethodVersion,
+                    command.Credit.PaymentMethodCode,command.Credit.PaymentMethodName,command.Credit.AccountId),
                 customer?.Name,
                 draft.CustomerPartySiteId, draft.Charges,
                 CustomerAddress: receiptCustomerSite?.AddressLine,

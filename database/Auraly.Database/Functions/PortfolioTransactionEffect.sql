@@ -5,7 +5,7 @@ RETURNS TABLE
 AS RETURN
 (
     SELECT CASE WHEN @Type IN(N'Opening',N'Adjustment',N'Unapplication',N'CreditUnapplication') THEN @Amount
-      WHEN @Type IN(N'Payment',N'Credit',N'Reversal',N'CreditApplication') THEN -@Amount
+      WHEN @Type IN(N'Payment',N'Credit',N'Reversal',N'CreditApplication',N'Application') THEN -@Amount
       END BalanceChange
 );
 GO

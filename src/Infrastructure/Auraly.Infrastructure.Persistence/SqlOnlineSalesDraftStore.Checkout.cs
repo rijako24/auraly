@@ -2,6 +2,7 @@ using System.Data;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.Contracts.Fiscal;
@@ -187,10 +188,13 @@ public sealed partial class SqlOnlineSalesDraftStore
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
 
+        await SqlPaymentMethodResolver.ValidateOnlineSaleAsync(connection, transaction, user.TenantId,
+            request.Payments, request.Credit, cancellationToken);
         var now = settlement.Context.OccurredAt;
         var creditValidation = await ValidateCreditAsync(
             connection,
             transaction,
+            user.TenantId,
             state.BusinessId,
             state.CustomerId,
             state.CustomerPartySiteId,
@@ -278,7 +282,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 payment.BankAccountId,
                 string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
                 payment.TenderedAmount,
-                payment.RoundingAdjustment)).ToArray();
+                payment.RoundingAdjustment,payment.PaymentMethodId,payment.PaymentMethodVersion,
+                payment.PaymentMethodCode,payment.PaymentMethodName,payment.AccountId)).ToArray();
         if (!PosPaymentRoundingPolicy.IsValid(withholding.NetAmount, payments))
             throw new OnlineSalesDraftValidationException(
                 "El ajuste al peso no corresponde al total original de la venta.");
@@ -372,7 +377,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                         : Math.Max(0m,
                     creditValidation.AvailableCredit.Value - request.Credit.Amount),
                     user.UserName,
-                    state.CustomerPartySiteId),
+                    state.CustomerPartySiteId,request.Credit.PaymentMethodId,request.Credit.PaymentMethodVersion,
+                    request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId),
             CustomerPartySiteId: state.CustomerPartySiteId,
             Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null);
 
@@ -839,6 +845,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             .Append('|').Append(request.DocumentType);
         foreach (var payment in request.Payments)
         {
+            if(payment.PaymentMethodId is {} form) value.Append("|form:").Append(form.ToString("D")).Append(':').Append(payment.PaymentMethodVersion).Append(':').Append(payment.AccountId).Append(':').Append(payment.PaymentMethodCode).Append(':').Append(payment.PaymentMethodName);
             value.Append('|')
                 .Append(payment.MethodCode)
                 .Append(':')
@@ -859,6 +866,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (request.Credit is not null)
             value.Append("|credit:")
                 .Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture));
+        if (request.Credit?.PaymentMethodId is not null)
+            value.Append("|credit-form:").Append(JsonSerializer.Serialize(request.Credit));
 
         return Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(value.ToString())));

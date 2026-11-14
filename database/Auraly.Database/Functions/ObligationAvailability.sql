@@ -9,9 +9,11 @@ CREATE FUNCTION accounting.ObligationAvailability
 RETURNS TABLE
 AS RETURN
 (
-    SELECT reserved.PendingPaymentAmount,adjustments.PendingAdjustmentAmount,
+    SELECT reserved.PendingPaymentAmount,
+        adjustments.PendingAdjustmentAmount+applications.PendingIndexedAdjustmentAmount PendingAdjustmentAmount,
         @OutstandingAmount-reserved.PendingPaymentAmount-adjustments.PendingAdjustmentAmount-applications.PendingApplicationAmount AvailableAmount,
-        adjustments.PendingAdjustmentCount,applications.PendingApplicationAmount,applications.PendingCancellationCount,
+        adjustments.PendingAdjustmentCount+applications.PendingIndexedAdjustmentCount PendingAdjustmentCount,
+        applications.PendingApplicationAmount-applications.PendingIndexedAdjustmentAmount PendingApplicationAmount,applications.PendingCancellationCount,
         applications.SourceCancelled
     FROM (SELECT
         COALESCE((SELECT SUM(payment.Amount) FROM
@@ -63,20 +65,28 @@ AS RETURN
         manualAdjustments.PendingAdjustmentCount+
         costAdjustments.PendingAdjustmentCount PendingAdjustmentCount) adjustments
     CROSS APPLY(SELECT COALESCE(SUM(target.Amount),CONVERT(decimal(19,4),0)) PendingApplicationAmount,
+        COALESCE(SUM(CASE WHEN target.EffectKind=N'Adjustment' THEN target.Amount ELSE 0 END),CONVERT(decimal(19,4),0)) PendingIndexedAdjustmentAmount,
+        COUNT_BIG(CASE WHEN target.EffectKind=N'Adjustment' THEN 1 END) PendingIndexedAdjustmentCount,
         COALESCE(MAX(CASE WHEN target.EffectKind=N'Cancellation' THEN 1 ELSE 0 END),0) PendingCancellationCount,
         CONVERT(bit,COALESCE(MAX(CASE WHEN target.EffectKind=N'Cancelled' THEN 1 ELSE 0 END),0)) SourceCancelled
       FROM (
       SELECT target.Amount,target.EffectKind FROM accounting.SourcePositionIndex target
       WHERE target.BusinessId=@BusinessId AND target.SubledgerKind=@SubledgerKind AND target.SubledgerId=@SubledgerId
-        AND target.EffectKind IN(N'CreditApplication',N'Cancellation')
-        AND NOT EXISTS(SELECT 1 FROM dbo.PayableTransactions applied WHERE @SubledgerKind=N'Payable'
+        AND target.EffectKind IN(N'CreditApplication',N'Cancellation',N'Adjustment')
+        -- EffectId is the immutable transaction PK. A cached plan optimized
+        -- for one adjustment otherwise seeks only by obligation and repeatedly
+        -- reads its entire history for each indexed effect (quadratic growth).
+        -- Retain all source/position checks after the single-key lookup.
+        AND NOT EXISTS(SELECT 1 FROM dbo.PayableTransactions applied
+          WITH(FORCESEEK(PK_PayableTransactions(PayableTransactionId))) WHERE @SubledgerKind=N'Payable'
           AND applied.PayableTransactionId=target.EffectId AND applied.PayableId=@SubledgerId
           AND applied.SourceDocumentId=target.SourceDocumentId AND applied.SourceDocumentType=target.SourceDocumentType
-          AND applied.TransactionType=CASE WHEN target.EffectKind=N'Cancellation' THEN N'Credit' ELSE N'CreditApplication' END)
-        AND NOT EXISTS(SELECT 1 FROM dbo.ReceivableTransactions applied WHERE @SubledgerKind=N'Receivable'
+          AND applied.TransactionType=CASE target.EffectKind WHEN N'Cancellation' THEN N'Credit' WHEN N'Adjustment' THEN N'Adjustment' ELSE N'CreditApplication' END)
+        AND NOT EXISTS(SELECT 1 FROM dbo.ReceivableTransactions applied
+          WITH(FORCESEEK(PK_ReceivableTransactions(ReceivableTransactionId))) WHERE @SubledgerKind=N'Receivable'
           AND applied.ReceivableTransactionId=target.EffectId AND applied.ReceivableId=@SubledgerId
           AND applied.SourceDocumentId=target.SourceDocumentId AND applied.SourceDocumentType=target.SourceDocumentType
-          AND applied.TransactionType=N'CreditApplication')
+          AND applied.TransactionType=CASE WHEN target.EffectKind=N'Adjustment' THEN N'Adjustment' ELSE N'CreditApplication' END)
         AND NOT EXISTS(SELECT 1 FROM dbo.SupplierCreditTransactions applied WHERE @SubledgerKind=N'SupplierCredit'
           AND applied.SupplierCreditTransactionId=target.EffectId AND applied.SupplierCreditId=@SubledgerId
           AND applied.SourceDocumentId=target.SourceDocumentId AND applied.SourceDocumentType=target.SourceDocumentType

@@ -2,12 +2,16 @@ import { expect, test } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
 
-for (const { mode, failCommandOnce, creating } of [
-  { mode: "Physical", failCommandOnce: false, creating: false }, { mode: "Both", failCommandOnce: false, creating: false },
-  { mode: "Both", failCommandOnce: true, creating: false }, { mode: "Physical", failCommandOnce: false, creating: true },
-  { mode: "Both", failCommandOnce: true, creating: true },
+for (const { mode, failCommandOnce, creating, deviceMatches } of [
+  { mode: "Physical", failCommandOnce: false, creating: false, deviceMatches: true }, { mode: "Both", failCommandOnce: false, creating: false, deviceMatches: true },
+  { mode: "Both", failCommandOnce: true, creating: false, deviceMatches: true }, { mode: "Physical", failCommandOnce: false, creating: true, deviceMatches: true },
+  { mode: "Both", failCommandOnce: true, creating: true, deviceMatches: true },
+  { mode: "Physical", failCommandOnce: false, creating: false, deviceMatches: false },
+  { mode: "Both", failCommandOnce: true, creating: false, deviceMatches: false },
+  { mode: "Both", failCommandOnce: false, creating: true, deviceMatches: false },
+  { mode: "Physical", failCommandOnce: false, creating: false, deviceMatches: null },
 ] as const) {
-  test(`la estación configura directamente su impresora en modo ${mode}, reintento=${failCommandOnce}, nueva=${creating}`, async ({ page, baseURL }) => {
+  test(`la estación configura directamente su impresora en modo ${mode}, reintento=${failCommandOnce}, nueva=${creating}, mismo equipo=${deviceMatches}`, async ({ page, baseURL }) => {
     const tenantId = "11111111-1111-1111-1111-111111111111";
     const businessId = "22222222-2222-2222-2222-222222222222";
     let stationId = "33333333-3333-3333-3333-333333333333";
@@ -25,6 +29,7 @@ for (const { mode, failCommandOnce, creating } of [
     let configurationReads = 0;
     let stationCreated = false;
     const writes: string[] = [];
+    const localReads: string[] = [];
     await page.route("**/api/**", async route => {
       const path = new URL(route.request().url()).pathname;
       let value: unknown = [];
@@ -63,8 +68,9 @@ for (const { mode, failCommandOnce, creating } of [
     });
     await page.route("http://127.0.0.1:47831/**", async route => {
       const path = new URL(route.request().url()).pathname;
+      if (route.request().method() === "GET") localReads.push(path);
       let value: unknown;
-      if (path.endsWith("/health")) value = { deviceId, status: "Ready" };
+      if (path.endsWith("/health")) value = { deviceId: deviceMatches ? deviceId : deviceMatches === false ? "88888888-8888-8888-8888-888888888888" : null, status: "Ready" };
       else if (path.endsWith("/configuration/printers")) value = { installedPrinters: ["EPSON Cocina"], configuration: {} };
       else if (route.request().method() === "PUT") {
         writes.push("printer");
@@ -82,8 +88,15 @@ for (const { mode, failCommandOnce, creating } of [
     expect(profileReads).toBe(0);
     await dialog.getByRole("combobox", { name: "Salida de comanda" }).click();
     await page.getByRole("option", { name: mode === "Both" ? "Pantalla e impresora" : "Solo impresora", exact: true }).click();
+    await expect(dialog.getByRole("combobox", { name: "Impresora Windows" })).toBeVisible();
+    await expect(dialog.getByText(/Para seleccionar o cambiar la impresora|Abre esta configuración en el equipo de impresión/)).toHaveCount(0);
     await dialog.getByRole("combobox", { name: "Impresora Windows" }).click();
     await page.getByRole("option", { name: "EPSON Cocina" }).click();
+    if (!deviceMatches) {
+      await dialog.getByRole("combobox", { name: "Equipo que imprime" }).click();
+      await page.getByRole("option", { name: "Caja cocina", exact: true }).click();
+      await expect(dialog.getByRole("combobox", { name: "Impresora Windows" })).toContainText("EPSON Cocina");
+    }
     await dialog.getByRole("combobox", { name: "Tamaño de tirilla" }).click();
     await page.getByRole("option", { name: "58 mm" }).click();
     await dialog.getByLabel("Copias", { exact: true }).fill("2");
@@ -95,6 +108,8 @@ for (const { mode, failCommandOnce, creating } of [
     await expect(dialog).toBeHidden();
     expect(writes).toEqual([...(creating ? ["station"] : []), "printer", "command", ...(failCommandOnce ? ["command"] : [])]);
     expect(profileReads).toBe(1);
+    expect(localReads.sort()).toEqual(["/edge/v1/configuration/printers",
+      "/edge/v1/configuration/restaurant-command-printers", "/edge/v1/health"].sort());
     expect(configurationReads).toBe(1);
   });
 }

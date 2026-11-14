@@ -1,10 +1,28 @@
 using Auraly.Platform.Application.Identity.Services;
+using Auraly.Contracts.Tenants;
 using Xunit;
 
 namespace Auraly.Platform.Tests.Identity;
 
 public sealed class TenantProvisioningRequestValidatorTests
 {
+    [Theory]
+    [InlineData("America/Bogota", true)]
+    [InlineData("SA Pacific Standard Time", true)]
+    [InlineData("America/New_York", true)]
+    [InlineData("", false)]
+    [InlineData("Unknown/Zone", false)]
+    public void Primary_business_requires_a_valid_time_zone(string timeZone, bool valid)
+    {
+        var request = new ProvisionTenantRequest(Guid.NewGuid(), "Empresa", "Empresa", "NaturalPerson",
+            "CC", "1020304050", null, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            "Dirección", "3001234567", "empresa@example.test", "", "Principal", "Dirección",
+            "3001234567", "sede@example.test", timeZone, "LatestReceiptCost", "admin@example.test", 1, 0);
+        var exception = Record.Exception(() => TenantProvisioningRequestValidator.Validate(request));
+        if (valid) Assert.Null(exception);
+        else Assert.IsAssignableFrom<ArgumentException>(exception);
+    }
+
     [Theory]
     [InlineData("CC", "1020304050")]
     [InlineData("CE", "1234567")]

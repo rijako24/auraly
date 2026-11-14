@@ -177,6 +177,7 @@ GO
 :r .\Migrations\BackfillEngineOwnedSourcesAndReportingJobs.sql
 :r .\Seeds\SeedAccountingDefaults.sql
 :r .\Migrations\20260928_CorrectDefaultPucMappings.sql
+:r .\Migrations\20261111_RetargetHistoricalInputVatMappings.sql
 :r .\Seeds\SeedAuralyBillingAccounting.sql
 :r .\Seeds\SeedComplianceReportDefinitions.sql
 :r .\Seeds\SeedDispatchReasons.sql
@@ -189,6 +190,8 @@ GO
 :r .\Migrations\20261023_BankAuxiliariesAndAcceptedAccounts.sql
 :r .\Migrations\20261023_ManualPaymentSites.sql
 :r .\Migrations\20261027_LinkPostedPortfolioOpenings.sql
+:r .\Migrations\20261109_PaymentMethodCatalog.sql
+:r .\Migrations\20261113_RetireAcceptedAccountConfiguration.sql
 :r .\Migrations\ClassifySystemWarehouses.sql
 GO
 PRINT 'Post-deployment scripts executed successfully.';

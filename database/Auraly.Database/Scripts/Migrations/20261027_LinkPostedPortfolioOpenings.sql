@@ -65,7 +65,6 @@ JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId AND line.PartyI
   AND (position.SourceLineId IS NULL OR line.SourceLineId=position.SourceLineId)
 JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=position.TenantId
   AND account.IsActive=1 AND account.AllowsPosting=1
-  AND (account.BusinessId IS NULL OR account.BusinessId=position.BusinessId)
   AND (account.FinancialFunction IS NULL OR account.FinancialFunction=position.Kind)
 WHERE position.PartyId IS NOT NULL AND
   ((position.Kind=N'Receivable' AND account.AccountType=N'Asset'

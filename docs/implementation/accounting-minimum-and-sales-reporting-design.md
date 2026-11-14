@@ -86,11 +86,11 @@ El diseño mínimo cerrado del 2026-09-08 está en la sección 8 de
 automática y permite sustituir ese predeterminado, administra las reglas actuales
 y corrige la continuidad de centros en reintentos y devoluciones. Esas correcciones
 están pendientes de implementación; no amplían pasos de POS/ventas/compras.
-La resolución automática usa una única jerarquía canónica: centro explícito del
-documento cuando el flujo lo admite; asignación vigente por operación y,
-opcionalmente, contexto de bodega; asignación general; centro general del perfil.
-La bodega no es una dimensión obligatoria ni se infiere como centro: sólo hace
-más específica una regla funcional configurada. El trabajo contable congela el
+La decisión del 2026-11-13 en la sección 8 comparte los centros entre las sedes
+del tenant y retira el filtro por bodega. La resolución automática conserva una
+única jerarquía canónica: centro explícito del documento cuando el flujo lo
+admite; asignación de la operación en la sede; asignación general de la sede;
+predeterminado de la empresa. El trabajo contable congela el
 identificador al llegar al paso de resolución y el asiento congela además nombre
 y código; cambiar un maestro después no reescribe un asiento contabilizado.
 Actualmente un pendiente que aún no llegó a ese paso puede tomar reglas posteriores;
@@ -197,6 +197,36 @@ Para reproducir el patrón en otro proceso:
 5. conservar checkpoint y una operación explícita de reconstrucción;
 6. comparar proyección contra fuente mediante pruebas de conciliación;
 7. no crear consolidados para datos pequeños sin una consulta costosa real.
+
+La revisión de rendimiento del 14-11-2026 mantiene este lector y las medidas
+canónicas. Los desgloses agrupan identificadores UUID como tales y convierten
+las claves a texto después de agregar; conservan `unattributed`, etiquetas,
+orden textual en empates y el contrato publicado. La vista de proveedores
+omite la comprobación de pertenencia sólo cuando no hay búsqueda: todos los
+grupos de actividad ya pertenecen a los candidatos por construcción. Con
+búsqueda conserva el filtro y su semijoin, también en comparaciones. No cambia
+la proyección, sus escritores, los snapshots ni los permisos.
+Agregar paneles no invalida el consolidado diario: el resumen sin filtros de
+dimensión usa `SalesReportDailyTotals` también cuando incluye desgloses. Los
+resúmenes restringidos conservan su agregado sobre actividad filtrada. Las
+medidas canónicas de hora, vendedor y bodega comparten una agrupación por
+documento. Su agregado usa las identidades tipadas y hash, sin ordenar etiquetas.
+El conteo marca una sola vez cada documento dentro de su dimensión y conserva
+las sumas firmadas, los costos desconocidos y las etiquetas históricas.
+Los metadatos del documento original se buscan por su clave primaria, también
+para cargos y devoluciones: el acceso no recorre todas las cabeceras históricas
+de la sede para enriquecer los hechos de un período. No se limita la fecha del
+documento original, porque una devolución puede pertenecer a otro período.
+
+La línea base con 100.000 ventas, 5.000 devoluciones y 1.005.000 líneas en 24
+meses, consultando 31 días, dio p95 de 2.838,2 ms para el resumen con paneles
+y 1.570,9 ms para proveedores. Se mantienen dos SQL y el límite de 1.500 ms,
+sin ampliar esperas ni reducir volumen o muestras. La medición local posterior
+aprobó: resumen con paneles 1.494,2 ms, proveedores 947,0 ms y páginas de
+comprobantes hasta 249,6 ms, siempre con dos SQL. La regresión de equivalencia
+también aprobó con los accesos por identidad. Esto certifica el escenario local,
+no el rendimiento de producción. El rollback del
+lector usa el binario anterior; este ajuste no requiere migración de datos.
 
 ## Pruebas de cierre
 

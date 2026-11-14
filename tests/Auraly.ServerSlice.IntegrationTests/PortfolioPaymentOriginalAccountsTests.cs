@@ -225,8 +225,7 @@ internal static class PortfolioOriginalAccountScenario
         CreateConfiguredAuxiliaryAsync(fixture, client, "1109", "Asset", "Cash", "Debit");
 
     internal static async Task<AccountingAccountView> CreateConfiguredAuxiliaryAsync(ServerSliceFixture fixture, HttpClient client,
-        string prefix, string type, string function, string side, Guid? bankAccountId = null, Guid? paymentMethodOptionId = null,
-        bool sharedAcrossBusinesses = false)
+        string prefix, string type, string function, string side, Guid? bankAccountId = null, Guid? paymentMethodOptionId = null)
     {
         var parentId = Guid.NewGuid();
         var parentCode = prefix + BitConverter.ToUInt64(parentId.ToByteArray()).ToString("D20");
@@ -236,7 +235,7 @@ internal static class PortfolioOriginalAccountScenario
         using var auxiliary = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
             new CreateAccountingAccountRequest(Guid.NewGuid(), fixture.TenantId, parentCode + "01", "Auxiliar de comprobantes de prueba", type, true,
                 function is "Payable" or "Receivable" or "SupplierAdvance" or "CustomerAdvance",
-                new(parentId, function, side, sharedAcrossBusinesses ? null : fixture.BusinessId, bankAccountId, paymentMethodOptionId)));
+                new(parentId, function, side, null, bankAccountId, paymentMethodOptionId)));
         Assert.True(auxiliary.IsSuccessStatusCode, await auxiliary.Content.ReadAsStringAsync());
         return (await auxiliary.Content.ReadFromJsonAsync<AccountingAccountView>())!;
     }
@@ -245,6 +244,44 @@ internal static class PortfolioOriginalAccountScenario
         new(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog, commandFilter: command =>
             command.CommandText.Contains("DECLARE @Payments TABLE", StringComparison.Ordinal)
             && command.CommandText.Contains("INSERT dbo.WorkSessionMovements", StringComparison.Ordinal));
+
+    internal static async Task AssertInactiveFormAccountRejectedAsync(ServerSliceFixture fixture, HttpClient client,
+        Guid accountId, Guid formId, Guid paymentId, bool receivable, Func<Task<HttpResponseMessage>> submit)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE dbo.AccountingAccounts SET IsActive=0 WHERE AccountId=@Account AND TenantId=@Tenant;
+            """, connection);
+        command.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+        command.Parameters.AddWithValue("@Account", accountId);
+        await command.ExecuteNonQueryAsync();
+        try
+        {
+            var usage = receivable ? "Receipts" : "SupplierPayments";
+            var choices = (await client.GetFromJsonAsync<Auraly.Contracts.Catalog.PaymentMethodPage>(
+                $"/api/commerce/v1/payment-methods/?usage={usage}&paymentMethodId={formId}"))!;
+            Assert.Empty(choices.Items);
+            using var response = await submit();
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, response.StatusCode);
+            command.CommandText = """
+                SELECT (SELECT COUNT(*) FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Payment),
+                  (SELECT COUNT(*) FROM dbo.CustomerPayments WHERE PaymentId=@Payment),
+                  (SELECT COUNT(*) FROM dbo.SupplierPayments WHERE PaymentId=@Payment);
+                """;
+            command.Parameters.AddWithValue("@Payment", paymentId);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(0, reader.GetInt32(0)); Assert.Equal(0, reader.GetInt32(1)); Assert.Equal(0, reader.GetInt32(2));
+        }
+        finally
+        {
+            command.CommandText = """
+                UPDATE dbo.AccountingAccounts SET IsActive=1 WHERE AccountId=@Account AND TenantId=@Tenant;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+    }
 
     internal static InventoryBalanceProcessingTests.CommandCounter CountOriginalReads(ServerSliceFixture fixture, bool receivable) =>
         new(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog, commandFilter: command =>

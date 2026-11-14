@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Payments;
@@ -31,16 +32,26 @@ public sealed record ReceivablesUserIdentity(Guid UserId, Guid TenantId, Guid Bu
     IReadOnlySet<string> Permissions);
 public sealed record ReceivableQuery(int Page, int PageSize, string? Search, Guid? CustomerId,
     string? Status, bool? Overdue, Guid? PartySiteId = null, bool OutstandingOnly = false,
-    DateOnly? From = null, DateOnly? To = null, string? SortBy = null, string? SortDirection = null);
+    DateOnly? From = null, DateOnly? To = null, string? SortBy = null, string? SortDirection = null,
+    Guid? ReceivableId = null, int DateRangeVersion = 1);
 public sealed record ReceivableListItem(Guid ReceivableId, Guid? CustomerId, string CustomerName,
     string DocumentNumber, string CurrencyCode, decimal OriginalAmount, decimal OutstandingAmount,
     DateTimeOffset DueDate, string Status, bool IsOverdue, DateTimeOffset CreatedAt,
     Guid? PartySiteId = null, string? PartySiteName = null, decimal PaidAmount = 0,
-    Guid? PartyId = null);
+    Guid? PartyId = null, int OverdueDays = 0, string AgingBandCode = "NotDue",DateTimeOffset? IssuedAt = null)
+{
+    public decimal AdjustmentAmount => OriginalAmount-PaidAmount-OutstandingAmount;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceDocumentType { get; init; }
+    public DateOnly? DueOn { get; init; }
+    public DateOnly? IssuedOn { get; init; }
+}
 public sealed record ReceivablePage(IReadOnlyList<ReceivableListItem> Items, int Page, int PageSize,
     int TotalCount, decimal TotalOutstanding, decimal TotalOverdue,
     decimal TotalOriginal = 0, decimal TotalPaid = 0)
 {
+    public DateOnly? ReferenceDate {get;init;}
+    public decimal TotalAdjustments => TotalOriginal-TotalPaid-TotalOutstanding;
     public int TotalPages => TotalCount == 0 ? 0 : (int)Math.Ceiling(TotalCount / (decimal)PageSize);
 }
 public sealed record ReceivableTransactionView(Guid TransactionId, string Type, decimal Amount,
@@ -52,21 +63,37 @@ public sealed record ReceivableDetail(Guid ReceivableId, Guid? CustomerId, strin
     Guid? PartySiteId = null, string? PartySiteName = null, Guid? PartyId = null,
     string? SourceNote = null);
 public sealed record CustomerCreditProfile(Guid CustomerId, decimal? CreditLimit,
-    int DefaultDueDays, bool IsCreditEnabled, decimal OutstandingAmount, decimal? AvailableCredit);
+    int DefaultDueDays, bool IsCreditEnabled, decimal OutstandingAmount, decimal? AvailableCredit,
+    int? MaximumOverdueInvoices = null, decimal PendingCreditAmount = 0);
 public sealed record UpdateCustomerCreditProfileRequest(Guid BusinessId, decimal? CreditLimit,
-    int DefaultDueDays, bool IsCreditEnabled);
+    int DefaultDueDays, bool IsCreditEnabled)
+{
+    private int? maximumOverdueInvoices;
+    public int? MaximumOverdueInvoices
+    {
+        get => maximumOverdueInvoices;
+        init { maximumOverdueInvoices=value; HasMaximumOverdueInvoices=true; }
+    }
+    // Older clients omit the field. Preserve its current value on those updates;
+    // an explicit JSON null from the new editor clears the limit.
+    [JsonIgnore] public bool HasMaximumOverdueInvoices { get; private init; }
+}
 public sealed record CustomerPaymentAllocationRequest(Guid ReceivableId, decimal Amount);
 public sealed record CustomerPaymentTenderRequest(string MethodCode, decimal Amount,
     decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
-    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null);
+    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null);
 public sealed record ConfirmCustomerPaymentRequest(Guid PaymentId, Guid BusinessId, Guid CustomerId,
     Guid? WorkSessionId, DateTimeOffset PaidAt, string CurrencyCode, string? Notes,
     IReadOnlyCollection<CustomerPaymentAllocationRequest> Allocations,
-    IReadOnlyCollection<CustomerPaymentTenderRequest> Payments);
+    IReadOnlyCollection<CustomerPaymentTenderRequest> Payments,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateOnly? PaidOn = null);
 public sealed record CustomerPaymentAllocationSnapshot(int LineNumber, Guid ReceivableId, decimal Amount);
 public sealed record CustomerPaymentTenderSnapshot(int LineNumber, string MethodCode, decimal Amount,
     decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
-    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null);
+    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null);
 public sealed record CustomerPaymentDocumentPayload(Guid TenantId, Guid BusinessId, Guid PaymentId,
     Guid CustomerId, Guid ConfirmedByUserId, Guid? WorkSessionId, string DocumentNumber,
     Guid DocumentSeriesId, string DocumentPrefix, string DocumentSeriesCode, long DocumentConsecutive,
@@ -74,7 +101,7 @@ public sealed record CustomerPaymentDocumentPayload(Guid TenantId, Guid Business
     decimal TotalAmount, IReadOnlyList<CustomerPaymentAllocationSnapshot> Allocations,
     IReadOnlyList<CustomerPaymentTenderSnapshot> Payments);
 public sealed record CustomerPaymentAcceptance(Guid PaymentId, Guid AccountingJobId,
-    string DocumentNumber, string Status, bool IdempotentReplay);
+    string DocumentNumber, string Status, bool IdempotentReplay, DateTimeOffset? PaidAt = null);
 public sealed record CustomerPaymentHistoryItem(Guid PaymentId, string DocumentNumber,
     DateTimeOffset PaidAt, string CurrencyCode, decimal TotalAmount, string Status,
     int AppliedDocumentCount, IReadOnlyList<CustomerPaymentTenderSnapshot> Payments,
@@ -90,7 +117,7 @@ public sealed record CustomerPaymentHistoryItem(Guid PaymentId, string DocumentN
 public sealed record CustomerPaymentHistoryApplication(Guid ReceivableId,string DocumentNumber,decimal Amount);
 public sealed record CustomerPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? CustomerId,
     string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null,
-    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null);
+    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null, int DateRangeVersion = 1);
 public sealed record CustomerPaymentHistoryPage(IReadOnlyList<CustomerPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount, decimal TotalAmount = 0)
 {
@@ -98,7 +125,7 @@ public sealed record CustomerPaymentHistoryPage(IReadOnlyList<CustomerPaymentHis
 }
 public sealed record CustomerPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue,
     Guid? CustomerId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null,
-    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null);
+    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null, int DateRangeVersion = 1);
 public sealed record CustomerPortfolioItem(Guid CustomerId, string CustomerName,
     string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
     decimal OutstandingAmount, decimal OverdueAmount, Guid? PartySiteId = null,
@@ -113,9 +140,23 @@ public sealed record ReceivablesReportQuery(int Page, int PageSize, bool Consoli
     DateOnly Cutoff, Guid? CustomerId = null, Guid? PartySiteId = null,
     DateOnly? From = null, DateOnly? To = null, string? Status = null,
     bool OutstandingOnly = false, bool OverdueOnly = false,
-    string? SortBy = null, string? SortDirection = null, string? Search = null);
+    string? SortBy = null, string? SortDirection = null, string? Search = null,
+    bool IncludeApplications = true, string? DocumentNumber = null,
+    DateOnly? IssuedFrom = null, DateOnly? IssuedTo = null,
+    int? MinimumAgeDays = null, int? MaximumAgeDays = null,
+    int? MinimumDaysPastDue = null, int? MaximumDaysPastDue = null, int TemplateVersion = 3, int DateRangeVersion = 1);
 public sealed record ReceivablesReportApplication(string DocumentNumber, DateTimeOffset AppliedAt,
     decimal Amount);
+public sealed record ReceivablesReportGroupTotals(int InvoiceCount, decimal OriginalAmount,
+    decimal PaidAmount, decimal OutstandingAmount, decimal NotDueAmount,
+    decimal Overdue1To30Amount, decimal Overdue31To60Amount,
+    decimal Overdue61To90Amount, decimal OverdueOver90Amount)
+{
+    public decimal AvailableAdvances { get; init; }
+    public decimal AvailableCredits { get; init; }
+    public decimal NetAmount => OutstandingAmount - AvailableAdvances - AvailableCredits;
+    public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
+}
 public sealed record ReceivablesReportItem(Guid? CustomerId, string CustomerName,
     string Identification, Guid? PartySiteId, string? PartySiteName, string CurrencyCode,
     int InvoiceCount, decimal OriginalAmount, decimal PaidAmount, decimal OutstandingAmount,
@@ -124,6 +165,21 @@ public sealed record ReceivablesReportItem(Guid? CustomerId, string CustomerName
     IReadOnlyList<ReceivablesReportApplication>? Applications = null,
     Guid? PartyId = null)
 {
+    public decimal AvailableAdvances { get; init; }
+    public decimal AvailableCredits { get; init; }
+    public decimal NetAmount => OutstandingAmount - AvailableAdvances - AvailableCredits;
+    public bool IsCreditBalance { get; init; }
+    public int? TermDays { get; init; }
+    public int? AgeDays { get; init; }
+    // Signed calendar difference, as in the reference: negative means not yet due.
+    public int? DaysPastDue { get; init; }
+    public string? LegalName { get; init; }
+    public string? Address { get; init; }
+    public string? City { get; init; }
+    public string? Phone { get; init; }
+    public string? Email { get; init; }
+    public decimal? CreditLimit { get; init; }
+    public ReceivablesReportGroupTotals? GroupTotals { get; init; }
     public decimal OtherImpact => OriginalAmount - PaidAmount - OutstandingAmount;
     public decimal NotDueAmount { get; init; }
     public decimal Overdue1To30Amount { get; init; }
@@ -135,6 +191,9 @@ public sealed record ReceivablesReportPage(IReadOnlyList<ReceivablesReportItem> 
     int Page, int PageSize, int TotalCount, int TotalInvoiceCount,
     decimal TotalOriginal, decimal TotalPaid, decimal TotalOutstanding, decimal TotalOverdue)
 {
+    public decimal TotalAvailableAdvances { get; init; }
+    public decimal TotalAvailableCredits { get; init; }
+    public decimal TotalNetAmount => TotalOutstanding - TotalAvailableAdvances - TotalAvailableCredits;
     public decimal TotalOtherImpact => TotalOriginal - TotalPaid - TotalOutstanding;
     public decimal TotalNotDue { get; init; }
     public decimal TotalOverdue1To30 { get; init; }

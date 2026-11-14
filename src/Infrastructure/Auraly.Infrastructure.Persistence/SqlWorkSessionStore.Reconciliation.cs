@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
@@ -216,13 +217,18 @@ public sealed partial class SqlWorkSessionStore
               ON original.PaymentMethodCode=effective.PaymentMethodCode
                 AND original.MovementType=effective.MovementType
             OPTION (RECOMPILE);
-              SELECT movement.* INTO #PagedMovements
+              -- Sort only identities before enriching the selected page. The
+              -- wide movement sort requested 22 MB for page 2/50 even though
+              -- only 50 rows were returned; keys avoid sorting evidence columns.
+              SELECT movement.VerificationKey INTO #PaymentPageKeys
               FROM #EligibleMovements movement
               LEFT JOIN #CorrectionStatuses correction ON correction.VerificationKey=movement.VerificationKey
               WHERE (@Method IS NULL OR COALESCE(correction.PaymentMethodCode,movement.PaymentMethodCode)=@Method)
                 AND (@Movement IS NULL OR movement.MovementType=@Movement)
               ORDER BY movement.SortOrder,movement.OccurredAt,movement.VerificationKey
               OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY OPTION (RECOMPILE);
+              SELECT movement.* INTO #PagedMovements FROM #PaymentPageKeys selected
+              JOIN #EligibleMovements movement ON movement.VerificationKey=selected.VerificationKey;
               SELECT manual.* INTO #SelectedManualMovements FROM #ManualTreasury manual
               JOIN #PagedMovements movement ON movement.SourceId=manual.MovementId
                 AND movement.SourceDocumentType=N'ManualAccountingVoucher';

@@ -374,13 +374,14 @@ public sealed partial class SqlPosSaleServerStore(
                 return existing;
             }
 
+            await SqlPaymentMethodResolver.ValidateSaleAsync(connection,transaction,request,cancellationToken);
             await ValidateRestaurantProductModeAsync(connection, transaction,
                 request, cancellationToken);
             await SqlInvoiceChargeStore.ValidateIssuedAsync(connection, transaction, request, cancellationToken);
             await ValidateCustomerSiteAsync(
                 connection, transaction, request, cancellationToken);
             await ValidateCreditAsync(
-                connection, transaction, request, cancellationToken);
+                connection, transaction, request, command.ReceivedAt, cancellationToken);
 
             var isFiscal = request.FiscalSnapshot is not null;
             var hasDianQuota = !isFiscal || !command.Verification.IsVerified ||
@@ -466,6 +467,7 @@ public sealed partial class SqlPosSaleServerStore(
         SqlConnection connection,
         SqlTransaction transaction,
         PosSaleUploadRequest request,
+        DateTimeOffset evaluationAt,
         CancellationToken cancellationToken)
     {
         if (request.Credit is null) return;
@@ -475,12 +477,13 @@ public sealed partial class SqlPosSaleServerStore(
         var validation = await SqlCustomerCreditValidator.ValidateWithinTransactionAsync(
             connection,
             transaction,
-            enrolledDeviceId is null ? null : request.TenantId,
+            request.TenantId,
             enrolledDeviceId,
             request.BusinessId,
             request.Credit.CustomerId,
             request.Credit.Amount,
             request.CommercialSnapshot.IssuedAt,
+            evaluationAt,
             cancellationToken,
             request.CustomerPartySiteId);
         if (!validation.IsAllowed)
@@ -571,7 +574,8 @@ public sealed partial class SqlPosSaleServerStore(
                 FiscalSeriesId, FiscalAuthorizationId,
                 DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
                 FiscalPrefix, FiscalConsecutive, IssuedAt, CustomerIdentification, CustomerId, CustomerPartySiteId,
-                UntaxedAmount, TaxAmount, PayableAmount, CreditAmount, CreditDueDate, CufeReceived,
+                UntaxedAmount, TaxAmount, PayableAmount, CreditAmount, CreditDueDate,
+                CreditPaymentMethodId,CreditPaymentMethodVersion,CreditPaymentMethodCode,CreditPaymentMethodName,CufeReceived,
                 CufeCalculated, FiscalStatus, ProcessingStatus, ReceivedAt,
                 CreatedByDeviceId, SoldByUserId, SoldByNameSnapshot,TableNameSnapshot
             )
@@ -583,7 +587,8 @@ public sealed partial class SqlPosSaleServerStore(
                 @FiscalSeriesId, @FiscalAuthorizationId,
                 @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
                 @FiscalPrefix, @FiscalConsecutive, @IssuedAt, @CustomerIdentification, @CustomerId, @CustomerPartySiteId,
-                @UntaxedAmount, @TaxAmount, @PayableAmount, @CreditAmount, @CreditDueDate, @CufeReceived,
+                @UntaxedAmount, @TaxAmount, @PayableAmount, @CreditAmount, @CreditDueDate,
+                @CreditForm,@CreditFormVersion,@CreditFormCode,@CreditFormName,@CufeReceived,
                 @CufeCalculated, @FiscalStatus, @ProcessingStatus, @ReceivedAt,
                 @DeviceId, @SoldByUserId,
                 (SELECT COALESCE(NULLIF(CONCAT(FirstName,N' ',LastName),N' '),Username) FROM dbo.AppUsers WHERE UserId=@SoldByUserId),
@@ -651,6 +656,10 @@ public sealed partial class SqlPosSaleServerStore(
         AddDecimal(sqlCommand, "@PayableAmount", commercial.PayableAmount, 19, 4);
         AddDecimal(sqlCommand, "@CreditAmount", request.Credit?.Amount ?? 0m, 19, 4);
         sqlCommand.Parameters.AddWithValue("@CreditDueDate", (object?)request.Credit?.DueDate ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@CreditForm", (object?)request.Credit?.PaymentMethodId ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@CreditFormVersion", (object?)request.Credit?.PaymentMethodVersion ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@CreditFormCode", (object?)request.Credit?.PaymentMethodCode ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@CreditFormName", (object?)request.Credit?.PaymentMethodName ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@CufeReceived", (object?)fiscal?.Cufe ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue(
             "@CufeCalculated",

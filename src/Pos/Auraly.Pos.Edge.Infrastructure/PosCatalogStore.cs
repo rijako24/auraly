@@ -32,6 +32,7 @@ public sealed partial class PosCatalogStore(string connectionString, TimeProvide
         await using var command = connection.CreateCommand();
         command.CommandText = Schema;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureSettlementSchemaAsync(connection, cancellationToken);
         await EnsureProgressStateAsync(connection, cancellationToken);
         await EnsureProductSchemaAsync(connection, cancellationToken);
         await InitializePricingAsync(connection, cancellationToken);

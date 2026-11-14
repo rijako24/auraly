@@ -6,13 +6,17 @@ namespace Auraly.Foundation.Tests;
 
 public sealed partial class AccountingVoucherFiscalValidationTests
 {
-    [Fact]
-    public void Fiscal_proof_covers_the_same_acquisition_vat_retention_and_single_payable()
+    [Theory]
+    [InlineData("Expense", "5195")]
+    [InlineData("Cost", "6195")]
+    public void Fiscal_proof_covers_the_same_acquisition_vat_retention_and_single_payable(string accountType, string code)
     {
         var (request, calculation, context) = Scenario();
+        context = context with { Accounts = context.Accounts.Select((account, index) => index == 0
+            ? account with { AccountType = accountType, AccountCode = code } : account).ToArray() };
         var preview = AccountingVoucherFinancialValidation.ValidateFiscal(request, calculation, context);
         Assert.True(preview.CanConfirm);
-        Assert.Equal("5195", Assert.Single(preview.Acquisitions).AccountCode);
+        Assert.Equal(code, Assert.Single(preview.Acquisitions).AccountCode);
         Assert.Equal(19_000m, preview.Acquisitions[0].VatAmount);
         Assert.Same(calculation.Withholding, preview.Withholding);
         Assert.Equal(112_650m, preview.Withholding.NetAmount);

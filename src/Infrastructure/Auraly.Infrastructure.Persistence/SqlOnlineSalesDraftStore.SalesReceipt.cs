@@ -95,10 +95,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                 (request.Credit?.Amount ?? 0m) != withholding.NetAmount + roundingAdjustment)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
+        await SqlPaymentMethodResolver.ValidateOnlineSaleAsync(connection, transaction, user.TenantId,
+            request.Payments, request.Credit, ct);
         var now = settlement.Context.OccurredAt;
         var creditValidation = await ValidateCreditAsync(
             connection,
             transaction,
+            user.TenantId,
             state.BusinessId,
             state.CustomerId,
             state.CustomerPartySiteId,
@@ -132,7 +135,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             payment.BankAccountId,
             string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
             payment.TenderedAmount,
-            payment.RoundingAdjustment)).ToArray();
+            payment.RoundingAdjustment,payment.PaymentMethodId,payment.PaymentMethodVersion,
+                payment.PaymentMethodCode,payment.PaymentMethodName,payment.AccountId)).ToArray();
         if (!PosPaymentRoundingPolicy.IsValid(withholding.NetAmount, payments))
             throw new OnlineSalesDraftValidationException(
                 "El ajuste al peso no corresponde al total original de la venta.");
@@ -167,7 +171,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                         : Math.Max(0m,
                             creditValidation.AvailableCredit.Value - request.Credit.Amount),
                     user.UserName,
-                    state.CustomerPartySiteId),
+                    state.CustomerPartySiteId,request.Credit.PaymentMethodId,request.Credit.PaymentMethodVersion,
+                    request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId),
             CustomerPartySiteId: state.CustomerPartySiteId,
             Charges: draft.Charges is { Count: > 0 } ? draft.Charges : null);
 

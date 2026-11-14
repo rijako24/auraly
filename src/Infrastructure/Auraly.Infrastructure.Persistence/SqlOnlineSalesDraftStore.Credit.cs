@@ -1,3 +1,6 @@
+using Auraly.BuildingBlocks.Domain.Time;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
+using Auraly.Domain.Receivables;
 using System.Data;
 using System.Text.Json;
 using Auraly.Contracts.Sales;
@@ -16,6 +19,10 @@ public sealed partial class SqlOnlineSalesDraftStore
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
+        var zone = await SqlBusinessLocalDates.ReadTimeZoneAsync(connection, user.TenantId, businessId, cancellationToken)
+            ?? throw new OnlineSalesDraftForbiddenException("La sede no está disponible para validar el crédito.");
+        var overdueBefore = SqlBusinessLocalDates.StartOfDay(
+            BusinessCalendar.DateAt(time.GetUtcNow(), zone), zone);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             WITH Requested AS (
@@ -45,7 +52,8 @@ public sealed partial class SqlOnlineSalesDraftStore
               GROUP BY o.CustomerId
             ), Outstanding AS (
               SELECT eligible.CustomerId,
-                     COALESCE(SUM(receivable.OutstandingAmount),0) OutstandingAmount
+                     COALESCE(SUM(receivable.OutstandingAmount),0) OutstandingAmount,
+                     COUNT(CASE WHEN receivable.OutstandingAmount>0 AND receivable.DueDate<@OverdueBefore THEN 1 END) OverdueInvoices
               FROM Eligible eligible
               LEFT JOIN dbo.Receivables receivable
                 ON receivable.CustomerId=eligible.CustomerId
@@ -65,15 +73,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             )
             SELECT eligible.CustomerId,eligible.CustomerName,eligible.CustomerIdentification,
                    eligible.RequestedAmount,
-                   CASE WHEN eligible.CustomerId IS NULL OR customer.CustomerId IS NULL OR profile.CustomerId IS NULL
-                                  OR profile.IsCreditEnabled=0 OR profile.CreditLimit IS NULL THEN NULL
-                        WHEN profile.CreditLimit-COALESCE(outstanding.OutstandingAmount,0)-COALESCE(pending.PendingAmount,0)<0
-                          THEN CONVERT(decimal(19,4),0)
-                        ELSE profile.CreditLimit-COALESCE(outstanding.OutstandingAmount,0)-COALESCE(pending.PendingAmount,0) END AvailableCredit,
-                   CASE WHEN eligible.CustomerId IS NULL OR customer.CustomerId IS NULL
-                                  OR profile.CustomerId IS NULL OR profile.IsCreditEnabled=0
-                          THEN N'El cliente no tiene habilitada la venta a crédito.'
-                        ELSE N'El valor seleccionado supera el cupo disponible del cliente.' END Reason
+                   CONVERT(bit,CASE WHEN customer.CustomerId IS NOT NULL AND profile.IsCreditEnabled=1 THEN 1 ELSE 0 END),
+                   profile.CreditLimit,COALESCE(outstanding.OutstandingAmount,0)+COALESCE(pending.PendingAmount,0),
+                   COALESCE(outstanding.OverdueInvoices,0),profile.MaximumOverdueInvoices
             FROM Eligible eligible
             LEFT JOIN dbo.Customers customer
               ON customer.CustomerId=eligible.CustomerId AND customer.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
@@ -82,37 +84,36 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON profile.CustomerId=eligible.CustomerId AND profile.BusinessId=@BusinessId
             LEFT JOIN Outstanding outstanding ON outstanding.CustomerId=eligible.CustomerId
             LEFT JOIN PendingCredit pending ON pending.CustomerId=eligible.CustomerId
-            WHERE eligible.CustomerId IS NULL
-               OR customer.CustomerId IS NULL
-               OR profile.CustomerId IS NULL
-               OR profile.IsCreditEnabled=0
-               OR (profile.CreditLimit IS NOT NULL
-                   AND eligible.RequestedAmount>
-                       profile.CreditLimit-COALESCE(outstanding.OutstandingAmount,0)-COALESCE(pending.PendingAmount,0))
             ORDER BY eligible.CustomerName;
             """;
         command.Parameters.AddRange([
             P("@Orders", JsonSerializer.Serialize(orderAmounts.Select(item => new
                 { OrderId = item.Key, AdditionalAmount = item.Value }))),
             P("@BusinessId", businessId),
-            P("@TenantId", user.TenantId)
+            P("@TenantId", user.TenantId),
+            P("@OverdueBefore", overdueBefore)
         ]);
         var issues = new List<OnlineOrderCreditValidationIssue>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            issues.Add(new(
-                reader.IsDBNull(0) ? null : reader.GetGuid(0),
-                reader.GetString(1),
-                reader.IsDBNull(2) ? null : reader.GetString(2),
-                reader.GetDecimal(3),
-                reader.IsDBNull(4) ? null : reader.GetDecimal(4),
-                reader.GetString(5)));
+        {
+            var overdue = reader.GetInt32(7);
+            var maximum = reader.IsDBNull(8) ? (int?)null : reader.GetInt32(8);
+            var decision = CustomerCreditPolicy.Evaluate(reader.GetBoolean(4),
+                reader.IsDBNull(5) ? null : reader.GetDecimal(5), reader.GetDecimal(6),
+                overdue, maximum, reader.GetDecimal(3));
+            if (!decision.IsAllowed)
+                issues.Add(new(reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetDecimal(3),
+                    decision.AvailableCredit, decision.RejectionReason!, overdue, maximum));
+        }
         return issues;
     }
 
-    private static async Task<PosCreditValidationResult?> ValidateCreditAsync(
+    private async Task<PosCreditValidationResult?> ValidateCreditAsync(
         SqlConnection connection,
         SqlTransaction transaction,
+        Guid tenantId,
         Guid businessId,
         Guid? customerId,
         Guid? partySiteId,
@@ -128,12 +129,13 @@ public sealed partial class SqlOnlineSalesDraftStore
         var validation = await SqlCustomerCreditValidator.ValidateWithinTransactionAsync(
             connection,
             transaction,
-            tenantId: null,
+            tenantId,
             deviceId: null,
             businessId,
             customerId.Value,
             credit.Amount,
             issuedAt,
+            time.GetUtcNow(),
             cancellationToken,
             partySiteId);
         if (!validation.IsAllowed)

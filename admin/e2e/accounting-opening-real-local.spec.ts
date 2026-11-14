@@ -19,7 +19,7 @@ test("apertura real vincula la deuda histórica desde la vista sin volver a crea
     code, name: "Cartera histórica E2E", accountType: "Liability", allowsPosting: false, requiresParty: false });
   await scopedJson("POST", `${base}/accounts`, { accountId, tenantId: process.env.AURALY_E2E_TENANT_ID,
     code: `${code}01`, name: "Obligación conciliada E2E", accountType: "Liability", allowsPosting: true, requiresParty: true,
-    semantics: { parentAccountId: parentId, financialFunction: "Payable", balanceSide: "Credit", businessId, bankAccountId: null, paymentMethodOptionId: null } });
+    semantics: { parentAccountId: parentId, financialFunction: "Payable", balanceSide: "Credit", businessId: null, bankAccountId: null, paymentMethodOptionId: null } });
   const accounts = await scopedJson<AccountingAccount[]>("GET", `${base}/accounts`);
   const equity = accounts.find(account => account.accountType === "Equity" && account.allowsPosting && account.isActive)!;
   expect(equity).toBeTruthy();

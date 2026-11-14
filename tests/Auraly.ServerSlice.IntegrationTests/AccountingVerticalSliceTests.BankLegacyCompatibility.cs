@@ -84,7 +84,7 @@ public sealed partial class AccountingVerticalSliceTests
         for (var index = 0; index < banks.Length; index++)
         {
             await using var command = new SqlCommand("""
-                SELECT AccountId FROM accounting.BankPostingAccount(@Tenant,@Business,@Bank);
+                SELECT AccountId FROM accounting.BankPostingAccount(@Tenant,@Bank);
                 SELECT book.EntryId,book.HasBankAttribution FROM accounting.BankBookEntries(@Tenant,@Bank) book;
                 SELECT COUNT(*) FROM accounting.BankBookEntries(NEWID(),@Bank);
                 """, connection);

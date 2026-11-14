@@ -12,6 +12,163 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData("InputVat", "Liability", "Payable", "General", "Debit")]
+    [InlineData("InputVat", "Liability", "CustomerAdvance", "General", "Debit")]
+    [InlineData("OutputVat", "Liability", "Payable", "General", "Credit")]
+    [InlineData("Inventory", "Asset", "Receivable", "General", "Debit")]
+    [InlineData("CustomerCreditsPayable", "Liability", "General", "CustomerAdvance", "Credit")]
+    [InlineData("SupplierCreditsReceivable", "Asset", "General", "SupplierAdvance", "Debit")]
+    [InlineData("NetPayrollPayable", "Liability", "General", "Payable", "Credit")]
+    [InlineData("EmployeeLoansReceivable", "Asset", "General", "Receivable", "Debit")]
+    [InlineData("EmployeeShortagesReceivable", "Asset", "General", "Receivable", "Debit")]
+    [InlineData("WithholdingIncomeTaxPayable", "Liability", "CustomerAdvance", "General", "Credit")]
+    [InlineData("TransferClearing", "Asset", "Cash", "General", "Debit")]
+    [InlineData("CashClosureDifferencesPending", "Asset", "Receivable", "General", "Debit")]
+    public async Task Posting_readiness_rejects_a_function_that_contradicts_the_native_purpose(
+        string category, string type, string function, string expectedFunction, string side)
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+        var account = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            type == "Asset" ? "1398" : "2298", type, function,
+            type == "Asset" ? "Debit" : "Credit");
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT COUNT(*) FROM accounting.PostingAccountReadiness(@Tenant,@Category,@Account)", connection);
+        command.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+        command.Parameters.AddWithValue("@Business", fixture.BusinessId);
+        command.Parameters.AddWithValue("@Category", category);
+        command.Parameters.AddWithValue("@Account", account.AccountId);
+        Assert.Equal(0, (int)(await command.ExecuteScalarAsync())!);
+        using var rejected = await client.PutAsJsonAsync("/api/commerce/v1/accounting/account-mappings",
+            new SetAccountMappingRequest(fixture.TenantId, fixture.BusinessId, category,
+                account.AccountId, new(2026,1,1), null));
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        var coherent = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            type == "Asset" ? "1397" : "2497", type, expectedFunction, side);
+        command.Parameters["@Account"].Value = coherent.AccountId;
+        Assert.Equal(1, (int)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Theory]
+    [InlineData("Cash")]
+    [InlineData("Bank")]
+    [InlineData("DebitCardClearing")]
+    [InlineData("CreditCardClearing")]
+    [InlineData("CardClearing")]
+    public async Task Posting_readiness_rejects_an_explicit_portfolio_function_for_a_treasury_category(string category)
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+        using var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null);
+        Assert.True(defaults.IsSuccessStatusCode, await defaults.Content.ReadAsStringAsync());
+        var account = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            "1398", "Asset", "Receivable", "Debit");
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT COUNT(*) FROM accounting.PostingAccountReadiness(@Tenant,@Category,@Account)", connection);
+        command.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+        command.Parameters.AddWithValue("@Business", fixture.BusinessId);
+        command.Parameters.AddWithValue("@Category", category);
+        command.Parameters.AddWithValue("@Account", account.AccountId);
+        Assert.Equal(0, (int)(await command.ExecuteScalarAsync())!);
+        using var rejected = await client.PutAsJsonAsync("/api/commerce/v1/accounting/account-mappings",
+            new SetAccountMappingRequest(fixture.TenantId, fixture.BusinessId, category, account.AccountId,
+                new(2026, 1, 1), null));
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Posting_readiness_rejects_an_explicit_general_function_for_a_control_category(bool payable)
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+        using var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null);
+        Assert.True(defaults.IsSuccessStatusCode, await defaults.Content.ReadAsStringAsync());
+        var account = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            payable ? "2298" : "1398", payable ? "Liability" : "Asset", "General", payable ? "Credit" : "Debit");
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*) FROM accounting.PostingAccountReadiness(@Tenant,@Category,@Account);
+            """, connection);
+        command.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+        command.Parameters.AddWithValue("@Business", fixture.BusinessId);
+        command.Parameters.AddWithValue("@Category", payable ? AccountingCategories.AccountsPayable : AccountingCategories.AccountsReceivable);
+        command.Parameters.AddWithValue("@Account", account.AccountId);
+        Assert.Equal(0, (int)(await command.ExecuteScalarAsync())!);
+        using var rejected = await client.PutAsJsonAsync("/api/commerce/v1/accounting/account-mappings",
+            new SetAccountMappingRequest(fixture.TenantId, fixture.BusinessId,
+                payable ? AccountingCategories.AccountsPayable : AccountingCategories.AccountsReceivable,
+                account.AccountId, new(2026, 1, 1), null));
+        Assert.False(rejected.IsSuccessStatusCode);
+        // An explicit and coherent function remains usable. No account is
+        // rewritten to manufacture compatibility with the selected category.
+        var coherent = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            payable ? "2297" : "1397", payable ? "Liability" : "Asset", payable ? "Payable" : "Receivable",
+            payable ? "Credit" : "Debit");
+        command.Parameters["@Account"].Value = coherent.AccountId;
+        Assert.Equal(1, (int)(await command.ExecuteScalarAsync())!);
+    }
+
+    [Theory]
+    [InlineData("6", false)]
+    [InlineData("6", true)]
+    [InlineData("7", false)]
+    [InlineData("7", true)]
+    public async Task Explicit_cost_accounts_share_posting_and_reports_without_reclassifying_legacy_parents(string pucClass, bool legacyParent)
+    {
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<AccountingService>();
+        var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Configure, AccountingPermissionCodes.Read, AccountingPermissionCodes.Activate });
+        await service.EnsureDefaultsAsync(user);
+        await service.ActivateAsync(user, new(new(2026, 1, 1), "COP", "ZeroDeclared"));
+        var parent = await service.CreateAccountAsync(user, new(Guid.NewGuid(), fixture.TenantId,
+            pucClass + (legacyParent ? "99891" : "99892"), "Agrupación de costos", legacyParent ? "Expense" : "Cost", false, false));
+        var cost = await service.CreateAccountAsync(user, new(Guid.NewGuid(), fixture.TenantId,
+            parent.Code + "01", "Costo operacional", "Cost", true, false,
+            new(parent.AccountId, "General", "Debit", null, null, null)));
+        await Assert.ThrowsAsync<AccountingValidationException>(() => service.CreateAccountAsync(user,
+            new(Guid.NewGuid(), fixture.TenantId, "519898", "Clase incompatible", "Cost", true, false)));
+        Assert.Contains((await service.AccountOptionsAsync(user, new(1, 25, cost.Code, ExpenseOnly: true), default)).Items,
+            account => account.AccountId == cost.AccountId);
+        var date = new DateOnly(2026, 10, 21);
+        var balanceBefore = await service.GetBalanceSheetAsync(user, date);
+        var cash = (await service.ListAccountsAsync(user)).Single(account => account.Code == "110505");
+        var id = Guid.NewGuid();
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend);
+        using var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/manual/vouchers",
+            new ConfirmManualAccountingVoucherRequest(id, fixture.BusinessId,
+                new(2026, 10, 21, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Costo clasificado", [
+                    new(cost.AccountId, null, null, "Costo", 100, 0), new(cash.AccountId, null, null, "Pago", 0, 100)]));
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Contains(await service.GetIncomeStatementAsync(user, date, date), row =>
+            row.Section == "Cost" && row.AccountCode == cost.Code && row.Amount == 100);
+        var balanceAfter = await service.GetBalanceSheetAsync(user, date);
+        Assert.Equal(-100m, balanceAfter.Where(row => row.AccountCode == "RESULTADO").Sum(row => row.Amount)
+            - balanceBefore.Where(row => row.AccountCode == "RESULTADO").Sum(row => row.Amount));
+        Assert.Equal(parent.AccountType, (await service.ListAccountsAsync(user)).Single(account => account.AccountId == parent.AccountId).AccountType);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var ready = new SqlCommand("""
+            DECLARE @Entry uniqueidentifier=(SELECT EntryId FROM dbo.AccountingEntries
+              WHERE TenantId=@Tenant AND BusinessId=@Business AND SourceDocumentId=@Source
+                AND SourceDocumentType=N'ManualAccountingVoucher');
+            SELECT (SELECT COUNT(*) FROM accounting.PostingAccountReadiness(@Tenant,N'CostOfGoodsSold',@Account)),
+              (SELECT COUNT(*) FROM accounting.PostingAccountReadiness(@Tenant,N'Inventory',@Account)),
+              (SELECT SUM(EligibleFunctionalAmount) FROM purchasing.ReceiptCostVoucherLines(@Entry) WHERE AccountId=@Account);
+            """, connection);
+        ready.Parameters.AddWithValue("@Tenant", fixture.TenantId); ready.Parameters.AddWithValue("@Business", fixture.BusinessId);
+        ready.Parameters.AddWithValue("@Account", cost.AccountId);
+        ready.Parameters.AddWithValue("@Source", id);
+        await using var reader = await ready.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync()); Assert.Equal(1, reader.GetInt32(0)); Assert.Equal(0, reader.GetInt32(1));
+        Assert.Equal(100m, reader.GetDecimal(2));
+    }
+
     [Fact]
     public async Task Automatic_inventory_mapping_rejects_a_liability_without_replacing_its_valid_configuration()
     {
@@ -22,7 +179,7 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
         var original = mappings.Where(item => item.Category == AccountingCategories.Inventory && item.BusinessId is null)
             .OrderByDescending(item => item.EffectiveFrom).First();
         var liability = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
-            "2995", "Liability", "General", "Credit", sharedAcrossBusinesses: true);
+            "2995", "Liability", "General", "Credit");
         var valid = new SetAccountMappingRequest(fixture.TenantId, original.BusinessId, original.Category,
             original.AccountId, original.EffectiveFrom, original.EffectiveTo);
         try
@@ -35,14 +192,14 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
             await using var connection = new SqlConnection(fixture.ConnectionString);
             await connection.OpenAsync();
             await using var resolved = new SqlCommand("""
-                SELECT (SELECT COUNT(*) FROM accounting.ResolvedPostingAccount(@Tenant,@Business,N'Inventory',@Date,@Invalid)),
-                  (SELECT COUNT(*) FROM accounting.ResolvedPostingAccount(@Tenant,@Business,N'Inventory',@Date,@Valid));
+                SELECT (SELECT COUNT(*) FROM accounting.PostingAccountReadiness(@Tenant,N'Inventory',@Invalid)),
+                  (SELECT COUNT(*) FROM accounting.PostingAccountReadiness(@Tenant,N'Inventory',@Valid));
                 """, connection);
             resolved.Parameters.AddWithValue("@Tenant", fixture.TenantId);
             resolved.Parameters.AddWithValue("@Business", fixture.BusinessId);
             resolved.Parameters.AddWithValue("@Date", new DateTime(2026, 10, 25));
-            resolved.Parameters.AddWithValue("@Invalid", System.Text.Json.JsonSerializer.Serialize(new[] { new { Category = original.Category, AccountId = liability.AccountId } }));
-            resolved.Parameters.AddWithValue("@Valid", System.Text.Json.JsonSerializer.Serialize(new[] { new { Category = original.Category, original.AccountId } }));
+            resolved.Parameters.AddWithValue("@Invalid", liability.AccountId);
+            resolved.Parameters.AddWithValue("@Valid", original.AccountId);
             await using var reader = await resolved.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync());
             Assert.Equal(0, reader.GetInt32(0));
@@ -218,9 +375,7 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
                   @DocumentId uniqueidentifier=NEWID(),@At datetimeoffset(7)='2026-10-21T12:00:00+00:00';
                 INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website)
                 VALUES(@OtherBusiness,@TenantId,N'Otra sede del benchmark',N'',N'',N'',N'',N'');
-                -- Keep the shared fixture valid for later accounting activation.
-                INSERT dbo.AccountingCostCenters(CostCenterId,BusinessId,Code,Name,IsDefault,IsActive,CreatedAt)
-                VALUES(NEWID(),@OtherBusiness,N'GENERAL',N'General del benchmark',1,1,@At);
+                -- The existing tenant-wide center also covers this new site.
                 INSERT dbo.AccountingPostingJobs(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
                   SourceDocumentType,SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,CreatedAt)
                 VALUES(NEWID(),@TenantId,@OtherBusiness,@DocumentId,N'ManualAccountingVoucher',
@@ -322,7 +477,7 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
             new HashSet<string> { AccountingPermissionCodes.Configure, AccountingPermissionCodes.Read });
         var baseAccount = await service.CreateAccountAsync(identity,
             new(Guid.NewGuid(), fixture.TenantId, "110598", "Base de caja libre", "Asset", false, false));
-        var properties = new AccountingAccountSemantics(baseAccount.AccountId, "Cash", "Debit", fixture.BusinessId, null, null);
+        var properties = new AccountingAccountSemantics(baseAccount.AccountId, "Cash", "Debit", null, null, null);
         var request = new CreateAccountingAccountRequest(Guid.NewGuid(), fixture.TenantId, "1105980007041",
             "Caja con numeración propia", "Asset", true, false, properties);
         var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
@@ -343,7 +498,7 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
         await Assert.ThrowsAsync<AccountingConflictException>(() => service.CreateAccountAsync(identity,
             request with { AccountId = Guid.NewGuid() }));
         await Assert.ThrowsAsync<AccountingConflictException>(() => service.CreateAccountAsync(identity,
-            request with { Semantics = properties with { BusinessId = null } }));
+            request with { Semantics = properties with { BalanceSide = "Credit" } }));
         await Assert.ThrowsAsync<AccountingValidationException>(() => service.CreateAccountAsync(identity,
             request with { AccountId = Guid.NewGuid(), Code = "1105982", Semantics = properties with { BusinessId = Guid.NewGuid() } }));
         await Assert.ThrowsAsync<AccountingValidationException>(() => service.CreateAccountAsync(identity,
@@ -355,7 +510,7 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
         await Assert.ThrowsAsync<AccountingForbiddenException>(() => service.CreateAccountAsync(
             identity with { Permissions = new HashSet<string> { AccountingPermissionCodes.Read } }, request));
         var edited = await service.UpdateAccountAsync(identity, auxiliary.AccountId,
-            new(auxiliary.Name, false, auxiliary.RowVersion!, properties with { BusinessId = null }));
+            new(auxiliary.Name + " editada", false, auxiliary.RowVersion!, properties));
         Assert.Null(edited.Semantics!.BusinessId);
         Assert.False(edited.ConfigurationLocked);
         Assert.Equal(edited, await service.UpdateAccountAsync(identity, edited.AccountId,
@@ -405,7 +560,7 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
         Assert.True(used.ConfigurationLocked);
         Assert.Null(await service.GetEntryAsync(user, command.VoucherId));
         await Assert.ThrowsAsync<AccountingConflictException>(() => service.UpdateAccountAsync(user, used.AccountId,
-            new("No debe guardar", false, used.RowVersion!, used.Semantics! with { BusinessId = fixture.BusinessId })));
+            new("No debe guardar", false, used.RowVersion!, used.Semantics! with { BalanceSide = "Credit" })));
         var renamed = await service.UpdateAccountAsync(user, used.AccountId, new("Nombre corregido", false, used.RowVersion!, used.Semantics));
         Assert.Equal(used.Semantics, renamed.Semantics);
         await store.ConfirmManualVoucherAsync(user, command, default);
@@ -479,7 +634,7 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
     }
 
     [Fact]
-    public async Task Configured_account_keeps_its_semantics_until_financial_acceptance_finishes()
+    public async Task Configured_account_keeps_its_semantics_until_posting_finishes()
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
         var account = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, client);
@@ -507,8 +662,8 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
             resolve.Parameters.AddWithValue("@Category", category);
             Assert.Equal(account.AccountId, (Guid)(await resolve.ExecuteScalarAsync())!);
         }
-        // This is the gap between resolving the winning account and freezing it
-        // in acceptance. A concurrent configuration edit must not overtake it.
+        // This is the gap between resolving the winning account and completing
+        // its journal. A concurrent semantic edit must not overtake posting.
         // LOCK_TIMEOUT 0 tests the held lock, without a timing-based assertion.
         await using var editor = new SqlConnection(fixture.ConnectionString);
         await editor.OpenAsync();

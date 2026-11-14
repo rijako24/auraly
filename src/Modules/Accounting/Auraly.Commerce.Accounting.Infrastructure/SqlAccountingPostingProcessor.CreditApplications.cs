@@ -10,11 +10,12 @@ public sealed partial class SqlAccountingPostingProcessor
     // This proves correspondence with the frozen capture. Group inference and
     // permission decisions belong to normalization at acceptance, not posting.
     private static void ValidateAcceptedCreditApplications(ConfirmManualAccountingVoucherRequest request,
-        VoucherFinancialEffects effects, IReadOnlyDictionary<Guid, ManualVoucherLineRequest> raw, HashSet<Guid> claimed)
+        VoucherFinancialEffects effects, IReadOnlyDictionary<Guid, ManualVoucherLineRequest> raw, HashSet<Guid> claimed,
+        IReadOnlyDictionary<Guid, decimal> adjustmentAmounts)
     {
         if (effects.CreditApplications.Count == 0) return;
-        if (request.VoucherTypeCode != "Accounting")
-            throw new InvalidOperationException("An accepted non-cash application requires its accounting voucher.");
+        if (request.VoucherTypeCode is not ("Accounting" or "CashReceipt" or "Disbursement"))
+            throw new InvalidOperationException("An accepted credit application requires its accounting voucher, cash receipt or disbursement.");
         foreach (var application in effects.CreditApplications)
         {
             var payable = application.SubledgerKind == AccountingSubledgerKinds.Payable;
@@ -25,7 +26,7 @@ public sealed partial class SqlAccountingPostingProcessor
                 !raw.TryGetValue(application.CreditSourceLineId, out var credit) ||
                 position.ExistingPosition is not { } positionTarget || positionTarget.SubledgerKind != application.SubledgerKind ||
                 positionTarget.SubledgerId != application.PositionId || position.PartyId is null || position.PartyId != credit.PartyId ||
-                application.Amount != (payable ? position.Debit : position.Credit) || (payable ? position.Credit : position.Debit) != 0 ||
+                application.Amount + adjustmentAmounts.GetValueOrDefault(application.PositionSourceLineId) != (payable ? position.Debit : position.Credit) || (payable ? position.Credit : position.Debit) != 0 ||
                 credit.ExistingPosition is not { } creditTarget || creditTarget.SubledgerId != application.CreditId ||
                 creditTarget.SubledgerKind != (payable ? AccountingSubledgerKinds.SupplierCredit : AccountingSubledgerKinds.CustomerCredit) ||
                 position.FinancialGroupId is { } positionGroup && positionGroup != application.GroupId ||

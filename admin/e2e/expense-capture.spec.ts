@@ -324,3 +324,23 @@ test("una anulación refresca una vez el detalle y la página filtrada con el es
   await detail.getByRole("button", { name: "Cerrar", exact: true }).click();
   await expect(page.getByRole("button", { name: "Ver gasto G-100" })).toHaveCount(0);
 });
+
+
+test.describe("calendario de sede en gastos", () => {
+  test.use({ timezoneId: "Pacific/Honolulu" });
+  for (const sample of [
+    { zone: "Pacific/Kiritimati", now: "2026-11-11T15:00:00Z", issue: "2026-11-12T12:00:00+14:00", due: "2026-12-12T12:00:00+14:00" },
+    { zone: "America/New_York", now: "2026-03-07T23:00:00Z", issue: "2026-03-07T12:00:00-05:00", due: "2026-04-06T12:00:00-04:00" },
+  ]) test(`emisión y plazo de proveedor siguen ${sample.zone}`, async ({ page, baseURL }) => {
+    await page.clock.install({ time: new Date(sample.now) });
+    const { state, dialog } = await openExpenses(page, baseURL!, true, { timeZone: sample.zone });
+    await expect.poll(() => state.preview.length).toBeGreaterThan(0);
+    expect(state.preview.at(-1)).toMatchObject({ issuedAt: sample.issue, dueDate: sample.due });
+    await expect(dialog.getByRole("button", { name: "Confirmar gasto", exact: true })).toBeEnabled();
+    await dialog.getByRole("button", { name: "Confirmar gasto", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(state.confirm).toHaveLength(1);
+    expect(state.confirm[0]).toMatchObject({ issuedAt: sample.issue, dueDate: sample.due });
+    expect(state.contextReads).toBe(1);
+  });
+});

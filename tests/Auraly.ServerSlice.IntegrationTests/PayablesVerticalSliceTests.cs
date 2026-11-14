@@ -280,6 +280,7 @@ public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixtur
         var selectedPayment = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
             $"/api/commerce/v1/payable-payments?page=1&pageSize=5&supplierId={fixture.SupplierId:D}&search={Uri.EscapeDataString(paymentNumber)}");
         Assert.NotNull(selectedPayment);
+        Assert.Equal(payment.PaidAt,Assert.Single(selectedPayment.Items,item=>item.PaymentId==payment.PaymentId).PaidAt);
         Assert.Contains(selectedPayment.Items, item => item.PaymentId == payment.PaymentId
             && item.AppliedDocumentCount == 1
             && item.Payments.Count == 4
@@ -305,6 +306,17 @@ public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixtur
         Assert.Equal(10_000m, await AccountAmountAsync(payment.PaymentId, creditCard.Code, false));
         Assert.Equal(0m, await AccountAmountAsync(payment.PaymentId, "13809501", false));
         Assert.Equal(0m, await AccountAmountAsync(payment.PaymentId, "13809502", false));
+        var reportCutoff = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
+        var reportQuery = $"page=1&pageSize=100&consolidated=false&cutoff={reportCutoff}&supplierId={fixture.SupplierId:D}&search={Uri.EscapeDataString(payableNumber)}";
+        var detailed = (await client.GetFromJsonAsync<PayablesReportPage>($"/api/commerce/v1/payables/report?{reportQuery}"))!;
+        var compact = (await client.GetFromJsonAsync<PayablesReportPage>($"/api/commerce/v1/payables/report/export?{reportQuery}&includeApplications=false"))!;
+        var detailRow = Assert.Single(detailed.Items, item => item.PayableId == payableId);
+        var compactRow = Assert.Single(compact.Items, item => item.PayableId == payableId);
+        Assert.Equal(40_000m, detailRow.PaidAmount);
+        Assert.NotEmpty(detailRow.Applications!);
+        Assert.Empty(compactRow.Applications!);
+        Assert.Equal(detailRow.OutstandingAmount, compactRow.OutstandingAmount);
+        Assert.Equal(detailRow.PaidAmount, compactRow.PaidAmount);
 
         var paymentDate = DateOnly.FromDateTime(payment.PaidAt.UtcDateTime).ToString("yyyy-MM-dd");
         var createdDate = DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd");
@@ -315,6 +327,13 @@ public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixtur
         var invoicePage = await client.GetFromJsonAsync<PayablePage>(
             $"/api/commerce/v1/payables?page=1&pageSize=20&{supplierFilter}&sortBy=status&sortDirection=asc");
         Assert.Contains(invoicePage!.Items, item => item.PayableId == payableId && item.PaidAmount > 0);
+        foreach(var filter in new[]{"status=PartiallyPaid",$"from={paymentDate}&to={paymentDate}"})
+        {
+            var filteredPayments=await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
+                $"/api/commerce/v1/payable-payments?page=1&pageSize=20&supplierId={fixture.SupplierId:D}&{filter}");
+            Assert.True(filteredPayments!.Items.Any(item=>item.PaymentId==payment.PaymentId),
+                $"El pago {payment.PaidAt:O} no aparece con el filtro {filter}.");
+        }
         var paymentsPage = await client.GetFromJsonAsync<SupplierPaymentHistoryPage>(
             $"/api/commerce/v1/payable-payments?page=1&pageSize=20&supplierId={fixture.SupplierId:D}&status=PartiallyPaid&from={paymentDate}&to={paymentDate}&sortBy=totalAmount&sortDirection=asc");
         Assert.Contains(paymentsPage!.Items, item => item.PaymentId == payment.PaymentId);
@@ -432,6 +451,9 @@ public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixtur
         using var deniedPrint = await denied.GetAsync(
             "/api/commerce/v1/payables/report/print?consolidated=true&cutoff=2026-10-07");
         Assert.Equal(HttpStatusCode.Forbidden, deniedPrint.StatusCode);
+        using var deniedExport = await denied.GetAsync(
+            "/api/commerce/v1/payables/report/export?page=1&pageSize=100&consolidated=true&cutoff=2026-10-07");
+        Assert.Equal(HttpStatusCode.Forbidden, deniedExport.StatusCode);
 
         var request = new ConfirmSupplierPaymentRequest(
             Guid.NewGuid(), Guid.NewGuid(), fixture.SupplierId,

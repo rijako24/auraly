@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Application.Catalog;
 using Auraly.Contracts.Catalog;
 using Microsoft.Data.SqlClient;
@@ -9,17 +10,17 @@ public sealed class SqlReferenceOptionStore(SqlServerConnectionFactory connectio
     : IReferenceOptionStore
 {
     public async Task<IReadOnlyList<ReferenceOption>> ListContextualAsync(CatalogUserIdentity user,string catalogCode,
-        DateOnly? from,DateOnly? to,CancellationToken cancellationToken)
+        DateOnly? from,DateOnly? to,CancellationToken cancellationToken, int dateRangeVersion=1)
     {
         await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
-        await using var command=new SqlCommand("""
+        await using var command=new SqlCommand($"""
             WITH historical AS(
               SELECT SourceDocumentType Code FROM dbo.AccountingPostingJobs
-              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND CAST(OccurredAt AS date) BETWEEN @From AND @To
+              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND {SqlBusinessLocalDates.SourceCalendarPredicate("OccurredAt",dateRangeVersion)}
               UNION SELECT SourceDocumentType FROM dbo.AccountingSourceDocuments
-              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND CAST(OccurredAt AS date) BETWEEN @From AND @To
+              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND {SqlBusinessLocalDates.SourceCalendarPredicate("OccurredAt",dateRangeVersion)}
               UNION SELECT DocumentType FROM accounting.VoucherDrafts
-              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND CAST(OccurredAt AS date) BETWEEN @From AND @To)
+              WHERE @History=1 AND TenantId=@Tenant AND BusinessId=@Business AND {SqlBusinessLocalDates.SourceCalendarPredicate("OccurredAt",dateRangeVersion)})
             SELECT optionValue.OptionId,optionValue.Code,
               optionValue.Label+CASE WHEN optionValue.RequiredPointOfSaleMode IS NOT NULL AND optionValue.RequiredPointOfSaleMode<>b.PointOfSaleMode THEN N' (histórico)' ELSE N'' END,
               optionValue.Description,optionValue.SortOrder
@@ -32,8 +33,8 @@ public sealed class SqlReferenceOptionStore(SqlServerConnectionFactory connectio
             """,connection);
         command.Parameters.AddWithValue("@Tenant",user.TenantId);command.Parameters.AddWithValue("@Business",user.BusinessId);
         command.Parameters.AddWithValue("@Catalog",catalogCode);
-        command.Parameters.AddWithValue("@From",(object?)from?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
-        command.Parameters.AddWithValue("@To",(object?)to?.ToDateTime(TimeOnly.MinValue)??DBNull.Value);
+        if (!await SqlBusinessLocalDates.BindSourceDateRangeAsync(command,user.TenantId,user.BusinessId,from,to,dateRangeVersion,cancellationToken))
+            return [];
         command.Parameters.AddWithValue("@History",catalogCode=="accounting-document-type"&&from.HasValue&&user.Permissions.Contains("accounting.read"));
         var result=new List<ReferenceOption>();await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken))result.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),

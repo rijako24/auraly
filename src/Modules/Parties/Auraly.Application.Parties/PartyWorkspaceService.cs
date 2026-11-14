@@ -67,12 +67,19 @@ public sealed class PartyWorkspaceService(
              actor.Permissions.Contains(SalesReturnPermissionCodes.Create) ||
              actor.Permissions.Contains("restaurant.attend") ||
              actor.Permissions.Contains("restaurant.tables.open_without_waiter"));
-        if (!returnCustomer && (query.Role?.Trim() != "Supplier" ||
+        var accountingParty = query.Role?.Trim() == "Any" && actor.Permissions.Contains("accounting.read");
+        if (!accountingParty && !returnCustomer && (query.Role?.Trim() != "Supplier" ||
             (!actor.Permissions.Contains(ExpensePermissionCodes.Create) &&
              !actor.Permissions.Contains(ExpensePermissionCodes.Read) &&
              !actor.Permissions.Contains(InvoiceChargePermissions.Configure))))
             Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
-        if (page < 1 || query.PageSize is < 1 or > 100)
+        // Explicit key resolution is bounded by its requested keys, rather
+        // than loading a tenant directory. Browsing retains its 100-row limit.
+        var maximumPageSize = Math.Max(100, query.RoleIds?.Count ?? 0);
+        if (query.RoleIds is not null && (query.RoleIds.Count < 1 ||
+            query.RoleIds.Any(id => id == Guid.Empty) || query.RoleIds.Distinct().Count() != query.RoleIds.Count))
+            throw new PartyValidationException("Indica roles distintos y válidos para la consulta.");
+        if (page < 1 || query.PageSize < 1 || query.PageSize > maximumPageSize || ((long)page-1)*query.PageSize>int.MaxValue)
             throw new PartyValidationException("Page and PageSize are outside the allowed range.");
         var role = query.Role?.Trim();
         if (role is not ("Any" or "Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User" or "Waiter"))

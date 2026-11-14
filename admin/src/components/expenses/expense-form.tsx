@@ -1,5 +1,6 @@
 "use client";
 
+import { CostCenterSelect, useCostCenterLabels } from "@/components/accounting/cost-center-select";
 import { useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
@@ -19,14 +20,14 @@ import { ExpenseBreakdown } from "./expense-breakdown";
 import { WithholdingAdjustmentEditor } from "@/components/taxation/withholding-adjustment-editor";
 import { taxationApi } from "@/services/api/taxation";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessDates } from "@/hooks/use-business-dates";
+import { accountingDateAtNoon } from "@/lib/accounting-document-date";
 
 type EditableLine = ExpenseLineInput & { key: string };
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 4 });
-const issuedAt = (date: string) => date ? `${date}T12:00:00-05:00` : "";
-const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 function newLine(options: ExpenseOptions): EditableLine {
   return { key: crypto.randomUUID(), expenseAccountId: null, conceptId: null,
-    costCenterId: options.costCenters.find(center => center.isDefault)?.costCenterId ?? null,
+    costCenterId: null,
     description: "", taxExclusiveAmount: 0, taxProfileId: null,
     taxTreatment: options.taxTreatments?.[0]?.code ?? "", withholdingConceptCode: null };
 }
@@ -34,6 +35,8 @@ function newLine(options: ExpenseOptions): EditableLine {
 export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   businessId: string; options: ExpenseOptions; onSaved: () => Promise<void>; onBusyChange: (busy: boolean) => void;
 }) {
+  const { timeZone, today } = useBusinessDates(businessId);
+  const issuedAt = (date: string) => date ? accountingDateAtNoon(date, timeZone) : "";
   const canAdjustWithholdings = useAuthStore(state =>
     state.user?.permissions?.includes("commerce.taxation.withholdings.manage") ?? false);
   const withholdingRules = useQuery({queryKey:["withholding-rules",businessId,"purchase-adjustments"],
@@ -41,10 +44,14 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
   const [party, setParty] = useState<SupplierSiteSelection | null>(null);
   const [lines, setLines] = useState<EditableLine[]>([]);
   const [editingLine, setEditingLine] = useState<EditableLine | null>(null);
-  const [form, setForm] = useState<ConfirmExpense>(() => ({ expenseId: crypto.randomUUID(), businessId,
-    supplierId: "", partySiteId: null, conceptId: null, costCenterId: null, supplierDocumentNumber: "", issuedAt: issuedAt(today()),
-    dueDate: issuedAt(today()), currencyCode: "COP", description: "", taxExclusiveAmount: 0, vatAmount: 0,
-    withholdingJurisdictionCode: null, evidenceUrl: null, purchaseEvidenceType: options.purchaseEvidenceTypes[0]?.code ?? "SupplierElectronicInvoice" }));
+  const centers=useCostCenterLabels([...lines.map(line=>line.costCenterId),editingLine?.costCenterId]);
+  const [form, setForm] = useState<ConfirmExpense>(() => {
+    const date = issuedAt(today());
+    return { expenseId: crypto.randomUUID(), businessId,
+      supplierId: "", partySiteId: null, conceptId: null, costCenterId: null, supplierDocumentNumber: "", issuedAt: date,
+      dueDate: date, currencyCode: "COP", description: "", taxExclusiveAmount: 0, vatAmount: 0,
+      withholdingJurisdictionCode: null, evidenceUrl: null, purchaseEvidenceType: options.purchaseEvidenceTypes[0]?.code ?? "SupplierElectronicInvoice" };
+  });
   const [preview, setPreview] = useState<ExpensePreview | null>(null);
   const [phase, setPhase] = useState<"calculate" | "confirm" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -123,7 +130,8 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
           sourceKey="expense-supplier-sites" onChange={(partySiteId, selected) => {
             setParty(selected ?? null);
             const allowed = options.purchaseEvidenceTypes.filter(option => allowedPurchaseEvidenceTypes(selected?.supplierPurchaseEvidencePolicy ?? null).includes(option.code));
-            const due = new Date(form.issuedAt); due.setUTCDate(due.getUTCDate() + (selected?.supplierDefaultPaymentDueDays ?? 0));
+            // Add calendar days before resolving the selected day's zone offset.
+            const due = new Date(`${form.issuedAt.slice(0, 10)}T00:00:00Z`); due.setUTCDate(due.getUTCDate() + (selected?.supplierDefaultPaymentDueDays ?? 0));
             change({ supplierId: selected?.supplierId ?? "", partySiteId: partySiteId || null,
               dueDate: Number.isNaN(due.getTime()) ? form.dueDate : issuedAt(due.toISOString().slice(0, 10)),
               purchaseEvidenceType: allowed.some(option => option.code === form.purchaseEvidenceType) ? form.purchaseEvidenceType : allowed[0]?.code ?? form.purchaseEvidenceType });
@@ -131,8 +139,8 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
         <Field label="Respaldo del gasto">{id => <Select value={form.purchaseEvidenceType} onValueChange={(value: PurchaseEvidenceType) => change({ purchaseEvidenceType: value })}><SelectTrigger id={id}><SelectValue/></SelectTrigger><SelectContent>{evidence.map(option => <SelectItem key={option.code} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select>}</Field>
         <Field label={supplierInvoice ? "Número de factura del proveedor" : "Referencia (opcional)"}>{id => <Input id={id} maxLength={80} required={supplierInvoice} value={form.supplierDocumentNumber ?? ""} onChange={event => change({ supplierDocumentNumber: event.target.value })}/>}</Field>
         <Field label="Descripción general (opcional)">{id => <Input id={id} maxLength={300} value={form.description} onChange={event => change({ description: event.target.value })}/>}</Field>
-        <Field label="Fecha de emisión">{id => <DatePicker id={id} value={form.issuedAt.slice(0, 10)} onChange={date => change({ issuedAt: issuedAt(date) })}/>}</Field>
-        <Field label="Fecha de vencimiento">{id => <DatePicker id={id} value={form.dueDate.slice(0, 10)} min={form.issuedAt.slice(0, 10)} onChange={date => change({ dueDate: issuedAt(date) })}/>}</Field>
+        <Field label="Fecha de emisión">{id => <DatePicker today={today()} id={id} value={form.issuedAt.slice(0, 10)} onChange={date => change({ issuedAt: issuedAt(date) })}/>}</Field>
+        <Field label="Fecha de vencimiento">{id => <DatePicker today={today()} id={id} value={form.dueDate.slice(0, 10)} min={form.issuedAt.slice(0, 10)} onChange={date => change({ dueDate: issuedAt(date) })}/>}</Field>
         <p className="text-sm text-muted-foreground sm:col-span-2">{support ? "Este gasto generará un documento soporte electrónico. El proveedor debe tener su identificación y código postal de seis dígitos completos." : "Este respaldo registra el gasto y la cuenta por pagar sin enviar un documento a la DIAN."}</p>
       </section>
       <section className="space-y-3" aria-label="Líneas del gasto">
@@ -149,7 +157,7 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
               const calculated = preview?.lines[index];
               return <tr key={line.key} className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 border-t p-3 md:table-row md:p-0">
                 <td className="col-span-2 min-w-0 break-words md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Concepto / descripción</span><b>{options.concepts.find(concept => concept.conceptId === line.conceptId)?.name}</b><p>{line.description}</p></td>
-                <td className="col-span-2 min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Centro de costo</span>{options.costCenters.find(center => center.costCenterId === line.costCenterId)?.name ?? "Predeterminado"}</td>
+                <td className="col-span-2 min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Centro de costo</span>{centers.data?.get(line.costCenterId??"")?.name ?? "Predeterminado"}</td>
                 <td className="min-w-0 font-medium md:whitespace-nowrap md:p-3 md:text-right"><span className="mb-1 block text-xs font-normal text-muted-foreground md:hidden">Base</span>{money.format(line.taxExclusiveAmount)}</td>
                 <td className="min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">IVA</span>{tax ? `${tax.name} · ${tax.rate}%` : "Sin IVA"}{tax && <small className="block text-muted-foreground">{options.taxTreatments?.find(item => item.code === line.taxTreatment)?.label}</small>}{calculated && <span className="block md:whitespace-nowrap">{money.format(calculated.vatAmount)}</span>}</td>
                 <td className="col-span-2 min-w-0 md:p-3"><span className="mb-1 block text-xs text-muted-foreground md:hidden">Concepto tributario</span>{line.withholdingConceptCode ?? "Sin clasificación específica"}</td>
@@ -186,10 +194,10 @@ export function ExpenseForm({ businessId, options, onSaved, onBusyChange }: {
               const concept = options.concepts.find(item => item.conceptId === value);
               if (concept) changeLine({ conceptId: concept.conceptId, expenseAccountId: null,
                 description: concept.name, costCenterId: concept.defaultCostCenterId, withholdingConceptCode: concept.withholdingConceptCode });
-            }}><SelectTrigger id={id} className={editingLine.conceptId ? "pr-16" : undefined}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Seleccionar concepto</SelectItem>{options.concepts.filter(item => item.isActive).map(item => <SelectItem key={item.conceptId} value={item.conceptId}>{item.name}</SelectItem>)}</SelectContent></Select>{editingLine.conceptId && <button type="button" aria-label="Quitar selección de concepto" className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => changeLine({ conceptId: null, expenseAccountId: null, description: "", costCenterId: options.costCenters.find(center => center.isDefault)?.costCenterId ?? null, withholdingConceptCode: null })}><X className="h-4 w-4"/></button>}</div>}</Field>
+            }}><SelectTrigger id={id} className={editingLine.conceptId ? "pr-16" : undefined}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Seleccionar concepto</SelectItem>{options.concepts.filter(item => item.isActive).map(item => <SelectItem key={item.conceptId} value={item.conceptId}>{item.name}</SelectItem>)}</SelectContent></Select>{editingLine.conceptId && <button type="button" aria-label="Quitar selección de concepto" className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => changeLine({ conceptId: null, expenseAccountId: null, description: "", costCenterId: null, withholdingConceptCode: null })}><X className="h-4 w-4"/></button>}</div>}</Field>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
-            <Field label="Centro de costo">{id => <Select value={editingLine.costCenterId ?? "none"} onValueChange={value => changeLine({ costCenterId: value === "none" ? null : value })}><SelectTrigger id={id}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Predeterminado de contabilidad</SelectItem>{options.costCenters.map(item => <SelectItem key={item.costCenterId} value={item.costCenterId}>{item.code} · {item.name}</SelectItem>)}</SelectContent></Select>}</Field>
+            <Field label="Centro de costo">{() => <CostCenterSelect value={editingLine.costCenterId} onChange={value=>changeLine({costCenterId:value})} selected={editingLine.costCenterId?centers.data?.get(editingLine.costCenterId):undefined} ariaLabel="Centro de costo del gasto" emptyLabel="Predeterminado de contabilidad"/>}</Field>
             <Field label="Descripción de la línea">{id => <Input id={id} required maxLength={300} value={editingLine.description} onChange={event => changeLine({ description: event.target.value })}/>}</Field>
             <Field label="Base antes de IVA">{id => <FormattedNumberInput id={id} kind="currency" value={editingLine.taxExclusiveAmount} onValueChange={value => changeLine({ taxExclusiveAmount: value ?? 0 })}/>}</Field>
             <Field label="Impuesto">{id => <Select value={editingLine.taxProfileId ?? "none"} onValueChange={value => changeLine({ taxProfileId: value === "none" ? null : value })}><SelectTrigger id={id}><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Sin IVA</SelectItem>{options.taxes?.map(tax => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select>}</Field>

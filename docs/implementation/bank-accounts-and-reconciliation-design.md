@@ -386,17 +386,19 @@ La organización por forma de pago y cuenta contable coincide con
 Este contraste orienta la usabilidad; la fuente de verdad de Auraly sigue siendo
 su módulo contable y las reglas fiscales aplicables a cada soporte.
 
-## Ampliación 2026-10-20: banco con auxiliares por sede y medio
+## Ampliación 2026-10-20: banco con varios auxiliares y medio
 
 Este diseño sustituye para operaciones futuras la cardinalidad banco → un
 auxiliar. Una cuenta bancaria real conserva un único `BankAccountId` y puede
-vincular varios auxiliares por sede/medio. Cada auxiliar pertenece como máximo a
-una cuenta bancaria. No duplicar el maestro del mismo banco/número para representar
+vincular varios auxiliares. Por la decisión prevalente del 2026-11-09, todos los
+auxiliares del PUC se comparten entre las sedes del tenant; no tienen una sede
+propia. Cada auxiliar pertenece como máximo a una cuenta bancaria. No duplicar el maestro del mismo banco/número para representar
 tres sedes. La cuenta principal sigue siendo un default de captura, no un selector
 automático de auxiliar cuando existan varias combinaciones.
 
 El vínculo canónico nuevo reside en `AccountingAccounts.BankAccountId`, junto a
-las dimensiones de sede/medio del auxiliar. La numeración es libre y no exige código contable en el banco ni en la sede;
+el medio del auxiliar. La sede pertenece a la partida, no limita el auxiliar.
+La numeración es libre y no exige código contable en el banco ni en la sede;
 las propiedades son independientes del código, según la sección 13 de [comprobantes](accounting-open-vouchers-design.md). No crear
 además una tabla de vínculos con otra relación editable. El FK actual inverso
 `BankAccounts.AccountingAccountId` se conserva solo durante migración compatible:
@@ -406,9 +408,10 @@ además una tabla de vínculos con otra relación editable. El FK actual inverso
 2. Migrar resolución de pagos, confirmaciones, POS/configuración y conciliación
    al vínculo nuevo; los consumidores antiguos que exigen un único auxiliar deben
    actualizarse antes de habilitar bancos con más de uno.
-3. Congelar banco y auxiliar en cada fuente aceptada y partida contabilizada.
-   Validar que la sede/medio de captura coincida con esa cuenta. Reintentos y
-   reversos usan el snapshot, aunque cambie la configuración para nuevos documentos.
+3. Conservar las cuentas elegidas explícitamente. Por decisión del 2026-11-13,
+   resolver las cuentas automáticas vigentes al contabilizar y guardar únicamente
+   la atribución aplicada al asiento. Validar tenant, función, banco y medio.
+   Reversos y replay terminado conservan el auxiliar del asiento original.
 4. Retirar escritura y después columna/FK inversos cuando no haya consumidores
    antiguos. La transición no admite dos relaciones editables. Después de usar
    la cardinalidad nueva no es seguro volver a un worker que solo entienda un
@@ -446,8 +449,9 @@ El perfil conserva esas categorías opcionales sin código/nombre de cuenta
 sugerida; `accounting.DefaultAccountDefinitions` proyecta solo sugerencias
 concretas para los tres accesos existentes de aprovisionamiento, defaults y seed.
 No se crean bancos o cuentas ficticios para completar la configuración. El
-resolver canónico valida la función, sede, banco y medio de la cuenta ganadora;
-una excepción por sede inválida no elige a escondidas la cuenta compartida.
+resolver canónico valida la función, tenant, banco y medio de la cuenta ganadora;
+una excepción de mapping por sede inválida no elige a escondidas el mapping general.
+Los auxiliares de ambos mappings se comparten entre sedes.
 Falta de configuración conserva el pago pendiente y su reserva, explica que no
 se realizó y revierte efectos financieros hasta corregir y reintentar el mismo
 trabajo. El cambio requiere revisar estas dos configuraciones antes del corte y
@@ -479,31 +483,35 @@ cuentas desde todas las definiciones no es compatible con esas filas opcionales.
   propiedades conserva su código y su ausencia de padre, sin inventar una
   agrupación. Esta excepción solo admite un auxiliar antiguo sin uso; el PUC
   ordinario conserva sus validaciones y la protección de cuentas utilizadas.
-- `accounting.BankPostingAccount` resuelve una transferencia por banco y sede:
-  primero sede específica frente a compartida y luego medio específico frente
-  a no especificado. Dos candidatos con igual prioridad son una ambigüedad, no
-  un `TOP(1)` arbitrario. No se interpreta el código ni el nombre del auxiliar.
-- La aceptación canónica llama a `accounting.BankAccountsFreeze` dentro de su
-  transacción. Se conserva la selección en el trabajo contable ya existente
-  (`ResolvedBankAccountsJson`), sin importes, saldos, cola ni proceso adicional.
-  También se protege la configuración de los auxiliares seleccionados.
-- Si todavía falta configuración o es ambigua, se conserva la referencia sin
-  auxiliar resuelto. El motor deja pendiente el documento con motivo explícito;
-  un pago/recaudo no aplica saldo, transacción ni asiento. El reintento existente
-  puede completar únicamente referencias sin resolver, antes de aplicar efectos;
-  nunca sustituye una cuenta ya fijada. Las fuentes comerciales sin contabilidad
-  mantienen su modo original. Las reversiones de propina invierten las partidas
-  del asiento original, incluidos banco, pasivo y centro de costo. No dependen
-  de un snapshot bancario anterior ni resuelven un auxiliar nuevo: el processor
-  y el participante de fijación excluyen esa nueva selección. Esto también
-  conserva los asientos históricos previos al snapshot; sin asiento original
-  completo, la anulación contable queda pendiente con causa visible.
+- `accounting.BankPostingAccount` resuelve una transferencia por tenant y banco,
+  priorizando el medio específico frente al no especificado. Dos candidatos con
+  igual prioridad son una ambigüedad, no un `TOP(1)` arbitrario. No se interpreta
+  el código ni el nombre del auxiliar. El corte comparte el PUC conservando la
+  asociación anterior como `LegacyBusinessId`, solo para evidencia histórica.
+  El preflight revisado previo al DACPAC bloquea bancos con varios candidatos
+  cuando alguno dependía de sede: requiere revisión explícita y no reasigna
+  auxiliares. Migración, contratos y rollback se rigen por comprobantes, 13.3.
+- Por decisión expresa del 2026-11-13, la selección automática se realiza al
+  contabilizar mediante `accounting.BankAccountsResolve`, dentro de la misma
+  transacción del processor. Sustituye la fijación al aceptar. La cuenta vigente
+  se valida mediante `BankPostingAccount`; `ResolvedBankAccountsJson` conserva
+  únicamente atribución realmente aplicada al journal, sin otro saldo o proceso.
+- Si falta configuración, el banco está inactivo o la selección es ambigua,
+  queda pendiente con motivo explícito y cero efecto parcial. El reintento
+  existente vuelve a leer configuración vigente; no utiliza caches aceptados
+  anteriormente. Un trabajo terminado conserva su resultado y su atribución.
+  Las fuentes comerciales sin contabilidad mantienen su modo original.
+  Las reversiones de propina invierten el asiento original, incluidos banco,
+  pasivo y centro; solo conservan la atribución probada del mismo original.
+  No dependen de un snapshot bancario para elegir cuentas ni resuelven otro
+  auxiliar actual. Sin asiento original completo quedan pendientes.
+  El corte versionado y rollback están en comprobantes abiertos, 14.12.
 - `accounting.BankBookEntries` es la proyección común para lectura, permisos,
   cruces y cierre. Reutiliza `BankBookAccounts` para auxiliares actuales e incluye
   la atribución histórica probada según la compatibilidad aprobada al inicio de
   este documento. Excluye compensación de tarjetas y pasivos; no copia asientos.
 - La migración prueba el auxiliar de documentos históricos contabilizados contra
-  su asiento. El vínculo compartido conserva su histórico y separa los auxiliares
+  su asiento; no fija configuración ni modifica trabajos pendientes. El vínculo compartido conserva su histórico y separa los auxiliares
   futuros según la decisión de noviembre. Un vínculo contradictorio o una
   referencia bancaria sin auxiliar original demostrable bloquean el corte;
   las partidas sin referencia bancaria se conservan sin atribución y bloquean

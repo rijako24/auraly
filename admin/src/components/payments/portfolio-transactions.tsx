@@ -1,6 +1,7 @@
 "use client";
 
-import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+import { useBusinessDates } from "@/hooks/use-business-dates";
 import { Button } from "@/components/ui/button";
 
 function movementLabel(type: string, payable: boolean) {
@@ -21,6 +22,7 @@ export function PortfolioTransactions({ transactions, currencyCode, direction, o
   currencyCode: string; direction: "payable" | "receivable";
   onUnapply?: (transactionId: string) => void;
 }) {
+  const { formatDateTime } = useBusinessDates();
   return <section><h3 className="mb-3 text-sm font-semibold">Movimientos</h3><div className="space-y-2">
     {transactions.map(transaction => <div key={transaction.transactionId} className="flex items-center justify-between rounded-lg border p-3 text-sm">
       <div><p className="font-medium">{movementLabel(transaction.type, direction === "payable")}</p><p className="text-xs text-muted-foreground">{formatDateTime(transaction.occurredAt)}</p></div>

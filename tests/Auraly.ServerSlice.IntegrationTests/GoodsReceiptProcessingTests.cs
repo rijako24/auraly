@@ -1268,7 +1268,9 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
     [Fact]
     public async Task Zero_value_credit_receipt_processes_inventory_without_opening_an_empty_payable()
     {
-        var request = CreateRequest();
+        // This scenario has no earlier inventory valuation to correct. Other
+        // journeys may sell the shared fixture product below zero.
+        var request = await CreateIsolatedCostEditRequestAsync();
         request = request with
         {
             DocumentId = Guid.NewGuid(),

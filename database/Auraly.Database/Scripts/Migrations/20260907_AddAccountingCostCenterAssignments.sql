@@ -41,10 +41,10 @@ IF COL_LENGTH(N'dbo.AccountingEntryLines',N'CostCenterNameSnapshot') IS NULL
 GO
 
 UPDATE line
-SET PartyIdentificationSnapshot=party.Identification,
-    PartyNameSnapshot=party.DisplayName,
-    CostCenterCodeSnapshot=center.Code,
-    CostCenterNameSnapshot=center.Name
+SET PartyIdentificationSnapshot=COALESCE(line.PartyIdentificationSnapshot,party.Identification),
+    PartyNameSnapshot=COALESCE(line.PartyNameSnapshot,party.DisplayName),
+    CostCenterCodeSnapshot=COALESCE(line.CostCenterCodeSnapshot,center.Code),
+    CostCenterNameSnapshot=COALESCE(line.CostCenterNameSnapshot,center.Name)
 FROM dbo.AccountingEntryLines line
 LEFT JOIN dbo.Parties party ON party.PartyId=line.PartyId
 LEFT JOIN dbo.AccountingCostCenters center ON center.CostCenterId=line.CostCenterId

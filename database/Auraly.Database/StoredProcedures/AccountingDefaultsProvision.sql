@@ -47,12 +47,12 @@ BEGIN
                       WHERE mapping.TenantId=@TenantId AND mapping.BusinessId IS NULL
                         AND mapping.Category=a.Category);
 
-    IF NOT EXISTS (SELECT 1 FROM dbo.AccountingCostCenters WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1)
+    IF NOT EXISTS (SELECT 1 FROM dbo.AccountingCostCenters WHERE TenantId=@TenantId AND IsDefault=1 AND IsActive=1)
         INSERT dbo.AccountingCostCenters(
-            CostCenterId,BusinessId,Code,Name,ParentCostCenterId,IsDefault,IsActive,CreatedAt)
-        VALUES(NEWID(),@BusinessId,N'PRINCIPAL',N'Operación principal',NULL,1,1,@Now);
+            CostCenterId,TenantId,Code,Name,ParentCostCenterId,IsDefault,IsActive,CreatedAt)
+        VALUES(NEWID(),@TenantId,N'PRINCIPAL',N'Operación principal',NULL,1,1,@Now);
 
-    DECLARE @DefaultCostCenterId uniqueidentifier=(SELECT TOP(1) CostCenterId FROM dbo.AccountingCostCenters WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1 ORDER BY CreatedAt);
+    DECLARE @DefaultCostCenterId uniqueidentifier=(SELECT TOP(1) CostCenterId FROM dbo.AccountingCostCenters WHERE TenantId=@TenantId AND IsDefault=1 AND IsActive=1 ORDER BY CreatedAt);
     INSERT dbo.ExpenseConcepts(ExpenseConceptId,BusinessId,Code,Name,ExpenseAccountId,DefaultCostCenterId,WithholdingConceptCode,IsActive,CreatedAt,UpdatedAt)
     SELECT NEWID(),@BusinessId,concept.Code,concept.Name,account.AccountId,@DefaultCostCenterId,NULL,1,@Now,@Now
     FROM dbo.AccountingConfigurationProfileExpenseConcepts concept

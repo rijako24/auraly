@@ -151,13 +151,14 @@ public class BusinessAdminService : IBusinessAdminService
                     "La propina sugerida solo aplica a sedes de restaurante y bar.");
         }
 
+        var timeZone = request.TimeZone is null ? business.TimeZone : NormalizeTimeZone(request.TimeZone);
         if (request.Name is not null) business.Name = request.Name;
         if (request.Description is not null) business.Description = request.Description;
         if (request.Address is not null) business.Address = request.Address;
         if (request.Phone is not null) business.Phone = request.Phone;
         if (request.Email is not null) business.Email = request.Email;
         if (request.Website is not null) business.Website = request.Website;
-        if (request.TimeZone is not null) business.TimeZone = NormalizeTimeZone(request.TimeZone);
+        if (request.TimeZone is not null) business.TimeZone = timeZone;
         if (request.SharesProductPrices is not null) business.SharesProductPrices = request.SharesProductPrices.Value;
         if (request.PointOfSaleMode is not null) business.PointOfSaleMode = request.PointOfSaleMode;
         if (request.RestaurantRequireWaiterCredential is not null)
@@ -218,8 +219,19 @@ public class BusinessAdminService : IBusinessAdminService
         return business;
     }
 
-    private static string NormalizeTimeZone(string? timeZone) =>
-        string.IsNullOrWhiteSpace(timeZone) ? BusinessClock.DefaultTimeZoneId : timeZone.Trim();
+    private static string NormalizeTimeZone(string? timeZone)
+    {
+        // Omission preserves the existing creation contract; an explicit empty/invalid value is rejected.
+        try
+        {
+            return BusinessTimeZoneResolver.NormalizeConfiguredId(timeZone ?? BusinessClock.DefaultTimeZoneId);
+        }
+        catch (ArgumentException)
+        {
+            throw new DomainValidationException(nameof(CreateBusinessRequest.TimeZone),
+                "Selecciona una zona horaria válida, por ejemplo America/Bogota.");
+        }
+    }
 
     private static void ValidateRestaurantWaiterPolicy(bool requireCredential, bool restrictTable)
     {
@@ -253,7 +265,7 @@ public class BusinessAdminService : IBusinessAdminService
 
     private static BusinessDto MapToDto(Business b) => new(
         b.BusinessId, b.TenantId, b.Name, b.Description, b.Address,
-        b.Phone, b.Email, b.Website, b.TimeZone, b.SharesProductPrices, b.IsActive, b.CreatedAt,
+        b.Phone, b.Email, b.Website, BusinessTimeZoneResolver.NormalizeConfiguredId(b.TimeZone), b.SharesProductPrices, b.IsActive, b.CreatedAt,
         b.PointOfSaleMode, b.RestaurantRequireWaiterCredential,
         b.RestaurantRestrictTableToWaiter, b.RestaurantSuggestedTipPercent);
 }

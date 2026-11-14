@@ -5,9 +5,11 @@ using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Contracts.Payables;
+using Auraly.Contracts.Receivables;
 using Auraly.Application.Payables;
 using Auraly.Application.WorkSessions;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Contracts.Catalog;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
@@ -24,6 +26,235 @@ public sealed class PortfolioManualPaymentPerformanceCollection : ICollectionFix
 [Trait("Performance", "ManualPortfolioAcceptance")]
 public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Configured_receipts_resolve_one_or_ten_forms_in_one_batch_for_up_to_five_hundred_lines()
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate, CatalogPermissionCodes.Read, CatalogPermissionCodes.Update);
+        using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
+        using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
+            new ActivateAccountingRequest(new(2026, 1, 1), "COP", "ZeroDeclared"))) activate.EnsureSuccessStatusCode();
+        var cash = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, client);
+        var revenue = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            "4193", "Revenue", "General", "Credit");
+        var reductionAccount = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            "5193", "Expense", "General", "Debit");
+        var receivable = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            "1393", "Asset", "Receivable", "Debit");
+        var type = (await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!
+            .Single(item => item.Code == "Cash");
+        var sides = (await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/accounting-balance-side"))!;
+        var creditSide = sides.Single(item => item.Code == "Credit");
+        var concept = new SaveFinancialConceptRequest(Guid.NewGuid(), $"PERF-{Guid.NewGuid():N}",
+            "Contrapartida de rendimiento", revenue.AccountId, creditSide.Id, true, false, true, true, 10);
+        using (var saved = await client.PutAsJsonAsync($"/api/commerce/v1/financial-concepts/{concept.FinancialConceptId}", concept))
+            saved.EnsureSuccessStatusCode();
+        var reductionConcept = concept with { FinancialConceptId = Guid.NewGuid(), Code = $"RED-{Guid.NewGuid():N}",
+            Name = "Reducción de rendimiento", AccountId = reductionAccount.AccountId,
+            SideOptionId = sides.Single(item => item.Code == "Debit").Id };
+        using (var saved = await client.PutAsJsonAsync($"/api/commerce/v1/financial-concepts/{reductionConcept.FinancialConceptId}", reductionConcept))
+            saved.EnsureSuccessStatusCode();
+        var forms = new List<PaymentMethodView>();
+        for (var index = 0; index < 10; index++)
+        {
+            var configuration = new SavePaymentMethodRequest(Guid.NewGuid(), $"PERF-{Guid.NewGuid():N}",
+                $"Caja de rendimiento {index}", type.Id, cash.AccountId, false, true, false, false, true, index);
+            using var saved = await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{configuration.PaymentMethodId}", configuration);
+            saved.EnsureSuccessStatusCode();
+            forms.Add((await saved.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method);
+        }
+        using var scope = fixture.CreateScope();
+        var publisher = new RecordingPublisher();
+        var coordinator = new AccountingProcessingCoordinator(publisher,
+            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>(),
+            scope.ServiceProvider.GetRequiredService<IAccountingProcessingSignalGate>());
+        var service = new AccountingService(scope.ServiceProvider.GetRequiredService<IAccountingStore>(),
+            scope.ServiceProvider.GetRequiredService<IBankReconciliationStore>(), coordinator,
+            scope.ServiceProvider.GetRequiredService<IAuralyIdGenerator>());
+        var processor = scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>();
+        var user = new AccountingUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { AccountingPermissionCodes.Read, AccountingPermissionCodes.ManualCreate,
+                AccountingPermissionCodes.ManualSend, ReceivablesPermissionCodes.RegisterPayment });
+        var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        var opened = await service.SaveVoucherDraftAsync(user, new(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher,
+            new(2026, 8, 3, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Obligación para pagos con conceptos", "PERF-CONCEPTO",
+            [new(receivable.AccountId, fixture.SupplierPartyId, null, "Obligación", 100000, 0,
+                "PERF-CONCEPTO", Guid.NewGuid(), DueDate: new(2026, 9, 3, 12, 0, 0, TimeSpan.Zero)),
+             new(revenue.AccountId, fixture.SupplierPartyId, null, "Contrapartida", 0, 100000, LineId: Guid.NewGuid())],
+            null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: 4, VoucherTypeCode: "Accounting"));
+        opened = await service.SendVoucherDraftAsync(user, opened.DocumentId, new(opened.RowVersion));
+        await processor.ProcessAsync(opened.DocumentId, AccountingManualDocumentTypes.ManualVoucher, fixture.BusinessId, default);
+        var obligationId = Assert.Single(opened.FinancialEffects!.Positions).PositionId;
+        await using (var resources = new SqlConnection(fixture.ConnectionString))
+        {
+            await resources.OpenAsync();
+            await using var check = new SqlCommand("""
+                SELECT systemMemory.available_physical_memory_kb,systemMemory.system_low_memory_signal_state,
+                  processMemory.process_physical_memory_low
+                FROM sys.dm_os_sys_memory systemMemory CROSS JOIN sys.dm_os_process_memory processMemory;
+                """, resources);
+            await using var row = await check.ExecuteReaderAsync();
+            Assert.True(await row.ReadAsync());
+            output.WriteLine("Before measurement: available physical memory={0}KB; OS pressure={1}; SQL pressure={2}",
+                row.GetInt64(0),row.GetBoolean(1),row.GetBoolean(2));
+            Assert.False(row.GetBoolean(1) || row.GetBoolean(2),
+                "SQL Server reports physical memory pressure. Release test resources before measuring latency.");
+        }
+        var postingCommands = new Dictionary<(bool Obligation, bool Reduction), int>();
+        var budgetFailures = new List<string>();
+        try
+        {
+            foreach (var (size, formCount, withConcept, withObligation, withReduction) in new[] {
+                (2, 1, false, false, false), (500, 1, false, false, false), (500, 10, false, false, false), (500, 10, true, false, false),
+                (3, 1, true, true, false), (500, 10, true, true, false), (3, 1, true, true, true), (500, 10, true, true, true) })
+            {
+                var acceptanceSamples = new List<double>();
+                var postingSamples = new List<double>();
+                var sqlTimings = new List<(string Stage, string Command, double Milliseconds)>();
+                for (var sample = 0; sample < 20; sample++)
+                {
+                    var documentId = Guid.NewGuid();
+                    var debtLineId = Guid.NewGuid();
+                    var credits = size - formCount - (withObligation ? 1 : 0);
+                    var lines = Enumerable.Range(0, credits).Select(_ => new VoucherDraftLine(withReduction ? reductionAccount.AccountId : revenue.AccountId,
+                        fixture.SupplierPartyId, null, "Concepto del recibo", withReduction ? 1 : 0, withReduction ? 0 : formCount, LineId: Guid.NewGuid(),
+                        FinancialConceptId: withConcept ? withReduction ? reductionConcept.FinancialConceptId : concept.FinancialConceptId : null,
+                        FinancialConceptTargetLineId: withReduction ? debtLineId : null,
+                        FinancialGroupId: withObligation ? documentId : null))
+                        .Concat(forms.Take(formCount).Select(form => new VoucherDraftLine(cash.AccountId,
+                            fixture.SupplierPartyId, null, "Dinero recibido", withReduction ? 1 : credits + (withObligation ? 1m / formCount : 0m), 0, LineId: Guid.NewGuid(),
+                            FinancialGroupId: withObligation ? documentId : null,
+                            PaymentEvidence: new(PaymentMethodId: form.PaymentMethodId, PaymentMethodTypeCode: form.MethodCode,
+                                PaymentMethodVersion: form.Version, PaymentMethodCode: form.Code, PaymentMethodName: form.Name))))
+                        .Concat(withObligation ? [new VoucherDraftLine(receivable.AccountId, fixture.SupplierPartyId, null,
+                            "Abono a la obligación", 0, withReduction ? credits + formCount : 1m, LineId: debtLineId,
+                            ExistingPosition: new("Receivable", obligationId), FinancialGroupId: documentId)] : Array.Empty<VoucherDraftLine>())
+                        .ToArray();
+                    var capture = new SaveVoucherDraftRequest(documentId, AccountingManualDocumentTypes.ManualVoucher,
+                        new(2026, 8, 3, 12, 0, 0, TimeSpan.Zero), "MANUAL_VOUCHER", "Recibo con formas por lote",
+                        "FORMAS-VOLUMEN", lines, null, null, MainPartyId: fixture.SupplierPartyId, PayloadVersion: 4, VoucherTypeCode: "CashReceipt");
+                    var draft = await service.SaveVoucherDraftAsync(user, capture);
+                    using (var activity = StageActivity("configured-receipt-acceptance"))
+                    using (var count = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
+                        afterExecute: (command, elapsed) => sqlTimings.Add(("acceptance", Label(command), elapsed))))
+                    {
+                        var timer = Stopwatch.StartNew();
+                        var accepted = await service.SendVoucherDraftAsync(user, draft.DocumentId, new(draft.RowVersion));
+                        acceptanceSamples.Add(timer.Elapsed.TotalMilliseconds);
+                        Assert.Equal(withObligation ? 8 : 7, count.Count);
+                        Assert.Equal("Pending", accepted.Status);
+                        Assert.Equal(withObligation ? 0 : formCount, accepted.FinancialEffects!.DirectMovements.Count);
+                        if (withObligation)
+                        {
+                            var payment = Assert.Single(accepted.FinancialEffects.Payments);
+                            Assert.Equal(withReduction ? null : (decimal?)(credits * formCount), payment.AdditionalConceptAmount);
+                            Assert.Equal(withReduction ? formCount : 1m, Assert.Single(payment.Allocations).Amount);
+                            Assert.Equal(withReduction ? credits : 0, accepted.FinancialEffects.Positions.Count);
+                            if (withReduction) Assert.All(accepted.FinancialEffects.Positions, item => {
+                                Assert.Equal("Adjustment", item.EffectKind); Assert.Equal(debtLineId, item.TargetSourceLineId); Assert.Equal(1m, item.Amount);
+                            });
+                        }
+                        if (withConcept) Assert.Equal(withReduction ? reductionConcept.FinancialConceptId : concept.FinancialConceptId, Assert.Single(accepted.FinancialEffects.Concepts!).FinancialConceptId);
+                        else Assert.Null(accepted.FinancialEffects.Concepts);
+                    }
+                    using (var activity = StageActivity("configured-receipt-posting"))
+                    using (var count = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
+                        afterExecute: (command, elapsed) => sqlTimings.Add(("posting", Label(command), elapsed))))
+                    using (var resolution = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
+                        commandFilter: command => command.CommandText.Contains("DECLARE @Resolved TABLE(SourceLineId", StringComparison.Ordinal)))
+                    {
+                        var timer = Stopwatch.StartNew();
+                        await processor.ProcessAsync(draft.DocumentId, AccountingManualDocumentTypes.ManualVoucher, fixture.BusinessId, default);
+                        postingSamples.Add(timer.Elapsed.TotalMilliseconds);
+                        postingCommands.TryAdd((withObligation, withReduction), count.Count);
+                        Assert.Equal(postingCommands[(withObligation, withReduction)], count.Count);
+                        Assert.Equal(1, resolution.Count);
+                    }
+                    var posted = await service.GetVoucherDraftAsync(user, draft.DocumentId);
+                    Assert.NotNull(posted);
+                    Assert.Equal("Posted", posted.Status);
+                    Assert.Equal(formCount, posted.AppliedPaymentMethods!.Count);
+                    Assert.All(posted.AppliedPaymentMethods, applied => Assert.Equal(cash.AccountId, applied.AccountId));
+                }
+                CheckStage("acceptance", acceptanceSamples, withObligation ? 8 : 7);
+                CheckStage("posting", postingSamples, postingCommands[(withObligation, withReduction)]);
+                foreach (var timing in sqlTimings.GroupBy(item => (item.Stage, item.Command)))
+                    output.WriteLine("lines={0}; forms={1}; {2}/{3}: count={4}; avg={5:F1}ms; max={6:F1}ms",
+                        size, formCount, timing.Key.Stage, timing.Key.Command, timing.Count(),
+                        timing.Average(item => item.Milliseconds), timing.Max(item => item.Milliseconds));
+
+                void CheckStage(string stage, List<double> samples, int commands)
+                {
+                    var ordered = samples.Order().ToArray();
+                    var p95 = ordered[(int)Math.Ceiling(samples.Count * .95) - 1];
+                    output.WriteLine("Configured receipt {0}: lines={1}; forms={2}; first={3:F1}ms; p95={4:F1}ms; SQL={5}; samples=20; concepts={6}; obligation={7}; reduction={8}",
+                        stage, size, formCount, samples[0], p95, commands, withConcept, withObligation, withReduction);
+                    if (p95 >= 2000) budgetFailures.Add($"{stage}: {size} lines/{formCount} forms/concepts={withConcept}/reduction={withReduction}, p95 {p95:F1} ms");
+                }
+            }
+        }
+        catch (SqlException timeout) when (timeout.Number == -2)
+        {
+            // Acceptance has already rolled back, and all measured stages have
+            // unwound. Capture the existing diagnostic only after the failure;
+            // never profile concurrently with the timed operation.
+            try { await WriteAcceptanceDiagnosticsAsync(); }
+            catch (Exception diagnosticError)
+            {
+                output.WriteLine("Acceptance diagnostics unavailable: {0}", diagnosticError.Message);
+            }
+            throw;
+        }
+        Assert.Equal(161, publisher.Count);
+        if (budgetFailures.Count > 0) await WriteAcceptanceDiagnosticsAsync();
+        Assert.True(budgetFailures.Count == 0, "Configured receipts exceeded 2 s: " + string.Join("; ", budgetFailures));
+    }
+
+    private async Task WriteAcceptanceDiagnosticsAsync()
+    {
+        // Only after every measured stage has finished, on the isolated fixture.
+        // Preserve cached plans if another performance regression needs analysis.
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        await using var command = new SqlCommand("""
+            SELECT OBJECT_SCHEMA_NAME(stats.object_id)+N'.'+OBJECT_NAME(stats.object_id),
+              stats.execution_count,stats.total_elapsed_time/1000.0/stats.execution_count,
+              CONVERT(nvarchar(max),planData.query_plan)
+            FROM sys.dm_exec_procedure_stats stats OUTER APPLY sys.dm_exec_query_plan(stats.plan_handle) planData
+            WHERE stats.database_id=DB_ID() AND stats.object_id IN(OBJECT_ID(N'dbo.AccountingSourcesAccept'),
+              OBJECT_ID(N'accounting.BankAccountsResolve'),OBJECT_ID(N'accounting.PortfolioPaymentAccept'));
+            SELECT TOP(12) OBJECT_SCHEMA_NAME(text.objectid)+N'.'+OBJECT_NAME(text.objectid),
+              stats.total_elapsed_time/1000.0/stats.execution_count,stats.total_logical_reads/stats.execution_count,
+              LEFT(SUBSTRING(text.text,stats.statement_start_offset/2+1,
+                (CASE stats.statement_end_offset WHEN -1 THEN DATALENGTH(text.text) ELSE stats.statement_end_offset END
+                  -stats.statement_start_offset)/2+1),400)
+            FROM sys.dm_exec_query_stats stats CROSS APPLY sys.dm_exec_sql_text(stats.sql_handle) text
+            WHERE text.dbid=DB_ID() AND text.objectid IN(OBJECT_ID(N'dbo.AccountingSourcesAccept'),
+              OBJECT_ID(N'accounting.BankAccountsResolve'),OBJECT_ID(N'accounting.PortfolioPaymentAccept'))
+            ORDER BY stats.total_elapsed_time/stats.execution_count DESC;
+            SELECT process_physical_memory_low,(SELECT COUNT_BIG(*) FROM sys.dm_exec_procedure_stats WHERE database_id=DB_ID())
+            FROM sys.dm_os_process_memory;
+            """, connection) { CommandTimeout = 10 };
+        await using var reader = await command.ExecuteReaderAsync();
+        var index = 0;
+        while (await reader.ReadAsync())
+        {
+            output.WriteLine("Acceptance diagnostic: {0}; executions={1}; average={2:F1}ms", reader.GetString(0), reader.GetInt64(1), reader.GetDecimal(2));
+            if (reader.IsDBNull(3)) continue;
+            var path = Path.Combine(Path.GetTempPath(), $"auraly-receipt-{connection.Database}-{index++}.sqlplan");
+            await File.WriteAllTextAsync(path, reader.GetString(3));
+            output.WriteLine("Cached plan: {0}", path);
+        }
+        await reader.NextResultAsync();
+        while (await reader.ReadAsync())
+            output.WriteLine("Acceptance statement: {0}; average={1:F1}ms; logical reads={2}; SQL={3}",
+                reader.GetString(0),reader.GetDecimal(1),reader.GetInt64(2),reader.GetString(3).Replace('\r',' ').Replace('\n',' '));
+        await reader.NextResultAsync();
+        Assert.True(await reader.ReadAsync());
+        output.WriteLine("After measurement: SQL pressure={0}; cached procedures in fixture={1}", reader.GetBoolean(0),reader.GetInt64(1));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -168,7 +399,8 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
                     "MANUAL_VOUCHER", "Reconocimiento por lote", "AP-VOLUMEN", lines, null, null,
                     MainPartyId: fixture.SupplierPartyId, PayloadVersion: 4, VoucherTypeCode: "Accounting");
                 var saved = await service.SaveVoucherDraftAsync(user, capture);
-                using (var count = new InventoryBalanceProcessingTests.CommandCounter(database))
+                using (var activity = StageActivity("obligation-opening-acceptance"))
+                using (var count = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId))
                 {
                     var timer = Stopwatch.StartNew();
                     var accepted = await service.SendVoucherDraftAsync(user, saved.DocumentId, new(saved.RowVersion));
@@ -179,10 +411,11 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
                     Assert.Equal(size - 1, accepted.FinancialEffects!.Positions.Count);
                     Assert.Empty(accepted.FinancialEffects.Payments);
                 }
-                using (var count = new InventoryBalanceProcessingTests.CommandCounter(database))
-                using (var openings = new InventoryBalanceProcessingTests.CommandCounter(database,
+                using (var activity = StageActivity("obligation-opening-posting"))
+                using (var count = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId))
+                using (var openings = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
                     commandFilter: command => command.CommandText.Contains(receivable ? "INSERT dbo.Receivables" : "INSERT dbo.Payables", StringComparison.Ordinal)))
-                using (var journal = new InventoryBalanceProcessingTests.CommandCounter(database,
+                using (var journal = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
                     commandFilter: command => command.CommandText.Contains("INSERT dbo.AccountingEntryLines", StringComparison.Ordinal)))
                 {
                     var timer = Stopwatch.StartNew();
@@ -384,6 +617,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
             var ordered = times.Order().ToArray();
             var p95 = ordered[(int)Math.Ceiling(ordered.Length * .95) - 1];
             output.WriteLine("Verificación de {0} movimientos, página {1}: p95 {2:F1} ms, 2 SQL, {3} filas, 20 muestras.", total, pageNumber, p95, pageSize);
+            if (p95 >= 2000) await WriteClosureDiagnosticsAsync("verification-budget");
             Assert.True(p95 < 2000, $"Verificación página {pageNumber}/{pageSize}: p95 {p95:F1} ms supera 2 segundos.");
         }
 
@@ -411,6 +645,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
             var p95 = ordered[(int)Math.Ceiling(ordered.Length * .95) - 1];
             output.WriteLine("Preview de {0} correcciones sobre {1} movimientos: p95 {2:F1} ms, 2 SQL, 20 muestras.",
                 correctionCount, total, p95);
+            if (p95 >= 2000) await WriteClosureDiagnosticsAsync("correction-budget");
             Assert.True(p95 < 2000, $"Preview de {correctionCount} correcciones: p95 {p95:F1} ms supera dos segundos.");
         }
 
@@ -484,6 +719,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
         {
             var acceptTimes = new List<double>();
             var postTimes = new List<double>();
+            var unapplySqlTimes = new List<(string Command, double Milliseconds)>();
             var lastPaymentId = Guid.Empty;
             for (var sample = 0; sample <= 20; sample++)
             {
@@ -582,7 +818,8 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
                     if (sample > 0) unapplyAcceptTimes.Add(timer.Elapsed.TotalMilliseconds);
                 }
                 using (var activity = StageActivity("unapplication-posting"))
-                using (var count = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId))
+                using (var count = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
+                    afterExecute: (command, elapsed) => unapplySqlTimes.Add((Label(command), elapsed))))
                 using (var writes = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
                     commandFilter: command => command.CommandText.Contains("DECLARE @Unapplications TABLE", StringComparison.Ordinal)))
                 {
@@ -724,6 +961,10 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
                 var ordered = samples.Order().ToArray();
                 var p95 = ordered[(int)Math.Ceiling(ordered.Length * .95) - 1];
                 output.WriteLine("Pago nativo, {0} obligaciones, {1}: p95 {2:F1} ms, {3} SQL, 20 muestras.", size, stage, p95, commands);
+                if (p95 >= 2000 && stage == "desaplicación/posting")
+                    foreach (var command in unapplySqlTimes.GroupBy(item => item.Command))
+                        output.WriteLine("Desaplicación/{0}: count={1}; avg={2:F1} ms; max={3:F1} ms",
+                            command.Key, command.Count(), command.Average(item => item.Milliseconds), command.Max(item => item.Milliseconds));
                 Assert.True(p95 < 2000, $"{stage}, {size} obligaciones: p95 {p95:F1} ms supera 2 segundos.");
             }
         }
@@ -793,41 +1034,49 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
         try { return await action(); }
         catch (SqlException error) when (error.Number == -2)
         {
-            // Diagnose only after a failed measurement. Successful gates have no
-            // observer, extra SQL, retries or altered timeout/budget.
-            try
-            {
-                await using var connection = new SqlConnection(fixture.ConnectionString);
-                await connection.OpenAsync();
-                Assert.StartsWith("AuralyServerSlice_", connection.Database);
-                await using var plans = new SqlCommand("""
-                    DECLARE @Candidates TABLE(Handle varbinary(64) PRIMARY KEY,Label nvarchar(32));
-                    INSERT @Candidates SELECT TOP(4) cached.plan_handle,
-                      CASE WHEN text.objectid=OBJECT_ID(N'worksessions.ManualTreasuryMovements') THEN N'TreasuryFunction' ELSE N'ClosureBatch' END
-                    FROM sys.dm_exec_cached_plans cached CROSS APPLY sys.dm_exec_sql_text(cached.plan_handle) text
-                    WHERE text.dbid=DB_ID() AND cached.cacheobjtype=N'Compiled Plan'
-                      AND text.text NOT LIKE N'%sys.dm_exec_cached_plans%'
-                      AND (text.text LIKE N'%DECLARE @ManualDirect TABLE%' OR text.text LIKE N'%#ClosureContext%'
-                        OR text.objectid=OBJECT_ID(N'worksessions.ManualTreasuryMovements'))
-                    ORDER BY cached.usecounts DESC;
-                    SELECT candidate.Label,CONVERT(nvarchar(max),planData.query_plan)
-                    FROM @Candidates candidate OUTER APPLY sys.dm_exec_query_plan(candidate.Handle) planData;
-                    """, connection) { CommandTimeout = 10 };
-                await using var reader = await plans.ExecuteReaderAsync();
-                var index = 0;
-                while (await reader.ReadAsync())
-                {
-                    if (reader.IsDBNull(1)) continue;
-                    var path = Path.Combine(Path.GetTempPath(), $"auraly-closure-{stage}-failure-{index++}.sqlplan");
-                    await File.WriteAllTextAsync(path, reader.GetString(1));
-                    output.WriteLine("Failure diagnostic ({0}): {1}", reader.GetString(0), path);
-                }
-            }
-            catch (Exception diagnosticError)
-            {
-                output.WriteLine("Failure diagnostic unavailable: {0}", diagnosticError.Message);
-            }
+            await WriteClosureDiagnosticsAsync(stage);
             throw;
+        }
+    }
+
+    private async Task WriteClosureDiagnosticsAsync(string stage)
+    {
+        // Diagnose only after a failed measurement. Successful gates have no
+        // observer, extra SQL, retries or altered timeout/budget.
+        try
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            Assert.StartsWith("AuralyServerSlice_", connection.Database);
+            await using var plans = new SqlCommand("""
+                DECLARE @Candidates TABLE(Handle varbinary(64) PRIMARY KEY,Label nvarchar(32));
+                INSERT @Candidates SELECT TOP(4) cached.plan_handle,
+                  CASE WHEN text.objectid=OBJECT_ID(N'worksessions.ManualTreasuryMovements') THEN N'TreasuryFunction' ELSE N'ClosureBatch' END
+                FROM sys.dm_exec_cached_plans cached CROSS APPLY sys.dm_exec_sql_text(cached.plan_handle) text
+                WHERE EXISTS(SELECT 1 FROM sys.dm_exec_plan_attributes(cached.plan_handle) attribute
+                    WHERE attribute.attribute=N'dbid' AND CONVERT(int,attribute.value)=DB_ID())
+                  AND cached.cacheobjtype=N'Compiled Plan'
+                  AND text.text NOT LIKE N'%sys.dm_exec_cached_plans%'
+                  AND (text.text LIKE N'%DECLARE @ManualDirect TABLE%' OR text.text LIKE N'%#ClosureContext%'
+                    OR text.objectid=OBJECT_ID(N'worksessions.ManualTreasuryMovements'))
+                ORDER BY CASE WHEN text.text LIKE N'%CREATE TABLE #Corrections%' THEN 0 ELSE 1 END,
+                  cached.usecounts DESC;
+                SELECT candidate.Label,CONVERT(nvarchar(max),planData.query_plan)
+                FROM @Candidates candidate OUTER APPLY sys.dm_exec_query_plan(candidate.Handle) planData;
+                """, connection) { CommandTimeout = 10 };
+            await using var reader = await plans.ExecuteReaderAsync();
+            var index = 0;
+            while (await reader.ReadAsync())
+            {
+                if (reader.IsDBNull(1)) continue;
+                var path = Path.Combine(Path.GetTempPath(), $"auraly-closure-{stage}-failure-{index++}.sqlplan");
+                await File.WriteAllTextAsync(path, reader.GetString(1));
+                output.WriteLine("Failure diagnostic ({0}): {1}", reader.GetString(0), path);
+            }
+        }
+        catch (Exception diagnosticError)
+        {
+            output.WriteLine("Failure diagnostic unavailable: {0}", diagnosticError.Message);
         }
     }
 
@@ -838,7 +1087,7 @@ public sealed class PortfolioManualPaymentPerformanceTests(ServerSliceFixture fi
         if (command.CommandText.Contains("DECLARE @LockedPosition", StringComparison.Ordinal)) return "LockDraft";
         if (command.CommandText.Contains("SELECT d.DocumentType,d.OccurredAt", StringComparison.Ordinal)) return "ReadDraft";
         if (command.CommandText.Contains("UPDATE accounting.VoucherDrafts SET SentAt", StringComparison.Ordinal)) return "FreezeDraft";
-        return "Gate";
+        return command.CommandText.Trim().Split('\n')[0].Trim();
     }
 
     private sealed class RecordingPublisher(string expectedType = AccountingManualDocumentTypes.ManualVoucher) : IAccountingProcessingSignalPublisher

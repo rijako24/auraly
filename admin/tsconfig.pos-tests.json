@@ -9,6 +9,9 @@
     "rootDir": "src"
   },
   "include": [
+    "src/lib/utils.test.ts",
+    "src/lib/accounting-document-date.ts",
+    "src/lib/accounting-document-date.test.ts",
     "src/components/restaurant/restaurant-payment-calculation.ts",
     "src/components/restaurant/restaurant-payment-calculation.test.ts",
     "src/components/payments/preexisting-receivables-template.ts",
@@ -181,6 +184,7 @@
     "src/components/fiscal/fiscal-device-resolution-state.test.ts",
     "src/lib/report-viewer.ts",
     "src/lib/report-viewer.test.ts",
+    "src/lib/portfolio-report-export.test.ts",
     "src/lib/accounting-auxiliary-report.test.ts",
     "src/lib/dispatch-report.ts",
     "src/lib/dispatch-report.test.ts",

@@ -1,25 +1,31 @@
 "use client";
 
+import { CostCenterSelect, useCostCenterLabels } from "@/components/accounting/cost-center-select";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowLeftRight, Copy, FileText, Plus, RotateCcw, Save, Send, Trash2 } from "lucide-react";
 import { accountingApi, type AccountingOpenPosition, type SaveVoucherDraft, type VoucherDraft, type VoucherDraftAdjustment, type VoucherDraftLineView, type VoucherDraftPreparation } from "@/services/api/accounting";
 import { fiscalDocumentsApi } from "@/services/api/fiscal-documents";
+import { paymentMethodsApi, type PaymentMethod } from "@/services/api/payment-methods";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { AccountSelect } from "./account-select";
 import { AccountingDocumentDialog } from "./accounting-document-dialog";
 import { CloneVoucherButton } from "./clone-voucher-button";
 import { VoucherPositionDialog } from "./voucher-position-dialog";
-import { VoucherPendingDocuments } from "./voucher-pending-documents";
+import { createVoucherPositionLine, VoucherPendingDocuments } from "./voucher-pending-documents";
 import { VoucherFiscalDialog } from "./voucher-fiscal-dialog";
-import { proposedAccountingDate } from "@/lib/accounting-document-date";
+import { accountingDateAtNoon, proposedAccountingDate } from "@/lib/accounting-document-date";
 import { accountingReversalStatusLabel } from "@/lib/accounting-labels";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { PartySelect } from "@/components/parties/party-role-select";
 import { SupplierSiteSelect } from "@/components/parties/supplier-site-select";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { PagedEntitySelect } from "@/components/forms/paged-entity-select";
+import { FinancialConceptSelect } from "./financial-concept-select";
+import type { FinancialConcept } from "@/services/api/financial-concepts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,26 +39,35 @@ const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP
 const newLine = (): VoucherDraftLineView => ({ value: { lineId: crypto.randomUUID(), accountId: null, partyId: null, costCenterId: null, description: "", debit: 0, credit: 0, reference: null, baseAmount: null }, accountCode: null, accountName: null, partyName: null, partyIdentification: null, costCenterName: null });
 const identifyLines = (lines: VoucherDraftLineView[]) => lines.map(line => line.value.lineId ? line
   : { ...line, value: { ...line.value, lineId: crypto.randomUUID() } });
+const groupUnassignedLines=(lines:VoucherDraftLineView[],groupId:string|null)=>lines.map(line=>!groupId||line.value.financialGroupId?line:
+  {...line,value:{...line.value,financialGroupId:groupId}});
+// Generated identity/group alone do not represent captured data. Every other
+// populated field must survive assisted additions, even in an incomplete row.
+const hasLineCapture=(line:VoucherDraftLineView)=>Object.entries(line.value).some(([key,value])=>
+  key!=="lineId"&&key!=="financialGroupId"&&value!==null&&value!==undefined&&value!==""&&value!==0);
 const editablePayloadVersion = (draft: VoucherDraft) => draft.documentType === "ManualAccountingVoucher"
   ? draft.payloadVersion === 4 ? 4 : 2 : null;
 
-export function VoucherDraftEditor({ businessId, initial, adjustment, preparation, onSaved, onDiscarded, onCloned, onClose, onBusyChange, modal = false, closeLabel = "Volver a trazabilidad" }: {
+export function VoucherDraftEditor({ businessId, initial, adjustment, preparation, onSaved, onDiscarded, onCloned, onClose, onBusyChange, modal = false, closeLabel = "Volver a trazabilidad", voucherTypeScope }: {
   businessId: string; initial?: VoucherDraft; adjustment?: VoucherDraftAdjustment; preparation?: VoucherDraftPreparation;
   onSaved?: (value: VoucherDraft) => void; onDiscarded?: (documentId: string) => void;
   onClose: () => void; onBusyChange?: (busy: boolean) => void;
   onCloned?: (value: VoucherDraft) => void;
   modal?: boolean; closeLabel?: string;
+  voucherTypeScope?: "CashReceipt";
 }) {
   const permissions = useAuthStore(state => state.user?.permissions ?? noPermissions);
+  const tenantId = useTenantContextStore(state => state.selectedTenantId);
+  const timeZone = useBusinessContextStore(state => state.businesses.find(business => business.businessId === businessId)?.timeZone);
   const queryClient = useQueryClient();
   const [saved, setSaved] = useState(initial);
   const [form, setForm] = useState<SaveVoucherDraft>(() => initial ? { ...initial,
     workSessionId: initial.sentAt ? initial.workSessionId : null,
     payloadVersion: editablePayloadVersion(initial), lines: initial.lines.map(line => line.value) } : {
     documentId: crypto.randomUUID(), documentType: adjustment ? "AccountAdjustment" : "ManualAccountingVoucher",
-    occurredAt: proposedAccountingDate(),
+    occurredAt: proposedAccountingDate(timeZone),
     conceptCode: adjustment ? "ACCOUNT_ADJUSTMENT" : "MANUAL_VOUCHER", description: preparation?.description ?? "", reference: preparation?.reference ?? null,
-    mainPartyId: preparation?.mainPartyId ?? null, voucherTypeCode: adjustment ? null : "Accounting",
+    mainPartyId: preparation?.mainPartyId ?? null, voucherTypeCode: adjustment ? null : voucherTypeScope ?? "Accounting",
     lines: [], adjustment: adjustment ?? null, rowVersion: null, payloadVersion: adjustment ? null : 4,
     workSessionId: null,
   });
@@ -72,16 +87,22 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const confirmUnsavedChanges = !modal || Boolean(preparation);
   const [positionOpen, setPositionOpen] = useState(false);
   const [showPendingDocuments, setShowPendingDocuments] = useState(false);
+  const [defaultFinancialGroupId, setDefaultFinancialGroupId] = useState<string | null>(() =>
+    initial?.lines.some(line => line.value.financialGroupId && (line.value.financialGroupId === initial.documentId ||
+      line.value.existingPosition?.subledgerKind === "CustomerCredit" || line.value.existingPosition?.subledgerKind === "SupplierCredit")) ? initial.documentId : null);
   const [fiscalOpen, setFiscalOpen] = useState(false);
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [detailLineId, setDetailLineId] = useState<string | null>(null);
+  const [chosenConcept,setChosenConcept]=useState<FinancialConcept|null>(null);
+  const [conceptAmount,setConceptAmount]=useState<number|null>(null);
+  const [conceptTargetLineId,setConceptTargetLineId]=useState<string|null>(null);
   const [chosenPartyId, setChosenPartyId] = useState("");
   const [mainParty, setMainParty] = useState({ name: initial?.mainPartyName ?? preparation?.mainPartyName ?? null, identification: initial?.mainPartyIdentification ?? preparation?.mainPartyIdentification ?? null });
   const voucherTypes = useReferenceOptions("accounting-voucher-type", form.payloadVersion === 4);
   const franchises = useReferenceOptions("card-franchise", detailLineId !== null);
   const directions = useReferenceOptions("accounting-adjustment-direction", !!form.adjustment);
   const statuses = useReferenceOptions("accounting-document-status");
-  const centers = useQuery({ queryKey: ["voucher-centers", businessId], queryFn: accountingApi.costCenters, staleTime: 300_000 });
+  const centers = useCostCenterLabels(lines.map(line => line.value.costCenterId));
   const adjustmentKind = form.adjustment?.subledgerKind;
   const obligationId = form.adjustment?.subledgerId ?? "";
   const obligation = useQuery<AccountingOpenPosition | null>({ queryKey: ["voucher-adjustment-obligation", businessId, adjustmentKind, obligationId],
@@ -100,9 +121,47 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const busy = phase !== null || fiscalBusy;
   const detailIndex = lines.findIndex(line => line.value.lineId === detailLineId);
   const detailLine = detailIndex < 0 ? null : lines[detailIndex];
+  const paymentOutgoing = form.voucherTypeCode === "Disbursement" || form.voucherTypeCode !== "CashReceipt" && (detailLine?.value.credit ?? 0) > 0;
+  const paymentUsage = form.voucherTypeCode === "CashReceipt" ? "Receipts" : form.voucherTypeCode === "Disbursement" ? "SupplierPayments"
+    : paymentOutgoing ? "VoucherPayments" : "VoucherReceipts";
+  const appliedPayments = new Map(saved?.appliedPaymentMethods?.map(item => [item.sourceLineId, item]));
   const financialGroups = [...new Set(lines.map(line => line.value.financialGroupId).filter((id): id is string => !!id))];
+  // These options are the captured document lines, not another portfolio fetch.
+  const adjustmentTargets = lines.filter(line => line.value.lineId && line.value.partyId === form.mainPartyId &&
+    line.value.existingPosition && !line.value.existingPosition.reversesTransactionId &&
+    (line.value.existingPosition.subledgerKind === "Receivable" && line.value.credit > 0 && line.value.debit === 0 ||
+     line.value.existingPosition.subledgerKind === "Payable" && line.value.debit > 0 && line.value.credit === 0));
+  const compatibleTargets = (side:string|null|undefined) => adjustmentTargets.filter(line =>
+    line.value.existingPosition!.subledgerKind === (side === "Debit" ? "Receivable" : "Payable"));
+  const chosenTargets = chosenConcept?.financialFunction === "General" ? compatibleTargets(chosenConcept.sideCode) : [];
+  const requiresConceptTarget = chosenConcept?.financialFunction === "General" && chosenTargets.length > 0 &&
+    (form.voucherTypeCode === "CashReceipt" && chosenConcept.sideCode === "Debit" ||
+     form.voucherTypeCode === "Disbursement" && chosenConcept.sideCode === "Credit");
+  const targetLabel = (line:VoucherDraftLineView) => `${line.value.reference || line.value.description || line.value.existingPosition!.subledgerId} · ${money.format(line.value.debit + line.value.credit)}`;
+  const creditGroups = new Set(lines.filter(line => line.value.existingPosition?.subledgerKind === "CustomerCredit" ||
+    line.value.existingPosition?.subledgerKind === "SupplierCredit").map(line => line.value.financialGroupId).filter(Boolean));
   const linkedPositions = lines.flatMap(line => line.value.existingPosition ? [{ ...line.value.existingPosition,
-    amount: line.value.debit + line.value.credit, financialDiscountEarned: line.value.financialDiscountEarned }] : []);
+    amount: line.value.debit + line.value.credit, financialDiscountEarned: line.value.financialDiscountEarned,
+    creditCrossing: !!line.value.financialGroupId && creditGroups.has(line.value.financialGroupId) }] : []);
+  const capturedReductions = new Map<string,number>();
+  for(const line of lines) if(line.value.financialConceptTargetLineId) capturedReductions.set(line.value.financialConceptTargetLineId,
+    (capturedReductions.get(line.value.financialConceptTargetLineId)??0)+line.value.debit+line.value.credit);
+  const crossTargets = lines.filter(line => line.value.lineId && line.value.accountId && line.value.partyId === form.mainPartyId &&
+    !line.value.existingPosition?.reversesTransactionId && line.value.financialDiscountEarned == null &&
+    (!line.value.financialGroupId || !creditGroups.has(line.value.financialGroupId)) &&
+    (line.value.existingPosition?.subledgerKind === "Receivable" && line.value.credit > 0 && line.value.debit === 0 ||
+      line.value.existingPosition?.subledgerKind === "Payable" && line.value.debit > 0 && line.value.credit === 0))
+    .map(line=>({...line,availableForCreditAmount:Math.max(0,Number((line.value.debit+line.value.credit-(capturedReductions.get(line.value.lineId!)??0)).toFixed(4)))}))
+    .filter(line=>line.availableForCreditAmount>0);
+  const groupedLines = new Map<string, VoucherDraftLineView[]>();
+  for (const line of lines) if (line.value.financialGroupId) {
+    const group = groupedLines.get(line.value.financialGroupId);
+    if (group) group.push(line); else groupedLines.set(line.value.financialGroupId, [line]);
+  }
+  const removableCrossings = lines.filter(line => line.value.financialGroupId &&
+    (line.value.existingPosition?.subledgerKind === "CustomerCredit" || line.value.existingPosition?.subledgerKind === "SupplierCredit") &&
+    groupedLines.get(line.value.financialGroupId)!.every(item =>
+      item.value.existingPosition && !item.value.existingPosition.reversesTransactionId));
   const supportCancellation = form.voucherTypeCode === "SupportDocumentCancellation";
   const fiscalDocument = form.voucherTypeCode === "SupportDocument" || supportCancellation;
   const effects = saved?.financialEffects;
@@ -115,7 +174,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   const debit = lines.reduce((sum, line) => sum + line.value.debit, 0);
   const credit = lines.reduce((sum, line) => sum + line.value.credit, 0);
-  const rowHeight = 56;
+  const rowHeight = 80;
   const start = lines.length >= 100 ? Math.max(0, Math.floor(scrollTop / rowHeight) - 4) : 0;
   const end = lines.length >= 100 ? Math.min(lines.length, start + 24) : lines.length;
 
@@ -131,6 +190,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     setDirty(true);
   }
   function change(patch: Partial<SaveVoucherDraft>) {
+    if(patch.voucherTypeCode&&patch.voucherTypeCode!==form.voucherTypeCode)setChosenConcept(null);
     setForm(current => ({ ...current, ...patch, fiscalCapture: Object.hasOwn(patch, "fiscalCapture") ? patch.fiscalCapture
       : patch.voucherTypeCode && patch.voucherTypeCode !== current.voucherTypeCode ? null
       : current.fiscalCapture ? { ...current.fiscalCapture, calculationHash: null } : null }));
@@ -145,6 +205,9 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     markChanged();
   }
   function accept(value: VoucherDraft) {
+    // The selection page was read before this operation. Once accepted, show
+    // the document's applied effects rather than stale available balances.
+    if (value.sentAt) setShowPendingDocuments(false);
     setSaved(value); setForm({ ...value, workSessionId: value.sentAt ? value.workSessionId : null,
       payloadVersion: editablePayloadVersion(value),
       lines: value.lines.map(line => line.value) }); setLines(identifyLines(value.lines));
@@ -242,7 +305,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     if (!saved || busy || !canCancelPlainJournal) return;
     setPhase("cancel"); setError(null);
     try {
-      const today = proposedAccountingDate();
+      const today = proposedAccountingDate(timeZone);
       const occurredAt = new Date(today) < new Date(saved.occurredAt) ? saved.occurredAt : today;
       const result = await accountingApi.cancelJournalVoucher(saved.documentId, cancellationId.current, occurredAt);
       const updated = { ...saved, reversalDocumentId: result.documentId, reversalStatus: result.status,
@@ -262,22 +325,109 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     updateValue(detailIndex, { paymentEvidence: Object.values(evidence).some(value => value !== null && value !== undefined && value !== "") ? evidence : null });
   }
 
+  function addPaymentForm() {
+    if (busy || readOnly || !form.mainPartyId) return;
+    const empty = lines.findIndex(item => !hasLineCapture(item));
+    if (empty < 0 && lines.length >= 500) return;
+    const line = empty < 0 ? newLine() : lines[empty];
+    const prepared = { ...line, partyName: mainParty.name, partyIdentification: mainParty.identification,
+      value: { ...line.value, partyId: form.mainPartyId, financialGroupId: defaultFinancialGroupId ?? form.documentId } };
+    const groupId = defaultFinancialGroupId ?? form.documentId;
+    setLines(previous => {
+      const grouped = groupUnassignedLines(previous,groupId);
+      return empty < 0 ? [...grouped, prepared] : grouped.map((item, index) => index === empty ? prepared : item);
+    });
+    setDefaultFinancialGroupId(groupId); setDetailLineId(prepared.value.lineId!); markChanged();
+  }
+
+  function addFinancialConcept() {
+    if(!chosenConcept||!conceptAmount||!form.mainPartyId||busy||readOnly||lines.length>=500)return;
+    const target=chosenTargets.find(line=>line.value.lineId===conceptTargetLineId);
+    if(requiresConceptTarget&&!target){setError("Selecciona la partida del documento que reduce este concepto.");return;}
+    const groupId=target?.value.financialGroupId??defaultFinancialGroupId??(target||form.voucherTypeCode==="CashReceipt"||form.voucherTypeCode==="Disbursement"?form.documentId:null);
+    const line=newLine();
+    const prepared:VoucherDraftLineView={...line,accountCode:chosenConcept.accountCode,accountName:chosenConcept.accountName,
+      partyName:mainParty.name,partyIdentification:mainParty.identification,financialConceptCode:chosenConcept.code,financialConceptName:chosenConcept.name,financialConceptSideCode:chosenConcept.sideCode,
+      value:{...line.value,accountId:chosenConcept.accountId,partyId:form.mainPartyId,description:chosenConcept.name,
+        financialConceptId:chosenConcept.financialConceptId,financialGroupId:groupId,financialConceptTargetLineId:target?.value.lineId??null,
+        debit:chosenConcept.sideCode==="Debit"?conceptAmount:0,credit:chosenConcept.sideCode==="Credit"?conceptAmount:0}};
+    setLines(current=>[...groupUnassignedLines(current.filter(hasLineCapture),groupId),prepared]);
+    if(groupId)setDefaultFinancialGroupId(groupId);
+    setConceptAmount(null);setError(null);markChanged();
+  }
+
+  function selectLineConcept(concept:FinancialConcept|null){
+    if(!concept||!detailLine||readOnly||busy||detailLine.value.existingPosition||detailLine.value.paymentEvidence)return;
+    const amount=detailLine.value.debit+detailLine.value.credit;
+    updateLine(detailIndex,{accountCode:concept.accountCode,accountName:concept.accountName,financialConceptCode:concept.code,financialConceptName:concept.name,
+      financialConceptSideCode:concept.sideCode,value:{...detailLine.value,accountId:concept.accountId,financialConceptId:concept.financialConceptId,
+        financialConceptTargetLineId:concept.financialFunction==="General"&&compatibleTargets(concept.sideCode).some(line=>line.value.lineId===detailLine.value.financialConceptTargetLineId)?detailLine.value.financialConceptTargetLineId:null,
+        description:!detailLine.value.description||detailLine.value.description===detailLine.financialConceptName?concept.name:detailLine.value.description,
+        debit:concept.sideCode==="Debit"?amount:0,credit:concept.sideCode==="Credit"?amount:0}});
+  }
+
+  function selectPaymentForm(method: PaymentMethod) {
+    if (!detailLine || busy || readOnly) return;
+    if (lines.some((line, index) => index !== detailIndex && line.value.paymentEvidence?.paymentMethodId === method.paymentMethodId)) {
+      setError("La forma ya está en las partidas. Cambia su importe o selecciona otra forma."); return;
+    }
+    const sameType = detailLine.value.paymentEvidence?.paymentMethodTypeCode === method.methodCode;
+    updateLine(detailIndex, { accountCode: method.accountCode, accountName: method.accountName,financialConceptCode:null,financialConceptName:null,
+      partyName: detailLine.value.partyId ? detailLine.partyName : mainParty.name,
+      partyIdentification: detailLine.value.partyId ? detailLine.partyIdentification : mainParty.identification,
+      value: { ...detailLine.value, partyId: detailLine.value.partyId ?? form.mainPartyId ?? null,
+      accountId: method.accountId, description: detailLine.value.description || method.name,financialConceptId:null,financialConceptTargetLineId:null,
+      paymentEvidence: { ...detailLine.value.paymentEvidence, paymentMethodId: method.paymentMethodId,
+        paymentMethodTypeCode: method.methodCode, paymentMethodVersion: method.version,
+        paymentMethodCode: method.code, paymentMethodName: method.name, tenderedAmount: null,
+        cardFranchiseCode: sameType ? detailLine.value.paymentEvidence?.cardFranchiseCode : null,
+        approvalNumber: sameType ? detailLine.value.paymentEvidence?.approvalNumber : null } } });
+    setError(null);
+  }
+
   function addPositionLines(added: VoucherDraftLineView[]) {
-    setLines(current => {
-      if (added.length > 1) return [...current.filter(item => item.value.accountId || item.value.description || item.value.debit || item.value.credit || item.value.existingPosition), ...added];
+    added = added.map(line => line.value.financialGroupId || !defaultFinancialGroupId ? line
+      : { ...line, value: { ...line.value, financialGroupId: defaultFinancialGroupId } });
+    setLines(previous => {
+      const current = groupUnassignedLines(previous,defaultFinancialGroupId);
+      if (added.length > 1) return [...current.filter(hasLineCapture), ...added];
       const line = added[0];
       const existing = current.findIndex(item => item.value.existingPosition?.subledgerKind === line.value.existingPosition?.subledgerKind &&
-        item.value.existingPosition?.subledgerId === line.value.existingPosition?.subledgerId);
+        item.value.existingPosition?.subledgerId === line.value.existingPosition?.subledgerId &&
+        (!item.value.financialGroupId || !creditGroups.has(item.value.financialGroupId)));
       if (existing >= 0) return current.map((item, index) => index === existing ? { ...item,
         accountCode: line.accountCode, accountName: line.accountName, partyName: line.partyName,
         partyIdentification: line.partyIdentification, value: { ...item.value, accountId: line.value.accountId,
           partyId: line.value.partyId, partySiteId: line.value.partySiteId, debit: line.value.debit,
           credit: line.value.credit, financialDiscountEarned: line.value.financialDiscountEarned } } : item);
-      const empty = current.findIndex(item => !item.value.accountId && !item.value.description && !item.value.debit &&
-        !item.value.credit && !item.value.existingPosition);
+      const empty = current.findIndex(item => !hasLineCapture(item));
       return empty < 0 ? [...current, line] : current.map((item, index) => index === empty ? line : item);
     });
     markChanged();
+  }
+
+  function crossCredit(position: AccountingOpenPosition, targetLineId: string, amount: number) {
+    const target = crossTargets.find(line => line.value.lineId === targetLineId);
+    const supplier = position.subledgerKind === "SupplierCredit";
+    const used = linkedPositions.filter(item => item.subledgerKind === position.subledgerKind && item.subledgerId === position.subledgerId)
+      .reduce((total, item) => total + item.amount, 0);
+    const total = target ? target.value.debit + target.value.credit : 0;
+    if (!target || position.partyId !== form.mainPartyId || !position.accountId || position.openingLinkIssue || position.currencyCode !== "COP" ||
+      target.value.existingPosition?.subledgerKind !== (supplier ? "Payable" : "Receivable") ||
+      supplier && target.value.partySiteId != null && target.value.partySiteId !== position.partySiteId ||
+      amount <= 0 || amount > target.availableForCreditAmount || Number((amount + used).toFixed(4)) > position.availableAmount ||
+      lines.length + (amount === total ? 1 : 2) > 500) {
+      setError("No se agregó el cruce: revisa la factura seleccionada y el importe disponible del anticipo."); return;
+    }
+    const groupId = crypto.randomUUID();
+    const remaining = Number((total - amount).toFixed(4));
+    const updated = lines.flatMap(line => line.value.lineId === targetLineId
+      ? remaining === 0 ? [] : [{ ...line, value: { ...line.value, debit: supplier ? remaining : 0, credit: supplier ? 0 : remaining } }]
+      : line.value.accountId || line.value.description || line.value.debit || line.value.credit || line.value.existingPosition ? [line] : [])
+      .map(line => line.value.financialGroupId ? line : { ...line, value: { ...line.value, financialGroupId: form.documentId } });
+    updated.push({ ...target, value: { ...target.value, lineId: crypto.randomUUID(), financialGroupId: groupId,
+      debit: supplier ? amount : 0, credit: supplier ? 0 : amount } }, createVoucherPositionLine(position,amount,groupId));
+    setLines(updated); setDefaultFinancialGroupId(form.documentId); setError(null); markChanged();
   }
 
   function copyMainPartyToLines() {
@@ -321,7 +471,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   return <div className="min-w-0 space-y-5">
     {!modal && <header className="flex flex-wrap items-center gap-4 rounded-3xl bg-gradient-to-r from-slate-950 to-teal-800 p-6 text-white">
       <Button variant="secondary" size="icon" aria-label={closeLabel} disabled={busy} onClick={close}><ArrowLeft className="h-4 w-4" /></Button>
-      <div className="flex-1"><h1 className="text-2xl font-bold">{form.adjustment ? "Ajuste de cartera" : "Comprobante manual"}</h1><p className="text-sm text-white/80">{statusLabel} · {supportCancellation ? "Nota de ajuste del documento soporte" : fiscalDocument ? "Documento soporte electrónico" : "Documento interno, sin envío a DIAN"}</p></div>
+      <div className="flex-1"><h1 className="text-2xl font-bold">{form.adjustment ? "Ajuste de cartera" : form.voucherTypeCode === "CashReceipt" ? "Recibo de caja" : "Comprobante manual"}</h1><p className="text-sm text-white/80">{statusLabel} · {supportCancellation ? "Nota de ajuste del documento soporte" : fiscalDocument ? "Documento soporte electrónico" : "Documento interno, sin envío a DIAN"}</p></div>
       {saved && (!saved.adjustment || saved.row.entryId) && permissions.includes("accounting.manual.create") && permissions.includes("accounting.read") &&
         <CloneVoucherButton documentId={saved.documentId} disabled={busy || dirty} onCloned={onCloned} />}
       {postedEntryButton}
@@ -368,29 +518,33 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     </section>}
     <fieldset disabled={busy || readOnly || !!form.adjustment && !obligation.data} className="min-w-0 space-y-5 disabled:opacity-80">
       <section className="grid gap-4 rounded-2xl border bg-card p-5 sm:grid-cols-3">
-        {!form.adjustment && form.payloadVersion === 4 && <div className="space-y-2"><Label>Tipo de comprobante</Label><Select value={form.voucherTypeCode ?? ""} disabled={busy || readOnly} onValueChange={voucherTypeCode => change({ voucherTypeCode })}>
+        {!form.adjustment && form.payloadVersion === 4 && <div className="space-y-2"><Label>Tipo de comprobante</Label><Select value={form.voucherTypeCode ?? ""} disabled={busy || readOnly || !!voucherTypeScope} onValueChange={voucherTypeCode => { change({ voucherTypeCode }); setShowPendingDocuments(false); }}>
           <SelectTrigger aria-label="Tipo de comprobante"><SelectValue /></SelectTrigger><SelectContent>{voucherTypes.data?.map(item => <SelectItem key={item.id} value={item.code}
-            disabled={item.code !== "Accounting" && item.code !== "Disbursement" && item.code !== "SupportDocument" && item.code !== "SupportDocumentCancellation"}>{item.label}</SelectItem>)}</SelectContent></Select>
-          <p className="text-xs text-muted-foreground">Los documentos soporte requieren su captura fiscal.</p></div>}
+            disabled={item.code !== "Accounting" && item.code !== "Disbursement" && item.code !== "CashReceipt" && item.code !== "SupportDocument" && item.code !== "SupportDocumentCancellation"}>{item.label}</SelectItem>)}</SelectContent></Select>
+          {!voucherTypeScope && <p className="text-xs text-muted-foreground">Los documentos soporte requieren su captura fiscal.</p>}</div>}
         {!form.adjustment && form.payloadVersion !== 4 && !readOnly && <div className="sm:col-span-3"><Button variant="outline" onClick={() => change({ payloadVersion: 4, voucherTypeCode: "Accounting" })}>Usar captura financiera</Button><p className="mt-1 text-xs text-muted-foreground">Valida la configuración financiera de los auxiliares antes de contabilizar.</p></div>}
         {!form.adjustment && <div className="min-w-0 space-y-2 sm:col-span-3"><Label>Tercero principal{form.payloadVersion === 4 ? " *" : ""}</Label><div className="flex flex-col gap-2 sm:flex-row sm:items-start"><div className="w-full min-w-0 flex-1"><PartySelect value={form.mainPartyId ?? ""} ariaLabel="Seleccionar tercero principal"
           selectedOption={form.mainPartyId && mainParty.name ? { value: form.mainPartyId, label: mainParty.name, description: mainParty.identification } : null}
           disabled={busy || readOnly} onChange={(id, party) => {
             change({ mainPartyId: id || null });
-            setShowPendingDocuments(false);
+            setShowPendingDocuments(!!id && (form.voucherTypeCode === "CashReceipt" || form.voucherTypeCode === "Disbursement"));
             setMainParty({ name: party?.displayName ?? null, identification: party?.identification ?? null });
             setLines(current => current.map(line => !line.value.accountId && !line.value.partyId && !line.value.description && !line.value.debit && !line.value.credit
               ? { ...line, value: { ...line.value, partyId: id || null }, partyName: party?.displayName ?? null, partyIdentification: party?.identification ?? null } : line));
           }}/></div>{form.payloadVersion === 4 && !fiscalDocument && <Button type="button" variant="outline" className="self-start" disabled={!form.mainPartyId}
             onClick={() => setShowPendingDocuments(current => !current)}>{showPendingDocuments ? "Ocultar documentos" : "Ver documentos"}</Button>}</div>
-          <div className="flex flex-wrap items-center gap-2"><p className="text-xs text-muted-foreground">{form.payloadVersion === 4 ? "Obligatorio para contabilizar. " : ""}Se propone en las nuevas partidas. Cada partida conserva su propio tercero.</p>
+          <div className="flex flex-wrap items-center gap-2"><p className="text-xs text-muted-foreground">{form.payloadVersion === 4 ? "Obligatorio para contabilizar. " : ""}{form.voucherTypeCode === "CashReceipt" ? "Las partidas del recibo deben corresponder al tercero seleccionado." : "Se propone en las nuevas partidas. Cada partida conserva su propio tercero."}</p>
             {!readOnly && !supportCancellation && <Button type="button" size="sm" variant="outline" disabled={!form.mainPartyId || busy} onClick={copyMainPartyToLines}>Copiar tercero a partidas sin vínculo</Button>}</div></div>}
         {!form.adjustment && form.payloadVersion === 4 && !fiscalDocument && form.mainPartyId && showPendingDocuments && !readOnly &&
           <div id="voucher-pending-documents" className="sm:col-span-3"><VoucherPendingDocuments key={form.mainPartyId}
             businessId={businessId} documentId={form.documentId} occurredAt={form.occurredAt}
             voucherTypeCode={form.voucherTypeCode} partyId={form.mainPartyId}
-            remainingLineCapacity={500 - lines.length} linkedPositions={linkedPositions} onAdd={addPositionLines} /></div>}
-        <div className="space-y-2"><Label>Fecha contable</Label><DatePicker value={form.occurredAt.slice(0, 10)} onChange={date => change({ occurredAt: date ? `${date}T12:00:00-05:00` : "" })} /></div>
+            remainingLineCapacity={500 - lines.length} linkedPositions={linkedPositions} crossTargets={crossTargets}
+            onCross={crossCredit} onAdd={addPositionLines} /></div>}
+        <div className="space-y-2"><Label htmlFor="voucher-occurred-at">{form.voucherTypeCode === "CashReceipt" || form.voucherTypeCode === "Disbursement" ? "Fecha de pago" : "Fecha contable"}</Label><DatePicker id="voucher-occurred-at" value={form.occurredAt.slice(0, 10)} onChange={date => {
+          try { change({ occurredAt: date ? accountingDateAtNoon(date, timeZone) : "" }); }
+          catch (value) { setError(value instanceof Error ? value.message : "No se pudo cambiar la fecha del pago."); }
+        }} /></div>
         <div className="space-y-2 sm:col-span-2"><Label htmlFor="voucher-description">Descripción</Label><Input id="voucher-description" maxLength={500} value={form.description} onChange={event => change({ description: event.target.value })} placeholder="Motivo del comprobante" />
           {!form.adjustment && !readOnly && !supportCancellation && <Button type="button" size="sm" variant="outline" disabled={!form.description.trim() || busy} onClick={replicateDescription}>Replicar descripción en todas las partidas</Button>}</div>
         {!form.adjustment && form.payloadVersion === 4 && form.voucherTypeCode === "SupportDocument" && <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
@@ -409,22 +563,59 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
         <div className="space-y-2"><Label>Cuenta de contrapartida</Label><AccountSelect value={form.adjustment.counterpartAccountId ?? ""} onChange={counterpartAccountId => change({ adjustment: { ...form.adjustment!, counterpartAccountId } })} /></div>
         <p className="text-sm text-muted-foreground sm:col-span-3">La obligación elegida se conserva vinculada. Guardar borrador no cambia su saldo; Guardar comprobante valida el saldo disponible y contabiliza.</p>
       </section> : <fieldset disabled={supportCancellation} className="min-w-0 overflow-hidden rounded-2xl border bg-card">
-        <div className="flex items-center justify-between gap-3 border-b p-4"><div><h2 className="font-semibold">Partidas del comprobante</h2><p className="text-sm text-muted-foreground">{supportCancellation ? "Partidas inversas del asiento original. Para cambiar el origen, selecciona otro soporte." : "Edita cada partida en su fila. D = débito, C = crédito. Puedes guardar un comprobante incompleto."}</p></div><Button variant="outline" disabled={lines.length >= 500} onClick={() => { setLines(current => { const line = newLine(); return [...current, {...line,value:{...line.value,partyId:form.mainPartyId??null},partyName:mainParty.name,partyIdentification:mainParty.identification}]; }); markChanged(); }}><Plus className="mr-2 h-4 w-4" />Agregar partida</Button></div>
-        <div className="max-h-[32rem] overflow-auto" onScroll={event => setScrollTop(event.currentTarget.scrollTop)}><table className="w-full min-w-[1200px] table-fixed text-sm"><colgroup><col className="w-9" /><col className="w-[220px]" /><col className="w-[170px]" /><col className="w-[140px]" /><col className="w-[205px]" /><col className="w-[120px]" /><col className="w-[110px]" /><col className="w-[110px]" /><col className="w-[160px]" /></colgroup><thead className="sticky top-0 z-10 bg-muted"><tr><th className="p-2 text-left">D/C</th><th className="p-2 text-left">Cuenta PUC</th><th className="p-2 text-left">Tercero</th><th className="p-2 text-left">Centro de costo</th><th className="p-2 text-left">Descripción u observación</th><th className="p-2 text-right">Base (opcional)</th><th className="p-2 text-right">Débito</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-right">Acciones</th></tr></thead><tbody>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4"><div><h2 className="font-semibold">Partidas del comprobante</h2><p className="text-sm text-muted-foreground">{supportCancellation ? "Partidas inversas del asiento original. Para cambiar el origen, selecciona otro soporte." : "Edita cada partida en su fila. D = débito, C = crédito. Puedes guardar un comprobante incompleto."}</p></div><div className="flex flex-wrap gap-2">
+          {form.payloadVersion === 4 && !fiscalDocument && <Button variant="outline" disabled={!form.mainPartyId || lines.length >= 500} onClick={addPaymentForm}>Agregar forma de pago</Button>}
+          <Button variant="outline" disabled={lines.length >= 500} onClick={() => { setLines(current => { const line = newLine(); return [...current, {...line,value:{...line.value,partyId:form.mainPartyId??null,financialGroupId:defaultFinancialGroupId},partyName:mainParty.name,partyIdentification:mainParty.identification}]; }); markChanged(); }}><Plus className="mr-2 h-4 w-4" />Agregar partida</Button></div></div>
+        {form.payloadVersion===4&&!fiscalDocument&&!readOnly&&<section aria-label="Agregar concepto financiero" className="grid gap-3 border-b p-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
+          <div className="space-y-1"><Label>Concepto</Label><FinancialConceptSelect value={chosenConcept?.financialConceptId??""}
+            usage={form.voucherTypeCode==="CashReceipt"?"Receipts":form.voucherTypeCode==="Disbursement"?"SupplierPayments":"Vouchers"}
+            selectedOption={chosenConcept?{value:chosenConcept.financialConceptId,label:`${chosenConcept.code} · ${chosenConcept.name}`,description:`${chosenConcept.accountCode} · ${chosenConcept.accountName} · ${chosenConcept.sideLabel}`}:null}
+            disabled={busy||!form.mainPartyId} onChange={concept=>{setChosenConcept(concept);setConceptTargetLineId(null);}}/></div>
+          <div className="space-y-1"><Label>Valor</Label><FormattedNumberInput kind="currency" ariaLabel="Valor del concepto financiero" value={conceptAmount??""} onValueChange={setConceptAmount}/></div>
+          <Button className="self-end" variant="outline" disabled={busy||!chosenConcept||!conceptAmount||!form.mainPartyId||lines.length>=500} onClick={addFinancialConcept}>Agregar concepto</Button>
+          {chosenConcept&&<p className="text-xs text-muted-foreground sm:col-span-3">Cuenta: {chosenConcept.accountCode} · {chosenConcept.accountName} · {chosenConcept.sideLabel}</p>}
+          {chosenConcept?.financialFunction==="General"&&(requiresConceptTarget||chosenTargets.length>0)&&<div className="space-y-1 sm:col-span-3">
+            <Label>Documento que ajusta el concepto</Label><Select value={conceptTargetLineId??"none"} disabled={busy} onValueChange={value=>setConceptTargetLineId(value==="none"?null:value)}>
+              <SelectTrigger aria-label="Documento que ajusta el concepto"><SelectValue/></SelectTrigger><SelectContent>
+                <SelectItem value="none">Sin documento vinculado</SelectItem>{chosenTargets.map(line=><SelectItem key={line.value.lineId} value={line.value.lineId!}>{targetLabel(line)}</SelectItem>)}
+              </SelectContent></Select><p className="text-xs text-muted-foreground">Elige la partida que reduce el concepto. No se distribuye ni se convierte una diferencia en anticipo automáticamente.</p>
+          </div>}
+        </section>}
+        {!!saved?.appliedPaymentMethods?.length && <section aria-label="Formas de pago utilizadas" className="space-y-1 border-b p-4 text-sm">
+          <p className="font-medium">Formas y cuentas utilizadas al contabilizar</p>
+          {saved.appliedPaymentMethods.map(method => <p key={method.sourceLineId}>{method.name} · {method.accountCode} · {method.accountName}</p>)}
+        </section>}
+        {removableCrossings.length > 0 && <section aria-label="Cruces de saldos a favor" className="space-y-2 border-b p-4 text-sm">
+          <p className="font-medium">Cruces agregados · sin entrada ni salida de dinero</p>
+          {removableCrossings.map(line => <div key={line.value.lineId} className="flex flex-wrap items-center justify-between gap-2">
+            <span>{line.value.reference ?? line.value.description} · {money.format(line.value.debit + line.value.credit)} → {groupedLines.get(line.value.financialGroupId!)!
+              .filter(item => item.value.existingPosition?.subledgerKind === "Receivable" || item.value.existingPosition?.subledgerKind === "Payable")
+              .map(item => item.value.reference ?? item.value.description).join(", ")}</span>
+            <Button variant="outline" size="sm" onClick={() => {
+              const remaining = lines.filter(item => item.value.financialGroupId !== line.value.financialGroupId);
+              setLines(remaining); markChanged(new Set(remaining.map(item => item.value.lineId!)));
+            }}>Retirar cruce {line.value.reference}</Button>
+          </div>)}
+          <p className="text-xs text-muted-foreground">Retirar el cruce deja esa parte de la factura pendiente. El dinero capturado conserva su importe.</p>
+        </section>}
+        <div className="max-h-[32rem] overflow-auto" onScroll={event => setScrollTop(event.currentTarget.scrollTop)}><table className="w-full min-w-[1420px] table-fixed text-sm"><colgroup><col className="w-9" /><col className="w-[220px]" /><col className="w-[170px]" /><col className="w-[140px]" /><col className="w-[205px]" /><col className="w-[160px]" /><col className="w-[160px]" /><col className="w-[160px]" /><col className="w-[160px]" /></colgroup><thead className="sticky top-0 z-10 bg-muted"><tr><th className="p-2 text-left">D/C</th><th className="p-2 text-left">Cuenta PUC</th><th className="p-2 text-left">Tercero</th><th className="p-2 text-left">Centro de costo</th><th className="p-2 text-left">Descripción u observación</th><th className="p-2 text-right">Base (opcional)</th><th className="p-2 text-right">Débito</th><th className="p-2 text-right">Crédito</th><th className="p-2 text-right">Acciones</th></tr></thead><tbody>
           {start > 0 && <tr aria-hidden><td colSpan={9} style={{ height: start * rowHeight }} /></tr>}
           {lines.slice(start, end).map((item, offset) => {
             const index = start + offset;
             const kind = item.value.debit > 0 && item.value.credit > 0 ? "D/C" : item.value.debit > 0 ? "D" : item.value.credit > 0 ? "C" : "—";
-            return <tr key={item.value.lineId ?? index} aria-label={`Partida ${index + 1}`} title={item.validationError ?? undefined} className={`h-[56px] border-t align-middle hover:bg-muted/30 ${item.validationError ? "bg-amber-100" : ""}`}>
+            return <tr key={item.value.lineId ?? index} aria-label={`Partida ${index + 1}`} title={item.validationError ?? undefined} style={{ height: rowHeight }} className={`border-t align-middle hover:bg-muted/30 ${item.validationError ? "bg-amber-100" : ""}`}>
               <td className="px-2 text-center"><span title={kind === "D" ? "Débito" : kind === "C" ? "Crédito" : undefined} className="inline-flex min-w-7 justify-center rounded-md bg-muted px-1 py-1 font-bold">{kind}</span></td>
-              <td className="p-1"><AccountSelect value={item.value.accountId ?? ""} resolveMissing={false} disabled={!!item.value.existingPosition} accounts={item.value.accountId && item.accountCode ? [{ accountId: item.value.accountId, code: item.accountCode, name: item.accountName ?? "" }] : []} onChange={(accountId, account) => updateLine(index, { value: { ...item.value, accountId }, accountCode: account?.code ?? null, accountName: account?.name ?? null })} /></td>
+              <td className="p-1">{appliedPayments.has(item.value.lineId!) ? <p title={`Cuenta utilizada al contabilizar: ${appliedPayments.get(item.value.lineId!)!.accountCode} · ${appliedPayments.get(item.value.lineId!)!.accountName}`} className="truncate px-2 text-xs">{appliedPayments.get(item.value.lineId!)!.accountCode} · {appliedPayments.get(item.value.lineId!)!.accountName}</p> : <AccountSelect value={item.value.accountId ?? ""} resolveMissing={false} disabled={!!item.value.existingPosition || !!item.value.paymentEvidence?.paymentMethodId || !!item.value.financialConceptId} accounts={item.value.accountId && item.accountCode ? [{ accountId: item.value.accountId, code: item.accountCode, name: item.accountName ?? "" }] : []} onChange={(accountId, account) => updateLine(index, { value: { ...item.value, accountId }, accountCode: account?.code ?? null, accountName: account?.name ?? null })} />}
+                {item.value.paymentEvidence?.paymentMethodName && <p title={appliedPayments.get(item.value.lineId!)?.name ?? item.value.paymentEvidence.paymentMethodName} className="truncate px-2 text-xs text-muted-foreground">{appliedPayments.get(item.value.lineId!)?.name ?? item.value.paymentEvidence.paymentMethodName}</p>}
+                {item.value.financialConceptId&&<p title={`${item.financialConceptCode} · ${item.financialConceptName}`} className="truncate px-2 text-xs text-muted-foreground">{item.financialConceptCode} · {item.financialConceptName}</p>}
+              </td>
               <td className="p-1"><PartySelect value={item.value.partyId ?? ""} disabled={!!item.value.existingPosition} selectedOption={item.value.partyId && item.partyName ? { value: item.value.partyId, label: item.partyName, description: item.partyIdentification ?? undefined } : null} onChange={(partyId, party) => updateLine(index, { value: { ...item.value, partyId: partyId || null }, partyName: party?.displayName ?? null, partyIdentification: party?.identification ?? null })} /></td>
-              <td className="p-1"><Select value={item.value.costCenterId ?? "auto"} disabled={busy || readOnly} onValueChange={value => updateValue(index, { costCenterId: value === "auto" ? null : value })}><SelectTrigger aria-label={`Centro de costo de la partida ${index + 1}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">Automático</SelectItem>{centers.data?.filter(center => center.isActive).map(center => <SelectItem key={center.costCenterId} value={center.costCenterId}>{center.code} · {center.name}</SelectItem>)}</SelectContent></Select></td>
+              <td className="p-1"><CostCenterSelect value={item.value.costCenterId} onChange={value=>updateValue(index,{costCenterId:value})} selected={item.value.costCenterId?centers.data?.get(item.value.costCenterId):undefined} selectedName={item.costCenterName} disabled={busy||readOnly} ariaLabel={`Centro de costo de la partida ${index+1}`}/></td>
               <td className="p-1"><Input required maxLength={500} aria-label="Descripción de la partida" placeholder="Descripción u observación" value={item.value.description} onChange={event => updateValue(index, { description: event.target.value })} className="h-9" /></td>
               <td className="p-1"><FormattedNumberInput kind="currency" allowNegative ariaLabel="Base de la partida" placeholder="Sin registrar" className="text-right tabular-nums" value={item.value.baseAmount ?? ""} onValueChange={baseAmount => updateValue(index, { baseAmount })} /></td>
-              <td className="p-1"><FormattedNumberInput kind="currency" ariaLabel="Débito de la partida" className="text-right tabular-nums" value={item.value.debit} onValueChange={debit => updateValue(index, { debit: debit ?? 0 })} /></td>
-              <td className="p-1"><FormattedNumberInput kind="currency" ariaLabel="Crédito de la partida" className="text-right tabular-nums" value={item.value.credit} onValueChange={credit => updateValue(index, { credit: credit ?? 0 })} /></td>
-              <td className="p-1 text-right">{form.payloadVersion === 4 && <Button variant="ghost" size="icon" title="Detalles de la partida" aria-label={`Detalles de la partida ${index + 1}`} onClick={() => setDetailLineId(item.value.lineId!)}><FileText className="h-4 w-4" /></Button>}<Button variant="ghost" size="icon" title="Intercambiar débito y crédito" aria-label={`Intercambiar débito y crédito de la partida ${index + 1}`} onClick={() => updateValue(index, {debit:item.value.credit,credit:item.value.debit})}><ArrowLeftRight className="h-4 w-4" /></Button><Button variant="ghost" size="icon" title="Duplicar partida" aria-label={`Duplicar partida ${index + 1}`} disabled={lines.length >= 500} onClick={() => { setLines(current => [...current.slice(0, index + 1), { ...item, value: { ...item.value, lineId: crypto.randomUUID() } }, ...current.slice(index + 1)]); markChanged(); }}><Copy className="h-4 w-4" /></Button><Button variant="ghost" size="icon" title="Eliminar partida" aria-label={`Eliminar partida ${index + 1}`} onClick={() => { setLines(current => current.filter((_, position) => position !== index)); markChanged(new Set(lines.filter((_, position) => position !== index).map(line => line.value.lineId!))); }}><Trash2 className="h-4 w-4" /></Button></td>
+              <td className="p-1"><FormattedNumberInput kind="currency" ariaLabel="Débito de la partida" disabled={!!item.value.financialConceptId&&item.financialConceptSideCode!=="Debit"} className="text-right tabular-nums" value={item.value.debit} onValueChange={debit => updateValue(index, { debit: debit ?? 0 })} /></td>
+              <td className="p-1"><FormattedNumberInput kind="currency" ariaLabel="Crédito de la partida" disabled={!!item.value.financialConceptId&&item.financialConceptSideCode!=="Credit"} className="text-right tabular-nums" value={item.value.credit} onValueChange={credit => updateValue(index, { credit: credit ?? 0 })} /></td>
+              <td className="p-1 text-right">{form.payloadVersion === 4 && <Button variant="ghost" size="icon" title="Detalles de la partida" aria-label={`Detalles de la partida ${index + 1}`} onClick={() => setDetailLineId(item.value.lineId!)}><FileText className="h-4 w-4" /></Button>}<Button variant="ghost" size="icon" title="Intercambiar débito y crédito" disabled={!!item.value.financialConceptId} aria-label={`Intercambiar débito y crédito de la partida ${index + 1}`} onClick={() => updateValue(index, {debit:item.value.credit,credit:item.value.debit})}><ArrowLeftRight className="h-4 w-4" /></Button><Button variant="ghost" size="icon" title="Duplicar partida" aria-label={`Duplicar partida ${index + 1}`} disabled={lines.length >= 500} onClick={() => { setLines(current => [...current.slice(0, index + 1), { ...item, value: { ...item.value, lineId: crypto.randomUUID() } }, ...current.slice(index + 1)]); markChanged(); }}><Copy className="h-4 w-4" /></Button><Button variant="ghost" size="icon" title="Eliminar partida" aria-label={`Eliminar partida ${index + 1}`} disabled={lines.some(line=>line.value.financialConceptTargetLineId===item.value.lineId)} onClick={() => { setLines(current => current.filter((_, position) => position !== index)); markChanged(new Set(lines.filter((_, position) => position !== index).map(line => line.value.lineId!))); }}><Trash2 className="h-4 w-4" /></Button></td>
             </tr>;
           })}
           {end < lines.length && <tr aria-hidden><td colSpan={9} style={{ height: (lines.length - end) * rowHeight }} /></tr>}
@@ -458,21 +649,60 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       }} onClose={() => setPositionOpen(false)} />}
     {detailLine && <Dialog open onOpenChange={open => { if (!open) setDetailLineId(null); }}><DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
       <DialogHeader><DialogTitle>Detalles de la partida {detailIndex + 1}</DialogTitle><DialogDescription>{detailLine.accountCode} · {detailLine.accountName}. La cuenta y sus vínculos determinan el efecto; el motor lo valida al contabilizar.</DialogDescription></DialogHeader>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {franchises.isError && <p role="alert" className="text-sm text-destructive">No se pudieron cargar las franquicias. <Button variant="link" onClick={() => void franchises.refetch()}>Reintentar franquicias</Button></p>}
       <fieldset disabled={busy || readOnly} className="grid gap-4 sm:grid-cols-2">
+        {detailLine.value.financialConceptId&&<div className="space-y-2 sm:col-span-2"><Label>Concepto de la partida</Label><FinancialConceptSelect
+          value={detailLine.value.financialConceptId} allowClear={false} disabled={busy||readOnly}
+          usage={form.voucherTypeCode==="CashReceipt"?"Receipts":form.voucherTypeCode==="Disbursement"?"SupplierPayments":"Vouchers"}
+          selectedOption={{value:detailLine.value.financialConceptId,label:`${detailLine.financialConceptCode} · ${detailLine.financialConceptName}`}}
+          onChange={selectLineConcept}/></div>}
+        {detailLine.value.financialConceptId&&detailLine.value.financialConceptTargetLineId&&<div className="space-y-2 sm:col-span-2">
+          <Label>Documento ajustado</Label><Select value={detailLine.value.financialConceptTargetLineId??"none"} disabled={busy||readOnly} onValueChange={value=>{
+            if(value==="none"){updateValue(detailIndex,{financialConceptTargetLineId:null});return;}
+            const target=compatibleTargets(detailLine.financialConceptSideCode).find(line=>line.value.lineId===value);
+            if(!target)return;const groupId=target.value.financialGroupId??defaultFinancialGroupId??form.documentId;
+            setLines(current=>current.map(line=>line.value.lineId===value?{...line,value:{...line.value,financialGroupId:groupId}}:
+              line.value.lineId===detailLineId?{...line,value:{...line.value,financialConceptTargetLineId:value,financialGroupId:groupId}}:line));markChanged();
+          }}><SelectTrigger aria-label="Documento ajustado"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="none">Sin documento vinculado</SelectItem>
+            {compatibleTargets(detailLine.financialConceptSideCode).map(line=><SelectItem key={line.value.lineId} value={line.value.lineId!}>{targetLabel(line)}</SelectItem>)}
+          </SelectContent></Select>
+        </div>}
+        {!detailLine.value.existingPosition && !detailLine.value.financialConceptId && !readOnly && form.payloadVersion === 4 && !fiscalDocument && <div className="space-y-2 sm:col-span-2"><Label>Forma de pago</Label>
+          <PagedEntitySelect<PaymentMethod> value={detailLine.value.paymentEvidence?.paymentMethodId ?? ""}
+            queryKey={["voucher-payment-methods", tenantId, businessId, paymentUsage]} disabled={busy}
+            ariaLabel="Forma de pago de la partida" placeholder="Selecciona una forma configurada" searchPlaceholder="Buscar código o nombre…"
+            emptyMessage="No hay formas habilitadas para esta entrada o salida. Revisa el catálogo de formas de pago."
+            selectedOption={detailLine.value.paymentEvidence?.paymentMethodId ? { value: detailLine.value.paymentEvidence.paymentMethodId,
+              label: detailLine.value.paymentEvidence.paymentMethodName ?? "", description: `${detailLine.accountCode} · ${detailLine.accountName}` } : null}
+            loadPage={async (search, page, pageSize) => { const result = await paymentMethodsApi.list({ search, page, pageSize, usage: paymentUsage });
+              return { ...result, totalPages: Math.ceil(result.totalCount / result.pageSize) }; }}
+            getOption={method => ({ value: method.paymentMethodId, label: method.name, description: `${method.code} · ${method.accountCode} · ${method.accountName}` })}
+            onChange={(_id, _option, method) => { if (method) selectPaymentForm(method); }} />
+          {detailLine.value.paymentEvidence?.paymentMethodId && <>
+            <p className="text-sm">Cuenta: {detailLine.accountCode} · {detailLine.accountName}</p>
+            <FormattedNumberInput kind="currency" ariaLabel={paymentOutgoing ? "Valor pagado por la forma" : "Valor recibido por la forma"}
+              value={paymentOutgoing ? detailLine.value.credit : detailLine.value.debit}
+              onValueChange={amount => updateValue(detailIndex, paymentOutgoing ? { credit: amount ?? 0, debit: 0 } : { debit: amount ?? 0, credit: 0 })} />
+            <Button variant="link" onClick={() => updateEvidence({ paymentMethodId: null, paymentMethodTypeCode: null, paymentMethodVersion: null, paymentMethodCode: null, paymentMethodName: null })}>Quitar forma seleccionada</Button>
+          </>}
+        </div>}
         {form.voucherTypeCode === "SupportDocument" && detailLine.value.partyId && <div className="space-y-2 sm:col-span-2"><Label>Sede del proveedor de la partida</Label>
           <SupplierSiteSelect value={detailLine.value.partySiteId ?? ""} partyId={detailLine.value.partyId} disabled={busy || readOnly}
             onChange={partySiteId => updateValue(detailIndex, { partySiteId: partySiteId || null })} />
           <p className="text-xs text-muted-foreground">Sin selección explícita se usa la sede predeterminada. La sede de la obligación se conserva en el soporte fiscal.</p>
         </div>}
         <div className="space-y-2"><Label htmlFor="line-document-reference">Referencia del documento</Label><Input id="line-document-reference" maxLength={100} value={detailLine.value.reference ?? ""} onChange={event => updateValue(detailIndex, { reference: event.target.value || null })} /></div>
-        <div className="space-y-2"><Label>Vencimiento de nueva obligación</Label><DatePicker value={detailLine.value.dueDate?.slice(0, 10) ?? ""} onChange={date => updateValue(detailIndex, { dueDate: date ? `${date}T12:00:00-05:00` : null })} /><p className="text-xs text-muted-foreground">Solo al abrir una cuenta por pagar o cobrar. Un anticipo no lleva vencimiento.</p></div>
-        <div className="space-y-2 sm:col-span-2"><Label>Grupo de partidas vinculadas</Label><Select value={detailLine.value.financialGroupId ?? "auto"} disabled={busy || readOnly} onValueChange={value => updateValue(detailIndex, { financialGroupId: value === "auto" ? null : value === "new" ? crypto.randomUUID() : value })}>
+        <div className="space-y-2"><Label htmlFor="voucher-due-date">Vencimiento de nueva obligación</Label><DatePicker id="voucher-due-date" value={detailLine.value.dueDate?.slice(0, 10) ?? ""} onChange={date => {
+          try { updateValue(detailIndex, { dueDate: date ? accountingDateAtNoon(date, timeZone) : null }); }
+          catch (value) { setError(value instanceof Error ? value.message : "No se pudo cambiar el vencimiento."); }
+        }} /><p className="text-xs text-muted-foreground">Solo al abrir una cuenta por pagar o cobrar. Un anticipo no lleva vencimiento.</p></div>
+        <div className="space-y-2 sm:col-span-2"><Label>Grupo de partidas vinculadas</Label><Select value={detailLine.value.financialGroupId ?? "auto"} disabled={busy || readOnly || !!detailLine.value.financialConceptTargetLineId || lines.some(line=>line.value.financialConceptTargetLineId===detailLineId)} onValueChange={value => updateValue(detailIndex, { financialGroupId: value === "auto" ? null : value === "new" ? crypto.randomUUID() : value })}>
           <SelectTrigger aria-label="Grupo de la partida"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">Automático para un solo tercero</SelectItem>{financialGroups.map((id, index) => <SelectItem key={id} value={id}>Grupo {index + 1}</SelectItem>)}<SelectItem value="new">Crear otro grupo</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Para varios pagos o cruces, asigna el mismo grupo a sus obligaciones y contrapartidas.</p></div>
-        {detailLine.value.existingPosition && <div className="rounded-xl border p-3 text-sm sm:col-span-2"><p>Documento vinculado: {detailLine.value.reference ?? detailLine.value.existingPosition.subledgerId}</p><Button variant="link" onClick={() => updateValue(detailIndex, { existingPosition: null })}>Quitar vínculo con el documento</Button></div>}
+        {detailLine.value.existingPosition && <div className="rounded-xl border p-3 text-sm sm:col-span-2"><p>Documento vinculado: {detailLine.value.reference ?? detailLine.value.existingPosition.subledgerId}</p><Button variant="link" disabled={lines.some(line=>line.value.financialConceptTargetLineId===detailLineId)} onClick={() => updateValue(detailIndex, { existingPosition: null })}>Quitar vínculo con el documento</Button></div>}
         <div className="space-y-2"><Label htmlFor="line-payment-approval">Autorización del pago</Label><Input id="line-payment-approval" maxLength={100} value={detailLine.value.paymentEvidence?.approvalNumber ?? ""} onChange={event => updateEvidence({ approvalNumber: event.target.value || null })} /></div>
         <div className="space-y-2"><Label>Franquicia de tarjeta</Label><Select value={detailLine.value.paymentEvidence?.cardFranchiseCode ?? "none"} disabled={busy || readOnly} onValueChange={value => updateEvidence({ cardFranchiseCode: value === "none" ? null : value })}><SelectTrigger aria-label="Franquicia del pago"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Sin tarjeta</SelectItem>{franchises.data?.map(item => <SelectItem key={item.id} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></div>
-        <div className="space-y-2"><Label>Efectivo entregado</Label><FormattedNumberInput kind="currency" ariaLabel="Efectivo entregado en la partida" value={detailLine.value.paymentEvidence?.tenderedAmount ?? ""} onValueChange={tenderedAmount => updateEvidence({ tenderedAmount })} /></div>
+        {form.voucherTypeCode !== "CashReceipt" && form.voucherTypeCode !== "Disbursement" && <div className="space-y-2"><Label>Efectivo entregado</Label><FormattedNumberInput kind="currency" ariaLabel="Efectivo entregado en la partida" value={detailLine.value.paymentEvidence?.tenderedAmount ?? ""} onValueChange={tenderedAmount => updateEvidence({ tenderedAmount })} /></div>}
         <div className="space-y-2"><Label htmlFor="line-payment-notes">Observación del pago</Label><Input id="line-payment-notes" maxLength={500} value={detailLine.value.paymentEvidence?.notes ?? ""} onChange={event => updateEvidence({ notes: event.target.value || null })} /></div>
         <p className="text-xs text-muted-foreground sm:col-span-2">La evidencia de pago corresponde únicamente a la partida de caja, banco o tarjeta. El banco y el medio se obtienen de la configuración del auxiliar.</p>
       </fieldset>

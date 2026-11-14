@@ -94,35 +94,54 @@ public sealed class GoodsReceiptService(
         PreviewGoodsReceiptCostWithholdingRequest request,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var previews = await PreviewCostWithholdingsAsync(user,
+            new(request.BusinessId, [request.Document]), cancellationToken);
+        return previews[0].Calculation;
+    }
+
+    public async Task<IReadOnlyList<GoodsReceiptCostWithholdingPreview>> PreviewCostWithholdingsAsync(
+        PurchasingUserIdentity user,
+        PreviewGoodsReceiptCostWithholdingsRequest request,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(request);
         if (user.BusinessId != request.BusinessId)
             throw new PurchasingForbiddenException("El documento de costo pertenece a otra sede.");
         Require(user, PurchasingPermissionCodes.CreateGoodsReceipts);
-        var document = request.Document ?? throw new PurchasingValidationException("Selecciona un documento de costo.");
+        if (request.Documents is null || request.Documents.Count < 1 ||
+            request.Documents.Any(document => document is null) ||
+            request.Documents.Select(document => document.CostDocumentId).Distinct().Count() != request.Documents.Count)
+            throw new PurchasingValidationException("Consulta documentos de costo distintos por solicitud.");
+        foreach (var document in request.Documents)
+            ValidateCostWithholdingInput(user, document);
+        var plan = await withholdingService.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId,
+            request.Documents.Select(document => document.SupplierId).Distinct().ToArray(), cancellationToken,
+            request.Documents.SelectMany(document => ManualAccountIds(document.WithholdingAdjustments)).Distinct().ToArray());
+        return request.Documents.Select(document => new GoodsReceiptCostWithholdingPreview(document.CostDocumentId,
+            CalculateWithholding(plan, user, document.SupplierId, document.WithholdingConceptCode,
+                document.WithholdingJurisdictionCode,
+                FunctionalCalculation(
+                    decimal.Round(document.Lines.Sum(line => line.Amount) * document.ExchangeRate, 4, MidpointRounding.AwayFromZero),
+                    decimal.Round(document.Lines.Sum(line => line.TaxAmount) * document.ExchangeRate, 4, MidpointRounding.AwayFromZero)),
+                document.IssuedAt, document.WithholdingAdjustments))).ToArray();
+    }
+
+    private static void ValidateCostWithholdingInput(PurchasingUserIdentity user, GoodsReceiptCostDocumentRequest document)
+    {
         RequireWithholdingAdjustmentPermission(user, document.WithholdingAdjustments);
         if (document.SupplierId == Guid.Empty || document.IssuedAt == default ||
             document.ExchangeRate <= 0 || document.Lines is null || document.Lines.Count == 0)
             throw new PurchasingValidationException("Completa proveedor, emisión, tasa de cambio y conceptos.");
         if (!PurchaseEvidenceTypes.IsValid(document.PurchaseEvidenceType))
             throw new PurchasingValidationException("El tipo de soporte del costo es inválido.");
-        if (document.Lines.Any(line => line.Amount < 0 || line.TaxAmount < 0 ||
+        if (document.Lines.Any(line => line is null || line.Amount < 0 || line.TaxAmount < 0 ||
             line.TaxableBaseAmount < 0 || line.TaxRate is < 0 or > 100))
             throw new PurchasingValidationException("El documento de costo contiene valores inválidos.");
         if (document.PurchaseEvidenceType == PurchaseEvidenceTypes.ForeignCommercialInvoice &&
             document.Lines.Any(line => line.TaxAmount != 0))
             throw new PurchasingValidationException("Una factura del exterior no puede registrar IVA colombiano descontable.");
-        var calculation = FunctionalCalculation(
-            decimal.Round(document.Lines.Sum(line => line.Amount) * document.ExchangeRate, 4,
-                MidpointRounding.AwayFromZero),
-            decimal.Round(document.Lines.Sum(line => line.TaxAmount) * document.ExchangeRate, 4,
-                MidpointRounding.AwayFromZero));
-        var plan = await withholdingService.PrepareCalculationPlanAsync(user.TenantId, user.BusinessId,
-            [document.SupplierId], cancellationToken, ManualAccountIds(document.WithholdingAdjustments));
-        return CalculateWithholding(plan,
-            user, document.SupplierId, document.WithholdingConceptCode,
-            document.WithholdingJurisdictionCode, calculation,
-            document.IssuedAt, document.WithholdingAdjustments);
     }
 
     public async Task<GoodsReceiptAcceptance> ConfirmAsync(

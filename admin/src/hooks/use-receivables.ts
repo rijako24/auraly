@@ -6,6 +6,7 @@ import {
   type ReceivableStatus,
 } from "@/services/api/receivables";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useBusinessDates } from "@/hooks/use-business-dates";
 
 export function useReceivables(params: {
   page: number;
@@ -22,8 +23,9 @@ export function useReceivables(params: {
   sortDirection?: "asc" | "desc";
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const { timeZone } = useBusinessDates(businessId);
   return useQuery({
-    queryKey: ["receivables", businessId, params],
+    queryKey: ["receivables", businessId, params, timeZone],
     queryFn: () => receivablesApi.list(params),
     enabled: !!businessId && params.enabled !== false,
     staleTime: 0,

@@ -41,7 +41,6 @@ const tolerance = 0.005;
 
 export function paymentTotalForCollection(
   documentTotal: number,
-  _payments: readonly Pick<PosPaymentInput, "methodCode">[] = [],
 ) {
   return roundToNearestHundred(documentTotal);
 }
@@ -58,11 +57,16 @@ export function splitCreditCheckout(
   if (creditRows.length === 0) return { payments, credit: null };
   if (creditRows.length > 1) throw new Error("La venta admite una sola línea de crédito.");
   const creditRow = creditRows[0];
+  const hasFormEvidence = creditRow.paymentMethodId !== undefined || creditRow.paymentMethodVersion !== undefined ||
+    creditRow.paymentMethodCode !== undefined || creditRow.paymentMethodName !== undefined || creditRow.accountId !== undefined;
   if (!customer)
     throw new Error("Debe seleccionar un cliente para vender a crédito.");
   return {
     payments: payments.filter((payment) => payment.methodCode !== "Credit"),
-    credit: { amount: creditRow.amount },
+    credit: { amount: creditRow.amount, ...(hasFormEvidence ? {
+      paymentMethodId: creditRow.paymentMethodId, paymentMethodVersion: creditRow.paymentMethodVersion,
+      paymentMethodCode: creditRow.paymentMethodCode, paymentMethodName: creditRow.paymentMethodName, accountId: creditRow.accountId,
+    } : {}) },
   };
 }
 
@@ -78,8 +82,13 @@ export function calculatePaymentSettlement(
   total: number,
   payments: PosPaymentInput[],
   roundCollection = true,
+  options: { allowChange?: boolean; precision?: 2 | 4 } = {},
 ): PosPaymentSettlement {
-  const paymentTotal = roundCollection ? paymentTotalForCollection(total, payments) : total;
+  const amountScale = 10 ** (options.precision ?? 2);
+  const round = (value: number) => Math.round(value * amountScale) / amountScale;
+  const tolerance = 0.5 / amountScale;
+  const allowChange = options.allowChange ?? true;
+  const paymentTotal = roundCollection ? paymentTotalForCollection(total) : total;
   const validAmounts =
     payments.length > 0 &&
     payments.every(
@@ -98,12 +107,13 @@ export function calculatePaymentSettlement(
   const cashApplied = round(Math.min(cashTendered, Math.max(0, paymentTotal - nonCashTotal)));
   const change = round(Math.max(0, cashTendered - cashApplied));
   const hasNonCashExcess = nonCashTotal - paymentTotal > tolerance;
-  const hasDuplicateCash = cashPayments.length > 1;
+  const hasDuplicateCash = new Set(cashPayments.map(payment=>payment.paymentMethodId ?? "Cash")).size !== cashPayments.length;
   const isValid =
     validAmounts &&
     missing < tolerance &&
     !hasNonCashExcess &&
-    !hasDuplicateCash;
+    !hasDuplicateCash &&
+    (allowChange || received - paymentTotal <= tolerance);
 
   let remainingCash = cashApplied;
   const collectedPayments = payments

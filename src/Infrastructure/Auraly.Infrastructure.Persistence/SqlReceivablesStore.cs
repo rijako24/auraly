@@ -1,3 +1,5 @@
+using Auraly.BuildingBlocks.Domain.Time;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Commerce.Accounting.Infrastructure;
 using System.Data;
 using System.Security.Cryptography;
@@ -31,6 +33,10 @@ public sealed partial class SqlReceivablesStore(
                 ["outstandingAmount"] = "OutstandingAmount", ["overdueAmount"] = "OverdueAmount"
             }, "name", "asc", "PartySiteName", "PartySiteId", "CustomerId");
         await using var connection=connections.Create(); await connection.OpenAsync(token);
+        var zone=await SqlBusinessLocalDates.ReadTimeZoneAsync(connection,user.TenantId,user.BusinessId,token)
+            ?? throw new ReceivablesForbiddenException("La sede no está disponible para consultar cartera.");
+        var referenceDate=BusinessCalendar.DateAt(timeProvider.GetUtcNow(),zone);
+        var referenceStart=SqlBusinessLocalDates.StartOfDay(referenceDate,zone);
         await using var command=new SqlCommand($"""
             WITH Paid AS(
               SELECT application.PositionId ReceivableId,SUM(application.Amount) PaidAmount
@@ -79,8 +85,8 @@ public sealed partial class SqlReceivablesStore(
         command.Parameters.AddWithValue("@CustomerId",(object?)query.CustomerId??DBNull.Value);
         command.Parameters.AddWithValue("@PartySiteId",(object?)query.PartySiteId??DBNull.Value);
         command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
-        AddDateRange(command,query.From,query.To);
-        command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
+        SqlBusinessLocalDates.BindDateRange(command,query.From,query.To,zone,query.DateRangeVersion);
+        command.Parameters.AddWithValue("@Now",referenceStart);command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);command.Parameters.AddWithValue("@PageSize",query.PageSize);
         await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);
         var count=reader.GetInt32(0);var outstanding=reader.GetDecimal(1);var overdue=reader.GetDecimal(2);var invoices=reader.GetInt32(3);
         var original=reader.GetDecimal(4);var paid=reader.GetDecimal(5);
@@ -106,8 +112,13 @@ public sealed partial class SqlReceivablesStore(
             "default", "asc", "page.ReceivableId");
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
+        var zone=await SqlBusinessLocalDates.ReadTimeZoneAsync(connection,user.TenantId,user.BusinessId,token)
+            ?? throw new ReceivablesForbiddenException("La sede no está disponible para consultar cartera.");
+        var referenceDate=BusinessCalendar.DateAt(timeProvider.GetUtcNow(),zone);
+        var referenceStart=SqlBusinessLocalDates.StartOfDay(referenceDate,zone);
         const string where = """
             r.BusinessId=@BusinessId AND b.TenantId=@TenantId
+            AND (@ReceivableId IS NULL OR r.ReceivableId=@ReceivableId)
             AND (@CustomerId IS NULL OR r.CustomerId=@CustomerId)
             AND (@PartySiteId IS NULL OR r.PartySiteId=@PartySiteId)
             AND (@Status IS NULL OR r.Status=@Status)
@@ -144,7 +155,7 @@ public sealed partial class SqlReceivablesStore(
             FROM #FilteredReceivables r LEFT JOIN Paid paid ON paid.ReceivableId=r.ReceivableId;
             """, connection))
         {
-            AddQuery(command, user, query, timeProvider.GetUtcNow());
+            AddQuery(command, user, query, referenceStart, zone);
             await using var reader = await command.ExecuteReaderAsync(token);
             await reader.ReadAsync(token); count=reader.GetInt32(0); outstanding=reader.GetDecimal(1); overdue=reader.GetDecimal(2);
             original=reader.GetDecimal(3); paidTotal=reader.GetDecimal(4);
@@ -154,7 +165,7 @@ public sealed partial class SqlReceivablesStore(
             SELECT r.ReceivableId,r.CustomerId,COALESCE(p.DisplayName,p.LegalName,p.Identification) CustomerName,
                    r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,r.OutstandingAmount,r.DueDate,
                    r.Status,r.CreatedAt,CAST(CASE WHEN r.OutstandingAmount>0 AND r.DueDate<@Now THEN 1 ELSE 0 END AS bit) IsOverdue,
-                   r.PartySiteId,site.Name PartySiteName,r.PartyId
+                   r.PartySiteId,site.Name PartySiteName,r.PartyId,r.SourceDocumentId,r.SourceDocumentType
             INTO #Page
             FROM dbo.Receivables r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId
             LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
@@ -165,8 +176,13 @@ public sealed partial class SqlReceivablesStore(
             SELECT page.ReceivableId,page.CustomerId,page.CustomerName,page.DocumentNumber,
               page.CurrencyCode,page.OriginalAmount,page.OutstandingAmount,page.DueDate,
               page.Status,page.CreatedAt,page.IsOverdue,page.PartySiteId,page.PartySiteName,
-              COALESCE(paid.PaidAmount,0),page.PartyId
+              COALESCE(paid.PaidAmount,0),page.PartyId,
+              issue.IssuedAt,page.SourceDocumentType
             FROM #Page page
+            LEFT JOIN dbo.AccountingSourceDocuments financialSource ON financialSource.SourceDocumentId=page.SourceDocumentId
+              AND financialSource.SourceDocumentType=page.SourceDocumentType AND financialSource.BusinessId=@BusinessId
+              AND financialSource.TenantId=@TenantId
+            CROSS APPLY accounting.PortfolioDocumentIssueDate(financialSource.PayloadJson,financialSource.OccurredAt) issue
             LEFT JOIN (SELECT application.PositionId ReceivableId,SUM(application.Amount) PaidAmount
               FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Receivable') application
               JOIN #Page selected ON selected.ReceivableId=application.PositionId
@@ -174,17 +190,23 @@ public sealed partial class SqlReceivablesStore(
             ORDER BY {pageOrder};
             """, connection))
         {
-            AddQuery(command,user,query,timeProvider.GetUtcNow());
+            AddQuery(command,user,query,referenceStart,zone);
             command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);
             command.Parameters.AddWithValue("@PageSize",query.PageSize);
             await using var reader=await command.ExecuteReaderAsync(token);
-            while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.IsDBNull(1)?null:reader.GetGuid(1),reader.GetString(2),
+            while(await reader.ReadAsync(token)) { var item=new ReceivableListItem(reader.GetGuid(0),reader.IsDBNull(1)?null:reader.GetGuid(1),reader.GetString(2),
                 reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.GetDecimal(6),reader.GetDateTimeOffset(7),
                 reader.GetString(8),reader.GetBoolean(10),reader.GetDateTimeOffset(9),
                 reader.IsDBNull(11)?null:reader.GetGuid(11),reader.IsDBNull(12)?null:reader.GetString(12),reader.GetDecimal(13),
-                reader.IsDBNull(14)?null:reader.GetGuid(14)));
+                reader.IsDBNull(14)?null:reader.GetGuid(14));
+                var age=PortfolioAging.Calculate(item.OutstandingAmount,item.DueDate,referenceDate,zone);
+                DateTimeOffset? issuedAt=reader.IsDBNull(15)?null:reader.GetDateTimeOffset(15);
+                items.Add(item with {OverdueDays=age.OverdueDays,AgingBandCode=age.BandCode,
+                    IssuedAt=issuedAt,SourceDocumentType=reader.GetString(16),DueOn=age.DueOn,
+                    IssuedOn=issuedAt is {} issued ? BusinessCalendar.DateAt(issued,zone) : null});
+            }
         }
-        return new(items,query.Page,query.PageSize,count,outstanding,overdue,original,paidTotal);
+        return new(items,query.Page,query.PageSize,count,outstanding,overdue,original,paidTotal) {ReferenceDate=referenceDate};
     }
 
     public Task<CustomerPaymentHistoryPage> PaymentHistoryAsync(ReceivablesUserIdentity user,
@@ -194,20 +216,34 @@ public sealed partial class SqlReceivablesStore(
     public async Task<CustomerPaymentHistoryPage> ListPaymentsAsync(ReceivablesUserIdentity user,
         CustomerPaymentHistoryQuery query,CancellationToken token)
     {
+        const string partyNameSql = "COALESCE(party.DisplayName,party.LegalName,party.Identification)";
         var paymentOrder = SqlPagedSort.Build(query.SortBy, query.SortDirection,
             new Dictionary<string, string>
             {
                 ["paidAt"] = "payment.PaidAt",
-                ["partyName"] = "COALESCE(party.DisplayName,party.LegalName,party.Identification)",
+                ["partyName"] = partyNameSql,
                 ["documentNumber"] = "origin.DocumentNumber",
                 ["totalAmount"] = "filtered.TotalAmount"
             }, "paidAt", "desc", "payment.PaymentId DESC");
+        var pageOrder = paymentOrder.Replace(partyNameSql, "filtered.PartyName", StringComparison.Ordinal)
+            .Replace("payment.", "filtered.", StringComparison.Ordinal)
+            .Replace("origin.", "filtered.", StringComparison.Ordinal);
         await using var connection=connections.Create(); await connection.OpenAsync(token);
+        var referenceNow=timeProvider.GetUtcNow();
+        var zone=TimeZoneInfo.Utc;
+        if(query.Overdue.HasValue || query.DateRangeVersion == 2 && (query.From.HasValue || query.To.HasValue))
+        {
+            zone=await SqlBusinessLocalDates.ReadTimeZoneAsync(connection,user.TenantId,user.BusinessId,token)
+                ?? throw new ReceivablesForbiddenException("La sede no está disponible para consultar cartera.");
+            if(query.Overdue.HasValue)
+                referenceNow=SqlBusinessLocalDates.StartOfDay(BusinessCalendar.DateAt(referenceNow,zone),zone);
+        }
         await using var command=new SqlCommand($"""
             -- Capture only filtered keys/amounts, then aggregate their applications.
             -- An advance has no invoice; its site comes from the accepted group.
-            CREATE TABLE #FilteredPayments(PaymentId uniqueidentifier PRIMARY KEY,TotalAmount decimal(19,4));
-            INSERT #FilteredPayments SELECT payment.PaymentId,payment.TotalAmount
+            CREATE TABLE #FilteredPayments(PaymentId uniqueidentifier PRIMARY KEY,TotalAmount decimal(19,4),
+              PaidAt datetimeoffset(7),PartyName nvarchar(300) COLLATE DATABASE_DEFAULT,DocumentNumber nvarchar(100) COLLATE DATABASE_DEFAULT);
+            INSERT #FilteredPayments SELECT payment.PaymentId,payment.TotalAmount,payment.PaidAt,{partyNameSql},origin.DocumentNumber
             FROM dbo.CustomerPayments payment
             INNER JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
               AND origin.SubledgerKind=N'Receivable' AND origin.BusinessId=payment.BusinessId
@@ -254,14 +290,10 @@ public sealed partial class SqlReceivablesStore(
             SELECT COUNT(*),COALESCE(SUM(TotalAmount),0) FROM #FilteredPayments;
             DECLARE @Page TABLE(PaymentId uniqueidentifier PRIMARY KEY);
             INSERT @Page(PaymentId)
-            SELECT payment.PaymentId FROM #FilteredPayments filtered
-            JOIN dbo.CustomerPayments payment ON payment.PaymentId=filtered.PaymentId
-            INNER JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
-              AND origin.SubledgerKind=N'Receivable' AND origin.BusinessId=payment.BusinessId
-            INNER JOIN dbo.Businesses business ON business.BusinessId=payment.BusinessId
-            LEFT JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId AND customer.TenantId=@TenantId
-            INNER JOIN dbo.Parties party ON party.PartyId=COALESCE(payment.PartyId,customer.PartyId) AND party.TenantId=@TenantId
-            ORDER BY {paymentOrder}
+            -- Reuse the same filter/sort facts, including the amount already
+            -- scoped to the selected site, before hydrating only this page.
+            SELECT filtered.PaymentId FROM #FilteredPayments filtered
+            ORDER BY {pageOrder}
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             SELECT payment.PaymentId,origin.DocumentNumber,payment.PaidAt,payment.CurrencyCode,
               filtered.TotalAmount,payment.Status,
@@ -285,7 +317,8 @@ public sealed partial class SqlReceivablesStore(
               origin.SourceDocumentId,origin.SourceDocumentType,origin.SourceGroupId
             ORDER BY {paymentOrder};
             SELECT tender.PaymentId,tender.LineNumber,tender.MethodCode,tender.Amount,tender.TenderedAmount,
-              tender.BankAccountId,tender.Reference,tender.Notes,tender.CardFranchiseCode,tender.ApprovalNumber
+              tender.BankAccountId,tender.Reference,tender.Notes,tender.CardFranchiseCode,tender.ApprovalNumber,
+              tender.PaymentMethodId,tender.PaymentMethodVersion,tender.PaymentMethodCode,tender.PaymentMethodName,tender.AccountId
             FROM dbo.CustomerPaymentTenders tender INNER JOIN @Page page ON page.PaymentId=tender.PaymentId
             ORDER BY tender.PaymentId,tender.LineNumber;
             SELECT application.PaymentId,application.ReceivableId,receivable.DocumentNumber,application.Amount
@@ -308,10 +341,11 @@ public sealed partial class SqlReceivablesStore(
         command.Parameters.AddWithValue("@Search",(object?)query.Search??DBNull.Value);
         command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value);
         command.Parameters.AddWithValue("@Overdue",(object?)query.Overdue??DBNull.Value);
-        command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
-        AddDateRange(command,query.From,query.To);
+        command.Parameters.AddWithValue("@Now",referenceNow);
+        SqlBusinessLocalDates.BindDateRange(command,query.From,query.To,zone,query.DateRangeVersion);
         command.Parameters.AddWithValue("@Offset",(query.Page-1)*query.PageSize);
         command.Parameters.AddWithValue("@PageSize",query.PageSize);
+        command.CommandText=SqlQueryShape.FoldOptionalPredicates(command);
         await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token);
         var total=reader.GetInt32(0);var totalAmount=reader.GetDecimal(1); await reader.NextResultAsync(token);
         var items=new List<CustomerPaymentHistoryItem>();
@@ -326,7 +360,10 @@ public sealed partial class SqlReceivablesStore(
             reader.GetInt32(1),reader.GetString(2),reader.GetDecimal(3),
             reader.IsDBNull(4)?null:reader.GetDecimal(4),reader.IsDBNull(5)?null:reader.GetGuid(5),
             reader.IsDBNull(6)?null:reader.GetString(6),reader.IsDBNull(7)?null:reader.GetString(7),
-            reader.IsDBNull(8)?null:reader.GetString(8),reader.IsDBNull(9)?null:reader.GetString(9)));
+            reader.IsDBNull(8)?null:reader.GetString(8),reader.IsDBNull(9)?null:reader.GetString(9),
+            reader.IsDBNull(10)?null:reader.GetGuid(10),reader.IsDBNull(11)?null:reader.GetInt32(11),
+            reader.IsDBNull(12)?null:reader.GetString(12),reader.IsDBNull(13)?null:reader.GetString(13),
+            reader.IsDBNull(14)?null:reader.GetGuid(14)));
         await reader.NextResultAsync(token);
         while(await reader.ReadAsync(token)) applications[reader.GetGuid(0)].Add(new(
             reader.GetGuid(1),reader.GetString(2),reader.GetDecimal(3)));
@@ -389,18 +426,24 @@ public sealed partial class SqlReceivablesStore(
         await using var connection=connections.Create(); await connection.OpenAsync(token);
         await using var command=new SqlCommand("""
             SELECT cp.CreditLimit,cp.DefaultDueDays,cp.IsCreditEnabled,
-                   COALESCE(SUM(CASE WHEN r.Status IN(N'Open',N'PartiallyPaid') THEN r.OutstandingAmount ELSE 0 END),0)
+                   COALESCE(SUM(CASE WHEN r.Status IN(N'Open',N'PartiallyPaid') THEN r.OutstandingAmount ELSE 0 END),0),
+                   cp.MaximumOverdueInvoices,
+                   COALESCE((SELECT SUM(d.CreditAmount) FROM dbo.SalesDocuments d
+                     WHERE d.CustomerId=@CustomerId AND d.BusinessId=@BusinessId AND d.CreditAmount>0
+                       AND d.ProcessingStatus IN(N'Received',N'Processing')),0)
             FROM dbo.Customers c INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId AND b.TenantId=c.TenantId
             LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=@BusinessId
             LEFT JOIN dbo.Receivables r ON r.CustomerId=c.CustomerId AND r.BusinessId=@BusinessId
             WHERE c.CustomerId=@CustomerId AND c.TenantId=@TenantId
-            GROUP BY cp.CreditLimit,cp.DefaultDueDays,cp.IsCreditEnabled;
+            GROUP BY cp.CreditLimit,cp.DefaultDueDays,cp.IsCreditEnabled,cp.MaximumOverdueInvoices;
             """,connection);
         command.Parameters.AddWithValue("@CustomerId",customerId); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@TenantId",user.TenantId);
         await using var reader=await command.ExecuteReaderAsync(token); if(!await reader.ReadAsync(token)) return null;
         var limit=reader.IsDBNull(0)?(decimal?)null:reader.GetDecimal(0); var due=reader.IsDBNull(1)?0:reader.GetInt32(1);
         var enabled=!reader.IsDBNull(2)&&reader.GetBoolean(2); var used=reader.GetDecimal(3);
-        return new(customerId,limit,due,enabled,used,limit is null?null:decimal.Max(0,limit.Value-used));
+        var pending=reader.GetDecimal(5);
+        return new(customerId,limit,due,enabled,used,CustomerCreditPolicy.CalculateAvailableCredit(limit,used+pending),
+            reader.IsDBNull(4)?null:reader.GetInt32(4),pending);
     }
 
     public async Task<CustomerCreditProfile> UpdateCreditProfileAsync(ReceivablesUserIdentity user, Guid customerId, UpdateCustomerCreditProfileRequest request, CancellationToken token)
@@ -416,10 +459,11 @@ public sealed partial class SqlReceivablesStore(
                 THROW 51300,'The customer is outside the authenticated business.',1;
             IF EXISTS(SELECT 1 FROM dbo.CustomerCreditProfiles WITH(UPDLOCK,HOLDLOCK) WHERE CustomerId=@CustomerId AND BusinessId=@BusinessId)
                 UPDATE dbo.CustomerCreditProfiles SET CreditLimit=@Limit,DefaultDueDays=@Days,IsCreditEnabled=@Enabled,
+                    MaximumOverdueInvoices=CASE WHEN @SetMaximum=1 THEN @Maximum ELSE MaximumOverdueInvoices END,
                     UpdatedByUserId=@UserId,UpdatedAt=@Now WHERE CustomerId=@CustomerId AND BusinessId=@BusinessId;
             ELSE
-                INSERT dbo.CustomerCreditProfiles(CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,UpdatedByUserId,UpdatedAt)
-                VALUES(@CustomerId,@BusinessId,@Limit,@Days,@Enabled,@UserId,@Now);
+                INSERT dbo.CustomerCreditProfiles(CustomerId,BusinessId,CreditLimit,DefaultDueDays,IsCreditEnabled,UpdatedByUserId,UpdatedAt,MaximumOverdueInvoices)
+                VALUES(@CustomerId,@BusinessId,@Limit,@Days,@Enabled,@UserId,@Now,@Maximum);
             DECLARE @Cursor BIGINT;
             SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
             FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
@@ -439,6 +483,8 @@ public sealed partial class SqlReceivablesStore(
         command.Parameters.AddWithValue("@CustomerId",customerId); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@Limit",(object?)request.CreditLimit??DBNull.Value); command.Parameters.AddWithValue("@Days",request.DefaultDueDays);
         command.Parameters.AddWithValue("@Enabled",request.IsCreditEnabled);
+        command.Parameters.AddWithValue("@SetMaximum",request.HasMaximumOverdueInvoices);
+        command.Parameters.AddWithValue("@Maximum",(object?)request.MaximumOverdueInvoices??DBNull.Value);
         command.Parameters.AddWithValue("@UserId",user.UserId); command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
         command.Parameters.AddWithValue("@NotificationId",ids.NewId());
         try { await command.ExecuteNonQueryAsync(token); } catch(SqlException ex) when(ex.Number==51300) { throw new ReceivablesValidationException(ex.Message); }
@@ -452,6 +498,8 @@ public sealed partial class SqlReceivablesStore(
         var hash=SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { request.PaymentId,request.BusinessId,
             request.CustomerId,request.WorkSessionId,request.PaidAt,request.CurrencyCode,request.Notes,
             settlement.Allocations,tenders.Tenders }));
+        if(request.PaidOn is {} selectedDay)
+            hash=SHA256.HashData(hash.Concat(Encoding.UTF8.GetBytes(selectedDay.ToString("O",System.Globalization.CultureInfo.InvariantCulture))).ToArray());
         for(var attempt=1;;attempt++)
         {
             try
@@ -559,6 +607,12 @@ public sealed partial class SqlReceivablesStore(
         try
         {
             var replay=await FindReplayAsync(connection,tx,user.TenantId,user.BusinessId,request.PaymentId,key,hash,settlement,token); if(replay is not null){await tx.CommitAsync(token);return replay;}
+            if(request.PaidOn is {} paidOn)
+            {
+                try { request=request with {PaidAt=await SqlBusinessLocalDates.EffectivePaymentDateAsync(connection,tx,user.TenantId,user.BusinessId,paidOn,token)}; }
+                catch(ArgumentException error) when(error.ParamName=="day")
+                { throw new ReceivablesValidationException(error.Message); }
+            }
             var now=timeProvider.GetUtcNow();
             AuralyDocumentNumberAssignment number;
             try
@@ -571,9 +625,13 @@ public sealed partial class SqlReceivablesStore(
                 throw new ReceivablesValidationException(error.Message,error);
             }
             var movementId=ids.NewId();
-            var paymentSnapshots=tenders.Tenders.Select((x,i)=>new CustomerPaymentTenderSnapshot(
+            IReadOnlyList<PaymentTender> resolvedTenders;
+            try { resolvedTenders=await SqlPaymentMethodResolver.ResolveAsync(connection,tx,user.TenantId,user.BusinessId,"Receipts",tenders.Tenders,token); }
+            catch(ArgumentException error) { throw new ReceivablesValidationException(error.Message); }
+            var paymentSnapshots=resolvedTenders.Select((x,i)=>new CustomerPaymentTenderSnapshot(
                 i+1,x.MethodCode,x.Amount,x.TenderedAmount,x.BankAccountId,x.Reference,x.Notes,
-                x.CardFranchiseCode,x.ApprovalNumber)).ToArray();
+                x.CardFranchiseCode,x.ApprovalNumber,x.PaymentMethodId,x.PaymentMethodVersion,
+                x.PaymentMethodCode,x.PaymentMethodName,x.AccountId)).ToArray();
             var payload=new CustomerPaymentDocumentPayload(user.TenantId,user.BusinessId,request.PaymentId,request.CustomerId,user.UserId,
                 request.WorkSessionId,number.FullNumber,number.SeriesId,number.Prefix,number.SeriesCode,number.Consecutive,request.PaidAt,
                 request.CurrencyCode,request.Notes,settlement.TotalAmount,
@@ -584,7 +642,7 @@ public sealed partial class SqlReceivablesStore(
             await SqlAccountingPostingJobWriter.InsertSourceAsync(connection,tx,user.TenantId,user.BusinessId,
                 request.PaymentId,ReceivablesDocumentTypes.Payment,json,request.PaidAt,ids,timeProvider,token,
                 AccountingJobRequirement.PreserveCommercialEffects,movementId);
-            await tx.CommitAsync(token); return new(request.PaymentId,movementId,number.FullNumber,"Accepted",false);
+            await tx.CommitAsync(token); return new(request.PaymentId,movementId,number.FullNumber,"Accepted",false,request.PaidAt.ToUniversalTime());
         }
         catch { if (tx.Connection is not null) await tx.RollbackAsync(CancellationToken.None); throw; }
     }
@@ -625,7 +683,7 @@ public sealed partial class SqlReceivablesStore(
               AND r.BusinessId=@BusinessId
             JOIN dbo.Businesses business ON business.BusinessId=r.BusinessId AND business.TenantId=@TenantId
             ORDER BY input.ReceivableId OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1);
-            SELECT p.PaymentId,origin.DocumentNumber,p.Status,j.AccountingPostingJobId,p.PayloadHash,s.SourceDocumentId,origin.SourceGroupId FROM dbo.CustomerPayments p
+            SELECT p.PaymentId,origin.DocumentNumber,p.Status,j.AccountingPostingJobId,p.PayloadHash,s.SourceDocumentId,origin.SourceGroupId,p.PaidAt FROM dbo.CustomerPayments p
             INNER JOIN dbo.Businesses business ON business.BusinessId=p.BusinessId AND business.TenantId=@TenantId
             INNER JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=p.PaymentId
               AND origin.SubledgerKind=N'Receivable' AND origin.BusinessId=p.BusinessId
@@ -643,16 +701,12 @@ public sealed partial class SqlReceivablesStore(
         if(!reader.GetFieldValue<byte[]>(4).AsSpan().SequenceEqual(hash))throw new ReceivablesConflictException("The idempotency key or PaymentId was reused with another payload.");
         if(reader.IsDBNull(3)||reader.IsDBNull(5))
             throw new ReceivablesConflictException("El pago ya está registrado, pero su fuente o trabajo financiero requieren revisión. No se aceptó otro pago.");
-        var acceptance=new CustomerPaymentAcceptance(reader.GetGuid(0),reader.GetGuid(3),reader.GetString(1),reader.GetString(2),true);
+        var acceptance=new CustomerPaymentAcceptance(reader.GetGuid(0),reader.GetGuid(3),reader.GetString(1),reader.GetString(2),true,reader.GetDateTimeOffset(7));
         if(await reader.ReadAsync(token))
             throw new ReceivablesConflictException("El identificador del pago y la clave de reintento pertenecen a pagos diferentes.");
         return acceptance;
     }
 
-    private static void AddQuery(SqlCommand c,ReceivablesUserIdentity u,ReceivableQuery q,DateTimeOffset now){c.Parameters.AddWithValue("@BusinessId",u.BusinessId);c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.AddWithValue("@CustomerId",(object?)q.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@PartySiteId",(object?)q.PartySiteId??DBNull.Value);c.Parameters.AddWithValue("@Status",(object?)q.Status??DBNull.Value);c.Parameters.AddWithValue("@OutstandingOnly",q.OutstandingOnly);c.Parameters.AddWithValue("@Overdue",(object?)q.Overdue??DBNull.Value);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@Now",now);AddDateRange(c,q.From,q.To);}
-    private static void AddDateRange(SqlCommand command,DateOnly? from,DateOnly? to)
-    {
-        command.Parameters.AddWithValue("@From",(object?)from?.ToDateTime(TimeOnly.MinValue,DateTimeKind.Utc)??DBNull.Value);
-        command.Parameters.AddWithValue("@To",(object?)to?.AddDays(1).ToDateTime(TimeOnly.MinValue,DateTimeKind.Utc)??DBNull.Value);
-    }
+    private static void AddQuery(SqlCommand c,ReceivablesUserIdentity u,ReceivableQuery q,DateTimeOffset now,TimeZoneInfo zone){c.Parameters.AddWithValue("@BusinessId",u.BusinessId);c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.Add("@ReceivableId",SqlDbType.UniqueIdentifier).Value=(object?)q.ReceivableId??DBNull.Value;c.Parameters.AddWithValue("@CustomerId",(object?)q.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@PartySiteId",(object?)q.PartySiteId??DBNull.Value);c.Parameters.AddWithValue("@Status",(object?)q.Status??DBNull.Value);c.Parameters.AddWithValue("@OutstandingOnly",q.OutstandingOnly);c.Parameters.AddWithValue("@Overdue",(object?)q.Overdue??DBNull.Value);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@Now",now);SqlBusinessLocalDates.BindDateRange(c,q.From,q.To,zone,q.DateRangeVersion);}
+
 }

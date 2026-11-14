@@ -20,7 +20,9 @@ public sealed partial class SqlAccountingPostingProcessor
     {
         var reversals = effects.Unapplications ?? [];
         if (reversals.Count == 0) return;
-        if (request.VoucherTypeCode != "Accounting")
+        if (request.VoucherTypeCode != "Accounting" &&
+            !(request.VoucherTypeCode == "CashReceipt" && reversals.All(item =>
+                item.ReversedTransactionType == "PaymentReturn" && item.SubledgerKind == AccountingSubledgerKinds.Payable)))
             throw new InvalidOperationException("Unapplying real money requires an accounting voucher, not another disbursement.");
         foreach (var item in reversals)
         {

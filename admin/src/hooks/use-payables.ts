@@ -6,6 +6,7 @@ import {
   type PayableStatus,
 } from "@/services/api/payables";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useBusinessDates } from "@/hooks/use-business-dates";
 
 export function usePayables(params: {
   page: number;
@@ -23,8 +24,9 @@ export function usePayables(params: {
   sortDirection?: "asc" | "desc";
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const { timeZone } = useBusinessDates(businessId);
   return useQuery({
-    queryKey: ["payables", businessId, params],
+    queryKey: ["payables", businessId, params, timeZone],
     queryFn: () => payablesApi.list(params),
     enabled: !!businessId && params.enabled !== false,
     staleTime: 0,

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Application.Receivables;
 using Auraly.Contracts.Receivables;
 using Auraly.Application.WorkSessions;
@@ -15,37 +16,54 @@ public static class ReceivablesApi
             HttpContext context, int page, int pageSize, bool consolidated, DateOnly cutoff,
             Guid? customerId, Guid? partySiteId, DateOnly? from, DateOnly? to,
             string? status, bool? outstandingOnly, bool? overdueOnly,
-            string? sortBy, string? sortDirection, string? search, ReceivablesService service, CancellationToken token) =>
+            string? sortBy, string? sortDirection, string? search, bool? includeApplications,
+            string? documentNumber, DateOnly? issuedFrom, DateOnly? issuedTo,
+            int? minimumAgeDays, int? maximumAgeDays, int? minimumDaysPastDue, int? maximumDaysPastDue, int? templateVersion, int? dateRangeVersion,
+            ReceivablesService service, CancellationToken token) =>
             await Execute(() => service.ReportAsync(context.User.ToReceivablesIdentity(),
                 new(page, pageSize, consolidated, cutoff, customerId, partySiteId, from, to,
-                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search), token), Results.Ok))
+                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search, includeApplications ?? true,
+                    documentNumber, issuedFrom, issuedTo, minimumAgeDays, maximumAgeDays, minimumDaysPastDue, maximumDaysPastDue,
+                    TemplateVersion: templateVersion ?? 3, DateRangeVersion: dateRangeVersion ?? 1), token), Results.Ok))
             .RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/receivables/report/print", async (
             HttpContext context, bool consolidated, DateOnly cutoff,
             Guid? customerId, Guid? partySiteId, DateOnly? from, DateOnly? to,
             string? status, bool? outstandingOnly, bool? overdueOnly,
-            string? sortBy, string? sortDirection, string? search, ReceivablesService service, CancellationToken token) =>
+            string? sortBy, string? sortDirection, string? search, bool? includeApplications,
+            string? documentNumber, DateOnly? issuedFrom, DateOnly? issuedTo,
+            int? minimumAgeDays, int? maximumAgeDays, int? minimumDaysPastDue, int? maximumDaysPastDue, int? dateRangeVersion,
+            int? templateVersion, ReceivablesService service, ITenantService tenants, CancellationToken token) =>
             await Execute(async () =>
             {
                 var html = await PortfolioReportPrint.ReceivablesAsync(
                     service, context.User.ToReceivablesIdentity(),
                     new(1, 100, consolidated, cutoff, customerId, partySiteId, from, to,
-                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search), token);
+                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search, includeApplications ?? true,
+                        documentNumber, issuedFrom, issuedTo, minimumAgeDays, maximumAgeDays, minimumDaysPastDue, maximumDaysPastDue, templateVersion ?? 3, dateRangeVersion ?? 1), tenants, token);
                 context.Response.Headers.CacheControl = "no-store";
                 return Results.Content(html, "text/html; charset=utf-8");
             })).RequireAuthorization("receivables.user");
-        endpoints.MapGet("/api/commerce/v1/receivables/customers",async(HttpContext context,int page,int pageSize,string? search,bool? overdue,Guid? customerId,Guid? partySiteId,string? status,DateOnly? from,DateOnly? to,string? sortBy,string? sortDirection,ReceivablesService service,CancellationToken token)=>
-            await Execute(()=>service.ListCustomersAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,overdue,customerId,status,from,to,partySiteId,sortBy,sortDirection),token),Results.Ok)).RequireAuthorization("receivables.user");
-        endpoints.MapGet("/api/commerce/v1/receivables",async(HttpContext context,int page,int pageSize,string? search,Guid? customerId,Guid? partySiteId,string? status,bool? overdue,bool? outstandingOnly,DateOnly? from,DateOnly? to,string? sortBy,string? sortDirection,ReceivablesService service,CancellationToken token)=>
-            await Execute(()=>service.ListAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,customerId,status,overdue,partySiteId,OutstandingOnly:outstandingOnly==true,From:from,To:to,SortBy:sortBy,SortDirection:sortDirection),token),Results.Ok)).RequireAuthorization("receivables.user");
+        endpoints.MapGet("/api/commerce/v1/receivables/report/export", async (HttpContext context,
+            [AsParameters] ReceivablesReportQuery query, ReceivablesService service, CancellationToken token) =>
+            await Execute(async () =>
+            {
+                var report = await service.PrintReportAsync(context.User.ToReceivablesIdentity(), query, token);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Ok(report);
+            })).RequireAuthorization("receivables.user");
+        endpoints.MapGet("/api/commerce/v1/receivables/customers",async(HttpContext context,int page,int pageSize,string? search,bool? overdue,Guid? customerId,Guid? partySiteId,string? status,DateOnly? from,DateOnly? to,string? sortBy,string? sortDirection,int? dateRangeVersion,ReceivablesService service,CancellationToken token)=>
+            await Execute(()=>service.ListCustomersAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,overdue,customerId,status,from,to,partySiteId,sortBy,sortDirection,dateRangeVersion ?? 1),token),Results.Ok)).RequireAuthorization("receivables.user");
+        endpoints.MapGet("/api/commerce/v1/receivables",async(HttpContext context,int page,int pageSize,string? search,Guid? customerId,Guid? partySiteId,string? status,bool? overdue,bool? outstandingOnly,DateOnly? from,DateOnly? to,string? sortBy,string? sortDirection,Guid? receivableId,int? dateRangeVersion,ReceivablesService service,CancellationToken token)=>
+            await Execute(()=>service.ListAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,customerId,status,overdue,partySiteId,OutstandingOnly:outstandingOnly==true,From:from,To:to,SortBy:sortBy,SortDirection:sortDirection,ReceivableId:receivableId,DateRangeVersion:dateRangeVersion ?? 1),token),Results.Ok)).RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/receivables/{receivableId:guid}",async(HttpContext context,Guid receivableId,ReceivablesService service,CancellationToken token)=>
             await Execute(async()=>{var value=await service.GetAsync(context.User.ToReceivablesIdentity(),receivableId,token);return value is null?Results.NotFound():Results.Ok(value);})).RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/customers/{customerId:guid}/credit",async(HttpContext context,Guid customerId,ReceivablesService service,CancellationToken token)=>
             await Execute(async()=>{var value=await service.GetCreditProfileAsync(context.User.ToReceivablesIdentity(),customerId,token);return value is null?Results.NotFound():Results.Ok(value);})).RequireAuthorization("receivables.user");
         endpoints.MapGet("/api/commerce/v1/customers/{customerId:guid}/payments",async(HttpContext context,Guid customerId,int? page,int? pageSize,ReceivablesService service,CancellationToken token)=>
             await Execute(()=>service.PaymentHistoryAsync(context.User.ToReceivablesIdentity(),customerId,page??1,pageSize??5,token),Results.Ok)).RequireAuthorization("receivables.user");
-        endpoints.MapGet("/api/commerce/v1/receivable-payments",async(HttpContext context,int page,int pageSize,string? search,Guid? customerId,Guid? partySiteId,string? status,bool? overdue,DateOnly? from,DateOnly? to,string? sortBy,string? sortDirection,ReceivablesService service,CancellationToken token)=>
-            await Execute(()=>service.ListPaymentsAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,customerId,status,overdue,from,to,partySiteId,sortBy,sortDirection),token),Results.Ok)).RequireAuthorization("receivables.user");
+        endpoints.MapGet("/api/commerce/v1/receivable-payments",async(HttpContext context,int page,int pageSize,string? search,Guid? customerId,Guid? partySiteId,string? status,bool? overdue,DateOnly? from,DateOnly? to,string? sortBy,string? sortDirection,int? dateRangeVersion,ReceivablesService service,CancellationToken token)=>
+            await Execute(()=>service.ListPaymentsAsync(context.User.ToReceivablesIdentity(),new(page,pageSize,search,customerId,status,overdue,from,to,partySiteId,sortBy,sortDirection,dateRangeVersion ?? 1),token),Results.Ok)).RequireAuthorization("receivables.user");
         endpoints.MapPut("/api/commerce/v1/customers/{customerId:guid}/credit",async(HttpContext context,Guid customerId,UpdateCustomerCreditProfileRequest request,ReceivablesService service,CancellationToken token)=>
             await Execute(()=>service.UpdateCreditProfileAsync(context.User.ToReceivablesIdentity(),customerId,request,token),Results.Ok)).RequireAuthorization("receivables.user");
         endpoints.MapPost("/api/commerce/v1/receivable-payments/confirm",async(HttpContext context,ConfirmCustomerPaymentRequest request,ReceivablesService service,CancellationToken token)=>
@@ -91,7 +109,7 @@ public static class ReceivablesApi
             }));
         return endpoints;
     }
-    private static async Task<IResult> Execute(Func<Task<IResult>> action){try{return await action();}catch(ReceivablesForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(WorkSessionForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(ReceivablesValidationException ex){return Results.Problem(ex.Message,statusCode:400);}catch(ReceivablesConflictException ex){return Results.Problem(ex.Message,statusCode:409);}catch(PortfolioReportPrintException ex){return Results.Problem(ex.Message,statusCode:ex.StatusCode);}}
+    private static async Task<IResult> Execute(Func<Task<IResult>> action){try{return await action();}catch(ReceivablesForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(WorkSessionForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(ReceivablesValidationException ex){return Results.Problem(ex.Message,statusCode:400);}catch(ReceivablesConflictException ex){return Results.Problem(ex.Message,statusCode:409);}catch(PortfolioReportLimitException ex){return Results.Problem(ex.Message,statusCode:422);}}
     private static async Task<IResult> Execute<T>(Func<Task<T>> action,Func<T,IResult> success){try{return success(await action());}catch(ReceivablesForbiddenException ex){return Results.Problem(ex.Message,statusCode:403);}catch(ReceivablesValidationException ex){return Results.Problem(ex.Message,statusCode:400);}catch(ReceivablesConflictException ex){return Results.Problem(ex.Message,statusCode:409);}}
 }
 

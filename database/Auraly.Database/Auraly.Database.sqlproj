@@ -7,6 +7,7 @@
     <ProjectGuid>a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d</ProjectGuid>
     <DSP>Microsoft.Data.Tools.Schema.Sql.SqlAzureV12DatabaseSchemaProvider</DSP>
     <ModelCollation>1033, CI</ModelCollation>
+    <AllowSnapshotIsolation>True</AllowSnapshotIsolation>
   </PropertyGroup>
   <ItemGroup>
     <SqlCmdVariable Include="DeploymentEnvironment">
@@ -52,15 +53,20 @@
     <Build Include="Functions\OpenSessionForUser.sql" />
     <Build Include="Functions\ManualTreasuryMovements.sql" />
     <Build Include="Views\PortfolioPaymentOrigins.sql" />
+    <Build Include="Tables\PaymentMethods.sql" />
+    <Build Include="Tables\FinancialConcepts.sql" />
+    <Build Include="Views\FinancialConceptDetails.sql" />
+    <Build Include="Functions\FinancialConceptAccountReadiness.sql" />
+    <Build Include="Views\PaymentMethodDetails.sql" />
     <Build Include="Functions\BankBookAccounts.sql" />
     <Build Include="Functions\BankBookEntries.sql" />
     <Build Include="Functions\BankInaccessibleBusinesses.sql" />
     <Build Include="Functions\BankPostingAccount.sql" />
     <Build Include="Functions\ConfiguredPostingAccount.sql" />
     <Build Include="Functions\PaymentPostingCategory.sql" />
+    <Build Include="Functions\PaymentMethodAccountReadiness.sql" />
     <Build Include="Functions\AccountingBankReferences.sql" />
-    <Build Include="StoredProcedures\AccountingBankAccountsFreeze.sql" />
-    <Build Include="StoredProcedures\PortfolioPaymentAccountsFreeze.sql" />
+    <Build Include="StoredProcedures\AccountingBankAccountsResolve.sql" />
     <Build Include="StoredProcedures\AccountingOpeningPositionsValidate.sql" />
     <Build Include="Schemas\Sales.sql" />
     <Build Include="Schemas\Catalog.sql" />
@@ -153,8 +159,12 @@
     <Build Include="Schemas\Compliance.sql" />
     <Build Include="Schemas\Reporting.sql" />
     <Build Include="Schemas\Payroll.sql" />
+    <Build Include="Functions\PayrollPayableRunEmployees.sql" />
+    <Build Include="Functions\PayrollEligibleRunEmployments.sql" />
+    <Build Include="Functions\PayrollCalculationSourceVersions.sql" />
     <Build Include="Schemas\Purchasing.sql" />
     <Build Include="Types\GuidIdList.sql" />
+    <Build Include="Types\PayrollCalculationInputs.sql" />
     <Build Include="Tables\ReferenceOptions.sql" />
     <Build Include="Tables\Tenants.sql" />
     <Build Include="Tables\Permissions.sql" />
@@ -333,6 +343,7 @@
     <Build Include="Tables\ServerOutboxMessages.sql" />
     <Build Include="Tables\Payroll.sql" />
     <Build Include="Tables\PayrollReporting.sql" />
+    <Build Include="Views\PayrollPaymentBatchPostingStatus.sql" />
   </ItemGroup>
   <ItemGroup>
     <Build Include="Functions\ProductCategoryHierarchySnapshot.sql" />

@@ -676,6 +676,11 @@
         "resolved": "13.0.3",
         "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
       },
+      "NodaTime": {
+        "type": "Transitive",
+        "resolved": "3.3.7",
+        "contentHash": "4Rc3zup1sZqtlcgkWZOsjoVbhm+RkDvxrFDJfIxi7nr32ZgzVW+zCTBr827+KG/4r5owpchUjqx8tO4K2ZtpOw=="
+      },
       "OpenAI": {
         "type": "Transitive",
         "resolved": "2.1.0",
@@ -1081,7 +1086,10 @@
         }
       },
       "auraly.buildingblocks.domain": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "NodaTime": "[3.3.7, )"
+        }
       },
       "auraly.buildingblocks.infrastructure": {
         "type": "Project",
@@ -1110,7 +1118,8 @@
       "auraly.commerce.accounting.contracts": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Catalog": "[1.0.0, )"
         }
       },
       "auraly.commerce.accounting.domain": {

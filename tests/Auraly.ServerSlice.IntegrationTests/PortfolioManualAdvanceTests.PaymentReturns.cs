@@ -11,12 +11,14 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class PortfolioManualAdvanceTests
 {
     [Theory]
-    [InlineData(true, true)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
     public async Task Payment_annulment_shares_original_budget_rollback_and_replay_without_opening_an_advance(
-        bool supplier, bool manualPayment)
+        bool supplier, bool manualPayment, bool cashReceipt)
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
@@ -124,6 +126,7 @@ public sealed partial class PortfolioManualAdvanceTests
         await AssertAnnulmentAsync(annulment.DocumentId, 1);
         var posted = (await client.GetFromJsonAsync<VoucherDraftView>(annulmentPath))!;
         Assert.Equal("Posted", posted.Status);
+        Assert.Equal(cashReceipt ? "CashReceipt" : "Accounting", posted.VoucherTypeCode);
         Assert.Equal("PaymentReturn", Assert.Single(posted.FinancialEffects!.Unapplications!).ReversedTransactionType);
         Assert.Empty(posted.FinancialEffects.Positions);
         for (var replay = 0; replay < 2; replay++)
@@ -197,7 +200,7 @@ public sealed partial class PortfolioManualAdvanceTests
             using var response = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/manual/drafts/{id}",
                 new SaveVoucherDraftRequest(id, AccountingManualDocumentTypes.ManualVoucher, at.AddMinutes(2), "MANUAL_VOUCHER",
                     "Anulación de pago", "ANULACION-PAGO", lines, null, null, MainPartyId: partyId,
-                    PayloadVersion: 4, VoucherTypeCode: "Accounting", WorkSessionId: null));
+                    PayloadVersion: 4, VoucherTypeCode: cashReceipt ? "CashReceipt" : "Accounting", WorkSessionId: null));
             Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
             return (await response.Content.ReadFromJsonAsync<VoucherDraftView>())!;
         }

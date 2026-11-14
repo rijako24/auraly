@@ -1,8 +1,11 @@
 import { apiClient, withPagedDefaults } from "./client";
+import type { PaymentSettlementConfiguration } from "./accounting";
 
 export type PayableStatus = "Open" | "PartiallyPaid" | "Paid" | "Cancelled";
 
 export interface PayableListItem {
+  dueOn?: string | null; issuedOn?: string | null;
+  sourceDocumentType?: string | null;
   payableId: string;
   supplierId: string;
   supplierName: string;
@@ -14,6 +17,10 @@ export interface PayableListItem {
   dueDate: string;
   status: PayableStatus;
   isOverdue: boolean;
+  overdueDays?: number;
+  agingBandCode?: string;
+  issuedAt?: string | null;
+  adjustmentAmount?: number;
   createdAt: string;
   expenseConceptName: string | null;
   partySiteId: string | null;
@@ -31,7 +38,8 @@ export interface PayablePage {
   totalPages: number;
   totalOutstanding: number;
   totalOverdue: number;
-  currencyTotals: Array<{ currencyCode: string; outstandingAmount: number; overdueAmount: number }>;
+  referenceDate?: string | null;
+  currencyTotals: Array<{ currencyCode: string; outstandingAmount: number; overdueAmount: number;originalAmount?:number|null;paidAmount?:number|null;adjustmentAmount?:number|null }>;
 }
 
 export interface PayableTransaction {
@@ -69,6 +77,7 @@ export interface ConfirmSupplierPaymentRequest {
   paymentId: string;
   businessId: string;
   supplierId: string;
+  paidOn?: string;
   paidAt: string;
   currencyCode: string;
   notes: string | null;
@@ -76,14 +85,12 @@ export interface ConfirmSupplierPaymentRequest {
   payments: SupplierPaymentTender[];
   workSessionId: string | null;
 }
-export interface SupplierPaymentTender {methodCode:"Cash"|"Transfer"|"DebitCard"|"CreditCard";amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null;cardFranchiseCode:string|null;approvalNumber:string|null}
+export interface SupplierPaymentTender {paymentMethodId?:string|null;paymentMethodVersion?:number|null;paymentMethodCode?:string|null;paymentMethodName?:string|null;accountId?:string|null;methodCode:"Cash"|"Transfer"|"DebitCard"|"CreditCard";amount:number;tenderedAmount:number|null;bankAccountId:string|null;reference:string|null;notes:string|null;cardFranchiseCode:string|null;approvalNumber:string|null}
 
-export interface PaymentSettlementConfiguration {
-  isAccountingEnabled: boolean;
-  bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean }>;
-}
+export type { PaymentSettlementConfiguration } from "./accounting";
 
 export interface SupplierPaymentAcceptance {
+  paidAt?:string|null;
   paymentId: string;
   accountingJobId: string;
   documentNumber: string;
@@ -114,6 +121,7 @@ export interface PayablesReportPage {
   page: number; pageSize: number; totalCount: number; totalPages: number;
 }
 export interface PayablesReportFilters {
+  includeApplications?: boolean;
   page: number; pageSize: number; consolidated: boolean; cutoff: string;
   supplierId?: string; partySiteId?: string; from?: string; to?: string; search?: string; conceptId?: string;
   status?: PayableStatus; outstandingOnly?: boolean; overdueOnly?: boolean;
@@ -122,19 +130,22 @@ export interface PayablesReportFilters {
 
 export const payablesApi = {
   report: (filters: PayablesReportFilters) =>
-    apiClient.get<PayablesReportPage>("/commerce/v1/payables/report", { ...filters }),
+    apiClient.get<PayablesReportPage>("/commerce/v1/payables/report", { ...filters, dateRangeVersion: 2 }),
   printReport: (filters: PayablesReportFilters) =>
-    apiClient.getText("/commerce/v1/payables/report/print", { ...filters, page: undefined, pageSize: undefined }),
+    apiClient.getText("/commerce/v1/payables/report/print", { ...filters, dateRangeVersion: 2, page: undefined, pageSize: undefined }),
+  exportReport: (filters: PayablesReportFilters) =>
+    apiClient.get<PayablesReportPage>("/commerce/v1/payables/report/export", { ...filters, dateRangeVersion: 2, page: 1, pageSize: 100 }),
   expenseConcepts: (search: string, page: number, pageSize: number) =>
     apiClient.get<{ items: Array<{ conceptId: string; name: string }>; page: number; pageSize: number; totalCount: number; totalPages: number }>(
       "/commerce/v1/payables/expense-concepts", { search: search || undefined, page, pageSize }),
-  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;partySiteId?:string;status?:PayableStatus;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults(params)),
-  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;partySiteId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults(params)),
+  supplierPortfolio:(params:{page?:number;pageSize?:number;search?:string;overdue?:boolean;supplierId?:string;partySiteId?:string;status?:PayableStatus;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<SupplierPortfolioPage>("/commerce/v1/payables/suppliers",withPagedDefaults({ ...params, dateRangeVersion: 2 })),
+  payments:(params:{page?:number;pageSize?:number;search?:string;supplierId?:string;partySiteId?:string;status?:PayableStatus;overdue?:boolean;from?:string;to?:string;sortBy?:string;sortDirection?:"asc"|"desc"})=>apiClient.get<SupplierPaymentHistoryPage>("/commerce/v1/payable-payments",withPagedDefaults({ ...params, dateRangeVersion: 2 })),
   settlementConfiguration: () =>
     apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/pos/settlement-configuration"),
   paymentHistory: (supplierId:string,page=1,pageSize=5) =>
     apiClient.get<SupplierPaymentHistoryPage>(`/commerce/v1/suppliers/${supplierId}/payments`,{page,pageSize}),
   list: (params: {
+    payableId?: string;
     page?: number;
     pageSize?: number;
     search?: string;
@@ -150,7 +161,7 @@ export const payablesApi = {
     sortDirection?: "asc" | "desc";
   }) => apiClient.get<PayablePage>(
     "/commerce/v1/payables",
-    withPagedDefaults(params),
+    withPagedDefaults({ ...params, dateRangeVersion: 2 }),
   ),
   posList: (params: {page:number;pageSize:number;supplierId:string;outstandingOnly:true}) =>
     apiClient.get<PayablePage>("/commerce/v1/pos/payables",params),

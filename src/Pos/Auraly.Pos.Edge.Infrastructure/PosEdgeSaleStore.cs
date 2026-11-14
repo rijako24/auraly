@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
@@ -53,7 +54,12 @@ public sealed record OfflineSalePayment(
     Guid? BankAccountId = null,
     string? Notes = null,
     decimal? TenderedAmount = null,
-    decimal RoundingAdjustment = 0m)
+    decimal RoundingAdjustment = 0m,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null)
 {
     public decimal CollectedAmount => Amount + RoundingAdjustment;
 }
@@ -1071,7 +1077,8 @@ public sealed class PosEdgeSaleStore
                     payment.BankAccountId,
                     payment.Notes,
                     payment.TenderedAmount,
-                    payment.RoundingAdjustment))
+                    payment.RoundingAdjustment,payment.PaymentMethodId,payment.PaymentMethodVersion,
+                    payment.PaymentMethodCode,payment.PaymentMethodName,payment.AccountId))
                 .ToArray()
             : command.Credit is not null
                 ? []
@@ -1093,6 +1100,12 @@ public sealed class PosEdgeSaleStore
             throw new InvalidOperationException(
                 "Actual payments plus financed balance must equal the payable amount.");
         }
+        if (!PaymentMethodEvidence.IsValidSet(payments.Select(payment =>
+                new PaymentMethodEvidence(payment.PaymentMethodId,
+                    payment.PaymentMethodVersion,payment.PaymentMethodCode,payment.PaymentMethodName,payment.AccountId)).Concat(
+                command.Credit is { } financed ? [new PaymentMethodEvidence(financed.PaymentMethodId,financed.PaymentMethodVersion,
+                    financed.PaymentMethodCode,financed.PaymentMethodName,financed.AccountId)] : [])))
+            throw new InvalidOperationException("La identidad de las formas de pago no es válida.");
         if (!PosPaymentRoundingPolicy.IsValid(withholding.NetAmount, payments))
             throw new InvalidOperationException(
                 "The payment rounding adjustment does not match the original sale total.");

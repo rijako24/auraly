@@ -10,7 +10,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class PayablesVerticalSliceTests
 {
     [Fact]
-    public async Task Accepted_bank_auxiliary_survives_more_specific_configuration_and_ambiguous_payments_remain_unpaid()
+    public async Task Pending_bank_payment_uses_current_auxiliary_and_ambiguous_or_inactive_banks_remain_unpaid()
     {
         var productId = Guid.NewGuid();
         await ConfigureSeriesAndAccountingAsync(productId);
@@ -39,11 +39,12 @@ public sealed partial class PayablesVerticalSliceTests
         using(var parent=await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
             new CreateAccountingAccountRequest(parentId,fixture.TenantId,"111992","Auxiliares de prueba de aceptación","Asset",false,false)))
             parent.EnsureSuccessStatusCode();
-        async Task<AccountingAccountView> CreateAuxiliaryAsync(int number,Guid? business)
+        var transferMethod=await ScalarAsync<Guid>("SELECT OptionId FROM reference.Options WHERE CatalogCode=N'payment-method' AND Code=N'Transfer'",Guid.Empty);
+        async Task<AccountingAccountView> CreateAuxiliaryAsync(int number,Guid? method)
         {
             using var response=await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
                 new CreateAccountingAccountRequest(Guid.NewGuid(),fixture.TenantId,$"1119920{number}",
-                    $"Banco auxiliar {number}","Asset",true,false,new(parentId,"Bank","Debit",business,bankId,null)));
+                    $"Banco auxiliar {number}","Asset",true,false,new(parentId,"Bank","Debit",null,bankId,method)));
             Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
             return (await response.Content.ReadFromJsonAsync<AccountingAccountView>())!;
         }
@@ -61,9 +62,18 @@ public sealed partial class PayablesVerticalSliceTests
             using var accepted=await SendAsync(client,"/api/commerce/v1/payable-payments/confirm",payment,payment.PaymentId.ToString("N"));
             Assert.True(accepted.IsSuccessStatusCode,await accepted.Content.ReadAsStringAsync());
             Assert.Equal("AccountingPendingConfiguration",await ScalarAsync<string>("SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",payment.PaymentId));
-            var frozenJson=await ScalarAsync<string>("SELECT ResolvedBankAccountsJson FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",payment.PaymentId);
-            using var frozen=JsonDocument.Parse(frozenJson);
-            Assert.Equal(shared.AccountId,Assert.Single(frozen.RootElement.EnumerateArray()).GetProperty("AccountId").GetGuid());
+            Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND ResolvedBankAccountsJson IS NOT NULL",payment.PaymentId));
+            Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.SupplierPaymentTenders WHERE PaymentId=@Id AND AccountId IS NOT NULL",payment.PaymentId));
+            // Recreate an old queued cache; neither bank nor native tender cache
+            // may override the current configuration on a subsequent attempt.
+            await using var legacy=new SqlCommand("""
+                UPDATE dbo.AccountingPostingJobs SET ResolvedBankAccountsJson=@Banks WHERE SourceDocumentId=@Id;
+                UPDATE dbo.SupplierPaymentTenders SET AccountId=@Account WHERE PaymentId=@Id;
+                """,connection);
+            legacy.Parameters.AddWithValue("@Id",payment.PaymentId);
+            legacy.Parameters.AddWithValue("@Account",shared.AccountId);
+            legacy.Parameters.AddWithValue("@Banks",JsonSerializer.Serialize(new[]{new{BankAccountId=bankId,AccountId=shared.AccountId}}));
+            Assert.Equal(2,await legacy.ExecuteNonQueryAsync());
             Assert.Equal(10_000m,await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id",positionId));
         }
         finally
@@ -73,7 +83,7 @@ public sealed partial class PayablesVerticalSliceTests
             binding.Parameters.AddWithValue("@Line",position.OpeningEntryLineNumber);
             Assert.Equal(1,await binding.ExecuteNonQueryAsync());
         }
-        var specific=await CreateAuxiliaryAsync(2,fixture.BusinessId);
+        var specific=await CreateAuxiliaryAsync(2,transferMethod);
         async Task SetBankActiveAsync(bool active)
         {
             using var response=await client.PutAsJsonAsync($"/api/commerce/v1/accounting/bank-accounts/{bankId}",
@@ -91,17 +101,25 @@ public sealed partial class PayablesVerticalSliceTests
         try
         {
             await RetryAsync(payment.PaymentId);
-            await RetryAsync(payment.PaymentId);
+            Assert.Equal("BankAccountConfigurationMissing",await ScalarAsync<string>("SELECT LastErrorCode FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",payment.PaymentId));
+            Assert.Equal(10_000m,await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id",positionId));
+            Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id",payment.PaymentId));
         }
         finally { await SetBankActiveAsync(true); }
-        Assert.Equal(100m,await AccountAmountAsync(payment.PaymentId,shared.Code,false));
-        Assert.Equal(0m,await AccountAmountAsync(payment.PaymentId,specific.Code,false));
+        await RetryAsync(payment.PaymentId);
+        await RetryAsync(payment.PaymentId);
+        Assert.Equal(0m,await AccountAmountAsync(payment.PaymentId,shared.Code,false));
+        Assert.Equal(100m,await AccountAmountAsync(payment.PaymentId,specific.Code,false));
+        Assert.Equal(specific.AccountId,await ScalarAsync<Guid>("SELECT AccountId FROM dbo.SupplierPaymentTenders WHERE PaymentId=@Id",payment.PaymentId));
+        var applied=await ScalarAsync<string>("SELECT ResolvedBankAccountsJson FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",payment.PaymentId);
+        using(var evidence=JsonDocument.Parse(applied))
+            Assert.Equal(specific.AccountId,Assert.Single(evidence.RootElement.EnumerateArray()).GetProperty("AccountId").GetGuid());
         var second=payment with {PaymentId=Guid.NewGuid()};
         using(var response=await SendAsync(client,"/api/commerce/v1/payable-payments/confirm",second,second.PaymentId.ToString("N")))
             Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
         Assert.Equal(100m,await AccountAmountAsync(second.PaymentId,specific.Code,false));
 
-        var ambiguous=await CreateAuxiliaryAsync(3,fixture.BusinessId);
+        var ambiguous=await CreateAuxiliaryAsync(3,transferMethod);
         var third=payment with {PaymentId=Guid.NewGuid()};
         using(var response=await SendAsync(client,"/api/commerce/v1/payable-payments/confirm",third,third.PaymentId.ToString("N")))
             Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
@@ -110,16 +128,23 @@ public sealed partial class PayablesVerticalSliceTests
         Assert.Equal(9_800m,await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id",positionId));
         Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id",third.PaymentId));
         Assert.Equal(0,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.PayableTransactions WHERE SourceDocumentId=@Id",third.PaymentId));
+        // A completed replay must not consult the currently ambiguous bank.
+        await RetryAsync(payment.PaymentId);
+        Assert.Equal(applied,await ScalarAsync<string>("SELECT ResolvedBankAccountsJson FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",payment.PaymentId));
+        Assert.Equal(1,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id",payment.PaymentId));
         using(var resolved=await client.PutAsJsonAsync($"/api/commerce/v1/accounting/accounts/{ambiguous.AccountId}",
             new UpdateAccountingAccountRequest(ambiguous.Name,false,ambiguous.RowVersion!,
-                ambiguous.Semantics! with {FinancialFunction="General",BankAccountId=null})))
+                ambiguous.Semantics! with {FinancialFunction="General",BankAccountId=null,PaymentMethodOptionId=null})))
             resolved.EnsureSuccessStatusCode();
         await RetryAsync(third.PaymentId);
         await RetryAsync(third.PaymentId);
         Assert.Equal(100m,await AccountAmountAsync(third.PaymentId,specific.Code,false));
         Assert.Equal(9_700m,await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id",positionId));
         Assert.Equal(1,await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id",third.PaymentId));
-        await AssertLegacyBankMigrationAsync(bankId,shared.AccountId,payment.PaymentId);
+        // Applied account evidence remains immutable on later replay.
+        await RetryAsync(payment.PaymentId);
+        Assert.Equal(applied,await ScalarAsync<string>("SELECT ResolvedBankAccountsJson FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",payment.PaymentId));
+        await AssertLegacyBankMigrationAsync(bankId,specific.AccountId,payment.PaymentId);
     }
 
     private async Task AssertLegacyBankMigrationAsync(Guid bankId,Guid accountId,Guid paymentId)
@@ -134,7 +159,7 @@ public sealed partial class PayablesVerticalSliceTests
             await using var legacy=new SqlCommand("""
                 UPDATE accounting.BankAccounts SET AccountingAccountId=@AccountId WHERE BankAccountId=@BankId;
                 UPDATE dbo.AccountingAccounts SET BankAccountId=NULL,FinancialFunction=NULL,BalanceSide=NULL,
-                  ParentAccountId=NULL,BusinessId=NULL,PaymentMethodOptionId=NULL WHERE AccountId=@AccountId;
+                  ParentAccountId=NULL,LegacyBusinessId=NULL,PaymentMethodOptionId=NULL WHERE AccountId=@AccountId;
                 UPDATE dbo.AccountingPostingJobs SET ResolvedBankAccountsJson=NULL
                   WHERE SourceDocumentId=@PaymentId AND SourceDocumentType=N'PayablePayment';
                 SELECT CONCAT(CONVERT(varchar(64),entry.SourcePayloadHash,2),N'|',entry.EntryId,N'|',line.LineNumber,N'|',

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Application.Payables;
 using Auraly.Contracts.Payables;
 using Auraly.Application.WorkSessions;
@@ -15,24 +16,32 @@ public static class PayablesApi
             HttpContext context, int page, int pageSize, bool consolidated, DateOnly cutoff,
             Guid? supplierId, Guid? partySiteId, DateOnly? from, DateOnly? to,
             string? status, bool? outstandingOnly, bool? overdueOnly,
-            string? sortBy, string? sortDirection, string? search, Guid? conceptId, PayablesService service, CancellationToken token) =>
+            string? sortBy, string? sortDirection, string? search, Guid? conceptId, bool? includeApplications, int? dateRangeVersion, PayablesService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ReportAsync(context.User.ToPayablesIdentity(),
                 new(page, pageSize, consolidated, cutoff, supplierId, partySiteId, from, to,
-                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search, conceptId), token), Results.Ok))
+                    status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search, conceptId, includeApplications ?? true, dateRangeVersion ?? 1), token), Results.Ok))
             .RequireAuthorization("payables.user");
         endpoints.MapGet("/api/commerce/v1/payables/report/print", async (
             HttpContext context, bool consolidated, DateOnly cutoff,
             Guid? supplierId, Guid? partySiteId, DateOnly? from, DateOnly? to,
             string? status, bool? outstandingOnly, bool? overdueOnly,
-            string? sortBy, string? sortDirection, string? search, Guid? conceptId, PayablesService service, CancellationToken token) =>
+            string? sortBy, string? sortDirection, string? search, Guid? conceptId, bool? includeApplications, int? dateRangeVersion, PayablesService service, ITenantService tenants, CancellationToken token) =>
             await ExecuteAsync(async () =>
             {
                 var html = await PortfolioReportPrint.PayablesAsync(
                     service, context.User.ToPayablesIdentity(),
                     new(1, 100, consolidated, cutoff, supplierId, partySiteId, from, to,
-                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search, conceptId), token);
+                        status, outstandingOnly == true, overdueOnly == true, sortBy, sortDirection, search, conceptId, includeApplications ?? true, dateRangeVersion ?? 1), tenants, token);
                 context.Response.Headers.CacheControl = "no-store";
                 return Results.Content(html, "text/html; charset=utf-8");
+            })).RequireAuthorization("payables.user");
+        endpoints.MapGet("/api/commerce/v1/payables/report/export", async (HttpContext context,
+            [AsParameters] PayablesReportQuery query, PayablesService service, CancellationToken token) =>
+            await ExecuteAsync(async () =>
+            {
+                var report = await service.PrintReportAsync(context.User.ToPayablesIdentity(), query, token);
+                context.Response.Headers.CacheControl = "no-store";
+                return Results.Ok(report);
             })).RequireAuthorization("payables.user");
         endpoints.MapGet("/api/commerce/v1/payables/expense-concepts",
                 async (HttpContext context, string? search, int page, int pageSize,
@@ -43,20 +52,20 @@ public static class PayablesApi
         endpoints.MapGet(
                 "/api/commerce/v1/payables/suppliers",
                 async (HttpContext context,int page,int pageSize,string? search,bool? overdue,
-                    Guid? supplierId,string? status,DateOnly? from,DateOnly? to,Guid? partySiteId,string? sortBy,string? sortDirection,
+                    Guid? supplierId,string? status,DateOnly? from,DateOnly? to,Guid? partySiteId,string? sortBy,string? sortDirection,int? dateRangeVersion,
                     PayablesService service,CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListSuppliersAsync(context.User.ToPayablesIdentity(),
-                        new SupplierPortfolioQuery(page,pageSize,search,overdue,supplierId,status,from,to,partySiteId,sortBy,sortDirection),cancellationToken),Results.Ok))
+                        new SupplierPortfolioQuery(page,pageSize,search,overdue,supplierId,status,from,to,partySiteId,sortBy,sortDirection,dateRangeVersion ?? 1),cancellationToken),Results.Ok))
             .RequireAuthorization("payables.user");
         endpoints.MapGet(
                 "/api/commerce/v1/payables",
                 async (HttpContext context, int page, int pageSize, string? search,
                     Guid? supplierId, string? status, bool? overdue, bool? outstandingOnly,
-                    DateOnly? from,DateOnly? to,Guid? conceptId,Guid? partySiteId,string? sortBy,string? sortDirection,
+                    DateOnly? from,DateOnly? to,Guid? conceptId,Guid? partySiteId,string? sortBy,string? sortDirection,Guid? payableId,int? dateRangeVersion,
                     PayablesService service, CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListAsync(
                         context.User.ToPayablesIdentity(),
-                        new PayableQuery(page, pageSize, search, supplierId, status, overdue, outstandingOnly==true,from,to,conceptId,partySiteId,sortBy,sortDirection),
+                        new PayableQuery(page, pageSize, search, supplierId, status, overdue, outstandingOnly==true,from,to,conceptId,partySiteId,sortBy,sortDirection,payableId,dateRangeVersion ?? 1),
                         cancellationToken), Results.Ok))
             .RequireAuthorization("payables.user");
 
@@ -84,10 +93,10 @@ public static class PayablesApi
         endpoints.MapGet(
                 "/api/commerce/v1/payable-payments",
                 async (HttpContext context,int page,int pageSize,string? search,Guid? supplierId,
-                    string? status,bool? overdue,DateOnly? from,DateOnly? to,Guid? partySiteId,string? sortBy,string? sortDirection,
+                    string? status,bool? overdue,DateOnly? from,DateOnly? to,Guid? partySiteId,string? sortBy,string? sortDirection,int? dateRangeVersion,
                     PayablesService service,CancellationToken cancellationToken) =>
                     await ExecuteAsync(() => service.ListPaymentsAsync(context.User.ToPayablesIdentity(),
-                        new SupplierPaymentHistoryQuery(page,pageSize,search,supplierId,status,overdue,from,to,partySiteId,sortBy,sortDirection),cancellationToken),Results.Ok))
+                        new SupplierPaymentHistoryQuery(page,pageSize,search,supplierId,status,overdue,from,to,partySiteId,sortBy,sortDirection,dateRangeVersion ?? 1),cancellationToken),Results.Ok))
             .RequireAuthorization("payables.user");
 
         endpoints.MapPost(
@@ -151,8 +160,8 @@ public static class PayablesApi
         { return Results.Problem(exception.Message, statusCode: 400); }
         catch (PayablesConflictException exception)
         { return Results.Problem(exception.Message, statusCode: 409); }
-        catch (PortfolioReportPrintException exception)
-        { return Results.Problem(exception.Message, statusCode: exception.StatusCode); }
+        catch (PortfolioReportLimitException exception)
+        { return Results.Problem(exception.Message, statusCode: 422); }
     }
 
     private static async Task<IResult> ExecuteAsync<T>(

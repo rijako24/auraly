@@ -86,7 +86,16 @@ public sealed record PayrollNoveltyInput(
     decimal TotalAmount,
     Guid? DeductionAgreementId,
     bool HasActiveDeductionAuthority,
-    bool MustProtectMinimumNetPay);
+    bool MustProtectMinimumNetPay)
+{
+    public static void ValidateAmounts(string calculationMethodCode,string noveltyTypeCode,
+        decimal quantity,decimal? unitAmount,decimal totalAmount)
+    {
+        var fixedAmount=calculationMethodCode==PayrollCalculationMethodCodes.FixedAmount && noveltyTypeCode==PayrollNoveltyTypeCodes.Amount;
+        if(quantity<0 || decimal.Round(quantity,6)!=quantity || quantity==0 && !fixedAmount || unitAmount<0 || totalAmount<0)
+            throw new PayrollCalculationException("La cantidad debe ser positiva y tener hasta seis decimales. Una novedad de importe fijo puede tener cantidad cero; sus valores no pueden ser negativos.");
+    }
+}
 
 public sealed record PayrollEmployeeCalculationInput(
     Guid EmploymentId,
@@ -98,7 +107,9 @@ public sealed record PayrollEmployeeCalculationInput(
     decimal RiskRate,
     IReadOnlyDictionary<string, decimal> RuleParameters,
     IReadOnlyDictionary<string, PayrollConceptDefinition> SystemConcepts,
-    IReadOnlyList<PayrollNoveltyInput> Novelties);
+    IReadOnlyList<PayrollNoveltyInput> Novelties,
+    bool AppliesTransportAllowance = true,
+    byte[]? EmploymentVersion = null);
 
 public sealed record PayrollCalculatedLine(
     Guid ConceptId,
@@ -126,7 +137,11 @@ public sealed record PayrollEmployeeCalculation(
     decimal Provisions,
     decimal NetPayable,
     IReadOnlyList<PayrollCalculatedLine> Lines,
-    byte[] CalculationHash);
+    byte[] CalculationHash)
+{
+    public bool AppliesTransportAllowance { get; init; } = true;
+    public byte[]? EmploymentVersion { get; init; }
+}
 
 public sealed class PayrollCalculator
 {
@@ -178,25 +193,30 @@ public sealed class PayrollCalculator
         var monthlyDays = Rule(rules, PayrollRuleParameterCodes.MonthlyDays);
         var lines = new List<PayrollCalculatedLine>();
 
-        var absenceDays = input.Novelties
-            .Where(x => x.NoveltyTypeCode == PayrollNoveltyTypeCodes.Days &&
-                        x.Concept.Nature == PayrollLineNature.Deduction)
-            .Sum(x => x.Quantity);
+        var absenceDays = AbsenceDays(input);
         var workedDays = input.WorkedDays - absenceDays;
         if (workedDays < 0)
             throw new PayrollCalculationException("Los días de ausencia superan los días reconocidos del período.");
+        if (decimal.Round(workedDays,4) != workedDays)
+            throw new PayrollCalculationException("Los días resultantes requieren ajustar su precisión a cuatro decimales antes de guardar.");
 
         var basicSalary = Money(input.MonthlySalary / monthlyDays * workedDays);
         Add(lines, concepts[PayrollSystemConceptRoles.BasicSalary], workedDays, null, input.MonthlySalary / monthlyDays, basicSalary);
 
-        foreach (var novelty in input.Novelties.OrderBy(x => x.NoveltyId))
+        IReadOnlyCollection<PayrollCalculatedLine>? percentageEarningBase = null;
+        foreach (var novelty in input.Novelties.OrderBy(NoveltyStage).ThenBy(x => x.NoveltyId))
         {
-            if (novelty.TotalAmount < 0 || novelty.Quantity <= 0 || novelty.UnitAmount < 0)
-                throw new PayrollCalculationException("Las novedades deben tener cantidad positiva y valor no negativo.");
+            PayrollNoveltyInput.ValidateAmounts(novelty.Concept.CalculationMethodCode,novelty.NoveltyTypeCode,
+                novelty.Quantity,novelty.UnitAmount,novelty.TotalAmount);
             if (novelty.Concept.RequiresDeductionAgreement &&
                 (novelty.DeductionAgreementId is null || !novelty.HasActiveDeductionAuthority))
                 throw new PayrollCalculationException($"El concepto '{novelty.Concept.Code}' requiere un acuerdo de deducción vigente y con evidencia.");
-            var amount = ResolveNoveltyAmount(novelty, lines);
+            var percentageEarning = novelty.Concept.Nature == PayrollLineNature.Earning &&
+                novelty.Concept.CalculationMethodCode == PayrollCalculationMethodCodes.PercentageOfBase;
+            if (percentageEarning) percentageEarningBase ??= lines.ToArray();
+            var amount = ResolveNoveltyAmount(novelty, percentageEarning ? percentageEarningBase! : lines);
+            if (IsAbsence(novelty) && amount != 0)
+                throw new PayrollCalculationException("La ausencia por días ya reduce el salario. Su valor debe ser cero para no descontarla dos veces.");
             Add(lines, novelty.Concept, novelty.Quantity, novelty.NoveltyId,
                 novelty.Concept.CalculationMethodCode == PayrollCalculationMethodCodes.QuantityByRate
                     ? novelty.UnitAmount
@@ -206,7 +226,7 @@ public sealed class PayrollCalculator
 
         var salaryEarnings = lines.Where(x => x.Nature == PayrollLineNature.Earning &&
                                               (x.ConceptId == concepts[PayrollSystemConceptRoles.BasicSalary].ConceptId ||
-                                               input.Novelties.Any(n => n.Concept.ConceptId == x.ConceptId && n.Concept.IsSalaryBase)))
+                                               x.IsSalaryBase))
             .Sum(x => x.Amount);
         var nonSalaryEarnings = lines.Where(x => x.Nature == PayrollLineNature.Earning).Sum(x => x.Amount) - salaryEarnings;
         var nonSalaryThreshold = Money((salaryEarnings + nonSalaryEarnings) * Rule(rules, PayrollRuleParameterCodes.NonSalaryExclusionThresholdRate));
@@ -218,7 +238,7 @@ public sealed class PayrollCalculator
             : salaryEarnings + excessNonSalary;
         contributionBase = Money(Math.Min(contributionBase, maximumBase));
 
-        if (!input.IsIntegralSalary && input.MonthlySalary <= minimum * Rule(rules, PayrollRuleParameterCodes.TransportAllowanceSalaryLimitMultiple))
+        if (input.AppliesTransportAllowance && !input.IsIntegralSalary && input.MonthlySalary <= minimum * Rule(rules, PayrollRuleParameterCodes.TransportAllowanceSalaryLimitMultiple))
         {
             var allowance = Money(Rule(rules, PayrollRuleParameterCodes.TransportAllowance) / monthlyDays * workedDays);
             Add(lines, concepts[PayrollSystemConceptRoles.TransportAllowance], workedDays, null, null, allowance);
@@ -262,9 +282,9 @@ public sealed class PayrollCalculator
         var deductions = Money(lines.Where(x => x.Nature == PayrollLineNature.Deduction).Sum(x => x.Amount));
         if (deductions > earnings)
             throw new PayrollCalculationException("Las deducciones no pueden superar los devengados del período.");
-        var protectedDeductions = Money(input.Novelties
-            .Where(x => x.Concept.Nature == PayrollLineNature.Deduction && x.MustProtectMinimumNetPay)
-            .Sum(ResolveNoveltyAmountForProtection));
+        var protectedIds = input.Novelties.Where(novelty => novelty.MustProtectMinimumNetPay).Select(novelty => novelty.NoveltyId).ToHashSet();
+        var protectedDeductions = Money(lines.Where(line => line.Nature == PayrollLineNature.Deduction &&
+            line.NoveltyId.HasValue && protectedIds.Contains(line.NoveltyId.Value)).Sum(line => line.Amount));
         var statutoryDeductions = Money(lines
             .Where(x => x.Nature == PayrollLineNature.Deduction && x.NoveltyId is null)
             .Sum(x => x.Amount));
@@ -273,10 +293,32 @@ public sealed class PayrollCalculator
             throw new PayrollCalculationException("Las deducciones autorizadas afectan el mínimo protegido del trabajador.");
         var employer = Money(lines.Where(x => x.Nature == PayrollLineNature.EmployerContribution).Sum(x => x.Amount));
         var provisions = Money(lines.Where(x => x.Nature == PayrollLineNature.Provision).Sum(x => x.Amount));
-        var normalized = lines.Where(x => x.Amount != 0).ToArray();
+        var normalized = lines.Where(x => x.Amount != 0 || x.NoveltyId.HasValue).ToArray();
         return new PayrollEmployeeCalculation(input.EmploymentId, input.PartyId, workedDays,
-            earnings, deductions, employer, provisions, Money(earnings - deductions), normalized, Hash(normalized));
+            earnings, deductions, employer, provisions, Money(earnings - deductions), normalized, Hash(normalized)) { AppliesTransportAllowance = input.AppliesTransportAllowance, EmploymentVersion = input.EmploymentVersion };
     }
+
+    public PayrollEmployeeCalculationInput WithFinalWorkedDays(PayrollEmployeeCalculationInput input,
+        decimal workedDays, int periodDays)
+    {
+        if (periodDays <= 0 || workedDays < 0 || workedDays > periodDays || decimal.Round(workedDays, 4) != workedDays)
+            throw new PayrollCalculationException("Los días trabajados deben estar dentro del período y admitir como máximo cuatro decimales.");
+        var baseDays = workedDays + AbsenceDays(input);
+        if (decimal.Round(baseDays, 4) != baseDays)
+            throw new PayrollCalculationException("Las ausencias requieren ajustar su precisión antes de guardar días con cuatro decimales.");
+        if (baseDays > periodDays)
+            throw new PayrollCalculationException("Los días trabajados y las ausencias superan los días del período.");
+        return input with { WorkedDays = baseDays };
+    }
+
+    private static bool IsAbsence(PayrollNoveltyInput novelty)
+        => novelty.NoveltyTypeCode == PayrollNoveltyTypeCodes.Days && novelty.Concept.Nature == PayrollLineNature.Deduction;
+
+    private static decimal AbsenceDays(PayrollEmployeeCalculationInput input)
+        => input.Novelties.Where(IsAbsence).Sum(novelty => novelty.Quantity);
+
+    private static int NoveltyStage(PayrollNoveltyInput novelty) => novelty.Concept.Nature != PayrollLineNature.Earning
+        ? 2 : novelty.Concept.CalculationMethodCode == PayrollCalculationMethodCodes.PercentageOfBase ? 1 : 0;
 
     public static void ValidateRuleParameters(IReadOnlyDictionary<string, decimal> parameters)
     {
@@ -285,6 +327,8 @@ public sealed class PayrollCalculator
             throw new PayrollCalculationException($"Faltan parámetros obligatorios: {string.Join(", ", missing)}.");
         if (RequiredRules.Any(code => parameters[code] < 0))
             throw new PayrollCalculationException("Los parámetros legales no pueden ser negativos.");
+        if (parameters[PayrollRuleParameterCodes.MonthlyDays] <= 0)
+            throw new PayrollCalculationException("El divisor de días del mes debe ser positivo.");
     }
 
     private static void Validate(PayrollEmployeeCalculationInput input)
@@ -333,14 +377,6 @@ public sealed class PayrollCalculator
                 $"El concepto '{concept.Code}' no tiene una base positiva para aplicar porcentaje.");
         return basis;
     }
-
-    private static decimal ResolveNoveltyAmountForProtection(PayrollNoveltyInput novelty) =>
-        novelty.Concept.CalculationMethodCode switch
-        {
-            PayrollCalculationMethodCodes.QuantityByRate when novelty.UnitAmount is not null =>
-                Money(novelty.Quantity * novelty.UnitAmount.Value),
-            _ => Money(novelty.TotalAmount)
-        };
 
     private static void AddPercentage(List<PayrollCalculatedLine> lines, PayrollConceptDefinition concept,
         decimal baseAmount, decimal rate, bool isEmployerCost = false) =>

@@ -15,14 +15,14 @@ public static class ReferenceOptionsApi
         group.MapGet("/{catalogCode}", async (
             HttpContext context,
             string catalogCode,
-            bool? contextual,DateOnly? from,DateOnly? to,
+            bool? contextual,DateOnly? from,DateOnly? to,int? dateRangeVersion,
             ReferenceOptionService service,
             CancellationToken cancellationToken) =>
         {
             try
             {
                 return Results.Ok(contextual==true
-                    ?await service.ListContextualAsync(context.User.ToCatalogUserIdentity(),catalogCode,from,to,cancellationToken)
+                    ?await service.ListContextualAsync(context.User.ToCatalogUserIdentity(),catalogCode,from,to,cancellationToken,dateRangeVersion ?? 1)
                     :await service.ListAsync(catalogCode, cancellationToken));
             }
             catch (CatalogValidationException exception)

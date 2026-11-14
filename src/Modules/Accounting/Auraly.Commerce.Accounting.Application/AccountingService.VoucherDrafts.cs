@@ -20,18 +20,30 @@ public sealed partial class AccountingService
             ? await store.GetEntryAsync(user, sourceDocumentId, cancellationToken) : null;
         if (source is null && entry is null || source?.Adjustment is not null && entry is null)
             throw new AccountingConflictException("No hay partidas de un comprobante disponible para copiar en esta sede.");
+        var appliedForms = source?.AppliedPaymentMethods?.ToDictionary(item => item.SourceLineId);
         var lines = entry is not null
             ? entry.Lines.Select(line => new VoucherDraftLine(line.AccountId, line.PartyId, line.CostCenterId,
                 line.Description, line.Debit, line.Credit, LineId: ids.NewId(), BaseAmount: line.BaseAmount)).ToArray()
-            : source!.Lines.Select(line => line.Value with { Reference = null, LineId = ids.NewId(),
-                ExistingPosition = null, FinancialGroupId = null, DueDate = null, PaymentEvidence = null,
-                FinancialDiscountEarned = null }).ToArray();
+            : source!.Lines.Select(line =>
+            {
+                var applied = line.Value.LineId is { } lineId && appliedForms is not null && appliedForms.TryGetValue(lineId,out var used) ? used : null;
+                var selected = line.Value.PaymentEvidence;
+                return line.Value with { AccountId=applied?.AccountId ?? line.Value.AccountId,Reference=null,LineId=ids.NewId(),
+                    ExistingPosition=null,FinancialGroupId=null,DueDate=null,FinancialDiscountEarned=null,FinancialConceptTargetLineId=null,
+                    // Retain form identity, clearing transaction-specific evidence.
+                    // Actual account evidence comes from the completed result only.
+                    PaymentEvidence=selected?.PaymentMethodId is null ? null : new VoucherPaymentEvidence(
+                        PaymentMethodId:selected.PaymentMethodId,PaymentMethodTypeCode:applied?.MethodCode ?? selected.PaymentMethodTypeCode,
+                        PaymentMethodVersion:applied?.Version ?? selected.PaymentMethodVersion,PaymentMethodCode:applied?.Code ?? selected.PaymentMethodCode,
+                        PaymentMethodName:applied?.Name ?? selected.PaymentMethodName) };
+            }).ToArray();
         var copy = new SaveVoucherDraftRequest(request.DocumentId, AccountingManualDocumentTypes.ManualVoucher,
             request.OccurredAt, source?.Adjustment is null && source is not null ? source.ConceptCode : "MANUAL_VOUCHER",
             source?.Description ?? entry!.Description, null, lines, null, null, source?.MainPartyId ?? entry?.MainPartyId, sourceDocumentId,
             PayloadVersion: source?.PayloadVersion == 4 ? 4 : 2,
             VoucherTypeCode: source?.PayloadVersion == 4
-                ? string.Equals(source.VoucherTypeCode,"Disbursement",StringComparison.OrdinalIgnoreCase) ? "Disbursement" : "Accounting" : null);
+                ? string.Equals(source.VoucherTypeCode,"Disbursement",StringComparison.OrdinalIgnoreCase) ? "Disbursement"
+                    : string.Equals(source.VoucherTypeCode,"CashReceipt",StringComparison.OrdinalIgnoreCase) ? "CashReceipt" : "Accounting" : null);
         try { return await SaveVoucherDraftAsync(user, copy, cancellationToken); }
         catch (AccountingConflictException)
         {
@@ -66,7 +78,7 @@ public sealed partial class AccountingService
         if (request.PayloadVersion != 4 && (request.VoucherTypeCode is not null || request.WorkSessionId is not null || request.FiscalCapture is not null ||
             request.Lines?.Any(line => line is not null && (line.ExistingPosition is not null || line.FinancialGroupId is not null ||
                 line.DueDate is not null || line.PartySiteId is not null || line.PaymentEvidence is not null ||
-                line.FinancialDiscountEarned is not null)) == true))
+                line.FinancialDiscountEarned is not null || line.FinancialConceptId is not null || line.FinancialConceptTargetLineId is not null)) == true))
             throw new AccountingValidationException("Los vínculos y datos financieros requieren la versión financiera del comprobante.");
         if (request.ClonedFromDocumentId is not null) Demand(user, AccountingPermissionCodes.Read);
         if (request.DocumentId == Guid.Empty || request.OccurredAt == default || request.MainPartyId == Guid.Empty ||
@@ -83,7 +95,8 @@ public sealed partial class AccountingService
             if (line is null || string.IsNullOrWhiteSpace(line.Description) || line.Description.Length > 500 ||
                 !ValidDraftAmount(line.Debit) || !ValidDraftAmount(line.Credit) ||
                 line.BaseAmount is { } recordedBase && !ValidDraftAmount(decimal.Abs(recordedBase)) ||
-                line.AccountId == Guid.Empty || line.PartyId == Guid.Empty || line.CostCenterId == Guid.Empty)
+                line.AccountId == Guid.Empty || line.PartyId == Guid.Empty || line.CostCenterId == Guid.Empty || line.FinancialConceptId==Guid.Empty ||
+                line.FinancialConceptTargetLineId == Guid.Empty || line.FinancialConceptTargetLineId is not null && line.FinancialConceptId is null)
                 throw new AccountingValidationException("Revisa los valores y las dimensiones de las partidas.");
             ValidateDraftReference(line.Reference);
             if (request.PayloadVersion == 4)
@@ -101,6 +114,7 @@ public sealed partial class AccountingService
                     evidence.ApprovalNumber?.Length > 100 || evidence.Notes?.Length > 500 ||
                     evidence.TenderedAmount is { } tendered && (tendered <= 0 || !ValidDraftAmount(tendered))))
                     throw new AccountingValidationException("Revisa la evidencia del medio y el valor entregado de la partida.");
+                AccountingVoucherFinancialValidation.ValidatePaymentFormEvidence(line.PaymentEvidence, line.AccountId);
             }
         }
         if (request.PayloadVersion == 4)
@@ -140,8 +154,11 @@ public sealed partial class AccountingService
     private static VoucherPaymentEvidence? NormalizeVoucherPaymentEvidence(VoucherPaymentEvidence? value)
     {
         if (value is null) return null;
-        var result=value with { CardFranchiseCode=Normalize(value.CardFranchiseCode),ApprovalNumber=Normalize(value.ApprovalNumber),Notes=Normalize(value.Notes) };
-        return result.CardFranchiseCode is null && result.ApprovalNumber is null && result.Notes is null && result.TenderedAmount is null ? null : result;
+        var result=value with { CardFranchiseCode=Normalize(value.CardFranchiseCode),ApprovalNumber=Normalize(value.ApprovalNumber),Notes=Normalize(value.Notes),
+            PaymentMethodTypeCode=Normalize(value.PaymentMethodTypeCode),PaymentMethodCode=Normalize(value.PaymentMethodCode),PaymentMethodName=Normalize(value.PaymentMethodName) };
+        return result.CardFranchiseCode is null && result.ApprovalNumber is null && result.Notes is null && result.TenderedAmount is null &&
+            result.PaymentMethodId is null && result.PaymentMethodTypeCode is null && result.PaymentMethodVersion is null &&
+            result.PaymentMethodCode is null && result.PaymentMethodName is null ? null : result;
     }
 
     public async Task<VoucherDraftView> SendVoucherDraftAsync(AccountingUserIdentity user,
@@ -179,7 +196,9 @@ public sealed partial class AccountingService
                         draft.PayloadVersion == 4 ? line.Value.PartySiteId : null,
                         draft.PayloadVersion == 4 ? line.Value.PaymentEvidence : null,
                         draft.PayloadVersion == 4 ? line.Value.Reference : null,
-                        draft.PayloadVersion == 4 ? line.Value.FinancialDiscountEarned : null)).ToArray(),
+                        draft.PayloadVersion == 4 ? line.Value.FinancialDiscountEarned : null,
+                        draft.PayloadVersion == 4 ? line.Value.FinancialConceptId : null,
+                        draft.PayloadVersion == 4 ? line.Value.FinancialConceptTargetLineId : null)).ToArray(),
                 draft.MainPartyId, draft.PayloadVersion,
                 reference, draft.PayloadVersion == 4 ? draft.VoucherTypeCode : null,
                 draft.PayloadVersion == 4 ? draft.WorkSessionId : null, draft.PayloadVersion == 4 ? draft.CurrencyCode : null,

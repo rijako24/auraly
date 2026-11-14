@@ -7,7 +7,17 @@ namespace Auraly.Commerce.Payroll.Application;
 
 public sealed record PayrollRunCalculationData(
     Guid PayrollRunId,
-    IReadOnlyList<PayrollEmployeeCalculationInput> Employees);
+    IReadOnlyList<PayrollEmployeeCalculationInput> Employees,
+    byte[] RowVersion)
+{
+    public int PeriodDays { get; init; }
+    public bool IsPartial { get; init; }
+    public byte[] ContextVersionHash { get; init; } = [];
+    public IReadOnlyDictionary<Guid, PayrollEmployeeCalculationSource> Sources { get; init; }
+        = new Dictionary<Guid, PayrollEmployeeCalculationSource>();
+}
+
+public sealed record PayrollEmployeeCalculationSource(decimal MaximumContractDays, byte[] NoveltyVersionHash);
 
 public interface IPayrollStore
 {
@@ -31,8 +41,10 @@ public interface IPayrollStore
     Task<ElectronicPayrollConfigurationView> SaveElectronicConfigurationAsync(
         PayrollUserIdentity user, SaveElectronicPayrollConfigurationRequest request,
         CancellationToken ct);
-    Task SaveNoveltyAsync(PayrollUserIdentity user, SavePayrollNoveltyRequest request,
+    Task<PayrollNoveltyView> SaveNoveltyAsync(PayrollUserIdentity user, SavePayrollNoveltyRequest request,
         CancellationToken ct);
+    Task<PayrollNoveltyView> VoidNoveltyAsync(PayrollUserIdentity user, Guid noveltyId,
+        byte[] rowVersion, CancellationToken ct);
     Task<PayrollPaymentBatchView> CreatePaymentBatchAsync(PayrollUserIdentity user,
         CreatePayrollPaymentBatchRequest request, CancellationToken ct);
     Task<PayrollRunView> CreateRunAsync(PayrollUserIdentity user,
@@ -41,9 +53,12 @@ public interface IPayrollStore
         CancellationToken ct);
     Task<IReadOnlyList<PayrollRunSummary>> ListRunsAsync(PayrollUserIdentity user,
         CancellationToken ct);
+    Task<PayrollRunEmploymentPage> PageRunEmploymentsAsync(PayrollUserIdentity user,
+        Guid runId, int page, int pageSize, string? search, CancellationToken ct,
+        PayrollRunEmploymentFilter? filter = null);
     Task<PayrollRunCalculationData> LoadCalculationDataAsync(PayrollUserIdentity user,
-        Guid runId, CancellationToken ct);
-    Task<PayrollRunView> SaveCalculationAsync(PayrollUserIdentity user, Guid runId,
+        Guid runId, CancellationToken ct, CalculatePayrollRunRequest? request = null);
+    Task<PayrollRunView> SaveCalculationAsync(PayrollUserIdentity user, PayrollRunCalculationData data,
         IReadOnlyList<PayrollEmployeeCalculation> calculations, CancellationToken ct);
     Task<PayrollRunAcceptance> ApproveRunAsync(PayrollUserIdentity user, Guid runId,
         string idempotencyKey, byte[] rowVersion, CancellationToken ct);
@@ -198,13 +213,14 @@ public sealed class PayrollService(
         }, ct);
     }
 
-    public Task SaveNoveltyAsync(PayrollUserIdentity user,
+    public Task<PayrollNoveltyView> SaveNoveltyAsync(PayrollUserIdentity user,
         SavePayrollNoveltyRequest request, CancellationToken ct = default)
     {
         Demand(user, PayrollPermissionCodes.Manage);
         if (request.NoveltyId == Guid.Empty || request.EmploymentId == Guid.Empty ||
-            request.ConceptId == Guid.Empty || request.Quantity <= 0 ||
-            request.TotalAmount < 0 || request.EndDate < request.StartDate)
+            request.ConceptId == Guid.Empty || request.Quantity < 0 ||
+            request.TotalAmount < 0 || request.EndDate < request.StartDate ||
+            (request.RowVersion is not null && request.RowVersion.Length != 8))
             throw new PayrollValidationException("La novedad no es válida.");
         return store.SaveNoveltyAsync(user, request with
         {
@@ -213,18 +229,28 @@ public sealed class PayrollService(
         }, ct);
     }
 
+    public Task<PayrollNoveltyView> VoidNoveltyAsync(PayrollUserIdentity user, Guid noveltyId,
+        byte[] rowVersion, CancellationToken ct = default)
+    {
+        Demand(user, PayrollPermissionCodes.Manage);
+        if (noveltyId == Guid.Empty || rowVersion is null || rowVersion.Length != 8)
+            throw new PayrollValidationException("La novedad y su versión son obligatorias.");
+        return store.VoidNoveltyAsync(user, noveltyId, rowVersion, ct);
+    }
+
     public async Task<PayrollPaymentBatchView> CreatePaymentBatchAsync(
         PayrollUserIdentity user, CreatePayrollPaymentBatchRequest request,
         CancellationToken ct = default)
     {
         Demand(user, PayrollPermissionCodes.Pay);
         if (request.PaymentBatchId == Guid.Empty || request.PayrollRunId == Guid.Empty ||
-            request.PaymentMethodOptionId == Guid.Empty)
+            request.PaymentMethodOptionId == Guid.Empty || request.PaymentMethodId == Guid.Empty || request.PaymentDate == default)
             throw new PayrollValidationException("Los datos del pago no son válidos.");
         var result = await store.CreatePaymentBatchAsync(user, request with
         {
             ReferenceNumber = Text(request.ReferenceNumber, 100, "Referencia de pago")
         }, ct);
+        if (result.AccountingSignalPublished) return result;
         await accounting.RequestPostingAsync(user.BusinessId, result.PaymentBatchId,
             PayrollAccountingDocumentTypes.Payment, ct);
         await store.MarkAccountingSignalPublishedAsync(result.PaymentBatchId, ct);
@@ -258,17 +284,69 @@ public sealed class PayrollService(
         return store.ListRunsAsync(user, ct);
     }
 
-    public async Task<PayrollRunView> CalculateRunAsync(PayrollUserIdentity user,
+    public Task<PayrollRunEmploymentPage> PageRunEmploymentsAsync(PayrollUserIdentity user,
+        Guid runId, int page, int pageSize, string? search, CancellationToken ct = default,
+        PayrollRunEmploymentFilter? filter = null)
+    {
+        Demand(user, PayrollPermissionCodes.Read);
+        if (runId == Guid.Empty || page < 1 || pageSize is < 1 or > 50 || page > int.MaxValue / pageSize)
+            throw new PayrollValidationException("La página debe tener entre 1 y 50 trabajadores.");
+        if (search?.Length > 160) throw new PayrollValidationException("La búsqueda admite hasta 160 caracteres.");
+        filter ??= new();
+        if (filter.ContractNumber?.Length > 64 || filter.SortBy is not ("employeeName" or "identification" or "contractNumber" or "startDate" or "endDate")
+            || filter.SortDirection is not ("asc" or "desc"))
+            throw new PayrollValidationException("El filtro u orden de trabajadores no es válido.");
+        return store.PageRunEmploymentsAsync(user, runId, page, pageSize, search?.Trim(), ct,
+            filter with { ContractNumber = filter.ContractNumber?.Trim() });
+    }
+
+    public Task<PayrollRunView> CalculateRunAsync(PayrollUserIdentity user,
         Guid runId, CancellationToken ct = default)
+        => CalculateRunAsync(user, runId, new CalculatePayrollRunRequest(), ct);
+
+    public async Task<PayrollRunView> CalculateRunAsync(PayrollUserIdentity user,
+        Guid runId, CalculatePayrollRunRequest request, CancellationToken ct = default)
     {
         Demand(user, PayrollPermissionCodes.Calculate);
-        var data = await store.LoadCalculationDataAsync(user, runId, ct);
+        if (runId == Guid.Empty) throw new PayrollValidationException("La liquidación es obligatoria.");
+        var changes = request.SelectionChanges ?? [];
+        var dayChanges = request.WorkedDaysChanges ?? [];
+        var recalculate = request.RecalculateEmploymentIds ?? [];
+        if (changes.Count > PayrollPaymentLimits.MaximumEmployees || changes.Any(value => value is null || value.EmploymentId == Guid.Empty)
+            || changes.Select(value => value.EmploymentId).Distinct().Count() != changes.Count)
+            throw new PayrollValidationException("La selección admite hasta 500 contratos distintos.");
+        if (dayChanges.Count > PayrollPaymentLimits.MaximumEmployees || dayChanges.Any(value => value is null || value.EmploymentId == Guid.Empty)
+            || dayChanges.Select(value => value.EmploymentId).Distinct().Count() != dayChanges.Count)
+            throw new PayrollValidationException("La edición de días admite hasta 500 contratos distintos.");
+        if (recalculate.Count > PayrollPaymentLimits.MaximumEmployees || recalculate.Any(id => id == Guid.Empty)
+            || recalculate.Distinct().Count() != recalculate.Count)
+            throw new PayrollValidationException("El recálculo admite hasta 500 contratos distintos.");
+        if (recalculate.Count > 0 && (request.SelectAll.HasValue || changes.Count > 0 || dayChanges.Count > 0))
+            throw new PayrollValidationException("Recalcula los trabajadores sin cambiar simultáneamente su selección o sus días.");
+        if ((request.SelectAll.HasValue || changes.Count > 0 || dayChanges.Count > 0 || recalculate.Count > 0) && request.RowVersion is not { Length: 8 })
+            throw new PayrollValidationException("La versión de la liquidación es obligatoria para cambiar la selección o los días.");
+        if (request.RowVersion is not null && request.RowVersion.Length != 8)
+            throw new PayrollValidationException("La versión de la liquidación no es válida.");
+        var data = await store.LoadCalculationDataAsync(user, runId, ct, request);
         if (data.Employees.Count == 0)
-            throw new PayrollValidationException("No existen relaciones laborales elegibles para el período.");
+            throw new PayrollValidationException("Selecciona al menos un trabajador elegible para el período.");
+        if (recalculate.Count > 0 && recalculate.Except(data.Employees.Select(value => value.EmploymentId)).Any())
+            throw new PayrollValidationException("Sólo se pueden recalcular trabajadores seleccionados en esta liquidación.");
         try
         {
+            if (dayChanges.Count > 0)
+            {
+                var byEmployment = dayChanges.ToDictionary(value => value.EmploymentId, value => value.WorkedDays);
+                if (byEmployment.Keys.Except(data.Employees.Select(value => value.EmploymentId)).Any())
+                    throw new PayrollValidationException("Sólo se pueden editar los días de trabajadores seleccionados en esta liquidación.");
+                data = data with
+                {
+                    Employees = data.Employees.Select(input => byEmployment.TryGetValue(input.EmploymentId, out var days)
+                        ? calculator.WithFinalWorkedDays(input, days, data.PeriodDays) : input).ToArray()
+                };
+            }
             var calculations = data.Employees.Select(calculator.Calculate).ToArray();
-            return await store.SaveCalculationAsync(user, runId, calculations, ct);
+            return await store.SaveCalculationAsync(user, data, calculations, ct);
         }
         catch (PayrollCalculationException error)
         {
@@ -286,6 +364,7 @@ public sealed class PayrollService(
             throw new PayrollValidationException("Idempotency-Key y versión son obligatorios.");
         var acceptance = await store.ApproveRunAsync(user, runId,
             idempotencyKey.Trim(), rowVersion, ct);
+        if (acceptance.AccountingSignalPublished) return acceptance;
         var documentType = acceptance.RunKind == PayrollRunKind.Adjustment.ToString()
             ? PayrollAccountingDocumentTypes.Adjustment
             : PayrollAccountingDocumentTypes.Accrual;

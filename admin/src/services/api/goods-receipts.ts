@@ -357,10 +357,10 @@ export const goodsReceiptsApi = {
   }) => apiClient.post<GoodsReceiptWithholdingCalculation>(
     "/commerce/v1/goods-receipts/withholding-preview", request,
   ),
-  previewCostWithholding: (request: {
-    businessId: string; document: GoodsReceiptCostDocument;
-  }) => apiClient.post<GoodsReceiptWithholdingCalculation>(
-    "/commerce/v1/goods-receipts/cost-withholding-preview", request,
+  previewCostWithholdings: (request: {
+    businessId: string; documents: GoodsReceiptCostDocument[];
+  }) => apiClient.post<{ costDocumentId: string; calculation: GoodsReceiptWithholdingCalculation }[]>(
+    "/commerce/v1/goods-receipts/cost-withholdings-preview", request,
   ),
   confirm: (request: {
     financialDiscount?: GoodsReceiptFinancialDiscount | null;

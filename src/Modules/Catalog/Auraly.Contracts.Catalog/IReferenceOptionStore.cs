@@ -3,7 +3,7 @@ namespace Auraly.Contracts.Catalog;
 public interface IReferenceOptionStore
 {
     Task<IReadOnlyList<ReferenceOption>> ListContextualAsync(CatalogUserIdentity user,string catalogCode,
-        DateOnly? from,DateOnly? to,CancellationToken cancellationToken);
+        DateOnly? from,DateOnly? to,CancellationToken cancellationToken, int dateRangeVersion=1);
     Task<IReadOnlyList<ReferenceOption>> ListAsync(
         string catalogCode,
         CancellationToken cancellationToken);

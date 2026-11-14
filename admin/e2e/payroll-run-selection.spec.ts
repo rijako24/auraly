@@ -1,0 +1,143 @@
+import { expect, test } from "@playwright/test";
+import { financialVoucherScenario, installFinancialVoucherContext } from "./support/financial-voucher";
+
+const id = (value:number) => `bcbcbcbc-1111-4222-8333-${String(value).padStart(12,"0")}`;
+
+test("selección paginada: teclado, búsqueda, reintento y cálculo sin refetch", async ({page,baseURL},testInfo) => {
+    const scenario = financialVoucherScenario();
+    scenario.user.permissions.push("payroll.read","payroll.calculate","payroll.approve");
+    await installFinancialVoucherContext(page,baseURL!,scenario);
+    let run = {payrollRunId:id(1),businessId:scenario.businessId,runKind:"Regular",periodStart:"2026-01-01",periodEnd:"2026-01-31",paymentDate:"2026-01-31",
+        status:"Calculated",calculationVersion:1,employeeCount:0,totalEarnings:0,totalDeductions:0,totalEmployerContributions:0,totalProvisions:0,netPayable:0,
+        employees:[] as Array<Record<string,unknown>>,payableEmployees:[],rowVersion:"AAAAAAAAAAE="};
+    const workers = Array.from({length:51},(_,index)=>({employmentId:id(index+100),employeeName:`Trabajador ${String(index).padStart(2,"0")}`,
+        identification:String(index),contractNumber:`C-${index}`,startDate:"2026-01-01",endDate:null,payFrequencyName:"Mensual",isSelected:true}));
+    let optionsReads=0,runsReads=0,detailReads=0,selectionReads=0,calculations=0,failPage=true,failCalculation=true;
+    let release:()=>void=()=>{};
+    const released = new Promise<void>(resolve=>{release=resolve;});
+    await page.route("**/api/commerce/v1/payroll/**",async route=>{
+        const url=new URL(route.request().url()),path=url.pathname;
+        if(path.endsWith("/options")){optionsReads++;await route.fulfill({json:{catalogs:{},concepts:[],employments:[],parties:[],ruleSets:[],settings:null,
+            electronicConfiguration:null,fiscalIssuers:[],deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;}
+        if(path.endsWith("/runs")){runsReads++;await route.fulfill({json:[run]});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){detailReads++;await route.fulfill({json:run});return;}
+        if(path.endsWith("/employments")){
+            expect(run.status).not.toBe("Approved");
+            selectionReads++;
+            if(failPage){await route.fulfill({status:503,json:{detail:"No disponible"}});return;}
+            const number=Number(url.searchParams.get("page")),search=url.searchParams.get("search");
+            const contract=url.searchParams.get("contractNumber");
+            const filtered=workers.filter(worker=>(!search||worker.employeeName.includes(search))&&(!contract||worker.contractNumber.includes(contract)));
+            if(url.searchParams.get("sortDirection")==="desc")filtered.reverse();
+            await route.fulfill({json:{items:filtered.slice((number-1)*50,number*50),page:number,pageSize:50,totalCount:filtered.length,
+                eligibleCount:51,selectedCount:workers.filter(worker=>worker.isSelected).length,rowVersion:run.rowVersion}});return;
+        }
+        if(path.endsWith("/calculate")){
+            calculations++;
+            const body=route.request().postDataJSON();
+            expect(body.rowVersion).toBe("AAAAAAAAAAE=");expect(body.selectAll).toBe(false);
+            expect(body.selectionChanges).toEqual([{employmentId:id(100),isSelected:true},{employmentId:id(150),isSelected:true}]);
+            if(failCalculation){failCalculation=false;await route.fulfill({status:503,json:{detail:"Cálculo no disponible"}});return;}
+            await released;
+            workers.forEach(worker=>{worker.isSelected=body.selectionChanges.some((change:{employmentId:string})=>change.employmentId===worker.employmentId);});
+            run={...run,rowVersion:"AAAAAAAAAAI=",calculationVersion:2,employeeCount:2,employees:workers.filter(worker=>worker.isSelected).map((worker,index)=>({
+                payrollRunEmployeeId:id(300+index),employmentId:worker.employmentId,partyId:id(400+index),employeeName:worker.employeeName,workedDays:30,
+                earnings:0,deductions:0,employerContributions:0,provisions:0,netPayable:0,lines:[]}))};
+            await route.fulfill({json:run});return;
+        }
+        if(path.endsWith("/approve")){
+            expect(route.request().postDataJSON().rowVersion).toBe("AAAAAAAAAAM=");
+            run={...run,status:"Approved",rowVersion:"AAAAAAAAAAQ="};
+            await route.fulfill({status:202,json:{payrollRunId:run.payrollRunId,status:"Approved",runKind:"Regular",accountingPostingJobId:id(900),idempotentReplay:false}});return;
+        }
+        throw new Error(`Unexpected payroll request ${path}`);
+    });
+    await page.goto("/dashboard/payroll?section=runs");
+    await page.getByRole("button",{name:/2026-01-01 — 2026-01-31/}).click();
+    await expect(page.getByText("No fue posible cargar los trabajadores de la liquidación.",{exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Recalcular",exact:true})).toBeDisabled();
+    failPage=false;await page.getByRole("button",{name:"Reintentar trabajadores",exact:true}).click();
+    const selection=page.getByRole("region",{name:"Trabajadores de la liquidación",exact:true});
+    await expect(selection.getByRole("checkbox")).toHaveCount(50);
+    await selection.getByRole("button",{name:"Ninguno",exact:true}).click();
+    await expect(page.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toBeDisabled();
+    const first=selection.getByRole("checkbox",{name:"Incluir Trabajador 00, contrato C-0",exact:true});
+    await first.focus();await page.keyboard.press("Space");await expect(first).toBeChecked();await expect(first).toBeFocused();
+    await selection.getByRole("button",{name:"Siguiente trabajadores",exact:true}).click();
+    await selection.getByRole("checkbox",{name:"Incluir Trabajador 50, contrato C-50",exact:true}).check();
+    await expect(selection.getByText("2 seleccionados de 51 elegibles",{exact:true})).toBeVisible();
+    const readsBeforeTyping=selectionReads;
+    await selection.getByRole("textbox",{name:"Buscar trabajador de la liquidación",exact:true}).fill("No existe");
+    expect(selectionReads).toBe(readsBeforeTyping);
+    await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+    await expect(selection.getByText("No hay trabajadores que coincidan con la búsqueda.",{exact:true})).toBeVisible();
+    await selection.getByRole("textbox",{name:"Buscar trabajador de la liquidación",exact:true}).fill("");
+    await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+    await expect(first).toBeChecked();
+    await selection.getByRole("button",{name:"Recalcular",exact:true}).click();
+    await expect(page.getByText("Cálculo no disponible",{exact:true})).toBeVisible();
+    await expect(first).toBeChecked();
+    const readsBeforeCalculation=selectionReads;
+    await selection.getByRole("button",{name:"Recalcular",exact:true}).click();
+    await expect(first).toBeDisabled();await expect(selection.getByRole("button",{name:"Calculando…",exact:true})).toBeDisabled();
+    release();
+    await expect(page.locator("summary")).toHaveCount(2);
+    await expect(first).toBeChecked();
+    await expect(selection.getByRole("checkbox",{name:"Incluir Trabajador 01, contrato C-1",exact:true})).not.toBeChecked();
+    await expect(page.getByRole("button",{name:"Aprobar y contabilizar",exact:true})).toBeEnabled();
+    await selection.getByRole("heading",{name:"Seleccionar trabajadores",exact:true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:testInfo.outputPath("seleccion-liquidacion.png")});
+    expect(calculations).toBe(2);expect(optionsReads).toBe(1);expect(runsReads).toBe(1);expect(detailReads).toBe(1);
+    expect(selectionReads).toBe(readsBeforeCalculation);
+    await selection.getByRole("button",{name:"Siguiente trabajadores",exact:true}).click();
+    await expect(selection.getByRole("checkbox",{name:"Incluir Trabajador 50, contrato C-50",exact:true})).toBeChecked();
+    expect(selectionReads).toBe(readsBeforeCalculation);
+    await selection.getByRole("button",{name:"Ordenar por Trabajador",exact:true}).click();
+    await expect(selection.getByRole("checkbox").first()).toHaveAccessibleName("Incluir Trabajador 50, contrato C-50");
+    await selection.getByRole("textbox",{name:"Filtrar contrato",exact:true}).fill("C-0");
+    await selection.getByRole("button",{name:"Filtrar contrato",exact:true}).click();
+    await expect(selection.getByRole("checkbox")).toHaveCount(1);
+    await expect(first).toBeChecked();
+    await selection.getByRole("textbox",{name:"Buscar trabajador de la liquidación",exact:true}).fill("Trabajador 50");
+    await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+    await expect(selection.getByText("No hay trabajadores que coincidan con la búsqueda.",{exact:true})).toBeVisible();
+    await expect(selection.getByText("2 seleccionados de 51 elegibles",{exact:true})).toBeVisible();
+    await selection.getByRole("textbox",{name:"Buscar trabajador de la liquidación",exact:true}).fill("");
+    await selection.getByRole("button",{name:"Buscar",exact:true}).click();
+    await first.uncheck();
+    run={...run,rowVersion:"AAAAAAAAAAM="};
+    await page.getByRole("button",{name:"Actualizar nómina",exact:true}).click();
+    await expect(selection.getByText("La liquidación cambió. Descarta la selección anterior antes de continuar.",{exact:true})).toBeVisible();
+    await expect(first).not.toBeChecked();
+    await expect(selection.getByRole("button",{name:"Recalcular",exact:true})).toBeDisabled();
+    await selection.getByRole("button",{name:"Descartar selección",exact:true}).click();
+    await expect(first).toBeChecked();
+    await expect(selection.getByRole("button",{name:"Recalcular",exact:true})).toBeEnabled();
+    const readsBeforeApprove=selectionReads;
+    await page.getByRole("button",{name:"Aprobar y contabilizar",exact:true}).click();
+    await expect(selection).toHaveCount(0);
+    expect(selectionReads).toBe(readsBeforeApprove);
+});
+
+test("sólo lectura no carga el selector de trabajadores",async({page,baseURL})=>{
+    const scenario=financialVoucherScenario();scenario.user.permissions.push("payroll.read");
+    await installFinancialVoucherContext(page,baseURL!,scenario);
+    const run={payrollRunId:id(1),periodStart:"2026-01-01",periodEnd:"2026-01-31",status:"Draft",employeeCount:0,totalEarnings:0,totalDeductions:0,netPayable:0,employees:[]};
+    let detailUnavailable=true;
+    await page.route("**/api/commerce/v1/payroll/**",async route=>{
+        const path=new URL(route.request().url()).pathname;
+        if(path.endsWith("/options")){await route.fulfill({json:{catalogs:{},concepts:[],employments:[],parties:[],ruleSets:[],settings:null,deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;}
+        if(path.endsWith("/runs")){await route.fulfill({json:[run]});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){
+            if(detailUnavailable){await route.fulfill({status:503,json:{detail:"Liquidación no disponible"}});return;}
+            await route.fulfill({json:run});return;
+        }
+        throw new Error(`Unexpected request ${path}`);
+    });
+    await page.goto("/dashboard/payroll");await page.getByRole("button",{name:/2026-01-01 — 2026-01-31/}).click();
+    await expect(page.getByRole("button",{name:"Reintentar detalle",exact:true})).toBeVisible();
+    detailUnavailable=false;await page.getByRole("button",{name:"Reintentar detalle",exact:true}).click();
+    await expect(page.getByRole("button",{name:"Reintentar detalle",exact:true})).toHaveCount(0);
+    await expect(page.getByText("Seleccionar trabajadores",{exact:true})).toHaveCount(0);
+    await expect(page.getByRole("button",{name:"Calcular nómina",exact:true})).toHaveCount(0);
+});

@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Domain.Payments;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
 
@@ -96,6 +97,10 @@ public sealed class RestaurantCollectionService(
         CancellationToken ct)
     {
         DemandCashier(actor, accountId);
+        if (!PaymentMethodEvidence.IsValidSet(request.Payments.Select(payment => new PaymentMethodEvidence(
+                payment.PaymentMethodId, payment.PaymentMethodVersion, payment.PaymentMethodCode,
+                payment.PaymentMethodName, payment.AccountId))))
+            throw new OnlineSalesDraftValidationException("La identidad de las formas de pago no es válida.");
         if (request.CollectionId == Guid.Empty || request.WorkSessionId == Guid.Empty ||
             request.ExpectedAccountVersion < 1 ||
             request.Allocations.Count > 500 ||
@@ -120,7 +125,7 @@ public sealed class RestaurantCollectionService(
                      !string.IsNullOrWhiteSpace(payment.ApprovalNumber)) ||
                 payment.MethodCode == "Transfer" &&
                     string.IsNullOrWhiteSpace(payment.Reference)) ||
-            request.Payments.Count(payment => payment.MethodCode == "Cash") > 1 ||
+            request.Payments.Count(payment => payment.MethodCode == "Cash" && payment.PaymentMethodId is null) > 1 ||
             request.Payments.Count(payment => payment.RoundingAdjustment != 0m) > 1 ||
             request.TipPayment is { } tip &&
               (tip.MethodCode is not ("Cash" or "DebitCard" or "CreditCard" or "Transfer") ||

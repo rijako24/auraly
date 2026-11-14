@@ -127,11 +127,11 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             var codes = Enumerable.Range(190000, 10000).Select(value => value.ToString())
                 .Where(code => accounts.All(account => account.Code != code)).Take(2).ToArray();
             var debit = await service.CreateAccountAsync(user, new(Guid.NewGuid(), fixture.TenantId, codes[0],
-                "Apertura de esta sede", "Asset", true, true,
-                new(null, "General", "Debit", fixture.BusinessId, null, null)));
+                "Auxiliar compartido para apertura", "Asset", true, true,
+                new(null, "General", "Debit", null, null, null)));
             var other = await service.CreateAccountAsync(user, new(Guid.NewGuid(), fixture.TenantId, codes[1],
-                "Apertura de otra sede", "Asset", true, false,
-                new(null, "General", "Debit", secondBusinessId, null, null)));
+                "Otro auxiliar compartido", "Asset", true, false,
+                new(null, "General", "Debit", null, null, null)));
             var credit = accounts.First(account => account.AllowsPosting && account.IsActive && account.AccountType == "Equity" && !account.RequiresParty);
             var request = new SaveAccountingOpeningBalanceRequest(Guid.NewGuid(), fixture.BusinessId,
                 new(2026, 10, 22), "COP", "Captura que debe conservarse", null, [
@@ -140,7 +140,6 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             var saved = await service.SaveOpeningBalanceAsync(user, request);
             foreach (var invalid in new[] {
                 request.Lines[0] with { AccountId = Guid.NewGuid() },
-                request.Lines[0] with { AccountId = other.AccountId },
                 request.Lines[0] with { PartyId = null },
                 request.Lines[0] with { PartyId = Guid.NewGuid() },
                 request.Lines[0] with { CostCenterId = Guid.NewGuid() } })
@@ -161,12 +160,14 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                 request with { RowVersion = saved.RowVersion, Description = "Edición obsoleta" }));
             await AssertUnchanged(updated);
 
-            var moved = await service.UpdateAccountAsync(user, debit.AccountId,
-                new(debit.Name, debit.RequiresParty, debit.RowVersion!, debit.Semantics! with { BusinessId = secondBusinessId }));
+            var sharedOptions = await service.AccountOptionsAsync(user with { BusinessId = secondBusinessId },
+                new(1, 10, null, AccountId: other.AccountId));
+            Assert.Equal(other.AccountId, Assert.Single(sharedOptions.Items).AccountId);
+            Assert.Null(other.Semantics!.BusinessId);
+            await SetActiveAsync(false);
             await Assert.ThrowsAsync<AccountingValidationException>(() => service.ApproveOpeningBalanceAsync(user, saved.BatchId));
             await AssertUnchanged(updated);
-            await service.UpdateAccountAsync(user, debit.AccountId,
-                new(moved.Name, moved.RequiresParty, moved.RowVersion!, debit.Semantics));
+            await SetActiveAsync(true);
             using (var counter = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog))
             {
                 var approved = await service.ApproveOpeningBalanceAsync(user, saved.BatchId);
@@ -175,6 +176,18 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                 Assert.Equal(updated.Lines.ToArray(), approved.Lines.ToArray());
             }
             Assert.Equal(0, await CountAsync("AccountingPostingJobs", "SourceDocumentId", saved.BatchId));
+
+            async Task SetActiveAsync(bool active)
+            {
+                await using var connection = new SqlConnection(fixture.ConnectionString);
+                await connection.OpenAsync();
+                await using var command = new SqlCommand(
+                    "UPDATE dbo.AccountingAccounts SET IsActive=@Active WHERE AccountId=@Account AND TenantId=@Tenant", connection);
+                command.Parameters.AddWithValue("@Active", active);
+                command.Parameters.AddWithValue("@Account", debit.AccountId);
+                command.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+                Assert.Equal(1, await command.ExecuteNonQueryAsync());
+            }
 
             async Task AssertUnchanged(AccountingOpeningBalanceView expected)
             {
@@ -757,14 +770,14 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         var assignmentId = Guid.NewGuid();
         using (var create = await accounting.PostAsJsonAsync(
                    "/api/commerce/v1/accounting/cost-centers",
-                   new CreateCostCenterRequest(centerId, fixture.BusinessId,
+                   new CreateCostCenterRequest(centerId, fixture.TenantId,
                        $"AUTO-{centerId:N}"[..13], "Centro automático prueba", null, false)))
             Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         using (var assign = await accounting.PutAsJsonAsync(
                    "/api/commerce/v1/accounting/cost-center-assignments",
                    new SaveAccountingCostCenterAssignmentRequest(
                        assignmentId, fixture.BusinessId, centerId,
-                       AccountingCostCenterOperationKinds.All, fixture.WarehouseId, true)))
+                       AccountingCostCenterOperationKinds.All, true)))
             Assert.True(assign.IsSuccessStatusCode,
                 await assign.Content.ReadAsStringAsync());
 
@@ -798,7 +811,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
                 "/api/commerce/v1/accounting/cost-center-assignments",
                 new SaveAccountingCostCenterAssignmentRequest(
                     assignmentId, fixture.BusinessId, centerId,
-                    AccountingCostCenterOperationKinds.All, fixture.WarehouseId, false,
+                    AccountingCostCenterOperationKinds.All, false,
                     await RuleVersionAsync(accounting, assignmentId)));
             disable.EnsureSuccessStatusCode();
 
@@ -815,7 +828,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
 
             var defaultCenterId = await ScalarAsync<Guid>("""
                 SELECT CostCenterId FROM dbo.AccountingCostCenters
-                WHERE BusinessId=@Id AND IsDefault=1 AND IsActive=1
+                WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@Id) AND IsDefault=1 AND IsActive=1
                 """, fixture.BusinessId);
             using var rejectDefault = await accounting.PutAsJsonAsync(
                 $"/api/commerce/v1/accounting/cost-centers/{defaultCenterId:D}/status",
@@ -825,8 +838,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     }
 
     private static async Task<string> CenterVersionAsync(HttpClient client, Guid id) =>
-        (await client.GetFromJsonAsync<AccountingCostCenterView[]>(
-            "/api/commerce/v1/accounting/cost-centers"))!.Single(row => row.CostCenterId == id).RowVersion;
+        (await client.GetFromJsonAsync<AccountingCostCenterPage>(
+            $"/api/commerce/v1/accounting/cost-centers?costCenterId={id:D}&pageSize=1"))!.Items.Single().RowVersion;
 
     private static async Task<string> RuleVersionAsync(HttpClient client, Guid id) =>
         (await client.GetFromJsonAsync<AccountingCostCenterAssignmentView[]>(
@@ -837,11 +850,11 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
         using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null)) defaults.EnsureSuccessStatusCode();
-        var original = (await client.GetFromJsonAsync<AccountingCostCenterView[]>("/api/commerce/v1/accounting/cost-centers"))!.Single(row => row.IsDefault);
+        var original = (await client.GetFromJsonAsync<AccountingCostCenterPage>("/api/commerce/v1/accounting/cost-centers?isDefault=true&isActive=true&pageSize=1"))!.Items.Single();
         var parentId = Guid.NewGuid(); var childId = Guid.NewGuid(); var ruleId = Guid.NewGuid();
         foreach (var request in new[] {
-            new CreateCostCenterRequest(parentId, fixture.BusinessId, $"P-{parentId:N}"[..16], "Administración", null, false),
-            new CreateCostCenterRequest(childId, fixture.BusinessId, $"H-{childId:N}"[..16], "Proyecto", parentId, false) })
+            new CreateCostCenterRequest(parentId, fixture.TenantId, $"P-{parentId:N}"[..16], "Administración", null, false),
+            new CreateCostCenterRequest(childId, fixture.TenantId, $"H-{childId:N}"[..16], "Proyecto", parentId, false) })
         {
             using var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers", request);
             response.EnsureSuccessStatusCode();
@@ -854,10 +867,10 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         }
         using (var cycle = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{parentId}", new UpdateCostCenterRequest("CYCLE", "Ciclo", childId, false, true, parentVersion)))
             Assert.Equal(HttpStatusCode.BadRequest, cycle.StatusCode);
-        var rule = new SaveAccountingCostCenterAssignmentRequest(ruleId, fixture.BusinessId, childId, "Inventory", null, true);
+        var rule = new SaveAccountingCostCenterAssignmentRequest(ruleId, fixture.BusinessId, childId, "Inventory", true);
         using (var create = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule)) create.EnsureSuccessStatusCode();
         var ruleVersion = await RuleVersionAsync(client, ruleId);
-        using (var edit = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule with { OperationKind = "Expenses", WarehouseId = fixture.WarehouseId, RowVersion = ruleVersion })) edit.EnsureSuccessStatusCode();
+        using (var edit = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule with { OperationKind = "Expenses", RowVersion = ruleVersion })) edit.EnsureSuccessStatusCode();
         using (var stale = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule with { RowVersion = ruleVersion }))
             Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
         var rules = (await client.GetFromJsonAsync<AccountingCostCenterAssignmentView[]>("/api/commerce/v1/accounting/cost-center-assignments"))!;
@@ -869,7 +882,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         try
         {
             using (var replace = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{parentId}", replacement)) replace.EnsureSuccessStatusCode();
-            var centers = (await client.GetFromJsonAsync<AccountingCostCenterView[]>("/api/commerce/v1/accounting/cost-centers"))!;
+            var centers = (await client.GetFromJsonAsync<AccountingCostCenterPage>("/api/commerce/v1/accounting/cost-centers?isDefault=true&isActive=true&pageSize=1"))!.Items;
             Assert.Equal(parentId, Assert.Single(centers, row => row.IsActive && row.IsDefault).CostCenterId);
             using (var stale = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{parentId}", replacement))
                 Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
@@ -882,7 +895,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
             using var restore = await client.PutAsJsonAsync($"/api/commerce/v1/accounting/cost-centers/{original.CostCenterId}", new UpdateCostCenterRequest(original.Code, original.Name, original.ParentCostCenterId, true, true, await CenterVersionAsync(client, original.CostCenterId)));
             restore.EnsureSuccessStatusCode();
             var currentRule = (await client.GetFromJsonAsync<AccountingCostCenterAssignmentView[]>("/api/commerce/v1/accounting/cost-center-assignments"))!.Single(row => row.AssignmentId == ruleId);
-            using var disable = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule with { OperationKind=currentRule.OperationKind, WarehouseId=currentRule.WarehouseId, IsActive=false, RowVersion=currentRule.RowVersion });
+            using var disable = await client.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments", rule with { OperationKind=currentRule.OperationKind, IsActive=false, RowVersion=currentRule.RowVersion });
             disable.EnsureSuccessStatusCode();
         }
     }
@@ -897,12 +910,12 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         var centerA = Guid.NewGuid(); var centerB = Guid.NewGuid();
         foreach (var id in new[] {centerA, centerB})
         {
-            using var create = await client.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers", new CreateCostCenterRequest(id, fixture.BusinessId, $"R-{id:N}"[..16], "Reclasificación", null, false));
+            using var create = await client.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers", new CreateCostCenterRequest(id, fixture.TenantId, $"R-{id:N}"[..16], "Reclasificación", null, false));
             create.EnsureSuccessStatusCode();
         }
         var accounts = (await client.GetFromJsonAsync<AccountingAccountView[]>("/api/commerce/v1/accounting/accounts"))!;
         var account = accounts.First(row => row.IsActive && row.AllowsPosting && !row.RequiresParty);
-        var originalDefault = (await client.GetFromJsonAsync<AccountingCostCenterView[]>("/api/commerce/v1/accounting/cost-centers"))!.Single(row => row.IsDefault);
+        var originalDefault = (await client.GetFromJsonAsync<AccountingCostCenterPage>("/api/commerce/v1/accounting/cost-centers?isDefault=true&isActive=true&pageSize=1"))!.Items.Single();
         var voucher = new ConfirmManualAccountingVoucherRequest(Guid.NewGuid(), fixture.BusinessId,
             new DateTimeOffset(2026,8,20,12,0,0,TimeSpan.FromHours(-5)), "AJUSTE", "Reclasificar centro",
             [new(account.AccountId,null,centerA,"Mismo auxiliar",125m,0),new(account.AccountId,null,centerB,"Mismo auxiliar",0,125m)]);
@@ -1115,8 +1128,8 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
 
         var laterCenterId=Guid.NewGuid(); var laterRuleId=Guid.NewGuid();
         using(var center=await accounting.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers",
-            new CreateCostCenterRequest(laterCenterId,fixture.BusinessId,$"L-{laterCenterId:N}"[..16],"Ventas futuras",null,false))) center.EnsureSuccessStatusCode();
-        var laterRule=new SaveAccountingCostCenterAssignmentRequest(laterRuleId,fixture.BusinessId,laterCenterId,"Sales",fixture.WarehouseId,true);
+            new CreateCostCenterRequest(laterCenterId,fixture.TenantId,$"L-{laterCenterId:N}"[..16],"Ventas futuras",null,false))) center.EnsureSuccessStatusCode();
+        var laterRule=new SaveAccountingCostCenterAssignmentRequest(laterRuleId,fixture.BusinessId,laterCenterId,"Sales",true);
         using(var rule=await accounting.PutAsJsonAsync("/api/commerce/v1/accounting/cost-center-assignments",laterRule)) rule.EnsureSuccessStatusCode();
         try
         {
@@ -3320,7 +3333,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         }
         var cardAccount = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(
             fixture, client, "1394", "Asset", "CardClearing", "Debit",
-            paymentMethodOptionId: creditCardMethodId, sharedAcrossBusinesses: true);
+            paymentMethodOptionId: creditCardMethodId);
         using (var mappedCard = await client.PutAsJsonAsync("/api/commerce/v1/accounting/account-mappings",
                    new SetAccountMappingRequest(fixture.TenantId, fixture.BusinessId,
                        AccountingCategories.CreditCardClearing, cardAccount.AccountId,
@@ -3643,7 +3656,7 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
         }
         var center = Guid.NewGuid();
         using (var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/cost-centers",
-            new CreateCostCenterRequest(center, fixture.BusinessId, "PRINCIPAL", "Operacion principal", null, true)))
+            new CreateCostCenterRequest(center, fixture.TenantId, "PRINCIPAL", "Operacion principal", null, true)))
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var period = Guid.NewGuid();
         using (var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/periods",
@@ -4115,16 +4128,13 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
               N'3000000000',CONCAT(@BusinessId,N'@test.local'),N'https://auraly.test',1,SYSUTCDATETIME());
             INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
             VALUES(NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
-            INSERT dbo.AccountingCostCenters
-              (CostCenterId,BusinessId,Code,Name,IsDefault,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,N'PRINCIPAL',N'Operación principal',1,1,SYSUTCDATETIME());
             """, connection);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@Name", $"Sede conciliación {businessId:N}"[..31]);
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@RoleId", fixture.RoleId);
-        Assert.Equal(3, await command.ExecuteNonQueryAsync());
+        Assert.Equal(2, await command.ExecuteNonQueryAsync());
     }
 
     private async Task<Guid> InsertPostedBankEntryAsync(

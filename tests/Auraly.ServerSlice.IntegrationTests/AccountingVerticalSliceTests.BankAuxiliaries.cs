@@ -66,7 +66,7 @@ public sealed partial class AccountingVerticalSliceTests
             using var account = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
                 new CreateAccountingAccountRequest(Guid.NewGuid(), fixture.TenantId, $"1119930{index}",
                     $"Auxiliar bancario {index}", "Asset", true, false,
-                    new(groupId, "Bank", "Debit", index == 1 ? null : fixture.BusinessId, bankId, null)));
+                    new(groupId, "Bank", "Debit", null, bankId, null)));
             account.EnsureSuccessStatusCode();
             auxiliaries.Add((await account.Content.ReadFromJsonAsync<AccountingAccountView>())!);
         }
@@ -129,7 +129,7 @@ public sealed partial class AccountingVerticalSliceTests
             using var account = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
                 new CreateAccountingAccountRequest(auxiliaries[index], fixture.TenantId, $"1119940{index + 1}",
                     $"Banco sede {index + 1}", "Asset", true, false,
-                    new(groupId, "Bank", "Debit", businesses[index], bankId, null)));
+                    new(groupId, "Bank", "Debit", null, bankId, null)));
             account.EnsureSuccessStatusCode();
         }
         var configurationNoticesBefore = await ScalarAsync<int>("""

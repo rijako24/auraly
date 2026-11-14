@@ -51,7 +51,8 @@ import {
   type InventoryReconciliationDetail,
   type InventoryReconciliationProduct,
 } from "@/services/api/inventory";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+import { useBusinessDates } from "@/hooks/use-business-dates";
 import {
   inventoryDraftKey,
   type DurableInventoryOperationDraft,
@@ -93,7 +94,8 @@ export function InventoryPhysicalCountWorkspace({
   onReconciled: (value: InventoryReconciliationDetail) => void;
 }) {
   const client = useQueryClient();
-  const today = localDateValue();
+  const { timeZone, today: todayInput, dayBoundary, formatDateTime } = useBusinessDates(businessId);
+  const today = todayInput();
   const [search, setSearch] = useState("");
   const [warehouseId, setWarehouseId] = useState("all");
   const [fromDate, setFromDate] = useState(today);
@@ -105,7 +107,7 @@ export function InventoryPhysicalCountWorkspace({
   const [selectedDrafts, setSelectedDrafts] = useState<Map<string, InventoryPhysicalCountDraftSummary>>(new Map());
   const selectedCountId = selectedDrafts.values().next().value?.inventoryPhysicalCountId ?? "";
   const query = useQuery({
-    queryKey: ["inventory-physical-count-drafts", businessId, deferredSearch, warehouseId, fromDate, toDate, status, page, pageSize],
+    queryKey: ["inventory-physical-count-drafts", businessId, deferredSearch, warehouseId, fromDate, toDate, status, page, pageSize, timeZone],
     queryFn: () => inventoryApi.physicalCountDrafts({
       warehouseId: warehouseId === "all" ? undefined : warehouseId,
       search: deferredSearch || undefined,
@@ -179,8 +181,8 @@ export function InventoryPhysicalCountWorkspace({
         <Field label="Buscar"><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={event => changeFilter(setSearch, event.target.value)} placeholder="Nombre, producto o código" /></div></Field>
         <Field label="Bodega"><Select value={warehouseId} onValueChange={value => changeFilter(setWarehouseId, value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todas las bodegas</SelectItem>{warehouses.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
         <Field label="Estado"><Select value={status} onValueChange={value => changeFilter(setStatus, value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Ready">Listo para conciliar</SelectItem><SelectItem value="InProgress">En progreso</SelectItem></SelectContent></Select></Field>
-        <Field label="Actualizado desde"><DatePicker value={fromDate} max={toDate || today} onChange={value => changeFilter(setFromDate, value)} /></Field>
-        <Field label="Actualizado hasta"><DatePicker value={toDate} min={fromDate || undefined} onChange={value => changeFilter(setToDate, value)} /><p className="text-xs text-muted-foreground">Si se deja vacío, se consulta hasta hoy.</p></Field>
+        <Field label="Actualizado desde"><DatePicker today={today} value={fromDate} max={toDate || today} onChange={value => changeFilter(setFromDate, value)} /></Field>
+        <Field label="Actualizado hasta"><DatePicker today={today} value={toDate} min={fromDate || undefined} onChange={value => changeFilter(setToDate, value)} /><p className="text-xs text-muted-foreground">Si se deja vacío, se consulta hasta hoy.</p></Field>
       </div>
       <p className="border-t pt-4 text-sm text-muted-foreground">Los filtros se aplican automáticamente y únicamente a los borradores.</p>
     </CardContent></Card>
@@ -624,6 +626,7 @@ export function PhysicalCountDraftEditForm({
   localDrafts: LocalDraftCoordinator<DurableInventoryOperationDraft>;
   onCompleted: (destination: "documents" | "drafts") => void;
 }) {
+  const { formatDateTime } = useBusinessDates(businessId);
   const draft = value?.count.drafts.find(item => item.draftId === value.draftId);
   const [lines, setLines] = useState<CountCaptureLine[]>([]);
   const [draftDialogOpen, setDraftDialogOpen] = useState(false);
@@ -993,21 +996,8 @@ function numeric(value: string) {
   return Number(value);
 }
 
-function dayBoundary(value: string, next = false) {
-  if (!value) return undefined;
-  const date = new Date(`${value}T00:00:00`);
-  if (next) date.setDate(date.getDate() + 1);
-  return date.toISOString();
-}
-
 function isConflict(error: unknown) {
   return Boolean(error && typeof error === "object" && "statusCode" in error && error.statusCode === 409);
-}
-
-function localDateValue() {
-  const date = new Date();
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
 function StatusBadge({ status }: { status: string }) {

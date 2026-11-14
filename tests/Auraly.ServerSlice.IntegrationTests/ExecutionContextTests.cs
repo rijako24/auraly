@@ -5,6 +5,9 @@ using Auraly.Api;
 using Microsoft.Extensions.DependencyInjection;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Contracts.Payables;
+using Auraly.Contracts.Receivables;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -12,13 +15,71 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class ExecutionContextTests(ServerSliceFixture fixture)
 {
-    [Fact]
-    public async Task Lists_only_tenants_and_businesses_assigned_through_roles()
+    [Theory]
+    [InlineData(ReceivablesPermissionCodes.RegisterPayment, true)]
+    [InlineData(PayablesPermissionCodes.RegisterPayment, true)]
+    [InlineData(AccountingPermissionCodes.Read, true)]
+    [InlineData(ReceivablesPermissionCodes.Read, false)]
+    public async Task Administrative_payment_configuration_uses_the_authorized_selected_tenant_while_POS_keeps_identity_scope(
+        string permission, bool allowed)
+    {
+        var tenantId = Guid.NewGuid(); var businessId = Guid.NewGuid(); var roleId = Guid.NewGuid();
+        await SeedAdditionalMembership(tenantId, businessId, roleId);
+        try
+        {
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var setup = new SqlCommand("""
+                    UPDATE dbo.Tenants SET PaymentMethodContractVersion=2 WHERE TenantId=@TenantId;
+                    INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+                    SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
+                    FROM dbo.Permissions WHERE Resource=@Permission;
+                    IF @@ROWCOUNT<>1 THROW 51999,'Expected one existing financial permission.',1;
+                    """, connection);
+                setup.Parameters.AddWithValue("@TenantId", tenantId);
+                setup.Parameters.AddWithValue("@RoleId", roleId);
+                setup.Parameters.AddWithValue("@Permission", permission);
+                await setup.ExecuteNonQueryAsync();
+            }
+            using var client = fixture.CreateAdminClientWithBusinessHeader(businessId, permission);
+            client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString("D"));
+            using (var reads = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter: command => command.CommandText.Contains(
+                    "SELECT PaymentMethodContractVersion FROM dbo.Tenants", StringComparison.Ordinal)))
+            using (var response = await client.GetAsync("/api/commerce/v1/accounting/settlement-configuration"))
+            {
+                Assert.Equal(allowed ? HttpStatusCode.OK : HttpStatusCode.Forbidden, response.StatusCode);
+                Assert.Equal(allowed ? 1 : 0, reads.Count);
+                if (allowed)
+                {
+                    var configuration = (await response.Content.ReadFromJsonAsync<PosAccountingSettlementConfiguration>())!;
+                    Assert.False(configuration.IsAccountingEnabled);
+                    Assert.Empty(configuration.BankAccounts);
+                    Assert.Equal(2, configuration.PaymentMethods!.ContractVersion);
+                    Assert.Empty(configuration.PaymentMethods.Forms);
+                }
+            }
+            using var pos = await client.GetAsync("/api/commerce/v1/pos/settlement-configuration");
+            Assert.Equal(HttpStatusCode.Forbidden, pos.StatusCode);
+            client.DefaultRequestHeaders.Remove("X-Tenant-Id");
+            client.DefaultRequestHeaders.Add("X-Tenant-Id", Guid.NewGuid().ToString("D"));
+            using var unrelated = await client.GetAsync("/api/commerce/v1/accounting/settlement-configuration");
+            Assert.Equal(HttpStatusCode.Forbidden, unrelated.StatusCode);
+        }
+        finally { await DeleteAdditionalMembership(tenantId, businessId, roleId); }
+    }
+
+    [Theory]
+    [InlineData("Pacific/Kiritimati", "Pacific/Kiritimati")]
+    [InlineData("SA Pacific Standard Time", "America/Bogota")]
+    public async Task Lists_only_tenants_and_businesses_assigned_through_roles(string configuredZone, string browserZone)
     {
         var tenantId = Guid.NewGuid();
         var businessId = Guid.NewGuid();
         var roleId = Guid.NewGuid();
-        await SeedAdditionalMembership(tenantId, businessId, roleId);
+        await SeedAdditionalMembership(tenantId, businessId, roleId, configuredZone);
         try
         {
             using var client = fixture.CreateAdminClient();
@@ -31,12 +92,17 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
             Assert.Contains(tenants, item => item.TenantId == tenantId);
 
             client.DefaultRequestHeaders.Add("X-Tenant-Id", tenantId.ToString("D"));
+            using var reads = new InventoryBalanceProcessingTests.CommandCounter(
+                new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+                commandFilter: command => command.CommandText == "dbo.ExecutionBusinessesList");
             var businesses = await client.GetFromJsonAsync<List<BusinessOption>>(
                 "/api/v1/execution-context/businesses");
 
             var selected = Assert.Single(businesses!);
             Assert.Equal(businessId, selected.BusinessId);
             Assert.Equal(tenantId, selected.TenantId);
+            Assert.Equal(browserZone, selected.TimeZone);
+            Assert.Equal(1, reads.Count);
         }
         finally
         {
@@ -62,6 +128,12 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
                 "/api/commerce/v1/work-sessions/current");
 
             Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+            // Reading an assigned company's sessions does not authorize opening
+            // a money session outside the immutable company of this login.
+            using var opening = await client.PostAsJsonAsync(
+                "/api/commerce/v1/work-sessions/current", new OpenWorkSessionRequest(businessId));
+            Assert.Equal(HttpStatusCode.Forbidden, opening.StatusCode);
 
             await using var connection = new SqlConnection(fixture.ConnectionString);
             await connection.OpenAsync();
@@ -202,7 +274,7 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
     private async Task SeedAdditionalMembership(
         Guid tenantId,
         Guid businessId,
-        Guid roleId)
+        Guid roleId, string timeZone = "America/Bogota")
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -211,10 +283,10 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
             INSERT dbo.Tenants(TenantId,Name,Email,IsActive,CreatedAt)
             VALUES(@TenantId,N'Tenant adicional',@Email,1,SYSUTCDATETIME());
             INSERT dbo.Businesses
-              (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
+              (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt,TimeZone)
             VALUES
               (@BusinessId,@TenantId,N'Negocio adicional',N'Prueba',N'Bogotá',N'3000000000',
-               @BusinessEmail,N'https://auraly.test',1,SYSUTCDATETIME());
+               @BusinessEmail,N'https://auraly.test',1,SYSUTCDATETIME(),@TimeZone);
             INSERT dbo.AppRoles
               (RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
             VALUES
@@ -228,6 +300,7 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
         command.Parameters.AddWithValue("@Email", $"tenant-{tenantId:N}@auraly.test");
         command.Parameters.AddWithValue("@BusinessEmail", $"business-{businessId:N}@auraly.test");
+        command.Parameters.AddWithValue("@TimeZone", timeZone);
         await command.ExecuteNonQueryAsync();
     }
 
@@ -373,5 +446,5 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
         await command.ExecuteNonQueryAsync();
     }
     private sealed record TenantOption(Guid TenantId, string Name);
-    private sealed record BusinessOption(Guid BusinessId, Guid TenantId, string Name);
+    private sealed record BusinessOption(Guid BusinessId, Guid TenantId, string Name, string TimeZone);
 }

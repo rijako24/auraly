@@ -10,6 +10,7 @@ export interface ReportColumn {
   label: string;
   align?: "left" | "right";
   numberFormat?: string;
+  excelType?: "date";
   format?: (value: ReportCell, row: ReportRow) => string;
 }
 

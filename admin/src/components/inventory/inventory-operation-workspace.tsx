@@ -31,6 +31,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
+import { useBusinessDates } from "@/hooks/use-business-dates";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -206,6 +208,7 @@ export function InventoryOperationWorkspace({
     completedKind?: InventoryOperationKind,
   ) => void;
 }) {
+  const { today } = useBusinessDates(businessId);
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<OperationKind>(initialKind);
   const [warehouseId, setWarehouseId] = useState("");
@@ -219,7 +222,7 @@ export function InventoryOperationWorkspace({
   const [productionOccurredAt, setProductionOccurredAt] = useState(() => new Date().toISOString());
   const [productionReview, setProductionReview] = useState<{ warehouseId: string; productId: string; quantity: number } | null>(null);
   const [suggestionDays, setSuggestionDays] = useState("3");
-  const [suggestionStartDate, setSuggestionStartDate] = useState(() => { const now = new Date(); return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10); });
+  const [suggestionStartDate, setSuggestionStartDate] = useState(today);
   const [productionSuggestion, setProductionSuggestion] = useState<ProductionDemandSuggestion | null>(null);
   const [suggestionBusy, setSuggestionBusy] = useState(false);
   const [productionAttempted, setProductionAttempted] = useState(false);
@@ -784,7 +787,7 @@ export function InventoryOperationWorkspace({
               <p className="font-semibold">Sugerido de producción · restaurante</p>
               <p className="mt-1 text-xs text-muted-foreground">Proyecta la demanda de los platos que usan esta preparación, comparando cada día con el mismo día de la semana y descontando lo disponible.</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_8rem_auto] sm:items-end">
-                <Field label="Desde"><Input type="date" value={suggestionStartDate} onChange={event => { setSuggestionStartDate(event.target.value); setProductionSuggestion(null); }}/></Field>
+                <Field label="Desde"><DatePicker today={today()} value={suggestionStartDate} onChange={value => { setSuggestionStartDate(value); setProductionSuggestion(null); }}/></Field>
                 <Field label="Días"><Input inputMode="numeric" value={suggestionDays} onChange={event => { if (/^\d{0,2}$/.test(event.target.value)) { setSuggestionDays(event.target.value); setProductionSuggestion(null); } }}/></Field>
                 <Button type="button" variant="outline" disabled={!productionLine || !warehouseId || !suggestionStartDate || !(Number(suggestionDays) >= 1 && Number(suggestionDays) <= 90) || suggestionBusy} onClick={async () => {
                   setSuggestionBusy(true);

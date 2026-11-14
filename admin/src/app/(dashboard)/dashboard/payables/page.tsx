@@ -15,7 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+import { useBusinessDates } from "@/hooks/use-business-dates";
 import { PortfolioTransactions } from "@/components/payments/portfolio-transactions";
 import { PortfolioUnapplicationDialog, type PortfolioUnapplicationTarget } from "@/components/payments/portfolio-unapplication-dialog";
 import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
@@ -38,6 +39,7 @@ const allConceptOptions = [{ value: "all", label: "Todos los conceptos" }];
 const conceptOption = (item: { conceptId: string; name: string }) => ({ value: item.conceptId, label: item.name });
 
 export default function PayablesPage() {
+  const { formatDate, today } = useBusinessDates();
   const router = useRouter();
   const queryClient = useQueryClient();
   const businessId = useBusinessContextStore(state=>state.selectedBusinessId);
@@ -129,7 +131,7 @@ export default function PayablesPage() {
         </Badge>
       ),
     },
-  ], []);
+  ], [formatDate]);
 
   const openPayment = () => {
     if (!detail || detail.outstandingAmount <= 0) return;
@@ -176,8 +178,8 @@ export default function PayablesPage() {
         <Button variant={overdue ? "destructive" : "outline"} onClick={() => { setOverdue((value) => !value); setPage(1); }}>
           <CalendarClock className="mr-2 h-4 w-4" /> Solo vencidas
         </Button>
-        <label className="space-y-1 text-sm">Desde<DatePicker value={from} max={to || undefined} onChange={value=>{setFrom(value);setPage(1)}} placeholder="Fecha inicial"/></label>
-        <label className="space-y-1 text-sm">Hasta<DatePicker value={to} min={from || undefined} onChange={value=>{setTo(value);setPage(1)}} placeholder="Fecha final"/></label>
+        <label className="space-y-1 text-sm">Desde<DatePicker today={today()} value={from} max={to || undefined} onChange={value=>{setFrom(value);setPage(1)}} placeholder="Fecha inicial"/></label>
+        <label className="space-y-1 text-sm">Hasta<DatePicker today={today()} value={to} min={from || undefined} onChange={value=>{setTo(value);setPage(1)}} placeholder="Fecha final"/></label>
         <div className="col-span-full flex justify-end"><Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setConceptId("all");setSelectedConcept(null);setOverdue(false);setSupplierId(undefined);setPartySiteId(undefined);setSupplierFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button></div>
       </div></details>
     }>

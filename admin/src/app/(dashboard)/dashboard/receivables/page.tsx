@@ -13,7 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+import { useBusinessDates } from "@/hooks/use-business-dates";
 import { PortfolioTransactions } from "@/components/payments/portfolio-transactions";
 import { PortfolioUnapplicationDialog, type PortfolioUnapplicationTarget } from "@/components/payments/portfolio-unapplication-dialog";
 import { PortfolioPaymentWizard } from "@/components/payments/portfolio-payment-wizard";
@@ -34,6 +35,7 @@ const statusLabels: Record<ReceivableStatus, string> = {
   Cancelled: "Cancelada",
 };
 export default function ReceivablesPage() {
+  const { formatDate, today } = useBusinessDates();
   const queryClient = useQueryClient();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const permissions = useAuthStore((state) => state.user?.permissions);
@@ -83,7 +85,7 @@ export default function ReceivablesPage() {
     { accessorKey: "originalAmount", header: "Valor original", cell: ({ row }) => formatCurrency(row.original.originalAmount, row.original.currencyCode,4) },
     { accessorKey: "outstandingAmount", header: "Saldo", cell: ({ row }) => <span className="font-semibold">{formatCurrency(row.original.outstandingAmount, row.original.currencyCode,4)}</span> },
     { accessorKey: "status", header: "Estado", cell: ({ row }) => <Badge variant={row.original.status === "Paid" ? "secondary" : row.original.isOverdue ? "destructive" : "outline"}>{row.original.isOverdue ? "Vencida" : statusLabels[row.original.status]}</Badge> },
-  ], []);
+  ], [formatDate]);
 
   const openPayment = () => {
     if (!detail?.customerId || detail.outstandingAmount <= 0) return;
@@ -105,8 +107,8 @@ export default function ReceivablesPage() {
       <ServerSearchInput value={search} onSearch={(value) => { setSearch(value); setPage(1); }} isSearching={query.isFetching} placeholder="Número de documento o identificación" />
       <Select value={status} onValueChange={(value) => { setStatus(value as ReceivableStatus | "all"); setPage(1); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Open">Pendientes</SelectItem><SelectItem value="PartiallyPaid">Abono parcial</SelectItem><SelectItem value="Paid">Pagadas</SelectItem><SelectItem value="Cancelled">Canceladas</SelectItem></SelectContent></Select>
       <Button variant={overdue ? "destructive" : "outline"} onClick={() => { setOverdue((value) => !value); setPage(1); }}><CalendarClock className="mr-2 h-4 w-4" /> Solo vencidas</Button>
-      <label className="space-y-1 text-sm">Desde<DatePicker value={from} max={to || undefined} onChange={value=>{setFrom(value);setPage(1)}} placeholder="Fecha inicial"/></label>
-      <label className="space-y-1 text-sm">Hasta<DatePicker value={to} min={from || undefined} onChange={value=>{setTo(value);setPage(1)}} placeholder="Fecha final"/></label>
+      <label className="space-y-1 text-sm">Desde<DatePicker today={today()} value={from} max={to || undefined} onChange={value=>{setFrom(value);setPage(1)}} placeholder="Fecha inicial"/></label>
+      <label className="space-y-1 text-sm">Hasta<DatePicker today={today()} value={to} min={from || undefined} onChange={value=>{setTo(value);setPage(1)}} placeholder="Fecha final"/></label>
       <div className="col-span-full flex justify-end"><Button variant="ghost" onClick={()=>{setSearch("");setStatus("all");setOverdue(false);setCustomerId(undefined);setPartySiteId(undefined);setCustomerFilter(null);setFrom("");setTo("");setPage(1)}}>Limpiar filtros</Button></div>
     </div></details>
     }>

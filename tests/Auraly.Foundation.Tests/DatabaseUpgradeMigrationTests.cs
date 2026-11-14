@@ -1,22 +1,114 @@
+using System.Diagnostics;
+using System.Text.Json;
+
 namespace Auraly.Foundation.Tests;
 
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
-    public void Production_database_cutover_stops_old_writers_and_requires_compatible_binaries()
+    public void Database_cutover_stops_old_writers_and_requires_compatible_binaries_in_every_environment()
     {
         var pipeline = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
-        var cutover = pipeline.IndexOf("$productionDatabaseCutover =", StringComparison.Ordinal);
+        var cutover = pipeline.IndexOf("$databaseCutover =", StringComparison.Ordinal);
         var stopApi = pipeline.IndexOf("az webapp stop", cutover, StringComparison.Ordinal);
         var stopWorker = pipeline.IndexOf("az functionapp stop", cutover, StringComparison.Ordinal);
         var stopped = pipeline.IndexOf("$apiState -ne 'Stopped' -or $workerState -ne 'Stopped'", cutover, StringComparison.Ordinal);
         var publish = pipeline.IndexOf("    Publish-Database\n", cutover, StringComparison.Ordinal);
         if (publish < 0) publish = pipeline.IndexOf("    Publish-Database\r\n", cutover, StringComparison.Ordinal);
         Assert.True(cutover >= 0 && stopApi > cutover && stopWorker > stopApi && stopped > stopWorker && publish > stopped);
-        Assert.Contains("$Environment -eq 'prod' -and $selectedComponents -contains 'database'", pipeline, StringComparison.Ordinal);
+        Assert.Contains("$databaseCutover = $selectedComponents -contains 'database'", pipeline, StringComparison.Ordinal);
         Assert.Contains("$selectedComponents -notcontains 'api' -or $selectedComponents -notcontains 'function'", pipeline, StringComparison.Ordinal);
+        Assert.Contains("$manifest.deploymentComponents -notcontains 'admin'", pipeline, StringComparison.Ordinal);
         Assert.Contains("Publish-AuralyApiPackage.ps1", pipeline, StringComparison.Ordinal);
         Assert.Contains("az functionapp start", pipeline, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("dev", "database,api,function,admin", false, "Stopped", 2, 1, null)]
+    [InlineData("prod", "database,api,function,admin", false, "Stopped", 2, 1, null)]
+    [InlineData("dev", "database,api,function", false, "Stopped", 0, 0, "junto con Admin")]
+    [InlineData("dev", "database,api", false, "Stopped", 0, 0, "API y Worker compatibles")]
+    [InlineData("dev", "database,function", false, "Stopped", 0, 0, "API y Worker compatibles")]
+    [InlineData("dev", "database,api,function,admin", true, "Stopped", 1, 0, "detener la API")]
+    [InlineData("dev", "database,api,function,admin", false, "Running", 2, 0, "detención")]
+    [InlineData("dev", "api,function", false, "Stopped", 0, 0, null)]
+    public async Task Canonical_cutover_guards_execute_before_publication(
+        string environment, string components, bool failStop, string observedState, int expectedStops, int expectedStarts, string? expectedIssue)
+    {
+        var pipeline = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var start = pipeline.IndexOf("$databaseCutover =", StringComparison.Ordinal);
+        var end = pipeline.IndexOf("if ($selectedComponents -contains 'database')", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        // Execute the real guard with Azure replaced at its I/O boundary. Never
+        // run publication or duplicate the deployment conditions in the test.
+        var guard = pipeline[start..end];
+        var published = pipeline.IndexOf("Assert-LastExitCode 'OneDeploy de Function fallo'", StringComparison.Ordinal);
+        var restartStart = pipeline.IndexOf("        if (", published, StringComparison.Ordinal);
+        var restartEnd = pipeline.IndexOf("        Sync-FunctionRuntimeSettingsFromApi", restartStart, StringComparison.Ordinal);
+        Assert.True(published >= 0 && restartStart > published && restartEnd > restartStart);
+        // This is the real post-publication start branch, executed only after
+        // successful guards and a simulated successful package publication.
+        var restart = pipeline[restartStart..restartEnd];
+        var script = $$"""
+            $ErrorActionPreference='Stop'
+            $Environment='{{environment}}'
+            # The workflow publishes Admin in its own job. The cloud adapter
+            # receives only its components; the immutable manifest owns the
+            # complete scope used to require the coordinated Admin cutover.
+            $manifest=@{deploymentComponents='{{components}}'.Split(',')}
+            $selectedComponents=@($manifest.deploymentComponents|Where-Object {$_ -ne 'admin'})
+            $configuration=@{ResourceGroup='test';Api='api';Function='worker'}
+            $events=[Collections.Generic.List[string]]::new()
+            function az {
+              $events.Add(($args -join ' '))
+              $global:LASTEXITCODE={{(failStop ? 1 : 0)}}
+            }
+            function Assert-LastExitCode { param([string]$Message) if($LASTEXITCODE -ne 0){throw $Message} }
+            function Assert-OfflineLeaseSigningConfiguration {}
+            function Invoke-AzJson { param([string[]]$Arguments) return @{state='{{observedState}}'} }
+            $issue=$null
+            try {
+            {{guard}}
+            {{restart}}
+            } catch {$issue=$_.Exception.Message}
+            [pscustomobject]@{events=$events.ToArray();issue=$issue}|ConvertTo-Json -Compress
+            """;
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-cutover-{Guid.NewGuid():N}.ps1");
+        try
+        {
+            await File.WriteAllTextAsync(path, script);
+            using var process = new Process { StartInfo = new("pwsh")
+            {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+            }};
+            foreach (var argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File", path })
+                process.StartInfo.ArgumentList.Add(argument);
+            process.Start();
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            try
+            {
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            }
+            catch (TimeoutException)
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+                throw;
+            }
+            Assert.True(process.ExitCode == 0, await error);
+            using var result = JsonDocument.Parse(await output);
+            var events = result.RootElement.GetProperty("events").EnumerateArray().Select(item => item.GetString()!).ToArray();
+            var stops = events.Where(item => item.Contains(" stop ", StringComparison.Ordinal)).ToArray();
+            Assert.Equal(expectedStops, stops.Length);
+            Assert.Equal(expectedStarts, events.Count(item => item.StartsWith("functionapp start ", StringComparison.Ordinal)));
+            if (expectedStops > 0) Assert.StartsWith("webapp stop ", stops[0]);
+            if (expectedStops > 1) Assert.StartsWith("functionapp stop ", stops[1]);
+            var issue = result.RootElement.GetProperty("issue");
+            if (expectedIssue is null) Assert.Equal(JsonValueKind.Null, issue.ValueKind);
+            else Assert.Contains(expectedIssue, issue.GetString(), StringComparison.Ordinal);
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]

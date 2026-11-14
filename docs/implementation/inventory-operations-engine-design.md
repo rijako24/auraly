@@ -141,6 +141,13 @@ scope.
 
 ## Accounting boundary
 
+Inventory reasons select an optional active cost center from the tenant's shared
+catalog, independently of its historical site. `SqlInventoryQueryStore.SaveReasonAsync`
+binds the authenticated tenant in the same save command; unknown or out-of-scope
+centers are validation errors, not server failures. The conversion-loss regression
+exercises an invalid selection and a valid save followed by the operational and
+accounting effects. No alternative configuration writer or inventory path is used.
+
 `CostCenterId`, reason, recognized unit cost, value change and immutable document
 snapshot are preserved. The same transaction emits `inventory.operation.processed`
 through the server outbox. This is the connected source for the accounting posting
@@ -556,3 +563,24 @@ Only local test databases were updated. No DEV or production deployment ran.
 - web screens for counts, adjustments, transfers and conversions;
 - evolution from the current connected `InventoryMovements` foundation to the
   header/line kardex model when reporting requirements require it.
+
+
+## Business calendar filters (2026-11-12, capture/presentation verified)
+
+Inventory history and physical-count draft filters derive their existing
+instant boundaries from the selected business calendar, not the browser zone.
+The contract remains DateTimeOffset with an inclusive start/exclusive end;
+query keys include the timezone when it changes those bounds. The existing
+context supplies the zone without I/O. Day bounds handle a missing midnight or
+skipped day in at most 29 in-memory conversions, independent of row count.
+Production suggestions use the same local day and canonical DatePicker.
+Operational instants, document acceptance, balances and the ledger writer are
+unchanged. Acceptance covers foreign browser timezone, DST, exact bounds,
+selection/capture and inventory regression, without additional SQL round trips.
+
+The complete admin build and the 98-case `accounting-critical-browser-regression`
+passed, including the two DST boundary cases, inventory capture/recovery,
+conversion, transfer receipt, production suggestions and POS payment printing.
+These intercepted browser journeys verify presentation and requests; they do
+not substitute for ledger/operational processing certification. The date
+increment changes no inventory balance, source acceptance or ledger writer.

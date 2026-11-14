@@ -108,6 +108,7 @@ export const navigation: NavEntry[] = [
   { type: "separator", label: "Finanzas" },
   { name: "Contabilidad", href: "/dashboard/accounting", icon: Library, permission: "accounting.read" },
   { name: "Trazabilidad financiera", href: "/dashboard/financial-traceability", icon: FileSearch, permission: "accounting.read" },
+  { name: "Recibos de caja", href: "/dashboard/cash-receipts", icon: ReceiptText, permission: "accounting.read" },
   { name: "Notas crédito de venta", href: "/dashboard/sales-returns", icon: Undo2, permission: "sales.returns.read" },
   { name: "Notas débito de venta", href: "/dashboard/sales-debit-notes", icon: ReceiptText, permission: "sales.debit-notes.read" },
   { name: "Cierres de sesión", href: "/dashboard/cash-differences", icon: Scale, permission: "work-sessions.differences.read" },

@@ -30,7 +30,8 @@ test("reintenta el mismo comprobante sin duplicarlo cuando se pierde la primera 
   await expect(page.getByText("Comprobante contabilizado: contenido inmutable.")).toHaveCount(0);
   expect(attempts).toHaveLength(1);
   await send.click();
-  await expect(page.getByText("Comprobante contabilizado: contenido inmutable.")).toBeVisible();
+  await expect(page.getByText("Comprobante aceptado; consulta su estado contable. El contenido está congelado.")).toBeVisible();
+  await expect(page.getByText("Comprobante contabilizado: contenido inmutable.")).toHaveCount(0);
   await expect(page.getByLabel("Descripción", { exact: true })).toBeDisabled();
   expect(attempts).toHaveLength(2);
   expect(attempts[1]).toEqual(attempts[0]);

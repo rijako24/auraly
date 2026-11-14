@@ -144,6 +144,7 @@ CREATE TABLE [payroll].[Employments]
     [BankOptionId] UNIQUEIDENTIFIER NULL,
     [BankAccountTypeOptionId] UNIQUEIDENTIFIER NULL,
     [BankAccountNumber] NVARCHAR(64) NULL,
+    [AppliesTransportAllowance] BIT NOT NULL CONSTRAINT [DF_PayrollEmployments_AppliesTransportAllowance] DEFAULT (1),
     [IsActive] BIT NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -246,7 +247,7 @@ CREATE TABLE [payroll].[Novelties]
     CONSTRAINT [FK_PayrollNovelties_Reason] FOREIGN KEY ([BusinessId],[ReasonId]) REFERENCES [dbo].[BusinessReasons]([BusinessId],[ReasonId]),
     CONSTRAINT [FK_PayrollNovelties_Agreement] FOREIGN KEY ([DeductionAgreementId]) REFERENCES [payroll].[DeductionAgreements]([DeductionAgreementId]),
     CONSTRAINT [CK_PayrollNovelties_Dates] CHECK ([EndDate] >= [StartDate]),
-    CONSTRAINT [CK_PayrollNovelties_Amounts] CHECK ([Quantity] > 0 AND [TotalAmount] >= 0),
+    CONSTRAINT [CK_PayrollNovelties_Amounts] CHECK ([Quantity] >= 0 AND [TotalAmount] >= 0),
     CONSTRAINT [CK_PayrollNovelties_Status] CHECK ([Status] IN (N'Draft',N'Approved',N'Consumed',N'Voided'))
 );
 GO
@@ -268,6 +269,7 @@ CREATE TABLE [payroll].[Runs]
     [PaymentDate] DATE NOT NULL,
     [Status] NVARCHAR(24) NOT NULL,
     [CalculationVersion] INT NOT NULL,
+    [SelectionInitialized] BIT NOT NULL CONSTRAINT [DF_PayrollRuns_SelectionInitialized] DEFAULT (0),
     [InputHash] BINARY(32) NULL,
     [TotalEarnings] DECIMAL(19,4) NOT NULL,
     [TotalDeductions] DECIMAL(19,4) NOT NULL,
@@ -303,6 +305,27 @@ CREATE UNIQUE INDEX [UX_PayrollRuns_Business_Regular_Period_Frequency]
     ON [payroll].[Runs]([BusinessId],[PeriodStart],[PeriodEnd],[PayFrequencyOptionId]) WHERE [RunKind] = N'Regular' AND [Status] <> N'Voided';
 GO
 
+-- Editable inputs belong to the run, independently of its replaceable calculation outputs.
+CREATE TABLE [payroll].[RunEmploymentInputs]
+(
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [PayrollRunId] UNIQUEIDENTIFIER NOT NULL,
+    [EmploymentId] UNIQUEIDENTIFIER NOT NULL,
+    [IsSelected] BIT NOT NULL CONSTRAINT [DF_PayrollRunEmploymentInputs_Selected] DEFAULT (1),
+    [BaseWorkedDays] DECIMAL(9,4) NULL,
+    CONSTRAINT [PK_PayrollRunEmploymentInputs] PRIMARY KEY ([PayrollRunId],[EmploymentId]),
+    CONSTRAINT [FK_PayrollRunEmploymentInputs_Run] FOREIGN KEY ([TenantId],[PayrollRunId])
+        REFERENCES [payroll].[Runs]([TenantId],[PayrollRunId]),
+    CONSTRAINT [FK_PayrollRunEmploymentInputs_Employment] FOREIGN KEY ([TenantId],[EmploymentId])
+        REFERENCES [payroll].[Employments]([TenantId],[EmploymentId]),
+    CONSTRAINT [CK_PayrollRunEmploymentInputs_Days] CHECK ([BaseWorkedDays] IS NULL OR [BaseWorkedDays]>=0)
+);
+GO
+CREATE INDEX [IX_PayrollRunEmploymentInputs_Run_Selected]
+    ON [payroll].[RunEmploymentInputs]([PayrollRunId],[IsSelected],[EmploymentId])
+    INCLUDE ([TenantId],[BaseWorkedDays]);
+GO
+
 CREATE TABLE [payroll].[RunEmployees]
 (
     [PayrollRunEmployeeId] UNIQUEIDENTIFIER NOT NULL,
@@ -319,13 +342,18 @@ CREATE TABLE [payroll].[RunEmployees]
     [Provisions] DECIMAL(19,4) NOT NULL,
     [NetPayable] DECIMAL(19,4) NOT NULL,
     [CalculationHash] BINARY(32) NOT NULL,
-    CONSTRAINT [PK_PayrollRunEmployees] PRIMARY KEY ([PayrollRunEmployeeId]),
-    CONSTRAINT [UQ_PayrollRunEmployees_Run_Employment] UNIQUE ([PayrollRunId],[EmploymentId]),
+    -- Keep one run's editable results together instead of looking up scattered UUID rows.
+    CONSTRAINT [PK_PayrollRunEmployees] PRIMARY KEY NONCLUSTERED ([PayrollRunEmployeeId]),
+    CONSTRAINT [UQ_PayrollRunEmployees_Run_Employment] UNIQUE CLUSTERED ([PayrollRunId],[EmploymentId]),
     CONSTRAINT [FK_PayrollRunEmployees_Run] FOREIGN KEY ([TenantId],[PayrollRunId]) REFERENCES [payroll].[Runs]([TenantId],[PayrollRunId]),
     CONSTRAINT [FK_PayrollRunEmployees_Employment] FOREIGN KEY ([TenantId],[EmploymentId]) REFERENCES [payroll].[Employments]([TenantId],[EmploymentId]),
     CONSTRAINT [FK_PayrollRunEmployees_Party] FOREIGN KEY ([TenantId],[PartyId]) REFERENCES [dbo].[Parties]([TenantId],[PartyId]),
     CONSTRAINT [CK_PayrollRunEmployees_Totals] CHECK ([WorkedDays] >= 0 AND [Earnings] >= 0 AND [Deductions] >= 0 AND [EmployerContributions] >= 0 AND [Provisions] >= 0 AND [NetPayable] >= 0 AND [NetPayable] = [Earnings] - [Deductions])
 );
+GO
+
+CREATE INDEX [IX_PayrollRunEmployees_Tenant_Party_Run]
+    ON [payroll].[RunEmployees]([TenantId],[PartyId],[PayrollRunId]);
 GO
 
 CREATE TABLE [payroll].[RunLines]
@@ -347,13 +375,13 @@ CREATE TABLE [payroll].[RunLines]
     [Amount] DECIMAL(19,4) NOT NULL,
     [IsEmployerCost] BIT NOT NULL,
     [IsSalaryBase] BIT NOT NULL,
-    CONSTRAINT [PK_PayrollRunLines] PRIMARY KEY ([PayrollRunLineId]),
-    CONSTRAINT [UQ_PayrollRunLines_Employee_Number] UNIQUE ([PayrollRunEmployeeId],[LineNumber]),
+    CONSTRAINT [PK_PayrollRunLines] PRIMARY KEY NONCLUSTERED ([PayrollRunLineId]),
+    CONSTRAINT [UQ_PayrollRunLines_Employee_Number] UNIQUE CLUSTERED ([PayrollRunEmployeeId],[LineNumber]),
     CONSTRAINT [FK_PayrollRunLines_RunEmployee] FOREIGN KEY ([PayrollRunEmployeeId]) REFERENCES [payroll].[RunEmployees]([PayrollRunEmployeeId]),
     CONSTRAINT [FK_PayrollRunLines_Concept] FOREIGN KEY ([ConceptId]) REFERENCES [payroll].[Concepts]([ConceptId]),
     CONSTRAINT [FK_PayrollRunLines_Novelty] FOREIGN KEY ([NoveltyId]) REFERENCES [payroll].[Novelties]([NoveltyId]),
     CONSTRAINT [FK_PayrollRunLines_Agreement] FOREIGN KEY ([DeductionAgreementId]) REFERENCES [payroll].[DeductionAgreements]([DeductionAgreementId]),
-    CONSTRAINT [CK_PayrollRunLines_Values] CHECK ([Quantity] > 0 AND [Amount] >= 0 AND ([BaseAmount] IS NULL OR [BaseAmount] >= 0))
+    CONSTRAINT [CK_PayrollRunLines_Values] CHECK ([Quantity] >= 0 AND [Amount] >= 0 AND ([BaseAmount] IS NULL OR [BaseAmount] >= 0))
 );
 GO
 
@@ -365,6 +393,13 @@ CREATE TABLE [payroll].[PaymentBatches]
     [PaymentDate] DATE NOT NULL,
     [PaymentMethodOptionId] UNIQUEIDENTIFIER NOT NULL,
     [ReferenceNumber] NVARCHAR(100) NOT NULL,
+    [PaymentMethodId] UNIQUEIDENTIFIER NULL,
+    [PaymentMethodTypeCode] NVARCHAR(32) NULL,
+    [PaymentMethodCode] NVARCHAR(64) NULL,
+    [PaymentMethodName] NVARCHAR(160) NULL,
+    [PaymentMethodVersion] INT NULL,
+    [AccountId] UNIQUEIDENTIFIER NULL,
+    [BankAccountId] UNIQUEIDENTIFIER NULL,
     [Status] NVARCHAR(24) NOT NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NOT NULL,
@@ -376,9 +411,18 @@ CREATE TABLE [payroll].[PaymentBatches]
     CONSTRAINT [FK_PayrollPaymentBatches_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_PayrollPaymentBatches_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_PayrollPaymentBatches_Method] FOREIGN KEY ([PaymentMethodOptionId]) REFERENCES [payroll].[CatalogOptions]([OptionId]),
+    CONSTRAINT [FK_PayrollPaymentBatches_Form] FOREIGN KEY ([TenantId],[PaymentMethodId]) REFERENCES [reference].[PaymentMethods]([TenantId],[PaymentMethodId]),
+    CONSTRAINT [FK_PayrollPaymentBatches_Account] FOREIGN KEY ([TenantId],[AccountId]) REFERENCES [dbo].[AccountingAccounts]([TenantId],[AccountId]),
+    CONSTRAINT [CK_PayrollPaymentBatches_Form] CHECK (([PaymentMethodId] IS NULL AND [PaymentMethodTypeCode] IS NULL AND [AccountId] IS NULL)
+      OR ([PaymentMethodId] IS NOT NULL AND [PaymentMethodTypeCode] IS NOT NULL AND [PaymentMethodTypeCode] IN(N'Cash',N'Transfer')
+          AND [PaymentMethodVersion] IS NOT NULL AND [PaymentMethodVersion]>0)),
     CONSTRAINT [CK_PayrollPaymentBatches_Status] CHECK ([Status] IN (N'Draft',N'Confirmed',N'Voided')),
     CONSTRAINT [CK_PayrollPaymentBatches_Total] CHECK ([TotalAmount] >= 0)
 );
+GO
+
+CREATE INDEX [IX_PayrollPaymentBatches_Form]
+    ON [payroll].[PaymentBatches]([TenantId],[PaymentMethodId]) WHERE [PaymentMethodId] IS NOT NULL;
 GO
 
 CREATE TABLE [payroll].[PaymentLines]

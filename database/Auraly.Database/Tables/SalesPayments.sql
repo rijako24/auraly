@@ -2,6 +2,11 @@ CREATE TABLE [dbo].[SalesPayments]
 (
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
     [PaymentNumber] INT NOT NULL,
+    [PaymentMethodId] UNIQUEIDENTIFIER NULL REFERENCES reference.PaymentMethods(PaymentMethodId),
+    [PaymentMethodVersion] INT NULL,
+    [PaymentMethodCode] NVARCHAR(64) NULL,
+    [PaymentMethodName] NVARCHAR(160) NULL,
+    [AccountId] UNIQUEIDENTIFIER NULL REFERENCES dbo.AccountingAccounts(AccountId),
     [MethodCode] NVARCHAR(32) NOT NULL,
     [Amount] DECIMAL(19, 4) NOT NULL,
     [RoundingAdjustment] DECIMAL(19, 4) NOT NULL CONSTRAINT [DF_SalesPayments_RoundingAdjustment] DEFAULT (0),
@@ -34,4 +39,8 @@ CREATE TABLE [dbo].[SalesPayments]
     CONSTRAINT [CK_SalesPayments_TransferEvidence] CHECK
       ([MethodCode]=N'Transfer' OR [Notes] IS NULL)
 );
+GO
+CREATE INDEX [IX_SalesPayments_PaymentMethod] ON [dbo].[SalesPayments]([PaymentMethodId])
+    WHERE [PaymentMethodId] IS NOT NULL;
+GO
 

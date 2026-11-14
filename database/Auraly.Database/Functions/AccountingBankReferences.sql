@@ -18,7 +18,9 @@ AS RETURN
           SELECT COALESCE(payment.BankAccountId,payment.WebBankAccountId)
           FROM (VALUES(header.Tenders),(header.WebTenders),(header.Payments),(header.WebPayments)) array(Payments)
           CROSS APPLY OPENJSON(array.Payments) WITH(
-            BankAccountId uniqueidentifier '$.BankAccountId',WebBankAccountId uniqueidentifier '$.bankAccountId') payment
+            BankAccountId uniqueidentifier '$.BankAccountId',WebBankAccountId uniqueidentifier '$.bankAccountId',
+            FormId uniqueidentifier '$.PaymentMethodId',WebFormId uniqueidentifier '$.paymentMethodId') payment
+          WHERE COALESCE(payment.FormId,payment.WebFormId) IS NULL
         ) value
     ) banks WHERE BankAccountId IS NOT NULL GROUP BY BankAccountId
 );

@@ -52,7 +52,7 @@ test("recepción totaliza documentos asociados y conserva costo total separado e
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Prueba" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Prueba" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Prueba", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: user.roles, permissions };
     else if (path.endsWith(`/goods-receipts/${documentId}`)) body = detail;
     else if (path.endsWith(`/accounting/postings/by-document/${documentId}`)) body = {

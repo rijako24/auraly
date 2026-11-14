@@ -53,7 +53,7 @@ BEGIN
       ON position.PositionId=COALESCE(line.ExistingPayableId,line.ExistingReceivableId)
         AND position.Kind=CASE WHEN line.ExistingPayableId IS NOT NULL THEN N'Payable' ELSE N'Receivable' END
       LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId AND account.TenantId=@TenantId
-        AND account.IsActive=1 AND account.AllowsPosting=1 AND (account.BusinessId IS NULL OR account.BusinessId=@BusinessId)
+        AND account.IsActive=1 AND account.AllowsPosting=1
       LEFT JOIN dbo.AccountingPostingJobs origin ON origin.SourceDocumentId=position.SourceDocumentId
         AND origin.SourceDocumentType=position.SourceDocumentType AND origin.TenantId=@TenantId AND origin.BusinessId=@BusinessId
       CROSS APPLY accounting.ObligationAvailability(@BusinessId,position.Kind,position.PositionId,position.Amount,NULL) pending

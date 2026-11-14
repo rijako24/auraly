@@ -1051,7 +1051,7 @@ public sealed class SqlInventoryOperationStore(
                                   (
                                     SELECT 1 FROM dbo.AccountingCostCenters c
                                     WHERE c.CostCenterId=COALESCE(@RequestedCostCenterId,r.DefaultCostCenterId)
-                                      AND c.BusinessId=r.BusinessId AND c.IsActive=1
+                                      AND c.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=r.BusinessId) AND c.IsActive=1
                                   )
                              THEN 1 ELSE 0 END AS bit)
             FROM dbo.BusinessReasons r WITH(UPDLOCK,HOLDLOCK)

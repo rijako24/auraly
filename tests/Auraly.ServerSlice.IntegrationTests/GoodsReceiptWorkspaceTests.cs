@@ -602,6 +602,19 @@ public sealed partial class GoodsReceiptWorkspaceTests(
             Assert.NotNull(costPreview.ReviewHash);
             Assert.Equal(0.10m, costPreview.WithholdingTotal);
 
+            using var batchPreviewResponse = await client.PostAsJsonAsync(
+                "/api/commerce/v1/goods-receipts/cost-withholdings-preview",
+                new PreviewGoodsReceiptCostWithholdingsRequest(fixture.BusinessId, [costDocument]));
+            Assert.True(batchPreviewResponse.IsSuccessStatusCode, await batchPreviewResponse.Content.ReadAsStringAsync());
+            var batchPreview = Assert.Single((await batchPreviewResponse.Content.ReadFromJsonAsync<GoodsReceiptCostWithholdingPreview[]>())!);
+            Assert.Equal(costDocument.CostDocumentId, batchPreview.CostDocumentId);
+            Assert.Equal(costPreview.ReviewHash, batchPreview.Calculation.ReviewHash);
+            Assert.Equal(costPreview.WithholdingTotal, batchPreview.Calculation.WithholdingTotal);
+            using var deniedBatch = await withoutPermission.PostAsJsonAsync(
+                "/api/commerce/v1/goods-receipts/cost-withholdings-preview",
+                new PreviewGoodsReceiptCostWithholdingsRequest(fixture.BusinessId, [costDocument]));
+            Assert.Equal(HttpStatusCode.Forbidden, deniedBatch.StatusCode);
+
             var confirmation = new ConfirmGoodsReceiptRequest(
                 request.DraftId, fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
                 request.SupplierInvoiceNumber, request.SupplierInvoiceDate, request.ReceivedAt,

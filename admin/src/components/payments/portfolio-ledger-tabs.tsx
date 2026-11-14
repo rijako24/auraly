@@ -12,7 +12,8 @@ import { payablesApi } from "@/services/api/payables";
 import { receivablesApi } from "@/services/api/receivables";
 import type { ReceivableStatus } from "@/services/api/receivables";
 import type { PayableStatus } from "@/services/api/payables";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+import { useBusinessDates } from "@/hooks/use-business-dates";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePosReferenceOptions } from "@/app/(pos)/pos/use-pos-reference-options";
@@ -64,6 +65,7 @@ export function PortfolioLedgerTabs({
   filters: ReactNode;
   children: ReactNode;
 }) {
+  const { formatDate, timeZone } = useBusinessDates();
   const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
   const canViewVoucher=useAuthStore(state=>state.user?.permissions.includes("accounting.read")??false);
   const canCorrect=useAuthStore(state=>{
@@ -79,11 +81,11 @@ export function PortfolioLedgerTabs({
   const [paymentSort,setPaymentSort]=useState<LedgerSort>({by:"paidAt",direction:"desc"});
   const toggleSort=(current:LedgerSort,setSort:(next:LedgerSort)=>void,by:string)=>
     setSort({by,direction:current.by===by&&current.direction==="asc"?"desc":"asc"});
-  const pageKey=JSON.stringify([direction,search,partyId,partySiteId,status,overdue,from,to,value,partySort,paymentSort]);
+  const pageKey=JSON.stringify([direction,search,partyId,partySiteId,status,overdue,from,to,value,partySort,paymentSort,timeZone]);
   const [pagination,setPagination]=useState({key:pageKey,page:1});
   const page=pagination.key===pageKey?pagination.page:1;
   const setPage=(next:number)=>setPagination({key:pageKey,page:next});
-  const partiesKey = [direction === "receivable" ? "receivable-customers" : "payable-suppliers",businessId];
+  const partiesKey = [direction === "receivable" ? "receivable-customers" : "payable-suppliers",businessId,timeZone];
   const loadParties = async (requestedPage: number) => {
       const filters = { page: requestedPage, pageSize: 20, search, status, overdue: overdue || undefined, from, to, sortBy:partySort.by, sortDirection:partySort.direction };
       if(direction === "receivable") { const result=await receivablesApi.customerPortfolio({...filters,customerId:partyId,partySiteId}); return {...result,items:result.items.map(item=>({id:item.customerId,name:item.customerName,identification:item.identification,partySiteId:item.partySiteId,partySiteName:item.partySiteName,invoiceCount:item.invoiceCount,originalAmount:item.originalAmount,paidAmount:item.paidAmount,outstandingAmount:item.outstandingAmount,overdueAmount:item.overdueAmount,supplierCreditAmount:0,currencyCode:"COP"}))}; }
@@ -97,7 +99,7 @@ export function PortfolioLedgerTabs({
     staleTime: 5 * 60 * 1000,
   });
   const payments = useQuery<Page<PaymentRow>>({
-    queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search, partyId, partySiteId, status, overdue, from, to, paymentSort],
+    queryKey: [direction === "receivable" ? "receivable-payments" : "payable-payments",businessId, page, search, partyId, partySiteId, status, overdue, from, to, paymentSort, timeZone],
     queryFn: async () => {
       const filters = { page, pageSize: 20, search, status, overdue: overdue || undefined, from, to, sortBy:paymentSort.by, sortDirection:paymentSort.direction };
       if(direction === "receivable") {

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+test.use({ timezoneId: "Pacific/Kiritimati" });
+
 test("la recepción confirmada abre edición de costos sin habilitar cantidades", async ({ page, baseURL }) => {
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
@@ -42,11 +44,14 @@ test("la recepción confirmada abre edición de costos sin habilitar cantidades"
     if (path.includes("/goods-receipts/drafts/") && route.request().method() === "PUT") {
       const submitted = route.request().postDataJSON() as {
         draftId: string; costEditOfReceiptId: string; baseCostRevisionNumber: number;
-        lines: { quantity: number }[];
+        lines: { quantity: number }[]; receivedAt: string; supplierInvoiceDate: string; dueDate: string;
       };
       expect(submitted.costEditOfReceiptId).toBe(documentId);
       expect(submitted.baseCostRevisionNumber).toBe(0);
       expect(submitted.lines[0].quantity).toBe(5);
+      expect(submitted.receivedAt).toBe(receivedAt);
+      expect(submitted.supplierInvoiceDate).toBe(receivedAt);
+      expect(submitted.dueDate).toBe(receivedAt);
       await route.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({ draftId: submitted.draftId, concurrencyToken: "AQIDBA==" }) });
       return;
@@ -54,7 +59,7 @@ test("la recepción confirmada abre edición de costos sin habilitar cantidades"
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Prueba" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Prueba" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Prueba", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: user.roles, permissions };
     else if (path.endsWith(`/goods-receipts/${documentId}/cost-edit`))
       body = { goodsReceiptId: documentId, baseCostRevisionNumber: 0, draft: null };

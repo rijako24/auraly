@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using System.Collections.Frozen;
 
 namespace Auraly.BuildingBlocks.Domain.Payments;
@@ -23,7 +24,12 @@ public sealed record PaymentTender(
     string? Reference = null,
     string? Notes = null,
     string? CardFranchiseCode = null,
-    string? ApprovalNumber = null);
+    string? ApprovalNumber = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null);
 
 public sealed record PaymentTenderBreakdown(
     IReadOnlyList<PaymentTender> Tenders,
@@ -38,11 +44,13 @@ public sealed record PaymentTenderBreakdown(
         IEnumerable<PaymentTender> tenders,
         decimal expectedAmount,
         int allocationCount,
-        IReadOnlySet<string> supportedMethods)
+        IReadOnlySet<string> supportedMethods,
+        bool requireEffectiveCash = false)
     {
         ArgumentNullException.ThrowIfNull(tenders);
         ArgumentNullException.ThrowIfNull(supportedMethods);
         var values = tenders.Select(Normalize).ToArray();
+        var configured = values.Any(value => value.PaymentMethodId.HasValue);
         var expected = Round(expectedAmount);
         if (values.Any(value => value.Reference?.Length > MaximumReferenceLength || value.Notes?.Length > MaximumNotesLength ||
             value.CardFranchiseCode?.Length > MaximumCardFranchiseLength || value.ApprovalNumber?.Length > MaximumApprovalLength))
@@ -52,12 +60,19 @@ public sealed record PaymentTenderBreakdown(
             throw new ArgumentException("A payment must use between one and ten payment methods.", nameof(tenders));
         if (allocationCount < 1)
             throw new ArgumentOutOfRangeException(nameof(allocationCount));
-        if (allocationCount > 1 && values.Length != 1)
+        // The versioned legacy contract remains readable during the coordinated
+        // cutover. Configured forms identify a tender independently of its type.
+        if (!configured && allocationCount > 1 && values.Length != 1)
             throw new ArgumentException("A payment applied to multiple invoices must use one payment method.", nameof(tenders));
         if (values.Any(value => string.IsNullOrWhiteSpace(value.MethodCode) ||
                                 !supportedMethods.Contains(value.MethodCode)))
             throw new ArgumentException("Every payment method must be supported.", nameof(tenders));
-        if (values.Select(value => value.MethodCode).Distinct(StringComparer.Ordinal).Count() != values.Length)
+        if (configured && values.Any(value => value.PaymentMethodId is null ||
+                value.PaymentMethodId == Guid.Empty || value.PaymentMethodVersion is null or < 1))
+            throw new ArgumentException("Every configured tender requires its form identity and version.", nameof(tenders));
+        if (configured
+            ? values.Select(value => value.PaymentMethodId).Distinct().Count() != values.Length
+            : values.Select(value => value.MethodCode).Distinct(StringComparer.Ordinal).Count() != values.Length)
             throw new ArgumentException("A payment method can only appear once.", nameof(tenders));
         if (values.Any(value => value.Amount <= 0))
             throw new ArgumentException("Every payment amount must be greater than zero.", nameof(tenders));
@@ -66,6 +81,11 @@ public sealed record PaymentTenderBreakdown(
         if (values.Any(value => value.MethodCode == "Cash" &&
                                 value.TenderedAmount is { } tendered && tendered < value.Amount))
             throw new ArgumentException("Cash tendered cannot be less than cash applied.", nameof(tenders));
+        // Administrative capture also applies this rule to unconfigured legacy
+        // accounts. Other legacy callers retain their versioned cash contract.
+        if ((configured || requireEffectiveCash) && values.Any(value => value.MethodCode == "Cash" &&
+                value.TenderedAmount is { } tendered && tendered != value.Amount))
+            throw new ArgumentException("El movimiento administrativo registra el dinero efectivo, sin vueltos. Clasifica la diferencia mediante una partida explícita.", nameof(tenders));
         if (values.Any(value => value.MethodCode == "Transfer" && value.Reference is null))
             throw new ArgumentException("A bank transfer requires a reference.", nameof(tenders));
         if (values.Any(value => value.MethodCode is "DebitCard" or "CreditCard" &&

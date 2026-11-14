@@ -83,6 +83,7 @@ test("concilia una obligación anterior, conserva su identidad y exige guardar a
   await expect(approve).toBeEnabled();
   expect(openingReads).toBe(1);
   const savedLines = saved!.lines as Array<Record<string, unknown>>;
+  expect(savedLines.every(line=>line.costCenterId===null)).toBe(true);
   expect(savedLines[0].existingPosition).toEqual({ subledgerKind: "Payable", subledgerId: positionId });
   const stableId = savedLines[0].lineId;
   expect(stableId).toEqual(expect.any(String));
@@ -110,7 +111,7 @@ test("saldos iniciales busca cualquier tercero activo sin filtrar por rol", asyn
       { accountId: "44444444-4444-4444-4444-444444444444", code: "130505", name: "Cuentas por cobrar", accountType: "Asset", allowsPosting: true, requiresParty: true, isActive: true },
       { accountId: "55555555-5555-5555-5555-555555555555", code: "310505", name: "Capital", accountType: "Equity", allowsPosting: true, requiresParty: false, isActive: true },
     ]);
-    if (path.endsWith("/cost-centers")) return json(route, []);
+    if (path.endsWith("/cost-centers")) return json(route, {items:[],page:1,pageSize:1,totalCount:0,totalPages:0});
     if (path.endsWith("/periods")) return json(route, []);
     if (path.endsWith("/mappings")) return json(route, []);
     if (path.endsWith("/category-definitions")) return json(route, []);

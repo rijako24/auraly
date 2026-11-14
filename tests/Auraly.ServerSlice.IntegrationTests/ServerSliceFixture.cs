@@ -264,6 +264,24 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         Environment.GetEnvironmentVariable("AURALY_TEST_SQLSERVER") ?? @".\LOCAL";
     public string ConnectionString { get; private set; } = string.Empty;
 
+    // Read-only scenarios create deliberately unconfigured sites. Keep their
+    // history, but do not leave them active for later tenant-readiness scenarios.
+    public async Task DeactivateReadFixtureBusinessesAsync(IReadOnlyCollection<Guid> businessIds)
+    {
+        if (businessIds.Count == 0) return;
+        if (businessIds.Contains(BusinessId)) throw new ArgumentException("No se puede desactivar la sede principal del fixture.");
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        await using var command = new SqlCommand("""
+            UPDATE dbo.Businesses SET IsActive=0 WHERE TenantId=@Tenant
+              AND BusinessId IN(SELECT Id FROM OPENJSON(@Businesses) WITH(Id uniqueidentifier '$'));
+            """, connection);
+        command.Parameters.AddWithValue("@Tenant", TenantId);
+        command.Parameters.AddWithValue("@Businesses", System.Text.Json.JsonSerializer.Serialize(businessIds));
+        await command.ExecuteNonQueryAsync();
+    }
+
     public HttpClient CreateClient() =>
         (_factory ?? throw new InvalidOperationException("The API fixture is not initialized."))
         .CreateClient();
@@ -1457,16 +1475,22 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 "SqlPackage was not found. Set SQLPACKAGE_PATH before running SQL integration tests.");
     }
 
-    internal async Task ApplyMigrationAsync(string fileName, SqlConnection connection, SqlTransaction? transaction = null)
+    internal async Task ApplyMigrationAsync(string fileName, SqlConnection connection, SqlTransaction? transaction = null,
+        IReadOnlyDictionary<string,object>? parameters = null, IReadOnlyDictionary<string,string>? sqlcmdVariables = null)
     {
         if (Path.GetFileName(fileName) != fileName ||
             connection.Database != new SqlConnectionStringBuilder(ConnectionString).InitialCatalog)
             throw new InvalidOperationException("Migration tests require this fixture's isolated database.");
         var script = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(), "database", "Auraly.Database", "Scripts", "Migrations", fileName));
+        if (sqlcmdVariables is not null)
+            foreach (var variable in sqlcmdVariables)
+                script = script.Replace("$(" + variable.Key + ")", variable.Value, StringComparison.Ordinal);
         foreach (var batch in Regex.Split(script, @"^GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
         {
             if (string.IsNullOrWhiteSpace(batch)) continue;
             await using var command = new SqlCommand(batch, connection, transaction) { CommandTimeout = 120 };
+            if (parameters is not null)
+                foreach (var parameter in parameters) command.Parameters.AddWithValue(parameter.Key,parameter.Value);
             await command.ExecuteNonQueryAsync();
         }
     }

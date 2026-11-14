@@ -38,8 +38,8 @@ test("una recepción confirmada permite editar costos sin cambiar su entrada fí
     purchasePresentationName: "Unidad", unitsPerPresentation: 1,
   });
   const receiptId = randomUUID();
-  const receivedAt = `${proposedAccountingDate().slice(0, 4)}-01-01T10:00:00-05:00`;
-  const dueDate = `${proposedAccountingDate().slice(0, 4)}-01-31T10:00:00-05:00`;
+  const receivedAt = `${proposedAccountingDate(context.timeZone).slice(0, 4)}-01-01T10:00:00-05:00`;
+  const dueDate = `${proposedAccountingDate(context.timeZone).slice(0, 4)}-01-31T10:00:00-05:00`;
   const receipt = await scopedJson<GoodsReceiptAcceptance>("POST",
     "/api/commerce/v1/goods-receipts/confirm", {
       documentId: receiptId, businessId, warehouseId: warehouse.warehouseId,

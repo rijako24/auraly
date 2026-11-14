@@ -28,6 +28,11 @@ CREATE TABLE [dbo].[SalesDocuments]
     [PayableAmount] DECIMAL(19, 4) NOT NULL,
     [CreditAmount] DECIMAL(19, 4) NOT NULL CONSTRAINT [DF_SalesDocuments_CreditAmount] DEFAULT 0,
     [CreditDueDate] DATETIMEOFFSET(7) NULL,
+    [CreditPaymentMethodId] UNIQUEIDENTIFIER NULL REFERENCES [reference].[PaymentMethods]([PaymentMethodId]),
+    [CreditPaymentMethodVersion] INT NULL,
+    [CreditPaymentMethodCode] NVARCHAR(64) NULL,
+    [CreditPaymentMethodName] NVARCHAR(160) NULL,
+    [CreditAccountId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[AccountingAccounts]([AccountId]),
     [CufeReceived] NVARCHAR(96) NULL,
     [CufeCalculated] NVARCHAR(96) NULL,
     [FiscalStatus] NVARCHAR(40) NULL,
@@ -72,6 +77,11 @@ CREATE TABLE [dbo].[SalesDocuments]
       ([DocumentType]=N'SalesReceipt' AND [FiscalSeriesId] IS NULL AND [FiscalAuthorizationId] IS NULL AND [FiscalNumber] IS NULL AND [FiscalPrefix] IS NULL AND [FiscalConsecutive] IS NULL AND [CufeReceived] IS NULL AND [CufeCalculated] IS NULL AND [FiscalStatus] IS NULL)),
     CONSTRAINT [CK_SalesDocuments_Amounts] CHECK ([UntaxedAmount] >= 0 AND [TaxAmount] >= 0 AND [PayableAmount] >= 0 AND [CreditAmount] BETWEEN 0 AND [PayableAmount]),
     CONSTRAINT [CK_SalesDocuments_CreditTerms] CHECK (([CreditAmount] = 0 AND [CreditDueDate] IS NULL) OR ([CreditAmount] > 0 AND [CreditDueDate] IS NOT NULL AND [CustomerId] IS NOT NULL)),
+    CONSTRAINT [CK_SalesDocuments_CreditPaymentMethod] CHECK (
+      ([CreditPaymentMethodId] IS NULL AND [CreditPaymentMethodVersion] IS NULL AND [CreditPaymentMethodCode] IS NULL
+        AND [CreditPaymentMethodName] IS NULL AND [CreditAccountId] IS NULL)
+      OR ([CreditPaymentMethodId] IS NOT NULL AND [CreditAmount]>0 AND [CreditPaymentMethodVersion] IS NOT NULL AND [CreditPaymentMethodVersion]>0
+        AND [CreditPaymentMethodCode] IS NOT NULL AND [CreditPaymentMethodName] IS NOT NULL)),
     CONSTRAINT [CK_SalesDocuments_CustomerSitePair] CHECK (
       ([CustomerId] IS NULL AND [CustomerPartySiteId] IS NULL)
       OR ([CustomerId] IS NOT NULL AND [CustomerPartySiteId] IS NOT NULL)),
@@ -108,6 +118,10 @@ GO
 
 CREATE INDEX [IX_SalesDocuments_WorkSession_Issued]
     ON [dbo].[SalesDocuments] ([WorkSessionId],[IssuedAt]);
+GO
+
+CREATE INDEX [IX_SalesDocuments_CreditPaymentMethod] ON [dbo].[SalesDocuments]([CreditPaymentMethodId])
+    WHERE [CreditPaymentMethodId] IS NOT NULL;
 GO
 
 CREATE INDEX [IX_SalesDocuments_Business_Warehouse_Issued]

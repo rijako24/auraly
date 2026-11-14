@@ -18,12 +18,14 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class PortfolioManualAdvanceTests(ServerSliceFixture fixture)
 {
     [Theory]
-    [InlineData(true, false, false)]
-    [InlineData(true, true, false)]
-    [InlineData(false, false, false)]
-    [InlineData(false, true, false)]
-    [InlineData(false, false, true)]
-    public async Task Advance_and_optional_abono_share_acceptance_application_session_and_parent(bool supplier, bool withObligation, bool customerRole)
+    [InlineData(true, false, false, false)]
+    [InlineData(true, true, false, false)]
+    [InlineData(false, false, false, false)]
+    [InlineData(false, true, false, false)]
+    [InlineData(false, false, true, false)]
+    [InlineData(false, false, true, true)]
+    [InlineData(false, true, true, true)]
+    public async Task Advance_and_optional_abono_share_acceptance_application_session_and_parent(bool supplier, bool withObligation, bool customerRole, bool cashReceipt)
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate, AccountingPermissionCodes.ManualSend,
@@ -69,7 +71,7 @@ public sealed partial class PortfolioManualAdvanceTests(ServerSliceFixture fixtu
         var session = await fixture.OpenWebWorkSessionAsync();
         var capture = new SaveVoucherDraftRequest(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher, at,
             "MANUAL_VOUCHER", "Anticipo desde cuentas", "ANTICIPO", lines, null, null, MainPartyId: partyId,
-            PayloadVersion: 4, VoucherTypeCode: supplier ? "Disbursement" : "Accounting", WorkSessionId: session);
+            PayloadVersion: 4, VoucherTypeCode: supplier ? "Disbursement" : cashReceipt ? "CashReceipt" : "Accounting", WorkSessionId: session);
         var path = $"/api/commerce/v1/accounting/manual/drafts/{capture.DocumentId}";
         VoucherDraftView saved;
         using (var save = await client.PutAsJsonAsync(path, capture))
@@ -100,6 +102,15 @@ public sealed partial class PortfolioManualAdvanceTests(ServerSliceFixture fixtu
         var opening = Assert.Single(accepted.FinancialEffects.Positions);
         Assert.Equal(opening.PositionId, payment.AdvancePositionId);
         Assert.Equal(500m, payment.AdvanceAmount);
+        if (supplier)
+        {
+            using var payableReader = fixture.CreateAdminClient(PayablesPermissionCodes.Read);
+            var pending = (await payableReader.GetFromJsonAsync<AccountingOpenPositionPage>(
+                $"/api/commerce/v1/accounting/open-positions?subledgerKind=All&partyId={partyId}&voucherTypeCode=Disbursement&page=1&pageSize=50"))!;
+            Assert.All(pending.Items,item => Assert.True(item.SubledgerKind is "Payable" or "SupplierCredit"));
+            // The failed posting has not opened an available advance.
+            Assert.DoesNotContain(pending.Items,item => item.SubledgerId==opening.PositionId);
+        }
         Assert.Equal(withObligation ? 1 : 0, payment.Allocations.Count);
         Assert.Equal(0, await CountAsync($"SELECT COUNT(*) FROM dbo.{(supplier ? "Supplier" : "Customer")}Credits WHERE SourceDocumentId=@Id", capture.DocumentId));
         Assert.Equal(0, await CountAsync("SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE DocumentId=@Id", payment.PaymentId));
@@ -269,7 +280,7 @@ public sealed partial class PortfolioManualAdvanceTests(ServerSliceFixture fixtu
             supplier ? 300m : 0, LineId: Guid.NewGuid(), ExistingPosition: new(creditKind, opening.PositionId)));
         var cross = new SaveVoucherDraftRequest(Guid.NewGuid(), AccountingManualDocumentTypes.ManualVoucher, at.AddDays(1),
             "MANUAL_VOUCHER", "Aplicación sin dinero", "CRUCE-ANTICIPO", crossLines, null, null,
-            MainPartyId: partyId, PayloadVersion: 4, VoucherTypeCode: "Accounting");
+            MainPartyId: partyId, PayloadVersion: 4, VoucherTypeCode: cashReceipt ? "CashReceipt" : "Accounting");
         var crossPath = $"/api/commerce/v1/accounting/manual/drafts/{cross.DocumentId}";
         VoucherDraftView crossSaved;
         using (var save = await client.PutAsJsonAsync(crossPath, cross))
@@ -292,6 +303,7 @@ public sealed partial class PortfolioManualAdvanceTests(ServerSliceFixture fixtu
             Assert.Equal(1, fault.Count);
         }
         var crossAccepted = (await client.GetFromJsonAsync<VoucherDraftView>(crossPath))!;
+        Assert.Equal("Accounting", crossAccepted.VoucherTypeCode);
         Assert.Empty(crossAccepted.FinancialEffects!.Payments);
         Assert.Equal(targets.Count, crossAccepted.FinancialEffects.CreditApplications.Count);
         Assert.Equal(targets.Count * 2, await CountAsync("SELECT COUNT(*) FROM accounting.SourcePositionIndex WHERE SourceDocumentId=@Id", cross.DocumentId));
@@ -429,6 +441,7 @@ public sealed partial class PortfolioManualAdvanceTests(ServerSliceFixture fixtu
             restoreLines.Add(new(advance.AccountId, partyId, null, "Restituir crédito original", supplier ? 150m : 0,
                 supplier ? 0 : 150m, LineId: Guid.NewGuid(), ExistingPosition: new(creditKind, opening.PositionId)));
             var restoreCapture = cross with { DocumentId = Guid.NewGuid(), OccurredAt = at.AddDays(2 + part),
+                VoucherTypeCode = crossAccepted.VoucherTypeCode,
                 Description = "Desaplicar cruce sin otro pago ni crédito", Lines = restoreLines };
             var restorePath = $"/api/commerce/v1/accounting/manual/drafts/{restoreCapture.DocumentId}";
             var restoreSaved = await SaveDraftAsync(restoreCapture);
@@ -496,6 +509,7 @@ public sealed partial class PortfolioManualAdvanceTests(ServerSliceFixture fixtu
         var competitors = new List<VoucherDraftView>();
         for (var index = 0; index < 2; index++)
             competitors.Add(await SaveDraftAsync(cross with { DocumentId = Guid.NewGuid(), OccurredAt = at.AddDays(5),
+                VoucherTypeCode = reapplied.VoucherTypeCode,
                 Description = "Restituciones concurrentes del mismo movimiento", Lines = [
                     new(control!.AccountId, partyId, null, "Reabrir obligación", supplier ? 0 : competingOriginal.Amount,
                         supplier ? competingOriginal.Amount : 0, LineId: Guid.NewGuid(),

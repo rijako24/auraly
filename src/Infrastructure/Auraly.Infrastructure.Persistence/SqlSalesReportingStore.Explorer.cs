@@ -1,5 +1,5 @@
 using System.Data;
-using System.Text.RegularExpressions;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -36,33 +36,39 @@ public sealed partial class SqlSalesReportingStore
             access.HasPendingSources,access.HasFailedSources,catalogs.GetValueOrDefault("sales-report-product-returns")??[],catalogs.GetValueOrDefault("sales-report-product-composition")??[]);
     }
 
-    private static (string Key,string Label) ExplorerDimension(string dimension) => dimension switch
+    private static (string Key,string Label) ExplorerDimension(string dimension,bool rawIdentifiers=false)
     {
-        "document" => ("CONVERT(nvarchar(36),a.OriginalSaleDocumentId)","d.DocumentNumber"),
-        "billed-by" => ("COALESCE(CONVERT(nvarchar(36),d.BilledByUserId),N'unattributed')","COALESCE(d.BilledByName,N'Sin atribución')"),
-        "seller" => ("COALESCE(CONVERT(nvarchar(36),a.SellerId),N'unattributed')","d.SellerName"),
-        "customer" => ("COALESCE(CONVERT(nvarchar(36),a.CustomerId),N'unattributed')","d.CustomerName"),
-        "supplier" => ("COALESCE(CONVERT(nvarchar(36),a.SupplierId),N'unattributed')","COALESCE(a.SupplierName,N'Sin atribución a proveedor')"),
-        "product" => ("COALESCE(CONVERT(nvarchar(36),a.ProductId),N'unattributed')","CASE WHEN a.ProductId IS NULL THEN N'Servicios y cargos sin atribución a producto' ELSE a.ItemName END"),
-        "category" => ("COALESCE(CONVERT(nvarchar(36),a.CategoryId),N'unattributed')","COALESCE(a.CategoryName,N'Sin atribución a categoría')"),
-        "area" => ("COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.AreaId'),N'unattributed')","COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.AreaName'),N'Sin área histórica')"),
-        "category-line" => ("COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.LineId'),N'unattributed')","COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.LineName'),N'Sin línea histórica')"),
-        "category-group" => ("COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.GroupId'),N'unattributed')","COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.GroupName'),N'Sin grupo histórico')"),
-        "subgroup" => ("COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.SubgroupId'),N'unattributed')","COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.SubgroupName'),N'Sin subgrupo histórico')"),
-        "warehouse" => ("COALESCE(CONVERT(nvarchar(36),a.WarehouseId),N'unattributed')","COALESCE(d.WarehouseName,N'Sin bodega')"),
-        "table" => ("COALESCE(CONVERT(nvarchar(36),d.TableId),N'unattributed')","CASE WHEN d.TableId IS NULL THEN N'Sin mesa atribuida' ELSE COALESCE(d.TableName,N'Mesa histórica sin nombre') END"),
-        "waiter" => ("COALESCE(CONVERT(nvarchar(36),a.WaiterPartyId),N'unattributed')","COALESCE(a.WaiterName,N'Sin atribución a mesero')"),
-        "day" => ("CONVERT(nvarchar(10),a.BusinessLocalDate,23)","CONVERT(nvarchar(10),a.BusinessLocalDate,23)"),
-        "month" => ("CONVERT(nvarchar(7),a.BusinessLocalDate,126)","CONVERT(nvarchar(7),a.BusinessLocalDate,126)"),
-        "hour" => ("COALESCE(RIGHT(N'0'+CONVERT(nvarchar(2),a.BusinessLocalHour),2)+N':00',N'unattributed')",
-            "COALESCE(RIGHT(N'0'+CONVERT(nvarchar(2),a.BusinessLocalHour),2)+N':00',N'Sin hora histórica')"),
-        "line" => ("CONCAT(a.SourceDocumentId,N'/',a.SourceDocumentType,N'/',a.SourceLineNumber,N'/',a.ItemKind,N'/',a.TaxCode,N'/',a.TaxRate)","a.ItemName"),
-        _ => throw new SalesReportingValidationException("La agrupación no es válida.")
-    };
+        string Identifier(string column,bool nullable=true)=>rawIdentifiers?column:nullable
+            ?$"COALESCE(CONVERT(nvarchar(36),{column}),N'unattributed')":$"CONVERT(nvarchar(36),{column})";
+        return dimension switch
+        {
+            "document" => (Identifier("a.OriginalSaleDocumentId",false),"d.DocumentNumber"),
+            "billed-by" => (Identifier("d.BilledByUserId"),"COALESCE(d.BilledByName,N'Sin atribución')"),
+            "seller" => (Identifier("a.SellerId"),"d.SellerName"),
+            "customer" => (Identifier("a.CustomerId"),"d.CustomerName"),
+            "supplier" => (Identifier("a.SupplierId"),"COALESCE(a.SupplierName,N'Sin atribución a proveedor')"),
+            "product" => (Identifier("a.ProductId"),"CASE WHEN a.ProductId IS NULL THEN N'Servicios y cargos sin atribución a producto' ELSE a.ItemName END"),
+            "category" => (Identifier("a.CategoryId"),"COALESCE(a.CategoryName,N'Sin atribución a categoría')"),
+            "area" => ("COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.AreaId'),N'unattributed')","COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.AreaName'),N'Sin área histórica')"),
+            "category-line" => ("COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.LineId'),N'unattributed')","COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.LineName'),N'Sin línea histórica')"),
+            "category-group" => ("COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.GroupId'),N'unattributed')","COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.GroupName'),N'Sin grupo histórico')"),
+            "subgroup" => ("COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.SubgroupId'),N'unattributed')","COALESCE(JSON_VALUE(a.CategoryHierarchyJson,'$.SubgroupName'),N'Sin subgrupo histórico')"),
+            "warehouse" => (Identifier("a.WarehouseId"),"COALESCE(d.WarehouseName,N'Sin bodega')"),
+            "table" => (Identifier("d.TableId"),"CASE WHEN d.TableId IS NULL THEN N'Sin mesa atribuida' ELSE COALESCE(d.TableName,N'Mesa histórica sin nombre') END"),
+            "waiter" => (Identifier("a.WaiterPartyId"),"COALESCE(a.WaiterName,N'Sin atribución a mesero')"),
+            "day" => ("CONVERT(nvarchar(10),a.BusinessLocalDate,23)","CONVERT(nvarchar(10),a.BusinessLocalDate,23)"),
+            "month" => ("CONVERT(nvarchar(7),a.BusinessLocalDate,126)","CONVERT(nvarchar(7),a.BusinessLocalDate,126)"),
+            "hour" => ("COALESCE(RIGHT(N'0'+CONVERT(nvarchar(2),a.BusinessLocalHour),2)+N':00',N'unattributed')",
+                "COALESCE(RIGHT(N'0'+CONVERT(nvarchar(2),a.BusinessLocalHour),2)+N':00',N'Sin hora histórica')"),
+            "line" => ("CONCAT(a.SourceDocumentId,N'/',a.SourceDocumentType,N'/',a.SourceLineNumber,N'/',a.ItemKind,N'/',a.TaxCode,N'/',a.TaxRate)","a.ItemName"),
+            _ => throw new SalesReportingValidationException("La agrupación no es válida.")
+        };
+    }
 
     private static string ExplorerSource => """
         FROM reporting.SalesReportActivity(@TenantId,@BusinessId,@From,@To,NULL,@Document,@WholeActivity) a
-        JOIN reporting.SalesReportDocuments d ON d.DocumentId=a.OriginalSaleDocumentId AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId
+        JOIN reporting.SalesReportDocuments d WITH(FORCESEEK(PK_SalesReportDocuments(DocumentId)))
+          ON d.DocumentId=a.OriginalSaleDocumentId AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId
         WHERE (@CustomerId IS NULL OR a.CustomerId=@CustomerId) AND (@SellerId IS NULL OR a.SellerId=@SellerId)
           AND (@SupplierId IS NULL OR a.SupplierId=@SupplierId) AND (@ProductId IS NULL OR a.ProductId=@ProductId)
           AND (@CategoryId IS NULL OR a.CategoryId=@CategoryId) AND (@WarehouseId IS NULL OR a.WarehouseId=@WarehouseId)
@@ -73,20 +79,30 @@ public sealed partial class SqlSalesReportingStore
              OR a.ItemName LIKE @Search ESCAPE N'~' OR a.ItemCode LIKE @Search ESCAPE N'~')
         """+ActivitySelectionSql;
 
-    private const string ExplorerMeasures="""
-        COUNT_BIG(DISTINCT a.OriginalSaleDocumentId) Documents,
-        COUNT_BIG(DISTINCT CASE WHEN a.MovementType=N'Sale' AND a.UntaxedAmount>0 THEN a.CustomerId END) Customers,
-        COALESCE(SUM(CASE WHEN a.ItemKind=N'Product' OR @Lines=1 THEN a.Quantity ELSE 0 END),0) Quantity,
-        COALESCE(SUM(CASE WHEN a.MovementType=N'Sale' THEN a.GrossAmount ELSE 0 END),0) GrossSales,
-        COALESCE(SUM(CASE WHEN a.MovementType=N'Sale' THEN a.DiscountAmount ELSE 0 END),0) Discounts,
-        COALESCE(-SUM(CASE WHEN a.MovementType=N'Return' THEN a.UntaxedAmount ELSE 0 END),0) Returns,
-        COALESCE(SUM(a.UntaxedAmount),0) NetUntaxed,COALESCE(SUM(a.TaxAmount),0) Tax,COALESCE(SUM(a.TotalAmount),0) NetTotal,
-        CASE WHEN COUNT_BIG(*)=COUNT_BIG(a.RecognizedCostAmount) THEN COALESCE(SUM(a.RecognizedCostAmount),0) END RecognizedCost,
-        CASE WHEN COUNT_BIG(*)=COUNT_BIG(a.RecognizedCostAmount) THEN COALESCE(SUM(a.UntaxedAmount-a.RecognizedCostAmount),0) END Profit,
-        COALESCE(SUM(a.MissingCostLines),0) MissingCostLines,
-        COALESCE(-SUM(CASE WHEN a.MovementType=N'Return' THEN a.TotalAmount ELSE 0 END),0) ReturnsWithTax,
-        COALESCE(-SUM(CASE WHEN a.MovementType=N'Return' THEN a.TaxAmount ELSE 0 END),0) ReturnedTax
-        """;
+    // One definition and result order for the measures. Intermediate projections
+    // request only what they consume, so unused distinct counts never enter the
+    // optimizer's alternatives or create spools/joins before being projected out.
+    private static readonly (string Name,string Expression)[] MeasureDefinitions =
+    [
+        ("Documents","COUNT_BIG(DISTINCT a.OriginalSaleDocumentId)"),
+        ("Customers","COUNT_BIG(DISTINCT CASE WHEN a.MovementType=N'Sale' AND a.UntaxedAmount>0 THEN a.CustomerId END)"),
+        ("Quantity","COALESCE(SUM(CASE WHEN a.ItemKind=N'Product' OR @Lines=1 THEN a.Quantity ELSE 0 END),0)"),
+        ("GrossSales","COALESCE(SUM(CASE WHEN a.MovementType=N'Sale' THEN a.GrossAmount ELSE 0 END),0)"),
+        ("Discounts","COALESCE(SUM(CASE WHEN a.MovementType=N'Sale' THEN a.DiscountAmount ELSE 0 END),0)"),
+        ("Returns","COALESCE(-SUM(CASE WHEN a.MovementType=N'Return' THEN a.UntaxedAmount ELSE 0 END),0)"),
+        ("NetUntaxed","COALESCE(SUM(a.UntaxedAmount),0)"),
+        ("Tax","COALESCE(SUM(a.TaxAmount),0)"),
+        ("NetTotal","COALESCE(SUM(a.TotalAmount),0)"),
+        ("RecognizedCost","CASE WHEN COUNT_BIG(*)=COUNT_BIG(a.RecognizedCostAmount) THEN COALESCE(SUM(a.RecognizedCostAmount),0) END"),
+        ("Profit","CASE WHEN COUNT_BIG(*)=COUNT_BIG(a.RecognizedCostAmount) THEN COALESCE(SUM(a.UntaxedAmount-a.RecognizedCostAmount),0) END"),
+        ("MissingCostLines","COALESCE(SUM(a.MissingCostLines),0)"),
+        ("ReturnsWithTax","COALESCE(-SUM(CASE WHEN a.MovementType=N'Return' THEN a.TotalAmount ELSE 0 END),0)"),
+        ("ReturnedTax","COALESCE(-SUM(CASE WHEN a.MovementType=N'Return' THEN a.TaxAmount ELSE 0 END),0)")
+    ];
+    private static string ExplorerMeasures=>MeasuresSql();
+    private static string MeasuresSql(params string[] names)=>string.Join(",\n",(names.Length==0
+        ?MeasureDefinitions:names.Select(name=>MeasureDefinitions.Single(measure=>measure.Name==name)))
+        .Select(measure=>$"{measure.Expression} {measure.Name}"));
 
     private const string DocumentSnapshotColumns="""
         metadata.DocumentId,metadata.DocumentType,metadata.DocumentNumber,metadata.FiscalNumber,metadata.IssuedAt,
@@ -373,20 +389,7 @@ public sealed partial class SqlSalesReportingStore
         // Mode flags and optional-filter presence select a bounded query shape
         // (whole documents, lines, active filters). Fold those branches without recompiling on
         // every read; identities, dates and selected values remain parameters.
-        var query=Regex.Replace(command.CommandText,@"(@\w+)\s+IS\s+(NOT\s+)?NULL\b",match=>
-        {
-            if(!command.Parameters.Contains(match.Groups[1].Value))return match.Value;
-            var absent=command.Parameters[match.Groups[1].Value].Value is DBNull;
-            return absent!=match.Groups[2].Success?"(1=1)":"(1=0)";
-        });
-        query=Regex.Replace(query,@"@\w+\b",match=>
-        {
-            if(!command.Parameters.Contains(match.Value))return match.Value;
-            var parameter=command.Parameters[match.Value];
-            if(parameter.Value is DBNull)return "NULL";
-            return parameter.SqlDbType==SqlDbType.Bit&&parameter.Value is bool value
-                ?(value?"CONVERT(bit,1)":"CONVERT(bit,0)"):match.Value;
-        });
+        var query=SqlQueryShape.FoldOptionalPredicates(command);
         // One bounded SQL batch owns the page, independent aggregates and detail cuts.
         // IntentShared is compatible with projection writers and other readers.
         // It only excludes explicit rebuilds; normal queries read committed

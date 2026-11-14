@@ -77,6 +77,10 @@ public sealed partial class SqlPartyWorkspaceStore
         PartyActorIdentity actor, int page, PartyRoleOptionQuery query, CancellationToken ct)
     {
         var role = RoleSource(query.Role);
+        var requestedRoles = query.RoleIds is null ? "" : $"""
+            INNER JOIN OPENJSON(@RoleIds) WITH(RoleId uniqueidentifier '$') requested
+              ON requested.RoleId=partyRole.{role.IdColumn}
+            """;
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
@@ -85,6 +89,7 @@ public sealed partial class SqlPartyWorkspaceStore
             FROM dbo.Parties party
             INNER JOIN {role.Table} partyRole
               ON partyRole.PartyId=party.PartyId AND {role.Scope}
+            {requestedRoles}
             WHERE party.TenantId=@TenantId AND partyRole.IsActive=1
               AND (@RoleId IS NULL OR partyRole.{role.IdColumn}=@RoleId)
               AND (@PartyId IS NULL OR party.PartyId=@PartyId)
@@ -103,6 +108,7 @@ public sealed partial class SqlPartyWorkspaceStore
             FROM dbo.Parties party
             INNER JOIN {role.Table} partyRole
               ON partyRole.PartyId=party.PartyId AND {role.Scope}
+            {requestedRoles}
             WHERE party.TenantId=@TenantId AND partyRole.IsActive=1
               AND (@RoleId IS NULL OR partyRole.{role.IdColumn}=@RoleId)
               AND (@PartyId IS NULL OR party.PartyId=@PartyId)
@@ -119,6 +125,8 @@ public sealed partial class SqlPartyWorkspaceStore
             new SqlParameter("@TenantId", actor.TenantId),
             new SqlParameter("@BusinessId", actor.BusinessId),
             new SqlParameter("@RoleId", (object?)query.RoleId ?? DBNull.Value),
+            new SqlParameter("@RoleIds", System.Data.SqlDbType.NVarChar, -1)
+                { Value = query.RoleIds is null ? DBNull.Value : System.Text.Json.JsonSerializer.Serialize(query.RoleIds) },
             new SqlParameter("@PartyId", (object?)query.PartyId ?? DBNull.Value),
             new SqlParameter("@Search", (object?)Empty(query.Search) ?? DBNull.Value),
             new SqlParameter("@Offset", (page - 1) * query.PageSize),
@@ -139,18 +147,9 @@ public sealed partial class SqlPartyWorkspaceStore
 
     private static RoleOptionSource RoleSource(string role) => role switch
     {
-        "Any" => new("""
-            (SELECT scoped.PartyId,scoped.PartyId AS RoleId,CAST(1 AS bit) AS IsActive
-             FROM (
-               SELECT PartyId FROM dbo.Customers WHERE TenantId=@TenantId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.Suppliers WHERE TenantId=@TenantId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.CommerceSellers WHERE TenantId=@TenantId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.Carriers WHERE TenantId=@TenantId AND IsActive=1
-               UNION SELECT PartyId FROM parties.Waiters WHERE TenantId=@TenantId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.Employees WHERE TenantId=@TenantId AND IsActive=1
-               UNION SELECT PartyId FROM dbo.AppUsers WHERE TenantId=@TenantId AND IsActive=1 AND PartyId IS NOT NULL
-             ) scoped)
-            """, "RoleId", "1=1", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
+        // Any selects active identities, including a payer without commercial
+        // roles. Specific roles retain their own active membership projection.
+        "Any" => new("dbo.Parties", "PartyId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
         "Customer" => new("dbo.Customers", "CustomerId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),
         "Supplier" => new("dbo.Suppliers", "SupplierId", "partyRole.TenantId=@TenantId", "partyRole.PurchaseEvidencePolicy", "partyRole.DefaultPaymentDueDays"),
         "Seller" => new("dbo.CommerceSellers", "SellerId", "partyRole.TenantId=@TenantId", "CAST(NULL AS NVARCHAR(40))", "CAST(NULL AS INT)"),

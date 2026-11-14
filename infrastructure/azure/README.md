@@ -72,6 +72,27 @@ Después del bootstrap, configurar en GitHub la aprobación obligatoria del envi
 
 El pipeline usa `SqlPackage 170.4.83`, genera primero un DeployReport, rechaza eliminaciones de tablas/columnas, publica con `BlockOnPossibleDataLoss=True` y `DropObjectsNotInSource=False`, y siempre retira la regla temporal del runner y el blob de OneDeploy. API y Function se autentican en SQL con la Managed Identity del ambiente. La ruta de red se habilita mediante `AllowAllWindowsAzureIps`, porque Flex Consumption no expone un conjunto completo y estable de IP de salida; enumerar `possibleOutboundIpAddresses` no cubre todas sus instancias. Los health checks abren la conexión SQL y la API se publica mediante `Publish-AuralyApiPackage.ps1`, compartido con la publicación rápida: se detiene y verifica el proceso anterior, se espera la extracción síncrona sin reinicio ni seguimiento del arranque y solo entonces se inicia el paquete nuevo. Si la extracción falla, permanece detenida; nunca se acepta como prueba de éxito el log de una publicación anterior.
 
+Todo release que incluya `database`, tanto en DEV como en PROD, debe incluir
+también `api`, `function` y `admin`. Antes de las migraciones se detienen ambos procesos
+y se comprueba que estén detenidos; después se publican los binarios compatibles.
+La exigencia de Admin se comprueba sobre `manifest.deploymentComponents`: el
+workflow lo publica en su propio job y no lo pasa como componente al adaptador
+de nube. API y Function sí deben estar en el subconjunto que ese adaptador va a
+publicar. La regresión ejecuta el guard con esta misma separación.
+Si falla el corte, no se reinician automáticamente los binarios anteriores contra
+el esquema nuevo. Para el PUC compartido se conserva la dimensión histórica en
+`LegacyBusinessId`; el retorno a binarios anteriores exige una reversión
+coordinada y revisada. Después de registrar operaciones con cuentas compartidas
+se prefiere corregir hacia adelante, preservando sus movimientos.
+
+El catálogo compartido de centros usa TenantId y una respuesta paginada. Admin
+debe pertenecer al mismo release para consumir ese contrato; después de la
+publicación se recarga el navegador. La migración de snapshots del 2026-09-07
+precede al cambio de códigos revisado del 2026-11-13, conservando los valores ya
+informados. Códigos duplicados, varios predeterminados o reglas por bodega sin
+revisión detienen el corte. El plan de cinco centros de DEV no autoriza cambios
+equivalentes ni despliegue a PROD.
+
 Los apartados manuales siguientes son procedimiento de contingencia y bootstrap, no la ruta ordinaria.
 
 ### Autenticación de los disparadores de Service Bus

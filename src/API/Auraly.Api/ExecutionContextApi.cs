@@ -2,13 +2,14 @@ using System.Data;
 using System.Security.Claims;
 using System.Text.Json;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Application.Time;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace Auraly.Api;
 
 public sealed record ExecutionTenantOption(Guid TenantId, string Name);
-public sealed record ExecutionBusinessOption(Guid BusinessId, Guid TenantId, string Name, bool SharesProductPrices);
+public sealed record ExecutionBusinessOption(Guid BusinessId, Guid TenantId, string Name, bool SharesProductPrices, string TimeZone);
 public sealed record ExecutionAccess(
     Guid TenantId,
     Guid? BusinessId,
@@ -122,8 +123,14 @@ public sealed class SqlExecutionContextDirectory(
         var result = new List<ExecutionBusinessOption>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
+        {
+            // Browser date controls require an IANA identity. Validate existing
+            // IANA values too; invalid configuration must not use the host zone.
+            var configuredZone = reader.GetString(4);
+            var timeZone = BusinessTimeZoneResolver.NormalizeConfiguredId(configuredZone);
             result.Add(new ExecutionBusinessOption(
-                reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetBoolean(3)));
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetBoolean(3), timeZone));
+        }
         return result;
     }
 

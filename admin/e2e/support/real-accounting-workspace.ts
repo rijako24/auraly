@@ -33,7 +33,11 @@ export async function realAccountingContext(page: Page, businessIdOverride?: str
     return result.body as T;
   }
 
-  return { scopedJson, businessId: businessId! };
+  const businesses = await scopedJson<Array<{ businessId: string; timeZone: string }>>(
+    "GET", "/api/execution-context/businesses");
+  const business = businesses.find(item => item.businessId === businessId);
+  expect(business?.timeZone, "El contexto autorizado debe incluir la zona del negocio de pruebas.").toBeTruthy();
+  return { scopedJson, businessId: businessId!, timeZone: business!.timeZone };
 }
 
 export async function realAccountingWorkspace(page: Page) {
@@ -41,7 +45,7 @@ export async function realAccountingWorkspace(page: Page) {
   const { scopedJson } = context;
   await scopedJson("PUT", "/api/commerce/v1/accounting/defaults", {});
   const activation = await scopedJson<{ status: string }>("POST", "/api/commerce/v1/accounting/activate", {
-    effectiveFrom: `${proposedAccountingDate().slice(0, 4)}-01-01`,
+    effectiveFrom: `${proposedAccountingDate(context.timeZone).slice(0, 4)}-01-01`,
     functionalCurrencyCode: "COP", openingBalanceMode: "ZeroDeclared",
   });
   expect(activation.status).toBe("Ready");
@@ -49,7 +53,7 @@ export async function realAccountingWorkspace(page: Page) {
 }
 
 export async function realAccountingAuxiliary(
-  { scopedJson, businessId }: Awaited<ReturnType<typeof realAccountingWorkspace>>,
+  { scopedJson }: Awaited<ReturnType<typeof realAccountingWorkspace>>,
   prefix: string, accountType: string, financialFunction: string, balanceSide: "Debit" | "Credit",
   bankAccountId: string | null = null, requiresParty = false,
 ) {
@@ -60,7 +64,7 @@ export async function realAccountingAuxiliary(
     code: parentCode, name: "Agrupación contable E2E", accountType, allowsPosting: false, requiresParty: false });
   return scopedJson<AccountingAccount>("POST", path, { accountId: randomUUID(), tenantId: process.env.AURALY_E2E_TENANT_ID,
     code: `${parentCode}01`, name: "Auxiliar contable E2E", accountType, allowsPosting: true, requiresParty,
-    semantics: { parentAccountId: parentId, financialFunction, balanceSide, businessId, bankAccountId, paymentMethodOptionId: null } });
+    semantics: { parentAccountId: parentId, financialFunction, balanceSide, businessId: null, bankAccountId, paymentMethodOptionId: null } });
 }
 
 export async function realPartyRequest(

@@ -95,6 +95,52 @@ mediciones de la base aislada de pruebas, no un p95 medido en producción.
 
 ### Cupo, plazo y recaudo
 
+Implementado en el cambio local del 2026-11-09, sin despliegue: se agrega
+`MaximumOverdueInvoices` al perfil de crédito canónico del cliente, junto al cupo
+y plazo. Es el máximo permitido, entero no negativo; null significa sin esa
+restricción y preserva la conducta de perfiles anteriores. No se impone un
+número comercial inventado por DIAN ni se agrega una jerarquía de overrides.
+
+El conteo incluye obligaciones comerciales del cliente abiertas o parcialmente
+pagadas con saldo positivo y vencimiento anterior al día local del negocio,
+en todas sus sedes dentro del alcance financiero autorizado. No cuenta anticipos,
+obligaciones anuladas/pagadas ni cartera de empleado identificada por otro rol.
+Con máximo 2, dos vencidas permiten y tres bloquean; con máximo 0, una bloquea.
+El cupo sigue validándose independientemente. Un anticipo no aplicado no borra
+una factura vencida ni evita el bloqueo; se debe aplicar explícitamente.
+
+Sólo bloquea nuevo crédito, no recaudo, aplicación de anticipo ni venta pagada
+de contado. La app de pedidos muestra causa/cantidad/límite; validación de lote
+y confirmación final aplican la misma política canónica de crédito en los
+canales que ejecutan esa operación. Conservar la presentación de pagos del POS
+no crea una excepción a esa política. Es una decisión de riesgo comercial del producto,
+no una regla fiscal. La validación final protege concurrencia e incluye el cupo
+ya comprometido por ventas pendientes como hoy.
+
+Conteos y cupo se consultan por conjunto de clientes, sin detalles por factura
+ni I/O por pedido. Regresiones: null/0/2, límite exacto y superado, abono parcial,
+factura que vence hoy, anticipo no aplicado/aplicado, venta de contado, cliente
+ajeno, lote con cliente repetido, carrera entre validación y confirmación y
+número constante de lecturas al crecer el lote. La regla no cambia por cambiar
+nombre o sede del cliente.
+
+`CustomerCreditPolicy` conserva la única decisión de dominio. El validador
+transaccional SQL usado por emisión online e ingreso conectado y la revisión
+por conjunto del lote cargan hechos y consumen esa política; no repiten su
+decisión en SQL o UI. La fecha de evaluación procede del reloj de aceptación,
+no de una fecha de factura atrasada. El lote usa una lectura de zona del negocio
+y una consulta de hechos para todos sus clientes, con el límite existente de
+50 pedidos. La consulta de perfil devuelve también el crédito aceptado pendiente
+y lo incluye en el cupo disponible.
+
+El editor de tercero y su alta usan el perfil existente. Guardar actualiza al
+único propietario del recurso con la respuesta autoritativa, sin otro GET.
+Los clientes anteriores que omiten el campo conservan el límite ya configurado;
+un `null` explícito lo elimina. Las pruebas `ReceivablesOverdueCreditTests` y
+`OrderCreditInvoiceTests` verifican límites, compatibilidad y la misma decisión
+en revisión y confirmación de lote; la prueba de lote comprueba viajes SQL
+constantes con uno y dos pedidos del mismo cliente.
+
 El cupo, la habilitación y el plazo predeterminado continúan perteneciendo a
 `CustomerCreditProfiles` y abarcan al cliente completo. Todas las obligaciones
 abiertas y documentos de crédito pendientes de sus sedes consumen el mismo
@@ -304,11 +350,14 @@ borran ni consolidan obligaciones ya emitidas.
 
 - Venta a crédito: débito a cuentas por cobrar y créditos a ingresos e impuestos, además del costo/inventario aplicable.
 - Recaudo: débito al medio de recaudo configurado y crédito a cuentas por cobrar.
-- Los nuevos recaudos fijan la cuenta disponible en `CustomerPaymentTenders`
-  durante la aceptación contable. Los reintentos conservan esa cuenta; solo un
-  retry explícito completa una cuenta que faltaba. Si no puede resolverse, no
-  se aplica el recaudo y se informa que no se realizó. Los medios históricos sin
-  identidad de partida conservan su contrato anterior. El propietario y corte
+- Los recaudos con identidad del catálogo de formas consultan su cuenta vigente
+  dentro del intento de contabilización. Un fallo revierte también la resolución;
+  el siguiente intento consulta la configuración actual. `CustomerPaymentTenders`
+  conserva la cuenta efectivamente aplicada y el replay de un completado no
+  vuelve a resolverla ni repite movimientos. Los contratos anteriores sin
+  identidad de forma conservan su resolución compatible al aceptar y los medios
+  históricos sin identidad de partida conservan su contrato anterior. Si falta
+  configuración válida no se aplica el recaudo. El propietario y corte
   compartido con CxP están en `accounting-open-vouchers-design.md`, sección 13.7.
 - No se crean pagos de venta ficticios para representar financiación.
 - Con contabilidad inactiva, venta, recaudo y devolución conservan la misma

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { accountingApi, type AccountingOpenPosition, type VoucherDraftLineView } from "@/services/api/accounting";
@@ -15,35 +15,72 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Kind = AccountingOpenPosition["subledgerKind"];
-type LinkedPosition = { subledgerKind: Kind; subledgerId: string; amount: number; financialDiscountEarned?: boolean | null };
+type LinkedPosition = { subledgerKind: Kind; subledgerId: string; amount: number; financialDiscountEarned?: boolean | null; creditCrossing?: boolean };
+export type VoucherCreditTarget = VoucherDraftLineView & { availableForCreditAmount: number };
 type DiscountDecision = "pending" | "earned" | "lost";
-const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 4 });
 const supportedKind = (value: string): value is Kind =>
   value === "Payable" || value === "Receivable" || value === "SupplierCredit" || value === "CustomerCredit";
-const originTypeLabel = (value: string) => ({ Expense: "Gasto", GoodsReceipt: "Compra",
-  ManualAccountingVoucher: "Comprobante contable" })[value as "Expense" | "GoodsReceipt" | "ManualAccountingVoucher"] ?? value;
 
-function PendingDocumentRow({ position, kind, voucherTypeCode, linked, remainingLineCapacity, onAdd, onOpenOrigin }: {
+export function createVoucherPositionLine(position: AccountingOpenPosition, amount: number,
+  financialGroupId: string | null, financialDiscountEarned: boolean | null = null): VoucherDraftLineView {
+  return { value: {
+    lineId: crypto.randomUUID(), accountId: position.accountId, partyId: position.partyId,
+    partySiteId: position.partySiteId, costCenterId: null,
+    description: `Aplicación ${position.documentNumber}`.slice(0, 500), reference: position.documentNumber.slice(0, 100),
+    debit: (position.openingCredit ?? 0) > 0 ? amount : 0, credit: (position.openingDebit ?? 0) > 0 ? amount : 0,
+    existingPosition: { subledgerKind: position.subledgerKind, subledgerId: position.subledgerId },
+    financialGroupId, financialDiscountEarned,
+  }, accountCode: position.accountCode, accountName: position.accountName,
+    partyName: position.partyName, partyIdentification: position.partyIdentification, costCenterName: null };
+}
+function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, linked, remainingLineCapacity, crossTargets, onCross, onAdd, onOpenOrigin }: {
   position: AccountingOpenPosition; kind: Kind; voucherTypeCode?: string | null;
+  sourceTypeLabel: string;
   linked: LinkedPosition[]; remainingLineCapacity: number;
+  crossTargets: ReadonlyArray<VoucherCreditTarget>;
+  onCross: (position: AccountingOpenPosition, targetLineId: string, amount: number) => void;
   onAdd: (lines: VoucherDraftLineView[]) => void; onOpenOrigin: (id: string) => void;
 }) {
-  const linkedAmount = linked.length === 1 ? linked[0].amount : null;
-  const [amount, setAmount] = useState<number | null>(linkedAmount ?? position.availableAmount);
+  const money = useMemo(() => new Intl.NumberFormat("es-CO", {
+    ...(position.currencyCode && /^[A-Z]{3}$/.test(position.currencyCode)
+      ? { style: "currency", currency: position.currencyCode } as const : {}),
+    maximumFractionDigits: 4,
+  }), [position.currencyCode]);
+  const assistedCredit = (voucherTypeCode === "CashReceipt" || voucherTypeCode === "Disbursement") &&
+    (kind === "CustomerCredit" || kind === "SupplierCredit");
+  const linkedAmount = linked.length === 0 ? null : linked.reduce((total, item) => total + item.amount, 0);
+  const editableLinked = linked.filter(item => !item.creditCrossing);
+  const crossAmount = linked.filter(item => item.creditCrossing).reduce((total, item) => total + item.amount, 0);
+  const availableForMoney = Math.max(0, Number((position.availableAmount - crossAmount).toFixed(4)));
+  const remainingCredit = Math.max(0, Number((position.availableAmount - (linkedAmount ?? 0)).toFixed(4)));
+  const suggestedAmount = assistedCredit ? remainingCredit : editableLinked.length === 1 ? editableLinked[0].amount : availableForMoney;
+  const [amount, setAmount] = useState<number | null>(suggestedAmount);
+  const [crossOpen, setCrossOpen] = useState(false);
+  const [targetId, setTargetId] = useState("");
+  const targets = crossTargets.filter(line => line.value.existingPosition?.subledgerKind ===
+    (kind === "SupplierCredit" ? "Payable" : "Receivable") &&
+    (kind !== "SupplierCredit" || line.value.partySiteId == null || line.value.partySiteId === position.partySiteId));
+  const target = targets.find(line => line.value.lineId === targetId);
+  const targetAmount = target?.availableForCreditAmount ?? 0;
+  const capturedTargetAmount = target ? target.value.debit + target.value.credit : 0;
   const [decision, setDecision] = useState<DiscountDecision>("pending");
-  useEffect(() => { setAmount(linkedAmount ?? position.availableAmount); }, [linkedAmount, position.availableAmount]);
+  useEffect(() => { setAmount(suggestedAmount); }, [suggestedAmount]);
+  const canCross = assistedCredit && !!position.accountId && !position.openingLinkIssue && position.currencyCode === "COP" &&
+    ((position.openingDebit ?? 0) > 0 || (position.openingCredit ?? 0) > 0) &&
+    !!target && amount !== null && amount > 0 && amount <= remainingCredit && amount <= targetAmount &&
+    remainingLineCapacity >= (amount === capturedTargetAmount ? 1 : 2);
   const discountAvailable = voucherTypeCode === "Disbursement" && kind === "Payable" &&
     !!position.financialDiscountEligibleAmount && position.financialDiscountAnticipated != null &&
-    !position.financialDiscountDecided && !position.financialDiscountPendingReturn;
+    !position.financialDiscountDecided && !position.financialDiscountPendingReturn && crossAmount === 0;
   const adjustment = discountAvailable && decision !== "pending"
     ? (decision === "earned" ? position.financialDiscountEligibleAmount! : 0) -
       (position.financialDiscountAnticipated ? position.financialDiscountEligibleAmount! : 0) : 0;
   const discountAccountId = adjustment > 0 ? position.financialDiscountEarnedAccountId
     : adjustment < 0 ? position.financialDiscountLostAccountId : null;
   const canAdd = !!position.accountId && !position.openingLinkIssue && position.currencyCode === "COP" &&
-    linked.length < 2 && !linked.some(item => item.financialDiscountEarned != null) &&
-    (linked.length > 0 || remainingLineCapacity >= (adjustment === 0 ? 1 : 2)) &&
-    amount !== null && amount > 0 && amount <= position.availableAmount &&
+    editableLinked.length < 2 && !linked.some(item => item.financialDiscountEarned != null) &&
+    (editableLinked.length > 0 || remainingLineCapacity >= (adjustment === 0 ? 1 : 2)) &&
+    amount !== null && amount > 0 && amount <= availableForMoney &&
     ((position.openingDebit ?? 0) > 0 || (position.openingCredit ?? 0) > 0) &&
     (decision === "pending" || discountAvailable && linked.length === 0 && amount > adjustment &&
       (adjustment === 0 || !!discountAccountId));
@@ -51,17 +88,7 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, linked, remaining
   function add() {
     if (!canAdd || amount === null) return;
     const groupId = decision === "pending" ? null : crypto.randomUUID();
-    const selected: VoucherDraftLineView = { value: {
-      lineId: crypto.randomUUID(), accountId: position.accountId, partyId: position.partyId,
-      partySiteId: position.partySiteId, costCenterId: null,
-      description: `Aplicación ${position.documentNumber}`.slice(0, 500),
-      reference: position.documentNumber.slice(0, 100),
-      debit: (position.openingCredit ?? 0) > 0 ? amount : 0,
-      credit: (position.openingDebit ?? 0) > 0 ? amount : 0,
-      existingPosition: { subledgerKind: kind, subledgerId: position.subledgerId },
-      financialGroupId: groupId, financialDiscountEarned: decision === "pending" ? null : decision === "earned",
-    }, accountCode: position.accountCode, accountName: position.accountName,
-      partyName: position.partyName, partyIdentification: position.partyIdentification, costCenterName: null };
+    const selected = createVoucherPositionLine(position, amount, groupId, decision === "pending" ? null : decision === "earned");
     const counterpart: VoucherDraftLineView[] = adjustment === 0 ? [] : [{ value: {
       lineId: crypto.randomUUID(), accountId: discountAccountId!, partyId: position.partyId,
       costCenterId: null, description: `Descuento financiero ${position.documentNumber}`.slice(0, 500),
@@ -75,23 +102,41 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, linked, remaining
 
   return <><tr className="border-t align-top text-sm" aria-label={`Documento ${position.documentNumber}`}>
     <td className="p-2"><button type="button" className="font-medium text-primary underline-offset-2 hover:underline" onClick={() => onOpenOrigin(position.sourceDocumentId)}>{position.documentNumber}</button>
-      <p className="text-xs text-muted-foreground">{originTypeLabel(position.sourceDocumentType)} · {position.occurredAt.slice(0, 10)}</p>
+      <p className="text-xs text-muted-foreground">{sourceTypeLabel} · {position.occurredAt.slice(0, 10)}</p>
+      <p className="text-xs text-muted-foreground">{position.partyName}{position.partyIdentification ? ` · ${position.partyIdentification}` : ""}</p>
+      {position.creditNature === "Advance" && <p className="text-xs font-medium text-primary">Anticipo</p>}
+      {position.currencyCode !== "COP" && <p className="text-xs text-muted-foreground">Moneda: {position.currencyCode ?? "Por conciliar"}</p>}
       <p className="text-xs text-muted-foreground">Vence: {position.dueDate?.slice(0, 10) ?? "Sin vencimiento"}</p></td>
-    <td className="p-2">{position.accountCode ? `${position.accountCode} · ${position.accountName}` : "Sin cuenta conciliada"}</td>
-    <td className="p-2">{position.partyName}<p className="text-xs text-muted-foreground">{position.partyIdentification}</p></td>
-    <td className="p-2 text-right">{money.format(position.openingDebit ?? 0)}</td>
-    <td className="p-2 text-right">{money.format(position.openingCredit ?? 0)}</td>
+    <td className="p-2">{position.accountCode ? `${position.accountCode} · ${position.accountName}` : "Sin cuenta conciliada"}
+      <p className="text-xs text-muted-foreground">D origen: {position.openingDebit == null ? "—" : money.format(position.openingDebit)} · C origen: {position.openingCredit == null ? "—" : money.format(position.openingCredit)}</p></td>
+    <td className="p-2 text-right">{money.format(position.originalAmount)}</td>
+    <td className="p-2 text-right">{position.paidAmount == null ? "—" : money.format(position.paidAmount)}</td>
+    <td className="p-2 text-right">{position.otherMovementsAmount == null ? "—" : money.format(position.otherMovementsAmount)}</td>
     <td className="p-2 text-right">{money.format(position.outstandingAmount)}<p className="text-xs text-muted-foreground">Disponible: {money.format(position.availableAmount)}</p>
       {linkedAmount !== null && <p className="text-xs text-primary">En este comprobante: {money.format(linkedAmount)}</p>}</td>
+    <td className="p-2 whitespace-nowrap">{position.overdueDays == null ? "—" : position.overdueDays === 0 ? "Al día" : `${position.overdueDays} días`}</td>
     <td className="p-2"><FormattedNumberInput kind="currency" ariaLabel={`Abono a ${position.documentNumber}`} value={amount ?? ""} onValueChange={setAmount} />
-      {amount !== null && amount > position.availableAmount && <p role="alert" className="text-xs text-destructive">Supera el disponible.</p>}</td>
-    <td className="p-2"><Button size="sm" disabled={!canAdd} onClick={add}>{linkedAmount !== null ? "Actualizar" : "Agregar"}</Button></td>
+      {amount !== null && amount > (assistedCredit ? remainingCredit : availableForMoney) && <p role="alert" className="text-xs text-destructive">Supera el disponible.</p>}
+      {assistedCredit && <p className="text-xs text-muted-foreground">Por aplicar aquí: {money.format(remainingCredit)}</p>}</td>
+    <td className="p-2">{assistedCredit
+      ? <Button size="sm" disabled={remainingCredit <= 0 || !!position.openingLinkIssue || position.currencyCode !== "COP" || !position.accountId}
+          onClick={() => setCrossOpen(current => !current)}>Cruzar</Button>
+      : <Button size="sm" disabled={!canAdd} onClick={add}>{editableLinked.length === 1 ? "Actualizar" : "Agregar"}</Button>}</td>
   </tr>
-  {(discountAvailable || position.openingLinkIssue || position.currencyCode !== "COP" || linked.length > 1 || linked.some(item => item.financialDiscountEarned != null)) &&
-    <tr className="border-t bg-muted/20"><td colSpan={8} className="px-3 py-2 text-xs">
+  {crossOpen && assistedCredit && <tr className="border-t bg-muted/20"><td colSpan={9} className="space-y-2 px-3 py-3 text-sm">
+    <p>Selecciona la obligación que cubrirá este saldo a favor. El cruce agrega sus dos partidas y reduce el importe pendiente de cubrir con dinero nuevo; no cambia el dinero registrado.</p>
+    {targets.length === 0 ? <p>Agrega primero la factura que quieres cubrir desde esta lista.</p> : <div className="flex flex-wrap items-center gap-3">
+      <Select value={target ? targetId : ""} onValueChange={setTargetId}><SelectTrigger className="w-80" aria-label={`Factura para cruzar ${position.documentNumber}`}><SelectValue placeholder="Seleccionar factura agregada" /></SelectTrigger>
+        <SelectContent>{targets.map(line => <SelectItem key={line.value.lineId} value={line.value.lineId!}>{line.value.reference ?? line.value.description} · {money.format(line.availableForCreditAmount)}</SelectItem>)}</SelectContent></Select>
+      <Button size="sm" disabled={!canCross} onClick={() => { if (canCross && amount !== null) { onCross(position, targetId, amount); setCrossOpen(false); setTargetId(""); } }}>Agregar cruce</Button>
+      {target && amount !== null && amount > targetAmount && <p role="alert" className="text-xs text-destructive">El cruce supera el abono seleccionado para esa factura.</p>}
+    </div>}
+  </td></tr>}
+  {(discountAvailable || position.openingLinkIssue || position.currencyCode !== "COP" || !assistedCredit && editableLinked.length > 1 || linked.some(item => item.financialDiscountEarned != null)) &&
+    <tr className="border-t bg-muted/20"><td colSpan={9} className="px-3 py-2 text-xs">
       {position.openingLinkIssue && <p role="alert" className="text-destructive">{position.openingLinkIssue}</p>}
       {position.currencyCode !== "COP" && <p role="alert" className="text-destructive">Este saldo requiere conciliación de moneda antes de aplicarse en COP.</p>}
-      {linked.length > 1 && <p role="alert" className="text-destructive">Este documento tiene varias partidas. Corrige sus valores en el comprobante.</p>}
+      {!assistedCredit && editableLinked.length > 1 && <p role="alert" className="text-destructive">Este documento tiene varias partidas. Corrige sus valores en el comprobante.</p>}
       {linked.some(item => item.financialDiscountEarned != null) && <p role="alert" className="text-destructive">Este documento ya tiene una decisión de descuento. Corrige o retira el grupo completo antes de agregarlo.</p>}
       {discountAvailable && <div className="flex flex-wrap items-center gap-3"><Label>Descuento financiero</Label>
         <Select value={decision} onValueChange={value => setDecision(value as DiscountDecision)}>
@@ -106,14 +151,22 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, linked, remaining
 }
 
 export function VoucherPendingDocuments({ businessId, documentId, occurredAt, voucherTypeCode, partyId,
-  remainingLineCapacity, linkedPositions, onAdd }: {
+  remainingLineCapacity, linkedPositions, crossTargets, onCross, onAdd }: {
   businessId: string; documentId: string; occurredAt: string; voucherTypeCode?: string | null; partyId: string;
   remainingLineCapacity: number; linkedPositions: ReadonlyArray<LinkedPosition>;
+  crossTargets: ReadonlyArray<VoucherCreditTarget>;
+  onCross: (position: AccountingOpenPosition, targetLineId: string, amount: number) => void;
   onAdd: (lines: VoucherDraftLineView[]) => void;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const kinds = useReferenceOptions("accounting-subledger-kind", filtersOpen);
+  const documentTypes = useReferenceOptions("accounting-document-type");
   const [kind, setKind] = useState<Kind | "All">("All");
+  const cashReceipt = voucherTypeCode === "CashReceipt";
+  const disbursement = voucherTypeCode === "Disbursement";
+  const eligibleKind = (code: string) => (!cashReceipt || code === "Receivable" || code === "CustomerCredit") &&
+    (!disbursement || code === "Payable" || code === "SupplierCredit");
+  const effectiveKind = kind !== "All" && !eligibleKind(kind) ? "All" : kind;
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -122,20 +175,21 @@ export function VoucherPendingDocuments({ businessId, documentId, occurredAt, vo
   const [dueTo, setDueTo] = useState("");
   const [originId, setOriginId] = useState<string | null>(null);
   useEffect(() => { const timer = window.setTimeout(() => { setSearch(searchInput); setPage(1); }, 300); return () => window.clearTimeout(timer); }, [searchInput]);
-  const positions = useQuery({ queryKey: ["voucher-position-options", businessId, documentId, kind, partyId, accountId, dueFrom, dueTo, search, page, occurredAt.slice(0, 10)],
-    queryFn: () => accountingApi.openPositions({ subledgerKind: kind, partyId, page, pageSize: 10, search: search || undefined,
+  const positions = useQuery({ queryKey: ["voucher-position-options", businessId, documentId, effectiveKind, cashReceipt, disbursement, partyId, accountId, dueFrom, dueTo, search, page, occurredAt.slice(0, 10)],
+    queryFn: () => accountingApi.openPositions({ subledgerKind: effectiveKind, partyId, page, pageSize: 10, search: search || undefined,
       accountId: accountId || undefined, dueFrom: dueFrom || undefined, dueTo: dueTo || undefined,
-      effectiveOn: occurredAt.slice(0, 10) }), enabled: !!partyId, staleTime: 60_000 });
+      effectiveOn: occurredAt.slice(0, 10), voucherTypeCode: cashReceipt ? "CashReceipt" : disbursement ? "Disbursement" : undefined }), enabled: !!partyId, staleTime: 60_000 });
   const totalPages = Math.ceil((positions.data?.totalCount ?? 0) / 10);
 
   return <section aria-label="Documentos pendientes del tercero" className="space-y-3 rounded-xl border bg-muted/10 p-4">
     <div><h3 className="font-semibold">Documentos pendientes del tercero</h3>
-      <p className="text-xs text-muted-foreground">Escribe el abono y agrega la partida. Guardar no paga; contabilizar valida el saldo y aplica el cruce.</p></div>
+      <p className="text-xs text-muted-foreground">Escribe el abono y agrega la partida. Guardar no paga; contabilizar valida el saldo y aplica el cruce.</p>
+      {positions.data?.referenceDate && <p className="text-xs text-muted-foreground">Saldos y edad consultados al {positions.data.referenceDate.split("-").reverse().join("/")}. La fecha del pago se registra por separado.</p>}</div>
     <details className="text-sm" onToggle={event => setFiltersOpen(event.currentTarget.open)}><summary className="cursor-pointer font-medium">Filtros</summary>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1"><Label>Tipo de saldo</Label><div className="flex gap-1"><Select value={kind === "All" ? "" : kind} onValueChange={value => { if (supportedKind(value)) { setKind(value); setPage(1); } }}>
+        <div className="space-y-1"><Label>Tipo de saldo</Label><div className="flex gap-1"><Select value={effectiveKind === "All" ? "" : effectiveKind} onValueChange={value => { if (supportedKind(value)) { setKind(value); setPage(1); } }}>
           <SelectTrigger aria-label="Tipo de saldo pendiente"><SelectValue placeholder="Todos los saldos" /></SelectTrigger>
-          <SelectContent>{kinds.data?.filter(item => supportedKind(item.code)).map(item =>
+          <SelectContent>{kinds.data?.filter(item => supportedKind(item.code) && eligibleKind(item.code)).map(item =>
             <SelectItem key={item.id} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
         </Select>{kind !== "All" && <Button type="button" variant="ghost" size="icon" aria-label="Limpiar tipo de saldo" onClick={() => { setKind("All"); setPage(1); }}><X className="h-4 w-4" /></Button>}</div></div>
         <div className="space-y-1"><Label htmlFor="pending-document-search">Buscar documento</Label>
@@ -148,12 +202,16 @@ export function VoucherPendingDocuments({ businessId, documentId, occurredAt, vo
     </details>
     {positions.isPending && <p role="status" className="text-sm">Consultando documentos…</p>}
     {positions.isError && <p role="alert" className="text-sm text-destructive">No se pudieron consultar los documentos. <Button variant="link" onClick={() => void positions.refetch()}>Reintentar</Button></p>}
-    {positions.data && <><div className="overflow-x-auto"><table className="w-full min-w-[1120px] text-left">
-      <thead className="bg-muted/50 text-xs"><tr><th className="p-2">Documento</th><th className="p-2">Cuenta</th><th className="p-2">Tercero</th>
-        <th className="p-2 text-right">Débito origen</th><th className="p-2 text-right">Crédito origen</th><th className="p-2 text-right">Saldo</th>
-        <th className="p-2">Abono</th><th className="p-2">Acción</th></tr></thead><tbody>
+    {positions.data && <><div className="overflow-x-auto"><table className="w-full min-w-[1020px] text-left">
+      <thead className="bg-muted/50 text-xs"><tr><th className="p-2">Documento / tercero</th><th className="p-2">Cuenta</th>
+        <th className="p-2 text-right">Original</th><th className="p-2 text-right">Abonado / pagado</th><th className="p-2 text-right">Otros movimientos</th>
+        <th className="p-2 text-right">Saldo</th>
+        <th className="p-2">Edad de cartera</th>
+        <th className="p-2">Valor a aplicar</th><th className="p-2">Acción</th></tr></thead><tbody>
         {positions.data.items.map(position => <PendingDocumentRow key={`${position.subledgerKind}:${position.subledgerId}`} position={position} kind={position.subledgerKind}
+          sourceTypeLabel={documentTypes.data?.find(item => item.code === position.sourceDocumentType)?.label ?? position.sourceDocumentType}
           voucherTypeCode={voucherTypeCode} remainingLineCapacity={remainingLineCapacity}
+          crossTargets={crossTargets} onCross={onCross}
           linked={linkedPositions.filter(item => item.subledgerKind === position.subledgerKind && item.subledgerId === position.subledgerId)}
           onAdd={onAdd} onOpenOrigin={setOriginId} />)}
       </tbody></table></div>

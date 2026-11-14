@@ -438,29 +438,8 @@ public sealed partial class SqlAccountingPostingProcessor
                 "The account adjustment payload is invalid.");
         var delta = request.Direction == AccountingAdjustmentDirections.Increase
             ? request.Amount : -request.Amount;
-        var now = timeProvider.GetUtcNow();
-        var isReceivable = request.SubledgerKind == AccountingSubledgerKinds.Receivable;
-        var positionTable = isReceivable ? "Receivables" : "Payables";
-        var positionId = isReceivable ? "ReceivableId" : "PayableId";
-        var transactionTable = isReceivable ? "ReceivableTransactions" : "PayableTransactions";
-        var transactionId = isReceivable ? "ReceivableTransactionId" : "PayableTransactionId";
-        var sql = DeclarePortfolioBalanceChangesSql + """
-            INSERT @PortfolioChanges VALUES(@SubledgerId,@Delta);
-            """ + PortfolioBalanceChangesSql(positionTable, positionId, PortfolioBalanceChangeKind.Adjustment) + $"""
-            INSERT dbo.[{transactionTable}]([{transactionId}],[{positionId}],TransactionType,Amount,
-              SourceDocumentId,OccurredAt,CreatedAt)
-            VALUES(@TransactionId,@SubledgerId,N'Adjustment',@Delta,@DocumentId,@OccurredAt,@Now);
-            IF @@ROWCOUNT<>1 THROW 51607,'The portfolio adjustment history is incomplete.',1;
-            """;
-        await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@SubledgerId", request.SubledgerId);
-        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
-        command.Parameters.AddWithValue("@TransactionId", ids.NewId());
-        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
-        command.Parameters.AddWithValue("@OccurredAt", request.OccurredAt);
-        command.Parameters.AddWithValue("@Now", now);
-        AddMoney(command, "@Delta", delta);
-        await command.ExecuteNonQueryAsync(token);
+        await ApplyPortfolioAdjustmentsAsync(connection, transaction, source, request.SubledgerKind,
+            [new(ids.NewId(), request.SubledgerId, delta)], token);
     }
 
     private async Task ApplySaleFinancialEffectsAsync(

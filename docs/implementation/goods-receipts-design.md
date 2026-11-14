@@ -1923,3 +1923,69 @@ responde conflicto antes de reservar el importe o crear el trabajo. El handler
 vuelve a verificar al procesar, pues el inventario puede cambiar entre ambas
 etapas. La regresión fuerza la pérdida temporal de esa referencia, comprueba el
 rechazo sin revisión y confirma que la misma solicitud se acepta al restaurarla.
+
+
+## Calendario de sede en compras (2026-11-12, captura/presentación verificadas)
+
+La captura y presentación usan Businesses.TimeZone del contexto existente, sin
+consulta adicional. Orden, fecha esperada, factura del proveedor y vencimiento
+se interpretan en esa sede, independientemente del navegador. Un instante
+explícito leído del servidor se conserva completo al guardar/reabrir; sólo una
+edición cambia la captura. Recepción y revisión mantienen sus fechas inmutables,
+identidades y motores. Los plazos suman días de calendario antes de resolver el
+offset de su fecha. Una hora local inexistente o repetida se rechaza al guardar;
+no se elige silenciosamente un instante. Un instante original explícito no es
+ambiguo y conserva offset/precisión. Los DateOnly siguen siendo días.
+
+Presupuesto: conversión acotada en memoria, sin red/SQL por fecha ni fila. El
+mismo DateTimePicker admite el día de referencia de la sede. Aceptación incluye
+UTC+14 frente a navegador distinto, DST, plazo a través de cambio de offset,
+guardar/reabrir sin deriva, y regresión de confirmación, costos e impresión.
+Los documentos ya aceptados no se reescriben por cambiar zona ni por rollback.
+
+### Consultas del editor y costos asociados (12-11-2026)
+
+La auditoría del calendario encontró lecturas por documento adicional: el
+editor consultaba proveedor y retenciones por fila y repetía la consulta de
+retenciones al editar. Se reemplazan por dos recursos propietarios del editor:
+un lote de metadatos de los proveedores seleccionados y un lote de vista
+previa de todos sus documentos. El documento que se edita sustituye su fila
+en ese lote; no crea otra consulta. Número, texto, vencimiento y distribución
+no invalidan un cálculo cuyos datos tributarios no cambiaron. La actualización
+explícita vuelve a consultar ese mismo recurso, sin polling ni reintento de red
+oculto; un error conserva la captura e impide confirmar con una vista previa
+incompleta. Guardar borrador no constituye aceptación financiera.
+
+`PreviewCostWithholdingsAsync` prepara una sola vez el plan del propietario
+WithholdingService con proveedores y cuentas de ajuste distintos. Calcula
+cada documento en memoria; el endpoint unitario publicado delega al mismo
+caso de uso. No hay otro cálculo tributario, writer, cola ni efecto financiero.
+El catálogo Parties resuelve sólo los IDs seleccionados, por conjunto, con
+los permisos existentes y la misma proyección mínima del selector. No se
+descarga el directorio ni se infieren proveedores inexistentes.
+
+Presupuesto: dos SQL por lote tributario y uno por lote de metadatos,
+independientes de la cantidad de documentos, y p95 tributario menor de 500 ms.
+En `accounting-critical-financial-regression`, los veinte intentos para uno y
+cien documentos obtuvieron p95 4,4/1,7 ms y exactamente dos SQL. El caso de
+metadatos verifica uno/cien proveedores con un SQL y autorización. La tanda
+completa aprobó 195/195 y la repetición ampliada 208/208. Los nuevos recorridos
+del editor para dos/cien documentos, edición sin refetch y fallo/reintento
+explícito pasaron dentro de los 98 escenarios de navegador de
+`accounting-critical-browser-regression`. El caso de dos documentos verifica
+que editar su número/observación y guardar no repite la consulta; los dos
+reintentos tributarios corresponden a dos pulsaciones explícitas de Actualizar.
+No hay consulta unitaria ni repetición de metadatos. Pasó el build completo.
+No se midió aún ese selector con un directorio grande ajeno a la selección.
+
+El corte publica primero el endpoint de lectura y después el cliente. Rollback
+del cliente conserva sus borradores y las APIs unitarias anteriores; no cambia
+recepciones aceptadas, inventario, cuentas por pagar ni asientos.
+
+La revisión contable del 12-11-2026 corrigió el auxiliar de CxP empleado por
+las revisiones de costo y el de IVA empleado por devoluciones: se conserva
+el vínculo con la contabilización original. La política, límites fiscales,
+diagnósticos históricos, presupuesto, evidencia y rollback están en
+[la auditoría contable](accounting-open-vouchers-design.md#devolución-del-iva-y-corrección-de-la-obligación-original).
+Esto no habilita correcciones fiscales/cambiarias desde la edición comercial
+ni repara automáticamente recepciones anteriores.

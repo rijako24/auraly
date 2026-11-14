@@ -9,6 +9,21 @@ public static class BusinessTimeZoneResolver
     public const string DefaultIanaTimeZoneId = "America/Bogota";
     private const string DefaultWindowsTimeZoneId = "SA Pacific Standard Time";
 
+    /// <summary>Validates configured zones without applying clock fallbacks and returns a browser-compatible ID.</summary>
+    public static string NormalizeConfiguredId(string timeZoneId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(timeZoneId);
+        try
+        {
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId.Trim());
+            return TimeZoneInfo.TryConvertWindowsIdToIanaId(zone.Id, out var ianaId) ? ianaId : zone.Id;
+        }
+        catch (Exception exception) when (exception is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            throw new ArgumentException("La zona horaria no es válida.", nameof(timeZoneId), exception);
+        }
+    }
+
     public static TimeZoneInfo Resolve(string? timeZoneId)
     {
         foreach (var candidate in EnumerateCandidates(timeZoneId))

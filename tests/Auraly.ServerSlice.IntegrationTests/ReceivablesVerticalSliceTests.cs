@@ -197,6 +197,14 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
             Assert.True(response.StatusCode == HttpStatusCode.Accepted,
                 $"{await response.Content.ReadAsStringAsync()}\nÚltimo comando SQL: {commands.LastCommandText}");
 
+        var (secondCustomer,_,_) = await ConfigureAsync();
+        var future = new PreexistingReceivableItemRequest(Guid.NewGuid(), null, ServerSliceFixture.UniqueNit(secondCustomer), null,
+            $"AGE-future-{secondCustomer:N}",new DateTimeOffset(cutoff.AddDays(-5).ToDateTime(new TimeOnly(23,30)),TimeSpan.FromHours(-5)),
+            new DateTimeOffset(cutoff.AddDays(3).ToDateTime(TimeOnly.MinValue),TimeSpan.FromHours(-5)),1_000m,counterpart,null);
+        using (var response = await client.PostAsJsonAsync("/api/commerce/v1/receivables/preexisting/import",
+                   new ImportPreexistingReceivablesRequest(fixture.BusinessId,[future])))
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,await response.Content.ReadAsStringAsync());
+
         var report = await client.GetFromJsonAsync<ReceivablesReportPage>(
             $"/api/commerce/v1/receivables/report?page=1&pageSize=3&consolidated=false&cutoff={cutoff:yyyy-MM-dd}&customerId={customerId:D}");
         Assert.NotNull(report);
@@ -208,6 +216,52 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(1_000m, report.TotalOverdueOver90);
         Assert.Equal(7_000m, report.TotalOverdue);
         Assert.Equal(3, report.Items.Count);
+        Assert.All(report.Items, item =>
+        {
+            Assert.Equal("Dirección principal",item.Address);
+            Assert.False(string.IsNullOrWhiteSpace(item.City));
+            Assert.Equal("Cliente crédito E2E",item.LegalName);
+            Assert.Equal(1,item.TermDays);
+            Assert.Equal(item.AgeDays - 1,item.DaysPastDue);
+            Assert.Equal(8,item.GroupTotals!.InvoiceCount);
+            Assert.Equal(8_000m,item.GroupTotals.OutstandingAmount);
+        });
+
+        var baseUrl = $"/api/commerce/v1/receivables/report?page=1&pageSize=1&consolidated=false&includeApplications=false&cutoff={cutoff:yyyy-MM-dd}&customerId={customerId:D}";
+        var range = $"&minimumAgeDays=31&maximumAgeDays=32&minimumDaysPastDue=30&maximumDaysPastDue=31&issuedFrom={cutoff.AddDays(-32):yyyy-MM-dd}&issuedTo={cutoff.AddDays(-31):yyyy-MM-dd}";
+        var filtered = (await client.GetFromJsonAsync<ReceivablesReportPage>(baseUrl + range))!;
+        Assert.Equal(2,filtered.TotalCount);
+        Assert.Equal(2_000m,filtered.TotalOutstanding);
+        var first = Assert.Single(filtered.Items);
+        Assert.Equal(2,first.GroupTotals!.InvoiceCount);
+        Assert.Equal(2_000m,first.GroupTotals.OutstandingAmount);
+        Assert.InRange(first.DaysPastDue!.Value,30,31);
+        var second = (await client.GetFromJsonAsync<ReceivablesReportPage>((baseUrl + range).Replace("page=1&", "page=2&")))!;
+        Assert.NotEqual(first.ReceivableId,Assert.Single(second.Items).ReceivableId);
+        Assert.Equal(filtered.TotalOutstanding,second.TotalOutstanding);
+        var exact = (await client.GetFromJsonAsync<ReceivablesReportPage>(baseUrl + $"&documentNumber={entries[0].DocumentNumber}"))!;
+        Assert.Equal(entries[0].ReceivableId,Assert.Single(exact.Items).ReceivableId);
+        Assert.Equal(1,exact.TotalCount);
+        var withoutCustomer = (await client.GetFromJsonAsync<ReceivablesReportPage>(
+            baseUrl.Replace($"&customerId={customerId:D}", "").Replace("pageSize=1&","pageSize=100&") + "&search=AGE-"))!;
+        Assert.Equal(9,withoutCustomer.TotalCount);
+        Assert.Equal(9_000m,withoutCustomer.TotalOutstanding);
+        Assert.Equal(2,withoutCustomer.Items.Select(item=>item.CustomerId).Distinct().Count());
+        var futureRow = Assert.Single(withoutCustomer.Items,item=>item.CustomerId == secondCustomer);
+        Assert.Equal(8,futureRow.TermDays); Assert.Equal(5,futureRow.AgeDays); Assert.Equal(-3,futureRow.DaysPastDue);
+        Assert.Equal(1_000m,futureRow.NotDueAmount);
+        var futureFilter = (await client.GetFromJsonAsync<ReceivablesReportPage>(
+            baseUrl.Replace($"&customerId={customerId:D}", "") + $"&minimumDaysPastDue=-3&maximumDaysPastDue=-3&search=AGE-&issuedFrom={cutoff.AddDays(-5):yyyy-MM-dd}&issuedTo={cutoff.AddDays(-5):yyyy-MM-dd}"))!;
+        Assert.Equal(future.ReceivableId,Assert.Single(futureFilter.Items).ReceivableId);
+        var oldest = (await client.GetFromJsonAsync<ReceivablesReportPage>(baseUrl + "&sortBy=daysPastDue&sortDirection=desc"))!;
+        Assert.Equal(91,Assert.Single(oldest.Items).DaysPastDue);
+        foreach (var invalid in new[] { "&minimumAgeDays=-1", "&minimumAgeDays=10&maximumAgeDays=1",
+            "&minimumDaysPastDue=5&maximumDaysPastDue=-1", "&maximumDaysPastDue=2147483647",
+            $"&issuedFrom={cutoff.AddDays(1):yyyy-MM-dd}" })
+        {
+            using var response = await client.GetAsync(baseUrl + invalid);
+            Assert.Equal(HttpStatusCode.BadRequest,response.StatusCode);
+        }
     }
 
     [Fact]
@@ -521,6 +575,18 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
                 "SELECT Status FROM dbo.CustomerPayments WHERE PaymentId=@Id",
                 payment.PaymentId));
             await AssertCommercialOnlyProcessingAsync(payment.PaymentId);
+
+            using (var viewer = fixture.CreateUserClient(userId, AccountingPermissionCodes.Read))
+            {
+                var receipts = (await viewer.GetFromJsonAsync<AccountingDocumentPage>(
+                    $"/api/commerce/v1/accounting/documents?from={payment.PaidAt.AddDays(-1):yyyy-MM-dd}&to={payment.PaidAt.AddDays(1):yyyy-MM-dd}&voucherTypeCode=CashReceipt&search={payment.PaymentId}"))!;
+                var receipt = Assert.Single(receipts.Items);
+                Assert.Equal(payment.PaymentId, receipt.SourceDocumentId);
+                Assert.Equal("CashReceipt", receipt.VoucherTypeCode);
+                Assert.Equal(AccountingPostingStatuses.CommercialEffectsApplied, receipt.Status);
+                Assert.Null(receipt.EntryId);
+                Assert.False(receipt.HasManualDraft);
+            }
 
             using (var replay = await SendAsync(client,
                        "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))
@@ -874,6 +940,34 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
         Assert.Contains(checkout.Receipt.DocumentNumber, printedReport);
         Assert.Contains(acceptance.DocumentNumber, printedReport);
         Assert.Contains("Edades de cartera", printedReport);
+        var compact = await client.GetFromJsonAsync<ReceivablesReportPage>(
+            $"/api/commerce/v1/receivables/report?page=1&pageSize=20&consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}");
+        var compactInvoice = Assert.Single(compact!.Items, item => item.ReceivableId == receivable.ReceivableId);
+        Assert.Equal(current.TotalPaid, compact.TotalPaid);
+        Assert.Equal(current.TotalOutstanding, compact.TotalOutstanding);
+        Assert.Equal(currentInvoice.PaidAmount, compactInvoice.PaidAmount);
+        Assert.Empty(compactInvoice.Applications!);
+        var compactPrint = await client.GetStringAsync(
+            $"/api/commerce/v1/receivables/report/print?consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}");
+        Assert.Contains(checkout.Receipt.DocumentNumber, compactPrint);
+        Assert.DoesNotContain(acceptance.DocumentNumber, compactPrint);
+        Assert.DoesNotContain("Abonos aplicados", compactPrint);
+        Assert.Contains("portfolio-v3", compactPrint);
+        Assert.Contains("Plazo (días)",compactPrint);
+        var legacyPrint = await client.GetStringAsync(
+            $"/api/commerce/v1/receivables/report/print?consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=2");
+        Assert.Contains("portfolio-v2",legacyPrint);
+        Assert.DoesNotContain("Plazo (días)",legacyPrint);
+        using (var exportResponse = await client.GetAsync(
+                   $"/api/commerce/v1/receivables/report/export?page=1&pageSize=100&consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}"))
+        {
+            Assert.True(exportResponse.IsSuccessStatusCode, await exportResponse.Content.ReadAsStringAsync());
+            Assert.True(exportResponse.Headers.CacheControl?.NoStore);
+            var exported = (await exportResponse.Content.ReadFromJsonAsync<ReceivablesReportPage>())!;
+            Assert.Equal(compact.TotalOutstanding, exported.TotalOutstanding);
+            Assert.Equal(compact.TotalPaid, exported.TotalPaid);
+            Assert.Empty(Assert.Single(exported.Items, item => item.ReceivableId == receivable.ReceivableId).Applications!);
+        }
 
         using (var response = await SendAsync(client,
                    "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))
@@ -1113,6 +1207,9 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
         using var deniedPrint = await denied.GetAsync(
             "/api/commerce/v1/receivables/report/print?consolidated=true&cutoff=2026-10-07");
         Assert.Equal(HttpStatusCode.Forbidden, deniedPrint.StatusCode);
+        using var deniedExport = await denied.GetAsync(
+            "/api/commerce/v1/receivables/report/export?page=1&pageSize=100&consolidated=true&cutoff=2026-10-07");
+        Assert.Equal(HttpStatusCode.Forbidden, deniedExport.StatusCode);
 
         using var scoped = fixture.CreateAdminClient(
             ReceivablesPermissionCodes.RegisterPayment);

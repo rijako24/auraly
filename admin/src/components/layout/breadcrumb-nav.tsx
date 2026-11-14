@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { navigation, type NavItem } from "./sidebar-nav-config";
 
 import {
   Breadcrumb,
@@ -47,8 +48,9 @@ const pathLabels: Record<string, string> = {
   profile: "Perfil",
 };
 
-function getLabel(segment: string): string {
-  return pathLabels[segment] ?? segment.charAt(0).toUpperCase() + segment.slice(1);
+function getLabel(segment: string, href: string): string {
+  const menu = navigation.find((entry): entry is NavItem => "href" in entry && entry.href === href);
+  return pathLabels[segment] ?? menu?.name ?? segment.charAt(0).toUpperCase() + segment.slice(1);
 }
 
 interface BreadcrumbNavProps {
@@ -76,7 +78,7 @@ export function BreadcrumbNav({ className }: BreadcrumbNavProps) {
       <BreadcrumbList>
         {segments.map((segment, index) => {
           const href = "/" + segments.slice(0, index + 1).join("/");
-          const label = href==="/dashboard/reports/products"?"Productos y rentabilidad":getLabel(segment);
+          const label = href==="/dashboard/reports/products"?"Productos y rentabilidad":getLabel(segment,href);
           const isLast = index === segments.length - 1;
 
           return (

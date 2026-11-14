@@ -18,7 +18,7 @@ export function formatCurrencyFromCents(amountInCents: number, currency = "COP")
   return formatCurrency(amountInCents / 100, currency);
 }
 
-/** Parses UTC API timestamps and lets the browser display them in local time. */
+/** Parses API instants; callers choose the display zone separately. */
 export function parseApiDate(date: string | Date): Date {
   if (date instanceof Date) return date;
 
@@ -27,16 +27,23 @@ export function parseApiDate(date: string | Date): Date {
   return new Date(hasTimeZone ? value : value + "Z");
 }
 
-export function formatDate(date: string | Date): string {
+export function formatDate(date: string | Date, timeZone?: string): string {
+  // DateOnly is a calendar value, not UTC midnight to move into another day.
+  const calendarDate = typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date.trim());
+  const instant = parseApiDate(date);
+  if (calendarDate && instant.toISOString().slice(0, 10) !== date.trim())
+    throw new RangeError("La fecha de calendario no es válida.");
   return new Intl.DateTimeFormat("es-CO", {
+    timeZone: calendarDate ? "UTC" : timeZone,
     year: "numeric",
     month: "short",
     day: "numeric",
-  }).format(parseApiDate(date));
+  }).format(instant);
 }
 
-export function formatDateTime(date: string | Date): string {
+export function formatDateTime(date: string | Date, timeZone?: string): string {
   return new Intl.DateTimeFormat("es-CO", {
+    timeZone,
     year: "numeric",
     month: "short",
     day: "numeric",

@@ -24,11 +24,11 @@ export function financialVoucherScenario() {
       status: "Created", attemptCount: 0, errorCode: null, errorMessage: null, entryId: null, entryNumber: null, debitTotal: 100, creditTotal: 100,
       postedAt: null, fiscalDocumentType: null, dianNumber: null, uniqueCodeType: null, uniqueCode: null, fiscalStatus: null, hasManualDraft: true },
   };
-  return { tenantId, businessId, documentId, positionId, user, draft };
+  return { tenantId, businessId, documentId, positionId, user, draft, timeZone: "America/Bogota" };
 }
 
 export async function installFinancialVoucherContext(page: Page, baseURL: string, scenario: ReturnType<typeof financialVoucherScenario>) {
-  const { tenantId, businessId, user } = scenario;
+  const { tenantId, businessId, user, timeZone } = scenario;
   await page.context().addCookies([{ name: "auth_token", value: "voucher", url: baseURL, httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ user, businessId }) => {
     localStorage.setItem("selected_tenant_id", user.tenantId); localStorage.setItem("selected_business_id", businessId);
@@ -40,12 +40,13 @@ export async function installFinancialVoucherContext(page: Page, baseURL: string
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Empresa de prueba" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede", timeZone }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, permissions: user.permissions, roles: [] };
     else if (path.endsWith("/reference-options/accounting-manual-concept")) body = [{ id: "concept", code: "MANUAL_VOUCHER", label: "Comprobante manual" }];
     else if (path.endsWith("/reference-options/accounting-voucher-type")) body = [
       { id: "accounting", code: "Accounting", label: "Comprobante contable" },
       { id: "disbursement", code: "Disbursement", label: "Egreso" },
+      { id: "receipt", code: "CashReceipt", label: "Recibo de caja" },
       { id: "support", code: "SupportDocument", label: "Documento soporte" },
       { id: "cancel-support", code: "SupportDocumentCancellation", label: "Anulación de documento soporte" },
     ];

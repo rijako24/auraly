@@ -51,7 +51,7 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
         JOIN sales.InvoiceChargeVersions v ON v.ChargeId=p.ChargeId AND v.Version=p.Version
         JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=v.ExpenseConceptId AND c.BusinessId=d.BusinessId
         JOIN dbo.AccountingAccounts a ON a.AccountId=v.ExpenseAccountId AND a.TenantId=@TenantId
-        LEFT JOIN dbo.AccountingCostCenters cc ON cc.CostCenterId=v.CostCenterId AND cc.BusinessId=d.BusinessId
+        LEFT JOIN dbo.AccountingCostCenters cc ON cc.CostCenterId=v.CostCenterId AND cc.TenantId=@TenantId
         JOIN dbo.TaxProfiles t ON t.TaxProfileId=v.SalesTaxProfileId AND t.TenantId=@TenantId
         JOIN dbo.TaxProfiles pt ON pt.TaxProfileId=v.PurchaseTaxProfileId AND pt.TenantId=@TenantId
         ORDER BY v.SortOrder,d.Code COLLATE Latin1_General_100_BIN2;
@@ -160,7 +160,7 @@ public sealed partial class SqlInvoiceChargeStore(SqlServerConnectionFactory con
                   WHERE c.ExpenseConceptId=@ConceptId AND c.BusinessId=@BusinessId
                     AND (@Active=0 OR (c.IsActive=1 AND a.IsActive=1 AND a.AllowsPosting=1
                       AND (c.DefaultCostCenterId IS NULL OR EXISTS(SELECT 1 FROM dbo.AccountingCostCenters cc
-                        WHERE cc.CostCenterId=c.DefaultCostCenterId AND cc.BusinessId=@BusinessId AND cc.IsActive=1)))))
+                        WHERE cc.CostCenterId=c.DefaultCostCenterId AND cc.TenantId=@TenantId AND cc.IsActive=1)))))
                   THROW 51702,N'Selecciona un concepto de gasto activo de esta sede.',1;
                 IF NOT EXISTS(SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxId AND TenantId=@TenantId
                   AND (@Active=0 OR IsActive=1))

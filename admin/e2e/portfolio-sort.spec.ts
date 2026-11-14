@@ -20,7 +20,7 @@ test("cartera ordena en el servidor antes de paginar", async ({ page, baseURL })
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
     else if (["/payables/suppliers", "/receivables/customers", "/payables", "/receivables", "/payable-payments", "/receivable-payments"].some(suffix => path.endsWith(suffix))) {
       requests.push({ path, by: url.searchParams.get("sortBy"), direction: url.searchParams.get("sortDirection"), page: url.searchParams.get("page") });

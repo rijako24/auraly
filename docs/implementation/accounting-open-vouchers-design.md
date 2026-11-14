@@ -1,5 +1,9 @@
 # Comprobantes abiertos en Trazabilidad financiera
 
+El cierre de diseño del 2026-11-09 en la sección 14 prevalece para formas de pago
+del tenant, recibos/anticipos y cuentas compartidas. Es objetivo pendiente de
+implementación; la evidencia de las secciones anteriores conserva su alcance.
+
 > **Decisiones del 2026-10-29 sobre correcciones:** fecha y partidas solo se
 > editan mientras la captura es borrador. «Guardar comprobante» acepta y congela
 > la fuente contable; la espera del envío DIAN no vuelve editable el asiento.
@@ -430,8 +434,33 @@ contables obligatorios en sedes, bancos ni medios de pago.
   tenant, tipo y prefijo, con código más corto; esto impide ciclos. Las referencias
   no se deducen de posiciones del código ni del nombre. No se crea un maestro de
   placas ni un nuevo motor de segmentación.
-- Banco, sede y medio son propiedades independientes, cuando correspondan. Un
-  auxiliar compartido no fija sede: el movimiento conserva su sede operativa.
+- Banco y medio son propiedades independientes, cuando correspondan. El objetivo
+  del 2026-11-09 usa auxiliares compartidos del tenant sin restricción por sede;
+  el movimiento conserva su sede operativa. El editor no selecciona sede y el
+  servicio rechaza una asociación nueva. `BusinessId` del contrato se conserva
+  nullable y se devuelve nulo; no es una regla alternativa de contabilización.
+  El corte coordinado renombra la columna anterior a `LegacyBusinessId` mediante
+  el refactorlog del DACPAC: conserva la asociación únicamente como evidencia
+  histórica, sin usarla para selección, disponibilidad ni contabilización. El
+  índice filtrado desplegado `IX_AccountingAccounts_Business` conserva su nombre
+  y pasa a referenciar `LegacyBusinessId`, para el FK histórico y el rollback.
+  El DACPAC lo retira y recrea durante el rename; omitirlo del modelo con
+  DropObjectsNotInSource=False impide verificar la actualización instalada. Las
+  cuentas, códigos, tipos, partidas, importes y mappings no se reescriben.
+  `20261113_PreflightSharedPucAccounts.sql`, en la lista revisada previa al DACPAC
+  del pipeline existente, bloquea bancos con múltiples auxiliares elegibles si
+  alguno estaba restringido por sede. Requiere revisar la configuración antes
+  de publicar; no elige, crea ni reasigna auxiliares automáticamente. Conserva
+  la selección específica por medio y el rechazo de ambigüedad del resolvedor
+  bancario canónico. Las excepciones por sede de mappings y las dimensiones del
+  movimiento siguen siendo independientes del alcance compartido del PUC.
+  Actualización exige detener escritores/consumidores antiguos y publicar esquema
+  y aplicación compatibles. Antes de nuevos movimientos, una reversión revisada
+  puede restaurar el nombre/constraints/índices anteriores usando la asociación
+  preservada; después de operar entre sedes no es seguro volver a restricciones
+  anteriores. Corresponde corregir hacia adelante o restaurar una copia coherente
+  de datos y aplicación, nunca borrar asientos. Los informes históricos conservan
+  tipo, código, auxiliar y sede de sus partidas; no se reclasifica AccountType.
   Banco y tarjeta de crédito por pagar requieren cuenta bancaria real; no se
   exige banco para mantenimiento, gastos o cartera. La función de control exige
   tercero; naturaleza débito/crédito no restringe el lado de cada partida.
@@ -445,9 +474,10 @@ contables obligatorios en sedes, bancos ni medios de pago.
   al contabilizar. `ConfigurationLockedAt` es una marca derivada de protección,
   sin importes ni edición independiente. Replay no repite esa escritura. Una
   cuenta utilizada conserva su significado; nombre y exigencia de tercero
-  mantienen los controles existentes. La fijación de identidades de mappings
-  nativos al aceptar está en implementación y verificación; no se presenta la
-  protección anterior como prueba de ese corte.
+  mantienen los controles existentes. Por decisión del 2026-11-13, los mappings
+  automáticos se resuelven vigentes al contabilizar y no se fijan al aceptar.
+  Las cuentas explícitas y los auxiliares originales de obligaciones conservan
+  su identidad; el replay terminado no vuelve a resolver configuración.
 - Las fuentes de modo comercial explícito (`AccountingEntryRequired=0`) no
   bloquean la configuración del libro. El backfill conserva protección
   conservadora para fuentes antiguas cuyo modo es desconocido (`NULL`); no
@@ -498,6 +528,178 @@ comprobante manual manda el auxiliar validado elegido. En un pago de obligación
 manda el auxiliar histórico de esa obligación, aunque cambie el mapping vigente.
 En captura asistida, cuenta bancaria, sede y medio deben resolver un único auxiliar;
 si faltan o hay varios, se pide seleccionar/configurar, sin elegir el primero.
+
+#### Compatibilidad de configuración al actualizar — decisión del 2026-11-11
+
+El usuario eligió conservar las cuentas históricas utilizadas y corregir sus
+asignaciones explícitamente. No se normaliza AccountType de una cuenta usada,
+no se reescriben partidas ni saldos, no se crean comprobantes de
+reclasificación automáticamente y no se agrega una excepción InputVat/Asset en
+el procesador. La clasificación actual participa en sección y signo de estados
+financieros y en el signo de nuevas ejecuciones de cumplimiento: cambiarla
+puede alterar reportes regenerados de períodos anteriores. Los artefactos ya
+persistidos no se regeneran como efecto del despliegue.
+
+La transición debe ser una migración versionada, transaccional e idempotente
+de mappings aprobados: identidad de tenant/mapping/cuenta anterior, cuenta
+destino compatible y vigencia explícita. Código y nombre iguales al default no
+prueban por sí solos que una configuración sea de plantilla. Un caso ambiguo
+requiere revisión; no se sobrescribe ni se reporta como resuelto.
+
+El usuario delegó después elegir cuenta y vigencia. La lectura autorizada de
+DEV confirmó el tenant @auraly, la cuenta origen 689badd3-cc49-499b-908a-9fcb68379621
+y el mapping 37039cfd-b4c6-41d1-9589-8ff96e8451fa; 240811 está libre. El plan
+versionado crea explícitamente 240811, «IVA descontable en compras», Liability,
+General, naturaleza Debit, compartida entre sedes. Su identidad nueva está en el
+plan; no la genera un fallback ni un aprovisionamiento en runtime. La estructura
+y dinámica de 2408 se contrastaron con el
+[Decreto 2650, catálogo y dinámica de IVA](https://gestornormativo.creg.gov.co/gestor/entorno/docs/decreto_2650_1993.htm):
+las subcuentas 240801–240898 permiten denominación según necesidades y el IVA de
+compras se registra al débito. Esta referencia explica la elección dentro del
+perfil PUC del sistema, no certifica por sí sola obligaciones tributarias.
+
+Se conserva el ID del mapping y su rango aprobado 2026-01-01/sin fin en DEV,
+cambiando únicamente AccountId. Es una corrección explícita de configuración
+para documentos nuevos con fechas admitidas, no una vigencia nueva que impediría
+compras retrodatadas. No altera los tipos de cuentas históricas ni los asientos
+que ya las referencian; tampoco sustituye cuentas fijadas en trabajos previos.
+La migración verifica los IDs y la configuración revisados, colisiones de código
+e identidad, compatibilidad canónica y cobertura requerida de negocios Ready.
+También exige revisar por separado cualquier mapping de cumplimiento fiscal
+de la cuenta origen; no lo copia ni cambia su interpretación por inferencia.
+La consulta de lectura en DEV confirmó que esa cuenta no tiene esos mappings.
+La migración anterior deja de cambiar AccountType por código/nombre, incluso
+en cuentas sin movimientos; una cuenta propia del cliente se conserva.
+Un mapping ya cambiado por el usuario se conserva. Un plan repetido no escribe
+otra cuenta ni actualiza otra vez el mapping. Una incompatibilidad no revisada
+detiene la actualización en vez de inventar cuentas o modificar al cliente.
+Producción no se inspeccionó ni se presume igual a DEV: sus identidades no se
+incluyen por inferencia. Esta preparación no autoriza ejecutar un despliegue.
+
+La vigencia debe cubrir las fechas permitidas de compras nuevas, incluidas
+retrodatadas: ConfiguredPostingAccountIdentity resuelve por fecha del documento.
+Una cuenta ya fijada en un job histórico no se sustituye cambiando el mapping.
+No se reparan, reencolan ni recrean recepciones antiguas. La apertura de CxP y el
+asiento permanecen juntos en la transacción de SqlAccountingPostingProcessor;
+no se agrega una apertura de cartera desde el motor de inventario.
+
+La comprobación de configuración reutiliza la política contable canónica.
+PostingAccountEligibility contiene el único predicado de tipo, actividad de
+cuenta, ámbito y condiciones bancarias; PostingAccountReadiness lo consume y
+conserva el bloqueo de primera utilización en posting. Los diagnósticos usan
+ese mismo predicado sin el bloqueo de actualización. RequiredPostingAccountReadiness
+compone perfil requerido, mapping prioritario y elegibilidad para la sede y
+fecha consultadas; defaults y habilitación consultan esa cobertura. Una
+sobrescritura de sede inválida nunca se oculta con un mapping general válido.
+Un conjunto requerido vacío no demuestra completitud. Los conteos existentes
+se conservan como datos informativos; no reemplazan la validación de cada
+categoría requerida. La consulta de habilitación identifica las categorías
+inválidas y no modifica una activación ni una apertura histórica aceptada.
+
+Aceptación del incremento de validación: instalación aislada con defaults
+válidos, cuenta histórica utilizada de tipo Asset para InputVat, override
+inválido con mapping general válido, conservación del informe histórico y del
+replay de activación, aislamiento y diagnóstico concurrente sin bloqueo U.
+Presupuesto: defaults un comando SQL; readiness tres comandos existentes,
+veinte muestras con p95 inferior a 1.000 ms y trabajo acotado al perfil requerido
+de la sede, sin I/O por categoría ni lectura de historia para evaluar cuentas.
+Se conserva el gate de fijación de cien fuentes/cien fechas: un comando por
+lote y p95 inferior a 2.000 ms. La medición se realiza en una instancia de
+pruebas aislada, sin compilaciones ni consultas diagnósticas concurrentes.
+
+El rollback operativo preferente revierte los binarios conservando esta
+corrección de datos y un perfil/esquema que admita la cuenta Liability; debe
+comprobarse esa compatibilidad antes de revertir. No se presupone que restaurar
+un perfil antiguo que exigía Asset sea compatible. No se devuelve automáticamente InputVat
+a la cuenta Asset, porque reaparecería la configuración inválida. Una reversión
+de datos excepcional exige detener la escritura y comprobar IDs, rango y
+rowversion registrados después de la transición; modifica sólo el mapping
+identificado y requiere una política de contabilización compatible antes de
+reanudar. Si hubo una edición posterior se detiene y se revisa, sin sobrescribir.
+La cuenta nueva se conserva cuando la referencian documentos, partidas o trabajos:
+no se eliminan asientos, obligaciones, pagos ni movimientos posteriores. Una
+corrección contable de saldos, si se solicitara, usa otro comprobante explícito
+del motor actual, fuera de esta migración; no se deduce ni se ejecuta al publicar.
+La evidencia debe incluir repetición de migración, compra nueva con una sola
+CxP y asiento balanceado y equivalencia histórica; corregir únicamente las
+comprobaciones de readiness no demuestra esos efectos.
+
+Evidencia local del 2026-11-11: compilación Release de esquema y del proyecto
+ServerSlice con sus dependencias, ambas sin errores ni advertencias. En la
+instancia existente `.\TEST`, 21 pruebas
+funcionales pasaron, incluida instalación nueva, actualización con cuenta usada,
+republicación completa del DACPAC, conservación de cuenta/rowversion, saldos,
+partidas y recepciones pendientes, compra nueva retrodatada y replay sin duplicar
+inventario, CxP ni asiento. Se comprobaron también override inválido, cuenta propia
+sin movimientos, plan desactualizado, colisión, rango cambiado, configuración no
+revisada, guardia fiscal y rollback completo ante una categoría adicional inválida.
+Resultados: `TestResults/accounting-input-vat-functional-certified.trx`;
+logs de compilación en `work/accounting-input-vat-schema-certified.log` y
+`work/accounting-input-vat-cleanup-build.log`. La compra nueva completa tardó
+1.715,9 ms en ese ensayo; es una observación individual, no un p95.
+
+Las tres pruebas de rendimiento pasaron sin reducir muestras ni umbrales:
+veinte muestras por escenario; cien fuentes/una fecha p95 734,5 ms, cien
+fuentes/cien fechas p95 902,1 ms, ambas un comando SQL; readiness p95 30,2 ms,
+tres comandos SQL, con bloqueo U concurrente sobre la cuenta. Resultado:
+`TestResults/accounting-input-vat-performance-test-instance.trx`. La ejecución
+inicial en la instancia compartida `.\LOCAL` excedió el gate de cien fechas
+(3.566,6 ms); no certifica ese entorno. La certificación usa el baseline aislado
+`.\TEST`, sin cambiar configuración de SQL Server ni detener las aplicaciones.
+No se extrapola a producción. Se selecciona la instancia mediante el contrato
+existente `AURALY_TEST_SQLSERVER`, sólo para el proceso de prueba y restaurando
+el valor anterior al terminar. Filtros reproducibles sobre el ensamblado Release:
+
+```text
+Funcional: (FullyQualifiedName~AccountingConfigurationReadinessTests&Performance!~AccountingReadiness)|(FullyQualifiedName~AccountingMappingFreezeTests&Performance!~NativeSourceAcceptance)|FullyQualifiedName~AccountingAccountEditingTests.Automatic_inventory_mapping|FullyQualifiedName~AccountingAccountEditingTests.Explicit_cost_accounts
+Rendimiento: Performance~NativeSourceAcceptance|Performance~AccountingReadiness
+```
+
+Auditoría posterior del incremento: la elegibilidad tiene un único propietario;
+diagnóstico, habilitación, migración y posting lo reutilizan. El adapter de posting
+conserva sus bloqueos; no se cambian el writer, la transacción financiera, los
+jobs, la autorización ni los efectos operativos. El plan es dato versionado de
+despliegue, no una condición por tenant en el procesador. El diagnóstico resuelve
+el perfil por conjunto con el mismo número de viajes; no agrega I/O por cuenta,
+N+1, polling ni refetch. No hubo cambios de frontend en este incremento. Se
+revisaron los archivos del cambio y sus diferencias respecto al checkout inicial,
+preservando el trabajo previo; `git diff --check` pasó. No se desplegó ni se
+escribieron datos en DEV o producción; la preparación para otro entorno requiere
+revisar sus identidades y configuración antes de incluirlas en el plan.
+
+**Verificación local del PUC compartido, 2026-11-13:** 55 casos SQL/API distintos
+aprobados entre `puc-shared-regression`, `puc-upgrade-isolated-final` y
+`puc-indexed-upgrade-final` (TRX en `work/`). Incluyen cuentas usadas, instalación
+nueva, actualización con columna/índice/FK anteriores, segunda publicación y
+replay; los snapshots comparan identidad, código, tipo, rowversion, partidas e
+importes. El preflight deja la configuración intacta y rechaza el banco que
+pierde su selección inequívoca al retirar sede. La actualización de la base local
+aislada comparó también todos los asientos y partidas antes/después: sin cambios.
+No se modificaron datos de DEV ni producción.
+
+La compilación de esquema/backend/admin y el lint enfocado aprobaron. Cuatro
+casos de navegador verificaron creación/edición sin sede, error/reintento,
+permisos, conflicto y reapertura; otros 24 conservaron pagos e impresión POS.
+La captura está en `work/puc-shared-create-final.png`. Los seis recorridos reales
+(caja, transferencia, asiento libre/clonado, abono CxC, gasto pendiente y pago CxP
+con correcciones) también aprobaron: `work/puc-shared-real-browser-v2.log`.
+Sus fixtures crean auxiliares sin sede. Agregar una obligación conserva las
+partidas parcialmente capturadas; la prueba identifica la aplicación por su
+cuenta, referencia e importe, sin suponer que reemplaza la primera fila.
+Crear puede alterar la
+posición en una página filtrada/ordenada y relee una sola página; la prueba cuenta
+esa lectura. Editar usa la cuenta devuelta y no relee la lista.
+
+Auditoría posterior: selección, configuración y posting reutilizan
+`PostingAccountEligibility`/`PostingAccountReadiness`, los servicios y el
+processor existentes; no hay otro writer, catálogo, saldo, job ni ruta financiera.
+Tenant, permisos, bloqueos e identidades de documentos se conservan. Se retiraron
+predicados de sede del auxiliar y parámetros SQL sin uso; el movimiento y los
+mappings conservan sus dimensiones. No se agregó I/O por partida, polling ni
+lecturas por cuenta. La prueba de diagnóstico mantiene tres SQL; creación/edición
+conservan sus conteos y la compra aislada verificó 239,8 ms/54 SQL frente al gate
+de dos segundos, con una CxP, un asiento balanceado y replay sin duplicación.
+Las condiciones globales pendientes siguen en 14.10.
 
 ### 13.4 Tipos, terceros y contrato de captura
 
@@ -1836,7 +2038,12 @@ Con fecha acotada a 100 pagos, CxP 45,7/48,7 ms y CxC 37,6/35,7 ms. No hubo
 builds, navegador ni diagnóstico SQL durante la medición. No certifica todavía
 reversos, movimientos directos, captura fiscal ni los cargos posteriores de compra.
 
-**Fijación de mappings nativos, 24 de octubre, verificada en SQL/API local:**
+**Antecedente: fijación de mappings nativos, 24 de octubre.**
+Esta política de selección al aceptar queda sustituida por la decisión expresa
+actual de vigencia al contabilizar de 14.12. La evidencia que sigue describe
+la versión anterior; no constituye una segunda ruta vigente.
+
+**Verificación de aquella versión en SQL/API local:**
 `ResolvedAccountMappingsJson` amplía el trabajo contable existente con identidades
 de configuración por categoría, sin importes ni un segundo libro. La aceptación
 canónica captura las categorías del perfil activo por sede/fecha. El participante
@@ -1880,7 +2087,11 @@ quedan pendientes con causa explícita; no se inventa una cuenta histórica.
 La lectura del original comparte el comando de validación de la propina y no
 agrega viajes por partida. El efecto financiero continúa en el mismo processor.
 
-**Fijación de auxiliares de pagos nativos, 23 de octubre, verificada en local:**
+**Antecedente: fijación de auxiliares de pagos nativos, 23 de octubre.**
+La selección al aceptar que sigue queda sustituida por 14.12; los auxiliares
+aplicados y el replay de resultados terminados permanecen protegidos.
+
+**Verificación de aquella versión en local:**
 `SupplierPaymentTenders` y `CustomerPaymentTenders` reutilizan sus campos de
 cuenta y partida. La aceptación nativa asigna una identidad estable por medio;
 no acepta una cuenta ni esa identidad suministradas por el cliente. El contrato
@@ -3162,3 +3373,1865 @@ vacío. La comprobación de apertura en cero rechaza saldos comerciales y
 operaciones pendientes; la modalidad de apertura importada requiere saldos
 iniciales aprobados. No se deduce que la situación de PROD sea idéntica a DEV
 ni se activa contabilidad por la ausencia de asientos previos.
+
+## 14. Formas de pago, recibos y anticipos: cierre del 2026-11-09
+
+Decisión objetivo pendiente de implementación/migración. Se basa en la solicitud
+Mantis y sus aclaraciones, no atribuye a DIAN reglas de interfaz ni afirma conocer
+efectos ocultos de botones. Reutiliza Catalog, Receivables/Payables, aceptación,
+normalización y SqlAccountingPostingProcessor existentes. Nómina se rige por la
+sección 13 de decision-nomina-electronica-integrada.md.
+
+### 14.0 Catálogo común, presentación POS y modal administrativo compartido
+
+La precisión del usuario limita el cambio visual del POS: su vista de pagos
+conserva distribución, controles e interacción. Todas las superficies, incluido
+POS web/Edge, consumen el mismo catálogo de formas por tenant y las mismas reglas
+canónicas de la operación. Se adaptan contratos, bindings y proyecciones cuando
+sea necesario para esa consistencia, sin crear un catálogo o política POS aparte.
+Los nombres/opciones reflejan las formas configuradas y habilitadas para cada
+uso; conservar la presentación no congela los medios técnicos actuales.
+
+- Administración de CxC recauda mediante Recibo de caja de cliente, accesible
+  desde su módulo. CxP conserva el módulo de pago actual y la captura mediante
+  comprobante; al desembolsar produce su comprobante de egreso. No se obliga a
+  proveedor a usar recibo de caja ni se retira una entrada existente.
+- Aclaración del usuario del 2026-11-10: **Recibos de caja** tiene acceso propio
+  debajo de Trazabilidad financiera en el menú de Finanzas. Reutiliza su vista,
+  consulta paginada, editor y permisos; no crea otro motor ni otro propietario
+  de carga. Incluye rango de fechas, tercero, número/referencia, estado y concepto
+  financiero de las partidas. Un recibo con varios conceptos puede encontrarse
+  por cualquiera de ellos; el concepto genérico del encabezado del comprobante
+  no sustituye ese filtro.
+- Ambas entradas administrativas amplían el propietario visual compartido
+  PortfolioPaymentWizard con la misma presentación de obligaciones. Como el
+  POS también lo consume mediante printOnPos/Edge, el enriquecimiento visual
+  administrativo se distingue explícitamente en ese propietario. Se reutilizan
+  servicio, catálogo y flujo financiero; los bindings POS y PosPaymentDialog
+  se adaptan al catálogo común conservando su presentación e interacción.
+  Esta distinción visual no introduce validadores ni escritores alternos.
+- Se conserva el acceso Pagar / Ir a pagar y los dos pasos actuales: seleccionar
+  obligaciones/importes y registrar las formas. La captura administrativa
+  muestra Valor recibido para cliente y Valor pagado para proveedor; retira
+  Cambio/Vueltos, billetaje y redondeos de cobro propios de venta. Registra el
+  importe efectivo de cada movimiento. El cálculo canónico de la operación
+  exige cuadratura entre dinero, aplicaciones, créditos y ajustes tipados;
+  ocultar una métrica sin retirar el tratamiento de vuelto no satisface el diseño.
+  Una diferencia queda pendiente de clasificar mediante concepto e importe
+  elegidos por el usuario; no se preselecciona Anticipo ni se convierte en
+  redondeo automático. Confirmar exige que no quede diferencia sin explicar.
+  La captura de venta POS conserva su comportamiento de cambio/redondeo vigente.
+- Confirmar produce una sola fuente con su recibo de caja o egreso y sus
+  aplicaciones, no un pago nativo más otro comprobante independiente. Devuelve
+  identidad/número y estado autoritativos para consultar/imprimir. Aceptado
+  pendiente no se presenta como aplicado; se conserva el estado del job existente,
+  sin otro enum ni proceso. Reintentar o reimprimir no repite dinero ni aplicaciones.
+  Un fallo de impresión no revierte ni vuelve a confirmar el movimiento.
+- Se conserva el alcance por tercero/sede, selección de documentos y abonos.
+  El modal ocupa el ancho útil disponible con tabla legible y desplazamiento
+  interno en alturas pequeñas. No se limita a agrandar las tarjetas actuales.
+- Por documento: número/tipo, emisión, vencimiento, moneda, importe original,
+  total abonado (cliente) o pagado (proveedor), notas/ajustes si existen, saldo
+  actual, días de mora y tramo de edad; casilla de selección e importe a aplicar.
+  Al día muestra mora cero. El tramo usa los cinco intervalos del reporte
+  propietario; no se confunde antigüedad desde emisión con mora.
+- Encabezado/resumen del tercero: originales, abonos/pagos, ajustes, pendiente,
+  vencido y edades del conjunto filtrado completo, no de la página visible.
+  Anticipos/créditos disponibles y neto se identifican aparte. En CxP se separan
+  monedas. Las etiquetas aclaran que se resumen documentos del filtro activo,
+  no necesariamente todos los pagos históricos del tercero.
+- La selección muestra también monto que se aplicará, uso de anticipo, dinero
+  nuevo y saldo residual proyectado; se distinguen siempre del saldo actual
+  persistido. Confirmar devuelve los importes/estado autoritativos.
+- La fecha efectiva del nuevo recibo/pago permanece editable. El resumen
+  operativo se calcula al instante/fecha de consulta del servidor en zona del
+  negocio, igual que cartera; editar la fecha del pago no reescribe el saldo
+  actual como si fuera un informe histórico. El corte histórico sigue en Reportes.
+- La API administrativa canónica pagina antes de enriquecer y devuelve por
+  conjunto los importes, fecha de referencia, edades y agregados. Original
+  menos saldo no se presenta como abonado porque puede contener notas/ajustes.
+  No consultar un detalle, historial o endpoint del informe por cada fila.
+- Un propietario de carga del modal reutiliza lista/agregados y la respuesta
+  del comando, sin duplicar GET para encabezado, edades o vistas ocultas.
+  Se conserva cancelación de resultados obsoletos y paginación.
+- Formas habilitadas, cuentas, límites y capacidades se validan en el propietario
+  canónico de cada operación para administración y POS. El contexto autorizado
+  se resuelve en servidor; no se confía en un booleano del cliente. Los adapters
+  traducen el contrato versionado y preservan identidad de forma y evidencia,
+  sin mantener políticas financieras diferentes para la misma operación.
+- Aceptación adicional: abrir desde CxC y CxP muestra todos esos campos,
+  coincidencia con Reportes a la misma referencia temporal, abono parcial,
+  notas/ajustes, al día/vencido, primera/siguientes páginas, totales globales,
+  selección entre páginas, monedas y lectura por conjunto. Ejecutar regresión
+  del POS web/preparado para demostrar que conserva presentación/interacción
+  y consume los mismos IDs, nombres, tipos y cuentas del catálogo autorizado.
+  Verificar dos bancos de tipo Transfer sin colapsar su identidad, aislamiento
+  por tenant, ámbitos de uso y formas desactivadas en históricos. Sesión,
+  importes, comprobantes e idempotencia conservan sus invariantes existentes.
+
+### 14.1 Maestro único de formas de pago del tenant
+
+- La definición comercial pertenece al tenant y se comparte en sus sedes.
+  Se extiende Catalog con el maestro especializado reference.PaymentMethods,
+  no se insertan nombres de bancos por tenant en reference.Options global.
+  Options conserva los tipos/códigos técnicos y correspondencias oficiales.
+- Presentación aprobada: los botones/atajos actuales representan tipos técnicos
+  del catálogo global existente, no bancos ni datáfonos. No se agrega un botón
+  por cada forma del tenant ni un tipo técnico arbitrario desde su administración.
+  El servidor devuelve tipos/formas elegibles para el contexto; la UI los agrupa
+  sin otro catálogo, lista de negocio o política de capacidades en frontend.
+- Dentro del tipo elegido se selecciona la forma concreta con el control de
+  captura existente: cero formas impide confirmar y explica la configuración
+  faltante; una se preselecciona; varias exigen selección explícita. Todas las
+  formas activas autorizadas son accesibles, con orden/búsqueda del catálogo,
+  sin truncarlas a las primeras cinco. El límite visual de tipos no limita formas.
+  Pulsar el tipo conserva el acceso a agregar otra línea del mismo tipo para
+  elegir otro banco/datáfono; al cambiarlo se limpian selecciones incompatibles.
+- La línea conserva identidad de forma y tipo técnico por separado. Dos bancos
+  Transfer no se fusionan ni se rechazan por compartir categoría. La cuenta
+  configurada se muestra y resuelve desde la forma; no se pide elegir otra cuenta
+  independiente que pueda contradecirla. Franquicia y aprobación de tarjeta
+  siguen siendo evidencia de la transacción, no nuevas formas ni tipos.
+- Identidad estable, código único por tenant, nombre, tipo de pago, auxiliar de
+  origen/destino, método electrónico, plazo, tercero contable opcional, estado,
+  orden, rowversion y ámbitos de uso: POS/ventas, recaudos de clientes, pagos
+  a proveedor, comprobantes y nómina; remisiones/domicilio cuando la operación
+  ya esté soportada. Cada superficie filtra el mismo maestro por uso autorizado
+  y capacidades reales del tipo; una casilla no crea una operación nueva.
+- FK al auxiliar del mismo tenant; banco se resuelve desde su configuración PUC,
+  sin otro vínculo banco-auxiliar editable ni otro maestro bancario. Crédito y
+  compensación no son entradas/salidas de efectivo. El administrador no habilita
+  mediante una casilla una operación incompatible con el tipo o la cuenta.
+- Se preservan identidad de forma y tipo técnico del tender para reglas/evidencia.
+  Código/nombre y auxiliar efectivamente utilizados quedan en el resultado al
+  aplicar/contabilizar, según la decisión de resolución vigente descrita abajo.
+  Dos formas Transfer distintas son válidas
+  en un recibo: unicidad por forma, no por categoría Transfer. POS web/Edge,
+  ventas, cartera, comprobantes, nómina y reportes comparten esta definición.
+  El tipo técnico permite aplicar reglas y correspondencias oficiales, pero
+  no sustituye la identidad de la forma elegida ni constituye otro maestro.
+- Cada recibo administrativo nuevo admite 1–10 formas monetarias, incluso para varias facturas.
+  Un cruce sin dinero admite cero. La restricción previa de varias facturas/un
+  solo medio se retira en el contrato canónico nuevo de recaudo/pago de cartera,
+  con adaptación coordinada de sus consumidores. No se conserva esa restricción
+  como excepción POS para la misma operación ni se rediseña su captura visual.
+- Formas utilizadas se desactivan; no se borran ni cambian de significado.
+  Decisión corregida expresamente por el usuario el 2026-11-09: la cuenta de
+  una forma del catálogo se consulta **al contabilizar**, incluso si cambió
+  después de confirmar el pago. Un intento pendiente/fallido vuelve a consultar
+  la configuración vigente; no conserva una copia completa de configuración ni
+  una cuenta resuelta de un intento que se revirtió. La resolución por lote,
+  validación, movimiento, evidencia de la cuenta usada y asiento comparten la
+  transacción del processor canónico. Un resultado ya contabilizado/aplicado
+  se devuelve idempotentemente sin resolver otra cuenta ni repetir efectos.
+  La identidad y evidencia capturadas identifican la operación; no fijan la
+  configuración que el motor utilizará. El historial conserva el resultado
+  efectivamente aplicado. No se crea una tabla de versiones de configuración
+  de formas por operación. Los contratos anteriores sin identidad de forma
+  conservan su evidencia histórica durante el corte compatible.
+- Neto mayor que factura no significa sobrepagarla: la aplicación tiene su máximo
+  y la diferencia se clasifica mediante los conceptos explícitos del documento.
+  Sólo elegir Anticipo y su importe crea ese saldo disponible. Valores negativos
+  no son un escape de validación: sólo ajustes/cruces tipados con cuenta y permiso.
+- Cargos tienen naturaleza, porcentaje, base explícita, cuenta, tercero, vigencia
+  y activación por fila. Bases permitidas se toman del catálogo canónico del
+  cálculo correspondiente; para cargos no tributarios se definen importe de
+  esa forma antes del cargo o subtotal sin impuestos de documentos seleccionados.
+  La base queda congelada y visible; no se calcula leyendo el label SUB. Retenciones
+  reutilizan WithholdingService/snapshots, sin copiar porcentajes a nombres ni
+  practicar otra vez las ya causadas. Otros cargos se normalizan como partidas
+  identificadas del mismo documento; no se convierten en otro tender o saldo.
+- El cargo se presenta explícitamente antes de aceptar: importe aplicado a
+  cartera, dinero de cada forma y gasto/retención/ajuste son hechos distintos.
+  Un cargo bancario de 3 sobre un cobro de 100 no reduce ficticiamente la deuda
+  pagada a 97: el snapshot debe justificar banco 97 y cargo 3 contra cartera 100.
+  No se registra una comisión no informada ni se deduce del nombre del banco.
+- La tabla de equivalencias por tipo/ámbito reutiliza los mappings contables
+  propietarios; no almacena una segunda asignación para la misma regla. El NIT
+  identifica un Party válido, no reemplaza al cliente del documento.
+
+### 14.2 Recibos de caja, egresos y aplicación
+
+- Decisión corregida expresamente por el usuario el 2026-11-10: recibo de caja
+  representa dinero que entra y puede hacerse a cualquier tercero activo,
+  tenga o no rol de cliente. No se crea un cliente ficticio para poder recibir.
+  El egreso representa dinero que sale. Los roles y las dimensiones comerciales
+  se validan al vincular una obligación o anticipo específico; no restringen el
+  selector general del tercero del recibo. Cada recibo identifica un solo tercero
+  que entrega el dinero; sus partidas y aplicaciones no pueden recaudar saldos de
+  otro tercero por cambiar el encabezado. Incluye número, fecha efectiva editable,
+  tercero/sede cuando corresponde, cobrador, observación, cuenta, documentos, anticipos, conceptos,
+  débitos/créditos, total y formas. Búsqueda/listado y exports consumen sus
+  fuentes persistidas. Proveedor recibe egreso al desembolsar dinero.
+- Ampliar el tipo de comprobante manual existente con recibo de caja;
+  no crear encabezado/engine/cola ni asiento independiente adicional al origen.
+  ReceivablesService/PayablesService adaptan al mismo participante de aceptación
+  financiera y grupos de pago. Compatibilidad conserva recibos nativos previos.
+- En un solo formulario se puede recibir dinero, aplicarlo a varias obligaciones
+  y clasificar la diferencia por concepto, o recibir sólo anticipo mediante esa
+  acción explícita. Ejemplo: entrada 10M, facturas 5M y concepto Anticipo por 5M
+  elegido por el usuario. Ese resultado depende de la clasificación; no es el
+  comportamiento predeterminado al sobrar dinero. No hay factura ficticia ni
+  segunda entrada de dinero para producir el anticipo.
+- En ese formulario también se selecciona anticipo existente, documento de origen
+  e importe a consumir. Si hace falta dinero nuevo, se indica su forma por la
+  diferencia. Si sólo hay cruce, el soporte se identifica como aplicación de
+  anticipo/comprobante contable enlazado al recibo original; no se numera ni
+  contabiliza otra entrada de caja. La vista previa distingue ambos hechos.
+  Agregar el anticipo exige elegir su obligación e importe: produce las dos
+  partidas vinculadas de ese cruce, conserva el restante del anticipo y no
+  redistribuye dinero entre facturas. El mismo criterio aplica al egreso del
+  proveedor; sin desembolso nuevo su identidad definitiva es comprobante
+  contable. Retirar un cruce del borrador elimina sus dos partidas y deja esa
+  porción de la obligación pendiente, conservando el dinero capturado.
+- La misma aceptación inmoviliza fondos/aplicaciones/anticipos/ajustes tipados.
+  El processor aplica todo atómicamente y comparte disponibilidad/protección
+  contra consumo concurrente. Las partidas deben pertenecer al mismo tenant,
+  tercero, moneda y ámbito operativo autorizado. Elegir forma del tenant no
+  habilita cruzar saldos de otro Business. Las sedes del cliente preservan las
+  reglas explícitas de aplicación del diseño de CxC.
+- Tabla: naturaleza y cuenta, fecha y documento, identificación/nombre, devolución
+  vinculada, saldo, débito/crédito, concepto y valor. Saldo a cubrir del documento
+  se distingue de saldo neto del cliente. Normalizador único calcula el balance:
+  dinero, aplicaciones, créditos, anticipos y ajustes no se suman indistintamente.
+- La captura administrativa incluye por documento/partida selector Concepto,
+  valor y acción de agregar, como las fotos 9/12/13. Concepto clasifica el efecto
+  financiero; Forma de pago identifica cómo entra/sale el dinero. Son selecciones
+  independientes. Se pueden agregar las partidas necesarias antes de confirmar.
+  Un abono parcial puede dejar deuda pendiente sin concepto de ajuste: la
+  diferencia que exige clasificar es el descuadre del movimiento respecto de
+  sus aplicaciones/partidas, no el saldo legítimo que queda en la factura.
+- Al elegir tercero se cargan juntos los pendientes y créditos elegibles en una
+  sola página: CxC y créditos/anticipos recibidos para Recibo de caja; CxP,
+  incluidos gastos pendientes, y anticipos entregados para Egreso. El usuario
+  selecciona qué aplicar y cuánto. Se ven original, abonos, saldo, vencimiento y
+  edad; el anticipo conserva su origen y disponibilidad. Los abonos aplicados
+  son historia de la obligación, no fondos disponibles para consumir otra vez.
+  La entrada Pagar de cartera usa esta misma captura y sus mismas capacidades.
+- Las cuentas quedan seleccionadas y visibles al capturar, junto a débito,
+  crédito, concepto y valor, como las fotos 12/13. La factura conserva su cuenta
+  original; cada concepto lleva su auxiliar y la forma muestra la caja/banco
+  configurada al seleccionarla. La resolución de formas vigente al contabilizar
+  y su evidencia aplicada siguen la decisión expresa de la sección 14.7; no se
+  guarda una copia del catálogo completo en el recibo.
+- Conceptos disponibles incluyen Ajuste al peso faltante, Ajuste al peso sobrante,
+  descuentos, retenciones y Anticipo, según configuración y aplicabilidad del
+  documento. Se resuelven mediante Catalog y los mappings contables propietarios,
+  extendidos para esos usos, sin una lista nueva quemada ni otro motor de cálculo.
+  Cada concepto declara su naturaleza, cuenta/mapping, método/base cuando aplique,
+  ámbito y permisos; no se deduce efecto de su nombre o de la diferencia detectada.
+  Retenciones reutilizan sus reglas/snapshots existentes; elegir un nombre con
+  porcentaje no crea una segunda tasa. Ninguno no compensa diferencias.
+- Ajuste al peso sobrante/faltante genera la partida del concepto seleccionado,
+  con su cuenta configurada; no genera saldo de anticipo ni vuelto. Anticipo
+  genera crédito disponible sólo por el importe seleccionado. Se congelan
+  concepto, importe, cálculo y cuenta resueltos en la misma fuente. La foto 12
+  muestra 216.748,03 de cartera y una partida de 51,97 de Ajuste al peso sobrante
+  hasta 216.800,00; es evidencia del selector/partida, no de un anticipo automático.
+- Si una retención/descuento reduce saldo sin dinero, tiene partida y evidencia
+  propias. Cualquier corrección fiscal de la venta usa su documento fiscal
+  canónico; el concepto del recibo no cambia por sí solo base/IVA de una factura.
+- Cargar cartera trae sólo posiciones financieras elegibles del cliente con
+  saldos y créditos por lote. Cargar con cartera conserva la selección explícita
+  de obligaciones al agregar un anticipo, sin distribuir automáticamente. Cargar
+  despachos selecciona documentos de despacho ya vinculados a obligaciones
+  existentes; no liquida otra venta, deuda o inventario. No se paga un despacho
+  sin fuente financiera por elegir ese botón.
+- Se ofrece edición/retiro sólo mientras sea borrador. Fecha efectiva se captura
+  en zona del negocio; creación/aceptación son instantes inmutables. Período
+  cerrado no se evade cambiando fecha. Un pago registrado tarde no altera cortes
+  históricos anteriores a su registro. Ajustar un aceptado usa corrección/reverso
+  existente, nunca sobrescribe el original ni abre otro proceso de recuperación.
+
+### 14.3 Anticipos y PUC
+
+- Anticipo de cliente abre CustomerCredits en la función CustomerAdvance (pasivo);
+  entregado a proveedor abre SupplierCredits en SupplierAdvance (activo).
+  Las aplicaciones consumen esos mismos saldos y no generan otra caja.
+- Para un perfil basado en el PUC comercial de referencia, 2805/280505 identifica
+  recibido de cliente y 1330/133005 entregado a proveedor. Son sugerencias de
+  configuración, no códigos obligatorios del motor. La petición de usar grupo
+  28 para anticipo entregado se resuelve conservando su esencia de activo y el
+  mapping correcto; no se reclasifica como pasivo por copiar el número.
+- Anticipo genuino no es por sí mismo venta/ingreso. Pago anticipado que remunera
+  una venta/servicio tiene tratamiento de facturación propio: el recibo no
+  sustituye factura cuando corresponde. Se reutiliza la venta/facturación
+  canónica; no se agrega un generador fiscal desde el recibo.
+- El maestro PUC es del tenant y no restringe cuentas nuevas por BusinessId.
+  Sede y centro continúan como dimensiones del movimiento. La selección de
+  auxiliar determina caja/banco real; compartir código no confunde sus saldos.
+  El editor retira la asignación de sede del auxiliar; históricos y fuentes
+  congeladas conservan su contexto, con migración explícita de restricciones.
+- Se añade tipo Costo con clasificación/mappings/reportes coherentes; costo
+  realizado se presenta separado del gasto. Costos de compra por distribuir
+  mantienen función de activo transitorio; crear el tipo no los lleva a resultados.
+  No reclasificar automáticamente toda cuenta por empezar su código en 6 o 7.
+- Deuda y anticipo se exhiben separados y el saldo neto comercial se deriva como
+  deuda menos anticipo disponible: 5M-10M=-5M. Clientes con sólo anticipo aparecen.
+  Otros créditos disponibles ya existentes se muestran separados y también
+  reducen ese neto por su remanente no aplicado. Una devolución ya aplicada a la
+  obligación no se resta otra vez como si todo su documento fuera crédito libre.
+  Esto no compensa de oficio activo/pasivo en mayor o estados financieros ni
+  amortiza factura sin aplicación explícita. Edades usan deuda pendiente positiva.
+
+### 14.4 Migración, controles y paridad
+
+- Nuevo maestro se carga con equivalencias explícitas de formas técnicas actuales
+  por tenant. Se mantienen códigos/snapshots históricos y se resuelve cada cuenta
+  válida de forma verificable. Si hay auxiliares ambiguos no se inventa banco;
+  se bloquea esa nueva captura hasta configurar. Desactivar no rompe consulta.
+- Cutover coordinado de contratos, DACPAC/seeds, mappings, POS web/Edge y sus
+  proyecciones preparadas, ventas, cartera, comprobantes, nómina y reportes.
+  El catálogo sincronizado es una proyección del mismo maestro por tenant,
+  sin edición o reglas alternas en Edge. Se preserva la presentación del POS.
+  Cada movimiento conserva su atribución de origen/sesión; no se mezclan
+  operaciones administrativas y sesiones preparadas por reutilizar IDs antiguos.
+  No hay dos escritores ni fallback al catálogo global para una forma desconocida.
+  La compatibilidad transitoria se versiona con corte explícito; históricos
+  conservan su contrato y snapshots sin reinterpretar cuentas o tipos.
+- CxC conserva COP y CxP las monedas de su contrato vigente. No se convierte un
+  egreso histórico o nativo a COP por adaptarlo al editor manual. Grupos y
+  anticipos cruzan sólo la misma moneda; no se incorpora conversión cambiaria
+  ni se suma dinero de monedas distintas en la migración.
+- No trasladar a código una semántica no demostrada de Mantis. En Auraly se hacen
+  explícitos la base de cargos y el contexto de mapping; Nota pendiente corresponde
+  a importe no aplicado identificado, sin declarar pagada una factura. El icono
+  Ret no recibe un efecto financiero inventado: las acciones propias son detalle
+  y comprobante, y cualquier retiro ya usa los controles de corrección existentes.
+  No se certifica equivalencia con acciones ocultas del proveedor.
+- Conserva permisos por operación/recurso, tenant y Business, idempotencia de
+  fuente/grupo y cuentas congeladas. La UI tiene un dueño por recurso, respuesta
+  autoritativa y push/acción explícita, sin polling ni remount/refetch redundante.
+- Objetivos nuevos a validar, no mediciones: páginas 50 + totales p95 <1 s;
+  aceptación de hasta 500 aplicaciones y 10 formas p95 <2 s; posting local <2 s
+  separado; lecturas por conjunto constantes (objetivo <=8), sin I/O por fila.
+  Límite explícito 500 aplicaciones por recibo; no se parte un recibo a escondidas.
+  Exports siguen el gate de 5.000 filas del informe propietario.
+- Regresiones: diferencia sin concepto bloquea; ajuste sobrante/faltante no crea
+  anticipo; Anticipo sólo por selección/importe explícitos; partidas de conceptos
+  mixtos; dos formas Transfer; varias facturas/varios medios; 10M/5M/exceso;
+  anticipo solo; cruce sin caja; mixto; cuenta correcta; retención no duplicada;
+  corte registrado tarde; crédito consumido concurrentemente; replay sin efectos;
+  tenant/sede ajenos; versiones históricas; cierre POS y banco; paridad visual
+  fotos 9–13 y benchmarks limpios de primera/siguientes páginas y 50/500 partidas.
+
+### 14.5 Preparación para implementación y condiciones de salida
+
+Con tipos/formas y captura administrativa anteriores, el diseño permite iniciar
+implementación incremental. Esto no declara el código implementado, migrado o
+certificado. No se requieren más decisiones de producto para iniciar esos slices.
+Cada slice debe completar contratos, persistencia, backend, consumidores y pruebas
+que le correspondan antes de habilitarse; no se publica sólo el editor del maestro.
+
+- Primero: maestro por tenant y resolución canónica de tipo/forma/cuenta, junto
+  con la migración PUC necesaria, contratos y adaptaciones de POS web/Edge,
+  captura administrativa y proyecciones/cierre. Conservar los botones de tipos;
+  probar selección de más de cinco formas y dos bancos Transfer en un pago.
+- Después: recibo cliente/egreso proveedor desde los accesos asistidos existentes,
+  anticipos puros/mixtos/aplicaciones y modal enriquecido. La reutilización de
+  captura manual no cambia la atribución de sesión: manual directa conserva
+  WorkSessionId null; asistidos/POS mantienen su tratamiento de origen vigente.
+  No se abre una sesión adicional por generar el soporte ni se duplica su cierre.
+- Informes/cupo consumen esos saldos/configuración y conservan su propietario.
+  Nómina completa los slices de la sección 13 de su decisión: contratos/perfiles,
+  liquidación y Novedades, contabilización y pago, documentos/exportación/fiscal.
+  No se habilita pagar una nómina cuya causación esté pendiente/fallida.
+- Migración verificable antes del corte: inventariar formas/tipos y cuentas por
+  tenant; producir equivalencias inequívocas y resolver faltantes explícitamente.
+  Los consumidores antiguos no pueden confirmar perdiendo la identidad de forma.
+  Coordinar la versión compatible de servidor, web y Edge y la proyección existente;
+  las cajas anteriores a esa versión deben actualizarse antes de usar el contrato
+  nuevo. No se habilita cartera offline. Rollback conserva fuentes, maestro y
+  snapshots ya utilizados y requiere un consumidor compatible; no se borran
+  formas ni se reactiva un writer antiguo que no entienda la nueva identidad.
+- La auditoría debe trazar cada forma hasta su movimiento, asiento y cierre:
+  conservar el total por tipo técnico y el detalle por forma/cuenta sin duplicar
+  dinero. Debe verificar también correcciones/desaplicaciones existentes con
+  varias formas y anticipo consumido, cuentas/versiones históricas, pending,
+  replay, concurrencia y fallo de impresión. La nueva entrada no elimina la
+  corrección canónica existente ni inventa una anulación independiente.
+- Gates de salida: escenarios de aceptación de las secciones 14.0–14.4 y de
+  cada documento propietario, builds/checks afectados, auditoría de pantalla
+  web/preparada y benchmarks limpios con sus límites declarados. Los contratos
+  fiscales DSNE conservan además los gates XSD/aceptación DIAN de Nómina 13.6;
+  ese pendiente limita la entrega fiscal y no impide empezar catálogo/cartera.
+
+### 14.6 Fuentes contrastadas
+
+- [DIAN, Concepto 12008/2026](https://normograma.dian.gov.co/dian/compilacion/docs/oficio_dian_12008_2026.htm)
+  y [Concepto unificado 106/2022, descriptor 1.1.7](https://normograma.dian.gov.co/dian/compilacion/docs/concepto_tributario_dian_0000106_2022.htm):
+  distinción fiscal entre anticipo genuino y pago anticipado.
+- [CTCP, concepto 2025-0275, copia del documento firmado](https://carlosarturorodriguezvera.com.co/wp-content/uploads/2025/10/Concepto-0275_CTCP_Nivel-de-detalle-de-las-cuentas-contables_30sep2025.pdf):
+  catálogo propio según marco/requerimientos y supervisión; no imponer un número
+  de dígitos o código de sede como requisito universal de DIAN.
+- [PUC de referencia publicado por Supersociedades](https://www.supersociedades.gov.co/documents/107391/831530/Decreto%202650%20del%2029%20de%20diciembre%20de%201993.pdf/4c2f354e-2505-e1a1-10c9-b5e10e0da0f2):
+  denominaciones convencionales de anticipos, no sustituto de política de entidad.
+- [Alegra, registrar/aplicar anticipos de clientes](https://ayuda.alegra.com/col/registra-y-aplica-los-anticipos-de-tus-clientes):
+  recibo original y aplicación posterior conservan identidades distintas.
+  Su restricción particular de fecha no se copia como norma universal de DIAN.
+
+
+### 14.7 Estado de implementación y cambio de resolución (2026-11-09)
+
+En curso, sin despliegue ni activación general del contrato 2. El avance actual
+incluye el maestro `reference.PaymentMethods`, su caso de uso y administración
+paginada; la captura existente conserva los botones por tipo y permite elegir
+formas del tenant; cartera agrega originales, pagos, ajustes, emisión, vencimiento,
+mora y fecha efectiva de pago. El mismo participante y processor siguen siendo
+los únicos escritores financieros.
+
+El perfil de crédito ya incluye el máximo opcional de vencidas en el esquema,
+contrato y edición/alta de tercero. La política de dominio es compartida por la
+revisión de pedidos por conjunto y la validación transaccional de emisión; su
+contrato y evidencia se detallan en `receivables-slice-design.md`, sección Cupo,
+plazo y recaudo.
+
+La última instrucción del usuario sustituye expresamente la propuesta inicial
+que fijaba la cuenta de la forma al aceptar: `SqlAccountingPostingProcessor`
+resuelve las formas contra el catálogo vivo dentro del intento de contabilización.
+Sus fallos revierten también esa resolución. El resultado aplicado conserva
+cuenta, nombre/código y revisión realmente utilizados; replay de un completado
+no relee configuración ni ejecuta efectos. El catálogo de Edge es su caché de
+operación existente, no una copia de configuración por transacción.
+El adaptador HTTP de emisión preparada y los mappers comunes de representación
+conservan ahora la identidad y metadatos capturados de cada forma hasta el
+snapshot, el recibo operacional y la reimpresión. No resuelven allí una
+cuenta contable ni consultan marca/configuración al imprimir. La emisión valida
+la identidad con `PaymentMethodEvidence`, compartida con Server; rechaza evidencia
+incompleta sin consumir consecutivo. Pasaron las 221 pruebas de Edge, incluida
+la emisión/reimpresión con dos formas de efectivo y la compatibilidad anterior.
+El usuario confirmó expresamente el 2026-11-10 que esto también aplica a un
+pago confirmado y en cola: si cambia la cuenta antes de contabilizarlo, se usa
+la vigente al contabilizar. La regresión de integración verifica ese cambio,
+una única resolución por lote y que el replay completado no repita efectos.
+
+La financiación configurada conserva su identidad en `SalesDocuments`, junto
+con `CreditAmount`/`CreditDueDate`; no se inserta como dinero recibido en
+`SalesPayments`. El mismo batch de resolución contable incluye efectivo y
+crédito y obtiene el auxiliar vigente antes de generar la apertura de cartera.
+La captura, los contratos web/Edge y los mappers de representación preservan
+esa referencia. Los campos opcionales nulos no se serializan: las fuentes
+anteriores mantienen su huella. Se verificaron venta totalmente financiada y
+recibo de venta con efectivo/crédito, cambio de auxiliar mientras el período
+está cerrado, reapertura/reintento y replay, además del rechazo de evidencia
+incompleta antes de numerar. No se añade otro tender, fuente, job ni consulta
+por línea; tampoco se modifica la presentación de botones del POS.
+
+El guardado canónico del catálogo también impide cambiar el tipo técnico de
+una forma referenciada por ventas, financiación, recaudos o pagos a proveedores,
+incluidos los aceptados aún pendientes de contabilizar. La comprobación usa
+cinco búsquedas indexadas por identidad, incluida la captura manual aceptada,
+y serializa la edición con la aceptación
+sobre la misma cabecera; no recorre los historiales ni copia un estado de uso.
+Una forma sin referencias admite corregir el tipo con una cuenta compatible.
+Cambiar cuenta/nombre o desactivar una forma usada sigue permitido. Las doce
+regresiones SQL/API verifican esas diferencias y el auxiliar vigente tanto en
+CxC como en CxP: un solo batch de resolución, rollback del intento fallido y
+replay completado sin nueva resolución, asiento ni aplicación.
+La recepción de Edge exige además que el tipo técnico capturado corresponda a
+la forma, aunque su caché sea anterior: un desacuerdo se rechaza antes de aceptar
+la fuente. La regresión verifica corregir la forma aún sin referencias y reenviar
+la misma venta emitida, sin duplicarla. La cuenta no se compara con la copia
+capturada: continúa resolviéndose con la configuración vigente al contabilizar.
+
+Verificado localmente: el tipo `Cost` se añade al catálogo PUC existente para
+clases 6 y 7. Los lectores de resultados y resultado acumulado lo incluyen con
+naturaleza de costo y sección propia; no cambia el tipo de cuentas ni aperturas
+históricas. Un auxiliar de costo admite un padre legado de tipo `Expense` de esas
+clases, sin reclasificarlo. Las categorías de naturaleza gasto admiten un auxiliar
+`Cost` mediante `PostingAccountReadiness`, la misma validación de mappings y posting.
+Conceptos de gastos, adquisiciones del comprobante y partidas asociables a una
+recepción reconocen ese tipo por sus propietarios existentes. Los defaults
+históricos no se reinterpretan por el prefijo de su código. La eliminación del
+alcance de sede del encabezado PUC todavía está pendiente; este avance no la
+declara implementada.
+El esquema compiló sin advertencias ni errores y pasaron las 1.103 pruebas de
+dominio/aplicación. Los doce escenarios SQL/API de la verificación incluyen cuatro
+combinaciones de clase 6/7 y padre nuevo/legado, asiento y estados financieros,
+readiness de categorías y elegibilidad para asociar costos; también comprueban
+la resolución de veinte líneas del concepto en una sola consulta. No se añadió
+otra fuente financiera, writer, tabla de saldos ni llamada por elemento.
+
+**Recibo de caja y selección de saldos, incremento local del 2026-11-10:**
+`CashReceipt` es un subtipo de la captura v4 y usa `VoucherDrafts`, aceptación,
+fuente/job padre, participante financiero y processor existentes. Admite un
+tercero activo con cualquier rol o sin rol comercial, sin crear Customer; sus
+partidas conservan el mismo pagador. Valida dinero entrante real, sin salidas,
+vueltos ni anticipos automáticos. La apertura explícita de anticipo reutiliza
+`CustomerCredits` con Party y Customer opcional. Cobrar obligaciones o consumir
+créditos exige el permiso financiero correspondiente; una entrada general no
+requiere un permiso de cartera ficticio.
+
+El menú Recibos de caja, debajo de Trazabilidad financiera, monta su misma vista
+con scope fijo, un solo propietario de consulta y editor compartido. Tiene
+fecha desde/hasta, tercero, número/referencia y estado. El filtro de conceptos
+financieros de partidas sigue pendiente: `MANUAL_VOUCHER` del encabezado no lo
+reemplaza. Elegir tercero en recibo o egreso abre juntos sus saldos elegibles;
+los filtros y límites se aplican antes de enriquecer la página. Original,
+pagado efectivo neto, otros movimientos, saldo, disponible y mora provienen de
+los auxiliares existentes y `PortfolioAppliedAmounts`, en un solo comando SQL.
+La mora utiliza la zona real de Business; un abono histórico no aparece como
+crédito disponible. Nombre legal/identificación cubren terceros sin nombre
+comercial sin inventar otro tercero.
+
+La acción Cruzar agrega dos partidas con sus vínculos, cuenta original e importe
+elegido: obligación y crédito existente. El remanente de la obligación puede
+cubrirse con dinero nuevo en el mismo padre; el remanente del anticipo sigue
+disponible. No cambia el efectivo/transferencia capturado ni distribuye entre
+facturas. Retirar el grupo durante el borrador elimina ese cruce completo y
+mantiene el dinero escrito. La normalización, reserva conjunta y aplicación
+atómica siguen en sus propietarios canónicos. Un egreso admite un grupo de
+cruce y su desembolso; si recibo o egreso contienen únicamente cruce, su tipo
+aceptado es Accounting, sin pago ni movimiento de caja nuevo. Reabrir y replay
+concurrente conservan esa identidad real, también en el filtro del listado.
+
+Verificación local de este incremento: 1.121 pruebas Foundation, build de admin
+y backend sin errores, lint de las pantallas modificadas y 23 recorridos del
+editor pasaron. La regresión SQL/API de 19 casos incluye aperturas de anticipos,
+abonos, entradas generales, terceros sin Customer y devoluciones de pagos.
+Dos de sus escenarios de cliente/proveedor comprobaron mezcla
+de anticipo y dinero, rechazo atómico de sobreaplicación, saldo remanente,
+cruce sin dinero, replay concurrente, un único asiento y una lectura por página.
+El caso de mora usa una zona distinta de UTC/Bogotá. La fecha de referencia
+proviene del reloj del servidor convertido a esa zona y se devuelve en la misma
+consulta; cambiar la fecha del pago no cambia la edad actual ni presenta el
+saldo actual como histórico. `EffectiveOn` conserva su uso de fecha de captura
+para los mappings de descuento, separado de la fecha de consulta. Esta evidencia no certifica
+las funcionalidades todavía pendientes ni autoriza activar contrato 2.
+
+La medición reproducible amplía
+`History_pages_filter_before_loading_details_with_ten_thousand_payments`, con
+10.000 obligaciones por tercero y veinte muestras en páginas primera/siguiente.
+El selector mantuvo un SQL/página: p95 máximo 771,0 ms en proveedor y 359,0 ms
+en cliente; primeras lecturas de 1.941,3 y 711,4 ms, dentro de 2 s. El mismo
+ensayo pasó ambos listados, historiales y reportes con sus límites existentes;
+listado de CxP p95 299,8/306,4 ms, tres SQL, y reporte p95 máximo 926,7 ms,
+dos SQL. No se aumentó timeout ni presupuesto. La primera ronda reprodujo un
+timeout del listado de CxP; la consulta ahora materializa los pagos de la página
+y los descuentos sólo de sus compras elegibles por separado. Sede y concepto
+también se enriquecen después de limitar la página. Reutiliza las funciones
+canónicas, sin lectura por documento ni tabla persistente adicional.
+
+La regresión conjunta posterior pasó 27 escenarios de recibos, anticipos,
+cruces, devoluciones, compras, sedes, permisos y descuentos financieros de
+proveedor. Su primera ronda expuso también un timeout en
+`PrepareSupplierDiscountPricesAsync`, reproducido en egreso manual y pago
+nativo. Esa lectura ahora acota las aplicaciones del lote y materializa las
+compras y líneas elegibles antes de enriquecer sus costos/familias. Conserva
+el conteo que detecta orígenes faltantes, el cálculo existente, la transacción
+del pago y una única llamada a `ProductLinkedCostsPrepare`; con cero decisiones
+la misma consulta termina antes de preparar sus detalles. No hay otra regla de
+descuento, lectura por elemento, writer de inventario ni proceso de precios.
+
+La propuesta y edición de fecha del comprobante reutilizan
+`accounting-document-date` con la zona del negocio obtenida del contexto
+autorizado existente. Conservan la convención de mediodía local, con el offset
+de la fecha seleccionada, incluido horario de verano; no usan Bogotá ni la zona
+del navegador como fallback. Vencimientos, clonación y anulación usan el mismo
+helper. Reabrir un documento conserva la fecha capturada sin reinterpretarla
+por una zona actual distinta. La fecha del pago sigue separada de la referencia
+actual del selector de saldos. El contrato de contexto es aditivo; servidor y
+procedimiento se actualizan antes del cliente, y un contexto antiguo sin zona
+debe recargarse antes de crear un documento, sin adivinarla ni escribir dinero.
+
+**Formas en el comprobante, incremento local del 2026-11-10:**
+el maestro existente agrega el uso Comprobantes (`UseForVouchers`), desactivado
+por defecto para las filas existentes y reservado a la captura contable general.
+Recibo de caja usa `UseForReceipts` y Egreso `UseForSupplierPayments`, igual que
+las entradas de cartera; la implementación manual no exige habilitar otro uso
+para el mismo documento. Omitir `UseForVouchers` al editar desde un cliente anterior
+conserva su valor. Las proyecciones `VoucherReceipts` y `VoucherPayments` de
+Comprobante contable general validan dirección, cuenta y sede en el servidor. La captura
+usa el selector paginado existente dentro de Detalles de la partida; muestra
+la cuenta de la forma y captura el importe sin vuelto. Permite varias formas
+del mismo tipo, hasta diez por documento, sin mezclar identidades configuradas
+con partidas monetarias del contrato anterior. La validación pertenece a
+`PaymentTenderBreakdown`, también para varias facturas y movimientos generales.
+
+`VoucherDraftLines` conserva identidad/tipo y metadatos capturados. Aceptación
+reutiliza `PortfolioPaymentAccept` para sus grupos; la fuente y su hash no se
+reescriben al resolver cuentas. El processor existente consulta las formas
+vigentes por lote dentro del savepoint, actualiza sus tenders derivados y usa
+el auxiliar efectivo por `SourceLineId` al construir las partidas del asiento.
+Verifica el número de tenders del padre actualizado. Un intento revertido no
+conserva cuentas resueltas ni bloqueos de clasificación de ese intento.
+
+`AppliedPaymentMethodsJson` en el job existente guarda únicamente evidencia
+del resultado completado: forma, revisión, nombre y cuenta efectivamente usados.
+No contiene importes, porcentajes, ámbitos ni una configuración para reproducir;
+no sustituye fuente, tenders o asiento. Se confirma con ellos en la misma
+transacción y sólo admite estados completados. El editor presenta esa evidencia
+al consultar el documento; sus valores capturados permanecen intactos para el
+replay. Clonar conserva la forma y cuenta utilizadas, y elimina evidencia propia
+de la transacción, referencias y vínculos. No se añade otro motor, tabla de
+documentos, cola, writer ni lectura por partida.
+
+La auditoría identificó además que el selector Any excluía terceros sin roles
+y exigía permisos del workspace. Su proyección canónica ahora devuelve
+identidades activas del tenant y admite `accounting.read` exclusivamente para
+Any; los roles específicos y el workspace conservan su autorización. No se
+crea Customer para seleccionar o recibir dinero de ese tercero.
+
+Pasaron 1.132 pruebas Foundation, 32 escenarios SQL/API conjuntos de recibos,
+anticipos, cruces, devoluciones, catálogo y pagos anteriores, más el escenario
+de comprobante general exclusivo. Este último verifica que omitir el uso nuevo
+al editar conserva su valor, que una forma sólo contable no aparece en recaudos
+ni puede enviarse como recibo, y que su tipo usado permanece protegido aun sin
+encabezado nativo de pago. La regresión de resolución fuerza dos fallos después
+de escrituras financieras: no quedan anticipo, asiento, evidencia aplicada ni
+bloqueo de la cuenta de ese intento. El siguiente usa la cuenta/revisión vigente;
+replay no resuelve otra vez y clonar conserva esa identidad sin copiar datos de
+la transacción. Compilaron esquema (cero advertencias/errores), backend y admin;
+pasaron lint y 25 recorridos del editor en navegador. El recorrido con ocho formas
+del mismo tipo verifica selección paginada, dos formas en un documento, cuenta
+visible bloqueada, un único guardado/envío y ausencia de GET adicionales para
+reconstruir el resultado. La regresión posterior a la auditoría pasó 1.139 pruebas
+Foundation y 58 escenarios SQL/API de recibos, anticipos, tesorería directa,
+aceptación, permisos y compatibilidad. Pasaron build/lint y 25 recorridos de
+navegador con el listado autoritativo, fecha capturada y precisión de cuatro
+decimales.
+
+La regresión bancaria adicional pasó nueve escenarios de aceptación por lote,
+auxiliares usados, bancos históricos compartidos, ambigüedad y cuentas de caja
+ya aplicadas. No cambió la selección de bancos nativos ni la evidencia congelada
+de documentos terminados. Después de aceptar el recibo/egreso, el editor cierra
+el selector de documentos pendientes leído antes de la operación: presenta el
+resultado aplicado y no deja disponibles en pantalla saldos anteriores, sin
+disparar otra lectura de cartera.
+
+La medición reproducible `Configured_receipts_resolve_one_or_ten_forms_in_one_batch_for_up_to_five_hundred_lines`
+procesa sesenta documentos independientes, veinte muestras por forma de carga.
+Con 500 partidas y una/diez formas obtuvo p95 de aceptación de 299,8/244,2 ms y
+contabilización de 99,8/86,9 ms; mantiene siete/nueve comandos respectivamente y
+una resolución de formas por lote. Con dos partidas obtuvo 165,8/28,4 ms; su
+primera aceptación fue de 900,7 ms. Cumple el presupuesto de 2 s por etapa, sin
+aumentar timeout ni reducir muestras, volumen o validaciones.
+
+La auditoría de ese camino acotó la validación de formas al conjunto seleccionado,
+fuera del CASE general que recompila dimensiones. `PortfolioPaymentAccountsFreeze`
+termina cuando el lote no contiene pagos nativos; `BankAccountsFreeze` materializa
+las referencias bancarias reales antes de resolver configuración. Una fuente sin
+bancos conserva su resultado vacío autoritativo. Conservan sus mismos contratos,
+locks, transacción, writers y número de viajes; no agregan una ruta de aceptación.
+
+Las primeras rondas alcanzaron p95 de 3,0–4,7 s con presión de memoria física de
+SQL y cero planes de procedimientos en caché; no certificaron rendimiento. El
+ensayo verde se ejecutó solo, desde el DLL compilado mediante VSTest, sin MSBuild,
+builds, navegador ni diagnósticos concurrentes; antes de medir registró 867.896 KB
+disponibles y las señales de presión de memoria del sistema y SQL desactivadas.
+La prueba comprueba esa precondición y conserva el mismo presupuesto. No se
+cambiaron servicios ni configuración del servidor para obtener la medición.
+
+La auditoría del listado retiró la reconstrucción local de filtros, orden y
+totales después de guardar. El comando devuelve el documento y el editor lo
+reutiliza, sin GET del borrador ni del listado. Las páginas del contexto se
+marcan obsoletas sin I/O: sólo al volver al listado el usuario activa una
+lectura paginada canónica. Esta lectura es necesaria porque la respuesta de
+guardado no contiene la página, su rango ni los agregados del filtro. Enviar
+desde el listado visible termina primero la etapa contable y solicita una sola
+página autorizada; no remonta otro propietario ni vacía caches para provocar
+consultas. Abrir y cerrar sin cambios no invalida la página.
+
+El contrato de filtro omitido/versión 1 conserva el calendario del offset
+capturado en `OccurredAt`. Desde la decisión del 12-11-2026 el admin solicita
+versión 2 y presenta la fecha en la zona vigente de la sede; el instante guardado
+no cambia. El journey anterior +14 conserva la captura original; el calendario
+visible se certifica ahora contra esa zona de sede. La captura manual v4
+declara efectivo sin vuelto también para auxiliares heredados mediante
+`PaymentTenderBreakdown`; no mantiene otro cálculo en el editor o normalizador.
+Los demás consumidores del contrato legado conservan su comportamiento hasta el
+corte coordinado. Un recibo tampoco admite reducir una deuda de tarjeta como
+entrada de dinero; ese ajuste corresponde al comprobante contable.
+
+**Bandeja común para recaudos nativos, incremento local del 2026-11-10:**
+la relación canónica `TraceabilitySourceMetadataSql` proyecta
+`ReceivablePayment` como Recibo de caja y `PayablePayment` como Egreso. El filtro
+de tipo se aplica antes de paginar y contar en las consultas existentes de
+documentos y partidas. La bandeja Recibos de caja fija el tipo lógico, sin
+restringirse a `ManualAccountingVoucher`. Mantiene identidad, número, fecha,
+estado y asiento originales; no crea borrador, fuente, trabajo, movimiento ni
+comprobante adicional. Los grupos hijos de un comprobante siguen excluidos de
+la relación nativa y un cruce sin dinero conserva el tipo Contable.
+
+La verificación con 10.000 recaudos incluye un trabajo histórico sin fuente y
+una fuente sin trabajo, además del recibo manual, cruce y egreso. Primera página,
+siguiente, tercero, número y ausencia de trabajo conservan una consulta por
+página: p95 de 105,1; 101,1; 324,7; 571,3 y 642,9 ms respectivamente, frente al
+presupuesto de 800 ms; la primera lectura fría fue de 1.801,0 ms, dentro de 2 s.
+Verifica también separación de egresos, aislamiento por
+tenant/sede y consulta de partidas con el mismo filtro. Este incremento sólo
+extiende la lectura; no sustituye la captura administrativa pendiente ni modifica
+plantillas publicadas, hashes históricos o la aceptación financiera.
+
+La auditoría encontró una ronda con 809,3 ms en el filtro por número. La relación
+nativa ahora aplica el tipo lógico también al buscar candidatos por tercero y
+número, antes de reunir sus fuentes: comparte esa condición en
+`TraceabilityNativeSourceScopeSql` y permite descartar propietarios ajenos al
+tipo solicitado. El filtro final conserva la autoridad del conteo/paginación.
+No se aumentó el presupuesto, timeout ni volumen permitido. Después de corregir
+pasaron los cinco escenarios SQL/API: filtros anteriores, diez mil recaudos,
+recaudo y egreso aceptados pendientes con formas configuradas y cobranza real
+sin contabilidad activa, incluido su replay sin contabilización retroactiva.
+
+El detalle nativo reutiliza `AccountingDocumentDialog`, con permiso de lectura,
+y no solicita documento fiscal para un recibo. Si no se generó asiento conserva
+el estado comercial del trabajo existente. Clonar un asiento nativo sigue
+creando la copia contable mediante el caso de uso existente y la abre en
+Trazabilidad financiera, respetando el tipo devuelto; no fuerza esa copia a
+convertirse en un recibo.
+
+Pasaron build de producción, lint y 41 recorridos de navegador del editor y los
+pagos administrativos, incluido el regreso a Recibos después de pagar cartera.
+La revisión posterior reforzó los contadores sobre las rutas HTTP reales y volvió a ejecutar
+los tres recorridos nativos: una lectura del listado y del trabajo, como máximo
+una del asiento, cero lecturas de borrador/documento fiscal y una sola mutación
+al clonar. Abrir y cerrar el detalle reutiliza los resultados. La proyección del
+tercero conserva la presentación canónica: nombre, razón social o identificación
+según lo que tenga la identidad, sin exigir un nombre comercial adicional.
+
+Confirmar desde `PortfolioPaymentWizard` marca obsoletas las páginas de esa
+empresa/sede mediante `refetchType:none`. El contexto de la operación acompaña
+sólo el resultado transitorio del comando, sin persistirse en el documento o
+impresión. Volver explícitamente a la bandeja activa a su único propietario de
+lectura; abrirla de nuevo sin otra mutación reutiliza la página. El resultado
+local de Edge no provoca consultas a la bandeja del servidor. No cambia la
+presentación del POS ni crea otro flujo de pago.
+
+Pasaron además ocho recorridos de pago e impresión desde POS: cliente/proveedor,
+web/instalado, impresión predeterminada/sin impresión. La primera ronda encontró
+una simulación antigua de CxP que omitía `CurrencyTotals`, propiedad del contrato
+`PayablePage` ya entregado por servidor y por su proxy. Se alineó esa simulación
+con el contrato; no se añadió un fallback de totales ni se modificaron la vista,
+los recibos impresos o el comportamiento del POS para resolver la prueba.
+
+Publicar la captura de formas requiere API y processor compatibles; un rollback conserva
+un consumidor que entienda estas identidades, según la política de corte de
+14.4. No se habilita automáticamente ese uso ni el contrato general 2.
+
+Todavía no se considera implementado el diseño completo: faltan los
+conceptos financieros en el recibo/egreso y la entrada Pagar de cartera adaptada
+a esa captura común, los restantes consumidores y corte
+del catálogo (incluidos cargos/configuración ampliada, nómina y la certificación del corte de ventas), la migración del PUC compartido,
+los saldos a favor/neto y restantes ampliaciones de reportes, y el ciclo de nómina de su documento
+propietario. El valor predeterminado `PaymentMethodContractVersion=1` preserva
+los clientes anteriores hasta completar esos gates. No es una autorización para
+activar la versión 2 sin migrar esos consumidores.
+
+### 14.8 Conceptos financieros por partida — catálogo y captura local
+
+El catálogo del tenant se administra mediante Catalog en
+`reference.FinancialConcepts`. No reemplaza `BusinessReasons`/motivos de caja
+física de WorkSessions: éstos conservan su alcance por sede, sesión, efectivo y
+sus categorías propias; el concepto de esta captura prepara una contrapartida
+o anticipo para recibo/egreso/comprobante con cualquiera de sus formas. No crea
+otro documento, flujo de pago, cálculo o writer financiero.
+
+Esta primera extensión permite auxiliares de función General, CustomerAdvance
+y SupplierAdvance con naturaleza compatible. La función del auxiliar conserva
+la autoridad del efecto; el nombre del concepto no lo determina. No incorpora
+una tasa en su nombre ni calcula retenciones, descuentos o sobrantes por
+inferencia. El cálculo de retenciones sigue pendiente de extender a sus
+participantes y reglas canónicas. Una
+configuración general llamada Anticipo no crea un saldo a favor: éste requiere
+su auxiliar de anticipo y el importe elegido, normalizados por el motor actual.
+
+Los conceptos generales que aumentan el dinero del grupo respecto de sus
+aplicaciones también se admiten junto a una factura o anticipo: crédito en
+recibo y débito en egreso, con tercero y grupo explícitos. La foto 12 se captura
+con aplicación de 216.748,03, concepto por 51,97 y una forma por 216.800,00.
+El abono a cartera conserva 216.748,03; el encabezado/medio/movimiento conserva
+216.800,00; el asiento incluye las tres partidas. Los 51,97 no abren crédito ni
+se registran como otro pago o entrada. No se infieren ni se agregan por diferencia.
+Un concepto General también puede reducir una obligación: débito para CxC y
+crédito para CxP. `FinancialConceptTargetLineId` identifica explícitamente la
+partida capturada que contiene el vínculo a esa obligación, del mismo tercero,
+grupo, moneda y sede compatible. No se distribuye una diferencia entre facturas.
+El normalizador produce un efecto `Adjustment` con `TargetSourceLineId`; el
+importe no puede superar el de la partida, sumando todos sus conceptos. El
+pago aplica solamente el resto y un cruce usa solamente el saldo a favor
+seleccionado. Si no entra ni sale dinero, se conserva como comprobante contable.
+El vínculo opcional se omite del JSON cuando no existe para conservar huellas
+anteriores; clonar elimina tanto el vínculo como los destinos de cartera.
+
+`ManualVoucherCreditTargets` y `AccountingSourcesAccept` incluyen esos ajustes
+en `SourcePositionIndex`. `ObligationAvailability` comparte su presupuesto con
+abonos y cruces, sin reservar dos veces el ajuste aplicado. El processor aplica
+ajustes individuales e incorporados mediante `ApplyPortfolioAdjustmentsAsync`,
+el writer existente `PortfolioBalanceChangesSql` y la historia de cartera, por
+lote y en la misma transacción que pago, sesión y asiento. No crea otro pago,
+saldo, worker ni tabla de reservas. El selector utiliza las partidas ya capturadas
+y no consulta cartera nuevamente. El cálculo fiscal de retenciones continúa
+fuera de esta extensión: un nombre General no representa una tasa fiscal.
+El cruce asistido muestra el importe restante después de los conceptos ya
+capturados y limita su selección a ese importe. Si divide una partida, conserva
+la identidad y los conceptos del remanente; no elimina su destino ni reparte
+los ajustes automáticamente entre grupos. La aceptación vuelve a validar todos
+los importes en el normalizador y presupuesto compartidos.
+
+`AdditionalConceptAmount` es un total derivado de esas partidas explícitas en
+el grupo inmutable, omitido cuando no existe para preservar huellas anteriores.
+No es otra configuración, saldo o reserva. `PortfolioPaymentAccept` valida su
+correspondencia con la fuente y admite esa porción en el total monetario del
+mismo pago; el processor prueba las partidas y usa su rutina de aplicación
+existente. Los pagos nativos sin padre no aceptan esa porción adicional.
+No se añade tabla, columna de saldo, documento, numeración, job ni consulta.
+El rollback del asiento revierte también aplicación y movimiento; retry y
+replay conservan la identidad y evidencia de la fuente aceptada.
+El despliegue requiere primero el procedimiento SQL compatible y después el
+processor/API antes de aceptar esta nueva combinación. Para volver al binario
+anterior se deshabilita su captura y se terminan los trabajos que la usen;
+un processor anterior no puede procesar esa nueva semántica. No se modifica
+una fuente aceptada ni se descarta su concepto para forzar el rollback.
+
+El usuario elige Concepto y Valor y agrega su partida; ve cuenta y naturaleza.
+La cuenta queda ligada a la selección y puede cambiarse al elegir otro concepto,
+sin modificar a escondidas su configuración. El borrador conserva identidad y
+vínculos y permite preparación incompleta; al aceptar se valida catálogo,
+cuenta, naturaleza, alcance y usos vigentes en un lote de dimensiones. Un cambio
+incompatible de configuración obliga a volver a seleccionar antes de aceptar.
+Las formas mantienen su resolución vigente al contabilizar, según 14.7.
+
+La grilla conserva espacio para leer el importe y sus decimales y permite
+desplazamiento horizontal. Sus filas renderizadas y sus desplazamientos
+virtuales comparten una sola altura; las etiquetas de cuenta aplicada, forma
+y concepto permanecen en una línea y conservan su contenido completo en el
+título. Un nombre largo no puede cambiar la geometría y dejar inaccesibles las
+últimas partidas de un documento de 500 líneas. No agrega lecturas por fila.
+
+Las incorporaciones asistidas de conceptos, formas y documentos pendientes
+comparten la identificación de filas vacías. Una fila con tercero, centro,
+referencia u otro dato capturado se conserva aunque aún no tenga cuenta o
+importe; sólo la identidad y el grupo generados no representan captura.
+
+La fuente conserva sólo ID, código y nombre de los conceptos usados, una vez
+por identidad, además de sus cuentas e importes ya contenidos en las partidas.
+No copia usos, activación ni el catálogo completo. Consultar/repetir un aceptado
+usa esa evidencia y no reconstruye la selección desde el catálogo vivo.
+Renombrar o desactivar el concepto no altera lo aceptado. Cambiar función o
+naturaleza de uno utilizado exige otro concepto; edición y aceptación se
+serializan sobre las mismas cabeceras seleccionadas.
+
+`AccountingSourcesAccept` deriva `accounting.SourceConceptIndex` desde esa
+selección inmutable en su transacción existente, sólo para fuentes nuevas.
+Contiene pertenencia, sin importes, balances ni edición independiente; no tiene
+worker, cola, reparación en replay ni otro writer. Los documentos anteriores
+no tienen esos IDs y no se clasifican por sus textos. El filtro de concepto de
+las partidas encuentra documentos completos que lo contengan, también si el
+concepto está inactivo; listado, conteo y reporte de partidas filtran antes de
+paginar. El concepto genérico MANUAL_VOUCHER del encabezado no sustituye el
+filtro. No exige recorrer JSON de toda la historia.
+
+Presupuesto de aceptación: un comando y viaje SQL por página del maestro y del listado,
+con 10.000 conceptos/fuentes y veinte muestras en primeras/siguientes páginas;
+p95 máximo 800 ms y primera lectura de 2 s. El maestro limita claves antes de
+enriquecer cuentas/naturaleza y calcula el conteo por el mismo filtro. Guardar
+devuelve entidad, página y conteo en su mismo comando; el cliente reutiliza el
+resultado y marca otras páginas/opciones del tenant obsoletas sin I/O. Preparar
+y aceptar hasta 500 partidas mantiene el lote y número de viajes existentes,
+sin lecturas por elemento; rige el presupuesto de 2 s de aceptación/posting.
+La validación debe incluir negativos de permisos, tenant, uso, cuenta y naturaleza,
+rechazo sin fuente/índice/efectos, repetición y cambio posterior de catálogo,
+hash legado y regresiones de los flujos que comparten la captura.
+
+Despliegue aditivo: esquema primero y API/cliente compatibles antes de habilitar
+la selección. La columna de borrador es nullable y los campos opcionales no se
+serializan cuando faltan; las fuentes y huellas anteriores se conservan. No
+autoriza activar contrato 2, migrar las cuentas por sede ni publicar un release.
+El vínculo de ajuste agrega una columna nullable al borrador y amplía el tipo
+admitido por el índice derivado; no reescribe fuentes anteriores. Después de
+aceptar fuentes con `Adjustment`, se conserva un processor compatible hasta
+completarlas. Un rollback a una versión que no entiende ese efecto requiere
+deshabilitar primero la nueva captura y drenar esas fuentes; no borrar reservas
+ni modificar payloads aceptados.
+
+Evidencia local del catálogo y captura inicial del 2026-11-10:
+
+- Esquema Release y backend compilan sin advertencias ni errores. Foundation:
+  1.144 pruebas aprobadas, incluida la conservación del contrato JSON anterior.
+- Dieciséis escenarios SQL/API verifican recibo/egreso, concepto General frente
+  a anticipo explícito, tercero sin rol de cliente, permisos y tenant, cuenta,
+  naturaleza y uso vigentes, rechazo sin fuente/índice, protección de semántica
+  utilizada incluso frente a función nula, repetición y evidencia histórica.
+  Resultado: `work/financial-concepts-regression.log` y su TRX homónimo.
+- Frontend: build de producción, TypeScript, UTF-8 y ESLint acotado aprobados.
+  Las 41 regresiones existentes de captura/pagos pasaron; los siete escenarios
+  nuevos pasaron en `admin/financial-concepts-focused-browser.log`, después de
+  corregir dos respuestas simuladas de las pruebas. Los ocho escenarios POS web
+  e instalado con impresión/sin imprimir pasaron en
+  `admin/financial-concepts-pos-browser.log`. Se inspeccionaron las capturas
+  del maestro y del recibo aceptado. No se cambió la presentación del POS.
+- Medición aislada: 10.001 conceptos y 10.000 fuentes, veinte muestras por
+  escenario y un viaje SQL por página. P95 maestro primera/siguiente/búsqueda:
+  130,2/127,7/67,6 ms; recibos primera/siguiente: 135,6/123,1 ms; primera lectura
+  máxima: 681 ms. TRX: `financial-concepts-isolated-performance.trx`.
+- Ochenta documentos aceptados y contabilizados con 2/500 partidas, 1/10 formas,
+  con/sin concepto, veinte muestras por combinación: siete comandos para
+  aceptación, nueve para posting y una resolución de formas por lote. Para
+  500 partidas/10 formas/concepto: p95 aceptación 1.679,1 ms y posting 522,5 ms,
+  dentro del límite de 2 s, con indicadores OS/SQL de memoria normales antes
+  de medir. Es el caso aprobado de
+  `financial-concepts-bounded-performance.trx`; ese archivo completo tiene
+  un caso aprobado y otro fallido, no dos aprobados.
+
+Limitación de la comprobación conjunta: su primera ejecución registró p95 de
+11,6 s en la primera página del listado; no se reprodujo en la medición aislada
+ni en la repetición final. Esta última volvió a aprobar el listado (p95 primera/
+siguiente 236,7/454,2 ms), pero el preflight de la otra prueba reportó presión
+de memoria SQL y la detuvo antes de medir las 500 partidas. OS: sin presión;
+SQL: con presión; memoria física disponible: 689.688 KB. Está registrado en
+`financial-concepts-final-performance.trx` (1 aprobado/1 fallido por el guard,
+antes de medir ese escenario).
+No se declara aprobada la ejecución conjunta ni se afirma una causa comprobada
+para el primer valor atípico. La prueba conserva sus volúmenes, límites y guard;
+debe repetirse con recursos SQL disponibles antes de publicar este alcance.
+
+La auditoría posterior confirmó Catalog como propietario del maestro,
+`AccountingSourcesAccept` como único writer del índice y el normalizador y
+processor existentes como propietarios financieros. No agrega flujo, worker,
+cola, job, writer de saldos, I/O por partida, polling ni reconstrucción de la
+página en cliente. Las mutaciones conservan su respuesta autoritativa y la
+selección sigue usando el combo paginado canónico. El alcance completo de
+retenciones y demás participantes de 14.0 sigue pendiente; este incremento no declara
+terminado ese alcance ni la adaptación administrativa nativa de Pagar o nómina.
+
+Validación local de factura más concepto adicional y su grilla (2026-11-10):
+
+- Esquema Release y backend compilan; Foundation final: 1.154 pruebas
+  aprobadas, con la forma JSON anterior y rechazo de diferencias sin concepto,
+  tercero distinto o concepto que pretenda reducir la deuda por este camino.
+- Treinta y tres escenarios de recibos/anticipos y quince de pagos nativos y
+  descuentos aprobados en `additional-concept-functional.trx` y
+  `additional-concept-native-regression.trx`. Los cuatro casos nuevos verifican
+  recibo/egreso con 3/500 partidas, aplicación por 216.748,03, concepto separado,
+  dinero exacto, rechazo de un total manipulado, rollback, retry y replay sin
+  otro asiento, anticipo o trabajo hijo. Dimensiones, aceptación y aplicación
+  mantienen un comando por lote tanto con uno como con 498 conceptos.
+- Frontend: build de producción, TypeScript, UTF-8 y ESLint acotado aprobados.
+  Cuarenta pruebas de navegador aprobadas en
+  `admin/additional-concept-browser-audit.log`: catálogo/captura, borrador,
+  importes completos, última fila de 500 partidas con etiquetas extensas,
+  cinco regresiones de familia de productos y veinticuatro de pagos POS con
+  y sin impresión. La captura conserva una sola lectura del documento.
+  Las pruebas de ancho y altura fallaron antes de corregir sus causas; la
+  revisión visual final confirmó el importe completo. No se rediseñó el POS.
+  `test:pos` aprobó además sus 16 pruebas previas y 267 principales, sin fallos,
+  en `admin/additional-concept-pos-unit.log`. Los artefactos de navegador se
+  conservaron bajo `admin/test-results/additional-concept-20261110`, ignorados
+  por Git; no reemplazan resultados ajenos.
+
+El rendimiento de esta extensión **no está aprobado**. El benchmark se amplió
+sin reducir límites a veinte muestras de recibos mixtos de 3/500 partidas y
+1/10 formas, además de sus escenarios anteriores. Su ejecución aislada se
+detuvo por el guard antes de medir: 451.376 KB disponibles, presión física de
+Windows y SQL activas (`additional-concept-bounded-performance.trx`). No produjo
+percentiles del recorrido nuevo y no se repitió con los mismos recursos.
+Una tanda anterior también incluyó el ensayo existente de 21.000 fuentes:
+falló por timeout al prepararlas y volvió a fallar al limpiar su base, antes de
+medir el recorrido. Sus 33 casos funcionales aprobados no convierten esa tanda
+en verde (`additional-concept-regression.trx`). La base aislada sobrante se
+verificó y eliminó después, sin desconectar sesiones ni tocar otras bases.
+No se atribuye ese timeout a una causa demostrada ni se amplía su timeout.
+
+La auditoría de este incremento mantuvo los mismos propietarios de catálogo,
+normalización, aceptación, saldos, movimiento, asiento y estado de UI. No añade
+tablas, motores, workers, colas, escrituras por partida, refetches ni polling.
+Conserva alcance de tenant/sede, permisos, referencias originales, reserva de
+cartera, atomicidad, idempotencia y compatibilidad de fuentes anteriores. El
+gate de rendimiento y los alcances funcionales pendientes de 14.0/13 de nómina
+impiden declarar terminado o publicable el diseño completo.
+
+Validación de reducción explícita de obligaciones (2026-11-10):
+
+- Foundation: 1.167 pruebas aprobadas. Esquema Release, API y frontend compilan;
+  lint de los dos componentes de captura y sus dos suites de navegador aprobado.
+  Los campos opcionales de vínculo se omiten del JSON anterior y clonar elimina
+  destinos de ejecución. La compilación de frontend no deja cambios en tsconfig.
+- La tanda enfocada SQL/API aprobó diez escenarios de factura más concepto
+  adicional o reducción, incluidos hasta 500 renglones, rollback del asiento,
+  reserva completa, rechazo de otro consumo y replay sin repetir efectos.
+- La regresión amplia aprobó 51 de 53 escenarios: anticipos, recibos para
+  terceros, devoluciones de pagos, descuentos de proveedor, medios configurados,
+  cuenta vigente al contabilizar y ajustes pendientes. Los dos casos de reducción
+  de 500 partidas fallaron por timeout en esa ejecución. Ambos pasaron después
+  aislados, con rollback/reintento, tras observar 1.017.228 KB disponibles y sin
+  señales de presión SQL/OS antes de iniciar. Eso no demuestra una causa única
+  de los timeouts ni una latencia estable. No se presenta la tanda amplia como
+  aprobada en su totalidad.
+- Dos escenarios adicionales aprobaron aumento y disminución individuales,
+  sus repeticiones y la forma histórica original (tipo/línea de origen nulos).
+  Cliente y proveedor también aprobaron reducción más cruce de anticipo por
+  el resto, sin otra entrada o salida de dinero. Un único comando aplica el lote
+  de ajustes de cada dirección, tanto con uno como con 498 conceptos.
+- Cincuenta y cinco escenarios de navegador aprobados: captura/guardado,
+  selección de destino por teclado, filtros y maestro, 500 filas virtualizadas,
+  cruce parcial/total con ajuste y retiro del cruce sin perder destinos, familia
+  de producto tras recargar y las 24 variantes de pago/impresión existentes.
+  Se revisaron también las capturas visuales de recibo y egreso.
+
+La auditoría corrigió la prueba del auxiliar original: un destino de ajuste se
+valida contra la partida de obligación indicada por su vínculo, no contra el
+auxiliar General de la contrapartida. Los ajustes sin dinero pasan la misma
+prueba. Se conservan un normalizador, aceptación, índice derivado, presupuesto
+de disponibilidad, processor, writer de saldos e historia. El lote individual
+y el incorporado comparten implementación; no hay job, tabla de reservas,
+endpoint ni flujo de pago paralelo. Tenant/sede, permisos, locks ordenados,
+atomicidad, idempotencia, cuenta original y cuentas efectivas de formas de pago
+conservan sus propietarios. UI conserva un dueño de carga y usa las partidas
+locales para la selección, sin GET adicional, I/O por fila ni polling.
+
+El benchmark canónico de formas configuradas añade reducciones de 3/500
+partidas a sus escenarios existentes: ocho variantes, veinte muestras por
+variante y 161 publicaciones esperadas contando la obligación inicial. Conserva
+el presupuesto de dos segundos y las comprobaciones de cantidad constante de
+comandos y resolución por lote; esos resultados nuevos todavía no están
+validados. La ejecución se detuvo antes de medir: 476.980 KB disponibles,
+presión OS falsa y presión física SQL verdadera. No generó percentiles ni
+demostró el presupuesto, y no se amplió su timeout. Requiere otro entorno o
+recursos disponibles para aprobar ese gate. El rendimiento y el resto de 14.0
+y de nómina 13 siguen impidiendo declarar terminado el diseño completo.
+
+### 14.9 Selección paginada del modal administrativo (2026-11-11)
+
+`PortfolioPaymentWizard` conserva la propiedad de consulta y selección para CxC
+y CxP. El listado administrativo acepta `receivableId` o `payableId` opcional:
+abrir desde un documento aplica ese filtro en la consulta canónica, antes del
+conteo, los agregados y la paginación. «Mostrar todas las facturas» retira el
+filtro sin borrar el abono capturado. No se solicita otro detalle para insertar
+una factura externa a la página ni se alteran artificialmente sus totales.
+Los endpoints POS no exponen este filtro y sus servicios lo descartan.
+
+Los filtros administrativos de documento/referencia, fecha de registro y mora
+se aplican mediante acción explícita. Paginar, filtrar o volver desde las formas
+de pago conserva importes y selección. Cuando una página vuelve a consultarse,
+sus saldos actualizan los límites de las seleccionadas sin sustituir los valores
+introducidos; un abono mayor al límite exige corrección. Las obligaciones que
+no están en la página permanecen identificadas en el resumen de selección.
+El processor conserva la validación transaccional definitiva de disponibilidad;
+el saldo residual mostrado es una proyección de los datos consultados.
+
+Tipo de origen, emisión, vencimiento, importes y tramo de mora llegan con la
+misma página. `PortfolioAging` devuelve el día de vencimiento utilizado para
+calcular la edad; el lector convierte también la emisión a fecha de negocio.
+`DueOn` e `IssuedOn` evitan que el navegador cambie esas fechas por su zona
+horaria. Los límites de registro se resuelven mediante `SqlBusinessLocalDates`,
+con inicio local inclusivo y día siguiente exclusivo. Se rechaza el último día
+representable como límite superior. Las obligaciones en moneda distinta de COP
+se consultan pero no se seleccionan para el contrato de pago actual en COP.
+No se introduce conversión monetaria implícita.
+
+Este incremento extiende los contratos y lectores existentes. No crea endpoints,
+tablas, escrituras, motores, estados, colas ni procesos de recuperación. Mantiene
+tenant/sede/tercero y permisos en el servidor, tres comandos SQL por página,
+sin lecturas por factura, recarga por pulsación ni polling. La presentación y
+la captura POS conservan su ruta. El resto de la captura administrativa de
+14.0, retenciones y nómina 13, y el gate de rendimiento de 14.8 siguen pendientes.
+
+Validación de este incremento:
+
+- SQL/API: dos escenarios, cliente y proveedor, con 41 obligaciones cada uno;
+  documento fuera de la primera página, abono de 100 y ajuste de 50 sobre 600,
+  agregados del mismo filtro, rechazo de ID vacío y fecha superior inválida,
+  aislamiento por tercero/sede y límite de registro al cambiar el día de negocio.
+  Se comprueban `IssuedOn` y `DueOn` además de la fecha original del documento.
+  `administrative-invoice-selection-verified.trx` aprobó ambos escenarios.
+- Primera página: 381,1 ms en CxC y 341,3 ms en CxP, frente al presupuesto de
+  dos segundos. Cuarenta muestras por dirección entre páginas 1 y 2: p95 de
+  285,4/333,4 ms frente a 800 ms, con tres comandos SQL en cada consulta.
+  Estas mediciones acotadas a 41 obligaciones no sustituyen el benchmark de
+  contabilización de 14.8 ni demuestran sus escenarios de 500 partidas.
+- Foundation: 1.167 aprobadas; suite POS: 16 de preparación y 267 principales;
+  presentación de reporte/edades: tres aprobadas. API y frontend compilan; lint
+  del wizard, presentación y nueva suite aprobado. Sin cambios de esquema ni
+  dependencias. Los includes temporales de Next no forman parte del cambio.
+- Navegador: dos escenarios de selección, tres de formas configuradas y las
+  24 variantes existentes de pago/impresión POS aprobados. Se comprueban selección
+  entre páginas/filtros, ida y vuelta desde pagos sin otra consulta, importes
+  grandes legibles, fechas con navegador en Kiritimati y negocio en Bogotá,
+  moneda extranjera sólo para consulta, reintento explícito, límite actualizado
+  y conservación de lo capturado. La búsqueda sin coincidencias conserva las
+  selecciones y comunica el resultado del filtro, sin afirmar que el tercero
+  carece de cartera; su regresión falló antes de corregir el mensaje y pasó
+  después. Se revisaron capturas de cliente y proveedor. La prueba de navegación
+  de recibos usa el menú lateral y espera la vista destino, sin confundirlo con
+  el breadcrumb durante una transición.
+
+La auditoría posterior revisó contratos, APIs, servicios, lectores SQL, fechas,
+wizard, presentación, pruebas y esta decisión. No cambian el writer, aceptación,
+reserva, transacción, permisos ni clave idempotente del pago; cada obligación
+sigue validándose en el processor al aplicarse. Los filtros nuevos se combinan
+con los alcances existentes en el servidor. No hay I/O por fila, GET de detalle
+adicional, carga de vistas ocultas, refetch al volver ni polling. La información
+adicional es una proyección de lectura y no una configuración congelada. La
+entrega requiere API antes que frontend; el rollback retira primero el frontend
+que usa el filtro nuevo. No requiere migración de datos ni modificación del POS.
+Esta auditoría y las pruebas del modal no cierran los pendientes de 14.0/14.8/13.
+
+
+La ampliación de nómina de 2026-11-11 está en
+`decision-nomina-electronica-integrada.md` 13.10: selector paginado del mismo
+catálogo (uso Payroll), resolución vigente por el processor compartido y
+cancelación del auxiliar de la causación original. No crea otro motor de pago
+ni modifica la presentación POS. Los pagos de nómina no necesitan la copia
+general de mappings al aceptar, incluidos los comandos compatibles
+sin forma del tenant. La sección 14.12 extiende esta regla al resto de fuentes. Su cuenta de salida se lee al contabilizar. Conserva explícitos los gates y
+pendientes del flujo completo de nómina.
+
+### Centros de costo compartidos: decisión del 13-11-2026
+
+El usuario aprobó que los centros de costo pertenezcan al tenant y se puedan
+utilizar desde todas sus sedes, igual que el PUC. El centro es una dimensión
+contable independiente de sede y bodega; la pantalla de centros deja de pedir
+una bodega. Se conservan nombre, jerarquía e identidad del centro; los cuatro
+códigos revisados se distinguen como se indica abajo. Los movimientos ya
+aplicados mantienen sus referencias, importes y clasificación congelada.
+
+El corte debe revisar códigos repetidos, predeterminados por sede y reglas
+existentes por bodega antes de cambiar su alcance. No fusiona centros, no
+reasigna asientos y no elige una regla ganadora arbitrariamente. La selección
+explícita y la asignación automática mantienen sus propietarios canónicos; no
+se crea un catálogo ni un resolvedor paralelo. El catálogo global debe tener
+búsqueda y paginación en servidor, con carga y respuesta de mutación
+autoritativas. El incremento está implementado y en regresión local; no
+certifica todavía el conjunto del checkout ni un despliegue remoto.
+
+La inspección de lectura de DEV encontró 19 centros y un tenant con cinco
+PRINCIPAL usados (3.255, 14, 124, 59 y 2 partidas respectivamente); no encontró
+reglas por bodega. El usuario aprobó los códigos PRINCIPAL, PRINCIPAL-BAR,
+PRINCIPAL-RESTBAR, PRINCIPAL-TIENDA y PRINCIPAL-TIENDA-DEV, preservando las cinco
+identidades. El corte pre-DACPAC conserva la asignación anterior mediante las
+reglas All existentes y valida cualquier conflicto antes de escribir. TenantId
+es el scope operativo; LegacyBusinessId conserva la procedencia para revisión
+y rollback, sin intervenir en el runtime. Los libros conservan código/nombre
+congelados; una consulta al maestro vigente sí muestra los códigos nuevos.
+
+Presupuesto de aceptación para el catálogo: 10.000 centros, primera página,
+siguiente y búsqueda filtrada; una llamada SQL por página, límite aplicado en
+servidor y p95 inferior a 500 ms en ejecución aislada, con 20 muestras. Los
+selectores usan el catálogo paginado y el documento resuelve sus IDs por lotes
+de hasta 100 (máximo 500 seleccionados), sin lectura por partida. Las reglas
+están acotadas a cinco por sede por su clave única y tipos cerrados. La respuesta
+de una regla actualiza su único propietario; el maestro relee sólo su página
+visible cuando una mutación puede cambiar orden, pertenencia o versiones de
+otros centros predeterminados. El contrato de gastos conserva sólo la metadata
+del predeterminado (cardinalidad uno por índice), no otro catálogo completo.
+Cambiar de sede conserva el catálogo compartido y descarta las capturas locales
+de centro/regla sin guardarlas. Las reglas se cargan con la nueva sede; no se
+reutiliza una asignación en edición del contexto anterior.
+
+El backfill de snapshots de 2026-09-07 se ejecuta antes del corte en el pipeline
+canónico. Ahora conserva cada campo ya informado mediante COALESCE: completar
+datos faltantes de un tercero no sobrescribe el código/nombre histórico del
+centro. El nuevo corte no mueve ese relleno a runtime ni añade una reparación
+de documentos. La primera medición aislada del catálogo de 10.000 centros fue
+p95 34,7 ms (página 1), 42,3 ms (página 2) y 125,4 ms (búsqueda); 1 SQL por
+consulta y 20 muestras. La ronda completa y la prueba de actualización siguen
+siendo compuertas separadas de esta medición.
+
+La actualización física local aprobó cuatro escenarios: esquema anterior con
+sus claves originales, los cinco centros revisados y partidas ya usadas;
+ejecución repetida del corte, publicación DACPAC con protección de pérdida de
+datos y replay sobre el esquema nuevo; rechazo atómico de conflictos de códigos,
+predeterminados o reglas por bodega. Conservó identidades, importes, referencias
+y snapshots, incluido el backfill parcial de tercero que no debe reemplazar un
+centro ya congelado. La publicación sobre la base local de navegación también
+comparó todas sus partidas antes y después sin cambios.
+
+Las regresiones funcionales verificaron uso desde otra sede, padres de la misma
+empresa, rechazo de otra empresa y del antiguo campo warehouseId, y un asiento
+balanceado que conserva sus snapshots después de renombrar el maestro. Los
+selectores de apertura, auxiliar y centros pasaron sus escenarios de navegador.
+La apertura histórica real vinculó una deuda existente y generó un solo asiento,
+conservando el saldo de la obligación. Esto no sustituye los presupuestos ni la
+auditoría transversal pendientes de 14.10.
+
+Rollback: antes del corte coordinado se conserva el respaldo de base y binarios
+de la versión anterior. Si no se han abierto escrituras nuevas, se restauran
+ambos bajo la misma detención de API/Function; después de nuevas escrituras se
+corrige hacia adelante. No se revierten importes ni se borran reglas/centros
+para hacer encajar binarios antiguos. PROD requiere inspección y autorización
+propias; el plan específico de DEV no se aplica en ese entorno.
+
+### 14.10 Revisión transversal para terminar el diseño (2026-11-11)
+
+La corrección de compatibilidad de InputVat no cierra el rediseño funcional.
+Se conserva la siguiente separación entre capacidades presentes y condiciones
+de salida pendientes; las pruebas de un incremento no certifican los demás.
+
+| Área | Implementación presente | Pendiente de cierre |
+| --- | --- | --- |
+| Formas de pago | Maestro del tenant, selección paginada, varias formas del mismo tipo y resolución vigente al contabilizar | Campos comerciales/cargos ampliados de 14.1, restantes consumidores y certificación del cutover común web/Edge antes de activar contrato 2 |
+| Recibos y egresos | Editor canónico, recibo a cualquier tercero, menú/filtros, conceptos explícitos y cruces de anticipos | La entrada administrativa Pagar debe ofrecer esa misma captura y capacidades de conceptos/anticipos, conservando atribución de sesión y correcciones |
+| Apertura de cartera | La apertura contable vincula obligaciones previamente registradas y conserva sus pagos, identidad y saldo | Capturar facturas pendientes nuevas directamente desde Saldos iniciales, con fechas y vencimientos. El usuario aplazó expresamente esta ampliación el 14-11 para terminar las regresiones y el corte a DEV |
+| Modal de cartera | Selección paginada, importes originales, pagos/ajustes, saldo, vencimiento y edades | Equivalencia integral con reportes y captura común, incluidos créditos/neto y escenarios de 14.0 |
+| PUC | Costos, política por propósito, transición revisada de InputVat y auxiliares compartidos entre todas las sedes; editor sin sede y actualización con cuentas usadas probados en 13.3 | Cada entorno requiere revisión de sus datos y corte autorizado; los pendientes de pagos/catálogos se conservan en sus propias filas |
+| Informes | Detallado/consolidado, abonos opcionales, XLSX/PDF; CxC incluye factura/plazo/edad/mora/contacto/cupo, créditos disponibles, sólo saldo a favor y neto; funcionalidad/aislamiento/collations/UI probados. La regresión acumulada del 14-11 aprobó los historiales, el selector y los créditos: p95 máximo 890,5 ms en el informe de 10.000 posiciones/créditos, dos SQL | Equivalencia global y últimos ajustes de presentación; estos escenarios locales no certifican producción ni los demás pendientes funcionales |
+| Nómina | Selección persistida, días 30/15 editables, auxilio contractual, cálculo por lote, pago por grupo/forma vigente, cantidad fija cero y edición/retiro/recalculo individual de novedades; superposición por persona protegida concurrentemente y causación al fin del período probadas | Contratos/afiliaciones y perfiles por concepto, vínculos con obligaciones, paginación histórica, documentos y gates completos de la sección 13 de su decisión. El calendario de borradores mensuales/quincenales y el cálculo de 500 pasaron su última verificación local |
+| Compatibilidad de despliegue | Migración revisada InputVat y política única, instalación nueva/actualización/replay probados localmente | Revisar configuración e identidades de cada entorno antes del despliegue autorizado; no reparar recepciones antiguas |
+| Fechas por sede | Campo editable, zonas y rangos de cartera probados en SQL/UI; gastos, propuestas de nómina, compras, inventario y trazabilidad usan el contexto; PaidOn conserva ejercicio contable y representación operativa UTC | Restantes reportes/capturas que todavía usan navegador o zona fija, calendario de fuentes operativas sin fecha civil explícita y regresión de sus integraciones |
+| Regresión final | Evidencia individual registrada en cada incremento | Ejecutar la matriz transversal, presupuestos con volumen, auditoría funcional de pantallas y del diff; gates externos fiscales se informan por separado |
+
+El corte local del 14-11-2026 comprobó compras nuevas con CxP, ventas/pedidos a
+crédito con CxC, recuperación/edición/facturación de pedidos, conteos, ajustes,
+traslados, conversiones y devoluciones. La matriz tuvo 305 aprobados y un fallo
+al crear el motivo de merma: faltaba enlazar el parámetro tenant después de
+compartir los centros. Corregido ese enlace y su error de validación, la tanda
+afectada aprobó 50/50, incluyendo inventario, centros y referencias de cuentas.
+La suite base aprobó 1.243 pruebas y las verificaciones del despliegue 34;
+estas últimas detectaron y corrigieron el arranque del Worker después del corte.
+El abono real de navegador volvió a aprobar obligación, recaudo y un solo
+asiento en replay. La actualización del esquema local conservó la huella del
+diario existente. Los lectores conservaron sus presupuestos y viajes; los
+detalles medidos pertenecen a los diseños de informes y reporting. La auditoría
+del diff mantuvo los motores, writers y catálogos canónicos, sin otro proceso
+de cartera ni de contabilización. Esto certifica este incremento local y no
+cierra las ampliaciones funcionales pendientes ni certifica servicios fiscales
+externos o impresión física. La captura nueva de apertura y la compensación
+CxC/CxP permanecen pendientes, conforme al alcance vigente.
+
+La regresión transversal del 13-11 detectó un p95 de 2.792,2 ms al contabilizar
+la desaplicación de un pago nativo con 100 obligaciones (límite: 2.000 ms).
+El diagnóstico posterior encontró reevaluación del parser JSON al cruzarlo con
+las partidas. `LoadManualVoucherFactsAsync` materializa ahora sus destinos una
+sola vez en el mismo comando, mediante `ManualVoucherCreditTargets`; conserva
+la política, los bloqueos, las validaciones y el processor existentes. No añade
+tablas persistidas ni viajes SQL. La repetición aislada aprobó ambos escenarios
+de `sql-performance-fix-focused.trx`: desaplicación de 100 obligaciones, p95
+556,7 ms y 11 SQL; recibo de 500 partidas, diez formas y conceptos reductores,
+aceptación 1.081,4 ms/8 SQL y posting 591,9 ms/12 SQL (veinte muestras por etapa).
+Comprueba también restituciones y devoluciones sin duplicar efectos. La primera
+ronda completa se interrumpió para corregir ese fallo; no certifica la matriz
+global. Una segunda ronda detectó el predicado de sede sin alias que todavía
+conservaba `SqlExpenseStore.SaveConceptAsync`; se retiró exclusivamente de la
+cuenta PUC, conservando tenant, tipo, disponibilidad y centro de costo por sede.
+El helper de aperturas históricas ahora crea cuentas compartidas según el
+contrato vigente. Los treinta escenarios afectados aprobaron en
+`shared-puc-regression-fix-focused.trx`, incluidas aperturas de 2/50/500 partidas,
+gastos, anticipos y cargos de factura. La repetición transversal y las
+comprobaciones de interfaz continúan.
+
+La medición final del reporte de créditos usó el baseline aislado existente
+`.\TEST`, con `AURALY_TEST_SQLSERVER` limitado al proceso de prueba y la aplicación
+local detenida. No se cambiaron parámetros de SQL Server. Con 10.000 posiciones
+y 10.000 créditos, veinte muestras por combinación, el p95 fue 809,7/815,1 ms
+para páginas 1/2 sin aplicaciones y 847,6/951,0 ms con aplicaciones, dos SQL por
+solicitud, frente al gate de 1.000 ms. La prueba conserva los totales y los límites
+de ambas páginas: `work/portfolio-credit-isolated-final/portfolio-credit-isolated-final.trx`.
+También aprobaron los ocho escenarios de reducciones por conceptos, incluidos
+ambos terceros con 498 conceptos y los cruces de crédito, en ese mismo baseline:
+`work/portfolio-concepts-isolated-final/portfolio-concepts-isolated-final.trx`.
+Comprueban reservas, rollback intermedio, una aplicación/asiento y replay sin
+duplicación. No se cambió el processor para ocultar el timeout anterior.
+El intento anterior en la instancia compartida `.\LOCAL` dio 1.610,4 ms y no
+certifica ese entorno ni se extrapola a producción. La evidencia aislada no
+sustituye la revisión funcional y de equivalencia aún pendiente en la tabla.
+
+Este inventario remite a los contratos propietarios y no agrega procesos,
+estados ni decisiones. La actualización de entornos no está autorizada por
+la instrucción de terminar implementación y pruebas locales.
+
+La repetición del 14-11 conserva los límites y las veinte muestras. En
+`receipt-timeout-diagnostic.trx` seis de siete escenarios aprobaron; la
+aceptación de 500 partidas con reducciones volvió a agotar el tiempo. Una
+ejecución exclusivamente diagnóstica localizó 3.155.780 lecturas en 4.429 ms
+en la comprobación de `ObligationAvailability`. Su plan reutilizado buscaba
+transacciones por obligación y recorría repetidamente su historia para cada
+efecto. La función conserva sus validaciones, pero exige ahora una búsqueda
+por la PK del identificador inmutable de cada efecto de CxC/CxP. No hay otra
+política, writer, saldo ni viaje SQL. El reporte histórico añade únicamente
+un índice de cobertura de movimientos por obligación/fecha; no cambia
+importes, corte ni agrupaciones. `portfolio-scope-final.trx` aprobó los siete
+escenarios del conjunto de recibos y tesorería; en el recibo de 500 partidas,
+diez formas y 489 reducciones, el p95 fue 986,2 ms/8 SQL al aceptar y
+496,5 ms/12 SQL al contabilizar. Sus veinte repeticiones mantienen importes y
+un solo efecto. También aprobaron los cinco escenarios de centros de costo.
+La consulta del reporte resuelve búsqueda/pertenencia a deuda por tercero,
+sede y moneda antes de unir sus créditos, evitando 10.000 pruebas idénticas
+para un tercero con 10.000 créditos. Materializa las fuentes distintas para
+leer su fecha inmutable una vez y comparte las claves filtradas con los dos
+agregados canónicos. Selecciona las claves de página antes de hidratar sus
+filas. El historial reutiliza sus hechos de orden ya filtrados, sin volver a
+unir todos los encabezados con sus fuentes para paginar. No añade estado
+persistido ni viajes. La API del informe respeta templateVersion=4; omitirla
+conserva la versión 3, y una versión desconocida se rechaza.
+
+La regresión conjunta de SQL/API/cartera/cierres aprobó 96/96. La suite base
+final aprobó 1.240/1.240, sin omisiones. Una ronda separada de informes,
+cartera y ambos historiales de 10.000 pagos aprobó 39/39; sus primeras cargas
+de selector fueron 811,3/1.341,9 ms. Ese conjunto no conserva los recibos y
+correcciones acumulados del escenario siguiente y no sustituye su gate.
+La medición acumulada `portfolio-cold-plan.trx` aprobó los siete escenarios de
+recibos/tesorería y los cuatro escenarios funcionales de informes. Mantiene
+tres fallos: primera carga del selector CxC 2.551,7 ms y CxP 2.176,9 ms
+(límite 2.000 ms), e informe de créditos 1.034,5 ms (p95, límite 1.000 ms).
+Los historiales sí aprobaron sus páginas medidas, pero no certifican el
+selector administrativo. Los siete escenarios de tesorería aprobados en esta
+ronda no borran el fallo de preview de corrección de la ronda anterior
+`portfolio-filter-facts-final.trx` (2.442,6 ms). Se conservan ambas evidencias;
+el incremento y el paquete completo siguen sin certificar para DEV.
+La reversión del índice exige
+eliminarlo explícitamente sin modificar datos: publicar el DACPAC anterior
+con `DropObjectsNotInSource=False` lo conserva. La reversión de la función exige el mismo corte
+coordinado del artefacto SQL y restaura su definición anterior. Estas
+ejecuciones no desplegaron a DEV ni a producción.
+
+La revisión detectó una contradicción de límites de registro: 14.9 introdujo
+días de la sede en los listados de facturas; directorios, historial y reportes
+conservan el contrato UTC documentado en la decisión de informes. Después de
+medianoche UTC pueden seleccionar conjuntos distintos. La regresión
+`PayablesVerticalSliceTests.Goods_receipt_to_supplier_payment_is_scoped_idempotent_and_accounted_once`
+la reproduce al filtrar la fecha UTC de creación: el directorio incluye la
+obligación y el listado local la excluye. No se alteró esa expectativa para
+ocultar el fallo. El usuario aprobó usar días de sede y configurar su zona
+horaria (12-11-2026). La transición de cartera usa `dateRangeVersion=2` en el
+admin para directorio, facturas, historial, informe, impresión y exportación;
+la omisión/versión 1 conserva los límites UTC publicados. El listado de
+facturas también respeta esa versión, corrigiendo la divergencia anterior.
+Una versión desconocida se rechaza antes de persistencia. Cambian solamente
+los límites de calendario: facturas/directorio/informes filtran CreatedAt y
+el historial conserva su filtro PaidAt (fecha efectiva de pago). No cambia
+la fecha de corte local ni el significado de los campos DateOnly.
+
+La zona reside exclusivamente en `Businesses.TimeZone`, editable en la ficha
+de sede; se valida sin fallback y se normaliza a IANA para el navegador. El
+comando devuelve el estado guardado y actualiza el contexto cargado y su copia
+offline sin otra consulta. Omitir la zona al crear conserva el default explícito
+existente; enviar una zona vacía o inválida se rechaza. El aprovisionamiento
+de la sede principal valida la misma regla y normaliza antes de persistir.
+No se reescriben
+instantes/documentos previos al cambiarla: los filtros y la presentación local
+usan la configuración vigente y por ello pueden cambiar de día visible.
+
+Presupuesto de este slice: conversión/validación de zona en memoria O(1) por
+comando de sede, sin consultas adicionales; directorios e informes mantienen
+2 comandos, facturas 3. Historial mantiene 1 sin filtro local y usa 2 cuando
+requiere zona por fechas locales o mora; nunca por fila. Se conserva la misma
+consulta paginada y los presupuestos de 10.000 documentos de 14.9. Aceptación:
+medianoche UTC/local, inicio inclusivo/final exclusivo, días DST de 23/25 horas,
+aislamiento entre sedes, versión anterior, rechazo de versión/zona inválidas,
+respuesta autoritativa sin refetch y regresión SQL/API/visor. Rollback: el
+cliente puede volver a versión 1 sin migrar datos; ninguna fecha se repara.
+La uniformidad del resto de módulos se audita por sus contratos propietarios;
+este incremento no certifica todavía todas las pantallas del sistema.
+
+La verificación final del 12-11-2026 consta en la decisión de informes,
+«Verificación del calendario por sede»: 56 pruebas de configuración, 23 SQL/API
+con presupuestos de 10.000 documentos, 10 navegador y 7 unitarias de admin.
+Los fallos iniciales y la corrección por agregados antes de enriquecer la página
+se conservan en esa evidencia. Se auditó el diff del incremento, sin nuevos
+motores/escrituras financieras ni cambios de parámetros de SQL. No sustituye
+la certificación de los módulos restantes del inventario.
+
+
+La ampliación de presentación/captura del 12-11-2026 está auditada en
+execution-context-design.md: fechas de cartera y pagos administrativos,
+propuestas de nómina y captura de gastos con offset de la fecha seleccionada.
+Su cobertura reúne 83 escenarios únicos de navegador en tandas complementarias,
+11 unitarias de fecha/exportación y 283 del motor POS. La última regresión de
+calendarios administrativos/POS pasó 26/26; build, tipos y lint dirigidos
+pasaron. Se registran también los fallos intermedios y sus correcciones, incluida
+la conservación del formato POS. No cierra los consumidores de calendario ni
+los demás pendientes de la tabla 14.10, ni autoriza actualizar entornos.
+
+Ampliación de calendario local de trazabilidad (12-11-2026, en verificación):
+`documents`, `financial-traceability-lines` y el catálogo contextual de tipos
+aceptan `dateRangeVersion=2`. El admin lo solicita en el listado y su catálogo; la
+versión omitida/1 conserva el calendario del offset capturado, sin reescribir
+fuentes. La versión 2 aplica límites UTC inclusivo/exclusivo de la sede vigente,
+incluidos cambios DST, medianoches inexistentes y días omitidos. El cálculo puro
+pertenece a `BusinessCalendar`; el adaptador SQL compartido enlaza parámetros,
+sin copiar consultas de zona en los módulos. No cambia aceptación ni posting.
+
+Presupuesto: se conserva el filtro y límite antes de enriquecer la página, con
+100.000 fuentes/10.000 terceros y p95 de 800 ms; versión 1 mantiene 1 comando,
+versión 2 emplea 2 (una zona por consulta y una página/agregados), sin I/O por fila.
+El catálogo contextual sin fechas conserva 1 comando; con fechas locales usa 2.
+La aceptación incluye SQL/API de ambas versiones, tercero/búsqueda, aislamiento,
+rechazo de versión inválida y extremos de calendario, más el benchmark existente
+sobre el mismo volumen para ambas versiones. El rollback consiste en solicitar
+versión 1; no requiere revertir fechas ni movimientos. La presentación de fechas
+históricas sigue la zona vigente de la sede, por decisión del usuario.
+
+Verificación SQL del incremento: accounting-business-calendar.trx aprobó 8/8,
+incluidos Bogotá, Tokio, DST de 23/25 horas, medianoche omitida en São Paulo y
+el día omitido de Apia; ambas API y el catálogo contextual conservan versión 1,
+aíslan sede y rechazan versión desconocida. El benchmark dedicado
+accounting-business-calendar-performance.trx aprobó 100.000 fuentes/10.000
+terceros sin carga concurrente de build/navegador/diagnóstico: p95 v1
+304,8/404,2/286,6/723,9/329,1 ms y v2 265,9/316,6/232,1/568,1/294,3 ms para
+primera/siguiente/tercero/tercero frecuente/búsqueda vacía. Primera lectura v2
+máxima 669,4 ms. Se verificaron 1/2 comandos por página respectivamente,
+conteos y filas únicas. El diagnóstico posterior no encontró spills; el mayor
+grant fue 13.040 KB, con uso de 6.056 KB. No se modificó memoria de SQL,
+volumen, límites ni umbrales para obtener el resultado. Build backend sin
+advertencias/errores; la regresión de interfaz y la auditoría final siguen en curso.
+
+### 14.11 Auditoría de autoridad contable y consistencia (12-11-2026)
+
+La cuenta no guarda un importe editable. El mayor se obtiene de partidas
+contabilizadas; las posiciones de CxC/CxP y créditos conservan el detalle
+documental de apertura y aplicaciones, enlazado a esas partidas. El auxiliar,
+su función configurada, el lado, el tercero y el documento seleccionado
+determinan el efecto. El concepto prepara esa combinación; su nombre no crea
+un anticipo. La regresión `Selected_financial_concepts_share_receipt_and_egress_posting_and_preserve_accepted_evidence`
+incluye un concepto llamado «Anticipo en el nombre, cuenta general»: no abre
+crédito. Un cruce reduce deuda y crédito sin otro ingreso/egreso de dinero.
+El disponible operativo descuenta reservas aceptadas pendientes; esa reserva
+no se presenta como saldo del mayor ni como pago ya contabilizado.
+
+La auditoría reprodujo una discrepancia real: readiness admitía un auxiliar
+con función explícita General para AccountsReceivable/AccountsPayable, pero
+el envío manual rechazaba esa contradicción. Las dos regresiones fallaron
+antes del arreglo. `PostingAccountEligibility` y la validación manual comparten
+ahora `PostingCategoryControlFunction`; la clasificación no se obtiene del
+código PUC ni de nombres de cuentas. El adaptador de contabilización conserva
+el bloqueo transaccional y los diagnósticos usan el predicado puro.
+
+La regresión concurrente existente detectó además que el bloqueo debía cubrir
+la fila de identidad, no depender de un posible índice de cobertura. El
+adaptador `PostingAccountReadiness` fuerza la clave clustered existente. Se
+conservó el escenario original de edición concurrente; no se sustituyó por
+una expectativa más débil. La documentación de SQL Server explica que los
+locks de esas sugerencias pueden tomarse sobre claves de índices de cobertura:
+[Table hints](https://learn.microsoft.com/en-us/sql/t-sql/queries/hints-transact-sql-table?view=sql-server-ver17).
+No se capturó el plan del fallo original; ese mecanismo es la explicación
+técnica inferida, mientras que bloqueo/rechazo están comprobados por la prueba.
+
+No se normaliza una función de cuenta utilizada, se modifica su tipo ni se
+reinterpreta historia para superar readiness. Los casos
+`An_existing_conflicting_control_mapping_is_reported_without_rewriting_its_used_account`
+crean una partida histórica real y comprueban que provisión/diagnóstico
+conservan cuenta, versión, balance, asiento y mapping, sin abrir cartera
+retroactiva. Un conflicto en un entorno bloquea su corte hasta revisar la
+cuenta destino; no autoriza crear auxiliares o reclasificaciones automáticas.
+El cambio de política se versiona en el DACPAC. Rollback conserva documentos,
+cuentas y movimientos; volver al validador anterior reabriría la discrepancia,
+por lo que no constituye una corrección de datos.
+
+La tanda focalizada `control-function-focused-reviewed.trx` pasó 20/20,
+incluidos instalación nueva, transición revisada InputVat, compra contabilizada
+una sola vez, replay, conflicto histórico y el bloqueo concurrente. La tanda
+amplia anterior pasó 189/193: además de ese bloqueo, detectó tres fixtures con
+expectativas de fecha/costo o aislamiento incorrectas. Se corrigieron los
+fixtures conservando los contratos aprobados. La repetición
+`accounting-critical-financial-regression` aprobó 195/195, sin omisiones, sobre
+el binario revisado; incluye también el lote de retenciones de compras y la
+resolución acotada de proveedores. Compiló sin advertencias ni errores.
+Esta evidencia no cierra la migración PUC entre sedes ni la conciliación global
+de la sección 14.10. También se revisan las funciones de tesorería y el límite
+de año de PaidOn antes de certificar la auditoría completa.
+
+La revisión posterior reprodujo otras cinco contradicciones: Caja, Banco y
+las tres categorías de compensación de tarjetas aceptaban un auxiliar con
+función explícita Receivable porque coincidía su AccountType Asset. Las cinco
+consultas devolvían readiness 1 antes del arreglo. La política compartida
+rechaza ahora esa contradicción; el guardado del mapping devuelve el conflicto
+publicado existente. La interpretación manual de controles de factura sigue
+limitada a CxC/CxP; ampliar la validación nativa no inventa una clasificación de
+tesorería en cuentas históricas sin función. Las categorías técnicas describen
+reglas estables de dominio; esto no promete ausencia de términos como
+CustomerAdvance en código. Lo configurable es el auxiliar real y su función,
+el concepto, el tercero, los medios y la aplicación; no se decide por números
+PUC ni por textos comerciales.
+
+También se detectó por inspección que normalizar PaidOn a UTC antes de aceptar
+la fuente podía desplazar 01-01-2026 en UTC+14 a 31-12-2025. Esa misma fecha
+selecciona activación, mapping y período. El adaptador conserva ahora el offset
+de mediodía de la fecha seleccionada en el contrato contable datetimeoffset
+existente. Encabezado y respuesta nativos conservan el instante en UTC; los
+grupos manuales mantienen su contrato de fecha del padre. No se guarda una
+copia de configuración ni se agrega una fecha editable o un reloj alternativo.
+No se recalcula una aceptación anterior al repetir su clave, incluso si la
+zona vigente cambió después. No se reescriben fuentes o pagos previos.
+
+Esta distinción acota la regla de instantes UTC de los estándares: la fuente
+ya usa un timestamp con offset como hecho de calendario contable, mientras el
+registro operativo conserva el instante UTC. El motivo es evitar un cambio de
+ejercicio y reutilizar activación/resolvedor/processor actuales, sin una ruta
+paralela. No se extiende esa excepción a nuevos campos o consumidores por
+inferencia; la migración restante de fechas conserva sus gates de 14.10.
+El incremento agrega cero consultas a la captura y a la contabilización. Su
+rollback conserva cuentas, fuentes, hashes y asientos; revertir el adaptador
+reintroduciría el defecto para pagos futuros, sin reparar los anteriores.
+
+Los primeros intentos del escenario anual detectaron errores de preparación
+del fixture (referencia de apertura, serie ausente/prefijo incorrecto) y una
+expectativa HTTP de replay incorrecta. Se corrigió el fixture usando el prefijo
+canónico y el contrato Accepted existente; no se cambió numeración ni API para
+adaptar esos datos de prueba. No se atribuyen esos fallos de fixture a la
+contabilización.
+
+`accounting-critical-final-regression` aprobó 208/208 sin omisiones sobre el
+esquema y servidor revisados, incluidos esos siete casos nuevos, fechas
+locales de cartera, IVA histórico/instalación nueva, compra nueva, rechazo,
+rollback, concurrencia, cuentas originales y replay. Las dos pruebas anuales
+verifican CxC/CxP, fecha de fuente/período, un asiento balanceado, respuesta UTC
+y repetición por HTTP después de cambiar la zona, sin otra aplicación.
+Compilaron SQL y backend sin advertencias ni errores. El build completo del
+admin pasó; sus archivos de configuración generados se restauraron exactamente.
+`accounting-critical-browser-regression` aprobó 98/98: editor, conceptos,
+recibos/egresos, anticipos/cruces, calendario, compras/inventario, impresión POS
+web/instalada y recuperación de familias. Las respuestas HTTP interceptadas
+de navegador no sustituyen las pruebas financieras con SQL real.
+
+La revisión del diff confirma los mismos propietarios de aceptación y posting,
+tablas de fuentes/jobs/posiciones y escritores financieros, sin otro motor,
+cola o flujo. La política nueva es por conjunto y agrega cero viajes SQL;
+el bloqueo usa la PK existente. Los recursos nuevos de compras tienen un dueño
+de carga cada uno, sin I/O por elemento, polling ni reconstrucción del resultado
+por refetch. Se conservaron permisos y ámbito tenant/sede; no se modificaron
+datos o servicios de DEV/producción. Los alcances pendientes de 14.10 continúan
+abiertos y esta auditoría no declara terminada la implementación completa.
+
+#### Devolución del IVA y corrección de la obligación original
+
+La revisión posterior amplió el caso de actualización de InputVat: registrar
+una devolución nueva de la compra histórica después de migrar a 240811 y
+cambiar nuevamente el mapping a un auxiliar propio. La prueba reprodujo una
+devolución balanceada que acreditaba el auxiliar actual y dejaba sin reversar
+el IVA del asiento original. El balanceo por sí solo no detecta ese defecto.
+
+El posting de devoluciones identifica ahora el auxiliar del primer IVA
+efectivamente reconocido mediante fuente/hash, propósito persistido y asiento
+contabilizado. Comprueba también las correcciones de esa adquisición contra
+el mismo auxiliar e importe. El mapping actual no sustituye esa evidencia.
+La consulta queda acotada a la compra y sus revisiones; no recorre compras de
+otros terceros ni consulta por línea. Una prueba histórica ausente, un auxiliar
+inactivo o un IVA que no concilia en un único auxiliar dejan el trabajo en el
+estado existente AccountingPendingConfiguration, con diagnóstico explícito.
+Se revierten los efectos financieros de ese intento. El inventario previamente
+confirmado por el motor documental conserva su frontera y no se repite.
+
+Las correcciones de costo que modifican la obligación usan asimismo el
+auxiliar de apertura obtenido por ObligationOpeningAccount; un cambio de
+mapping no divide el mayor de una única cuenta por pagar entre auxiliares.
+No se abrió la edición fiscal: cambiar impuestos continúa rechazándose y un
+soporte fiscal/cambiario sigue exigiendo su corrección enlazada antes de editar
+costos. Las primeras dos pruebas de edición pretendían recorridos prohibidos
+por esos gates; se sustituyeron por el recorrido comercial interno admitido,
+sin debilitar la validación. También se corrigió la cuenta padre ausente de
+sus auxiliares de prueba. Estos fallos de preparación no eran defectos del
+motor ni autorización para agregar un flujo fiscal.
+
+`acquisition-accounts-final-regression` pasó 18/18 sin omisiones. Incluye compra
+nueva retrodatada (1.799,5 ms, presupuesto menor de 2 s), devolución histórica
+conservando el tipo Asset y el auxiliar original, dos correcciones sucesivas
+de costo con cambio de mapping de CxP, devolución parcial, ausencia de prueba
+histórica, rollback financiero y replay. La edición comercial medida usó
+43 comandos y 878,4 ms; las devoluciones de una/veinte líneas conservaron
+47/47 comandos y el presupuesto existente. El nuevo lector de IVA agrega
+un comando sólo cuando la devolución tiene IVA descontable; la corrección
+de deuda agrega uno por documento con variación de saldo, nunca por partida.
+El build backend pasó sin advertencias ni errores. La regresión ampliada
+`accounting-authority-final-regression` pasó 258/258 sin omisiones e incluyó
+todos los escenarios de entradas/devoluciones, además de la matriz financiera
+anterior. Su primera compra tras reaplicar el esquema registró 2.068,8 ms:
+ese caso todavía sólo informaba el tiempo. Se añadió inicialmente un gate de
+2 s para esa primera ejecución completa; otras muestras dieron 2.036,2 y
+2.120,0 ms. La revisión del propietario de compras, «Confirmación por lotes»,
+aclara que ese presupuesto es en caliente y que aceptación/motores se miden
+según su etapa. Aplicarlo a todo el primer recorrido tras publicar era una
+exigencia nueva del test, no una condición aprobada incumplida del producto.
+Se corrigió la prueba y se retiraron los guards de rendimiento experimentales
+de AccountingSourcesAccept, conservando su implementación anterior.
+
+La prueba registra ahora la primera compra aparte y comprueba que genera
+un único asiento balanceado, cuenta por pagar y movimiento, con el IVA en el
+auxiliar seleccionado. Mide luego otra compra distinta para el gate en
+caliente de 2 s, sin presentar el primer tiempo como caliente ni ocultarlo.
+`accounting-authority-budget-scope-reviewed` pasó 14/14: primera compra
+2.011,2 ms; caliente 1.389,3 ms y 55 comandos. La tanda anterior con el gate
+nuevo, antes de aclarar su alcance, pasó 290/292: además de ese gate detectó
+la restricción indebida de inventario descrita abajo. No se atribuye a esas
+tandas la certificación global de 14.10.
+
+La auditoría del incremento confirma el mismo processor, transacción,
+savepoint, fuentes/jobs, submayores y writer de asientos. No se añadieron
+endpoints, tablas, colas, estados ni reintentos. No hay excepciones por tipo
+Asset para InputVat, creación automática de auxiliares ni reparación de
+recepciones. Las cuentas históricas conservan identidad, clasificación y
+presentación; una devolución nueva agrega su movimiento normal en ese
+auxiliar. La configuración de pruebas sintética se restaura sólo en la base
+aislada. No se modificaron datos de entornos instalados.
+
+Rollback de aplicación conserva esos asientos y documentos; no se borran ni
+recalculan. El binario anterior volvería a utilizar el mapping vigente en
+devoluciones/correcciones futuras y reintroduciría el defecto: requiere
+detener esos comandos durante un rollback, no deshacer movimientos mediante
+SQL ni alterar cuentas utilizadas. Los casos históricos ambiguos requieren
+revisión explícita; no se inventa un vínculo para forzar su contabilización.
+
+Como evidencia adicional del incremento anterior, Foundation pasó 1.211/1.211
+y las unidades de fechas/exportación del admin 15/15. La desvinculación de
+familias pasó además 2/2 con API/SQL reales, documentados en su propietario.
+No equivale a haber cerrado los pendientes funcionales de 14.10 ni a una
+certificación fiscal externa.
+
+La revisión amplió la política de función a todos los propósitos nativos.
+Doce reproducciones de `Posting_readiness_rejects_a_function_that_contradicts_the_native_purpose`
+devolvieron readiness 1 antes del arreglo: incluían IVA contra controles de
+cartera, inventario contra CxC, créditos, nómina, préstamos, retenciones y
+cuentas transitorias. No era suficiente hacer coincidir Asset/Liability.
+
+`PostingCategoryControlFunction` conserva una sola matriz técnica, sin códigos
+PUC, nombres de clientes ni otra tabla de configuración:
+
+| Propósito nativo | Función explícita compatible |
+| --- | --- |
+| AccountsReceivable, EmployeeLoansReceivable, EmployeeShortagesReceivable | Receivable |
+| AccountsPayable, NetPayrollPayable | Payable |
+| SupplierCreditsReceivable | SupplierAdvance |
+| CustomerCreditsPayable | CustomerAdvance |
+| Cash | Cash |
+| Bank, SupplierDebitCard | Bank |
+| DebitCardClearing, CreditCardClearing, CardClearing | CardClearing |
+| SupplierCreditCard | CreditCardLiability |
+| Inventory | General o UnallocatedPurchaseCost |
+| Restantes categorías del perfil, incluidos impuestos, ingresos, gastos y transitorios generales | General |
+
+La elegibilidad exige esa correspondencia para una función definida. Conserva
+las comprobaciones de banco/medio de las tarjetas del proveedor, retirando la
+comparación duplicada de su función. La política pura y su adaptador con lock
+siguen siendo los mismos propietarios; no se agregan viajes SQL. La captura
+manual con categoría nula sigue filtrando sólo AccountsReceivable/AccountsPayable:
+ampliar la matriz no infiere anticipos o préstamos para auxiliares sin función.
+Tampoco crea posiciones genéricas nuevas de nómina: su propietario, fuentes,
+proyecciones y cancelación del auxiliar original permanecen intactos.
+
+La regresión existente de costos descubrió un caso válido que el primer
+predicado demasiado restrictivo había bloqueado: usar un auxiliar de costos
+por distribuir para inventario nativo. La elegibilidad admite ambos propósitos
+compatibles mediante EXISTS, sin multiplicar filas para auxiliares sin función.
+La pertenencia al inventario y la prohibición de capitalizarlo de nuevo se
+demuestran con la fuente/partida original, no con esa bandera de la cuenta.
+`Explicit_unallocated_asset_reclassifies_once_and_never_reoffers_native_capitalized_inventory`
+pasó sin modificar su criterio ni su captura. No se agregó una excepción por
+tenant, código, nombre, versión histórica o cuenta concreta.
+
+La función nula histórica mantiene el contrato previo hasta el corte del PUC;
+no se escribe General ni otra función en cuentas utilizadas. Las funciones
+explícitas contradictorias se diagnostican y bloquean su mapping, sin cambiar
+cuentas ni movimientos. La revisión de esas identidades/configuraciones antes
+de desplegar, el alcance compartido entre sedes y los consumidores del corte
+siguen pendientes. No se convierte una prueba de doce rechazos en cobertura
+universal ni se da por terminada la conciliación de todos los submayores.
+
+La repetición final `accounting-authority-reviewed-final` aprobó 292/292,
+sin omisiones, con el esquema y servidor finales. Incluye la matriz de doce
+rechazos y sus auxiliares coherentes, el caso nativo de costos por distribuir
+sin doble capitalización, antigüedad/fechas, recibos/egresos, créditos,
+compras/devoluciones, cierres y nómina. La primera compra posterior a publicar
+tardó 1.806,6 ms; la compra distinta medida en caliente, 1.568,9 ms con
+55 comandos. Los límites de las pruebas originales permanecen.
+
+El pago de nómina añadió el rechazo de un auxiliar original inactivo en el
+mismo lector por lote. La reproducción anterior llegó a IsPaid=true; con el
+arreglo conserva pendiente, cero asientos y AccountId aplicado nulo, y paga
+una sola vez después de restaurar la disponibilidad y reintentar. Las cinco
+variantes de grupos pasaron: 2/100/500 trabajadores, formas del tenant y
+compatibles, lectura paginada, histórico, concurrencia y replay. Aceptar 500
+con/sin forma tomó 130,91/282,89 ms, dos comandos; sus lecturas dieron p95
+86,81/106,39 ms en veinte muestras. El recálculo de un trabajador dentro de
+500 obtuvo p95 157,76 ms, veinte muestras y diez comandos. No se reservaron
+recursos ni se modificó memoria/configuración de SQL para estas mediciones.
+
+La auditoría posterior del incremento revisó los predicados, sus llamadas,
+el lector histórico, los overrides de cuentas, el savepoint y el writer
+común, las regresiones nuevas y los propietarios documentales. Se conserva
+tenant/sede, autorización, bloqueo de disponibilidad, atomicidad e idempotencia.
+Las lecturas nuevas están acotadas al documento/lote; no hay I/O por partida,
+otro motor/cola/writer, polling ni cambios de frontend o de sus propietarios
+de carga en este último incremento. Compilaron esquema y backend sin errores
+ni advertencias; diff check sin errores. Los experimentos de rendimiento
+retirados no forman parte de la solución. La auditoría completa del rediseño,
+las identidades del PUC compartido, su corte y los pendientes de 14.10 siguen
+abiertos. Tampoco se ha cambiado la política temporal genérica que conserva
+mappings desde aceptación: se solicitó aclaración para extender la decisión
+de vigencia al contabilizar, ya aplicada a formas de pago, a esas otras rutas.
+
+
+### 14.12 Configuración automática vigente al contabilizar (2026-11-13)
+
+El usuario confirmó que se procese con la configuración vigente, incluidos los
+pagos ya confirmados en cola, y autorizó continuar esta unificación. Sustituye
+la selección automática al aceptar descrita en el antecedente del 24 de octubre.
+Aplica a ventas, compras, gastos, causación y pago de nómina, cartera importada
+y medios nativos, además de las formas del tenant que ya seguían esta regla.
+
+1. La aceptación conserva fuente inmutable, modo financiero, índices y reservas;
+   no lee ni fija mappings/bancos automáticos. Las cuentas capturadas de forma
+   explícita conservan sus validaciones y protección existentes.
+2. El único processor, después de reconocer un trabajo terminado, lee la
+   configuración actual bajo su transacción serializable. La fecha fuente sigue
+   seleccionando la vigencia; configuración vigente no significa aplicar una
+   vigencia futura a un documento anterior. Un override inválido no cae a otro
+   auxiliar ni a una copia aceptada anteriormente.
+3. La apertura y el asiento son atómicos con los demás efectos financieros.
+   `ConfiguredPostingAccount` reutiliza identidad y elegibilidad canónicas;
+   `BankAccountsResolve` devuelve solo las referencias del documento. No escribe
+   configuración en trabajos pendientes. Los tenders nativos registran su cuenta
+   aplicada con las líneas del journal, mediante el writer actual.
+4. `ResolvedAccountMappingsJson` y `ResolvedBankAccountsJson` conservan la evidencia
+   histórica existente. En nuevas contabilizaciones contienen únicamente bindings
+   usados por el journal. No son instrucciones para reintentar ni un catálogo
+   congelado. Las fuentes, importes e identificadores históricos no se modifican.
+5. Saldar o revertir conserva la cuenta probada en la apertura/asiento original;
+   no reinterpreta esa obligación mediante mappings actuales. Una cuenta elegida
+   explícitamente tampoco se sustituye. La disponibilidad del auxiliar se valida
+   dentro del mismo motor. Replay terminado retorna su resultado sin reconstruir
+   evidencia ausente, inventario, cartera, pagos o asientos.
+
+La partida manual preparada con un concepto financiero (14.8) conserva el
+auxiliar explícito que el usuario ve y confirma junto con su efecto financiero.
+No se reconstruye al contabilizar desde el catálogo de conceptos. Se distingue
+del concepto automático de Gastos, cuya cuenta deriva el processor; esta
+excepción corresponde a cuentas elegidas expresamente, no a otro cache de
+configuración automática.
+
+Presupuesto: aceptación de hasta cien fuentes en un SQL y p95 menor de dos
+segundos; resolver de partidas y de bancos por conjunto, sin I/O por elemento.
+Se elimina el viaje de fijación de tenders nativos. La evidencia aplicada se
+escribe en los comandos de journal/compleción existentes; no agrega otro viaje.
+La aceptación ya no recorre las categorías del perfil ajenas al documento.
+
+Corte versionado: `20261113_RetireAcceptedAccountConfiguration.sql` retira los
+procedimientos `AccountMappingsFreeze`, `BankAccountsFreeze`,
+`PortfolioPaymentAccountsFreeze` y `ResolvedPostingAccount`, sin tocar filas ni
+encolar/reintentar recepciones antiguas. Es idempotente. Exige detener y drenar
+los consumidores contables anteriores antes de publicar esquema y aplicación
+coordinadamente. No se autoriza despliegue desde este checkout sin integrar.
+
+Reportes históricos: no cambia AccountType, identidad ni líneas contabilizadas;
+por tanto este corte no reclasifica su presentación. Los nuevos asientos pueden
+usar otro auxiliar si se cambió el mapping antes de contabilizar. Los reportes
+siguen leyendo journal/submayores, no reconstruyen importes desde el catálogo.
+La transición revisada de InputVat conserva su plan y límites propios.
+
+Rollback: detener consumidores nuevos; conservar los resultados ya aplicados y
+su evidencia. No regenerar caches de pendientes ni reprocesar históricos. Volver
+al binario previo con sus procedimientos cambia la política temporal y requiere
+una decisión explícita de reversión coordinada; no basta publicar ese binario
+contra este esquema. Ante un defecto se prefiere corregir el mismo motor hacia
+adelante, preservando documentos, pagos y asientos.
+
+La migración bancaria anterior quedó limitada a trabajos Posted que requieren
+asiento. La prueba nueva detectó antes del arreglo que un trabajo pendiente sin
+cache cambiaba su rowversion y recibía `ResolvedBankAccountsJson=[]`; el caso
+con cache previo se conservaba. La corrección elimina esa selección de pendientes
+y no borra caches existentes. La prueba compara fuente y trabajo completos y
+repite ambas migraciones. La evidencia de actualización de InputVat incorpora
+ahora también banco y rowversion del trabajo, además de importes y documentos.
+
+La primera ronda dirigida aprobó nueve casos de la nueva política. La ronda
+ampliada detectó una compra en 2.283,9 ms (límite 2.000), tres datos de prueba con
+vigencias superpuestas y un caso gratuito que compartía inventario con otros
+journeys. Se corrigió la preparación de esos escenarios sin reducir sus asserts
+financieros. La compra añadió un viaje bancario sin referencias: el lector fuente
+consulta ahora el parser canónico para omitirlo cuando no corresponde; reutiliza
+además el Status ya bloqueado, sin otro SELECT, y el writer no prepara cambios
+de tenders para documentos ajenos a pagos. Los bindings se escriben en los mismos
+comandos existentes.
+
+La ronda ampliada fue interrumpida después de fallos en cadena de ventas y
+presión del entorno local. Se verificó una primera venta Pending sin intentos,
+cursor esperando su secuencia y un timeout de conexión SQL antes de ejecutar
+consultas; esa ronda no certifica resultados ni rendimiento. La repetición roja
+de migración conservó su falla funcional reproducible y además registró un timeout
+de limpieza de la base temporal. No se aumentaron timeouts ni presupuestos, no
+se cambiaron memoria/servicios SQL ni aplicaciones del usuario. La base temporal
+de la ronda interrumpida se identificó y retiró como hace el fixture.
+
+La evidencia por ronda se conserva a continuación. Este corte no cierra los
+pendientes funcionales del rediseño enumerados en 14.10.
+
+
+Verificación posterior: `accounting-current-configuration-reviewed-focused`
+aprobó 26/28; sus únicos fallos fueron presupuesto de aceptación de nómina de
+500 trabajadores (2.192,3 ms) y compra en caliente (2.063,2 ms, 54 SQL). Los seis
+casos de `accounting-current-configuration-budget-isolated` aprobaron después,
+sin cambiar binario, pruebas, número de muestras ni límites. La compra en caliente
+obtuvo 1.482,1 ms y 54 comandos; la primera posterior al esquema se informó
+separadamente (2.382,6 ms). Se conservan ambos resultados para no confundir la
+medición aislada con la ronda bajo presión. Los casos de migración con/sin cache,
+vigencia futura, cuenta antigua en cola, override inválido, replay terminado,
+banco inactivo/ambiguo, efectivo, financiación, venta mixta y recepción gratuita
+aprobaron con el código final. Esquema y backend compilaron sin diagnósticos.
+
+La auditoría de alcance encontró también la cuenta del concepto de gasto.
+El processor la resuelve por conjunto dentro del lector existente del proveedor;
+no agrega viajes ni reescribe la captura. Las cuentas explícitas se validan sin
+sustituirlas. `AccountingAccountReferences` distingue cuentas explícitas de las
+derivadas de concepto/forma: la aceptación no protege semántica de una cuenta
+automática que podría no utilizarse. La protección permanente corresponde al
+asiento realmente insertado; las partidas explícitas siguen protegidas al aceptar.
+El resultado conserva `ExpenseConcept:{id}` con el auxiliar realmente usado,
+como evidencia en el mismo trabajo. La regresión adicional cubre 1/100 líneas,
+contrato de cabecera, cuenta directa, pendiente/corrección, replay y anulación.
+El cierre dirigido de gastos se registra a continuación.
+
+Las retenciones automáticas ya usan `PurchaseWithholdingKind` y sus mappings
+vigentes. La revisión de esquema descarta una excepción por cuenta por defecto:
+`CK_WithholdingRules_AutomationAccount` exige DefaultAccountId NULL en reglas
+automáticas; `DocumentWithholdingLines` solo admite AccountId en partidas
+puntuales con ManualLineId, sin RuleId/version. Esas selecciones explícitas se
+conservan. No hace falta otro escritor de retenciones ni cambiar el snapshot
+fiscal para aplicar esta política.
+
+
+El cierre de gastos aprobó 24/24 con el esquema y binario corregidos, incluidos
+los cuatro escenarios nuevos y la anulación con source/hash/job originales.
+La auditoría posterior amplió el guard de las retenciones puntuales a la misma
+política de propósito/sede: el plan anterior admitía un auxiliar de anticipos,
+reproducido en `accounting-manual-withholding-red`. Se valida el incremento
+adicional antes de dar por terminado este corte; su detalle pertenece a la
+decisión de gastos y retenciones, sin otro motor ni modificación fiscal.
+
+La revisión de retenciones aprobó 25/26 en la primera ronda; el único fallo
+fue el límite de confirmación de un gasto (2.034 ms frente a 2.000 ms). Esa
+ronda incluyó dos consultas de diagnóstico durante su ejecución y no se usa
+como certificación de rendimiento. El binario final aprobó después 3/3 en
+`accounting-manual-withholding-final`, sin diagnóstico concurrente ni cambios
+de límites: validación de propósito/sede, plantilla manual válida e inválida,
+cuenta desactivada después de aceptar, cero efectos en el intento pendiente,
+corrección/reintento y replay terminado con la cuenta nuevamente desactivada.
+La CxP neta y el asiento balanceado aparecen exactamente una vez; fuente y
+retención explícita conservan su captura. El journey completo de gastos
+aprobó con 23 SQL por confirmación para 1/20/100 líneas y 157/90/166 ms,
+respectivamente; sus previews usaron tres comandos, sin lecturas por partida.
+
+La auditoría del incremento revisó las escrituras, los tres consumidores de
+retenciones, aceptación, resolución, evidencia aplicada y migraciones. Conserva
+el processor, los submayores y el writer existentes; no añade estados, tablas,
+colas, reintentos ni llamadas por elemento. La elegibilidad es canónica, la
+selección está acotada por tenant/sede y la resolución contable mantiene sus
+bloqueos hasta el commit. No cambia contratos HTTP ni frontend. La ampliación
+de regresión transversal con el binario final se registra a continuación; no
+sustituye los pendientes globales de 14.10 ni autoriza despliegues.
+
+`accounting-current-policy-regression` ejecutó 346 pruebas sin omisiones y
+aprobó 345: compras/costos/devoluciones, ventas/financiación, gastos y retenciones,
+cartera/cruces/anticipos, formas, nómina, configuración y migraciones. El único
+fallo fue de rendimiento del auxiliar contable con 100.000 movimientos ajenos:
+la agrupación de siete dígitos tardó 1.290,5 ms frente a su límite de 750 ms.
+Se conserva esa ronda fallida. La repetición exacta del escenario en
+`accounting-current-policy-auxiliary-isolated` aprobó sin cambiar código,
+preparación, volumen ni umbral; no tuvo builds ni diagnóstico concurrentes.
+Balance: 230,4 ms; agrupaciones: 172,8/184,8/224,6 ms; páginas primera/segunda:
+125,8/127,5 ms. Cada consulta usó un SQL. Son resultados de dos rondas y no
+una única ejecución completamente verde; la variación observada queda explícita.
+
+La suite base `accounting-current-policy-foundation` aprobó 1.211/1.211,
+sin omisiones, con dominio y compuertas de arquitectura.
+`accounting-current-policy-other-sources` aprobó los 45 escenarios adicionales
+de ajustes/valoración/traslados de inventario, cierres de caja y calendarios
+por sede, propinas y sus reversiones. Las 391 pruebas de integración distintas
+del incremento quedaron verificadas entre las tandas, manteniendo visible
+el fallo de latencia de la ronda conjunta y su repetición aislada aprobada.
+
+La auditoría posterior comprobó el diff del incremento y sus consumidores:
+resolución común de cuentas, participantes de formas/gastos/retenciones,
+evidencia aplicada, referencias explícitas, aceptación y migraciones. No quedan
+llamadas de ejecución a los objetos retirados; sus nombres solo permanecen en
+la migración de retiro, pruebas históricas y documentación de antecedentes.
+Se preservaron los cambios ajenos del checkout. No se modificó la presentación
+POS ni se publicaron cambios en DEV/producción. Los pendientes del inventario
+14.10 y el arranque local integral continúan fuera de este cierre del incremento.

@@ -21,6 +21,8 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
   let accepted = false;
   let customerReads = 0;
   let paymentInvoiceReads = 0;
+  let configurationReads = 0;
+  const configurationFailsOnce = acceptedStatus === "Processed" && failureStatus === null;
   const delayPaymentMethods = acceptedStatus === "Accepted" && failureStatus === null;
   let releasePaymentMethods: (() => void) | undefined;
   const paymentMethodsReady = delayPaymentMethods
@@ -38,7 +40,7 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
     else if (path.endsWith("/receivables/customers")) {
       customerReads++;
@@ -48,7 +50,7 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
         totalOutstanding: paid ? 0 : 10450.45, totalOverdue: 0, totalInvoiceCount: 1 };
     } else if (path.endsWith("/receivables")) {
       if (url.searchParams.get("outstandingOnly") === "true") paymentInvoiceReads++;
-      body = { items: paid ? [] : [invoice], page: 1, pageSize: 20, totalCount: paid ? 0 : 1,
+      body = { referenceDate:"2026-09-23", items: paid ? [] : [invoice], page: 1, pageSize: 20, totalCount: paid ? 0 : 1,
         totalPages: paid ? 0 : 1, totalOutstanding: paid ? 0 : 10450.45, totalOverdue: 0 };
     }
     else if (path.endsWith("/receivable-payments")) body = { items: accepted ? [{ paymentId: "66666666-6666-6666-6666-666666666666",
@@ -65,7 +67,14 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
       ];
     }
     else if (path.endsWith("/reference-options/card-franchise")) body = [{ id: "visa", code: "Visa", label: "Visa", sortOrder: 1 }];
-    else if (path.endsWith("/pos/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
+    else if (path.endsWith("/accounting/settlement-configuration")) {
+      configurationReads++;
+      if (configurationFailsOnce && configurationReads === 1) {
+        await route.fulfill({ status: 503, json: { status: 503, detail: "Configuración temporalmente no disponible." } });
+        return;
+      }
+      body = { isAccountingEnabled: false, bankAccounts: [] };
+    }
     else if (path.endsWith("/parties/role-options")) body = { items: [], page: 1, totalPages: 0, totalCount: 0 };
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "77777777-7777-7777-7777-777777777777" };
     else if (path.endsWith(`/businesses/${businessId}`)) body = { businessId, name: "Sede pruebas", address: "Calle 1", phone: "3001234567" };
@@ -111,12 +120,38 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
       expect(attempts).toHaveLength(0);
     } finally { releasePaymentMethods?.(); }
   }
+  if (configurationFailsOnce) {
+    await expect(checkout.getByRole("alert")).toContainText("La captura se conserva");
+    await expect(checkout.getByRole("button", { name: "Sin imprimir", exact: true })).toBeDisabled();
+    const amount = checkout.getByRole("textbox", { name: "Valor recibido en Efectivo", exact: true });
+    await amount.fill("100");
+    await checkout.getByRole("button", { name: "Reintentar configuración", exact: true }).click();
+    await expect(checkout.getByRole("alert")).toHaveCount(0);
+    await expect(amount).toHaveValue("100");
+    expect(configurationReads).toBe(2);
+    await amount.fill("10.450,45");
+    await expect(amount).toHaveValue("10.450,45");
+  }
   await expect(checkout.getByRole("button", { name: "Confirmar pago" })).toBeEnabled();
   await page.keyboard.press("F2");
   const card = page.getByRole("dialog", { name: "Datos de la tarjeta" });
   await expect(card).toBeVisible();
   await card.getByPlaceholder("Aprobación del datáfono").fill("AP-001");
   await card.getByRole("button", { name: /Guardar datos/ }).click();
+  const restorePreviousVersion = failureStatus === 503 && acceptedStatus === "Accepted";
+  const previousPaymentId = "99999999-9999-9999-9999-999999999999";
+  if (restorePreviousVersion) {
+    // Simulate an uncertain command left by the version without editable PaidOn.
+    await page.evaluate(({ businessId, customerId, receivableId, userId, paymentId }) => {
+      const fingerprint = JSON.stringify({ direction: "receivable", businessId, partyId: customerId,
+        allocations: [{ id: receivableId, amount: 10450.45 }], discountDecisions: {},
+        tenders: [{ methodCode: "DebitCard", amount: 10450.45, reference: null,
+          cardFranchiseCode: "Visa", approvalNumber: "AP-001", bankAccountId: null, notes: null, tenderedAmount: null }] });
+      sessionStorage.setItem(`portfolio-payment:receivable:${businessId}:${userId}`, JSON.stringify({
+        fingerprint, paymentId, paidAt: "2026-09-23T12:00:00-05:00", sessionId: "77777777-7777-7777-7777-777777777777",
+      }));
+    }, { businessId, customerId, receivableId, userId: user.userId, paymentId: previousPaymentId });
+  }
   await checkout.getByRole("button", { name: "Media carta", exact: true }).click();
   if (failureStatus) {
     const alert = checkout.getByRole("alert");
@@ -136,6 +171,10 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
     payments: [{ methodName: "Tarjeta configurada", amount: 10450.45 }] } });
   expect(confirmation).toMatchObject({ payments: [{ methodCode: "DebitCard", amount: 10450.45,
     cardFranchiseCode: "Visa", approvalNumber: "AP-001" }] });
+  if (restorePreviousVersion) {
+    expect(confirmation).toMatchObject({ paymentId: previousPaymentId, paidAt: "2026-09-23T12:00:00-05:00" });
+    expect(confirmation).not.toHaveProperty("paidOn");
+  }
   await expect.poll(() => customerReads).toBeGreaterThan(1);
   if (acceptedStatus === "Accepted") {
     await expect(page.getByText(/RCC-001 recibido y pendiente de aplicar/)).toBeVisible();
@@ -147,7 +186,7 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
   await expect(page.getByLabel("Resumen de cartera")).toContainText("$ 0");
   const readsAfterPayment = paymentInvoiceReads;
   await page.getByRole("row", { name: /Cliente prueba/ }).click();
-  await expect(page.getByText("Este tercero no tiene facturas pendientes.")).toBeVisible();
+  await expect(page.getByText("No hay facturas pendientes que coincidan con los filtros.")).toBeVisible();
   expect(paymentInvoiceReads).toBe(readsAfterPayment + 1);
 });
 }
@@ -183,7 +222,7 @@ test(`pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta (${sup
     let body: unknown = [];
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
+    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas", timeZone: "America/Bogota" }];
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
     else if (path.endsWith("/payables/suppliers")) {
       supplierReads++;
@@ -193,14 +232,14 @@ test(`pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta (${sup
     }
     else if (path.endsWith("/payables")) {
       if (url.searchParams.get("outstandingOnly") === "true") paymentInvoiceReads++;
-      body = { items: paid ? [] : [{ payableId, supplierId, supplierName: "Proveedor prueba", partySiteId, partySiteName: "Sede principal",
+      body = { referenceDate:"2026-09-23", items: paid ? [] : [{ payableId, supplierId, supplierName: "Proveedor prueba", partySiteId, partySiteName: "Sede principal",
         documentNumber: "FC-001", currencyCode: "COP", originalAmount: 12400, outstandingAmount: 12400,
         dueDate: "2026-10-01T12:00:00-05:00", status: "Open", isOverdue: false,
         ...(financialDiscount ? { financialDiscountEligibleAmount: 2400, financialDiscountAnticipated: false,
           financialDiscountPendingReturn: false } : {}),
         createdAt: "2026-09-23T12:00:00-05:00" }], page: 1, pageSize: 20,
         totalCount: paid ? 0 : 1, totalPages: paid ? 0 : 1,
-        totalOutstanding: paid ? 0 : 12400, totalOverdue: 0 };
+        totalOutstanding: paid ? 0 : 12400, totalOverdue: 0, currencyTotals:[{currencyCode:"COP", originalAmount:12400,paidAmount:paid?12400:0,adjustmentAmount:0,outstandingAmount:paid?0:12400,overdueAmount:0}] };
     }
     else if (path.endsWith("/payable-payments")) body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 };
     else if (path.endsWith("/reference-options/payment-method")) body = [
@@ -210,7 +249,7 @@ test(`pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta (${sup
       { id: "credit", code: "CreditCard", label: "Tarjeta crédito", sortOrder: 4 },
     ];
     else if (path.endsWith("/reference-options/card-franchise")) body = [{ id: "visa", code: "Visa", label: "Visa", sortOrder: 1 }];
-    else if (path.endsWith("/pos/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
+    else if (path.endsWith("/accounting/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
     else if (path.endsWith("/parties/role-options")) body = { items: [], page: 1, totalPages: 0, totalCount: 0 };
     else if (path.endsWith("/parties/site-options")) body = { items: [{ partyId: supplierId, roleId: supplierId, partySiteId, displayName: "Proveedor prueba", identification: "1001", siteName: "Sede principal", isPrimary: true, supplierPurchaseEvidencePolicy: null, supplierDefaultPaymentDueDays: 30 }], page: 1, totalPages: 1, totalCount: 1 };
     else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "77777777-7777-7777-7777-777777777777" };
@@ -275,7 +314,7 @@ test(`pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta (${sup
   await expect(page.getByLabel("Resumen de cartera")).toContainText("$ 0");
   const readsAfterPayment = paymentInvoiceReads;
   await page.getByRole("row", { name: /Proveedor prueba/ }).click();
-  await expect(page.getByText("Este tercero no tiene facturas pendientes.")).toBeVisible();
+  await expect(page.getByText("No hay facturas pendientes que coincidan con los filtros.")).toBeVisible();
   expect(paymentInvoiceReads).toBe(readsAfterPayment + 1);
 });
 }

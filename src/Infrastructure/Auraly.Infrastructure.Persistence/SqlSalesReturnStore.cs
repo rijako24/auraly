@@ -393,7 +393,7 @@ public sealed class SqlSalesReturnStore(
                   WHEN @AccountingEnabled=1 AND EXISTS(
                     SELECT 1 FROM accounting.BankAccounts b WITH(UPDLOCK,HOLDLOCK)
                     INNER JOIN dbo.Businesses business ON business.TenantId=b.TenantId
-                    CROSS APPLY accounting.BankPostingAccount(b.TenantId,@BusinessId,b.BankAccountId) account
+                    CROSS APPLY accounting.BankPostingAccount(b.TenantId,b.BankAccountId) account
                     WHERE b.BankAccountId=@BankAccountId AND business.BusinessId=@BusinessId
                       AND b.IsActive=1 AND account.AccountId IS NOT NULL) THEN 1
                   ELSE 0 END;

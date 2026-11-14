@@ -58,7 +58,8 @@ public sealed class ExpenseSupplierSelectionTests(ServerSliceFixture fixture)
         var filtered = await client.GetFromJsonAsync<AccountingAccountOptionPage>(path + $"&page=1&search={Uri.EscapeDataString(target.Code)}&accountId={target.AccountId:D}");
         Assert.Equal(target.AccountId, Assert.Single(filtered!.Items).AccountId);
         Assert.Equal(1, filtered.TotalCount);
-        Assert.Equal("Expense", filtered.Items[0].AccountType);
+        Assert.Equal(target.AccountType, filtered.Items[0].AccountType);
+        Assert.Contains(filtered.Items[0].AccountType, new[] { "Expense", "Cost" });
         var empty = await client.GetFromJsonAsync<AccountingAccountOptionPage>(path + $"&page={first.TotalPages + 1}");
         Assert.Empty(empty!.Items);
         Assert.Equal(first.TotalCount, empty.TotalCount);

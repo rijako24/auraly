@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Payments;
@@ -40,7 +41,7 @@ public sealed record PayableQuery(
     bool? Overdue,
     bool OutstandingOnly = false,
     DateOnly? From = null, DateOnly? To = null, Guid? ConceptId = null,
-    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null);
+    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null, Guid? PayableId = null, int DateRangeVersion = 1);
 
 public sealed record PayableListItem(
     Guid PayableId,
@@ -59,7 +60,14 @@ public sealed record PayableListItem(
     Guid? PartySiteId = null, string? PartySiteName = null,
     decimal? FinancialDiscountEligibleAmount = null,
     bool? FinancialDiscountAnticipated = null,
-    bool FinancialDiscountPendingReturn = false);
+    bool FinancialDiscountPendingReturn = false,int OverdueDays=0,string AgingBandCode="NotDue",DateTimeOffset? IssuedAt=null)
+{
+    public decimal AdjustmentAmount=>OriginalAmount-PaidAmount-OutstandingAmount;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceDocumentType { get; init; }
+    public DateOnly? DueOn { get; init; }
+    public DateOnly? IssuedOn { get; init; }
+}
 
 public sealed record PayablePage(
     IReadOnlyList<PayableListItem> Items,
@@ -69,6 +77,7 @@ public sealed record PayablePage(
     decimal TotalOutstanding,
     decimal TotalOverdue)
 {
+    public DateOnly? ReferenceDate {get;init;}
     public IReadOnlyList<PayableCurrencyTotal> CurrencyTotals { get; init; } = [];
     public int TotalPages => TotalCount == 0
         ? 0
@@ -76,7 +85,13 @@ public sealed record PayablePage(
 }
 
 public sealed record PayableCurrencyTotal(string CurrencyCode, decimal OutstandingAmount,
-    decimal OverdueAmount);
+    decimal OverdueAmount,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? OriginalAmount=null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] decimal? PaidAmount=null)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public decimal? AdjustmentAmount=>OriginalAmount-PaidAmount-OutstandingAmount;
+}
 
 public sealed record PayableExpenseConceptOption(Guid ConceptId, string Name);
 public sealed record PayableExpenseConceptPage(
@@ -119,7 +134,8 @@ public sealed record SupplierPaymentAllocationRequest(
 
 public sealed record SupplierPaymentTenderRequest(string MethodCode, decimal Amount,
     decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
-    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null);
+    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null);
 
 public sealed record ConfirmSupplierPaymentRequest(
     Guid PaymentId,
@@ -130,7 +146,8 @@ public sealed record ConfirmSupplierPaymentRequest(
     string? Notes,
     IReadOnlyCollection<SupplierPaymentAllocationRequest> Allocations,
     IReadOnlyCollection<SupplierPaymentTenderRequest> Payments,
-    Guid? WorkSessionId = null);
+    Guid? WorkSessionId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateOnly? PaidOn = null);
 
 public sealed record SupplierPaymentAllocationSnapshot(
     int LineNumber,
@@ -141,7 +158,9 @@ public sealed record SupplierPaymentAllocationSnapshot(
 
 public sealed record SupplierPaymentTenderSnapshot(int LineNumber, string MethodCode, decimal Amount,
     decimal? TenderedAmount = null, Guid? BankAccountId = null, string? Reference = null,
-    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null);
+    string? Notes = null, string? CardFranchiseCode = null, string? ApprovalNumber = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null);
 
 public sealed record SupplierPaymentDocumentPayload(
     Guid TenantId,
@@ -167,7 +186,7 @@ public sealed record SupplierPaymentAcceptance(
     Guid AccountingJobId,
     string DocumentNumber,
     string Status,
-    bool IdempotentReplay);
+    bool IdempotentReplay, DateTimeOffset? PaidAt = null);
 public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentNumber,
     DateTimeOffset PaidAt, string CurrencyCode, decimal TotalAmount, string Status,
     int AppliedDocumentCount, IReadOnlyList<SupplierPaymentTenderSnapshot> Payments,
@@ -183,7 +202,7 @@ public sealed record SupplierPaymentHistoryItem(Guid PaymentId, string DocumentN
 public sealed record SupplierPaymentHistoryApplication(Guid PayableId,string DocumentNumber,decimal Amount);
 public sealed record SupplierPaymentHistoryQuery(int Page,int PageSize,string? Search,Guid? SupplierId,
     string? Status = null, bool? Overdue = null, DateOnly? From = null, DateOnly? To = null,
-    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null);
+    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null, int DateRangeVersion = 1);
 public sealed record SupplierPaymentHistoryPage(IReadOnlyList<SupplierPaymentHistoryItem> Items,
     int Page, int PageSize, int TotalCount)
 {
@@ -191,7 +210,7 @@ public sealed record SupplierPaymentHistoryPage(IReadOnlyList<SupplierPaymentHis
 }
 public sealed record SupplierPortfolioQuery(int Page, int PageSize, string? Search, bool? Overdue,
     Guid? SupplierId = null, string? Status = null, DateOnly? From = null, DateOnly? To = null,
-    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null);
+    Guid? PartySiteId = null, string? SortBy = null, string? SortDirection = null, int DateRangeVersion = 1);
 public sealed record SupplierPortfolioItem(Guid SupplierId, string SupplierName,
     string Identification, int InvoiceCount, decimal OriginalAmount, decimal PaidAmount,
     decimal OutstandingAmount, decimal OverdueAmount, decimal SupplierCreditAmount = 0,
@@ -208,7 +227,7 @@ public sealed record PayablesReportQuery(int Page, int PageSize, bool Consolidat
     DateOnly? From = null, DateOnly? To = null, string? Status = null,
     bool OutstandingOnly = false, bool OverdueOnly = false,
     string? SortBy = null, string? SortDirection = null, string? Search = null,
-    Guid? ConceptId = null);
+    Guid? ConceptId = null, bool IncludeApplications = true, int DateRangeVersion = 1);
 public sealed record PayablesReportApplication(string DocumentNumber, DateTimeOffset AppliedAt,
     decimal Amount);
 public sealed record PayablesReportItem(Guid SupplierId, string SupplierName,

@@ -9,6 +9,7 @@ AS RETURN
         (
             CounterpartAccountId uniqueidentifier '$.CounterpartAccountId',
             WebCounterpartAccountId uniqueidentifier '$.counterpartAccountId',
+            ConceptId uniqueidentifier '$.ConceptId',WebConceptId uniqueidentifier '$.conceptId',
             ExpenseAccountId uniqueidentifier '$.ExpenseAccountId',
             WebExpenseAccountId uniqueidentifier '$.expenseAccountId',
             Lines nvarchar(max) '$.Lines' AS JSON,
@@ -18,13 +19,15 @@ AS RETURN
         (
             SELECT header.CounterpartAccountId AccountId
             UNION ALL SELECT header.WebCounterpartAccountId
-            UNION ALL SELECT header.ExpenseAccountId
-            UNION ALL SELECT header.WebExpenseAccountId
+            UNION ALL SELECT header.ExpenseAccountId WHERE COALESCE(header.ConceptId,header.WebConceptId) IS NULL AND header.Lines IS NULL AND header.WebLines IS NULL
+            UNION ALL SELECT header.WebExpenseAccountId WHERE COALESCE(header.ConceptId,header.WebConceptId) IS NULL AND header.Lines IS NULL AND header.WebLines IS NULL
             UNION ALL
             SELECT lineValue.AccountId
             FROM (VALUES(header.Lines),(header.WebLines)) payload(Lines)
             CROSS APPLY OPENJSON(payload.Lines) WITH
             (
+                ConceptId uniqueidentifier '$.ConceptId',WebConceptId uniqueidentifier '$.conceptId',
+                FormId uniqueidentifier '$.PaymentEvidence.PaymentMethodId',WebFormId uniqueidentifier '$.paymentEvidence.paymentMethodId',
                 AccountId uniqueidentifier '$.AccountId',
                 WebAccountId uniqueidentifier '$.accountId',
                 AccountingAccountId uniqueidentifier '$.AccountingAccountId',
@@ -32,9 +35,14 @@ AS RETURN
                 ExpenseAccountId uniqueidentifier '$.ExpenseAccountId',
                 WebExpenseAccountId uniqueidentifier '$.expenseAccountId'
             ) line
-            CROSS APPLY (VALUES(line.AccountId),(line.WebAccountId),
-                (line.AccountingAccountId),(line.WebAccountingAccountId),
-                (line.ExpenseAccountId),(line.WebExpenseAccountId)) lineValue(AccountId)
+            CROSS APPLY (
+                SELECT line.AccountId AccountId WHERE COALESCE(line.FormId,line.WebFormId) IS NULL
+                UNION ALL SELECT line.WebAccountId WHERE COALESCE(line.FormId,line.WebFormId) IS NULL
+                UNION ALL SELECT line.AccountingAccountId
+                UNION ALL SELECT line.WebAccountingAccountId
+                UNION ALL SELECT line.ExpenseAccountId WHERE COALESCE(line.ConceptId,line.WebConceptId) IS NULL
+                UNION ALL SELECT line.WebExpenseAccountId WHERE COALESCE(line.ConceptId,line.WebConceptId) IS NULL
+            ) lineValue
         ) value
     ) accounts
     WHERE AccountId IS NOT NULL

@@ -179,9 +179,14 @@ public sealed partial class PayablesVerticalSliceTests
             [new SupplierPaymentAllocationRequest(payableId, cash, earned)],
             [new SupplierPaymentTenderRequest(SupplierPaymentMethods.Cash, cash, cash)]);
         var key = $"discount-payment-{payment.PaymentId:N}";
+        Exception? paymentFailure = null;
+        string? failedSql = null;
+        using var paymentDiagnostics = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            onCommandError: (command,error) => { paymentFailure = error; failedSql = command.CommandText; });
         using (var accepted = await SendAsync(client, "/api/commerce/v1/payable-payments/confirm", payment, key))
             Assert.True(accepted.StatusCode == HttpStatusCode.Accepted,
-                $"Payment: {(int)accepted.StatusCode} {await accepted.Content.ReadAsStringAsync()}");
+                $"Payment: {(int)accepted.StatusCode} {await accepted.Content.ReadAsStringAsync()}\n{paymentFailure}\n{failedSql}");
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.SupplierPayments WHERE PaymentId=@Id", payment.PaymentId));
         Assert.Equal(0m, await ScalarAsync<decimal>(

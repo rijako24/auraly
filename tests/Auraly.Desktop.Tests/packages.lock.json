@@ -297,6 +297,11 @@
         "resolved": "13.0.1",
         "contentHash": "ppPFpBcvxdsfUonNcvITKqLl3bqxWbDCZIzDWHzjpdAHRFfZe0Dw9HmA0+za13IdyrgJwpkDTDA9fHaxOrt20A=="
       },
+      "NodaTime": {
+        "type": "Transitive",
+        "resolved": "3.3.7",
+        "contentHash": "4Rc3zup1sZqtlcgkWZOsjoVbhm+RkDvxrFDJfIxi7nr32ZgzVW+zCTBr827+KG/4r5owpchUjqx8tO4K2ZtpOw=="
+      },
       "NuGet.Frameworks": {
         "type": "Transitive",
         "resolved": "6.5.0",
@@ -1323,7 +1328,10 @@
         }
       },
       "auraly.buildingblocks.domain": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "NodaTime": "[3.3.7, )"
+        }
       },
       "auraly.commerce.accounting.application": {
         "type": "Project",
@@ -1346,7 +1354,8 @@
       "auraly.commerce.accounting.contracts": {
         "type": "Project",
         "dependencies": {
-          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Catalog": "[1.0.0, )"
         }
       },
       "auraly.commerce.accounting.domain": {

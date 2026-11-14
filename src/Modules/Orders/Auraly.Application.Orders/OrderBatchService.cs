@@ -342,7 +342,9 @@ public sealed class OrderBatchService(
             issue.CustomerIdentification,
             issue.RequestedAmount,
             issue.AvailableCredit,
-            issue.Reason);
+            issue.Reason,
+            issue.OverdueInvoiceCount,
+            issue.MaximumOverdueInvoices);
 
     private async Task<IReadOnlyList<InvoiceChargeDefinition>> ResolveChargeDefinitionsAsync(
         OrderActor actor,

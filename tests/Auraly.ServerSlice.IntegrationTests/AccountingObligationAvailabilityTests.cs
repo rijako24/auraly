@@ -30,6 +30,46 @@ public sealed class AccountingObligationAvailabilityCollection : ICollectionFixt
 public sealed class AccountingObligationAvailabilityTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
     [Fact]
+    public async Task Position_preview_uses_account_eligibility_without_claiming_a_posting_update_lock()
+    {
+        using var client=fixture.CreateAdminClient(AccountingPermissionCodes.Configure,AccountingPermissionCodes.Read);
+        using(var defaults=await client.PutAsync("/api/commerce/v1/accounting/defaults",null))defaults.EnsureSuccessStatusCode();
+        await using var connection=new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_",connection.Database);
+        var date=new DateOnly(2026,9,11);
+        await using var mapping=new SqlCommand("""
+            SELECT TOP(1) AccountId FROM dbo.AccountingAccountMappings
+            WHERE TenantId=@Tenant AND Category=N'SupplierFinancialDiscountEarned'
+              AND (BusinessId=@Business OR BusinessId IS NULL)
+              AND EffectiveFrom<=@Date AND (EffectiveTo IS NULL OR EffectiveTo>=@Date)
+            ORDER BY CASE WHEN BusinessId=@Business THEN 0 ELSE 1 END,EffectiveFrom DESC;
+            """,connection);
+        mapping.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+        mapping.Parameters.AddWithValue("@Business",fixture.BusinessId);
+        mapping.Parameters.AddWithValue("@Date",date.ToDateTime(TimeOnly.MinValue));
+        var accountId=Assert.IsType<Guid>(await mapping.ExecuteScalarAsync());
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync();
+        try
+        {
+            await using(var held=new SqlCommand("SELECT AccountId FROM dbo.AccountingAccounts WITH(UPDLOCK,ROWLOCK) WHERE AccountId=@Account",connection,transaction))
+            {
+                held.Parameters.AddWithValue("@Account",accountId);
+                Assert.Equal(accountId,await held.ExecuteScalarAsync());
+            }
+            using var scope=fixture.CreateScope();
+            var service=scope.ServiceProvider.GetRequiredService<AccountingService>();
+            var user=new AccountingUserIdentity(fixture.UserId,fixture.TenantId,fixture.BusinessId,
+                new HashSet<string>{AccountingPermissionCodes.Read});
+            using var reads=new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+            await service.OpenPositionsAsync(user,new("Payable",1,1,PartyId:fixture.SupplierPartyId,
+                EffectiveOn:date,VoucherTypeCode:"Disbursement")).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(1,reads.Count);
+        }
+        finally {await transaction.RollbackAsync();}
+    }
+
+    [Fact]
     public async Task Availability_and_pages_are_scoped_and_bounded_with_twenty_one_thousand_sources()
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);

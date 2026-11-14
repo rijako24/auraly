@@ -19,7 +19,7 @@ public interface IWithholdingRuleStore
         Guid tenantId, Guid userId, SaveCounterpartyTaxProfileRequest request, CancellationToken ct);
     Task<IReadOnlySet<string>> GetActiveResponsibilityCodesAsync(CancellationToken ct);
     Task<IReadOnlySet<Guid>> GetValidManualAccountIdsAsync(
-        Guid tenantId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct);
+        Guid tenantId, Guid businessId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct);
 }
 
 public sealed record WithholdingCalculationPlan(
@@ -172,7 +172,7 @@ public sealed class WithholdingService(
         var rulesTask = store.ListAsync(tenantId, businessId, false, ct);
         var accountsTask = accounts.Length == 0
             ? Task.FromResult<IReadOnlySet<Guid>>(new HashSet<Guid>())
-            : store.GetValidManualAccountIdsAsync(tenantId, accounts, ct);
+            : store.GetValidManualAccountIdsAsync(tenantId, businessId, accounts, ct);
         await Task.WhenAll(profilesTask, rulesTask, accountsTask);
         return new WithholdingCalculationPlan(
             businessId,

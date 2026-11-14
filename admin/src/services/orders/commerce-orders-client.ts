@@ -131,6 +131,8 @@ export type OrderCreditValidationIssue = {
   requestedAmount: number;
   availableCredit: number | null;
   reason: string;
+  overdueInvoiceCount?: number | null;
+  maximumOverdueInvoices?: number | null;
 };
 
 export type InvoiceOrdersResponse = {

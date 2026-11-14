@@ -73,7 +73,8 @@ AS RETURN
       0,t.TaxableAmount-COALESCE(l.Base,0),0,t.TaxableAmount-COALESCE(l.Base,0),t.TaxCode,t.TaxRate,
       t.TaxAmount-COALESCE(l.Tax,0),t.TotalAmount-COALESCE(l.Total,0),0,NULL,NULL,t.ProjectedAt,t.BusinessLocalHour,@TenantId,@BusinessId,CONVERT(bigint,0),NULL
     FROM reporting.SalesReportTaxFacts t
-    JOIN reporting.SalesReportDocuments d ON d.DocumentId=COALESCE(t.OriginalSaleDocumentId,t.SourceDocumentId)
+    JOIN reporting.SalesReportDocuments d WITH(FORCESEEK(PK_SalesReportDocuments(DocumentId)))
+      ON d.DocumentId=COALESCE(t.OriginalSaleDocumentId,t.SourceDocumentId)
       AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId
     LEFT JOIN LineTaxes l ON l.SourceDocumentId=t.SourceDocumentId AND l.SourceDocumentType=t.SourceDocumentType
       AND l.TaxCode=t.TaxCode AND l.TaxRate=t.TaxRate
@@ -101,7 +102,8 @@ AS RETURN
       COALESCE(c.Quantity,0),t.Base,0,t.Base,NULL,NULL,t.Tax,t.Total,
       CASE WHEN COALESCE(c.Missing,0)=0 THEN COALESCE(c.Cost,0) END,NULL,NULL,t.ProjectedAt,t.BusinessLocalHour,
       @TenantId,@BusinessId,COALESCE(c.Missing,0),NULL
-    FROM WholeReturns t JOIN reporting.SalesReportDocuments d ON d.DocumentId=t.OriginalSaleDocumentId
+    FROM WholeReturns t JOIN reporting.SalesReportDocuments d WITH(FORCESEEK(PK_SalesReportDocuments(DocumentId)))
+      ON d.DocumentId=t.OriginalSaleDocumentId
       AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId
     LEFT JOIN ReturnCosts c ON c.SourceDocumentId=t.SourceDocumentId
 );

@@ -46,7 +46,7 @@ public static class SalesInvoicePresentationMapper
                         charge.InvoicedTaxAmount, charge.InvoicedAmount,
                         charge.TaxCode, charge.TaxRate))).ToArray(),
             ComposePayments(request.Payments.Select(Payment), request.Credit?.Amount,
-                request.Credit?.DueDate.ToString("O", CultureInfo.InvariantCulture)),
+                request.Credit?.DueDate.ToString("O", CultureInfo.InvariantCulture),request.Credit),
             request.UblSnapshot, customerName, fiscalStatus,
             request.Credit is null ? null : new CreditSaleAcknowledgement(
                 request.DocumentId, request.DocumentNumber.FullNumber, snapshot.IssuedAt,
@@ -108,13 +108,16 @@ public static class SalesInvoicePresentationMapper
     private static OnlineSalesPayment Payment(PosSalePaymentContract payment) => new(
         payment.MethodCode, payment.Amount, payment.Reference, payment.CardFranchiseCode,
         payment.ApprovalNumber, payment.BankAccountId, payment.Notes,
-        payment.TenderedAmount, payment.RoundingAdjustment);
+        payment.TenderedAmount, payment.RoundingAdjustment,payment.PaymentMethodId,payment.PaymentMethodVersion,
+        payment.PaymentMethodCode,payment.PaymentMethodName,payment.AccountId);
 
     private static IReadOnlyList<OnlineSalesPayment> ComposePayments(
         IEnumerable<OnlineSalesPayment> payments, decimal? creditAmount,
-        string? creditReference) =>
+        string? creditReference, PosSaleCreditContract? credit = null) =>
         creditAmount is { } amount
-            ? payments.Append(new OnlineSalesPayment("Credit", amount, creditReference)).ToArray()
+            ? payments.Append(new OnlineSalesPayment("Credit", amount, creditReference,
+                PaymentMethodId:credit?.PaymentMethodId,PaymentMethodVersion:credit?.PaymentMethodVersion,
+                PaymentMethodCode:credit?.PaymentMethodCode,PaymentMethodName:credit?.PaymentMethodName,AccountId:credit?.AccountId)).ToArray()
             : payments.ToArray();
 
     private static SalesInvoicePrintDetails? PrintDetails(

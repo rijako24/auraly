@@ -16,7 +16,7 @@ CREATE TABLE [dbo].[ExpenseConcepts]
     CONSTRAINT [UQ_ExpenseConcepts_Business_Concept] UNIQUE ([BusinessId],[ExpenseConceptId]),
     CONSTRAINT [FK_ExpenseConcepts_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_ExpenseConcepts_Accounts] FOREIGN KEY ([ExpenseAccountId]) REFERENCES [dbo].[AccountingAccounts]([AccountId]),
-    CONSTRAINT [FK_ExpenseConcepts_CostCenters] FOREIGN KEY ([BusinessId],[DefaultCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([BusinessId],[CostCenterId])
+    CONSTRAINT [FK_ExpenseConcepts_CostCenters] FOREIGN KEY ([DefaultCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([CostCenterId])
 );
 GO
 
@@ -68,7 +68,7 @@ CREATE TABLE [dbo].[Expenses]
     CONSTRAINT [FK_Expenses_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_Expenses_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers]([SupplierId]),
     CONSTRAINT [FK_Expenses_Concepts] FOREIGN KEY ([BusinessId],[ExpenseConceptId]) REFERENCES [dbo].[ExpenseConcepts]([BusinessId],[ExpenseConceptId]),
-    CONSTRAINT [FK_Expenses_CostCenters] FOREIGN KEY ([BusinessId],[CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([BusinessId],[CostCenterId]),
+    CONSTRAINT [FK_Expenses_CostCenters] FOREIGN KEY ([CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([CostCenterId]),
     CONSTRAINT [FK_Expenses_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries]([DocumentSeriesId]),
     CONSTRAINT [FK_Expenses_Users] FOREIGN KEY ([ConfirmedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
     CONSTRAINT [FK_Expenses_CancellationReasonOption] FOREIGN KEY ([CancellationReasonOptionId]) REFERENCES [reference].[Options]([OptionId]),

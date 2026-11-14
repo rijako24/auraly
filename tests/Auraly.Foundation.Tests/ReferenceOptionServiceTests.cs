@@ -58,10 +58,25 @@ public sealed class ReferenceOptionServiceTests
             user, "tax-responsibility", new CreateReferenceOptionRequest("O-99", "Nueva")));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public async Task Contextual_calendar_rejects_unknown_versions_before_reading(int version)
+    {
+        var store = new CapturingStore();
+        var service = new ReferenceOptionService(store);
+        var user = new CatalogUserIdentity(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), new HashSet<string>());
+
+        await Assert.ThrowsAsync<CatalogValidationException>(() => service.ListContextualAsync(
+            user, "accounting-document-type", new(2026, 11, 12), new(2026, 11, 12), dateRangeVersion: version));
+
+        Assert.Null(store.CatalogCode);
+    }
+
     private sealed class CapturingStore : IReferenceOptionStore
     {
         public Task<IReadOnlyList<ReferenceOption>> ListContextualAsync(CatalogUserIdentity user,string catalogCode,
-            DateOnly? from,DateOnly? to,CancellationToken cancellationToken)=>ListAsync(catalogCode,cancellationToken);
+            DateOnly? from,DateOnly? to,CancellationToken cancellationToken, int dateRangeVersion=1)=>ListAsync(catalogCode,cancellationToken);
         public string? CatalogCode { get; private set; }
         public CreateReferenceOptionRequest? Created { get; private set; }
 

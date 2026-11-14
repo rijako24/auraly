@@ -247,20 +247,32 @@ public sealed class PosConfigurationTests
             var store = new PosCatalogStore($"Data Source={Path.Combine(directory, "catalog.db")}");
             await store.InitializeAsync();
             var bankId = Guid.NewGuid();
+            var form = new Auraly.Contracts.Catalog.PaymentMethodView(Guid.NewGuid(), "WIRE", "Banco configurado",
+                Guid.NewGuid(), "Transfer", "Transferencia", Guid.NewGuid(), "111005", "Banco configurado", bankId,
+                true, true, true, true, true, 10, 1, new byte[8]);
 
             await store.ApplySettlementConfigurationAsync(new(
                 true,
                 [new PosBankAccount(bankId, "Principal", "Banco prueba", "1234",
-                    "Corriente", true, "AQID")]));
+                    "Corriente", true, "AQID")],
+                new Auraly.Contracts.Catalog.PaymentMethodCatalogSnapshot(2, [form])));
 
-            var enabled = await store.SettlementConfigurationAsync();
+            var reopened = new PosCatalogStore($"Data Source={Path.Combine(directory, "catalog.db")}");
+            await reopened.InitializeAsync();
+            var enabled = await reopened.SettlementConfigurationAsync();
             Assert.True(enabled.IsAccountingEnabled);
             Assert.Equal(bankId, Assert.Single(enabled.BankAccounts).BankAccountId);
+            Assert.Equal(2, enabled.PaymentMethods!.ContractVersion);
+            var savedForm = Assert.Single(enabled.PaymentMethods.Forms);
+            Assert.Equal(form.PaymentMethodId, savedForm.PaymentMethodId);
+            Assert.Equal(form.AccountId, savedForm.AccountId);
+            Assert.Equal(form.RowVersion, savedForm.RowVersion);
 
             await store.ApplySettlementConfigurationAsync(new(false, []));
             var disabled = await store.SettlementConfigurationAsync();
             Assert.False(disabled.IsAccountingEnabled);
             Assert.Empty(disabled.BankAccounts);
+            Assert.Null(disabled.PaymentMethods);
         }
         finally
         {

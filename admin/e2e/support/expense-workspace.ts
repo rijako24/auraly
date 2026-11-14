@@ -4,7 +4,7 @@ const tenantId = "11111111-1111-1111-1111-111111111111", businessId = "22222222-
 const accountId = "44444444-4444-4444-4444-444444444444", supplierId = "55555555-5555-5555-5555-555555555555";
 const conceptId = "66666666-6666-6666-6666-666666666666";
 async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = true,
-  behavior: {holdPreview?: boolean; manageWithholdings?: boolean; rules?: object[];
+  behavior: {timeZone?: string; holdPreview?: boolean; manageWithholdings?: boolean; rules?: object[];
     supplierSearch?: string; supplierPolicy?: "InternalReceiptVoucher"} = {}) {
   const user = { userId: "33333333-3333-3333-3333-333333333333", tenantId, tenantKey: "@expense",
     username: "accountant", firstName: "Prueba", lastName: "Gastos", roles: [], permissions: ["expenses.read", "expenses.create", "expenses.configure", "expenses.cancel",
@@ -14,7 +14,7 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
     localStorage.setItem("selected_tenant_id", user.tenantId); localStorage.setItem("selected_business_id", businessId);
     localStorage.setItem("auth-state", JSON.stringify({ state: { isAuthenticated: true, user }, version: 0 }));
   }, { user, businessId });
-  const state = { preview: [] as Record<string, unknown>[], confirm: [] as Record<string, unknown>[], savedRules: [] as Record<string, unknown>[], supplierSearches: [] as string[], list: 0, accountReads: 0, conflict: false, canConfirm: true };
+  const state = { contextReads: 0, preview: [] as Record<string, unknown>[], confirm: [] as Record<string, unknown>[], savedRules: [] as Record<string, unknown>[], supplierSearches: [] as string[], list: 0, accountReads: 0, conflict: false, canConfirm: true };
   let releasePreview = () => {};
   const previewGate = new Promise<void>(resolve => { releasePreview = resolve; });
   await page.route("**/api/**", async route => {
@@ -22,7 +22,7 @@ async function openExpenses(page: Page, baseURL: string, enterSupplierInvoice = 
     let body: unknown = [], status = 200;
     if (path === "/api/auth/me") body = user;
     else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Empresa" }];
-    else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede" }];
+    else if (path.endsWith("/execution-context/businesses")) { state.contextReads++; body = [{ tenantId, businessId, name: "Sede", timeZone: behavior.timeZone ?? "America/Bogota" }]; }
     else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, permissions: user.permissions, roles: [] };
     else if (path.endsWith("/reference-options/accounting-withholding-kind")) body = [
       { id: "kind-income", code: "IncomeTax", label: "Retefuente", isActive: true, sortOrder: 10 },

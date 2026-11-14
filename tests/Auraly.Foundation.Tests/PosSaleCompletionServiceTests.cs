@@ -269,8 +269,10 @@ public sealed class PosSaleCompletionServiceTests
         });
     }
 
-    [Fact]
-    public async Task Server_authorized_credit_is_persisted_as_financing_not_received_money()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Server_authorized_credit_is_persisted_as_financing_not_received_money(bool configured)
     {
         await WithFixtureAsync(async fixture =>
         {
@@ -282,14 +284,13 @@ public sealed class PosSaleCompletionServiceTests
                 sellerId: null,
                 customerPartySiteId: Guid.NewGuid());
 
+            var terms = new PosSaleCreditTerms(customerId,10_000m,fixture.IssuedAt.AddDays(30),40_000m);
+            if(configured) terms = terms with {PaymentMethodId=Guid.NewGuid(),PaymentMethodVersion=2,
+                PaymentMethodCode="CRE",PaymentMethodName="Crédito comercial",AccountId=Guid.NewGuid()};
             var result = await fixture.CompleteAsync(
                 draft.DraftId,
                 payments: [],
-                credit: new PosSaleCreditTerms(
-                    customerId,
-                    10_000m,
-                    fixture.IssuedAt.AddDays(30),
-                    40_000m));
+                credit: terms);
 
             var pending = Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
             var upload = PosSaleContractSerializer.Deserialize(pending.Payload);
@@ -301,6 +302,9 @@ public sealed class PosSaleCompletionServiceTests
             var receiptCredit = Assert.Single(result.Receipt.Payments);
             Assert.Equal("Credit", receiptCredit.MethodCode);
             Assert.Equal(10_000m, receiptCredit.Amount);
+            Assert.Equal(terms.PaymentMethodId,upload.Credit.PaymentMethodId);
+            Assert.Equal(terms.PaymentMethodId,receiptCredit.PaymentMethodId);
+            Assert.Equal(terms.AccountId,receiptCredit.AccountId);
             Assert.NotNull(result.Receipt.CreditAcknowledgement);
             Assert.Equal(40_000m,
                 result.Receipt.CreditAcknowledgement.RemainingCredit);
@@ -383,7 +387,6 @@ public sealed class PosSaleCompletionServiceTests
         }
         finally
         {
-            SqliteConnection.ClearAllPools();
             Delete(path);
             Delete($"{path}-wal");
             Delete($"{path}-shm");
@@ -448,7 +451,7 @@ public sealed class PosSaleCompletionServiceTests
                 [CommercePermissionCodes.SalesCreate]);
             var confirmation = new ConfirmOfflineSaleService(
                 new PermissionAuthorizer(new FixedPermissionProvider(permissions)));
-            var connectionString = $"Data Source={path}";
+            var connectionString = new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString();
             var drafts = new PosDraftStore(connectionString, ids, TimeProvider.System);
             var issuance = new PosDraftIssuanceStore(connectionString, ids, TimeProvider.System);
             var sales = new PosEdgeSaleStore(connectionString, confirmation);

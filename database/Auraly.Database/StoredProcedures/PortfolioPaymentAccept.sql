@@ -26,30 +26,31 @@ BEGIN
       TenantId uniqueidentifier,BusinessId uniqueidentifier,ConfirmedBy uniqueidentifier,SessionId uniqueidentifier,
       Number nvarchar(40),SeriesId uniqueidentifier,Prefix nvarchar(8),SeriesCode nvarchar(16),Consecutive bigint,
       PaidAt datetimeoffset(7),Currency char(3),Notes nvarchar(1000),Total decimal(19,4),
-      AdvancePositionId uniqueidentifier,AdvanceAmount decimal(19,4),
+      AdvancePositionId uniqueidentifier,AdvanceAmount decimal(19,4),AdditionalConceptAmount decimal(19,4),
       ParentId uniqueidentifier,ParentType nvarchar(64),GroupId uniqueidentifier,
       Allocations nvarchar(max),Tenders nvarchar(max));
     INSERT @Headers
     SELECT paymentId,CASE WHEN @SubledgerKind=N'Payable' THEN supplierId ELSE customerId END,partyId,partySiteId,
       tenantId,businessId,confirmedByUserId,workSessionId,documentNumber,documentSeriesId,documentPrefix,
-      documentSeriesCode,documentConsecutive,paidAt,currencyCode,notes,totalAmount,advancePositionId,COALESCE(advanceAmount,0),
+      documentSeriesCode,documentConsecutive,paidAt,currencyCode,notes,totalAmount,advancePositionId,COALESCE(advanceAmount,0),COALESCE(additionalConceptAmount,0),
       parentSourceDocumentId,parentSourceDocumentType,sourceGroupId,allocations,payments
     FROM OPENJSON(@Groups) WITH(paymentId uniqueidentifier,supplierId uniqueidentifier,customerId uniqueidentifier,
       partyId uniqueidentifier,partySiteId uniqueidentifier,tenantId uniqueidentifier,businessId uniqueidentifier,confirmedByUserId uniqueidentifier,
       workSessionId uniqueidentifier,documentNumber nvarchar(40),documentSeriesId uniqueidentifier,
       documentPrefix nvarchar(8),documentSeriesCode nvarchar(16),documentConsecutive bigint,
       paidAt datetimeoffset(7),currencyCode char(3),notes nvarchar(1000),totalAmount decimal(19,4),
-      advancePositionId uniqueidentifier,advanceAmount decimal(19,4),
+      advancePositionId uniqueidentifier,advanceAmount decimal(19,4),additionalConceptAmount decimal(19,4),
       parentSourceDocumentId uniqueidentifier,parentSourceDocumentType nvarchar(64),sourceGroupId uniqueidentifier,
       allocations nvarchar(max) AS JSON,payments nvarchar(max) AS JSON);
     IF EXISTS(SELECT 1 FROM @Headers WHERE TenantId IS NULL OR TenantId<>@TenantId OR BusinessId IS NULL OR BusinessId<>@BusinessId
         OR ConfirmedBy IS NULL OR ConfirmedBy<>@UserId)
       THROW 51401,'The payment does not match its authenticated scope.',1;
-    IF EXISTS(SELECT 1 FROM @Headers WHERE Currency IS NULL OR Currency<>N'COP' OR Total IS NULL OR Total<=0 OR PaidAt IS NULL)
+    IF EXISTS(SELECT 1 FROM @Headers WHERE Currency IS NULL OR Currency<>N'COP' OR Total IS NULL OR Total<=0 OR PaidAt IS NULL
+        OR AdditionalConceptAmount<0 OR AdditionalConceptAmount>=Total)
       THROW 51400,'The payment amount, currency or date is invalid.',1;
     IF @Grouped=0 AND EXISTS(SELECT 1 FROM @Headers WHERE ParentId IS NOT NULL OR ParentType IS NOT NULL OR GroupId IS NOT NULL
         OR Number IS NULL OR SeriesId IS NULL OR Prefix IS NULL OR SeriesCode IS NULL OR Consecutive IS NULL
-        OR AdvancePositionId IS NOT NULL OR AdvanceAmount<>0 OR PartySiteId IS NOT NULL)
+        OR AdvancePositionId IS NOT NULL OR AdvanceAmount<>0 OR AdditionalConceptAmount<>0 OR PartySiteId IS NOT NULL)
       THROW 51400,'A native payment requires its own document number.',1;
     IF @Grouped=1
     BEGIN
@@ -71,17 +72,18 @@ BEGIN
         THROW 51401,'The payment groups require their accepted financial source, without child numbering.',1;
       DECLARE @FrozenGroups TABLE(GroupId uniqueidentifier PRIMARY KEY,PaymentId uniqueidentifier,
         Kind nvarchar(16),PartyId uniqueidentifier,RoleId uniqueidentifier,PartySiteId uniqueidentifier,
-        AdvancePositionId uniqueidentifier,AdvanceAmount decimal(19,4),Allocations nvarchar(max),Tenders nvarchar(max));
-      INSERT @FrozenGroups SELECT GroupId,PaymentId,SubledgerKind,PartyId,CounterpartyRoleId,PartySiteId,AdvancePositionId,COALESCE(AdvanceAmount,0),Allocations,Tenders
+        AdvancePositionId uniqueidentifier,AdvanceAmount decimal(19,4),AdditionalConceptAmount decimal(19,4),Allocations nvarchar(max),Tenders nvarchar(max));
+      INSERT @FrozenGroups SELECT GroupId,PaymentId,SubledgerKind,PartyId,CounterpartyRoleId,PartySiteId,AdvancePositionId,COALESCE(AdvanceAmount,0),COALESCE(AdditionalConceptAmount,0),Allocations,Tenders
         FROM OPENJSON(@ParentPayload,'$.FinancialEffects.Payments') WITH(GroupId uniqueidentifier,PaymentId uniqueidentifier,
           SubledgerKind nvarchar(16),PartyId uniqueidentifier,CounterpartyRoleId uniqueidentifier,PartySiteId uniqueidentifier,
-          AdvancePositionId uniqueidentifier,AdvanceAmount decimal(19,4),Allocations nvarchar(max) AS JSON,Tenders nvarchar(max) AS JSON);
+          AdvancePositionId uniqueidentifier,AdvanceAmount decimal(19,4),AdditionalConceptAmount decimal(19,4),Allocations nvarchar(max) AS JSON,Tenders nvarchar(max) AS JSON);
       IF EXISTS(SELECT 1 FROM @Headers h LEFT JOIN @FrozenGroups frozen ON frozen.GroupId=h.GroupId
           AND frozen.PaymentId=h.PaymentId AND frozen.Kind=@SubledgerKind
         WHERE frozen.GroupId IS NULL OR frozen.PartyId IS NULL OR h.PartyId IS NULL OR h.PartyId<>frozen.PartyId
           OR EXISTS(SELECT h.RoleId EXCEPT SELECT frozen.RoleId)
           OR EXISTS(SELECT h.PartySiteId EXCEPT SELECT frozen.PartySiteId)
           OR h.AdvanceAmount<>frozen.AdvanceAmount
+          OR h.AdditionalConceptAmount<>frozen.AdditionalConceptAmount
           OR h.AdvanceAmount<0 OR h.AdvanceAmount>h.Total
           OR (h.AdvanceAmount=0 AND h.AdvancePositionId IS NOT NULL)
           OR (h.AdvanceAmount>0 AND (h.AdvancePositionId IS NULL OR frozen.AdvancePositionId IS NULL
@@ -117,7 +119,7 @@ BEGIN
         financialDiscountEarned bit) input;
     IF EXISTS(SELECT 1 FROM @Headers h OUTER APPLY(SELECT COUNT(*) Count,SUM(Amount) Total FROM @Input WHERE PaymentId=h.PaymentId) lines
         WHERE lines.Count NOT BETWEEN CASE WHEN h.AdvanceAmount>0 THEN 0 ELSE 1 END AND 100
-          OR COALESCE(lines.Total,0)+h.AdvanceAmount<>h.Total)
+          OR COALESCE(lines.Total,0)+h.AdvanceAmount+h.AdditionalConceptAmount<>h.Total)
       OR EXISTS(SELECT 1 FROM @Input WHERE Amount IS NULL OR Amount<=0 OR LineNumber<1 OR PositionId IS NULL)
       OR (@Grouped=1 AND ((SELECT COUNT(*) FROM @Input)>500 OR EXISTS(SELECT 1 FROM @Input WHERE SourceLineId IS NULL)))
       THROW 51400,'The payment allocation batch is invalid.',1;
@@ -233,29 +235,48 @@ BEGIN
     DECLARE @Methods TABLE(PaymentId uniqueidentifier,LineNumber int,MethodCode nvarchar(32),Amount decimal(19,4),
       TenderedAmount decimal(19,4),BankAccountId uniqueidentifier,Reference nvarchar(160),Notes nvarchar(500),
       CardFranchiseCode nvarchar(64),ApprovalNumber nvarchar(100),AccountId uniqueidentifier,SourceLineId uniqueidentifier,
+      PaymentMethodId uniqueidentifier,PaymentMethodVersion int,PaymentMethodCode nvarchar(64),PaymentMethodName nvarchar(160),
       PRIMARY KEY(PaymentId,LineNumber));
     INSERT @Methods SELECT h.PaymentId,method.* FROM @Headers h CROSS APPLY OPENJSON(h.Tenders)
       WITH(lineNumber int,methodCode nvarchar(32),amount decimal(19,4),tenderedAmount decimal(19,4),bankAccountId uniqueidentifier,
         reference nvarchar(160),notes nvarchar(500),cardFranchiseCode nvarchar(64),approvalNumber nvarchar(100),
-        accountId uniqueidentifier,sourceLineId uniqueidentifier) method;
+        accountId uniqueidentifier,sourceLineId uniqueidentifier,paymentMethodId uniqueidentifier,
+        paymentMethodVersion int,paymentMethodCode nvarchar(64),paymentMethodName nvarchar(160)) method;
     IF EXISTS(SELECT 1 FROM @Headers h OUTER APPLY(SELECT COUNT(*) Count,SUM(Amount) Total FROM @Methods WHERE PaymentId=h.PaymentId) methods
         WHERE methods.Count NOT BETWEEN 1 AND 10 OR methods.Total<>h.Total)
       OR EXISTS(SELECT 1 FROM @Methods WHERE Amount IS NULL OR Amount<=0 OR LineNumber<1)
       OR (@Grouped=1 AND EXISTS(SELECT 1 FROM @Methods WHERE AccountId IS NULL OR SourceLineId IS NULL))
-      OR (@Grouped=0 AND EXISTS(SELECT 1 FROM @Methods WHERE AccountId IS NOT NULL OR SourceLineId IS NOT NULL))
+      OR (@Grouped=0 AND EXISTS(SELECT 1 FROM @Methods WHERE (AccountId IS NOT NULL AND PaymentMethodId IS NULL) OR SourceLineId IS NOT NULL))
       THROW 51400,'The payment methods do not match the accepted amount.',1;
+    IF EXISTS(SELECT 1 FROM @Methods method WHERE method.PaymentMethodId IS NOT NULL AND NOT EXISTS(
+        SELECT 1 FROM reference.PaymentMethodDetails form
+        WHERE form.TenantId=@TenantId AND form.PaymentMethodId=method.PaymentMethodId
+          AND form.IsActive=1 AND form.IsReady=1 AND form.MethodCode=method.MethodCode
+          AND EXISTS(SELECT 1 FROM dbo.AccountingAccounts account WHERE account.AccountId=form.AccountId
+            AND account.TenantId=@TenantId)
+          AND EXISTS(SELECT 1 FROM accounting.PaymentMethodAccountReadiness(@TenantId,method.MethodCode,form.AccountId) ready
+            WHERE ready.SourceType=CASE WHEN @SubledgerKind=N'Payable' THEN N'SupplierPaymentMethod' ELSE N'CustomerPaymentMethod' END)
+          AND ((@Grouped=0 AND form.Version=method.PaymentMethodVersion AND method.AccountId IS NULL
+            AND form.Code=method.PaymentMethodCode AND form.Name=method.PaymentMethodName
+            AND ((@SubledgerKind=N'Receivable' AND form.UseForReceipts=1) OR (@SubledgerKind=N'Payable' AND form.UseForSupplierPayments=1)))
+            OR (@Grouped=1 AND method.AccountId IS NOT NULL AND
+              CASE JSON_VALUE(@ParentPayload,'$.VoucherTypeCode') WHEN N'CashReceipt' THEN form.UseForReceipts
+                WHEN N'Disbursement' THEN form.UseForSupplierPayments ELSE form.UseForVouchers END=1))))
+      THROW 51401,N'La forma de pago no coincide con su configuración autorizada.',1;
     IF @Grouped=1
     BEGIN
       DECLARE @ExpectedMethods TABLE(PaymentId uniqueidentifier,LineNumber int,MethodCode nvarchar(32),Amount decimal(19,4),
         TenderedAmount decimal(19,4),BankAccountId uniqueidentifier,Reference nvarchar(160),Notes nvarchar(500),
         CardFranchiseCode nvarchar(64),ApprovalNumber nvarchar(100),AccountId uniqueidentifier,SourceLineId uniqueidentifier,
+      PaymentMethodId uniqueidentifier,PaymentMethodVersion int,PaymentMethodCode nvarchar(64),PaymentMethodName nvarchar(160),
         PRIMARY KEY(PaymentId,LineNumber));
       INSERT @ExpectedMethods SELECT frozen.PaymentId,CONVERT(int,item.[key])+1,value.*
       FROM @FrozenGroups frozen JOIN @Headers header ON header.PaymentId=frozen.PaymentId AND header.GroupId=frozen.GroupId
       CROSS APPLY OPENJSON(frozen.Tenders) item
       CROSS APPLY OPENJSON(item.value) WITH(MethodCode nvarchar(32),Amount decimal(19,4),TenderedAmount decimal(19,4),
         BankAccountId uniqueidentifier,Reference nvarchar(160),Notes nvarchar(500),CardFranchiseCode nvarchar(64),
-        ApprovalNumber nvarchar(100),AccountId uniqueidentifier,SourceLineId uniqueidentifier) value;
+        ApprovalNumber nvarchar(100),AccountId uniqueidentifier,SourceLineId uniqueidentifier,PaymentMethodId uniqueidentifier,
+        PaymentMethodVersion int,PaymentMethodCode nvarchar(64),PaymentMethodName nvarchar(160)) value;
       IF EXISTS(SELECT * FROM @Methods EXCEPT SELECT * FROM @ExpectedMethods)
         OR EXISTS(SELECT * FROM @ExpectedMethods EXCEPT SELECT * FROM @Methods)
         THROW 51401,N'La evidencia de pago no coincide con el comprobante padre.',1;
@@ -269,7 +290,7 @@ BEGIN
       THROW 51401,'A selected bank account is not active for this tenant.',1;
     IF EXISTS(SELECT 1 FROM @Methods input WHERE input.AccountId IS NOT NULL AND NOT EXISTS(
         SELECT 1 FROM dbo.AccountingAccounts account WHERE account.AccountId=input.AccountId AND account.TenantId=@TenantId
-          AND account.IsActive=1 AND account.AllowsPosting=1 AND (account.BusinessId IS NULL OR account.BusinessId=@BusinessId)))
+          AND account.IsActive=1 AND account.AllowsPosting=1))
       THROW 51401,'A selected treasury auxiliary is not active for this business.',1;
 
     -- Stable source identity marks the new native contract. Historical tenders
@@ -283,10 +304,11 @@ BEGIN
         Notes,TotalAmount,Status,ConfirmedByUserId,AcceptedAt,ParentSourceDocumentId,ParentSourceDocumentType,SourceGroupId,PartySiteId)
       SELECT PaymentId,@BusinessId,RoleId,SessionId,SeriesId,Number,Prefix,SeriesCode,Consecutive,
         CASE WHEN @Grouped=1 THEN CONCAT(N'manual:',CONVERT(nvarchar(36),ParentId),N':',CONVERT(nvarchar(36),GroupId)) ELSE @IdempotencyKey END,
-        @PayloadHash,PaidAt,Currency,Notes,Total,N'Accepted',@UserId,@AcceptedAt,ParentId,ParentType,GroupId,PartySiteId FROM @Headers;
+        @PayloadHash,CASE WHEN @Grouped=0 THEN SWITCHOFFSET(PaidAt,'+00:00') ELSE PaidAt END,
+        Currency,Notes,Total,N'Accepted',@UserId,@AcceptedAt,ParentId,ParentType,GroupId,PartySiteId FROM @Headers;
       INSERT dbo.SupplierPaymentTenders(PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,BankAccountId,
-        Reference,Notes,CardFranchiseCode,ApprovalNumber,AccountId,SourceLineId)
-      SELECT PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,BankAccountId,Reference,Notes,CardFranchiseCode,ApprovalNumber,AccountId,SourceLineId FROM @Methods;
+        Reference,Notes,CardFranchiseCode,ApprovalNumber,AccountId,SourceLineId,PaymentMethodId,PaymentMethodVersion,PaymentMethodCode,PaymentMethodName)
+      SELECT PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,BankAccountId,Reference,Notes,CardFranchiseCode,ApprovalNumber,AccountId,SourceLineId,PaymentMethodId,PaymentMethodVersion,PaymentMethodCode,PaymentMethodName FROM @Methods;
       INSERT dbo.SupplierPaymentApplications(PaymentId,LineNumber,PayableId,Amount,
         FinancialDiscountEarned,FinancialDiscountAdjustment)
       SELECT PaymentId,LineNumber,PositionId,Amount,FinancialDiscountEarned,FinancialDiscountAdjustment FROM @Input;
@@ -298,10 +320,11 @@ BEGIN
         Notes,TotalAmount,Status,ConfirmedByUserId,AcceptedAt,ParentSourceDocumentId,ParentSourceDocumentType,SourceGroupId,PartySiteId)
       SELECT PaymentId,@BusinessId,RoleId,CASE WHEN RoleId IS NULL THEN PartyId END,SessionId,SeriesId,Number,Prefix,SeriesCode,Consecutive,
         CASE WHEN @Grouped=1 THEN CONCAT(N'manual:',CONVERT(nvarchar(36),ParentId),N':',CONVERT(nvarchar(36),GroupId)) ELSE @IdempotencyKey END,
-        @PayloadHash,PaidAt,Currency,Notes,Total,N'Accepted',@UserId,@AcceptedAt,ParentId,ParentType,GroupId,PartySiteId FROM @Headers;
+        @PayloadHash,CASE WHEN @Grouped=0 THEN SWITCHOFFSET(PaidAt,'+00:00') ELSE PaidAt END,
+        Currency,Notes,Total,N'Accepted',@UserId,@AcceptedAt,ParentId,ParentType,GroupId,PartySiteId FROM @Headers;
       INSERT dbo.CustomerPaymentTenders(PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,BankAccountId,
-        Reference,Notes,CardFranchiseCode,ApprovalNumber,AccountId,SourceLineId)
-      SELECT PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,BankAccountId,Reference,Notes,CardFranchiseCode,ApprovalNumber,AccountId,SourceLineId FROM @Methods;
+        Reference,Notes,CardFranchiseCode,ApprovalNumber,AccountId,SourceLineId,PaymentMethodId,PaymentMethodVersion,PaymentMethodCode,PaymentMethodName)
+      SELECT PaymentId,LineNumber,MethodCode,Amount,TenderedAmount,BankAccountId,Reference,Notes,CardFranchiseCode,ApprovalNumber,AccountId,SourceLineId,PaymentMethodId,PaymentMethodVersion,PaymentMethodCode,PaymentMethodName FROM @Methods;
       INSERT dbo.CustomerPaymentApplications(PaymentId,LineNumber,ReceivableId,Amount)
       SELECT PaymentId,LineNumber,PositionId,Amount FROM @Input;
     END

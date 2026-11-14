@@ -27,7 +27,6 @@ AS RETURN
                   CASE @SubledgerKind WHEN N'SupplierCredit' THEN N'SupplierAdvance' WHEN N'CustomerCredit' THEN N'CustomerAdvance' ELSE @SubledgerKind END)
                 THEN N'El vínculo de apertura requiere revisión antes de aplicar esta obligación.'
             WHEN account.IsActive=0 OR account.AllowsPosting=0
-                OR (account.BusinessId IS NOT NULL AND account.BusinessId<>@BusinessId)
                 THEN N'La cuenta de apertura no está activa y disponible para movimientos en esta sede.'
         END Issue,entry.OccurredAt OpeningOccurredAt
     FROM (VALUES(0)) anchor(Value)

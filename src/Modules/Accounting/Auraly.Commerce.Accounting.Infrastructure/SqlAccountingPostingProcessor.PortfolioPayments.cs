@@ -21,6 +21,9 @@ public sealed partial class SqlAccountingPostingProcessor
         AccountingJournal.ValidateIdentifiedSourceLines(request.Lines.Select(line => line.LineId));
         var raw = request.Lines.ToDictionary(line => line.LineId!.Value);
         var claimed = new HashSet<Guid>();
+        var acceptedConceptIds = effects.Concepts?.Select(item => item.FinancialConceptId).ToHashSet() ?? [];
+        var groupedConceptLines = request.Lines.Where(line => line.FinancialConceptId is not null)
+            .ToLookup(line => line.FinancialGroupId);
         var unapplications = effects.Unapplications ?? [];
         var cancellation = request.VoucherTypeCode == "SupportDocumentCancellation";
         if (request.VoucherTypeCode == "SupportDocument" && (request.FiscalCapture is null || request.MainPartyId is null ||
@@ -32,7 +35,8 @@ public sealed partial class SqlAccountingPostingProcessor
             effects.Positions.Count != 1 || effects.Payments.Count != 0 || effects.CreditApplications.Count != 0 ||
             effects.DirectMovements.Count != 0 || unapplications.Count != 0 || request.WorkSessionId is not null))
             throw new InvalidOperationException("The support cancellation must reverse its original obligation without money or other effects.");
-        ValidateAcceptedCreditApplications(request, effects, raw, claimed);
+        var adjustmentAmounts = ValidateAcceptedConceptAdjustments(request, effects, raw, claimed, acceptedConceptIds);
+        ValidateAcceptedCreditApplications(request, effects, raw, claimed, adjustmentAmounts);
         ValidateAcceptedUnapplications(request, effects, raw, claimed);
         foreach (var movement in effects.DirectMovements)
         {
@@ -45,12 +49,13 @@ public sealed partial class SqlAccountingPostingProcessor
         }
         foreach (var opening in effects.Positions)
         {
+            if (opening.EffectKind == "Adjustment") continue;
             if (cancellation)
             {
                 if (opening.EffectKind != "Cancellation" || opening.SubledgerKind != AccountingSubledgerKinds.Payable ||
                     opening.EffectId == Guid.Empty || opening.PositionId == Guid.Empty || opening.CounterpartyRoleId is null ||
                     opening.PartySiteId is null || opening.PartyId != request.MainPartyId || opening.Amount <= 0 ||
-                    opening.GroupId != opening.SourceLineId || !claimed.Add(opening.SourceLineId) ||
+                    opening.GroupId != opening.SourceLineId || opening.TargetSourceLineId is not null || !claimed.Add(opening.SourceLineId) ||
                     !raw.TryGetValue(opening.SourceLineId, out var reversed) || reversed.AccountId != opening.AccountId ||
                     reversed.PartyId != opening.PartyId || reversed.PartySiteId != opening.PartySiteId ||
                     reversed.Debit != opening.Amount || reversed.Credit != 0 ||
@@ -64,7 +69,7 @@ public sealed partial class SqlAccountingPostingProcessor
             var advance = opening.SubledgerKind is "SupplierCredit" or "CustomerCredit";
             var creditSide = payable || opening.SubledgerKind == "CustomerCredit";
             if (opening.EffectKind != "Open" || opening.SubledgerKind is not (AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable or "SupplierCredit" or "CustomerCredit") ||
-                !advance && request.VoucherTypeCode is not ("Accounting" or "SupportDocument") || opening.EffectId == Guid.Empty || opening.PositionId == Guid.Empty ||
+                !advance && request.VoucherTypeCode is not ("Accounting" or "CashReceipt" or "SupportDocument") || opening.TargetSourceLineId is not null || opening.EffectId == Guid.Empty || opening.PositionId == Guid.Empty ||
                 opening.SubledgerKind is (AccountingSubledgerKinds.Payable or "SupplierCredit") && opening.CounterpartyRoleId is null ||
                 opening.CounterpartyRoleId is not null && opening.PartySiteId is null ||
                 opening.CounterpartyRoleId is null && opening.PartySiteId is not null || opening.PartyId == Guid.Empty ||
@@ -84,7 +89,7 @@ public sealed partial class SqlAccountingPostingProcessor
         {
             if (group.PaymentId == Guid.Empty || group.GroupId == Guid.Empty ||
                 group.SubledgerKind is not (AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.Receivable) ||
-                group.Allocations is null || group.Tenders is null ||
+                group.Allocations is null || group.Tenders is null || group.AdditionalConceptAmount is <= 0m ||
                 (group.AdvancePositionId is null ? group.AdvanceAmount != 0 : group.AdvanceAmount <= 0 ||
                     !effects.Positions.Any(item => item.PositionId == group.AdvancePositionId && item.GroupId == group.GroupId &&
                         item.SubledgerKind == (group.SubledgerKind == AccountingSubledgerKinds.Payable ? "SupplierCredit" : "CustomerCredit"))) ||
@@ -96,7 +101,7 @@ public sealed partial class SqlAccountingPostingProcessor
                 if (!claimed.Add(item.SourceLineId) || !raw.TryGetValue(item.SourceLineId, out var line) ||
                     line.AccountId != item.AccountId || line.PartyId != group.PartyId ||
                     line.ExistingPosition is not { } target || target.SubledgerKind != group.SubledgerKind || target.SubledgerId != item.SubledgerId ||
-                    item.Amount <= 0 || item.Amount + item.FinancialDiscountAdjustment != (payable ? line.Debit : line.Credit) ||
+                    item.Amount <= 0 || item.Amount + item.FinancialDiscountAdjustment + adjustmentAmounts.GetValueOrDefault(item.SourceLineId) != (payable ? line.Debit : line.Credit) ||
                     item.FinancialDiscountEarned != line.FinancialDiscountEarned ||
                     (!payable && (item.FinancialDiscountEarned is not null || item.FinancialDiscountAdjustment != 0m)) ||
                     (payable ? line.Credit : line.Debit) != 0 ||
@@ -112,18 +117,33 @@ public sealed partial class SqlAccountingPostingProcessor
                     line.FinancialGroupId is { } capturedGroup && capturedGroup != group.GroupId)
                     throw new InvalidOperationException("An accepted tender does not match its immutable source line.");
             }
+            // Prove the normalized additional amount against explicit concept
+            // lines, without consulting the live catalogue or reclassifying it.
+            var counterparts = groupedConceptLines[group.GroupId].Where(line => !claimed.Contains(line.LineId!.Value)).ToArray();
+            if (counterparts.Sum(line => payable ? line.Debit : line.Credit) != (group.AdditionalConceptAmount ?? 0m) ||
+                counterparts.Any(line => line.PartyId != group.PartyId || line.ExistingPosition is not null ||
+                    line.PaymentEvidence is not null || line.DueDate is not null || line.FinancialDiscountEarned is not null ||
+                    !acceptedConceptIds.Contains(line.FinancialConceptId!.Value) ||
+                    (payable ? line.Debit <= 0m || line.Credit != 0m : line.Credit <= 0m || line.Debit != 0m)))
+                throw new InvalidOperationException("The accepted additional concepts differ from their immutable source lines.");
+            foreach (var line in counterparts) claimed.Add(line.LineId!.Value);
         }
-        if (request.Lines.Any(line => line.ExistingPosition is not null && !claimed.Contains(line.LineId!.Value)) ||
+        foreach (var target in adjustmentAmounts)
+            if (!claimed.Contains(target.Key) && (raw[target.Key].Debit + raw[target.Key].Credit != target.Value ||
+                raw[target.Key].FinancialDiscountEarned is not null || !claimed.Add(target.Key)))
+                throw new InvalidOperationException("The accepted adjustment does not cover its otherwise unclaimed obligation line.");
+        if (request.Lines.Any(line => (line.ExistingPosition is not null || line.FinancialConceptTargetLineId is not null) && !claimed.Contains(line.LineId!.Value)) ||
             effects.DirectMovements.Select(item => item.MovementId).Distinct().Count() != effects.DirectMovements.Count ||
             effects.DirectMovements.Any(item => effects.Payments.Any(group => group.GroupId == item.GroupId)) ||
             effects.Payments.Select(group => group.GroupId).Distinct().Count() != effects.Payments.Count ||
             effects.Payments.Select(group => group.PaymentId).Distinct().Count() != effects.Payments.Count ||
-            effects.Positions.Select(item => item.PositionId).Distinct().Count() != effects.Positions.Count ||
+            effects.Positions.Where(item => item.EffectKind != "Adjustment").Select(item => item.PositionId).Distinct().Count()
+                != effects.Positions.Count(item => item.EffectKind != "Adjustment") ||
             effects.Positions.Select(item => item.EffectId).Concat(effects.CreditApplications.Select(item => item.EffectId))
                 .Concat(unapplications.Select(item => item.EffectId)).Distinct().Count()
                 != effects.Positions.Count + effects.CreditApplications.Count + unapplications.Count)
             throw new InvalidOperationException("The financial voucher has unclaimed or repeated effects.");
-        if (effects.CreditApplications.Count > 0 || unapplications.Count > 0 || cancellation)
+        if (effects.CreditApplications.Count > 0 || unapplications.Count > 0 || cancellation || adjustmentAmounts.Count > 0)
             await LockManualFinancialPositionsAsync(connection, transaction, source, token);
         if (cancellation)
             await ApplyManualSupportCancellationAsync(connection, transaction, source, effects.Positions.Single(), token);
@@ -134,12 +154,16 @@ public sealed partial class SqlAccountingPostingProcessor
                     opening.PartySiteId, source.DocumentId, source.DocumentType, opening.SourceLineId,
                     opening.DocumentReference!, request.CurrencyCode, opening.Amount, opening.Amount, 1m,
                     null, opening.DueDate!.Value, source.OccurredAt)).ToArray(), token);
-        var receivableOpenings = effects.Positions.Where(item => item.SubledgerKind == AccountingSubledgerKinds.Receivable).ToArray();
+        var receivableOpenings = effects.Positions.Where(item => item.EffectKind == "Open" && item.SubledgerKind == AccountingSubledgerKinds.Receivable).ToArray();
         if (receivableOpenings.Length > 0)
             await OpenManualReceivablesAsync(connection, transaction, source, receivableOpenings, token);
         var creditOpenings = effects.Positions.Where(item => item.SubledgerKind is "SupplierCredit" or "CustomerCredit").ToArray();
         if (creditOpenings.Length > 0)
             await OpenManualCreditsAsync(connection, transaction, source, creditOpenings, token);
+        foreach (var kind in new[] { AccountingSubledgerKinds.Payable, AccountingSubledgerKinds.Receivable })
+            await ApplyPortfolioAdjustmentsAsync(connection, transaction, source, kind,
+                effects.Positions.Where(item => item.EffectKind == "Adjustment" && item.SubledgerKind == kind)
+                    .Select(item => new PortfolioAdjustment(item.EffectId, item.PositionId, -item.Amount, item.SourceLineId)).ToArray(), token);
         await ApplyDirectionAsync(AccountingSubledgerKinds.Payable);
         await ApplyDirectionAsync(AccountingSubledgerKinds.Receivable);
         var discountedPayments = effects.Payments.Where(group => group.SubledgerKind == AccountingSubledgerKinds.Payable &&
@@ -161,6 +185,9 @@ public sealed partial class SqlAccountingPostingProcessor
                 .Select(item => item.CounterpartyRoleId!.Value))
             .Concat(creditCustomers)
             .Concat(unapplicationCustomers)
+            .Concat(effects.Positions.Where(item => item.EffectKind == "Adjustment" &&
+                item.SubledgerKind == AccountingSubledgerKinds.Receivable && item.CounterpartyRoleId.HasValue)
+                .Select(item => item.CounterpartyRoleId!.Value))
             .Distinct().ToArray();
 
         async Task ApplyDirectionAsync(string kind)
@@ -174,7 +201,8 @@ public sealed partial class SqlAccountingPostingProcessor
                     group.Allocations.Select((item, index) => new PortfolioAllocation(index + 1, item.SubledgerId, item.Amount,
                         item.FinancialDiscountEarned is null ? null : item.FinancialDiscountAdjustment)).ToArray(),
                     group.Tenders.Select((item, index) => new PortfolioTender(index + 1, item.MethodCode, item.Amount, item.Reference)).ToArray(),
-                    source.DocumentId, source.DocumentType, group.GroupId, group.AdvanceAmount)).ToArray(), token);
+                    source.DocumentId, source.DocumentType, group.GroupId, group.AdvanceAmount,
+                    group.AdditionalConceptAmount ?? 0m)).ToArray(), token);
         }
     }
 
@@ -284,20 +312,31 @@ public sealed partial class SqlAccountingPostingProcessor
         if (!acceptedEffects.GetProperty("Payments").EnumerateArray().Any(group => group.GetProperty("Allocations").GetArrayLength() > 0)
             && acceptedEffects.GetProperty("CreditApplications").GetArrayLength() == 0
             && !acceptedEffects.GetProperty("Positions").EnumerateArray().Any(position =>
-                position.GetProperty("EffectKind").GetString() == "Cancellation")
+                position.GetProperty("EffectKind").GetString() is "Cancellation" or "Adjustment")
             && (!acceptedEffects.TryGetProperty("Unapplications", out var reversalsCapture) ||
                 reversalsCapture.ValueKind == JsonValueKind.Null || reversalsCapture.GetArrayLength() == 0))
             return FinancialFactsResult.Ready(facts);
         await using var command = new SqlCommand("""
+            DECLARE @SourceLines TABLE(LineId uniqueidentifier PRIMARY KEY,AccountId uniqueidentifier,
+              PartyId uniqueidentifier,FinancialConceptTargetLineId uniqueidentifier);
+            INSERT @SourceLines SELECT LineId,AccountId,PartyId,FinancialConceptTargetLineId FROM OPENJSON(@Payload,'$.Lines')
+              WITH(LineId uniqueidentifier,AccountId uniqueidentifier,PartyId uniqueidentifier,FinancialConceptTargetLineId uniqueidentifier);
+            -- Materialize the canonical parser once. Joining its expanded JSON
+            -- expression directly can reparse a large payload for every line.
+            DECLARE @Targets TABLE(SubledgerKind nvarchar(16),SubledgerId uniqueidentifier,
+              SourceLineId uniqueidentifier,EffectKind nvarchar(24));
+            INSERT @Targets SELECT SubledgerKind,SubledgerId,SourceLineId,EffectKind
+              FROM accounting.ManualVoucherCreditTargets(@Payload);
             DECLARE @Positions TABLE(Kind nvarchar(16),PositionId uniqueidentifier,AccountId uniqueidentifier,PartyId uniqueidentifier,
               PRIMARY KEY(Kind,PositionId,AccountId,PartyId));
             INSERT @Positions SELECT payment.SubledgerKind,input.SubledgerId,input.AccountId,payment.PartyId
               FROM OPENJSON(@Payload,'$.FinancialEffects.Payments') WITH(SubledgerKind nvarchar(16),PartyId uniqueidentifier,Allocations nvarchar(max) AS JSON) payment
               CROSS APPLY OPENJSON(payment.Allocations) WITH(SubledgerId uniqueidentifier,AccountId uniqueidentifier) input
               UNION SELECT target.SubledgerKind,target.SubledgerId,line.AccountId,line.PartyId
-              FROM accounting.ManualVoucherCreditTargets(@Payload) target
-              JOIN OPENJSON(@Payload,'$.Lines') WITH(LineId uniqueidentifier,AccountId uniqueidentifier,PartyId uniqueidentifier) line
-                ON line.LineId=target.SourceLineId;
+              FROM @Targets target
+              JOIN @SourceLines captured ON captured.LineId=target.SourceLineId
+              JOIN @SourceLines line ON line.LineId=CASE WHEN target.EffectKind=N'Adjustment'
+                THEN captured.FinancialConceptTargetLineId ELSE captured.LineId END;
             SELECT TOP(1) Issue FROM(
               SELECT COALESCE(opening.Issue,CASE WHEN opening.AccountId<>input.AccountId OR party.PartyId<>input.PartyId
                   THEN N'La aplicación ya no corresponde al auxiliar original de la obligación.' END) Issue
@@ -343,7 +382,7 @@ public sealed partial class SqlAccountingPostingProcessor
         DateTimeOffset PaidAt, Guid ConfirmedByUserId, string CurrencyCode,
         IReadOnlyList<PortfolioAllocation> Allocations, IReadOnlyList<PortfolioTender> Tenders,
         Guid? ParentSourceDocumentId = null, string? ParentSourceDocumentType = null, Guid? SourceGroupId = null,
-        decimal AdvanceAmount = 0m);
+        decimal AdvanceAmount = 0m, decimal AdditionalConceptAmount = 0m);
 
     private sealed record PortfolioAllocation(int LineNumber, Guid PositionId, decimal Amount,
         decimal? ExpectedFinancialDiscountAdjustment = null);
@@ -398,13 +437,13 @@ public sealed partial class SqlAccountingPostingProcessor
             DECLARE @Payments TABLE(PaymentId uniqueidentifier PRIMARY KEY,RoleId uniqueidentifier,PartyId uniqueidentifier,
               WorkSessionId uniqueidentifier,PaidAt datetimeoffset(7),ConfirmedByUserId uniqueidentifier,CurrencyCode char(3),
               ParentSourceDocumentId uniqueidentifier,ParentSourceDocumentType nvarchar(64),SourceGroupId uniqueidentifier,
-              AdvanceAmount decimal(19,4),
+              AdvanceAmount decimal(19,4),AdditionalConceptAmount decimal(19,4),
               Allocations nvarchar(max),Tenders nvarchar(max));
             INSERT @Payments SELECT * FROM OPENJSON(@Rows) WITH(
               PaymentId uniqueidentifier,RoleId uniqueidentifier,PartyId uniqueidentifier,WorkSessionId uniqueidentifier,
               PaidAt datetimeoffset(7),ConfirmedByUserId uniqueidentifier,CurrencyCode char(3),
               ParentSourceDocumentId uniqueidentifier,ParentSourceDocumentType nvarchar(64),SourceGroupId uniqueidentifier,
-              AdvanceAmount decimal(19,4),
+              AdvanceAmount decimal(19,4),AdditionalConceptAmount decimal(19,4),
               Allocations nvarchar(max) AS JSON,Tenders nvarchar(max) AS JSON);
             IF (SELECT COUNT(*) FROM @Payments)<>@PaymentCount
               THROW 51607,'The accepted payment batch is incomplete.',1;
@@ -439,6 +478,8 @@ public sealed partial class SqlAccountingPostingProcessor
               (SELECT COUNT(*) FROM @Allocations input WHERE input.PaymentId=payment.PaymentId) NOT BETWEEN
                 CASE WHEN payment.AdvanceAmount>0 AND payment.ParentSourceDocumentId IS NOT NULL THEN 0 ELSE 1 END AND 100
                 OR payment.AdvanceAmount IS NULL OR payment.AdvanceAmount<0
+                OR payment.AdditionalConceptAmount IS NULL OR payment.AdditionalConceptAmount<0
+                OR payment.AdditionalConceptAmount<>0 AND payment.ParentSourceDocumentId IS NULL
                 OR payment.AdvanceAmount>0 AND payment.ParentSourceDocumentId IS NULL)
               OR EXISTS(SELECT 1 FROM @Allocations WHERE LineNumber<=0 OR Amount<=0 OR TransactionId IS NULL)
               THROW 51607,'The accepted payment allocations are invalid.',1;
@@ -462,7 +503,7 @@ public sealed partial class SqlAccountingPostingProcessor
                 AND input.ExpectedFinancialDiscountAdjustment<>COALESCE(ready.FinancialDiscountAdjustment,0))
               THROW 51607,'The accepted discount decision changed after payment acceptance.',1;
             IF EXISTS(SELECT 1 FROM @Payments payment JOIN dbo.[{paymentTable}] header ON header.PaymentId=payment.PaymentId
-              WHERE header.TotalAmount<>payment.AdvanceAmount+COALESCE((SELECT SUM(input.Amount) FROM @Ready input WHERE input.PaymentId=payment.PaymentId),0)
+              WHERE header.TotalAmount<>payment.AdvanceAmount+payment.AdditionalConceptAmount+COALESCE((SELECT SUM(input.Amount) FROM @Ready input WHERE input.PaymentId=payment.PaymentId),0)
                 OR (SELECT COUNT(*) FROM dbo.[{applicationTable}] application WHERE application.PaymentId=payment.PaymentId)
                   <>(SELECT COUNT(*) FROM @Ready input WHERE input.PaymentId=payment.PaymentId))
               THROW 51607,'The payment does not match all its accepted applications.',1;
@@ -517,7 +558,7 @@ public sealed partial class SqlAccountingPostingProcessor
             payment.PaymentId, payment.RoleId, payment.PartyId, payment.WorkSessionId, payment.PaidAt,
             payment.ConfirmedByUserId, payment.CurrencyCode, payment.ParentSourceDocumentId,
             payment.ParentSourceDocumentType, payment.SourceGroupId,
-            payment.AdvanceAmount,
+            payment.AdvanceAmount, payment.AdditionalConceptAmount,
             Allocations = payment.Allocations.Select(item => new { item.LineNumber, item.PositionId, item.Amount,
                 item.ExpectedFinancialDiscountAdjustment, TransactionId = ids.NewId() }),
             Tenders = payment.Tenders.Select(item => new

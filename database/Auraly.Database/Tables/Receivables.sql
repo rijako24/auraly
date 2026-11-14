@@ -3,6 +3,7 @@ CREATE TABLE [dbo].[CustomerCreditProfiles]
     [CustomerId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [CreditLimit] DECIMAL(19,4) NULL,
+    [MaximumOverdueInvoices] INT NULL,
     [DefaultDueDays] INT NOT NULL DEFAULT 0,
     [IsCreditEnabled] BIT NOT NULL DEFAULT 0,
     [UpdatedByUserId] UNIQUEIDENTIFIER NOT NULL,
@@ -13,6 +14,7 @@ CREATE TABLE [dbo].[CustomerCreditProfiles]
     CONSTRAINT [FK_CustomerCreditProfiles_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_CustomerCreditProfiles_Users] FOREIGN KEY ([UpdatedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [CK_CustomerCreditProfiles_Limit] CHECK ([CreditLimit] IS NULL OR [CreditLimit] >= 0),
+    CONSTRAINT [CK_CustomerCreditProfiles_OverdueLimit] CHECK ([MaximumOverdueInvoices] IS NULL OR [MaximumOverdueInvoices] >= 0),
     CONSTRAINT [CK_CustomerCreditProfiles_DueDays] CHECK ([DefaultDueDays] BETWEEN 0 AND 3650)
 );
 GO
@@ -97,6 +99,12 @@ CREATE TABLE [dbo].[ReceivableTransactions]
     CONSTRAINT [CK_ReceivableTransactions_Amount] CHECK ([Amount] <> 0)
 );
 GO
+-- Historical portfolio reads filter the authorized obligations before summing
+-- their immutable movements. Cover that range without reading unrelated
+-- transaction payload/source columns from the clustered history.
+CREATE INDEX [IX_ReceivableTransactions_Position_Date] ON [dbo].[ReceivableTransactions]([ReceivableId],[OccurredAt])
+    INCLUDE([CreatedAt],[TransactionType],[Amount]);
+GO
 CREATE INDEX [IX_ReceivableTransactions_Unapplications] ON [dbo].[ReceivableTransactions]([ReceivableId],[OccurredAt])
     INCLUDE([Amount],[ReversesTransactionId],[CreatedAt]) WHERE [TransactionType]=N'Unapplication';
 GO
@@ -171,6 +179,10 @@ CREATE TABLE [dbo].[CustomerPaymentTenders]
 (
     [PaymentId] UNIQUEIDENTIFIER NOT NULL,
     [LineNumber] INT NOT NULL,
+    [PaymentMethodId] UNIQUEIDENTIFIER NULL REFERENCES reference.PaymentMethods(PaymentMethodId),
+    [PaymentMethodVersion] INT NULL,
+    [PaymentMethodCode] NVARCHAR(64) NULL,
+    [PaymentMethodName] NVARCHAR(160) NULL,
     [MethodCode] NVARCHAR(32) NOT NULL,
     [Amount] DECIMAL(19,4) NOT NULL,
     [TenderedAmount] DECIMAL(19,4) NULL,
@@ -192,6 +204,9 @@ CREATE TABLE [dbo].[CustomerPaymentTenders]
 );
 GO
 CREATE INDEX [IX_CustomerPaymentTenders_BankAccount] ON [dbo].[CustomerPaymentTenders] ([BankAccountId]) WHERE [BankAccountId] IS NOT NULL;
+GO
+CREATE INDEX [IX_CustomerPaymentTenders_PaymentMethod] ON [dbo].[CustomerPaymentTenders]([PaymentMethodId])
+    WHERE [PaymentMethodId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[CustomerPaymentApplications]

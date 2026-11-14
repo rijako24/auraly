@@ -19,7 +19,7 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]
-    public async Task Native_source_keeps_known_accounts_fills_missing_configuration_and_preserves_legacy_posted_replay(
+    public async Task Native_source_uses_current_effective_accounts_and_preserves_completed_replay(
         bool missingCounterpart, bool legacyPending)
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
@@ -48,7 +48,7 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
             previous = (string)(await backup.ExecuteScalarAsync() ?? throw new InvalidOperationException("The mapping snapshot was not returned."));
         }
         async Task SetAsync(Guid accountId) => await service.SetMappingAsync(user,
-            new(fixture.TenantId, fixture.BusinessId, category, accountId, new(2026, 1, 1), null));
+            new(fixture.TenantId, fixture.BusinessId, category, accountId, new(2026, 1, 1), new(2026, 8, 2)));
         SqlAccountingPostingJobWriter.Source Source() => PayrollSource(at, category);
         async Task AcceptAsync(SqlAccountingPostingJobWriter.Source source)
         {
@@ -75,18 +75,24 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
             }
             var original = Source();
             await AcceptAsync(original);
-            var frozen = await SnapshotAsync(original.DocumentId);
-            Assert.NotNull(frozen);
-            using (var values = JsonDocument.Parse(frozen))
-                Assert.Equal(first.AccountId, values.RootElement.EnumerateArray().Single(value => value.GetProperty("Category").GetString() == category)
-                    .GetProperty("AccountId").GetGuid());
+            Assert.Null(await SnapshotAsync(original.DocumentId));
+            if (legacyPending)
+            {
+                await using var legacy = new SqlCommand("UPDATE dbo.AccountingPostingJobs SET ResolvedAccountMappingsJson=@Old WHERE SourceDocumentId=@Id", connection);
+                legacy.Parameters.AddWithValue("@Id", original.DocumentId);
+                legacy.Parameters.AddWithValue("@Old", JsonSerializer.Serialize(new[] { new { Category=category, AccountId=first.AccountId } }));
+                Assert.Equal(1, await legacy.ExecuteNonQueryAsync());
+            }
+            var acceptedEvidence = await SnapshotAsync(original.DocumentId);
             await SetAsync(second.AccountId);
+            // A future effective row is current configuration too, but must not
+            // override the document's earlier effective date.
+            await service.SetMappingAsync(user,new(fixture.TenantId,fixture.BusinessId,category,
+                first.AccountId,new(2026,8,3),null));
             await AcceptAsync(original with { JobId = Guid.NewGuid() });
-            Assert.Equal(frozen, await SnapshotAsync(original.DocumentId));
+            Assert.Equal(acceptedEvidence, await SnapshotAsync(original.DocumentId));
             if (missingCounterpart)
             {
-                using var values = JsonDocument.Parse(frozen);
-                Assert.DoesNotContain(values.RootElement.EnumerateArray(), value => value.GetProperty("Category").GetString() == "NetPayrollPayable");
                 await processor.ProcessAsync(original.DocumentId, original.DocumentType, fixture.BusinessId, default);
                 Assert.Null(await service.GetEntryAsync(user, original.DocumentId));
                 await AssertPendingAsync(original.DocumentId, "NetPayrollPayable");
@@ -99,27 +105,36 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
                 restoreCounterpart.Parameters.Add("@Previous", SqlDbType.NVarChar, -1).Value = previous;
                 await restoreCounterpart.ExecuteNonQueryAsync();
             }
-            if (legacyPending)
-                await ClearSnapshotAsync(original.DocumentId);
-            else
+            // An invalid current override must not fall back to the earlier
+            // accepted cache or to a shared mapping. Retry reads current configuration.
+            await SetActiveAsync(second.AccountId, false);
+            try
             {
-                // Invalidating the selected auxiliary must not substitute the new
-                // mapping. Retry can use the same identity once it is usable again.
-                await SetActiveAsync(first.AccountId, false);
-                try
-                {
-                    await processor.ProcessAsync(original.DocumentId, original.DocumentType, fixture.BusinessId, default);
-                    Assert.Null(await service.GetEntryAsync(user, original.DocumentId));
-                    await AssertPendingAsync(original.DocumentId, category);
-                }
-                finally { await SetActiveAsync(first.AccountId, true); }
+                await processor.ProcessAsync(original.DocumentId, original.DocumentType, fixture.BusinessId, default);
+                Assert.Null(await service.GetEntryAsync(user, original.DocumentId));
+                await AssertPendingAsync(original.DocumentId, category);
+                Assert.Equal(acceptedEvidence, await SnapshotAsync(original.DocumentId));
             }
-            await processor.ProcessAsync(original.DocumentId, original.DocumentType, fixture.BusinessId, default);
+            finally { await SetActiveAsync(second.AccountId, true); }
+            using (var bankQueries = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                commandFilter: command => command.CommandText == "accounting.BankAccountsResolve"))
+            {
+                await processor.ProcessAsync(original.DocumentId, original.DocumentType, fixture.BusinessId, default);
+                Assert.Equal(0,bankQueries.Count);
+            }
             var entry = await service.GetEntryAsync(user, original.DocumentId);
             Assert.NotNull(entry);
-            Assert.Contains(entry.Lines, line => line.AccountId == (legacyPending ? second.AccountId : first.AccountId) && line.Debit == 100m);
-            Assert.DoesNotContain(entry.Lines, line => line.AccountId == (legacyPending ? first.AccountId : second.AccountId));
+            Assert.Contains(entry.Lines, line => line.AccountId == second.AccountId && line.Debit == 100m);
+            Assert.DoesNotContain(entry.Lines, line => line.AccountId == first.AccountId);
+            Assert.Equal(100m,entry.DebitTotal);
+            Assert.Equal(entry.DebitTotal,entry.CreditTotal);
             var completedSnapshot = await SnapshotAsync(original.DocumentId);
+            using (var actual = JsonDocument.Parse(completedSnapshot!))
+            {
+                Assert.Equal(2,actual.RootElement.GetArrayLength());
+                Assert.Equal(second.AccountId,actual.RootElement.EnumerateArray().Single(value => value.GetProperty("Category").GetString()==category).GetProperty("AccountId").GetGuid());
+            }
+            await SetAsync(first.AccountId);
             await processor.ProcessAsync(original.DocumentId, original.DocumentType, fixture.BusinessId, default);
             Assert.Equal(completedSnapshot, await SnapshotAsync(original.DocumentId));
             // A completed pre-cutover job has no reconstructible mapping snapshot.
@@ -129,11 +144,11 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
             Assert.Null(await SnapshotAsync(original.DocumentId));
             var later = Source();
             await AcceptAsync(later);
-            var nextSnapshot = await SnapshotAsync(later.DocumentId);
-            Assert.NotNull(nextSnapshot);
-            using var next = JsonDocument.Parse(nextSnapshot);
-            Assert.Equal(second.AccountId, next.RootElement.EnumerateArray().Single(value => value.GetProperty("Category").GetString() == category)
-                .GetProperty("AccountId").GetGuid());
+            Assert.Null(await SnapshotAsync(later.DocumentId));
+            await processor.ProcessAsync(later.DocumentId,later.DocumentType,fixture.BusinessId,default);
+            var nextEntry=await service.GetEntryAsync(user,later.DocumentId);
+            Assert.Contains(nextEntry!.Lines,line=>line.AccountId==first.AccountId && line.Debit==100m);
+
         }
         finally
         {
@@ -182,7 +197,7 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
     }
 
     [Fact]
-    public async Task An_invalid_site_override_or_frozen_account_never_falls_back_or_crosses_scope()
+    public async Task An_invalid_current_site_override_never_falls_back_or_crosses_scope()
     {
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
         var shared = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client, "5194", "Expense", "General", "Debit");
@@ -196,14 +211,13 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
             VALUES(NEWID(),@Tenant,NULL,N'SalaryExpense',@Shared,'20260101',SYSDATETIMEOFFSET()),
               (NEWID(),@Tenant,@Business,N'SalaryExpense',@Site,'20260101',SYSDATETIMEOFFSET());
             UPDATE dbo.AccountingAccounts SET IsActive=0 WHERE AccountId=@Site AND TenantId=@Tenant;
+            INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone,IsActive)
+            SELECT @OtherBusiness,TenantId,N'Otra sede del PUC compartido',N'',N'',N'',N'',N'',TimeZone,1
+            FROM dbo.Businesses WHERE BusinessId=@Business AND TenantId=@Tenant;
             SELECT (SELECT AccountId FROM accounting.ConfiguredPostingAccountIdentity(@Tenant,@Business,N'SalaryExpense','20260802')),
               (SELECT COUNT(*) FROM accounting.ConfiguredPostingAccount(@Tenant,@Business,N'SalaryExpense','20260802')),
-              (SELECT COUNT(*) FROM accounting.ResolvedPostingAccount(@Tenant,@Business,N'SalaryExpense','20260802',@InvalidSnapshot)),
-              (SELECT COUNT(*) FROM accounting.ResolvedPostingAccount(@Tenant,@Business,N'SalaryExpense','20260802',NULL)),
-              (SELECT COUNT(*) FROM accounting.ResolvedPostingAccount(@Tenant,@Business,N'SalaryExpense','20260802',N'[]')),
-              (SELECT AccountId FROM accounting.ResolvedPostingAccount(@Tenant,@Business,N'SalaryExpense','20260802',@ValidSnapshot)),
-              (SELECT COUNT(*) FROM accounting.ResolvedPostingAccount(@OtherTenant,@Business,N'SalaryExpense','20260802',@ValidSnapshot)),
-              (SELECT COUNT(*) FROM accounting.ResolvedPostingAccount(@Tenant,@OtherBusiness,N'SalaryExpense','20260802',@ValidSnapshot));
+              (SELECT COUNT(*) FROM accounting.ConfiguredPostingAccount(@OtherTenant,@Business,N'SalaryExpense','20260802')),
+              (SELECT COUNT(*) FROM accounting.ConfiguredPostingAccount(@Tenant,@OtherBusiness,N'SalaryExpense','20260802'));
             """, connection, transaction);
         command.Parameters.AddWithValue("@Tenant", fixture.TenantId);
         command.Parameters.AddWithValue("@Business", fixture.BusinessId);
@@ -211,20 +225,18 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
         command.Parameters.AddWithValue("@OtherBusiness", Guid.NewGuid());
         command.Parameters.AddWithValue("@Shared", shared.AccountId);
         command.Parameters.AddWithValue("@Site", site.AccountId);
-        command.Parameters.AddWithValue("@InvalidSnapshot", JsonSerializer.Serialize(new[] { new { Category = "SalaryExpense", AccountId = site.AccountId } }));
-        command.Parameters.AddWithValue("@ValidSnapshot", JsonSerializer.Serialize(new[] { new { Category = "SalaryExpense", AccountId = shared.AccountId } }));
         await using (var rows = await command.ExecuteReaderAsync())
         {
             Assert.True(await rows.ReadAsync());
             Assert.Equal(site.AccountId, rows.GetGuid(0));
-            foreach (var index in new[] { 1, 2, 3, 4, 6, 7 }) Assert.Equal(0, rows.GetInt32(index));
-            Assert.Equal(shared.AccountId, rows.GetGuid(5));
+            foreach (var index in new[] { 1, 2 }) Assert.Equal(0, rows.GetInt32(index));
+            Assert.Equal(1, rows.GetInt32(3)); // Another site uses the tenant's shared mapping.
         }
         await transaction.RollbackAsync();
     }
 
     [Fact]
-    public async Task Accepting_a_native_source_serializes_mapping_edits_and_rolls_back_its_snapshot_with_the_source()
+    public async Task Accepting_a_native_source_does_not_read_automatic_mappings_and_rolls_back_with_its_source()
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -242,8 +254,7 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
             """, editor))
         {
             change.Parameters.AddWithValue("@Tenant", fixture.TenantId);
-            var failure = await Record.ExceptionAsync(async () => { await change.ExecuteNonQueryAsync(); });
-            Assert.Equal(1222, Assert.IsType<SqlException>(failure).Number);
+            Assert.True(await change.ExecuteNonQueryAsync() > 0);
         }
         await transaction.RollbackAsync();
         await using var absent = new SqlCommand("""
@@ -257,8 +268,8 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    [Trait("Performance", "NativeMappingFreeze")]
-    public async Task One_hundred_native_sources_freeze_up_to_one_hundred_dates_in_one_command_under_two_seconds(bool distinctDates)
+    [Trait("Performance", "NativeSourceAcceptance")]
+    public async Task One_hundred_native_sources_accept_without_loading_account_configuration_in_one_command_under_two_seconds(bool distinctDates)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -280,8 +291,7 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
                 if (round > 0) samples.Add(timer.Elapsed.TotalMilliseconds);
             }
             await using (var verify = new SqlCommand("""
-                SELECT COUNT(*),COUNT(DISTINCT HASHBYTES('SHA2_256',job.ResolvedAccountMappingsJson)),
-                  MIN(LEN(job.ResolvedAccountMappingsJson))
+                SELECT COUNT(*),COUNT(job.ResolvedAccountMappingsJson),COUNT(job.ResolvedBankAccountsJson)
                 FROM OPENJSON(@Ids) WITH(Id uniqueidentifier '$') input
                 JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=input.Id AND job.BusinessId=@BusinessId;
                 """, connection, transaction))
@@ -291,8 +301,8 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
                 await using var rows = await verify.ExecuteReaderAsync();
                 Assert.True(await rows.ReadAsync());
                 Assert.Equal(100, rows.GetInt32(0));
-                Assert.Equal(1, rows.GetInt32(1));
-                Assert.True(rows.GetInt64(2) > 2);
+                Assert.Equal(0, rows.GetInt32(1));
+                Assert.Equal(0, rows.GetInt32(2));
             }
             await transaction.RollbackAsync();
         }
@@ -301,13 +311,66 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
         Assert.True(p95 < 2000, $"p95 {p95:F1} ms exceeds the 2000 ms acceptance budget.");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Retiring_accepted_configuration_is_idempotent_and_does_not_modify_pending_sources_or_evidence(bool legacyCache)
+    {
+        await using var connection=new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_",connection.Database);
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable);
+        var at=new DateTimeOffset(2026,8,2,12,0,0,TimeSpan.Zero);
+        var source=PayrollSource(at,"SalaryExpense");
+        Assert.Equal(1,await SqlAccountingPostingJobWriter.InsertSourcesAsync(connection,transaction,
+            [source],at,AccountingJobRequirement.AccountingEntryOnly,default));
+        await using var command=new SqlCommand("""
+            EXEC(N'CREATE PROCEDURE accounting.AccountMappingsFreeze AS RETURN;');
+            EXEC(N'CREATE PROCEDURE accounting.BankAccountsFreeze AS RETURN;');
+            EXEC(N'CREATE PROCEDURE accounting.PortfolioPaymentAccountsFreeze AS RETURN;');
+            EXEC(N'CREATE FUNCTION accounting.ResolvedPostingAccount() RETURNS int AS BEGIN RETURN 1; END;');
+            UPDATE dbo.AccountingPostingJobs SET ResolvedAccountMappingsJson=@Cache,ResolvedBankAccountsJson=@Cache
+              WHERE SourceDocumentId=@Id AND TenantId=@Tenant;
+            SELECT (SELECT JSON_QUERY((SELECT source.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER)) Source,
+              JSON_QUERY((SELECT job.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER)) Job FROM dbo.AccountingSourceDocuments source
+              JOIN dbo.AccountingPostingJobs job ON job.AccountingPostingJobId=source.AccountingPostingJobId
+              WHERE source.SourceDocumentId=@Id AND source.TenantId=@Tenant FOR JSON PATH);
+            """,connection,transaction);
+        command.Parameters.AddWithValue("@Id",source.DocumentId);
+        command.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+        command.Parameters.Add("@Cache",SqlDbType.NVarChar,-1).Value=legacyCache ? "[]" : DBNull.Value;
+        var previous=(string)(await command.ExecuteScalarAsync())!;
+        for(var attempt=0;attempt<2;attempt++)
+        {
+            await fixture.ApplyMigrationAsync("20261023_BankAuxiliariesAndAcceptedAccounts.sql",connection,transaction);
+            await fixture.ApplyMigrationAsync("20261113_RetireAcceptedAccountConfiguration.sql",connection,transaction);
+        }
+        command.CommandText="""
+            SELECT (SELECT JSON_QUERY((SELECT source.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER)) Source,
+              JSON_QUERY((SELECT job.* FOR JSON PATH,WITHOUT_ARRAY_WRAPPER)) Job FROM dbo.AccountingSourceDocuments source
+              JOIN dbo.AccountingPostingJobs job ON job.AccountingPostingJobId=source.AccountingPostingJobId
+              WHERE source.SourceDocumentId=@Id AND source.TenantId=@Tenant FOR JSON PATH);
+            SELECT COUNT(*) FROM sys.objects WHERE object_id IN(
+              OBJECT_ID(N'accounting.AccountMappingsFreeze'),OBJECT_ID(N'accounting.BankAccountsFreeze'),
+              OBJECT_ID(N'accounting.PortfolioPaymentAccountsFreeze'),OBJECT_ID(N'accounting.ResolvedPostingAccount'));
+            """;
+        await using(var rows=await command.ExecuteReaderAsync())
+        {
+            Assert.True(await rows.ReadAsync());
+            Assert.Equal(previous,rows.GetString(0));
+            Assert.True(await rows.NextResultAsync());Assert.True(await rows.ReadAsync());
+            Assert.Equal(0,rows.GetInt32(0));
+        }
+        await transaction.RollbackAsync();
+    }
+
     private SqlAccountingPostingJobWriter.Source PayrollSource(DateTimeOffset at, string category)
     {
         var id = Guid.NewGuid();
         var date = DateOnly.FromDateTime(at.Date);
         return new(fixture.TenantId, fixture.BusinessId, id, PayrollAccountingDocumentTypes.Accrual,
             PayrollContractSerializer.Serialize(new PayrollAccountingPayload(fixture.TenantId, fixture.BusinessId,
-                id, "Regular", date, date, date, "Configuración fijada al aceptar", [
+                id, "Regular", date, date, date, "Configuración vigente al contabilizar", [
                     new(category, 100m, 0, fixture.SupplierPartyId, "Devengado"),
                     new("NetPayrollPayable", 0, 100m, fixture.SupplierPartyId, "Contrapartida")])), at, Guid.NewGuid());
     }
@@ -316,7 +379,7 @@ public sealed class AccountingMappingFreezeTests(ServerSliceFixture fixture, ITe
 public sealed partial class ReceivablesVerticalSliceTests
 {
     [Fact]
-    public async Task Imported_portfolio_keeps_its_accepted_auxiliary_and_unavailable_accounts_leave_no_opening()
+    public async Task Imported_portfolio_uses_current_control_account_preserves_explicit_counterpart_and_rolls_back_when_unavailable()
     {
         var (customerId, userId, partySiteId) = await ConfigureAsync();
         using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
@@ -347,7 +410,7 @@ public sealed partial class ReceivablesVerticalSliceTests
             var second = await PortfolioOriginalAccountScenario.RemapAsync(fixture, client, true);
             try
             {
-                await SetActiveAsync(false);
+                await SetActiveAsync(second.AccountId,false);
                 try
                 {
                     await processor.ProcessAsync(id, ReceivablesDocumentTypes.PreexistingReceivable, fixture.BusinessId, default);
@@ -367,12 +430,13 @@ public sealed partial class ReceivablesVerticalSliceTests
                     Assert.Equal(0, row.GetInt32(3));
                     Assert.Equal(0, row.GetInt32(4));
                 }
-                finally { await SetActiveAsync(true); }
+                finally { await SetActiveAsync(second.AccountId,true); }
                 await processor.ProcessAsync(id, ReceivablesDocumentTypes.PreexistingReceivable, fixture.BusinessId, default);
                 var entry = await service.GetEntryAsync(user, id);
                 Assert.NotNull(entry);
-                Assert.Contains(entry.Lines, line => line.AccountId == first.AccountId && line.Debit == 100m);
-                Assert.DoesNotContain(entry.Lines, line => line.AccountId == second.AccountId);
+                Assert.Contains(entry.Lines, line => line.AccountId == second.AccountId && line.Debit == 100m);
+                Assert.DoesNotContain(entry.Lines, line => line.AccountId == first.AccountId);
+                Assert.Contains(entry.Lines,line=>line.AccountId==counterpart && line.Credit==100m);
                 await processor.ProcessAsync(id, ReceivablesDocumentTypes.PreexistingReceivable, fixture.BusinessId, default);
                 Assert.Equal(100m, await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE SourceDocumentId=@Id", id));
             }
@@ -380,12 +444,12 @@ public sealed partial class ReceivablesVerticalSliceTests
         }
         finally { await PortfolioOriginalAccountScenario.RestoreAsync(fixture, first); }
 
-        async Task SetActiveAsync(bool active)
+        async Task SetActiveAsync(Guid accountId,bool active)
         {
             await using var command = new SqlCommand("UPDATE dbo.AccountingAccounts SET IsActive=@Active WHERE TenantId=@Tenant AND AccountId=@Id", connection);
             command.Parameters.AddWithValue("@Active", active);
             command.Parameters.AddWithValue("@Tenant", fixture.TenantId);
-            command.Parameters.AddWithValue("@Id", first.AccountId);
+            command.Parameters.AddWithValue("@Id", accountId);
             await command.ExecuteNonQueryAsync();
         }
     }

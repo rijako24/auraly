@@ -2,9 +2,15 @@
 
 ## Decisión prevalente: Gastos asistido — 2026-10-20
 
-El usuario autorizó iniciar la implementación y cambió la captura: Gastos se mantiene para personas no contables. Cada línea selecciona un concepto configurado, descripción, importe, impuestos y centro de costo; no permite elegir una cuenta. El servidor resuelve la cuenta vigente del concepto por conjunto y la congela en el snapshot aceptado. El maestro de conceptos conserva su parametrización bajo `expenses.configure`; la selección de cuentas libres pertenece al comprobante manual. No se crea otro flujo de gastos ni otra fuente financiera.
+El usuario autorizó iniciar la implementación y cambió la captura: Gastos se mantiene para personas no contables. Cada línea selecciona un concepto configurado, descripción, importe, impuestos y centro de costo; no permite elegir una cuenta. El preview y la confirmación resuelven el concepto por conjunto y conservan la captura inmutable. Por decisión del 2026-11-13 (comprobantes, 14.12), el mismo motor financiero vuelve a resolver la cuenta automática del concepto al contabilizar; una cuenta explícita conserva su identidad. El maestro de conceptos conserva su parametrización bajo `expenses.configure`; la selección de cuentas libres pertenece al comprobante manual. No se crea otro flujo de gastos ni otra fuente financiera.
 
 El comando de línea admite `ExpenseAccountId=null` con `ConceptId` obligatorio en la captura asistida. El servidor no acepta una cuenta explícita distinta de la configurada en ese concepto. Los contratos anteriores de cuenta directa siguen siendo legibles y aceptables durante el corte para no romper integraciones; sus replays e históricos conservan hashes. El formulario nuevo envía el concepto y nunca una cuenta escogida por el usuario. Cambio de mapping entre preview y confirmación invalida el hash; concepto inactivo o ajeno se rechaza antes de aceptar. La resolución, preview, aceptación y posting siguen en `ExpenseService`/`SqlExpenseStore`/motor contable existentes.
+
+La ampliación PUC del 2026-11-10 permite configurar el concepto con un auxiliar
+activo de tipo `Expense` o `Cost`. Ambos pasan por la misma resolución por lote,
+preview, snapshot y aceptación existentes. La distinción se conserva en los
+informes contables: costo se presenta separado de gasto. No se agrega una captura
+libre en Gastos ni se reclasifican cuentas históricas.
 
 Las secciones siguientes conservan la infraestructura y compatibilidad de contratos anteriores; la selección libre de cuenta pertenece al comprobante manual. Los conceptos guardados siguen disponibles. Aclaración posterior del usuario: se conserva «Agregar gasto» y la captura por concepto/valores. «Agregar factura» en Recepciones se conserva conforme al diseño anterior.
 
@@ -76,6 +82,16 @@ Se preservan pagos, anulación y consulta del comprobante en sus recorridos actu
 | Pago al proveedor | Cartera y `PortfolioPaymentWizard` |
 
 `dbo.Expenses.ExpenseConceptId` admite NULL. Las líneas normalizadas, sus etiquetas, cuentas, centros, impuestos y clasificación se congelan en `ExpenseDocumentPayload.Lines`, dentro de la fuente contable canónica. No se crea una tabla de líneas duplicada ni un segundo writer. El snapshot fiscal copia esa misma información cuando corresponde.
+
+La cuenta incluida en esa captura es evidencia del preview, no configuración para
+un intento futuro. Si hay ConceptId, el processor lee su cuenta vigente junto
+con el proveedor en el viaje existente, valida el auxiliar con la política
+canónica y guarda solo el binding aplicado en el trabajo completado. Si no hay
+concepto, valida disponibilidad de la cuenta explícita sin sustituirla. Un
+concepto o auxiliar inválido deja pendiente y revierte los efectos financieros.
+La anulación sigue invirtiendo el asiento original. No se recalculan impuestos,
+se modifica el payload aceptado ni se cambia su hash o su respaldo fiscal.
+Los importes, tarifas, fechas, centros y descripciones capturados se conservan.
 
 El listado y el detalle admiten gastos sin concepto. El detalle expone las líneas y las retenciones históricas del payload. Los filtros de concepto en Gastos y CxP contemplan también las líneas del documento antes de contar, totalizar y paginar; no filtran únicamente la grilla recibida. Proveedor sigue siendo un ID elegido mediante el combo de terceros.
 
@@ -295,3 +311,51 @@ La nulabilidad histórica de `ConceptId` conserva los contratos anteriores de cu
 La instrucción vigente del usuario limita esta ampliación a implementación y
 pruebas locales, sin despliegue. Un despliegue posterior requiere autorización
 y un commit integrado en `origin/main`.
+
+
+## Calendario de sede en captura (2026-11-12)
+
+ExpenseForm usa la zona del contexto existente para proponer emisión y
+vencimiento, y `accountingDateAtNoon` para conservar el día escogido con su
+offset real. Retira el -05:00 y America/Bogota fijos. El plazo del proveedor
+suma días de calendario al día de emisión antes de resolver el offset del
+vencimiento; por ello cruza DST y zonas +14 sin cambiar el día. DatePicker
+recibe el mismo día local para Elegir hoy. El comando, preview tributario,
+hash, aceptación y processor existentes se conservan; no cambia documentos
+aceptados ni hace otra lectura por formulario. La captura/confirmación se
+prueba desde un navegador en otra zona, incluida selección +14 y cambio DST.
+
+
+### Cuenta vigente y anulación original — revisión 2026-11-13
+
+Pasaron 24 casos SQL/API de gastos, selección de cuentas, cuentas en cola y
+protección de partidas explícitas (`accounting-current-expense-cancellation-reviewed`).
+Las cuatro variantes nuevas cubren concepto de una/cien líneas, cabecera anterior
+y cuenta directa. Rechazan auxiliar inactivo sin asiento/CxP, conservan la fuente
+byte por byte, usan el auxiliar vigente con una sola consulta por conjunto y
+anulan/reintentan contra el asiento realmente contabilizado. La anulación valida
+identidad, scope, hash y estado Posted del original, sin exigir la cuenta de un
+preview que pudo cambiar antes de contabilizar. No se relajan los importes ni la
+identidad de las cuentas elegidas expresamente.
+
+La auditoría detectó también que el validador de retenciones puntuales solo
+comprobaba clase pasivo, actividad y permiso de contabilizar. La reproducción
+nueva aceptó indebidamente un auxiliar CustomerAdvance en el plan de selección.
+El cambio reutiliza PostingAccountEligibility para candidatos por tenant/sede y
+PostingAccountReadiness para guardar la plantilla y para el tipo exacto al
+contabilizar. No infiere finalidad desde código/nombre ni duplica esa política.
+Una selección incompatible devuelve el resultado de configuración pendiente del
+motor y revierte el intento financiero en el mismo savepoint, sin cambiar el
+snapshot fiscal, cantidades o tarifas. La consulta de candidatos sigue siendo
+un lote, y el lector de retenciones no agrega viajes.
+
+La ampliación pasó sus tres pruebas dirigidas con el binario final
+(`accounting-manual-withholding-final`). Incluye rechazo de cuenta de anticipos
+y de otra sede en el plan y en plantillas; desactivación entre aceptación y
+posting; ausencia de asiento/CxP mientras queda pendiente; y reintento/replay
+que conserva una sola CxP neta de 99 y un asiento balanceado de 100 con la
+retención manual de 1 en su cuenta original. El journey de 1/20/100 líneas
+aprobó con 23 comandos por confirmación (157/90/166 ms) y tres por preview.
+Una ronda anterior registró 25/26 y excedió por 34 ms el presupuesto de dos
+segundos; se conserva como evidencia fallida, sin ampliar el límite. La
+regresión transversal ampliada se documenta en comprobantes, sección 14.12.

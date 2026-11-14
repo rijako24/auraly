@@ -13,7 +13,7 @@ public sealed partial class SqlAccountingStore
     {
         await using var command = new SqlCommand("""
             SELECT AccountId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,RowVersion,
-              ParentAccountId,FinancialFunction,BalanceSide,BusinessId,BankAccountId,PaymentMethodOptionId,ConfigurationLockedAt
+              ParentAccountId,FinancialFunction,BalanceSide,CAST(NULL AS uniqueidentifier) BusinessId,BankAccountId,PaymentMethodOptionId,ConfigurationLockedAt
             FROM dbo.AccountingAccounts WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@TenantId AND AccountId=@AccountId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
@@ -30,7 +30,8 @@ public sealed partial class SqlAccountingStore
         await using var command = new SqlCommand("""
             IF @Parent IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WITH(UPDLOCK,HOLDLOCK)
               WHERE TenantId=@TenantId AND AccountId=@Parent AND AccountId<>@AccountId AND IsActive=1
-                AND AllowsPosting=0 AND AccountType=@Type AND LEN(Code)<LEN(@Code)
+                AND AllowsPosting=0 AND (AccountType=@Type OR
+                  @Type=N'Cost' AND AccountType=N'Expense' AND LEFT(Code,1) IN(N'6',N'7')) AND LEN(Code)<LEN(@Code)
                 AND LEFT(@Code,LEN(Code))=Code AND (LEN(@Code)<=6 OR LEN(Code)>=6))
               THROW 51411,N'La cuenta padre debe ser una agrupación activa del mismo tipo y prefijo.',1;
             IF LEN(@Code)>6 AND @Parent IS NULL AND @PreserveLegacyParent=0
@@ -38,9 +39,6 @@ public sealed partial class SqlAccountingStore
             IF NOT EXISTS(SELECT 1 FROM reference.Options WITH(HOLDLOCK)
               WHERE CatalogCode=N'accounting-financial-function' AND Code=@Function AND IsActive=1)
               THROW 51411,N'La función financiera no está activa.',1;
-            IF @BusinessId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Businesses WITH(HOLDLOCK)
-              WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51411,N'La sede no está activa o no pertenece a esta empresa.',1;
             IF @BankId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM accounting.BankAccounts WITH(HOLDLOCK)
               WHERE TenantId=@TenantId AND BankAccountId=@BankId AND IsActive=1)
               THROW 51411,N'La cuenta bancaria no está activa o no pertenece a esta empresa.',1;
@@ -66,7 +64,6 @@ public sealed partial class SqlAccountingStore
         command.Parameters.Add("@Parent", SqlDbType.UniqueIdentifier).Value = (object?)value?.ParentAccountId ?? DBNull.Value;
         command.Parameters.Add("@Function", SqlDbType.NVarChar, 64).Value = (object?)value?.FinancialFunction ?? DBNull.Value;
         command.Parameters.Add("@Balance", SqlDbType.NVarChar, 6).Value = (object?)value?.BalanceSide ?? DBNull.Value;
-        command.Parameters.Add("@BusinessId", SqlDbType.UniqueIdentifier).Value = (object?)value?.BusinessId ?? DBNull.Value;
         command.Parameters.Add("@BankId", SqlDbType.UniqueIdentifier).Value = (object?)value?.BankAccountId ?? DBNull.Value;
         command.Parameters.Add("@PaymentId", SqlDbType.UniqueIdentifier).Value = (object?)value?.PaymentMethodOptionId ?? DBNull.Value;
     }

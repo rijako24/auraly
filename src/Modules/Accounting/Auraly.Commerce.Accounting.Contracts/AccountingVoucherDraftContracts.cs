@@ -18,7 +18,11 @@ public sealed record VoucherDraftLine(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     VoucherPaymentEvidence? PaymentEvidence = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    bool? FinancialDiscountEarned = null);
+    bool? FinancialDiscountEarned = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? FinancialConceptId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? FinancialConceptTargetLineId = null);
 
 public sealed record VoucherDraftAdjustment(
     string SubledgerKind, Guid SubledgerId, string Direction, decimal Amount,
@@ -54,7 +58,8 @@ public sealed record SendVoucherDraftRequest(string RowVersion);
 
 public sealed record VoucherDraftLineView(
     VoucherDraftLine Value, string? AccountCode, string? AccountName,
-    string? PartyName, string? PartyIdentification, string? CostCenterName, string? ValidationError = null);
+    string? PartyName, string? PartyIdentification, string? CostCenterName, string? ValidationError = null,
+    string? FinancialConceptCode = null,string? FinancialConceptName = null,string? FinancialConceptSideCode=null);
 
 public sealed record VoucherDraftView(
     Guid DocumentId, string DocumentType, DateTimeOffset OccurredAt,
@@ -71,4 +76,5 @@ public sealed record VoucherDraftView(
     VoucherFinancialEffects? FinancialEffects = null,
     VoucherFiscalCapture? FiscalCapture = null,
     Guid? ReversalDocumentId = null,
-    string? ReversalStatus = null);
+    string? ReversalStatus = null,
+    IReadOnlyList<VoucherAppliedPaymentMethod>? AppliedPaymentMethods = null);

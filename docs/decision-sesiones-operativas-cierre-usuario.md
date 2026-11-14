@@ -260,6 +260,21 @@ se cambió la configuración de memoria del servidor. La corrección conserva
 su única consulta propietaria; las tablas temporales no son otra proyección
 persistente ni un saldo editable.
 
+La repetición del 14 de noviembre con el historial financiero acumulado
+volvió a rebasar los dos segundos. El plan mostró otra ordenación de 22.440 KB
+en la selección de la segunda página de 50 filas: se ordenaba `movement.*`
+antes de aplicar el límite. La consulta propietaria ahora ordena únicamente
+`VerificationKey` con sus criterios de orden, limita esas claves y después
+recupera los hechos y la evidencia de esa página. Conserva el resumen de toda
+la sesión, filtros de medio/movimiento, autorizaciones, snapshots, correcciones
+y dos comandos SQL. No cambia fuentes ni escritores. La ronda acumulada
+`portfolio-cold-plan.trx` aprobó las páginas 1/1, 1/50 y 2/50 con p95 de
+1.930,1/1.418,7/1.648,3 ms; previews de 1/50 correcciones dieron
+1.224,7/1.352,2 ms, siempre dos SQL y veinte muestras. La regresión funcional
+con cartera y WorkSessionApiTests aprobó 96/96. Se conserva el fallo previo
+de preview (2.442,6 ms) de `portfolio-filter-facts-final.trx`; la ronda aprobada
+no lo elimina ni certifica los restantes gates del paquete de despliegue.
+
 La corrección de un medio conserva el comprobante original y su snapshot; registra
 el movimiento corregido asociado a su identificador y aplica el ajuste por
 la fuente contable `WorkSessionClosureReconciliation` existente. Corregir un importe

@@ -111,9 +111,9 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
           p.Identification [identification],r.PeriodStart [periodStart],r.PeriodEnd [periodEnd],
           re.WorkedDays [workedDays],re.Earnings [earnings],re.Deductions [deductions],
           re.NetPayable [netPayable],
-          CASE WHEN EXISTS(SELECT 1 FROM payroll.PaymentLines pl JOIN payroll.PaymentBatches pb
-            ON pb.PaymentBatchId=pl.PaymentBatchId WHERE pl.PayrollRunEmployeeId=re.PayrollRunEmployeeId
-            AND pb.Status=N'Confirmed') THEN N'Pagado' ELSE N'Pendiente' END [paymentStatus],
+          CASE WHEN EXISTS(SELECT 1 FROM payroll.PaymentLines pl JOIN payroll.PaymentBatchPostingStatus pb
+            ON pb.PaymentBatchId=pl.PaymentBatchId AND pb.TenantId=r.TenantId AND pb.BusinessId=r.BusinessId WHERE pl.PayrollRunEmployeeId=re.PayrollRunEmployeeId
+            AND pb.IsPaid=1) THEN N'Pagado' ELSE N'Pendiente' END [paymentStatus],
           COALESCE((SELECT TOP(1) d.Status FROM payroll.ElectronicDocuments d
             JOIN payroll.ElectronicPeriods ep ON ep.ElectronicPeriodId=d.ElectronicPeriodId
             WHERE d.PartyId=re.PartyId AND ep.TenantId=r.TenantId AND ep.BusinessId=r.BusinessId
@@ -176,13 +176,15 @@ public sealed class SqlPayrollReportingStore(PayrollSqlConnectionFactory connect
     private const string PaymentsSql = """
         SELECT pl.PaymentLineId [id],re.PartyId [partyId],
           COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),p.Identification,N'Persona') [employeeName],
-          p.Identification [identification],b.PaymentDate [paymentDate],o.Label [paymentMethod],
-          b.ReferenceNumber [paymentReference],pl.Amount [amount],b.Status [status]
-        FROM payroll.PaymentBatches b JOIN payroll.PaymentLines pl ON pl.PaymentBatchId=b.PaymentBatchId
+          p.Identification [identification],b.PaymentDate [paymentDate],COALESCE(b.PaymentMethodName,o.Label) [paymentMethod],
+          b.ReferenceNumber [paymentReference],pl.Amount [amount],posting.AccountingStatus [status]
+        FROM payroll.PaymentBatches b JOIN payroll.PaymentBatchPostingStatus posting
+          ON posting.PaymentBatchId=b.PaymentBatchId AND posting.TenantId=b.TenantId AND posting.BusinessId=b.BusinessId AND posting.IsPaid=1
+        JOIN payroll.PaymentLines pl ON pl.PaymentBatchId=b.PaymentBatchId
         JOIN payroll.RunEmployees re ON re.PayrollRunEmployeeId=pl.PayrollRunEmployeeId
         JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=b.TenantId
         JOIN payroll.CatalogOptions o ON o.OptionId=b.PaymentMethodOptionId
-        WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId AND b.Status=N'Confirmed'
+        WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
           AND b.PaymentDate BETWEEN @From AND @To AND (@PartyId IS NULL OR re.PartyId=@PartyId)
         ORDER BY b.PaymentDate DESC,[employeeName];
         """;

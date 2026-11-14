@@ -4,6 +4,7 @@ using Auraly.Platform.Application.Identity.DTOs;
 using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Platform.Domain.Repositories;
 using Microsoft.Extensions.Logging;
+using Auraly.Platform.Application.Time;
 
 namespace Auraly.Platform.Application.Identity.Services;
 
@@ -19,6 +20,7 @@ public sealed class TenantProvisioner(
         CancellationToken cancellationToken = default)
     {
         TenantProvisioningRequestValidator.Validate(request);
+        request = request with { TimeZone = BusinessTimeZoneResolver.NormalizeConfiguredId(request.TimeZone) };
         if (!await unitOfWork.Tenants.IsReferenceOptionActiveAsync(
                 "tenant-entity-type", request.EntityType, cancellationToken)
             || !await unitOfWork.Tenants.IsReferenceOptionActiveAsync(

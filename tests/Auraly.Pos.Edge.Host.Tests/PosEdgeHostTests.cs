@@ -985,8 +985,33 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
             await DraftStatusAsync(captured.Draft.DraftId.Value));
     }
 
-    [Fact]
-    public async Task Commercial_receipt_flows_through_the_local_http_api_without_fiscal_data()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Incomplete_payment_form_identity_does_not_consume_a_local_receipt_number(bool accountOnly)
+    {
+        var response = await Client.PostAsJsonAsync("/edge/v1/capture", new CaptureRequest("770123", null));
+        response.EnsureSuccessStatusCode();
+        var draft = (await response.Content.ReadFromJsonAsync<PosCaptureResult>())!.Draft!;
+        var url = $"/edge/v1/drafts/{draft.DraftId.Value:D}/complete";
+        using var rejected = await Client.PostAsJsonAsync(url, new CompleteDraftRequest(null,
+            [new("Cash", draft.PayableAmount, null, PaymentMethodId: accountOnly ? null : Guid.NewGuid(),
+                AccountId: accountOnly ? Guid.NewGuid() : null)], DocumentType: PosSaleDocumentTypes.Receipt));
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Contains("identidad de las formas de pago", await rejected.Content.ReadAsStringAsync());
+        Assert.Equal(PosDraftStatus.Active, await DraftStatusAsync(draft.DraftId.Value));
+        using var accepted = await Client.PostAsJsonAsync(url, new CompleteDraftRequest(null,
+            [new("Cash", draft.PayableAmount, null)], DocumentType: PosSaleDocumentTypes.Receipt));
+        accepted.EnsureSuccessStatusCode();
+        Assert.Equal("CVI03-00000001", (await accepted.Content.ReadFromJsonAsync<CompletePosSaleResult>())!.IssuedSale.DocumentNumber);
+        using var scope = _factory!.Services.CreateScope();
+        Assert.Single(await scope.ServiceProvider.GetRequiredService<PosEdgeSaleStore>().GetPendingOutboxAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Commercial_receipt_flows_through_the_local_http_api_without_fiscal_data(bool configured)
     {
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
         Assert.NotNull(active);
@@ -997,12 +1022,24 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         capture.EnsureSuccessStatusCode();
         var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
         Assert.NotNull(captured?.Draft);
+        var firstForm = Guid.NewGuid();
+        var secondForm = Guid.NewGuid();
+        var firstAccount = Guid.NewGuid();
+        var secondAccount = Guid.NewGuid();
+        var payments = configured ? new[] {
+            new CompletePaymentRequest("Cash", captured.Draft.PayableAmount / 2, null,
+                PaymentMethodId: firstForm, PaymentMethodVersion: 1, PaymentMethodCode: "CASH-1",
+                PaymentMethodName: "Caja uno", AccountId: firstAccount),
+            new CompletePaymentRequest("Cash", captured.Draft.PayableAmount / 2, null,
+                PaymentMethodId: secondForm, PaymentMethodVersion: 2, PaymentMethodCode: "CASH-2",
+                PaymentMethodName: "Caja dos", AccountId: secondAccount) }
+            : [new CompletePaymentRequest("Cash", captured.Draft.PayableAmount, null)];
 
         var completed = await Client.PostAsJsonAsync(
             $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/complete",
             new CompleteDraftRequest(
                 null,
-                [new CompletePaymentRequest("Cash", captured.Draft.PayableAmount, null)],
+                payments,
                 DocumentType: PosSaleDocumentTypes.Receipt));
         completed.EnsureSuccessStatusCode();
         var result = await completed.Content.ReadFromJsonAsync<CompletePosSaleResult>();
@@ -1019,6 +1056,16 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         Assert.Null(result.Receipt.FiscalNumber);
         Assert.Null(result.Receipt.Cufe);
         Assert.Null(result.Receipt.QrPayload);
+        if (configured)
+        {
+            using var scope = _factory!.Services.CreateScope();
+            var store = scope.ServiceProvider.GetRequiredService<PosEdgeSaleStore>();
+            var upload = (await store.GetIssuedUploadAsync(result.IssuedSale.DocumentId))!;
+            Assert.Equal(new[] { firstForm, secondForm }, upload.Payments.Select(payment => payment.PaymentMethodId!.Value));
+            Assert.Equal(new[] { firstAccount, secondAccount }, upload.Payments.Select(payment => payment.AccountId!.Value));
+            Assert.Equal(new[] { "Caja uno", "Caja dos" }, result.Receipt.Payments.Select(payment => payment.PaymentMethodName));
+            Assert.Equal(new[] { firstForm, secondForm }, result.Receipt.ToPrintDocument().Payments.Select(payment => payment.PaymentMethodId!.Value));
+        }
 
         var sales = await Client.GetFromJsonAsync<SaleSearchPageContract>(
             $"/edge/v1/sales?search={result.IssuedSale.DocumentNumber}&skip=0&take=50");
@@ -1034,6 +1081,8 @@ public sealed class PosEdgeHostTests(Xunit.Abstractions.ITestOutputHelper output
         Assert.Equal(HttpStatusCode.NoContent, reprint.StatusCode);
         Assert.Single(_printer.Receipts);
         Assert.Equal(PosSaleDocumentTypes.Receipt, _printer.Receipts[0].DocumentType);
+        if (configured)
+            Assert.Equal(new[] { "Caja uno", "Caja dos" }, _printer.Receipts[0].Payments.Select(payment => payment.PaymentMethodName));
     }
 
     [Fact]

@@ -14,4 +14,25 @@
     <Property Name="ParentElementType" Value="SqlSchema" />
     <Property Name="NewName" Value="ProductCompositionComponents" />
   </Operation>
+  <Operation Name="Rename Refactor" Key="d0ed2d20-3d89-433d-89c1-7f9033470ca8" ChangeDateTime="11/13/2026 00:00:00">
+    <Property Name="ElementName" Value="[dbo].[AccountingAccounts].[BusinessId]" />
+    <Property Name="ElementType" Value="SqlSimpleColumn" />
+    <Property Name="ParentElementName" Value="[dbo].[AccountingAccounts]" />
+    <Property Name="ParentElementType" Value="SqlTable" />
+    <Property Name="NewName" Value="LegacyBusinessId" />
+  </Operation>
+  <Operation Name="Rename Refactor" Key="3f404f29-480b-43bd-ab93-dfb7c2ad75fa" ChangeDateTime="11/13/2026 00:00:00">
+    <Property Name="ElementName" Value="[dbo].[AccountingCostCenters].[BusinessId]" />
+    <Property Name="ElementType" Value="SqlSimpleColumn" />
+    <Property Name="ParentElementName" Value="[dbo].[AccountingCostCenters]" />
+    <Property Name="ParentElementType" Value="SqlTable" />
+    <Property Name="NewName" Value="LegacyBusinessId" />
+  </Operation>
+  <Operation Name="Rename Refactor" Key="22833c5d-9257-4960-8306-b459aa73ab06" ChangeDateTime="11/13/2026 00:00:00">
+    <Property Name="ElementName" Value="[dbo].[AccountingCostCenterAssignments].[WarehouseId]" />
+    <Property Name="ElementType" Value="SqlSimpleColumn" />
+    <Property Name="ParentElementName" Value="[dbo].[AccountingCostCenterAssignments]" />
+    <Property Name="ParentElementType" Value="SqlTable" />
+    <Property Name="NewName" Value="LegacyWarehouseId" />
+  </Operation>
 </Operations>

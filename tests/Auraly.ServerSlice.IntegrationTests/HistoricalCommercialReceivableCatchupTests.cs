@@ -111,7 +111,7 @@ public sealed partial class ReceivablesVerticalSliceTests
             await using var createMigratedAccount = new SqlCommand("""
                 INSERT dbo.AccountingAccounts
                   (AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,
-                   IsActive,CreatedAt,FinancialFunction,BalanceSide,BusinessId)
+                   IsActive,CreatedAt,FinancialFunction,BalanceSide,LegacyBusinessId)
                 VALUES(@AccountId,@TenantId,N'130599',N'Cartera histórica',N'Asset',1,1,
                   1,SYSDATETIMEOFFSET(),N'Receivable',N'Debit',@BusinessId);
                 """, connection);

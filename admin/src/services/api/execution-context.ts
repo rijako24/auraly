@@ -60,6 +60,15 @@ async function request<T>(
 }
 
 export const executionContextApi = {
+  updateCachedBusiness: (business: BusinessContextOption) => {
+    const key = contextCacheKey("businesses", business.tenantId);
+    const cached = readCachedContext<BusinessContextOption[]>(key);
+    if (!Array.isArray(cached)) return;
+    const updated = cached.map(item => item.businessId === business.businessId ? {
+      ...item, name: business.name, sharesProductPrices: business.sharesProductPrices, timeZone: business.timeZone,
+    } : item);
+    try { localStorage.setItem(key, JSON.stringify(updated)); } catch { /* Offline cache is best effort. */ }
+  },
   tenants: () => request<ExecutionTenant[]>("tenants"),
   businesses: (tenantId: string) =>
     request<BusinessContextOption[]>("businesses", tenantId),

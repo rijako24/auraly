@@ -50,7 +50,7 @@ async function mockApi(page: Page, settings: { conflictOnFirstReceiptSave?: bool
     const path = url.pathname;
     if (path.endsWith("/auth/me")) return json(route, { userId, tenantId, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions });
     if (path.endsWith("/execution-context/tenants")) return json(route, [{ tenantId, name: "Auraly" }]);
-    if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Auraly" }]);
+    if (path.endsWith("/execution-context/businesses")) return json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]);
     if (path.endsWith("/execution-context/access")) return json(route, { tenantId, businessId, roles: ["Administrator"], permissions });
     if (path.endsWith("/inventory/warehouses")) return json(route, [
       { warehouseId: primaryWarehouseId, code: "PPL", name: "Principal" },
@@ -474,20 +474,22 @@ test("recepción permite aplicar una retención puntual y descartar en móvil si
   expect(errors).toEqual([]);
 });
 
-test("guardar recepción recupera un token vencido sin exigir varios intentos", async ({ page }) => {
+test("guardar recepción conserva la captura ante un conflicto y no sobrescribe la versión ajena", async ({ page }) => {
   const mock = await mockApi(page, { conflictOnFirstReceiptSave: true });
   await authenticate(page);
   await page.goto("/dashboard/purchasing/goods-receipts");
   await page.getByRole("button", { name: "Nueva entrada" }).click();
   const dialog = page.getByRole("dialog", { name: "Recepción de compra" });
 
+  await dialog.getByPlaceholder("Observaciones de recepción").fill("Conservar ante conflicto");
   await dialog.getByRole("button", { name: "Guardar borrador" }).click();
 
-  await expect(dialog).toBeHidden();
-  await expect(page.getByText("Borrador guardado y disponible para recuperar.")).toBeVisible();
-  expect(mock.receiptSaveAttempts()).toBe(2);
-  expect(mock.receiptSaveTokens()).toEqual([null, "server-current-token"]);
-  await expect(page.getByText(/pudo cambiar en otra sesión/i)).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByPlaceholder("Observaciones de recepción")).toHaveValue("Conservar ante conflicto");
+  await expect(page.getByText("El borrador cambió en otra sesión. Ábrelo desde la lista para revisar la versión actual antes de guardar.")).toBeVisible();
+  expect(mock.receiptSaveAttempts()).toBe(1);
+  expect(mock.receiptSaveTokens()).toEqual([null]);
+  await expect(page.getByText("Borrador guardado y disponible para recuperar.")).toHaveCount(0);
 });
 
 test("recepción simple sigue directa y la factura adicional carga catálogos y conceptos contables", async ({ page }) => {

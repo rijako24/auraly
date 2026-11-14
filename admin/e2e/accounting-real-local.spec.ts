@@ -75,7 +75,7 @@ async function unapplyRealPayment(page: Page, context: Awaited<ReturnType<typeof
   const crossId = randomUUID();
   const crossCapture: SaveVoucherDraft = {
     documentId: crossId, documentType: "ManualAccountingVoucher", payloadVersion: 4,
-    occurredAt: proposedAccountingDate(), conceptCode: "MANUAL_VOUCHER", voucherTypeCode: "Accounting",
+    occurredAt: proposedAccountingDate(context.timeZone), conceptCode: "MANUAL_VOUCHER", voucherTypeCode: "Accounting",
     mainPartyId: partyId, description: "Aplicar el anticipo existente", reference: null, adjustment: null, rowVersion: null,
     lines: [
       { accountId: debtAccount, partyId, costCenterId: null, description: "Cruzar obligación", debit: payable ? 25 : 0,
@@ -425,7 +425,7 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   expect(counterpart).toBeTruthy();
   const receivableId = randomUUID();
   const documentNumber = `CXC-E2E-${randomUUID()}`;
-  const date = proposedAccountingDate();
+  const date = proposedAccountingDate(context.timeZone);
   await scopedJson("POST", `${api}/receivables/preexisting/import`, { businessId, items: [{
     receivableId, customerId: customer.customerId, customerIdentification: null, partySiteId: null,
     documentNumber, issuedAt: date, dueDate: date, amount: 1000.5001,
@@ -443,9 +443,9 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   await wizard.getByRole("combobox", { name: "Seleccionar customer", exact: true }).click();
   await page.getByPlaceholder("Buscar por nombre o identificación…").fill(name);
   await page.getByRole("option").filter({ hasText: name }).click();
-  await expect(wizard.getByText(/^Saldo /)).toContainText("1.000,5001");
+  await expect(wizard.getByText("Pendiente", { exact: true }).locator("..")).toContainText("1.000,5001");
   await wizard.getByLabel(`Abono para ${documentNumber}`, { exact: true }).fill("100.25");
-  await expect(wizard.getByText("Total seleccionado", { exact: true }).locator("..")).toContainText("100,25");
+  await expect(wizard.getByText("Total seleccionado", { exact: true }).locator("../..")).toContainText("100,25");
   await wizard.getByRole("button", { name: "Ir a pagar", exact: true }).click();
   const checkout = page.getByRole("dialog", { name: "Abono a cartera", exact: true });
   await expect(checkout).toContainText("100,25");
@@ -487,12 +487,15 @@ test("abono real de cartera conserva la obligación, el recaudo y un solo asient
   await page.getByPlaceholder("Buscar por nombre o identificación…").fill(name);
   await page.getByRole("option").filter({ hasText: name }).click();
   await expect(wizard.getByText(documentNumber, { exact: true })).toBeVisible();
-  await expect(wizard.getByText(/^Saldo /)).toContainText("900,2501");
+  await expect(wizard.getByText("Pendiente", { exact: true }).locator("..")).toContainText("900,2501");
   await wizard.screenshot({ path: "../work/cartera-real-abono.png" });
   await wizard.getByRole("button", { name: "Cancelar", exact: true }).click();
   await invoiceRow.click();
   await unapplyRealPayment(page, context, "Receivable", documentNumber, receivableId, customer.partyId, 900.2501);
-  expect((await scopedJson<CustomerPaymentHistoryPage>("GET", `${api}/customers/${customer.customerId}/payments?page=1&pageSize=25`)).items).toEqual(history.items);
+  // The original receipt and gross cash remain immutable. Unapplying 50.0001
+  // and returning 20.0001 changes only its remaining application to the debt.
+  expect((await scopedJson<CustomerPaymentHistoryPage>("GET", `${api}/customers/${customer.customerId}/payments?page=1&pageSize=25`)).items)
+    .toEqual([{...history.items[0],netAppliedAmount:30.2498}]);
 });
 
 
@@ -547,7 +550,11 @@ test("un gasto pendiente aparece debajo del tercero en el comprobante manual", a
   const accountCode = (await row.locator("td").nth(1).innerText()).split(" · ")[0];
   await row.getByLabel(`Abono a ${expense.documentNumber}`).fill("300");
   await row.getByRole("button", { name: "Agregar" }).click();
-  await expect(page.getByRole("row", { name: "Partida 1", exact: true })).toContainText(accountCode);
+  const application = page.getByRole("row", { name: /^Partida \d+$/ }).filter({ hasText: accountCode });
+  await expect(application).toHaveCount(1);
+  await expect(application.getByRole("textbox", { name: "Descripción de la partida", exact: true }))
+    .toHaveValue(`Aplicación ${expense.documentNumber}`);
+  await expect(application.getByRole("textbox", { name: "Débito de la partida", exact: true })).toHaveValue("300");
   console.log(`PROVEEDOR_DEMO=${name} GASTO_DEMO=${expense.documentNumber}`);
 });
 
@@ -657,7 +664,8 @@ test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por
   await page.getByRole("tab", { name: "Facturas", exact: true }).click();
   await page.getByRole("row").filter({ hasText: expense.documentNumber }).click();
   await unapplyRealPayment(page, context, "Payable", expense.documentNumber, expense.payable!.payableId, supplier.partyId, 900.25, true);
-  expect((await scopedJson<SupplierPaymentHistoryPage>("GET", `${api}/suppliers/${supplier.supplierId}/payments?page=1&pageSize=25`)).items).toEqual(history.items);
+  const correctedHistory=(await scopedJson<SupplierPaymentHistoryPage>("GET", `${api}/suppliers/${supplier.supplierId}/payments?page=1&pageSize=25`)).items;
+  expect(correctedHistory).toEqual([{...history.items[0],netAppliedAmount:30.2498}]);
   const beforeCancellation = await scopedJson<AccountingOpenPositionPage>("GET",
     `${api}/accounting/open-positions?subledgerKind=SupplierCredit&partyId=${supplier.partyId}&page=1&pageSize=10`);
   const originalAdvance = expect.objectContaining({ originalAmount: 50.0001, outstandingAmount: 50.0001 });
@@ -685,6 +693,6 @@ test("gasto real usa cuenta automática y su abono actualiza la misma cuenta por
   expect(afterCancellation.items.find(item => item.sourceDocumentId === cancelled.cancellationId)).toMatchObject({
     creditNature: "Credit", originalAmount: 30.2498, outstandingAmount: 30.2498,
   });
-  expect((await scopedJson<SupplierPaymentHistoryPage>("GET", `${api}/suppliers/${supplier.supplierId}/payments?page=1&pageSize=25`)).items).toEqual(history.items);
+  expect((await scopedJson<SupplierPaymentHistoryPage>("GET", `${api}/suppliers/${supplier.supplierId}/payments?page=1&pageSize=25`)).items).toEqual(correctedHistory);
   await detailDialog.screenshot({ path: "../work/gasto-anulado-tras-desaplicacion-real.png" });
 });

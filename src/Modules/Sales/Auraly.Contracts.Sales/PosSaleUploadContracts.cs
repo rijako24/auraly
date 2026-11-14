@@ -75,7 +75,12 @@ public sealed record PosSalePaymentContract(
     Guid? BankAccountId = null,
     string? Notes = null,
     decimal? TenderedAmount = null,
-    decimal RoundingAdjustment = 0m)
+    decimal RoundingAdjustment = 0m,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null)
 {
     public decimal CollectedAmount => Amount + RoundingAdjustment;
 }
@@ -234,7 +239,12 @@ public sealed record PosSaleCreditContract(
     DateTimeOffset DueDate,
     decimal? RemainingCredit = null,
     string? SoldByName = null,
-    Guid? PartySiteId = null);
+    Guid? PartySiteId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null);
 
 public sealed record PosCreditValidationRequest(
     Guid BusinessId,
@@ -256,7 +266,9 @@ public sealed record PosCreditValidationResult(
     bool IsAllowed,
     string? RejectionReason,
     PosCreditFiscalMaterial? FiscalMaterial = null,
-    DateTimeOffset? DueDate = null);
+    DateTimeOffset? DueDate = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? OverdueInvoiceCount = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MaximumOverdueInvoices = null);
 
 public static class PosSaleFiscalMappings
 {

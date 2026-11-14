@@ -201,9 +201,11 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Account_references_cover_manual_and_native_snapshot_names_without_including_party_or_bank_ids(bool webSnapshot)
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Account_references_cover_manual_and_native_snapshot_names_without_including_party_or_bank_ids(bool webSnapshot, bool withLines)
     {
         var counterpart = Guid.NewGuid();
         var expense = Guid.NewGuid();
@@ -216,10 +218,10 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
             ExpenseAccountId = expense,
             PartyId = Guid.NewGuid(),
             BankAccountId = Guid.NewGuid(),
-            Lines = new[] { new { AccountId = manualLine, AccountingAccountId = accountingLine,
+            Lines = withLines ? new[] { new { AccountId = manualLine, AccountingAccountId = accountingLine,
                 ExpenseAccountId = expenseLine, PartyId = Guid.NewGuid(), BankAccountId = Guid.NewGuid() },
                 new { AccountId = manualLine, AccountingAccountId = accountingLine,
-                    ExpenseAccountId = expenseLine, PartyId = Guid.NewGuid(), BankAccountId = Guid.NewGuid() } }
+                    ExpenseAccountId = expenseLine, PartyId = Guid.NewGuid(), BankAccountId = Guid.NewGuid() } } : null
         }, webSnapshot ? new JsonSerializerOptions(JsonSerializerDefaults.Web) : new JsonSerializerOptions());
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -228,7 +230,11 @@ public sealed class AccountingSourceAcceptanceTests(ServerSliceFixture fixture, 
         var actual = new List<Guid>();
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync()) actual.Add(reader.GetGuid(0));
-        Assert.Equal(new[] { counterpart, expense, manualLine, accountingLine, expenseLine }.Order(), actual.Order());
+        // Native line capture replaces the header's expense selection. A direct
+        // header remains an explicit reference when the source has no lines.
+        var expected = withLines ? new[] { counterpart, manualLine, accountingLine, expenseLine }
+            : new[] { counterpart, expense };
+        Assert.Equal(expected.Order(), actual.Order());
     }
 
     [Theory]

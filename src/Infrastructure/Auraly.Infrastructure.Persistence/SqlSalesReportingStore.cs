@@ -108,20 +108,36 @@ public sealed partial class SqlSalesReportingStore(
         SqlConnection connection,SalesReportingUserIdentity user,SalesReportFilter filter,
         string dimension,int limit,CancellationToken token)
     {
-        var (key,label)=ExplorerDimension(dimension);
+        var (key,label)=ExplorerDimension(dimension,rawIdentifiers:true);
         await using var command=new SqlCommand(LineBreakdownSql(ExplorerSource,key,label),connection);
         AddExplorerParameters(command,user,new(filter));command.Parameters.AddWithValue("@Limit",limit);
         return await ReadBreakdownRowsAsync(command,token);
     }
 
-    private static string LineBreakdownSql(string source,string key,string label,int? limit=null)=>$"""
-            WITH grouped AS(SELECT {key} [Key],MAX({label}) Label,{ExplorerMeasures}
-              {source} GROUP BY {key})
-            SELECT TOP({(limit is {} take?take.ToString(System.Globalization.CultureInfo.InvariantCulture):"@Limit")}) [Key],Label,Documents,Quantity,GrossSales,Discounts,Returns,NetUntaxed,Tax,NetTotal,
+    private static string LineBreakdownSql(string source,string key,string label,int? limit=null)
+    {
+        // Mark each document once within its dimension, then aggregate its
+        // existing signed measures in one pass. COUNT(DISTINCT) mixed with sums
+        // produced two wide spools and a join over the same filtered activity.
+        var measures=MeasuresSql("Documents","Quantity","GrossSales","Discounts","Returns",
+            "NetUntaxed","Tax","NetTotal","RecognizedCost","Profit").Replace(
+            "COUNT_BIG(DISTINCT a.OriginalSaleDocumentId)",
+            "SUM(CONVERT(bigint,CASE WHEN a.DocumentOrdinal=1 AND a.OriginalSaleDocumentId IS NOT NULL THEN 1 ELSE 0 END))",
+            StringComparison.Ordinal);
+        return $"""
+            WITH ranked AS(SELECT {key} DimensionKey,{label} DimensionLabel,{FinancialActivityColumns},
+                ROW_NUMBER() OVER(PARTITION BY {key},a.OriginalSaleDocumentId ORDER BY a.OriginalSaleDocumentId) DocumentOrdinal
+              {source}),
+            grouped AS(SELECT a.DimensionKey [Key],MAX(a.DimensionLabel) Label,{measures}
+              FROM ranked a GROUP BY a.DimensionKey)
+            -- Group typed identities; publish their original text keys only for
+            -- the result groups, preserving the null identity and text tie order.
+            SELECT TOP({(limit is {} take?take.ToString(System.Globalization.CultureInfo.InvariantCulture):"@Limit")}) COALESCE(CONVERT(nvarchar(max),[Key]),N'unattributed') [Key],Label,Documents,Quantity,GrossSales,Discounts,Returns,NetUntaxed,Tax,NetTotal,
               RecognizedCost,Profit,Profit/NULLIF(NetUntaxed,0)*100,
               COALESCE(NetUntaxed/NULLIF(SUM(NetUntaxed) OVER(),0)*100,0)
             FROM grouped ORDER BY NetUntaxed DESC,Label,[Key];
             """;
+    }
 
     private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadPaymentBreakdownAsync(
         SqlConnection connection,SalesReportingUserIdentity user,SalesReportFilter filter,int limit,CancellationToken token)

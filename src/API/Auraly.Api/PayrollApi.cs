@@ -73,11 +73,22 @@ public static class PayrollApi
         {
             try
             {
-                await service.SaveNoveltyAsync(context.User.Identity(), request, ct);
-                return Results.Created($"/api/commerce/v1/payroll/novelties/{request.NoveltyId:D}", request);
+                if (request.RowVersion is not null) return Results.BadRequest();
+                var result = await service.SaveNoveltyAsync(context.User.Identity(), request, ct);
+                return Results.Created($"/api/commerce/v1/payroll/novelties/{request.NoveltyId:D}", result);
             }
             catch (Exception error) { return Problem(error); }
         });
+
+        group.MapPut("/novelties/{id:guid}", (HttpContext context, Guid id,
+            SavePayrollNoveltyRequest request, PayrollService service, CancellationToken ct) =>
+            id != request.NoveltyId || request.RowVersion is null
+                ? Task.FromResult<IResult>(Results.BadRequest())
+                : Execute(() => service.SaveNoveltyAsync(context.User.Identity(), request, ct)));
+
+        group.MapPost("/novelties/{id:guid}/void", (HttpContext context, Guid id,
+            PayrollVersionRequest request, PayrollService service, CancellationToken ct) =>
+            Execute(() => service.VoidNoveltyAsync(context.User.Identity(), id, request.RowVersion, ct)));
 
         group.MapPost("/payments", (HttpContext context,
             CreatePayrollPaymentBatchRequest request, PayrollService service,
@@ -99,8 +110,14 @@ public static class PayrollApi
             Execute(() => service.GetRunAsync(context.User.Identity(), id, ct)));
 
         group.MapPost("/runs/{id:guid}/calculate", (HttpContext context, Guid id,
-            PayrollService service, CancellationToken ct) =>
-            Execute(() => service.CalculateRunAsync(context.User.Identity(), id, ct)));
+            CalculatePayrollRunRequest? request, PayrollService service, CancellationToken ct) =>
+            Execute(() => service.CalculateRunAsync(context.User.Identity(), id, request ?? new(), ct)));
+
+        group.MapGet("/runs/{id:guid}/employments", (HttpContext context, Guid id,
+            int? page, int? pageSize, string? search, string? contractNumber, string? sortBy,
+            string? sortDirection, PayrollService service, CancellationToken ct) =>
+            Execute(() => service.PageRunEmploymentsAsync(context.User.Identity(), id,
+                page ?? 1, pageSize ?? 50, search, ct, new(contractNumber, sortBy ?? "employeeName", sortDirection ?? "asc"))));
 
         group.MapPost("/runs/{id:guid}/approve", (HttpContext context, Guid id,
             PayrollVersionRequest request, PayrollService service, CancellationToken ct) =>

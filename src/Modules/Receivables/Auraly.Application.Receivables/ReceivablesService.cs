@@ -39,37 +39,56 @@ public sealed class ReceivablesService(
         ReceivablesReportQuery query, CancellationToken token = default)
     {
         ValidateReport(user, query);
-        return store.ReportAsync(user, query, token);
+        return store.ReportAsync(user, NormalizeReport(query), token);
     }
-    public Task<ReceivablesReportPage> PrintReportAsync(ReceivablesUserIdentity user,
+    public async Task<ReceivablesReportPage> PrintReportAsync(ReceivablesUserIdentity user,
         ReceivablesReportQuery query, CancellationToken token = default)
     {
         ValidateReport(user, query);
-        return store.PrintReportAsync(user, query, token);
+        var result = await store.PrintReportAsync(user, NormalizeReport(query), token);
+        PortfolioReportLimits.ValidateExport(result.TotalCount,
+            result.Items.Sum(item => (long)(item.Applications?.Count ?? 0)));
+        return result;
     }
     private static void ValidateReport(ReceivablesUserIdentity user, ReceivablesReportQuery query)
     {
         Require(user, ReceivablesPermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100 ||
             (long)(query.Page - 1) * query.PageSize > int.MaxValue ||
-            query.Cutoff == DateOnly.MaxValue || query.To == DateOnly.MaxValue ||
+            query.Cutoff == DateOnly.MaxValue || query.To == DateOnly.MaxValue || query.TemplateVersion is not (2 or 3 or 4) ||
             query.CustomerId == Guid.Empty || query.PartySiteId == Guid.Empty ||
             query.From > query.To || query.From > query.Cutoff ||
-            query.To > query.Cutoff)
+            query.To > query.Cutoff || query.IssuedFrom > query.IssuedTo ||
+            query.IssuedFrom > query.Cutoff || query.IssuedTo > query.Cutoff ||
+            query.IssuedTo == DateOnly.MaxValue ||
+            query.MinimumAgeDays is < 0 || query.MaximumAgeDays is < 0 ||
+            query.MinimumAgeDays > query.MaximumAgeDays ||
+            query.MinimumDaysPastDue > query.MaximumDaysPastDue ||
+            query.MinimumAgeDays > query.Cutoff.DayNumber ||
+            query.MaximumAgeDays > query.Cutoff.DayNumber ||
+            query.MinimumDaysPastDue < query.Cutoff.DayNumber - DateOnly.MaxValue.DayNumber + 1 ||
+            query.MinimumDaysPastDue > query.Cutoff.DayNumber ||
+            query.MaximumDaysPastDue < query.Cutoff.DayNumber - DateOnly.MaxValue.DayNumber ||
+            query.MaximumDaysPastDue > query.Cutoff.DayNumber)
             throw new ReceivablesValidationException("Los filtros del informe no son válidos.");
-        ValidateLedgerFilters(query.Status, query.From, query.To);
+        ValidateLedgerFilters(query.Status, query.From, query.To, query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection,
-            "name", "issuedAt", "dueDate", "documentNumber", "originalAmount",
-            "paidAmount", "outstandingAmount", "overdueAmount", "invoiceCount"))
+            "name", "issuedAt", "dueDate", "ageDays", "daysPastDue", "documentNumber", "originalAmount",
+            "paidAmount", "outstandingAmount", "netAmount", "overdueAmount", "invoiceCount"))
             throw new ReceivablesValidationException("El orden del informe no es válido.");
     }
+
+    private static ReceivablesReportQuery NormalizeReport(ReceivablesReportQuery query) => query with
+    {
+        Search = Normalize(query.Search, 120), DocumentNumber = Normalize(query.DocumentNumber, 64)
+    };
     public Task<CustomerPortfolioPage> ListCustomersAsync(ReceivablesUserIdentity user,
         CustomerPortfolioQuery query, CancellationToken token = default)
     {
         Require(user, ReceivablesPermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
             throw new ReceivablesValidationException("Invalid pagination.");
-        ValidateLedgerFilters(query.Status, query.From, query.To);
+        ValidateLedgerFilters(query.Status, query.From, query.To, query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "name", "invoiceCount", "originalAmount", "paidAmount", "outstandingAmount", "overdueAmount"))
             throw new ReceivablesValidationException("El ordenamiento de clientes no es válido.");
         return store.ListCustomersAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
@@ -83,7 +102,7 @@ public sealed class ReceivablesService(
         Require(user, ReceivablesPermissionCodes.RegisterPosPayment);
         if (query.CustomerId is null || query.CustomerId == Guid.Empty)
             throw new ReceivablesValidationException("Selecciona un cliente para consultar sus facturas pendientes.");
-        return ListCoreAsync(user, query with { Search = null, Status = null,
+        return ListCoreAsync(user, query with { Search = null, Status = null, ReceivableId = null,
             Overdue = null, OutstandingOnly = true }, ReceivablesPermissionCodes.RegisterPosPayment, token);
     }
 
@@ -91,7 +110,8 @@ public sealed class ReceivablesService(
     {
         Require(user, permission);
         if (query.Page < 1 || query.PageSize is < 1 or > 100) throw new ReceivablesValidationException("Invalid pagination.");
-        ValidateLedgerFilters(query.Status, query.From, query.To);
+        if (query.ReceivableId == Guid.Empty) throw new ReceivablesValidationException("La factura seleccionada no es válida.");
+        ValidateLedgerFilters(query.Status, query.From, query.To, query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "documentNumber", "dueDate", "originalAmount", "outstandingAmount", "status"))
             throw new ReceivablesValidationException("El ordenamiento de facturas no es válido.");
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
@@ -125,17 +145,17 @@ public sealed class ReceivablesService(
     {
         Require(user,ReceivablesPermissionCodes.Read);
         if(query.Page<1||query.PageSize is <1 or >100)throw new ReceivablesValidationException("Invalid pagination.");
-        ValidateLedgerFilters(query.Status, query.From, query.To);
+        ValidateLedgerFilters(query.Status, query.From, query.To, query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "paidAt", "partyName", "documentNumber", "totalAmount"))
             throw new ReceivablesValidationException("El ordenamiento de recaudos no es válido.");
         return store.ListPaymentsAsync(user,query with { Search=Normalize(query.Search,120) },token);
     }
 
-    private static void ValidateLedgerFilters(string? status, DateOnly? from, DateOnly? to)
+    private static void ValidateLedgerFilters(string? status, DateOnly? from, DateOnly? to, int dateRangeVersion)
     {
         if (status is not null and not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled"))
             throw new ReceivablesValidationException("The receivable status is invalid.");
-        if (from > to)
+        if (dateRangeVersion is not (1 or 2) || from > to || to == DateOnly.MaxValue)
             throw new ReceivablesValidationException("The date range is invalid.");
     }
 
@@ -144,7 +164,8 @@ public sealed class ReceivablesService(
     {
         Require(user, ReceivablesPermissionCodes.ManageCredit);
         if (request.BusinessId != user.BusinessId) throw new ReceivablesForbiddenException("The profile belongs to another business.");
-        if (customerId == Guid.Empty || request.DefaultDueDays is < 0 or > 3650 || request.CreditLimit < 0)
+        if (customerId == Guid.Empty || request.DefaultDueDays is < 0 or > 3650 || request.CreditLimit < 0 ||
+            request.MaximumOverdueInvoices < 0)
             throw new ReceivablesValidationException("The credit profile is invalid.");
         var result = await store.UpdateCreditProfileAsync(user, customerId, request, token);
         await synchronization.DispatchPendingAsync(user.TenantId, user.BusinessId, CancellationToken.None);
@@ -223,7 +244,8 @@ public sealed class ReceivablesService(
 
     private static PaymentTender ToDomain(CustomerPaymentTenderRequest value) => new(
         value.MethodCode, value.Amount, value.TenderedAmount, value.BankAccountId,
-        value.Reference, value.Notes, value.CardFranchiseCode, value.ApprovalNumber);
+        value.Reference, value.Notes, value.CardFranchiseCode, value.ApprovalNumber,
+        value.PaymentMethodId, value.PaymentMethodVersion);
 
     private static string? Normalize(string? value, int max)
     {

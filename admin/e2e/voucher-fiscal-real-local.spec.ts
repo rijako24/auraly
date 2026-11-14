@@ -20,7 +20,7 @@ test("captura fiscal manual real revisa, guarda y reabre sin crear una deuda ni 
   });
   const expense = await realAccountingAuxiliary(context, "5195", "Expense", "General", "Debit", null, true);
   const payable = await realAccountingAuxiliary(context, "2295", "Liability", "Payable", "Credit", null, true);
-  const at = proposedAccountingDate();
+  const at = proposedAccountingDate(context.timeZone);
   const description = `Adquisición E2E ${randomUUID().slice(0, 8)}`;
   const request: SaveVoucherDraft = {
     documentId: randomUUID(), documentType: "ManualAccountingVoucher", occurredAt: at,

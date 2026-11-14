@@ -218,6 +218,11 @@ public sealed class SalesReportPerformanceTests(ServerSliceFixture fixture,ITest
             var timing=plan.Descendants(ns+"QueryTimeStats").FirstOrDefault();
             if(timing is null||Number(timing,"ElapsedTime")<50)return;
             var text=plan.Descendants(ns+"StmtSimple").FirstOrDefault()?.Attribute("StatementText")?.Value??"";
+            var planDirectory=Path.Combine(AppContext.BaseDirectory,"TestResults","sales-report-failure-plans");
+            Directory.CreateDirectory(planDirectory);
+            var planPath=Path.Combine(planDirectory,Guid.NewGuid().ToString("N")+".sqlplan");
+            plan.Save(planPath);
+            output.WriteLine("Failure-only plan: {0}",planPath);
             output.WriteLine("PLAN {0}: elapsed={1} ms, cpu={2} ms: {3}",name,Number(timing,"ElapsedTime"),Number(timing,"CpuTime"),text[..Math.Min(160,text.Length)]);
             foreach(var operation in plan.Descendants(ns+"RelOp"))
             {

@@ -230,12 +230,12 @@ WHERE t.IsActive=1 AND a.IsActive=1 AND a.AllowsPosting=1 AND NOT EXISTS(
   AND p.IsDefault=1 AND p.IsActive=1;
 
 INSERT dbo.AccountingCostCenters(
-  CostCenterId,BusinessId,Code,Name,ParentCostCenterId,IsDefault,IsActive,CreatedAt)
-SELECT NEWID(),b.BusinessId,N'GENERAL',N'Operación general',NULL,1,1,@AccountingNow
-FROM dbo.Businesses b
-WHERE b.IsActive=1 AND NOT EXISTS(
+  CostCenterId,TenantId,Code,Name,ParentCostCenterId,IsDefault,IsActive,CreatedAt)
+SELECT NEWID(),tenant.TenantId,N'GENERAL',N'Operación general',NULL,1,1,@AccountingNow
+FROM dbo.Tenants tenant
+WHERE tenant.IsActive=1 AND NOT EXISTS(
   SELECT 1 FROM dbo.AccountingCostCenters c
-  WHERE c.BusinessId=b.BusinessId AND c.IsDefault=1 AND c.IsActive=1);
+  WHERE c.TenantId=tenant.TenantId AND c.IsDefault=1 AND c.IsActive=1);
 
 INSERT dbo.BusinessReasons(
   ReasonId,BusinessId,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,

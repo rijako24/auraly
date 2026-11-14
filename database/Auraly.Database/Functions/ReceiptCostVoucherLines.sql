@@ -8,7 +8,7 @@ AS RETURN
       line.Debit,line.Credit,
       CONVERT(decimal(19,4),CASE WHEN line.Debit>0
         AND (account.RequiresParty=0 OR line.PartyId IS NOT NULL) AND
-        ((account.AccountType=N'Expense' AND COALESCE(account.FinancialFunction,N'General')=N'General')
+        ((account.AccountType IN(N'Expense',N'Cost') AND COALESCE(account.FinancialFunction,N'General')=N'General')
           OR (account.AccountType=N'Asset' AND account.FinancialFunction=N'UnallocatedPurchaseCost'
             AND entry.SourceDocumentType=N'ManualAccountingVoucher'))
         AND entry.SourceDocumentType IN(N'Expense',N'ManualAccountingVoucher',N'GoodsReceiptCostDocument')

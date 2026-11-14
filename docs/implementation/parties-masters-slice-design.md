@@ -74,6 +74,14 @@ valida siempre el Business autenticado.
 
 ## Experiencia web
 
+El selector paginado `GET /api/commerce/v1/parties/role-options?role=Any`
+consulta identidades activas del tenant, aunque no tengan un rol comercial.
+`PartyId` es también su identificador de selección, sin inventar una membresía.
+Por la decisión de recibos del 2026-11-10 (comprobantes abiertos, sección 14.2),
+`accounting.read` puede leer esa proyección mínima; no concede acceso al workspace
+ni a proyecciones de roles específicos. Estas conservan su autorización y tabla
+especializadas. Conteo y página usan los mismos filtros del servidor.
+
 El menú agrega dos superficies, sin multiplicar CRUD simples:
 
 - **Terceros**: lista unificada, búsqueda, filtros, paginación, alta de cliente o
@@ -101,6 +109,18 @@ paralelas ni otra fuente de verdad. Reiniciar el proceso conserva ventas, client
 pendientes, series y outbox porque no se reemplaza la base local.
 
 ## Alcance pendiente deliberado
+
+La resolución de proveedores ya seleccionados en los costos de una recepción
+extiende `PartyWorkspaceService.RoleOptionsAsync` mediante el contrato opcional
+RoleIds y `POST /parties/role-options`. Reutiliza autorización y proyección de
+la consulta existente: el lote une sus IDs antes de conteo, orden y límite,
+en un solo comando SQL, sin lecturas por persona. La búsqueda de directorio
+conserva páginas de hasta cien; la resolución exacta limita su página a los
+IDs distintos solicitados y no agrega una descarga general del directorio.
+La petición de lote sólo admite la primera página. Su contrato sigue aislado
+por tenant; no otorga acceso al workspace ni cambia permisos por rol. La
+regresión de compras verifica cien IDs, permiso de proveedor y rechazo con
+el permiso limitado a captura de gasto. El endpoint GET publicado se conserva.
 
 - reconciliación de `ExternalCommerceCustomers` hacia Party/Customer;
 - roles Employee, Seller, Carrier y Driver con sus consumidores reales;

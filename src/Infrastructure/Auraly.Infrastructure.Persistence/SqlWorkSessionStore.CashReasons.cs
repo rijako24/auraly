@@ -221,7 +221,7 @@ public sealed partial class SqlWorkSessionStore
     {
         await using var command = new SqlCommand("""
             SELECT COUNT_BIG(*) FROM dbo.AccountingCostCenters
-            WHERE CostCenterId=@CostCenterId AND BusinessId=@BusinessId AND IsActive=1;
+            WHERE CostCenterId=@CostCenterId AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1;
             """, connection, transaction);
         command.Parameters.AddWithValue("@CostCenterId", costCenterId);
         command.Parameters.AddWithValue("@BusinessId", businessId);

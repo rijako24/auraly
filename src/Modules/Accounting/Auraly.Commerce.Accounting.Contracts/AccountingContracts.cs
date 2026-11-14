@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Auraly.Commerce.Accounting.Contracts;
 
 public static class AccountingPermissionCodes
@@ -217,7 +219,7 @@ public sealed record ChangeBankReconciliationStatusRequest(
 
 public sealed record CreateCostCenterRequest(
     Guid CostCenterId,
-    Guid BusinessId,
+    Guid TenantId,
     string Code,
     string Name,
     Guid? ParentCostCenterId,
@@ -225,13 +227,24 @@ public sealed record CreateCostCenterRequest(
 
 public sealed record AccountingCostCenterView(
     Guid CostCenterId,
-    Guid BusinessId,
+    Guid TenantId,
     string Code,
     string Name,
     Guid? ParentCostCenterId,
     bool IsDefault,
     bool IsActive,
     string RowVersion = "");
+
+public sealed record AccountingCostCenterQuery(
+    string? Search = null, bool? IsActive = null, bool? IsDefault = null,
+    Guid? CostCenterId = null, int Page = 1, int PageSize = 50,
+    string SortBy = "code", string SortDirection = "asc", IReadOnlyList<Guid>? Ids = null);
+
+public sealed record AccountingCostCenterPage(
+    IReadOnlyList<AccountingCostCenterView> Items, int Page, int PageSize, int TotalCount)
+{
+    public int TotalPages => (int)Math.Ceiling((double)TotalCount / PageSize);
+}
 
 public sealed record UpdateCostCenterRequest(
     string Code, string Name, Guid? ParentCostCenterId,
@@ -252,12 +265,13 @@ public static class AccountingCostCenterOperationKinds
 public sealed record AccountingCostCenterAssignmentView(
     Guid AssignmentId, Guid BusinessId, Guid CostCenterId,
     string CostCenterCode, string CostCenterName, string OperationKind,
-    Guid? WarehouseId, string? WarehouseCode, string? WarehouseName, bool IsActive,
+    bool IsActive,
     string RowVersion = "");
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SaveAccountingCostCenterAssignmentRequest(
     Guid AssignmentId, Guid BusinessId, Guid CostCenterId,
-    string OperationKind, Guid? WarehouseId, bool IsActive, string? RowVersion = null);
+    string OperationKind, bool IsActive, string? RowVersion = null);
 
 public sealed record CreateAccountingPeriodRequest(
     Guid PeriodId,
@@ -319,7 +333,8 @@ public sealed record AccountingReadinessView(
 
 public sealed record PosAccountingSettlementConfiguration(
     bool IsAccountingEnabled,
-    IReadOnlyList<BankAccountView> BankAccounts);
+    IReadOnlyList<BankAccountView> BankAccounts,
+    Auraly.Contracts.Catalog.PaymentMethodCatalogSnapshot? PaymentMethods = null);
 
 public static class AccountingOpeningBalanceStatuses
 {
@@ -419,7 +434,11 @@ public sealed record ManualVoucherLineRequest(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     string? Reference = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    bool? FinancialDiscountEarned = null);
+    bool? FinancialDiscountEarned = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? FinancialConceptId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Guid? FinancialConceptTargetLineId = null);
 
 public sealed record ConfirmManualAccountingVoucherRequest(
     Guid VoucherId, Guid BusinessId, DateTimeOffset OccurredAt,

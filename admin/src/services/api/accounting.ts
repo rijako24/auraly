@@ -1,5 +1,12 @@
 import { apiClient } from "./client";
 import type { WithholdingAdjustment, WithholdingCalculation } from "./taxation";
+import type { PaymentMethodCatalogSnapshot } from "./payment-methods";
+
+export interface PaymentSettlementConfiguration {
+  paymentMethods?: PaymentMethodCatalogSnapshot | null;
+  isAccountingEnabled: boolean;
+  bankAccounts: Array<{ bankAccountId: string; displayName: string; isPrimary: boolean }>;
+}
 
 export interface AccountingAccount {
   accountId: string; code: string; name: string; accountType: string;
@@ -28,12 +35,15 @@ export interface AccountingOpenPosition {
   financialDiscountEarnedAccountName?: string | null;
   financialDiscountLostAccountId?: string | null; financialDiscountLostAccountCode?: string | null;
   financialDiscountLostAccountName?: string | null;
+  paidAmount?: number | null; otherMovementsAmount?: number | null; overdueDays?: number | null;
 }
-export interface AccountingOpenPositionPage { items: AccountingOpenPosition[]; page: number; pageSize: number; totalCount: number; totalOutstandingAmount: number; }
+export interface AccountingOpenPositionPage { items: AccountingOpenPosition[]; page: number; pageSize: number; totalCount: number; totalOutstandingAmount: number; referenceDate?: string | null; }
 export interface AccountingCostCenter {
-  costCenterId: string; businessId: string; code: string; name: string;
+  costCenterId: string; tenantId: string; code: string; name: string;
   parentCostCenterId: string | null; isDefault: boolean; isActive: boolean; rowVersion:string;
 }
+export interface AccountingCostCenterQuery { search?:string;isActive?:boolean;isDefault?:boolean;costCenterId?:string;ids?:string[];page?:number;pageSize?:number;sortBy?:"code"|"name";sortDirection?:"asc"|"desc"; }
+export interface AccountingCostCenterPage { items:AccountingCostCenter[];page:number;pageSize:number;totalCount:number;totalPages:number; }
 export interface AccountingPeriod {
   periodId: string; startsOn: string; endsOn: string; name: string; status: string;
 }
@@ -51,7 +61,7 @@ export interface AccountingReadiness {
   blockingIssues: string[];
   canEditOpeningBalances: boolean;
 }
-export interface AccountingCostCenterAssignment { assignmentId:string;businessId:string;costCenterId:string;costCenterCode:string;costCenterName:string;operationKind:"All"|"Sales"|"Purchasing"|"Expenses"|"Inventory";warehouseId:string|null;warehouseCode:string|null;warehouseName:string|null;isActive:boolean;rowVersion:string; }
+export interface AccountingCostCenterAssignment { assignmentId:string;businessId:string;costCenterId:string;costCenterCode:string;costCenterName:string;operationKind:"All"|"Sales"|"Purchasing"|"Expenses"|"Inventory";isActive:boolean;rowVersion:string; }
 export interface ActivateAccounting {
   effectiveFrom: string;
   functionalCurrencyCode: "COP";
@@ -94,7 +104,7 @@ export interface CreateAccount {
   accountType: string; allowsPosting: boolean; requiresParty: boolean; semantics?: AccountingAccount["semantics"];
 }
 export interface CreateCostCenter {
-  costCenterId: string; businessId: string; code: string; name: string;
+  costCenterId: string; tenantId: string; code: string; name: string;
   parentCostCenterId: string | null; isDefault: boolean;
 }
 export interface CreatePeriod {
@@ -132,9 +142,11 @@ export interface SetComplianceConceptMapping { businessId:string|null;authorityC
 export interface GenerateComplianceReport { authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;periodFrom:string;periodTo:string; }
 
 export const accountingApi = {
+  settlementConfiguration: () =>
+    apiClient.get<PaymentSettlementConfiguration>("/commerce/v1/accounting/settlement-configuration"),
   openPositions: (params: { subledgerKind: AccountingOpenPosition["subledgerKind"] | "All"; page: number; pageSize: number;
     partyId?: string; accountId?: string; search?: string; dueFrom?: string; dueTo?: string;
-    subledgerId?: string; counterpartyRoleId?: string; manualSupportOnly?: boolean; effectiveOn?: string }) => apiClient.get<AccountingOpenPositionPage>("/commerce/v1/accounting/open-positions", params),
+    subledgerId?: string; counterpartyRoleId?: string; manualSupportOnly?: boolean; effectiveOn?: string; voucherTypeCode?: "CashReceipt" | "Disbursement" }) => apiClient.get<AccountingOpenPositionPage>("/commerce/v1/accounting/open-positions", params),
   voucherDraft: (id: string) => apiClient.get<VoucherDraft>(`/commerce/v1/accounting/manual/drafts/${id}`),
   unapplicationCapture: (subledgerKind: "Payable" | "Receivable", subledgerId: string, transactionId: string) =>
     apiClient.get<VoucherDraftPreparation>(`/commerce/v1/accounting/unapplication-capture?${new URLSearchParams({ subledgerKind, subledgerId, transactionId })}`),
@@ -166,9 +178,16 @@ export const accountingApi = {
   reverseBankReconciliationAllocation: (id:string,matchId:string,reason:string,rowVersion:string) => apiClient.post<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}/allocations/${matchId}/reverse`,{reason,rowVersion}),
   closeBankReconciliation: (id:string,rowVersion:string) => apiClient.post<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}/close`,{rowVersion}),
   reopenBankReconciliation: (id:string,rowVersion:string,reason:string) => apiClient.post<BankReconciliationDetail>(`/commerce/v1/accounting/bank-reconciliations/${id}/reopen`,{rowVersion,reason}),
-  costCenters: () => apiClient.get<AccountingCostCenter[]>("/commerce/v1/accounting/cost-centers"),
+  costCenterPage: (query:AccountingCostCenterQuery = {}) => {
+    const params = new URLSearchParams();
+    for (const [key,value] of Object.entries(query)) {
+      if (Array.isArray(value)) for (const id of value) params.append(key,id);
+      else if (value != null && value !== "") params.set(key,String(value));
+    }
+    return apiClient.get<AccountingCostCenterPage>(`/commerce/v1/accounting/cost-centers?${params}`);
+  },
   costCenterAssignments: () => apiClient.get<AccountingCostCenterAssignment[]>("/commerce/v1/accounting/cost-center-assignments"),
-  saveCostCenterAssignment: (request:{assignmentId:string;businessId:string;costCenterId:string;operationKind:AccountingCostCenterAssignment["operationKind"];warehouseId:string|null;isActive:boolean;rowVersion?:string|null}) => apiClient.put<AccountingCostCenterAssignment>("/commerce/v1/accounting/cost-center-assignments",request),
+  saveCostCenterAssignment: (request:{assignmentId:string;businessId:string;costCenterId:string;operationKind:AccountingCostCenterAssignment["operationKind"];isActive:boolean;rowVersion?:string|null}) => apiClient.put<AccountingCostCenterAssignment>("/commerce/v1/accounting/cost-center-assignments",request),
   periods: () => apiClient.get<AccountingPeriod[]>("/commerce/v1/accounting/periods"),
   mappings: () => apiClient.get<AccountingMapping[]>("/commerce/v1/accounting/account-mappings"),
   categoryDefinitions: () => apiClient.get<AccountingCategoryDefinition[]>("/commerce/v1/accounting/category-definitions"),
@@ -182,7 +201,7 @@ export const accountingApi = {
   accountPage: (params: {page:number;pageSize:number;search?:string}) => apiClient.get<AccountingAccountPage>("/commerce/v1/accounting/accounts", params),
   updateAccount: (accountId:string, request:{name:string;requiresParty:boolean;rowVersion:string;semantics?:AccountingAccount["semantics"]}) => apiClient.put<AccountingAccount>(`/commerce/v1/accounting/accounts/${accountId}`, request),
   createCostCenter: (request: CreateCostCenter) => apiClient.post<AccountingCostCenter>("/commerce/v1/accounting/cost-centers", request),
-  updateCostCenter: (costCenterId:string, request:Omit<AccountingCostCenter,"costCenterId"|"businessId">) => apiClient.put<AccountingCostCenter>(`/commerce/v1/accounting/cost-centers/${costCenterId}`,request),
+  updateCostCenter: (costCenterId:string, request:Omit<AccountingCostCenter,"costCenterId"|"tenantId">) => apiClient.put<AccountingCostCenter>(`/commerce/v1/accounting/cost-centers/${costCenterId}`,request),
   setCostCenterStatus: (costCenterId:string,isActive:boolean,rowVersion:string) => apiClient.put<AccountingCostCenter>(`/commerce/v1/accounting/cost-centers/${costCenterId}/status`,{isActive,rowVersion}),
   createPeriod: (request: CreatePeriod) => apiClient.post<AccountingPeriod>("/commerce/v1/accounting/periods", request),
   setMapping: (request: SetAccountMapping) => apiClient.put<void>("/commerce/v1/accounting/account-mappings", request),
@@ -192,7 +211,7 @@ export const accountingApi = {
   posting: (documentId:string) => apiClient.get<AccountingPosting>(`/commerce/v1/accounting/postings/by-document/${documentId}`),
   retryPosting: (documentId:string) => apiClient.post<AccountingPosting>(`/commerce/v1/accounting/postings/${documentId}/retry`,{}),
   entry: (documentId:string) => apiClient.get<AccountingEntry>(`/commerce/v1/accounting/entries/by-document/${documentId}`),
-  documents: (params:{from:string;to:string;voucherTypeCode?:string;documentType?:string;status?:string;search?:string;partyId?:string;page?:number;pageSize?:number}) => apiClient.get<AccountingDocumentPage>("/commerce/v1/accounting/documents",params),
+  documents: (params:{from:string;to:string;voucherTypeCode?:string;documentType?:string;status?:string;search?:string;partyId?:string;financialConceptId?:string;page?:number;pageSize?:number}) => apiClient.get<AccountingDocumentPage>("/commerce/v1/accounting/documents",{...params,dateRangeVersion:2}),
   trialBalance: (from: string, to: string) => apiClient.get<TrialBalanceRow[]>(`/commerce/v1/accounting/reports/trial-balance?from=${from}&to=${to}`),
   accountMovements: (query: AccountMovementQuery) => apiClient.get<AccountMovementPage>("/commerce/v1/accounting/reports/account-movements",{...query}),
   accountMovementReport: (query: Omit<AccountMovementQuery,"page"|"pageSize">) => apiClient.get<AccountMovementPage>("/commerce/v1/accounting/reports/account-movements/print",{...query}),
@@ -209,11 +228,15 @@ export const accountingApi = {
   complianceArtifactUrl: (runId:string) => `/api/commerce/v1/accounting/compliance/runs/${runId}/artifact`,
 };
 
-export interface VoucherPaymentEvidence { cardFranchiseCode?:string|null;approvalNumber?:string|null;tenderedAmount?:number|null;notes?:string|null; }
+export interface VoucherPaymentEvidence { cardFranchiseCode?:string|null;approvalNumber?:string|null;tenderedAmount?:number|null;notes?:string|null;
+  paymentMethodId?:string|null;paymentMethodTypeCode?:string|null;paymentMethodVersion?:number|null;
+  paymentMethodCode?:string|null;paymentMethodName?:string|null; }
+export interface VoucherAppliedPaymentMethod { sourceLineId:string;paymentMethodId:string;methodCode:string;version:number;
+  code:string;name:string;accountId:string;accountCode:string;accountName:string;bankAccountId:string|null; }
 export interface VoucherDraftLine { accountId:string|null;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number;reference?:string|null;lineId?:string|null;baseAmount?:number|null;
   existingPosition?:{subledgerKind:"Payable"|"Receivable"|"SupplierCredit"|"CustomerCredit";subledgerId:string;reversesTransactionId?:string|null}|null;
   financialGroupId?:string|null;dueDate?:string|null;partySiteId?:string|null;paymentEvidence?:VoucherPaymentEvidence|null;
-  financialDiscountEarned?:boolean|null; }
+  financialDiscountEarned?:boolean|null;financialConceptId?:string|null;financialConceptTargetLineId?:string|null; }
 export interface VoucherDraftAdjustment { subledgerKind:"Receivable"|"Payable";subledgerId:string;direction:"Increase"|"Decrease";amount:number;counterpartAccountId:string|null;costCenterId:string|null; }
 export interface VoucherFiscalAcquisition {
   sourceLineId:string;taxExclusiveAmount:number;taxProfileId:string|null;
@@ -230,6 +253,6 @@ export interface VoucherFiscalPreview {
   payableSourceLineId?:string|null;supplierPartySiteId?:string|null;
 }
 export interface SaveVoucherDraft { payloadVersion?:number|null;clonedFromDocumentId?:string|null;mainPartyId?:string|null;voucherTypeCode?:string|null;workSessionId?:string|null;fiscalCapture?:VoucherFiscalCapture|null; documentId:string;documentType:"ManualAccountingVoucher"|"AccountAdjustment";occurredAt:string;conceptCode:string;description:string;reference:string|null;lines:VoucherDraftLine[];adjustment:VoucherDraftAdjustment|null;rowVersion:string|null; }
-export interface VoucherDraftLineView { value:VoucherDraftLine;accountCode:string|null;accountName:string|null;partyName:string|null;partyIdentification:string|null;costCenterName:string|null;validationError?:string|null; }
+export interface VoucherDraftLineView { value:VoucherDraftLine;accountCode:string|null;accountName:string|null;partyName:string|null;partyIdentification:string|null;costCenterName:string|null;validationError?:string|null;financialConceptCode?:string|null;financialConceptName?:string|null;financialConceptSideCode?:string|null; }
 export interface VoucherDraftPreparation { description:string;reference:string|null;mainPartyId:string;mainPartyName:string;mainPartyIdentification:string|null;lines:VoucherDraftLineView[]; }
-export interface VoucherDraft extends Omit<SaveVoucherDraft,"lines"> { mainPartyName?:string|null;mainPartyIdentification?:string|null;lines:VoucherDraftLineView[];currencyCode:string;rowVersion:string;sentAt:string|null;status:string;canEdit:boolean;canSend:boolean;row:AccountingDocumentRow;reversalDocumentId?:string|null;reversalStatus?:string|null;financialEffects?:{positions:unknown[];payments:unknown[];creditApplications:unknown[];directMovements:unknown[];unapplications?:unknown[]|null}|null; }
+export interface VoucherDraft extends Omit<SaveVoucherDraft,"lines"> { mainPartyName?:string|null;mainPartyIdentification?:string|null;lines:VoucherDraftLineView[];currencyCode:string;rowVersion:string;sentAt:string|null;status:string;canEdit:boolean;canSend:boolean;row:AccountingDocumentRow;reversalDocumentId?:string|null;reversalStatus?:string|null;financialEffects?:{positions:unknown[];payments:unknown[];creditApplications:unknown[];directMovements:unknown[];unapplications?:unknown[]|null}|null;appliedPaymentMethods?:VoucherAppliedPaymentMethod[]|null; }

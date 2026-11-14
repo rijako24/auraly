@@ -66,6 +66,10 @@ CREATE TABLE [dbo].[SupplierPaymentTenders]
 (
     [PaymentId] UNIQUEIDENTIFIER NOT NULL,
     [LineNumber] INT NOT NULL,
+    [PaymentMethodId] UNIQUEIDENTIFIER NULL REFERENCES reference.PaymentMethods(PaymentMethodId),
+    [PaymentMethodVersion] INT NULL,
+    [PaymentMethodCode] NVARCHAR(64) NULL,
+    [PaymentMethodName] NVARCHAR(160) NULL,
     [MethodCode] NVARCHAR(32) NOT NULL,
     [Amount] DECIMAL(19,4) NOT NULL,
     [TenderedAmount] DECIMAL(19,4) NULL,
@@ -87,6 +91,9 @@ CREATE TABLE [dbo].[SupplierPaymentTenders]
 );
 GO
 CREATE INDEX [IX_SupplierPaymentTenders_BankAccount] ON [dbo].[SupplierPaymentTenders] ([BankAccountId]) WHERE [BankAccountId] IS NOT NULL;
+GO
+CREATE INDEX [IX_SupplierPaymentTenders_PaymentMethod] ON [dbo].[SupplierPaymentTenders]([PaymentMethodId])
+    WHERE [PaymentMethodId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[SupplierPaymentApplications]

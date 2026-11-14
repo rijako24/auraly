@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArchiveRestore, Barcode, ChevronDown, CircleAlert, CircleDollarSign, FileText, PackagePlus, Plus, Save,
   Search, Trash2, Truck, Warehouse,
@@ -55,7 +55,9 @@ import { WithholdingAdjustmentEditor } from "@/components/taxation/withholding-a
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+import { useBusinessDates } from "@/hooks/use-business-dates";
+import { accountingDateAtNoon, addCalendarDays, businessDateTimeAt, businessDateInput, proposedAccountingDate } from "@/lib/accounting-document-date";
 import { accountingStatusLabel, businessStatusLabel } from "@/lib/accounting-labels";
 import { partiesApi } from "@/services/api/parties";
 import { useTenantCommercialSubscription } from "@/hooks/use-tenants";
@@ -126,6 +128,7 @@ export default function GoodsReceiptsPage() {
 }
 
 function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
+  const { timeZone, formatDateTime } = useBusinessDates(businessId);
   const router = useRouter();
   const userId = useAuthStore((state) => state.user?.userId);
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
@@ -228,7 +231,7 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
       accessorKey: "updatedAt", header: "Actualizada",
       cell: ({ row }) => formatDateTime(row.original.updatedAt),
     },
-  ], []);
+  ], [formatDateTime]);
 
   const newEntry = async () => {
     if (!businessId || !localDraftKey) return;
@@ -237,13 +240,13 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
       if (!stored && legacyLocalDraftKey) {
         const legacy = localStorage.getItem(legacyLocalDraftKey);
         if (legacy) {
-          stored = { ...emptyDraft(), ...JSON.parse(legacy) as Partial<EditorDraft> };
+          stored = { ...emptyDraft(timeZone), ...JSON.parse(legacy) as Partial<EditorDraft> };
           await saveGoodsReceiptDraft(localDraftKey, stored);
           localStorage.removeItem(legacyLocalDraftKey);
         }
       }
       if (stored) {
-        setEditor({ ...emptyDraft(), ...stored,
+        setEditor({ ...emptyDraft(timeZone), ...stored,
           referencedCostDocuments: stored.referencedCostDocuments ?? [],
           additionalCostDocuments: (stored.additionalCostDocuments ?? []).map(openDraftCostDocument),
           pendingCostDocument: stored.pendingCostDocument ? openDraftCostDocument(stored.pendingCostDocument) : null });
@@ -253,13 +256,13 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
       toast.error("No fue posible recuperar la captura guardada en este dispositivo.");
       return;
     }
-    rememberLocalDraft(emptyDraft());
+    rememberLocalDraft(emptyDraft(timeZone));
   };
 
   const openEntry = async (item: GoodsReceiptListItem) => {
     try {
       if (item.status === "Draft") {
-        rememberLocalDraft(fromDraft(await goodsReceiptsApi.getDraft(item.documentId)));
+        rememberLocalDraft(fromDraft(await goodsReceiptsApi.getDraft(item.documentId), timeZone));
       } else {
         setDetail(await goodsReceiptsApi.getDetail(item.documentId));
       }
@@ -275,9 +278,9 @@ function GoodsReceiptsWorkspace({ businessId }: { businessId: string | null }) {
     try {
       const state = await goodsReceiptsApi.getCostEditState(detail.documentId);
       rememberLocalDraft(state.draft
-        ? { ...fromDraft(state.draft), costEditSupplierName: detail.supplierName,
+        ? { ...fromDraft(state.draft, timeZone), costEditSupplierName: detail.supplierName,
             existingCostDocumentIds: (detail.additionalCostDocuments ?? []).map(document => document.costDocumentId) }
-        : fromDetailForCostEdit(detail, state.baseCostRevisionNumber));
+        : fromDetailForCostEdit(detail, state.baseCostRevisionNumber, timeZone));
       setDetail(undefined);
     } catch (error) {
       toast.error(apiErrorMessage(error, "No fue posible abrir la edición de costos."));
@@ -360,6 +363,7 @@ function ReceiptDetailDialog({
   canEditCosts: boolean;
   onEditCosts: () => void;
 }) {
+  const { formatDateTime, formatDate } = useBusinessDates();
   const [accountingDocumentId,setAccountingDocumentId]=useState<string>();
   const [reportOpen,setReportOpen]=useState(false);
   const associationModes = useReferenceOptions("purchase-cost-association-mode", Boolean(detail?.referencedCostDocuments?.length));
@@ -422,7 +426,7 @@ function ReceiptDetailDialog({
   if(reportOpen)return <Dialog open onOpenChange={value=>!value&&setReportOpen(false)}><DialogContent showClose={false} className="h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] overflow-hidden p-2 sm:p-4"><ReportViewer
     onClose={()=>setReportOpen(false)}
     title={detail.purchaseEvidenceType==="BuyerElectronicSupportDocument"?`Documento soporte ${fiscal.data?.dianNumber??detail.documentNumber}`:`Recepción de compra ${detail.documentNumber}`}
-    description={`${detail.supplierName} · ${purchaseEvidenceLabels[detail.purchaseEvidenceType]} · ${new Date(detail.receivedAt).toLocaleDateString("es-CO")}${fiscal.data?.uniqueCode?` · ${fiscal.data.uniqueCodeType} ${fiscal.data.uniqueCode}`:""}`}
+    description={`${detail.supplierName} · ${purchaseEvidenceLabels[detail.purchaseEvidenceType]} · ${formatDate(detail.receivedAt)}${fiscal.data?.uniqueCode?` · ${fiscal.data.uniqueCodeType} ${fiscal.data.uniqueCode}`:""}`}
     fileName={`${detail.purchaseEvidenceType==="BuyerElectronicSupportDocument"?"documento-soporte":"recepcion-compra"}-${fiscal.data?.dianNumber??detail.documentNumber}`}
     rows={[
       { id: "merchandise", __group: `Factura principal · ${detail.currencyCode}` },
@@ -594,6 +598,9 @@ function ReceiptEditor({
   canAssociateProducts: boolean; canAdjustWithholdings: boolean; canUseCostVouchers: boolean;
   onChange: (draft: EditorDraft) => void; onClose: () => void; onClear: () => Promise<void>;
 }) {
+  const { timeZone, today: todayInput, dateInput } = useBusinessDates(businessId);
+  const localToday = open && draft ? todayInput() : undefined;
+  const plusDaysFrom = (value: string, days: number) => value ? addCalendarDays(dateInput(value), days) : "";
   const options = useGoodsReceiptOptions(open);
   const [voucherEditor, setVoucherEditor] = useState<GoodsReceiptVoucherCost | "new">();
   const availableOrders = useQuery({
@@ -675,13 +682,13 @@ function ReceiptEditor({
     queryKey: [
       "goods-receipt-withholding-preview", businessId, draft?.supplierId,
       draft?.supplierInvoiceDate, draft?.purchaseEvidenceType,
-      draft?.withholdingConceptCode, draft?.withholdingAdjustments, draft?.exchangeRate, draft?.lines,
+      draft?.withholdingConceptCode, draft?.withholdingAdjustments, draft?.exchangeRate, draft?.lines, timeZone,
     ],
     queryFn: () => {
       if (!businessId || !draft) throw new Error("La recepción no está lista para calcular retenciones.");
       return goodsReceiptsApi.previewWithholding({
         businessId, supplierId: draft.supplierId,
-        supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate)!,
+        supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate, timeZone)!,
         lines: draft.lines.map(withDerivedWeight),
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: null,
@@ -693,54 +700,56 @@ function ReceiptEditor({
     enabled: withholdingPreviewReady,
     staleTime: 10_000,
   });
-  const costWithholdingPreviews = useQueries({
-    queries: (draft?.additionalCostDocuments ?? []).map((document) => ({
-      queryKey: ["goods-receipt-cost-withholding-preview", businessId, document],
-      queryFn: () => goodsReceiptsApi.previewCostWithholding({
-        businessId: businessId!, document: serializeCostDocuments([document])[0],
-      }),
-      enabled: Boolean(open && businessId && document.supplierId && document.issuedAt &&
-        document.exchangeRate > 0 && document.lines.length > 0),
-      staleTime: 10_000,
-    })),
-  });
-  const editingCostWithholdingPreview = useQuery({
-    queryKey:["goods-receipt-cost-withholding-preview",businessId,editingCostDocument],
-    queryFn:() => goodsReceiptsApi.previewCostWithholding({businessId:businessId!,document:serializeCostDocuments([editingCostDocument!])[0]}),
-    enabled:Boolean(open && businessId && editingCostDocument?.supplierId && editingCostDocument.issuedAt &&
-      editingCostDocument.exchangeRate > 0 && editingCostDocument.lines.length > 0),
+  const previewCostDocuments = editingCostDocument
+    ? (draft?.additionalCostDocuments ?? []).some(document => document.costDocumentId === editingCostDocument.costDocumentId)
+      ? (draft?.additionalCostDocuments ?? []).map(document => document.costDocumentId === editingCostDocument.costDocumentId
+        ? editingCostDocument : document)
+      : [...(draft?.additionalCostDocuments ?? []), editingCostDocument]
+    : (draft?.additionalCostDocuments ?? []);
+  const readyCostDocuments = previewCostDocuments.filter(document =>
+    document.supplierId && document.issuedAt && document.exchangeRate > 0 && document.lines.length > 0);
+  const costWithholdingBatch = useQuery({
+    queryKey: ["goods-receipt-cost-withholdings-preview", businessId, readyCostDocuments.map(costWithholdingInputKey), timeZone],
+    queryFn: () => goodsReceiptsApi.previewCostWithholdings({
+      businessId: businessId!, documents: serializeCostDocuments(readyCostDocuments, timeZone),
+    }),
+    enabled: Boolean(open && businessId && readyCostDocuments.length),
     staleTime: 10_000,
+    retry: false,
   });
+  const costWithholdingById = new Map(costWithholdingBatch.data?.map(item => [item.costDocumentId, item.calculation]));
+  const editingCostWithholdingPreview = {
+    data: editingCostDocument ? costWithholdingById.get(editingCostDocument.costDocumentId) : undefined,
+    isFetching: costWithholdingBatch.isFetching,
+    isError: costWithholdingBatch.isError,
+  };
   const costSupplierIds = [...new Set((draft?.additionalCostDocuments ?? [])
     .map((document) => document.supplierId).filter(Boolean))];
-  const costSupplierQueries = useQueries({
-    queries: costSupplierIds.map((supplierId) => ({
-      queryKey: ["goods-receipt-cost-supplier", businessId, supplierId],
-      queryFn: async () => (await partiesApi.roleOptions({
-        page: 1, pageSize: 1, role: "Supplier", roleId: supplierId,
-      })).items[0] ?? null,
-      enabled: Boolean(open && businessId && supplierId),
-      staleTime: 5 * 60 * 1000,
-    })),
+  const costSupplierLookupIds = costSupplierIds.filter(id =>
+    !Object.hasOwn(costSupplierNames, id) || !Object.hasOwn(costSupplierPolicies, id));
+  const costSupplierQuery = useQuery({
+    queryKey: ["goods-receipt-cost-suppliers", businessId, [...costSupplierIds].sort()],
+    queryFn: () => partiesApi.resolveRoleOptions("Supplier", costSupplierIds),
+    enabled: Boolean(open && businessId && costSupplierLookupIds.length && (costsExpanded || editingCostDocument)),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
   });
+  const costSupplierById = new Map(costSupplierQuery.data?.items.map(item => [item.roleId, item]));
+  const costSupplierPolicy = (id: string) => Object.hasOwn(costSupplierPolicies, id)
+    ? costSupplierPolicies[id] ?? null
+    : costSupplierById.get(id)?.supplierPurchaseEvidencePolicy ?? null;
   if (!draft || !businessId) return null;
   const costEdit = Boolean(draft.costEditOfReceiptId);
   const totals = calculateGoodsReceiptTotals(draft.lines);
   const mainRate = draft.currencyCode === "COP" ? 1 : draft.exchangeRate;
-  const previewCostDocuments = editingCostDocument
-    ? draft.additionalCostDocuments.some(document => document.costDocumentId === editingCostDocument.costDocumentId)
-      ? draft.additionalCostDocuments.map(document => document.costDocumentId === editingCostDocument.costDocumentId
-        ? editingCostDocument : document)
-      : [...draft.additionalCostDocuments, editingCostDocument]
-    : draft.additionalCostDocuments;
   const purchaseCostPreview = previewGoodsReceiptPurchaseCosts(
     draft.lines, draft.currencyCode, draft.exchangeRate, previewCostDocuments, draft.referencedCostDocuments,
     draft.financialDiscount,
   );
   const purchaseCostByLine = new Map(purchaseCostPreview.map(line => [line.lineNumber, line]));
-  const additionalSummary = draft.additionalCostDocuments.reduce((summary, document, index) => {
+  const additionalSummary = previewCostDocuments.reduce((summary, document) => {
     const rate = document.currencyCode === "COP" ? 1 : document.exchangeRate;
-    const preview = costWithholdingPreviews[index]?.data;
+    const preview = costWithholdingById.get(document.costDocumentId);
     for (const line of document.lines) {
       const base = line.amount * rate;
       const capitalizedTax = line.taxTreatment === "CapitalizedCost" ? line.taxAmount * rate : 0;
@@ -770,10 +779,10 @@ function ReceiptEditor({
   const missingReferencedCostWeight = draft.referencedCostDocuments.some(document => document.mode === "Distribute" &&
     document.lines.some(line => line.allocationMethod === "Weight")) &&
     draft.lines.some(line => (line.totalGrossWeightKg ?? 0) <= 0);
-  const hasExtendedSummary = draft.currencyCode !== "COP" || draft.additionalCostDocuments.length > 0 || referencedCostTotal > 0;
-  const resolvedCostSupplierNames = Object.fromEntries(costSupplierIds.map((supplierId, index) => [
+  const hasExtendedSummary = draft.currencyCode !== "COP" || previewCostDocuments.length > 0 || referencedCostTotal > 0;
+  const resolvedCostSupplierNames = Object.fromEntries(costSupplierIds.map(supplierId => [
     supplierId,
-    costSupplierNames[supplierId] ?? costSupplierQueries[index]?.data?.displayName ?? "Proveedor seleccionado",
+    costSupplierNames[supplierId] ?? costSupplierById.get(supplierId)?.displayName ?? (costSupplierQuery.isPending ? "Cargando proveedor…" : "Proveedor no disponible"),
   ]));
   const allowedEvidenceTypes = allowedPurchaseEvidenceTypes(selectedSupplier?.supplierPurchaseEvidencePolicy ?? null);
   const visibleEvidenceTypes = options.data?.purchaseEvidenceTypes.filter((item) =>
@@ -842,8 +851,7 @@ function ReceiptEditor({
       toast.error("En una entrada confirmada agrega una factura electrónica del proveedor o un comprobante interno en COP.");
       return;
     }
-    const supplierPolicy = costSupplierPolicies[editingCostDocument.supplierId] ??
-      costSupplierQueries[costSupplierIds.indexOf(editingCostDocument.supplierId)]?.data?.supplierPurchaseEvidencePolicy ?? null;
+    const supplierPolicy = costSupplierPolicy(editingCostDocument.supplierId);
     if (editingCostDocument.purchaseEvidenceType !== "ImportDeclaration" &&
         !allowedPurchaseEvidenceTypes(supplierPolicy).includes(editingCostDocument.purchaseEvidenceType)) {
       toast.error("El tipo de soporte no está permitido para este proveedor. Selecciona uno de los soportes disponibles.");
@@ -903,9 +911,9 @@ function ReceiptEditor({
     partySiteId: draft.partySiteId || null,
     supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
       ? draft.supplierInvoiceNumber.trim() || null : null,
-    supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
-    receivedAt: draft.originalReceivedAt ?? goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: true,
-    dueDate: toIsoOrNull(draft.dueDate),
+    supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate, timeZone),
+    receivedAt: draft.originalReceivedAt ?? goodsReceiptConfirmationReceivedAt(businessDateTimeAt(draft.receivedAt, timeZone)), createsPayable: true,
+    dueDate: toIsoOrNull(draft.dueDate, timeZone),
     currencyCode: draft.currencyCode, notes: draft.notes.trim() || null,
     lines: draft.lines.map(withDerivedWeight), concurrencyToken: draft.concurrencyToken,
     purchaseEvidenceType: draft.purchaseEvidenceType || null,
@@ -914,7 +922,7 @@ function ReceiptEditor({
     exchangeRateSource: draft.exchangeRateSource,
     withholdingConceptCode: draft.withholdingConceptCode || null,
     withholdingAdjustments: draft.withholdingAdjustments ?? null,
-    additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments),
+    additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments, timeZone),
     referencedCostDocuments: draft.referencedCostDocuments.length ? draft.referencedCostDocuments : null,
     financialDiscount: draft.financialDiscount,
   });
@@ -1095,7 +1103,7 @@ function ReceiptEditor({
       toast.error("Indica la fecha de emisión del documento de compra.");
       return;
     }
-    if (!draft.dueDate || draft.dueDate < draft.supplierInvoiceDate) {
+    if (!draft.dueDate || dateInput(draft.dueDate) < dateInput(draft.supplierInvoiceDate)) {
       toast.error("Indica un vencimiento igual o posterior a la fecha de emisión.");
       return;
     }
@@ -1111,8 +1119,8 @@ function ReceiptEditor({
         toast.error("Espera el cálculo actualizado de las retenciones antes de confirmar.");
         return;
       }
-      if (draft.additionalCostDocuments.some((document,index) => document.withholdingAdjustments?.length &&
-          (!costWithholdingPreviews[index]?.data || costWithholdingPreviews[index]?.isFetching || costWithholdingPreviews[index]?.isError))) {
+      if (draft.additionalCostDocuments.some(document =>
+          (!costWithholdingById.has(document.costDocumentId) || costWithholdingBatch.isFetching || costWithholdingBatch.isError))) {
         toast.error("Revisa las retenciones de las facturas adicionales antes de confirmar.");
         return;
       }
@@ -1125,9 +1133,9 @@ function ReceiptEditor({
         supplierId: draft.supplierId, partySiteId: draft.partySiteId || null,
         supplierInvoiceNumber: ["SupplierElectronicInvoice", "ForeignCommercialInvoice"].includes(draft.purchaseEvidenceType)
           ? draft.supplierInvoiceNumber.trim() || null : null,
-        supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
-        receivedAt: draft.originalReceivedAt ?? goodsReceiptConfirmationReceivedAt(draft.receivedAt), createsPayable: true,
-        dueDate: toIsoOrNull(draft.dueDate),
+        supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate, timeZone),
+        receivedAt: draft.originalReceivedAt ?? goodsReceiptConfirmationReceivedAt(businessDateTimeAt(draft.receivedAt, timeZone)), createsPayable: true,
+        dueDate: toIsoOrNull(draft.dueDate, timeZone),
         currencyCode: draft.currencyCode, notes: draft.notes.trim() || null, lines: draft.lines.map(withDerivedWeight),
         draftConcurrencyToken: savedEdit?.concurrencyToken ?? null,
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
@@ -1140,8 +1148,8 @@ function ReceiptEditor({
         exchangeRateSource: draft.exchangeRateSource,
         referencedCostDocuments: draft.referencedCostDocuments.length ? draft.referencedCostDocuments : null,
         financialDiscount: draft.financialDiscount,
-        additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments).map((document,index) => ({
-          ...document, withholdingReviewHash: costWithholdingPreviews[index]?.data?.reviewHash ?? null,
+        additionalCostDocuments: serializeCostDocuments(draft.additionalCostDocuments, timeZone).map(document => ({
+          ...document, withholdingReviewHash: costWithholdingById.get(document.costDocumentId)?.reviewHash ?? null,
         })),
       });
       try {
@@ -1330,7 +1338,7 @@ function ReceiptEditor({
           </Field>
           }
           <Field label="Fecha de emisión">
-            <DatePicker value={draft.supplierInvoiceDate} disabled={costEdit} onChange={(value) => change({
+            <DatePicker today={localToday} value={dateInput(draft.supplierInvoiceDate)} disabled={costEdit} onChange={(value) => change({
               supplierInvoiceDate:value,
               dueDate:plusDaysFrom(value,selectedSupplier?.supplierDefaultPaymentDueDays??30),
             })} />
@@ -1338,7 +1346,7 @@ function ReceiptEditor({
           <Field label="Moneda">
             <Select value={draft.currencyCode} disabled={costEdit} onValueChange={(currencyCode) => change({
               currencyCode, exchangeRate: currencyCode === "COP" ? 1 : draft.exchangeRate,
-              exchangeRateDate: currencyCode === "COP" ? draft.supplierInvoiceDate : (draft.exchangeRateDate || draft.supplierInvoiceDate),
+              exchangeRateDate: currencyCode === "COP" ? dateInput(draft.supplierInvoiceDate) : (draft.exchangeRateDate || dateInput(draft.supplierInvoiceDate)),
               exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" :
                 (draft.exchangeRateSource === "FunctionalCurrency"
                   ? options.data?.exchangeRateSources[0]?.code ?? "" : draft.exchangeRateSource),
@@ -1350,7 +1358,7 @@ function ReceiptEditor({
             <Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={draft.exchangeRate}
               disabled={costEdit}
               onValueChange={(value) => change({ exchangeRate: value ?? 0 })} /></Field>
-            <Field label="Fecha de la tasa"><DatePicker value={draft.exchangeRateDate} disabled={costEdit} onChange={(exchangeRateDate) => change({ exchangeRateDate })} /></Field>
+            <Field label="Fecha de la tasa"><DatePicker today={localToday} value={draft.exchangeRateDate} disabled={costEdit} onChange={(exchangeRateDate) => change({ exchangeRateDate })} /></Field>
             <Field label="Fuente de la tasa"><Select value={draft.exchangeRateSource} disabled={costEdit} onValueChange={(exchangeRateSource) => change({ exchangeRateSource })}>
               <SelectTrigger disabled={costEdit || options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger>
               <SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
@@ -1365,8 +1373,8 @@ function ReceiptEditor({
             también cuando se paga de contado. Para vencimiento inmediato, selecciona la fecha de emisión.
           </p>
           <Field label="Fecha de vencimiento">
-            <DatePicker min={draft.supplierInvoiceDate||undefined} disabled={costEdit}
-              value={draft.dueDate} onChange={(dueDate)=>change({dueDate})} />
+            <DatePicker today={localToday} min={dateInput(draft.supplierInvoiceDate)||undefined} disabled={costEdit}
+              value={dateInput(draft.dueDate)} onChange={(dueDate)=>change({dueDate})} />
             <p className="text-xs text-muted-foreground">Se propone con los {selectedSupplier?.supplierDefaultPaymentDueDays??30} días configurados en el proveedor, pero puede ajustarse para este documento.</p>
           </Field>
         </section>
@@ -1386,7 +1394,7 @@ function ReceiptEditor({
                   : null })} />
             </Field>
             {draft.financialDiscount && <><Field label="Fecha pactada (informativa)">
-              <DatePicker value={draft.financialDiscount.expectedOn ?? ""}
+              <DatePicker today={localToday} value={draft.financialDiscount.expectedOn ?? ""}
                 onChange={(expectedOn) => change({ financialDiscount: {
                   ...draft.financialDiscount!, expectedOn: expectedOn || null,
                 } })} />
@@ -1587,6 +1595,8 @@ function ReceiptEditor({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <p className="max-w-3xl text-sm text-muted-foreground">Cada documento conserva su proveedor, vencimiento, IVA, retención y cuenta por pagar. Solo el valor marcado como capitalizable se distribuye al inventario.</p>
               <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" disabled={!readyCostDocuments.length || costWithholdingBatch.isFetching}
+                  onClick={() => void costWithholdingBatch.refetch()}>Actualizar retenciones</Button>
                 <Button type="button" variant="outline" onClick={addCostDocument}><Plus className="mr-2 h-4 w-4" />Agregar factura</Button>
                 {canUseCostVouchers && <Button type="button" variant="outline" disabled={!options.data} onClick={() => setVoucherEditor("new")}><Plus className="mr-2 h-4 w-4" />Agregar comprobante</Button>}
               </div>
@@ -1600,6 +1610,14 @@ function ReceiptEditor({
             {missingReferencedCostWeight && <p role="alert" className="text-sm text-destructive">{costEdit
               ? "Esta recepción no conserva pesos para todos los productos. Usa reparto por valor o manual; los pesos de la entrada confirmada no cambian."
               : "Hay un comprobante repartido por peso sin peso positivo en todos los productos. Revisa el comprobante y completa los pesos; ese importe todavía no se refleja en el costo por producto."}</p>}
+            {costSupplierQuery.isError && <div role="alert" className="rounded-lg border border-destructive p-3 text-sm">
+              No fue posible consultar los proveedores de las facturas adicionales.
+              <Button type="button" variant="link" onClick={() => void costSupplierQuery.refetch()}>Reintentar</Button>
+            </div>}
+            {costWithholdingBatch.isError && <div role="alert" className="rounded-lg border border-destructive p-3 text-sm">
+              No fue posible calcular las retenciones de las facturas adicionales. Revisa los documentos antes de confirmar.
+              <Button type="button" variant="link" onClick={() => void costWithholdingBatch.refetch()}>Reintentar</Button>
+            </div>}
             <CostDocumentGrid title="Facturas agregadas"
               documents={draft.additionalCostDocuments}
               supplierNames={resolvedCostSupplierNames}
@@ -1615,8 +1633,7 @@ function ReceiptEditor({
             const functionalGross = (documentNet + documentTax) * rate;
             const evidenceLabel = options.data?.purchaseCostEvidenceTypes.find((item) =>
               item.code === document.purchaseEvidenceType)?.label ?? document.purchaseEvidenceType;
-            const supplierPolicy = costSupplierPolicies[document.supplierId] ??
-              costSupplierQueries[costSupplierIds.indexOf(document.supplierId)]?.data?.supplierPurchaseEvidencePolicy ?? null;
+            const supplierPolicy = costSupplierPolicy(document.supplierId);
             const allowedCostEvidenceTypes = allowedPurchaseEvidenceTypes(supplierPolicy);
             return <Dialog key={document.costDocumentId} open onOpenChange={(value) => !value && closeCostDocument()}>
               <DialogContent className="flex max-h-[92dvh] max-w-6xl flex-col overflow-hidden p-0">
@@ -1645,11 +1662,11 @@ function ReceiptEditor({
                   }} /></Field>
                 <Field label="Soporte"><Select value={document.purchaseEvidenceType} onValueChange={(purchaseEvidenceType: PurchaseEvidenceType) => { if (allowEvidence(purchaseEvidenceType)) updateCostDocument({ purchaseEvidenceType, documentNumber: purchaseEvidenceType === "BuyerElectronicSupportDocument" ? "" : document.documentNumber }); }}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCostEvidenceTypes.length)}><SelectValue placeholder="Cargando soportes…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCostEvidenceTypes ?? []).filter((item) => (item.code === "ImportDeclaration" || allowedCostEvidenceTypes.includes(item.code)) && (!costEdit || item.code === "SupplierElectronicInvoice" || item.code === "InternalReceiptVoucher")).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
                 <Field label="Número">{document.purchaseEvidenceType === "BuyerElectronicSupportDocument" ? <Input readOnly value="Se asignará al confirmar" /> : <Input value={document.documentNumber} maxLength={80} onChange={(event) => updateCostDocument({ documentNumber: event.target.value })} />}</Field>
-                <Field label="Fecha de emisión"><DatePicker value={document.issuedAt.slice(0, 10)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
+                <Field label="Fecha de emisión"><DatePicker today={localToday} value={dateInput(document.issuedAt)} onChange={(issuedAt) => updateCostDocument({ issuedAt })} /></Field>
                 <Field label="Moneda"><Select value={document.currencyCode} onValueChange={(currencyCode) => updateCostDocument({ currencyCode, exchangeRate: currencyCode === "COP" ? 1 : document.exchangeRate, exchangeRateSource: currencyCode === "COP" ? "FunctionalCurrency" : (document.exchangeRateSource === "FunctionalCurrency" ? options.data?.exchangeRateSources[0]?.code ?? "" : document.exchangeRateSource) })}><SelectTrigger disabled={options.isLoading || !(options.data?.purchaseCurrencies.length)}><SelectValue placeholder="Cargando monedas…" /></SelectTrigger><SelectContent>{(options.data?.purchaseCurrencies ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
-                {document.currencyCode !== "COP" && <><Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={document.exchangeRate} onValueChange={(value) => updateCostDocument({ exchangeRate: value ?? 0 })} /></Field><Field label="Fecha de la tasa"><DatePicker value={document.exchangeRateDate?.slice(0, 10) ?? document.issuedAt.slice(0, 10)} onChange={(exchangeRateDate) => updateCostDocument({ exchangeRateDate })} /></Field><Field label="Fuente de la tasa"><Select value={document.exchangeRateSource} onValueChange={(exchangeRateSource) => updateCostDocument({ exchangeRateSource })}><SelectTrigger disabled={options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger><SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field></>}
+                {document.currencyCode !== "COP" && <><Field label="Tasa pactada/registrada a COP"><FormattedNumberInput kind="currency" value={document.exchangeRate} onValueChange={(value) => updateCostDocument({ exchangeRate: value ?? 0 })} /></Field><Field label="Fecha de la tasa"><DatePicker today={localToday} value={document.exchangeRateDate?.slice(0, 10) ?? document.issuedAt.slice(0, 10)} onChange={(exchangeRateDate) => updateCostDocument({ exchangeRateDate })} /></Field><Field label="Fuente de la tasa"><Select value={document.exchangeRateSource} onValueChange={(exchangeRateSource) => updateCostDocument({ exchangeRateSource })}><SelectTrigger disabled={options.isLoading || !(options.data?.exchangeRateSources.length)}><SelectValue placeholder="Selecciona la fuente" /></SelectTrigger><SelectContent>{(options.data?.exchangeRateSources ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field></>}
                 <Field label="Condición"><Input readOnly value="Crédito · cuenta por pagar independiente" /></Field>
-                {document.createsPayable && <Field label="Vencimiento"><DatePicker min={document.issuedAt.slice(0, 10)} value={document.dueDate?.slice(0, 10) ?? ""} onChange={(dueDate) => updateCostDocument({ dueDate })} /></Field>}
+                {document.createsPayable && <Field label="Vencimiento"><DatePicker today={localToday} min={dateInput(document.issuedAt)} value={dateInput(document.dueDate ?? "")} onChange={(dueDate) => updateCostDocument({ dueDate })} /></Field>}
                 <Field label="Concepto para retención"><Select value={document.withholdingConceptCode || "__none"} onValueChange={(value) => updateCostDocument({ withholdingConceptCode: value === "__none" ? null : value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none">Sin concepto</SelectItem>{(options.data?.withholdingConcepts ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
               </div>
               <div className="space-y-3">
@@ -1700,8 +1717,11 @@ function ReceiptEditor({
                 <DocumentTotal label="Neto por pagar" value={withholding?.data?.netAmount ?? functionalGross} suffix="COP" strong />
                 <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">El IVA descontable se reconoce separado; únicamente las bases y los impuestos marcados como mayor valor se llevan al costo o gasto.</p>
                 {withholding?.isFetching && <p className="text-xs text-muted-foreground md:col-span-2 xl:col-span-5">Calculando retenciones con el motor tributario…</p>}
-                {withholding?.isError && <p className="text-xs text-amber-700 md:col-span-2 xl:col-span-5">La vista previa no está disponible; la confirmación volverá a validarla.</p>}
+                {withholding?.isError && <p role="alert" className="text-xs text-amber-700 md:col-span-2 xl:col-span-5">No fue posible calcular las retenciones. Actualiza el cálculo antes de confirmar.</p>}
               </div>
+              <div className="flex justify-end"><Button type="button" variant="outline"
+                disabled={withholding.isFetching || !readyCostDocuments.some(item => item.costDocumentId === document.costDocumentId)}
+                onClick={() => void costWithholdingBatch.refetch()}>Actualizar retenciones</Button></div>
               <WithholdingAdjustmentEditor businessId={businessId} occurredAt={document.issuedAt} calculation={withholding.data ?? null}
                 adjustments={document.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
                 disabled={!canAdjustWithholdings || withholding.isFetching}
@@ -1718,6 +1738,9 @@ function ReceiptEditor({
           })}
         </section>
 
+        <div className="flex justify-end"><Button type="button" variant="outline"
+          disabled={!withholdingPreviewReady || withholdingPreview.isFetching}
+          onClick={() => void withholdingPreview.refetch()}>Actualizar retenciones de mercancía</Button></div>
         <WithholdingAdjustmentEditor businessId={businessId} occurredAt={draft.supplierInvoiceDate ?? ""} calculation={withholdingPreview.data ?? null}
           adjustments={draft.withholdingAdjustments ?? []} rules={withholdingRules.data ?? []}
           disabled={!canAdjustWithholdings || withholdingPreview.isFetching}
@@ -1760,6 +1783,8 @@ function ReceiptEditor({
             {draft.financialDiscount && !draft.financialDiscount.anticipateInCost &&
               <p className="text-xs text-slate-300">Descuento financiero pactado: {formatCurrency(agreedFinancialDiscount)}. Se confirmará al pagar; aún no reduce la obligación.</p>}
             <p className="pt-2 text-xs text-slate-300">Las retenciones reducen lo adeudado; no reducen el costo ni el IVA reconocido.</p>
+            {!editingCostDocument && costWithholdingBatch.isFetching && <p role="status" className="text-right text-xs text-slate-300">Calculando retenciones de las facturas adicionales…</p>}
+            {!editingCostDocument && costWithholdingBatch.isError && <p role="alert" className="text-xs text-amber-300">Actualiza las retenciones de las facturas adicionales antes de confirmar.</p>}
             {withholdingPreview.isFetching && <p className="text-right text-xs text-slate-300">Calculando retenciones…</p>}
             {withholdingPreview.isError && <p className="text-right text-xs text-amber-300">
               No fue posible calcular la retención: {withholdingPreview.error instanceof Error
@@ -1864,22 +1889,23 @@ function ReceiptEditor({
   </Dialog>;
 }
 
-function emptyDraft(): EditorDraft {
+function emptyDraft(timeZone: string | undefined): EditorDraft {
+  const day = proposedAccountingDate(timeZone).slice(0, 10);
   return {
     draftId: crypto.randomUUID(), warehouseId: "", supplierId: "", partySiteId: "",
-    supplierInvoiceNumber: "", supplierInvoiceDate: todayInput(), purchaseEvidenceType: "",
-    receivedAt: localDateTime(), dueDate: plusDaysFrom(todayInput(),30),
+    supplierInvoiceNumber: "", supplierInvoiceDate: day, purchaseEvidenceType: "",
+    receivedAt: new Date().toISOString(), dueDate: addCalendarDays(day,30),
     notes: "", lines: [], concurrencyToken: null,
     withholdingConceptCode: "", withholdingJurisdictionCode: "", withholdingAdjustments: [], purchaseOrderId: "",
-    currencyCode: "COP", exchangeRate: 1, exchangeRateDate: todayInput(),
+    currencyCode: "COP", exchangeRate: 1, exchangeRateDate: day,
     exchangeRateSource: "FunctionalCurrency", additionalCostDocuments: [], referencedCostDocuments: [],
     financialDiscount: null,
   };
 }
 
-function fromDetailForCostEdit(detail: GoodsReceiptDetail, baseCostRevisionNumber: number): EditorDraft {
+function fromDetailForCostEdit(detail: GoodsReceiptDetail, baseCostRevisionNumber: number, timeZone: string | undefined): EditorDraft {
   return {
-    ...emptyDraft(),
+    ...emptyDraft(timeZone),
     costEditOfReceiptId: detail.documentId,
     costEditRevisionId: crypto.randomUUID(),
     costEditSupplierName: detail.supplierName,
@@ -1890,10 +1916,10 @@ function fromDetailForCostEdit(detail: GoodsReceiptDetail, baseCostRevisionNumbe
     supplierId: detail.supplierId,
     partySiteId: detail.partySiteId ?? "",
     supplierInvoiceNumber: detail.supplierInvoiceNumber ?? "",
-    supplierInvoiceDate: detail.supplierInvoiceDate?.slice(0, 10) ?? "",
+    supplierInvoiceDate: detail.supplierInvoiceDate ?? "",
     purchaseEvidenceType: detail.purchaseEvidenceType,
-    receivedAt: localDateTime(detail.receivedAt),
-    dueDate: detail.dueDate?.slice(0, 10) ?? "",
+    receivedAt: detail.receivedAt,
+    dueDate: detail.dueDate ?? "",
     notes: detail.notes ?? "",
     withholdingConceptCode: detail.withholdingConceptCode ?? "",
     withholdingAdjustments: (detail.withholding?.adjustments ?? []).map(adjustment => {
@@ -1919,7 +1945,7 @@ function fromDetailForCostEdit(detail: GoodsReceiptDetail, baseCostRevisionNumbe
     purchaseOrderId: detail.purchaseOrderId ?? "",
     currencyCode: detail.currencyCode,
     exchangeRate: detail.exchangeRate,
-    exchangeRateDate: detail.exchangeRateDate ?? detail.supplierInvoiceDate?.slice(0, 10) ?? "",
+    exchangeRateDate: detail.exchangeRateDate ?? businessDateInput(detail.supplierInvoiceDate ?? "", timeZone),
     exchangeRateSource: detail.exchangeRateSource,
     additionalCostDocuments: (detail.additionalCostDocuments ?? []).map(openDraftCostDocument),
     referencedCostDocuments: (detail.referencedCostDocuments ?? []).map(document => ({
@@ -1946,7 +1972,7 @@ function fromDetailForCostEdit(detail: GoodsReceiptDetail, baseCostRevisionNumbe
   };
 }
 
-function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
+function fromDraft(draft: GoodsReceiptDraft, timeZone: string | undefined): EditorDraft {
   return {
     costEditOfReceiptId: draft.costEditOfReceiptId ?? undefined,
     costEditRevisionId: draft.costEditOfReceiptId ? crypto.randomUUID() : undefined,
@@ -1954,10 +1980,10 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
     originalReceivedAt: draft.costEditOfReceiptId ? draft.receivedAt : undefined,
     draftId: draft.draftId, warehouseId: draft.warehouseId ?? "",
     supplierId: draft.supplierId ?? "", partySiteId: draft.partySiteId ?? "", supplierInvoiceNumber: draft.supplierInvoiceNumber ?? "",
-    supplierInvoiceDate: draft.supplierInvoiceDate?.slice(0, 10) ?? "",
+    supplierInvoiceDate: draft.supplierInvoiceDate ?? "",
     purchaseEvidenceType: draft.purchaseEvidenceType ?? "",
-    receivedAt: localDateTime(draft.receivedAt),
-    dueDate: draft.dueDate?.slice(0, 10) ?? "", notes: draft.notes ?? "",
+    receivedAt: draft.receivedAt,
+    dueDate: draft.dueDate ?? "", notes: draft.notes ?? "",
     lines: draft.lines.map((line) => ({
       lineNumber: line.lineNumber, productId: line.productId, description: line.description,
       quantity: line.quantity, unitCost: line.unitCost,
@@ -1978,7 +2004,7 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
     purchaseOrderId: draft.purchaseOrderId ?? "",
     concurrencyToken: draft.concurrencyToken,
     currencyCode: draft.currencyCode, exchangeRate: draft.exchangeRate ?? 1,
-    exchangeRateDate: draft.exchangeRateDate ?? draft.supplierInvoiceDate?.slice(0, 10) ?? todayInput(),
+    exchangeRateDate: draft.exchangeRateDate ?? (draft.supplierInvoiceDate ? businessDateInput(draft.supplierInvoiceDate, timeZone) : proposedAccountingDate(timeZone).slice(0,10)),
     exchangeRateSource: draft.exchangeRateSource ?? "FunctionalCurrency",
     referencedCostDocuments: draft.referencedCostDocuments ?? [],
     financialDiscount: draft.financialDiscount ?? null,
@@ -1995,32 +2021,25 @@ function openDraftCostDocument(document: GoodsReceiptCostDocument): GoodsReceipt
 }
 
 
-function localDateTime(value = new Date().toISOString()) {
-  const date = new Date(value);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+function toIsoOrNull(value: string, timeZone: string | undefined) {
+  if (!value) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? accountingDateAtNoon(value, timeZone) : businessDateTimeAt(value, timeZone);
 }
-
-function plusDaysFrom(value: string, days: number) {
-  if (!value) return "";
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
-  date.setDate(date.getDate() + days);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+// The preview contract consumes tax inputs. Document text, due dates and
+// allocation choices do not cause a second calculation of unchanged taxes.
+function costWithholdingInputKey(document: GoodsReceiptCostDocument) {
+  return { costDocumentId: document.costDocumentId, supplierId: document.supplierId,
+    issuedAt: document.issuedAt, purchaseEvidenceType: document.purchaseEvidenceType,
+    exchangeRate: document.exchangeRate, withholdingConceptCode: document.withholdingConceptCode,
+    withholdingJurisdictionCode: document.withholdingJurisdictionCode,
+    withholdingAdjustments: document.withholdingAdjustments,
+    lines: document.lines.map(line => ({ amount: line.amount, taxAmount: line.taxAmount,
+      taxableBaseAmount: line.taxableBaseAmount, taxRate: line.taxRate })) };
 }
-
-function todayInput() {
-  const date = new Date();
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
-}
-
-function toIsoOrNull(value: string) { return value ? new Date(value).toISOString() : null; }
-function serializeCostDocuments(documents: GoodsReceiptCostDocument[]) {
+function serializeCostDocuments(documents: GoodsReceiptCostDocument[], timeZone: string | undefined) {
   return documents.map((document) => ({ ...document,
-    issuedAt: toIsoOrNull(document.issuedAt)!,
-    dueDate: document.createsPayable && document.dueDate ? toIsoOrNull(document.dueDate) : null,
+    issuedAt: toIsoOrNull(document.issuedAt, timeZone)!,
+    dueDate: document.createsPayable && document.dueDate ? toIsoOrNull(document.dueDate, timeZone) : null,
   }));
 }
 
@@ -2051,6 +2070,7 @@ function CostDocumentGrid({ title, documents, supplierNames, onOpen, onRemove }:
   title: string; documents: GoodsReceiptCostDocument[]; supplierNames: Record<string, string>;
   onOpen: (document: GoodsReceiptCostDocument) => void; onRemove: (id: string) => void;
 }) {
+  const { dateInput } = useBusinessDates();
   return <section className="overflow-hidden rounded-xl border">
     <div className="flex items-center justify-between bg-muted/40 px-4 py-3">
       <h4 className="text-sm font-semibold">{title}</h4>
@@ -2069,7 +2089,7 @@ function CostDocumentGrid({ title, documents, supplierNames, onOpen, onRemove }:
             const tax = document.lines.reduce((sum, line) => sum + line.taxAmount, 0);
             return <tr key={document.costDocumentId} className="border-t">
               <td className="px-4 py-3 font-medium">{supplierNames[document.supplierId] ?? "Proveedor seleccionado"}</td>
-              <td>{document.documentNumber || "Sin número"}</td><td>{document.dueDate?.slice(0, 10) || "Contado"}</td>
+              <td>{document.documentNumber || "Sin número"}</td><td>{dateInput(document.dueDate ?? "") || "Contado"}</td>
               <td className="text-right">{formatCurrency(subtotal)} {document.currencyCode}</td>
               <td className="text-right">{formatCurrency(tax)} {document.currencyCode}</td>
               <td className="text-right font-semibold">{formatCurrency(subtotal + tax)} {document.currencyCode}</td>

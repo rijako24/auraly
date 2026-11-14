@@ -1,9 +1,11 @@
 using System.Net.Http.Json;
 using System.Diagnostics;
 using Auraly.Application.Orders;
+using Auraly.Application.Sales;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit.Abstractions;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -84,6 +86,66 @@ public sealed class OrderCreditInvoiceTests(
         Assert.Equal(scenario.CustomerId, issue.CustomerId);
         Assert.Null(issue.AvailableCredit);
         Assert.Contains("no tiene habilitada", issue.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Credit_batch_and_final_acceptance_share_the_overdue_invoice_limit()
+    {
+        var original = await SeedAsync(creditLimit: 100_000m);
+        using var firstClient = CreateClient(original.UserId);
+        var posted = await InvoiceAsync(firstClient, original, "Credit");
+        Assert.Equal(2, posted.CompletedCount);
+        var next = await SeedAsync(creditLimit: 100_000m);
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE dbo.CustomerCreditProfiles SET MaximumOverdueInvoices=1
+                WHERE CustomerId=@CustomerId AND BusinessId=@BusinessId;
+                UPDATE dbo.Receivables SET DueDate=DATEADD(day,-2,SYSDATETIMEOFFSET())
+                WHERE CustomerId=@CustomerId AND BusinessId=@BusinessId;
+                IF @@ROWCOUNT<>2 THROW 51500,'The credit fixture must have two invoices.',1;
+                UPDATE dbo.Orders SET CustomerId=@CustomerId,
+                  PartySiteId=(SELECT PartySiteId FROM dbo.Orders WHERE OrderId=@OriginalOrder)
+                WHERE BusinessId=@BusinessId AND OrderId IN(@FirstOrder,@SecondOrder);
+                """;
+            command.Parameters.AddWithValue("@CustomerId", original.CustomerId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@OriginalOrder", original.FirstOrderId);
+            command.Parameters.AddWithValue("@FirstOrder", next.FirstOrderId);
+            command.Parameters.AddWithValue("@SecondOrder", next.SecondOrderId);
+            await command.ExecuteNonQueryAsync();
+        }
+        next = next with { CustomerId = original.CustomerId };
+        using (var scope = fixture.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<IOnlineSalesCheckoutStore>();
+            var identity = new OnlineSalesUserIdentity(next.UserId, fixture.TenantId,
+                new HashSet<string> { CommercePermissionCodes.SalesCreate });
+            foreach (var amounts in new[]
+            {
+                new Dictionary<Guid, decimal> { [next.FirstOrderId] = 0 },
+                new Dictionary<Guid, decimal> { [next.FirstOrderId] = 0, [next.SecondOrderId] = 0 }
+            })
+            {
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(
+                    new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog);
+                Assert.Single(await store.ValidateOrderCreditBatchAsync(identity, fixture.BusinessId, amounts, default));
+                Assert.Equal(2, counter.Count); // One business-day read and one set-based credit query.
+            }
+        }
+        using var client = CreateClient(next.UserId);
+        var preview = Assert.Single(await ValidateCreditAsync(client, next));
+        Assert.Equal(2, preview.OverdueInvoiceCount);
+        Assert.Equal(1, preview.MaximumOverdueInvoices);
+        Assert.Equal(70_000m, preview.AvailableCredit);
+        Assert.Contains("facturas vencidas", preview.Reason, StringComparison.OrdinalIgnoreCase);
+        var rejected = await InvoiceAsync(client, next, "Credit");
+        Assert.Equal("CreditRejected", rejected.Status);
+        Assert.Equal(Guid.Empty, rejected.OperationId);
+        Assert.Empty(rejected.Results);
+        Assert.Equal(preview, Assert.Single(rejected.CreditValidationIssues!));
     }
 
     [Fact]

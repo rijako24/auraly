@@ -12,6 +12,7 @@ test("auxiliar pagina más de 200 movimientos, conserva totales y comparte el ca
   const requests: URL[] = [];
   const printRequests: URL[] = [];
   let centerReads = 0;
+  let defaultCenterReads = 0;
   let fail = false;
   let printFail = true;
   await page.context().addCookies([{ name: "auth_token", value: "auxiliary-test", url: baseURL!, httpOnly: true, sameSite: "Lax" }]);
@@ -35,8 +36,9 @@ test("auxiliar pagina más de 200 movimientos, conserva totales y comparte el ca
       role: "Supplier", displayName: "Proveedor principal", identification: "900123456" }],
       page: 1, pageSize: 10, totalCount: 1, totalPages: 1 };
     else if (path.endsWith("/cost-centers")) {
-      centerReads++;
-      body = [{ costCenterId: centerId, code: "CENTRO", name: "Centro contable", isActive: true }];
+      if(url.searchParams.get("isDefault")==="true") defaultCenterReads++;
+      else centerReads++;
+      body = {items:[{ costCenterId: centerId, code: "CENTRO", name: "Centro contable", isActive: true }],page:1,pageSize:10,totalCount:1,totalPages:1};
     } else if (path.endsWith("/trial-balance")) body = [{ accountCode: "13300501", accountName: "Anticipos a proveedores",
       level: "Auxiliary", openingDebit: 50, openingCredit: 0, debit: 201, credit: 0, closingDebit: 251, closingCredit: 0 }];
     else if (path.endsWith("/account-movements") || path.endsWith("/account-movements/print")) {
@@ -87,7 +89,8 @@ test("auxiliar pagina más de 200 movimientos, conserva totales y comparte el ca
   expect(requests[0].searchParams.get("accountRootCode")).toBe("13300501");
   expect(requests[0].searchParams.get("accountFrom")).toBeNull();
   expect(requests[0].searchParams.get("accountTo")).toBeNull();
-  expect(centerReads).toBe(1);
+  expect(centerReads).toBe(0);
+  expect(defaultCenterReads).toBe(1);
   await dialog.getByRole("button", { name: "Siguiente", exact: true }).click();
   await expect(dialog.getByText("CONT-051", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Página 2 de 5", { exact: true })).toBeVisible();
@@ -100,6 +103,7 @@ test("auxiliar pagina más de 200 movimientos, conserva totales y comparte el ca
   expect(requests).toHaveLength(3);
   expect(requests[2].searchParams.get("page")).toBe("1");
   expect(requests[2].searchParams.get("costCenterId")).toBe(centerId);
+  expect(centerReads).toBe(1);
   await dialog.getByRole("combobox", { name: "Filtrar auxiliar por tercero" }).click();
   await page.getByRole("option", { name: /Proveedor principal/ }).click();
   await expect.poll(()=>requests.length).toBe(4);

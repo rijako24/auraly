@@ -406,7 +406,7 @@ public sealed partial class AccountingVerticalSliceTests
             new CreateAccountingAccountRequest(accountId, fixture.TenantId,
                 groupCode + "01",
                 "Obligación conciliada", accountType, true, true,
-                new(groupId, kind, side, fixture.BusinessId, null, null)));
+                new(groupId, kind, side, null, null, null)));
         Assert.True(createAccount.StatusCode == HttpStatusCode.Created, await createAccount.Content.ReadAsStringAsync());
         return accountId;
     }

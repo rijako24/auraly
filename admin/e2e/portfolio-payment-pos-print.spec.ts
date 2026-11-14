@@ -75,7 +75,7 @@ for (const scenario of [
       let body: unknown = [];
       if (path === "/api/auth/me") body = user;
       else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
-      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede prueba" }];
+      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede prueba", timeZone: "America/Bogota" }];
       else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions };
       else if (path.endsWith("/workspace/bootstrap")) body = { tenantId, tenantName: "Empresa prueba", userId: user.userId,
         userDisplayName: "Laura Prueba", options: [workspace], canEnrollPosDevice: false,
@@ -91,7 +91,9 @@ for (const scenario of [
       else if (path.endsWith(scenario.invoicePath)) body = { items: [{
         ...(scenario.direction === "receivable" ? { receivableId: invoiceId } : { payableId: invoiceId }),
         documentNumber: "FV-001", dueDate: "2026-10-01T12:00:00-05:00", outstandingAmount: 125000,
-        currencyCode: "COP", isOverdue: false }], page: 1, pageSize: 20, totalPages: 1, totalCount: 1 };
+        currencyCode: "COP", isOverdue: false }], page: 1, pageSize: 20, totalPages: 1, totalCount: 1,
+        totalOutstanding: 125000, totalOverdue: 0,
+        currencyTotals: [{ currencyCode: "COP", outstandingAmount: 125000, overdueAmount: 0 }] };
       else if (path.endsWith("/reference-options/payment-method")) body = [{ id: "cash", code: "Cash", label: "Efectivo", sortOrder: 1 }];
       else if (path.endsWith("/pos/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
       else if (path.endsWith(scenario.confirmationPath)) { confirmCount++; body = { paymentId, documentNumber: scenario.documentNumber,

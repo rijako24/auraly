@@ -6,6 +6,7 @@ import type { PagedRequest } from "@/types/api";
 import type { PagedResponse } from "@/types/api";
 import type { Business } from "@/types/entities";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
+import { executionContextApi } from "@/services/api/execution-context";
 import type { BusinessContextOption } from "@/stores/business-context-store";
 
 export const businessKeys = {
@@ -37,7 +38,8 @@ export function useUpdateBusiness() {
       queryClient.setQueriesData<PagedResponse<Business>>({ queryKey: lists }, current => current && {
         ...current, items: current.items.map(item => item.businessId === business.businessId ? business : item),
       });
-      queryClient.setQueriesData<BusinessContextOption[]>({ predicate: query => query.queryKey[0] === "execution-context" && query.queryKey[2] === "businesses" && query.queryKey[3] === business.tenantId }, current => current?.map(item => item.businessId === business.businessId ? { ...item, name: business.name, sharesProductPrices: business.sharesProductPrices } : item));
+      queryClient.setQueriesData<BusinessContextOption[]>({ predicate: query => query.queryKey[0] === "execution-context" && query.queryKey[2] === "businesses" && query.queryKey[3] === business.tenantId }, current => current?.map(item => item.businessId === business.businessId ? { ...item, name: business.name, sharesProductPrices: business.sharesProductPrices, timeZone: business.timeZone } : item));
+      executionContextApi.updateCachedBusiness(business);
       // Name determines ordering and name/email determine server-side search.
       // A single row cannot determine membership in a changed SQL page.
       if (!previous || previous.name !== business.name || previous.email !== business.email)

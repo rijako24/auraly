@@ -117,19 +117,24 @@ public sealed partial class SqlWithholdingRuleStore(
     }
 
     public async Task<IReadOnlySet<Guid>> GetValidManualAccountIdsAsync(
-        Guid tenantId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct)
+        Guid tenantId, Guid businessId, IReadOnlyCollection<Guid> accountIds, CancellationToken ct)
     {
         if (accountIds.Count == 0) return new HashSet<Guid>();
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
-            SELECT a.AccountId FROM dbo.AccountingAccounts a
-            JOIN OPENJSON(@AccountIds) WITH(AccountId uniqueidentifier '$') requested
-              ON requested.AccountId=a.AccountId
-            WHERE a.TenantId=@TenantId AND a.IsActive=1 AND a.AllowsPosting=1
-              AND a.AccountType=N'Liability';
+            -- Candidate accounts must be eligible for a purchase withholding
+            -- purpose. Posting validates the exact captured kind under its lock.
+            SELECT requested.AccountId FROM OPENJSON(@AccountIds) WITH(AccountId uniqueidentifier '$') requested
+            JOIN dbo.Businesses business ON business.BusinessId=@BusinessId AND business.TenantId=@TenantId
+            WHERE EXISTS(SELECT 1 FROM dbo.AccountingSourceCategoryMappings mapping
+              JOIN dbo.AccountingConfigurationProfiles profile ON profile.ProfileCode=mapping.ProfileCode
+                AND profile.IsDefault=1 AND profile.IsActive=1
+              CROSS APPLY accounting.PostingAccountEligibility(@TenantId,mapping.Category,requested.AccountId) eligible
+              WHERE mapping.SourceType=N'PurchaseWithholdingKind');
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@AccountIds", JsonSerializer.Serialize(accountIds.Distinct()));
         var valid = new HashSet<Guid>();
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -190,14 +195,18 @@ public sealed partial class SqlWithholdingRuleStore(
             if (proposed.DefaultAccountId is { } accountId)
             {
                 await using var account = new SqlCommand("""
-                    SELECT COUNT_BIG(*) FROM dbo.AccountingAccounts
-                    WHERE AccountId=@AccountId AND TenantId=@TenantId AND AccountType=N'Liability'
-                      AND IsActive=1 AND AllowsPosting=1;
+                    SELECT COUNT_BIG(*) FROM dbo.AccountingSourceCategoryMappings mapping
+                    JOIN dbo.AccountingConfigurationProfiles profile ON profile.ProfileCode=mapping.ProfileCode
+                      AND profile.IsDefault=1 AND profile.IsActive=1
+                    CROSS APPLY accounting.PostingAccountReadiness(@TenantId,mapping.Category,@AccountId) eligible
+                    WHERE mapping.SourceType=N'PurchaseWithholdingKind' AND mapping.SourceCode=@Kind;
                     """, connection, transaction);
                 account.Parameters.AddWithValue("@AccountId", accountId);
                 account.Parameters.AddWithValue("@TenantId", tenantId);
+                account.Parameters.AddWithValue("@BusinessId", proposed.BusinessId);
+                account.Parameters.AddWithValue("@Kind", proposed.Kind.ToString());
                 if (Convert.ToInt64(await account.ExecuteScalarAsync(ct)) != 1)
-                    throw new TaxationValidationException("Selecciona una cuenta de pasivo activa para esta regla manual.");
+                    throw new TaxationValidationException("Selecciona un auxiliar activo y compatible con la retención y su sede para esta regla manual.");
             }
             var id = ruleId ?? proposed.RuleId;
             var nextVersion = await GetNextVersionAsync(connection, transaction, proposed.BusinessId, id, ct);

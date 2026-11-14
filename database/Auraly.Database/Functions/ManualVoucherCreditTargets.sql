@@ -38,5 +38,13 @@ AS RETURN
     WITH(EffectId uniqueidentifier,EffectKind nvarchar(24),SubledgerKind nvarchar(16),PositionId uniqueidentifier,
       SourceLineId uniqueidentifier,Amount decimal(19,4)) cancellation
     WHERE cancellation.EffectKind=N'Cancellation' AND cancellation.SubledgerKind=N'Payable'
+    UNION ALL
+    SELECT adjustment.EffectId,adjustment.SubledgerKind,adjustment.PositionId,
+      adjustment.SourceLineId,adjustment.Amount,CONVERT(nvarchar(24),N'Adjustment'),CONVERT(uniqueidentifier,NULL)
+    FROM OPENJSON(CASE WHEN JSON_VALUE(@PayloadJson,'$.PayloadVersion')=N'4'
+      THEN @PayloadJson ELSE N'{}' END,'$.FinancialEffects.Positions')
+    WITH(EffectId uniqueidentifier,EffectKind nvarchar(24),SubledgerKind nvarchar(16),PositionId uniqueidentifier,
+      SourceLineId uniqueidentifier,Amount decimal(19,4)) adjustment
+    WHERE adjustment.EffectKind=N'Adjustment' AND adjustment.SubledgerKind IN(N'Payable',N'Receivable')
 );
 GO

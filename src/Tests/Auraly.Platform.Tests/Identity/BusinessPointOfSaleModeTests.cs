@@ -229,6 +229,39 @@ public sealed class BusinessPointOfSaleModeTests
             _business.TenantId, default), Times.Once);
     }
 
+    [Theory]
+    [InlineData("America/New_York", "America/New_York")]
+    [InlineData(" SA Pacific Standard Time ", "America/Bogota")]
+    [InlineData("UTC", "Etc/UTC")]
+    public async Task Time_zone_is_validated_and_returned_in_browser_format_without_extra_reads(string configured, string expected)
+    {
+        var result = await Service.UpdateAsync(_business.TenantId, false, _business.BusinessId,
+            new(null, null, null, null, null, null, configured), default);
+
+        Assert.Equal(expected, result.TimeZone);
+        Assert.Equal(expected, _business.TimeZone);
+        _businesses.Verify(repo => repo.GetByIdAsync(_business.BusinessId), Times.Once);
+        _work.Verify(work => work.SaveChangesAsync(default), Times.Once);
+        _options.VerifyNoOtherCalls();
+        _pricingSynchronization.VerifyNoOtherCalls();
+        _synchronization.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("America/Invalid")]
+    public async Task Invalid_time_zone_cannot_change_any_business_field(string configured)
+    {
+        await Assert.ThrowsAsync<DomainValidationException>(() => Service.UpdateAsync(
+            _business.TenantId, false, _business.BusinessId,
+            new("No guardar", null, null, null, null, null, configured), default));
+
+        Assert.Equal("Sede", _business.Name);
+        Assert.Equal("America/Bogota", _business.TimeZone);
+        _work.Verify(work => work.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private void SetActiveModes(params string[] codes) => _options
         .Setup(store => store.ListAsync(PointOfSaleModes.CatalogCode, default))
         .ReturnsAsync(codes.Select(code => new ReferenceOption(Guid.NewGuid(), code, code, null, 0)).ToList());

@@ -12,7 +12,7 @@ public sealed partial class PayablesVerticalSliceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Accepted_cash_payment_keeps_its_account_after_mapping_change_and_replay(bool missingAccount)
+    public async Task Pending_cash_payment_uses_current_mapping_and_completed_replay_keeps_its_account(bool missingAccount)
     {
         var product = Guid.NewGuid();
         await ConfigureSeriesAndAccountingAsync(product);
@@ -39,7 +39,7 @@ public sealed partial class ReceivablesVerticalSliceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Accepted_cash_collection_keeps_its_account_after_mapping_change_and_replay(bool missingAccount)
+    public async Task Pending_cash_collection_uses_current_mapping_and_completed_replay_keeps_its_account(bool missingAccount)
     {
         var (customerId, userId, _) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId, ReceivablesPermissionCodes.ManageCredit,
@@ -106,8 +106,7 @@ internal static class PortfolioTreasuryAccountFreezeScenario
             Assert.True(await row.ReadAsync());
             Assert.Equal("AccountingPendingConfiguration", row.GetString(0));
             Assert.Equal(10_000m, row.GetDecimal(1));
-            if (missingAccount) Assert.True(row.IsDBNull(2));
-            else Assert.Equal(originalCash, row.GetGuid(2));
+            Assert.True(row.IsDBNull(2));
             Assert.NotEqual(Guid.Empty, row.GetGuid(3));
         }
         finally
@@ -132,7 +131,7 @@ internal static class PortfolioTreasuryAccountFreezeScenario
         Assert.True(await remap.ExecuteNonQueryAsync() > 0);
         try
         {
-            var expected = missingAccount ? alternate.AccountId : originalCash;
+            var expected = alternate.AccountId;
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 using var retry = await client.PostAsync($"/api/commerce/v1/accounting/postings/{paymentId}/retry", null);

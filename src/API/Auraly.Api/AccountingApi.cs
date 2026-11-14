@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Contracts.Payables;
+using Auraly.Contracts.Receivables;
 
 namespace Auraly.Api;
 
@@ -10,11 +12,11 @@ public static class AccountingApi
     {
         endpoints.MapGet("/api/commerce/v1/accounting/open-positions", async (HttpContext context,
             string? subledgerKind, int? page, int? pageSize, Guid? partyId, Guid? accountId,
-            string? search, DateOnly? dueFrom, DateOnly? dueTo, Guid? subledgerId, Guid? counterpartyRoleId, bool? manualSupportOnly, DateOnly? effectiveOn,
+            string? search, DateOnly? dueFrom, DateOnly? dueTo, Guid? subledgerId, Guid? counterpartyRoleId, bool? manualSupportOnly, DateOnly? effectiveOn, string? voucherTypeCode,
             AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.OpenPositionsAsync(context.User.ToAccountingIdentity(),
                 new(subledgerKind ?? AccountingSubledgerKinds.Payable, page ?? 1, pageSize ?? 25,
-                    partyId, accountId, search, dueFrom, dueTo, subledgerId, counterpartyRoleId, manualSupportOnly == true, effectiveOn), token), Results.Ok))
+                    partyId, accountId, search, dueFrom, dueTo, subledgerId, counterpartyRoleId, manualSupportOnly == true, effectiveOn, voucherTypeCode), token), Results.Ok))
             .RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/account-options", async (HttpContext context,
             int? page, int? pageSize, string? search, bool? expenseOnly, Guid? accountId, bool? liabilityOnly, bool? groupingOnly,
@@ -87,12 +89,19 @@ public static class AccountingApi
                 : await ExecuteAsync(() => service.ListAccountsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/bank-accounts", async (HttpContext context, bool? includeInactive, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListBankAccountsAsync(context.User.ToAccountingIdentity(), includeInactive == true, token), Results.Ok)).RequireAuthorization("accounting.user");
-        endpoints.MapGet("/api/pos/v1/accounting/settlement-configuration", async (HttpContext context, AccountingService service, CancellationToken token) =>
-            await ExecuteAsync(() => service.GetPosSettlementConfigurationAsync(
+        endpoints.MapGet("/api/pos/v1/accounting/settlement-configuration", async (HttpContext context, AccountingService service, Auraly.Application.Catalog.PaymentMethodService forms, CancellationToken token) =>
+            await ExecuteAsync(() => SettlementConfigurationAsync(service,forms,
                 context.User.ToPosDeviceIdentity().TenantId, token), Results.Ok)).RequireAuthorization("pos.enrolled");
-        endpoints.MapGet("/api/commerce/v1/pos/settlement-configuration", async (HttpContext context, AccountingService service, CancellationToken token) =>
-            await ExecuteAsync(() => service.GetPosSettlementConfigurationAsync(
+        endpoints.MapGet("/api/commerce/v1/pos/settlement-configuration", async (HttpContext context, AccountingService service, Auraly.Application.Catalog.PaymentMethodService forms, CancellationToken token) =>
+            await ExecuteAsync(() => SettlementConfigurationAsync(service,forms,
                 context.User.ToAccountingIdentity().TenantId, token), Results.Ok)).RequireAuthorization();
+        endpoints.MapGet("/api/commerce/v1/accounting/settlement-configuration", async (HttpContext context, AccountingService service, Auraly.Application.Catalog.PaymentMethodService forms, CancellationToken token) =>
+            await ExecuteAsync(() => SettlementConfigurationAsync(service,forms,
+                context.User.ToAccountingIdentity().TenantId, token), Results.Ok))
+            .RequireAuthorization(policy => policy.RequireAssertion(context =>
+                context.User.HasClaim("permission", AccountingPermissionCodes.Read) ||
+                context.User.HasClaim("permission", ReceivablesPermissionCodes.RegisterPayment) ||
+                context.User.HasClaim("permission", PayablesPermissionCodes.RegisterPayment)));
         endpoints.MapPut("/api/commerce/v1/accounting/bank-accounts/{bankAccountId:guid}", async (HttpContext context, Guid bankAccountId, SaveBankAccountRequest request, AccountingService service, CancellationToken token) =>
             bankAccountId != request.BankAccountId
                 ? Results.Problem("La cuenta bancaria de la ruta no coincide con la solicitud.", statusCode: 400)
@@ -115,8 +124,11 @@ public static class AccountingApi
             await ExecuteAsync(() => service.CloseBankReconciliationAsync(context.User.ToAccountingIdentity(), reconciliationId, request, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/bank-reconciliations/{reconciliationId:guid}/reopen", async (HttpContext context, Guid reconciliationId, ChangeBankReconciliationStatusRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ReopenBankReconciliationAsync(context.User.ToAccountingIdentity(), reconciliationId, request, token), Results.Ok)).RequireAuthorization("accounting.user");
-        endpoints.MapGet("/api/commerce/v1/accounting/cost-centers", async (HttpContext context, AccountingService service, CancellationToken token) =>
-            await ExecuteAsync(() => service.ListCostCentersAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/cost-centers", async (HttpContext context,
+            string? search, bool? isActive, bool? isDefault, Guid? costCenterId, int? page, int? pageSize,
+            string? sortBy, string? sortDirection, Guid[]? ids, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListCostCentersAsync(context.User.ToAccountingIdentity(),
+                new(search,isActive,isDefault,costCenterId,page ?? 1,pageSize ?? 50,sortBy ?? "code",sortDirection ?? "asc",ids is { Length: > 0 } ? ids : null),token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/cost-center-assignments", async (HttpContext context, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListCostCenterAssignmentsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPut("/api/commerce/v1/accounting/cost-center-assignments", async (HttpContext context, SaveAccountingCostCenterAssignmentRequest request, AccountingService service, CancellationToken token) =>
@@ -193,16 +205,16 @@ public static class AccountingApi
         endpoints.MapGet("/api/commerce/v1/accounting/reports/exceptions", async (HttpContext context, DateOnly from, DateOnly to, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetExceptionsAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/documents", async (HttpContext context,
-            DateOnly from, DateOnly to, string? documentType, string? status, string? search, Guid? partyId, string? voucherTypeCode,
-            int? page, int? pageSize, AccountingService service, CancellationToken token) =>
+            DateOnly from, DateOnly to, string? documentType, string? status, string? search, Guid? partyId, string? voucherTypeCode,Guid? financialConceptId,
+            int? page, int? pageSize, int? dateRangeVersion, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListDocumentsAsync(context.User.ToAccountingIdentity(),
-                from, to, documentType, status, search, page ?? 1, pageSize ?? 25, token, partyId, voucherTypeCode),
+                from, to, documentType, status, search, page ?? 1, pageSize ?? 25, token, partyId, voucherTypeCode,financialConceptId,dateRangeVersion ?? 1),
                 Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/reports/financial-traceability-lines", async (HttpContext context,
-            DateOnly from, DateOnly to, string? documentType, string? status, string? search, Guid? partyId, string? voucherTypeCode,
-            int? page, int? pageSize, AccountingService service, CancellationToken token) =>
+            DateOnly from, DateOnly to, string? documentType, string? status, string? search, Guid? partyId, string? voucherTypeCode,Guid? financialConceptId,
+            int? page, int? pageSize, int? dateRangeVersion, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListFinancialTraceabilityLinesAsync(context.User.ToAccountingIdentity(),
-                from, to, documentType, status, search, page ?? 1, pageSize ?? 250, token, partyId, voucherTypeCode),
+                from, to, documentType, status, search, page ?? 1, pageSize ?? 250, token, partyId, voucherTypeCode,financialConceptId,dateRangeVersion ?? 1),
                 Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/compliance/definitions", async (HttpContext context, short? taxYear, ComplianceReportingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListDefinitionsAsync(context.User.ToAccountingIdentity(), taxYear, token), Results.Ok)).RequireAuthorization("accounting.user");
@@ -227,6 +239,18 @@ public static class AccountingApi
                 return value is null ? Results.NotFound() : Results.Ok(value);
             })).RequireAuthorization("accounting.user");
         return endpoints;
+    }
+
+    private static async Task<PosAccountingSettlementConfiguration> SettlementConfigurationAsync(
+        AccountingService accounting, Auraly.Application.Catalog.PaymentMethodService forms,
+        Guid tenantId, CancellationToken cancellationToken)
+    {
+        var configuration=await accounting.GetPosSettlementConfigurationAsync(tenantId,cancellationToken);
+        try { return configuration with { PaymentMethods=await forms.GetSnapshotAsync(tenantId,cancellationToken) }; }
+        catch(Auraly.Application.Catalog.CatalogValidationException error)
+        { throw new AccountingValidationException(error.Message); }
+        catch(Auraly.Application.Catalog.CatalogForbiddenException error)
+        { throw new AccountingForbiddenException(error.Message); }
     }
 
     private static async Task<IResult> ExecuteAsync(Func<Task<IResult>> action)

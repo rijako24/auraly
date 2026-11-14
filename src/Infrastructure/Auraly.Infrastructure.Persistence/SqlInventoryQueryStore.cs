@@ -345,9 +345,9 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             IF @DefaultCostCenterId IS NOT NULL AND NOT EXISTS
             (
               SELECT 1 FROM dbo.AccountingCostCenters
-              WHERE CostCenterId=@DefaultCostCenterId AND BusinessId=@BusinessId AND IsActive=1
+              WHERE CostCenterId=@DefaultCostCenterId AND TenantId=@TenantId AND IsActive=1
             )
-              THROW 51220,'Accounting cost center is not active in the authenticated business.',1;
+              THROW 51220,'Accounting cost center is not active in the authenticated legal entity.',1;
             IF @IsNew=1
               INSERT dbo.BusinessReasons(ReasonId,BusinessId,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference,IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
               VALUES(@Id,@BusinessId,@OperationType,@Code,@Name,NULL,@CounterpartCategory,@DefaultCostCenterId,@RequiresReference,0,@IsActive,@DisplayOrder,SYSUTCDATETIME(),SYSUTCDATETIME());
@@ -365,7 +365,9 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             """;
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection);
         command.Parameters.AddWithValue("@Id",id); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@OperationType",request.OperationType); command.Parameters.AddWithValue("@Code",code); command.Parameters.AddWithValue("@Name",request.Name); command.Parameters.AddWithValue("@IsActive",request.IsActive); command.Parameters.AddWithValue("@DisplayOrder",request.DisplayOrder); command.Parameters.AddWithValue("@CounterpartCategory",(object?)request.CounterpartAccountingCategory??DBNull.Value); command.Parameters.AddWithValue("@DefaultCostCenterId",(object?)request.DefaultCostCenterId??DBNull.Value); command.Parameters.AddWithValue("@RequiresReference",request.RequiresReference); command.Parameters.AddWithValue("@IsNew",inventoryReasonId is null);
+        command.Parameters.AddWithValue("@TenantId",user.TenantId);
         try { await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); return new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetBoolean(4),reader.GetBoolean(5),reader.GetInt32(6),reader.IsDBNull(7)?null:reader.GetString(7),reader.IsDBNull(8)?null:reader.GetGuid(8),reader.GetBoolean(9)); }
+        catch(SqlException exception) when(exception.Number==51220) { throw new InventoryValidationException(exception.Message); }
         catch(SqlException exception) when(exception.Number is 2601 or 2627) { throw new InventoryConflictException("An inventory reason with the same name already exists for this operation."); }
     }
 

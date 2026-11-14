@@ -22,6 +22,7 @@ CREATE TABLE [accounting].[SourcePositionIndex]
     CONSTRAINT [CK_SourcePositionIndex_Amount] CHECK ([Amount]>0),
     CONSTRAINT [CK_SourcePositionIndex_Effect] CHECK (
       ([EffectKind]=N'CreditApplication' AND [ReversesTransactionId] IS NULL) OR
+      ([EffectKind]=N'Adjustment' AND [SubledgerKind] IN(N'Payable',N'Receivable') AND [ReversesTransactionId] IS NULL) OR
       ([EffectKind]=N'Cancellation' AND [SubledgerKind]=N'Payable' AND [ReversesTransactionId] IS NULL) OR
       ([EffectKind]=N'Unapplication' AND [SubledgerKind] IN(N'Payable',N'Receivable')
         AND [ReversesTransactionId] IS NOT NULL AND [ReversesTransactionId]<>'00000000-0000-0000-0000-000000000000') OR

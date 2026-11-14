@@ -50,8 +50,8 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   await scopedJson("PUT", `/api/commerce/v1/taxation/counterparty-profiles/${supplier.supplierId}`, {
     businessId, counterpartyId: supplier.supplierId, appliesWithholding: false, responsibilities: [], jurisdictionCode: "11001",
   });
-  const issuedAt = `${proposedAccountingDate().slice(0, 4)}-01-01T10:00:00-05:00`;
-  const dueDate = `${proposedAccountingDate().slice(0, 4)}-01-31T10:00:00-05:00`;
+  const issuedAt = `${proposedAccountingDate(context.timeZone).slice(0, 4)}-01-01T10:00:00-05:00`;
+  const dueDate = `${proposedAccountingDate(context.timeZone).slice(0, 4)}-01-31T10:00:00-05:00`;
   let sourceId: string, sourceAccountCode: string, sourceAccountName: string;
   if (unallocatedAsset) {
     const parentId = randomUUID();

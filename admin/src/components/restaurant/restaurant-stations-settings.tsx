@@ -104,7 +104,6 @@ function StationDialog({ businessId, initialStation, client, kinds, modes, onSta
   const thisDeviceId = localPrinters.data?.deviceId;
   const thisDeviceAvailable = Boolean(thisDeviceId && devices.data?.some(device => device.deviceId === thisDeviceId));
   const deviceId = current?.printerDeviceId ?? (thisDeviceAvailable ? thisDeviceId : null);
-  const isThisDevice = Boolean(thisDeviceAvailable && deviceId === thisDeviceId);
   const profileKey = current?.printerProfileKey || station.stationId;
   const existingProfile = localPrinters.data?.profiles.find(profile => profile.key.toLowerCase() === profileKey.toLowerCase());
   const printer = printerDraft ?? existingProfile ?? {
@@ -112,10 +111,9 @@ function StationDialog({ businessId, initialStation, client, kinds, modes, onSta
   } satisfies RestaurantCommandPrinterProfile;
   const remoteConfigured = Boolean(deviceId && deviceId === configuration.data?.printerDeviceId
     && configuration.data.printerProfileKey);
-  const printerReady = isThisDevice
-    ? Boolean(localPrinters.isSuccess && printer.printerName && Number.isInteger(printer.copies)
-        && printer.copies >= 1 && printer.copies <= 3)
-    : remoteConfigured;
+  const localPrinterReady = Boolean(localPrinters.isSuccess && printer.printerName && Number.isInteger(printer.copies)
+    && printer.copies >= 1 && printer.copies <= 3);
+  const printerReady = localPrinterReady || (!printerDraft && remoteConfigured);
   const save = useMutation({
     mutationFn: async (value: CommandDraft) => {
       setSaveError(null);
@@ -144,7 +142,7 @@ function StationDialog({ businessId, initialStation, client, kinds, modes, onSta
         // Commands can only be configured while the station is active. Apply
         // deactivation last, without weakening the server's operational guard.
         if (!deactivating) await persistStation();
-        if (value.mode !== "Virtual" && isThisDevice) {
+        if (value.mode !== "Virtual" && localPrinterReady) {
           if (!client || !printerReady) throw new Error("Selecciona una impresora válida para esta estación.");
           if (!existingProfile || printer.printerName !== existingProfile.printerName ||
               printer.paperWidthMillimeters !== existingProfile.paperWidthMillimeters ||
@@ -222,16 +220,13 @@ function StationDialog({ businessId, initialStation, client, kinds, modes, onSta
           {devices.isError && <p role="alert" className="text-sm text-destructive">No se pudieron consultar los equipos de impresión.</p>}
           {client && localPrinters.isPending && <p className="text-sm text-muted-foreground">Consultando las impresoras de este equipo…</p>}
           {localPrinters.isError && <p role="alert" className="text-sm text-destructive">{localPrinters.error.message}</p>}
-          {isThisDevice && <div className="space-y-4 rounded-2xl border bg-muted/30 p-4">
+          <div className="space-y-4 rounded-2xl border bg-muted/30 p-4">
             <div className="grid gap-2"><Label>Impresora Windows</Label><Select value={printer.printerName || undefined} onValueChange={printerName => setPrinterDraft({ ...printer, printerName })}><SelectTrigger aria-label="Impresora Windows"><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent>{localPrinters.data?.printers.map(name => <SelectItem key={name} value={name}>{name}</SelectItem>)}</SelectContent></Select></div>
-            {!localPrinters.data?.printers.length && <p className="text-sm text-amber-700">Windows no reporta impresoras instaladas. Instala su controlador y actualiza la lista.</p>}
+            {localPrinters.isSuccess && !localPrinters.data.printers.length && <p className="text-sm text-amber-700">Windows no reporta impresoras instaladas. Instala su controlador y actualiza la lista.</p>}
             <div className="grid grid-cols-2 gap-3"><div className="grid gap-2"><Label>Tamaño de tirilla</Label><Select value={String(printer.paperWidthMillimeters)} onValueChange={width => setPrinterDraft({ ...printer, paperWidthMillimeters: Number(width) as 58 | 80 })}><SelectTrigger aria-label="Tamaño de tirilla"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></div><div className="grid gap-2"><Label htmlFor="command-copies">Copias</Label><Input id="command-copies" type="number" min={1} max={3} value={printer.copies} onChange={event => setPrinterDraft({ ...printer, copies: Number(event.target.value) })}/></div></div>
             <label className="flex items-center justify-between gap-3"><span className="text-sm font-medium">Corte de papel</span><Switch checked={printer.cut} onCheckedChange={cut => setPrinterDraft({ ...printer, cut })}/></label>
-            <Button variant="outline" size="sm" disabled={localPrinters.isFetching || save.isPending} onClick={() => void localPrinters.refetch()}>Actualizar impresoras</Button>
-          </div>}
-          {!isThisDevice && (!client || !localPrinters.isPending) && <p className="text-sm text-muted-foreground">{deviceId
-            ? "Para seleccionar o cambiar la impresora, abre esta comanda en el equipo que imprime."
-            : "Abre esta configuración en el equipo de impresión registrado y selecciona su impresora."}</p>}
+            <Button variant="outline" size="sm" disabled={!client || localPrinters.isFetching || save.isPending} onClick={() => void localPrinters.refetch()}>Actualizar impresoras</Button>
+          </div>
         </>}
         </fieldset>
         {saveError && <p role="alert" className="text-sm text-destructive">{saveError}</p>}

@@ -103,6 +103,9 @@ test("el PUC crea desde el encabezado y conserva el formulario cuando hay confli
   const state = await openPuc(page, baseURL!);
   await page.getByRole("button", { name: "Nueva cuenta", exact: true }).click();
   await expect(page.getByRole("button", { name: "Crear cuenta", exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Sede del auxiliar", { exact: true })).toHaveCount(0);
+  await expect(page.locator("#puc-business")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toContainText("se comparte entre todas sus sedes");
   await expect(page.getByRole("checkbox", { name: "Exigir tercero en cada partida" })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Exigir tercero en cada partida" })).toBeDisabled();
   await page.getByLabel("Código PUC", { exact: true }).fill("51959899");

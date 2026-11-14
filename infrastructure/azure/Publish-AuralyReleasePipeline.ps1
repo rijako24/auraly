@@ -421,7 +421,9 @@ function Publish-Database {
             '20260922_MigratePortfolioPaymentTenders.sql',
             '20260929_MoveCommerceMastersToTenant.sql',
             '20260930_ReconcileTenantCustomerCopies.sql',
-            '20260930_ReconcileTenantTaxProfileCopies.sql')
+            '20260930_ReconcileTenantTaxProfileCopies.sql',
+            '20261113_PreflightSharedPucAccounts.sql',
+            '20261113_ShareAccountingCostCenters.sql')
         if (-not $ValidateOnly) {
             foreach ($migration in $reviewedMigrations) {
                 Invoke-ReviewedPreDacpacMigration `
@@ -634,7 +636,7 @@ function Publish-Function {
             --parameters "@$parameterFile" `
             --output none
         Assert-LastExitCode 'OneDeploy de Function fallo'
-        if ($productionDatabaseCutover) {
+        if ($databaseCutover) {
             & az functionapp start --resource-group $configuration.ResourceGroup --name $configuration.Function --output none
             Assert-LastExitCode 'No se pudo iniciar el Worker nuevo después del corte de base de datos'
         }
@@ -760,13 +762,13 @@ if ($recordedComponents.Count -gt 0) {
     }
 }
 
-$productionDatabaseCutover = $Environment -eq 'prod' -and $selectedComponents -contains 'database'
-if ($productionDatabaseCutover -and
-    ($selectedComponents -notcontains 'api' -or $selectedComponents -notcontains 'function')) {
-    throw 'El corte de base de datos de producción exige publicar API y Worker compatibles en el mismo release.'
+$databaseCutover = $selectedComponents -contains 'database'
+if ($databaseCutover -and
+    ($selectedComponents -notcontains 'api' -or $selectedComponents -notcontains 'function' -or $manifest.deploymentComponents -notcontains 'admin')) {
+    throw 'El corte de base de datos exige publicar API y Worker compatibles junto con Admin en el mismo release.'
 }
 if ($selectedComponents -contains 'function') { Assert-OfflineLeaseSigningConfiguration }
-if ($productionDatabaseCutover) {
+if ($databaseCutover) {
     # A failed database cutover must never restart the old writers. Recovery is
     # an explicit roll-forward with compatible binaries, not a finally restart.
     & az webapp stop --resource-group $configuration.ResourceGroup --name $configuration.Api --output none

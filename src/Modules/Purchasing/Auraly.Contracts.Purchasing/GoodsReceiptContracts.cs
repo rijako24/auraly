@@ -378,6 +378,14 @@ public sealed record PreviewGoodsReceiptCostWithholdingRequest(
     Guid BusinessId,
     GoodsReceiptCostDocumentRequest Document);
 
+public sealed record PreviewGoodsReceiptCostWithholdingsRequest(
+    Guid BusinessId,
+    IReadOnlyList<GoodsReceiptCostDocumentRequest> Documents);
+
+public sealed record GoodsReceiptCostWithholdingPreview(
+    Guid CostDocumentId,
+    WithholdingCalculationSnapshot Calculation);
+
 public sealed record SaveGoodsReceiptDraftRequest(
     Guid DraftId,
     Guid BusinessId,

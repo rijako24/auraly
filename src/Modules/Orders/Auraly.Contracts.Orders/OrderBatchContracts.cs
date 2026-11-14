@@ -37,7 +37,9 @@ public sealed record OrderCreditValidationIssue(
     string? CustomerIdentification,
     decimal RequestedAmount,
     decimal? AvailableCredit,
-    string Reason);
+    string Reason,
+    int? OverdueInvoiceCount = null,
+    int? MaximumOverdueInvoices = null);
 
 public sealed record InvoiceOrdersResponse(
     Guid OperationId,

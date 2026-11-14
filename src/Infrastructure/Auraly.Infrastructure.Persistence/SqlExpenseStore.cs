@@ -30,11 +30,10 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
               ORDER BY Name,Identification;
             SELECT a.AccountId,a.Code,a.Name FROM dbo.AccountingAccounts a
               JOIN dbo.Businesses b ON b.TenantId=a.TenantId
-                WHERE @IncludeDirectories=1 AND b.BusinessId=@BusinessId AND a.IsActive=1 AND a.AllowsPosting=1 AND a.AccountType=N'Expense'
-                  AND (a.BusinessId IS NULL OR a.BusinessId=@BusinessId)
+                WHERE @IncludeDirectories=1 AND b.BusinessId=@BusinessId AND a.IsActive=1 AND a.AllowsPosting=1 AND a.AccountType IN(N'Expense',N'Cost')
               ORDER BY a.Code;
             SELECT CostCenterId,Code,Name,IsDefault FROM dbo.AccountingCostCenters
-              WHERE BusinessId=@BusinessId AND IsActive=1 ORDER BY IsDefault DESC,Code;
+              WHERE TenantId=@TenantId AND IsDefault=1 AND IsActive=1;
             SELECT Code,Label,COALESCE(Description,N'') FROM reference.Options
               WHERE CatalogCode=N'purchase-evidence-type' AND IsActive=1
                 AND Code IN(N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')
@@ -99,10 +98,9 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
                 IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                   THROW 51600,'La empresa está fuera del tenant.',1;
                 IF NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts WHERE AccountId=@AccountId AND TenantId=@TenantId
-                  AND AccountType=N'Expense' AND AllowsPosting=1 AND IsActive=1
-                  AND (BusinessId IS NULL OR BusinessId=@BusinessId))
-                  THROW 51601,'La cuenta debe ser una cuenta de gasto activa que permita movimientos.',1;
-                IF @CenterId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WHERE CostCenterId=@CenterId AND BusinessId=@BusinessId AND IsActive=1)
+                  AND AccountType IN(N'Expense',N'Cost') AND AllowsPosting=1 AND IsActive=1)
+                  THROW 51601,'La cuenta debe ser una cuenta de gasto o costo activa que permita movimientos.',1;
+                IF @CenterId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WHERE CostCenterId=@CenterId AND TenantId=@TenantId AND IsActive=1)
                   THROW 51602,'El centro de costo está fuera de la empresa.',1;
                 UPDATE dbo.ExpenseConcepts WITH(UPDLOCK,HOLDLOCK) SET Name=@Name,ExpenseAccountId=@AccountId,
                   DefaultCostCenterId=@CenterId,WithholdingConceptCode=@WithholdingCode,IsActive=@Active,UpdatedAt=@Now
@@ -259,7 +257,7 @@ public sealed partial class SqlExpenseStore(SqlServerConnectionFactory connectio
                 JOIN dbo.Suppliers s ON s.SupplierId=@SupplierId
                   AND s.TenantId=b.TenantId AND s.IsActive=1
                 WHERE c.ExpenseConceptId=@ConceptId AND c.BusinessId=@BusinessId AND b.TenantId=@TenantId AND c.IsActive=1
-                  AND (@CenterId IS NULL OR EXISTS(SELECT 1 FROM dbo.AccountingCostCenters cc WHERE cc.CostCenterId=@CenterId AND cc.BusinessId=@BusinessId AND cc.IsActive=1));
+                  AND (@CenterId IS NULL OR EXISTS(SELECT 1 FROM dbo.AccountingCostCenters cc WHERE cc.CostCenterId=@CenterId AND cc.TenantId=@TenantId AND cc.IsActive=1));
                 """, connection, tx))
             {
                 validate.Parameters.AddWithValue("@ConceptId", (object?)request.ConceptId ?? DBNull.Value); validate.Parameters.AddWithValue("@BusinessId", user.BusinessId); validate.Parameters.AddWithValue("@TenantId", user.TenantId); validate.Parameters.AddWithValue("@SupplierId", request.SupplierId); validate.Parameters.AddWithValue("@CenterId", (object?)request.CostCenterId ?? DBNull.Value);

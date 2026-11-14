@@ -81,7 +81,7 @@ public static partial class AccountingVoucherFinancialValidation
             if (!lines.TryGetValue(value.SourceLineId, out var line) || !covered.Add(value.SourceLineId))
                 return Incomplete("Cada base fiscal debe identificar una partida de adquisición distinta.");
             var account = accounts[line.AccountId];
-            if (account.AccountType is not ("Asset" or "Expense") || account.Function is not ("General" or "UnallocatedPurchaseCost") ||
+            if (account.AccountType is not ("Asset" or "Expense" or "Cost") || account.Function is not ("General" or "UnallocatedPurchaseCost") ||
                 string.IsNullOrWhiteSpace(account.AccountCode) || line.Credit != 0 ||
                 line.Debit != value.TaxExclusiveAmount + (value.TaxTreatment == "CapitalizedCost" ? acquisition.VatAmount : 0))
                 return Incomplete("El débito de la adquisición debe coincidir con su base y el IVA que sea mayor valor del costo.");

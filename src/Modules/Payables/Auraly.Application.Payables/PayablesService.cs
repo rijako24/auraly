@@ -52,11 +52,14 @@ public sealed class PayablesService(
         ValidateReport(user, query);
         return store.ReportAsync(user, query, cancellationToken);
     }
-    public Task<PayablesReportPage> PrintReportAsync(PayablesUserIdentity user,
+    public async Task<PayablesReportPage> PrintReportAsync(PayablesUserIdentity user,
         PayablesReportQuery query, CancellationToken cancellationToken = default)
     {
         ValidateReport(user, query);
-        return store.PrintReportAsync(user, query, cancellationToken);
+        var result = await store.PrintReportAsync(user, query, cancellationToken);
+        PortfolioReportLimits.ValidateExport(result.TotalCount,
+            result.Items.Sum(item => (long)(item.Applications?.Count ?? 0)));
+        return result;
     }
     private static void ValidateReport(PayablesUserIdentity user, PayablesReportQuery query)
     {
@@ -67,7 +70,7 @@ public sealed class PayablesService(
             query.SupplierId == Guid.Empty || query.PartySiteId == Guid.Empty || query.ConceptId == Guid.Empty ||
             query.From > query.To || query.From > query.Cutoff || query.To > query.Cutoff)
             throw new PayablesValidationException("Los filtros del informe no son válidos.");
-        ValidateLedgerFilters(query.Status, query.From, query.To);
+        ValidateLedgerFilters(query.Status, query.From, query.To, query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection,
             "name", "issuedAt", "dueDate", "documentNumber", "originalAmount",
             "paidAmount", "outstandingAmount", "overdueAmount", "invoiceCount", "currency"))
@@ -88,7 +91,7 @@ public sealed class PayablesService(
         Require(user, PayablesPermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
             throw new PayablesValidationException("Invalid pagination.");
-        ValidateLedgerFilters(query.Status,query.From,query.To);
+        ValidateLedgerFilters(query.Status,query.From,query.To,query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "name", "invoiceCount", "originalAmount", "paidAmount", "outstandingAmount", "overdueAmount", "supplierCreditAmount"))
             throw new PayablesValidationException("El ordenamiento de proveedores no es válido.");
         return store.ListSuppliersAsync(user, query with { Search = Normalize(query.Search, 120) }, cancellationToken);
@@ -107,7 +110,7 @@ public sealed class PayablesService(
         Require(user, PayablesPermissionCodes.RegisterPosPayment);
         if (query.SupplierId is null || query.SupplierId == Guid.Empty)
             throw new PayablesValidationException("Selecciona un proveedor para consultar sus facturas pendientes.");
-        return ListCoreAsync(user, query with { Search = null, Status = null,
+        return ListCoreAsync(user, query with { Search = null, Status = null, PayableId = null,
             Overdue = null, OutstandingOnly = true }, PayablesPermissionCodes.RegisterPosPayment, cancellationToken);
     }
 
@@ -117,9 +120,10 @@ public sealed class PayablesService(
     {
         Require(user, permission);
         if (query.Page < 1) throw new PayablesValidationException("Page must be greater than zero.");
+        if (query.PayableId == Guid.Empty) throw new PayablesValidationException("La obligación seleccionada no es válida.");
         if (query.PageSize is < 1 or > 100)
             throw new PayablesValidationException("PageSize must be between 1 and 100.");
-        ValidateLedgerFilters(query.Status,query.From,query.To);
+        ValidateLedgerFilters(query.Status,query.From,query.To,query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "documentNumber", "dueDate", "originalAmount", "outstandingAmount", "status"))
             throw new PayablesValidationException("El ordenamiento de facturas no es válido.");
         if (query.ConceptId == Guid.Empty)
@@ -151,17 +155,17 @@ public sealed class PayablesService(
     {
         Require(user,PayablesPermissionCodes.Read);
         if(query.Page<1||query.PageSize is <1 or >100)throw new PayablesValidationException("Invalid pagination.");
-        ValidateLedgerFilters(query.Status,query.From,query.To);
+        ValidateLedgerFilters(query.Status,query.From,query.To,query.DateRangeVersion);
         if (!PagedSort.IsValid(query.SortBy, query.SortDirection, "paidAt", "partyName", "documentNumber", "totalAmount"))
             throw new PayablesValidationException("El ordenamiento de pagos no es válido.");
         return store.ListPaymentsAsync(user,query with { Search=Normalize(query.Search,120) },cancellationToken);
     }
 
-    private static void ValidateLedgerFilters(string? status,DateOnly? from,DateOnly? to)
+    private static void ValidateLedgerFilters(string? status,DateOnly? from,DateOnly? to,int dateRangeVersion)
     {
         if(status is not null and not ("Open" or "PartiallyPaid" or "Paid" or "Cancelled"))
             throw new PayablesValidationException("The payable status is invalid.");
-        if(from>to)throw new PayablesValidationException("The date range is invalid.");
+        if(dateRangeVersion is not (1 or 2)||from>to||to==DateOnly.MaxValue)throw new PayablesValidationException("The date range is invalid.");
     }
 
     public Task<SupplierPaymentAcceptance> ConfirmPaymentAsync(
@@ -250,7 +254,8 @@ public sealed class PayablesService(
 
     private static PaymentTender ToDomain(SupplierPaymentTenderRequest value) => new(
         value.MethodCode, value.Amount, value.TenderedAmount, value.BankAccountId,
-        value.Reference, value.Notes, value.CardFranchiseCode, value.ApprovalNumber);
+        value.Reference, value.Notes, value.CardFranchiseCode, value.ApprovalNumber,
+        value.PaymentMethodId, value.PaymentMethodVersion);
 
     private static string? Normalize(string? value, int maximumLength)
     {

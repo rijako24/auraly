@@ -70,7 +70,7 @@ for (const direction of ["payables", "receivables"] as const) {
       let body: unknown = [];
       if (path === "/api/auth/me") body = user;
       else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Pruebas" }];
-      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas" }];
+      else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede pruebas", timeZone: "America/Bogota" }];
       else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId, roles: [], permissions: user.permissions };
       else if (path.endsWith("/parties/role-options")) body = { items: [{ partyId, roleId: partyId, role: partyRole,
         displayName: partyName, identification: "1001", supplierPurchaseEvidencePolicy: null,

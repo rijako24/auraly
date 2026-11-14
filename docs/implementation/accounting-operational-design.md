@@ -23,7 +23,8 @@ batches without creating those obligations again.
 The local implementation replaces the former bank-to-single-auxiliary link
 with configured auxiliaries that refer to the bank master, as defined in
 [`bank-accounts-and-reconciliation-design.md`](bank-accounts-and-reconciliation-design.md).
-This does not complete the remaining voucher effects or native mapping snapshots.
+This does not complete the remaining voucher effects. Automatic account selection
+follows the 2026-11-13 decision in section 14.12 of the owner design.
 The receipt-cost valuation decision is tracked in
 [`goods-receipts-design.md`](goods-receipts-design.md), not silently resolved here.
 
@@ -32,9 +33,11 @@ vouchers in goods receipts. A new acquisition with a positive supplier net opens
 its payable regardless of immediate or deferred terms; a separate disbursement
 applies the actual payment. An advance application has no new cash effect. Account
 defaults belong to the existing category/account mappings. Bank references and
-manual financial effects are frozen on acceptance; the complete snapshot of
-native mappings remains a gate in section 13.6 of the owner design. An
-immediate-payment label never selects a bank or proves settlement.
+manual financial effects are immutable on acceptance. Automatic auxiliary
+selection uses current configuration when posting, honoring its effective
+interval for the source date (section 14.12). Original closing accounts and
+explicit manual selections retain their identity. An immediate-payment label
+never selects a bank or proves settlement.
 
 The original verified defect was that `LoadGoodsReceiptFactsAsync` returned
 `SettlementSourceMissing` for `CreatesPayable=false`, while the financial-effects

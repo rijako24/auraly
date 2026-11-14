@@ -44,8 +44,8 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
         // never processed, published, or inserted into an application database.
         await using var seed = new SqlCommand("""
             SET NOCOUNT ON;
-            INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website)
-            VALUES(@BusinessId,@TenantId,N'Sede benchmark',N'',N'',N'',N'',N'');
+            INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone)
+            VALUES(@BusinessId,@TenantId,N'Sede benchmark',N'',N'',N'',N'',N'',N'Etc/UTC');
             CREATE TABLE #Numbers(N int PRIMARY KEY);
             WITH Digit(N) AS(SELECT value FROM (VALUES(0),(1),(2),(3),(4),(5),(6),(7),(8),(9)) d(value))
             INSERT #Numbers SELECT a.N+10*b.N+100*c.N
@@ -168,8 +168,9 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
             (Name: "missing", Page: 1, PartyId: (Guid?)null, Search: (string?)"BENCH-NO-MATCH", Total: 0, Items: 0),
         };
         var exceededBudgets = new List<string>();
-        (string Sql, string Name, int Page, Guid? PartyId, string? Search, double P95)? slowest = null;
-        (string Sql, string Name, int Page, Guid? PartyId, string? Search, double P95)? grantScenario = null;
+        (string Sql, string Name, int Page, Guid? PartyId, string? Search, double P95, int Version)? slowest = null;
+        (string Sql, string Name, int Page, Guid? PartyId, string? Search, double P95, int Version)? grantScenario = null;
+        foreach (var version in new[] { 1, 2 })
         foreach (var sample in cases)
         {
             var milliseconds = new List<double>(20);
@@ -182,7 +183,7 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
                 try
                 {
                     result = await service.ListDocumentsAsync(user, new(2026, 10, 1), new(2026, 10, 31),
-                        null, null, sample.Search, sample.Page, 50, partyId: sample.PartyId);
+                        null, null, sample.Search, sample.Page, 50, partyId: sample.PartyId, dateRangeVersion: version);
                 }
                 catch (SqlException)
                 {
@@ -193,7 +194,7 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
                     throw;
                 }
                 timer.Stop();
-                Assert.Equal(1, counter.Count);
+                Assert.Equal(version == 1 ? 1 : 2, counter.Count);
                 sql = counter.LastCommandText;
                 Assert.Equal(sample.Total, result.TotalCount);
                 Assert.Equal(sample.Items, result.Items.Count);
@@ -203,14 +204,14 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
                 milliseconds.Add(timer.Elapsed.TotalMilliseconds);
             }
             var p95 = milliseconds.Order().ElementAt(18);
-            output.WriteLine($"100000 sources / 10000 parties, {sample.Name}: first {milliseconds[0]:F1} ms, p95 {p95:F1} ms, 1 SQL/page.");
+            output.WriteLine($"100000 sources / 10000 parties, {sample.Name}, calendar v{version}: first {milliseconds[0]:F1} ms, p95 {p95:F1} ms, {(version == 1 ? 1 : 2)} SQL/page.");
             if (sample.Name == "frequent-party")
-                grantScenario = (sql!, sample.Name, sample.Page, sample.PartyId, sample.Search, p95);
+                grantScenario = (sql!, sample.Name, sample.Page, sample.PartyId, sample.Search, p95, version);
             if (p95 > 800)
             {
-                exceededBudgets.Add($"{sample.Name}: p95 {p95:F1} ms exceeds the 800 ms inbox budget.");
+                exceededBudgets.Add($"{sample.Name} v{version}: p95 {p95:F1} ms exceeds the 800 ms inbox budget.");
                 if (slowest is null || p95 > slowest.Value.P95)
-                    slowest = (sql!, sample.Name, sample.Page, sample.PartyId, sample.Search, p95);
+                    slowest = (sql!, sample.Name, sample.Page, sample.PartyId, sample.Search, p95, version);
             }
         }
         await MarkPhaseAsync("Diagnosing");
@@ -223,10 +224,11 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
             await using var diagnostic = new SqlCommand("SET STATISTICS XML ON;\n" + failure.Sql + "\nSET STATISTICS XML OFF;", connection);
             diagnostic.Parameters.AddWithValue("@TenantId", user.TenantId);
             diagnostic.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-            diagnostic.Parameters.AddWithValue("@From", new DateTime(2026, 10, 1));
-            diagnostic.Parameters.AddWithValue("@To", new DateTime(2026, 10, 31));
+            await Auraly.BuildingBlocks.Infrastructure.Persistence.SqlBusinessLocalDates.BindSourceDateRangeAsync(
+                diagnostic, user.TenantId, user.BusinessId, new(2026, 10, 1), new(2026, 10, 31), failure.Version, default);
             diagnostic.Parameters.AddWithValue("@DocumentType", DBNull.Value);
             diagnostic.Parameters.AddWithValue("@VoucherTypeCode", DBNull.Value);
+            diagnostic.Parameters.AddWithValue("@FinancialConceptId", DBNull.Value);
             diagnostic.Parameters.AddWithValue("@Status", DBNull.Value);
             diagnostic.Parameters.AddWithValue("@Search", (object?)failure.Search ?? DBNull.Value);
             diagnostic.Parameters.AddWithValue("@PartyId", (object?)failure.PartyId ?? DBNull.Value);

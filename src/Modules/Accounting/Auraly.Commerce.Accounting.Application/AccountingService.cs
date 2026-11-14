@@ -22,7 +22,7 @@ public interface IAccountingStore
     Task<IReadOnlyList<BankAccountView>> ListActiveBankAccountsForTenantAsync(Guid tenantId, CancellationToken cancellationToken);
     Task<bool> IsAccountingEnabledAsync(Guid tenantId, CancellationToken cancellationToken);
     Task<BankAccountView> SaveBankAccountAsync(AccountingUserIdentity user, SaveBankAccountRequest request, CancellationToken cancellationToken);
-    Task<IReadOnlyList<AccountingCostCenterView>> ListCostCentersAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<AccountingCostCenterPage> ListCostCentersAsync(AccountingUserIdentity user, AccountingCostCenterQuery query, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingCostCenterAssignmentView>> ListCostCenterAssignmentsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<AccountingCostCenterAssignmentView> SaveCostCenterAssignmentAsync(AccountingUserIdentity user, SaveAccountingCostCenterAssignmentRequest request, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingPeriodView>> ListPeriodsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
@@ -60,8 +60,8 @@ public interface IAccountingStore
     Task<IReadOnlyList<FinancialStatementRow>> GetBalanceSheetAsync(AccountingUserIdentity user, DateOnly asOf, CancellationToken cancellationToken);
     Task<IReadOnlyList<FinancialStatementRow>> GetIncomeStatementAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingExceptionRow>> GetExceptionsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
-    Task<AccountingDocumentPage> ListDocumentsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken, Guid? partyId = null, string? voucherTypeCode = null);
-    Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken, Guid? partyId = null, string? voucherTypeCode = null);
+    Task<AccountingDocumentPage> ListDocumentsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken, Guid? partyId = null, string? voucherTypeCode = null,Guid? financialConceptId=null, int dateRangeVersion=1);
+    Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType, string? status, string? search, int page, int pageSize, CancellationToken cancellationToken, Guid? partyId = null, string? voucherTypeCode = null,Guid? financialConceptId=null, int dateRangeVersion=1);
 }
 
 public interface IBankReconciliationStore
@@ -84,7 +84,8 @@ public sealed partial class AccountingService(
     public Task<AccountingOpenPositionPage> OpenPositionsAsync(AccountingUserIdentity user,
         AccountingOpenPositionQuery query, CancellationToken cancellationToken = default)
     {
-        var sourceReadPermission = query.SubledgerKind switch
+        var sourceReadPermission = query.VoucherTypeCode == "CashReceipt" ? ReceivablesPermissionCodes.Read
+            : query.VoucherTypeCode == "Disbursement" ? PayablesPermissionCodes.Read : query.SubledgerKind switch
         {
             AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.SupplierCredit => PayablesPermissionCodes.Read,
             AccountingSubledgerKinds.Receivable or AccountingSubledgerKinds.CustomerCredit => ReceivablesPermissionCodes.Read,
@@ -98,7 +99,12 @@ public sealed partial class AccountingService(
             || query.Page < 1 || query.PageSize is < 1 or > 50 || query.PartyId == Guid.Empty
             || query.AccountId == Guid.Empty || query.SubledgerId == Guid.Empty || query.CounterpartyRoleId == Guid.Empty || query.Search?.Length > 120
             || query.DueFrom > query.DueTo || query.ManualSupportOnly && query.SubledgerKind != AccountingSubledgerKinds.Payable
-            || query.SubledgerKind == "All" && query.PartyId is null)
+            || query.SubledgerKind == "All" && query.PartyId is null
+            || query.VoucherTypeCode is not (null or "CashReceipt" or "Disbursement")
+            || query.VoucherTypeCode == "CashReceipt" && (query.PartyId is null ||
+                query.SubledgerKind is not ("All" or AccountingSubledgerKinds.Receivable or AccountingSubledgerKinds.CustomerCredit))
+            || query.VoucherTypeCode == "Disbursement" && (query.PartyId is null ||
+                query.SubledgerKind is not ("All" or AccountingSubledgerKinds.Payable or AccountingSubledgerKinds.SupplierCredit)))
             throw new AccountingValidationException("Los filtros de documentos pendientes no son válidos.");
         return store.OpenPositionsAsync(user, query with { Search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim() }, cancellationToken);
     }
@@ -312,7 +318,7 @@ public sealed partial class AccountingService(
         if (request.PayloadVersion != 4 && (request.VoucherTypeCode is not null || request.WorkSessionId is not null ||
             request.CurrencyCode is not null || request.FinancialEffects is not null || request.FiscalCapture is not null ||
             request.Lines?.Any(line => line is not null && (line.ExistingPosition is not null || line.FinancialGroupId is not null ||
-                line.DueDate is not null || line.PartySiteId is not null || line.PaymentEvidence is not null || line.Reference is not null)) == true))
+                line.DueDate is not null || line.PartySiteId is not null || line.PaymentEvidence is not null || line.Reference is not null || line.FinancialConceptId is not null || line.FinancialConceptTargetLineId is not null)) == true))
             throw new AccountingValidationException("Los vínculos y efectos financieros requieren la versión financiera del comprobante.");
         if (request.VoucherId == Guid.Empty || request.BusinessId != user.BusinessId || request.MainPartyId == Guid.Empty ||
             request.Lines is null || request.Lines.Count is < 2 or > 500)
@@ -324,6 +330,9 @@ public sealed partial class AccountingService(
         {
             if (line is null)
                 throw new AccountingValidationException("El comprobante contiene una partida vacía.");
+            if(line.FinancialConceptId==Guid.Empty || line.FinancialConceptTargetLineId == Guid.Empty ||
+                line.FinancialConceptTargetLineId is not null && line.FinancialConceptId is null)
+                throw new AccountingValidationException("La identidad del concepto financiero no es válida.");
             ValidateText(line.Description, 500, "Descripción de la partida");
         }
         try
@@ -489,11 +498,22 @@ public sealed partial class AccountingService(
         }, cancellationToken);
     }
 
-    public Task<IReadOnlyList<AccountingCostCenterView>> ListCostCentersAsync(
-        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+    public Task<AccountingCostCenterPage> ListCostCentersAsync(
+        AccountingUserIdentity user, AccountingCostCenterQuery query, CancellationToken cancellationToken = default)
     {
-        Demand(user, AccountingPermissionCodes.Read);
-        return store.ListCostCentersAsync(user, cancellationToken);
+        if (!user.Permissions.Contains(AccountingPermissionCodes.Read) &&
+            !user.Permissions.Contains(AccountingPermissionCodes.ManualCreate) &&
+            !user.Permissions.Contains(ExpensePermissionCodes.Create) &&
+            !user.Permissions.Contains(ExpensePermissionCodes.Configure) &&
+            !user.Permissions.Contains(Auraly.Contracts.Inventory.InventoryPermissionCodes.ManageReasons) &&
+            !user.Permissions.Contains(Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.ConfigureCashReasons))
+            throw new AccountingForbiddenException("No tienes permiso para consultar centros de costo.");
+        if (query.Page < 1 || query.Page > 1_000_000 || query.PageSize is < 1 or > 100 ||
+            query.Search?.Length > 160 || query.SortBy is not ("code" or "name") ||
+            query.SortDirection is not ("asc" or "desc") || query.CostCenterId == Guid.Empty ||
+            query.Ids is { Count: > 100 } || query.Ids?.Any(id => id == Guid.Empty) == true)
+            throw new AccountingValidationException("Los filtros del centro de costo no son válidos.");
+        return store.ListCostCentersAsync(user, query with { Search = query.Search?.Trim() }, cancellationToken);
     }
 
     public Task<IReadOnlyList<AccountingPeriodView>> ListPeriodsAsync(
@@ -539,7 +559,7 @@ public sealed partial class AccountingService(
                 "El código PUC debe tener 1 dígito para clase, 2 para grupo, 4 para cuenta, 6 para subcuenta o más de 6 para auxiliar.");
         if (request.AllowsPosting && code.Length < 6)
             throw new AccountingValidationException("Las clases, grupos y cuentas son niveles de agrupación y no permiten movimientos.");
-        if (request.AccountType is not ("Asset" or "Liability" or "Equity" or "Revenue" or "Expense" or "ContraRevenue" or "OrderDebit" or "OrderCredit"))
+        if (request.AccountType is not ("Asset" or "Liability" or "Equity" or "Revenue" or "Expense" or "Cost" or "ContraRevenue" or "OrderDebit" or "OrderCredit"))
             throw new AccountingValidationException("El tipo de cuenta no es válido.");
         var compatibleType = code[0] switch
         {
@@ -547,7 +567,9 @@ public sealed partial class AccountingService(
             '2' => request.AccountType == "Liability",
             '3' => request.AccountType == "Equity",
             '4' => request.AccountType is "Revenue" or "ContraRevenue",
-            '5' or '6' or '7' => request.AccountType == "Expense",
+            '5' => request.AccountType == "Expense",
+            // Expense remains valid for historical integrations and accounts.
+            '6' or '7' => request.AccountType is "Cost" or "Expense",
             '8' => request.AccountType == "OrderDebit",
             '9' => request.AccountType == "OrderCredit",
             _ => false
@@ -572,9 +594,11 @@ public sealed partial class AccountingService(
     private static void ValidateAccountSemantics(AccountingAccountSemantics? value)
     {
         if (value is null) return;
+        if (value.BusinessId is not null)
+            throw new AccountingValidationException("Las cuentas del PUC se comparten entre todas las sedes de la empresa; no admiten una sede propia.");
         ValidateText(value.FinancialFunction, 64, "Función financiera");
         ValidateText(value.BalanceSide, 6, "Naturaleza del saldo");
-        if (value.ParentAccountId == Guid.Empty || value.BusinessId == Guid.Empty ||
+        if (value.ParentAccountId == Guid.Empty ||
             value.BankAccountId == Guid.Empty || value.PaymentMethodOptionId == Guid.Empty)
             throw new AccountingValidationException("Las relaciones de la cuenta deben tener identificadores válidos.");
     }
@@ -582,8 +606,8 @@ public sealed partial class AccountingService(
     public Task<AccountingCostCenterView> CreateCostCenterAsync(AccountingUserIdentity user, CreateCostCenterRequest request, CancellationToken cancellationToken = default)
     {
         Demand(user, AccountingPermissionCodes.Configure);
-        if (request.BusinessId != user.BusinessId || request.CostCenterId == Guid.Empty)
-            throw new AccountingForbiddenException("El centro de costo pertenece a otra sede o no tiene identificador.");
+        if (request.TenantId != user.TenantId || request.CostCenterId == Guid.Empty)
+            throw new AccountingForbiddenException("El centro de costo pertenece a otra empresa o no tiene identificador.");
         ValidateText(request.Code, 32, "Código del centro de costo");
         ValidateText(request.Name, 160, "Nombre del centro de costo");
         return store.CreateCostCenterAsync(user, request with { Code = request.Code.Trim(), Name = request.Name.Trim() }, cancellationToken);
@@ -762,25 +786,35 @@ public sealed partial class AccountingService(
     public Task<AccountingDocumentPage> ListDocumentsAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
         string? status, string? search, int page, int pageSize,
-        CancellationToken cancellationToken = default, Guid? partyId = null, string? voucherTypeCode = null)
+        CancellationToken cancellationToken = default, Guid? partyId = null, string? voucherTypeCode = null,Guid? financialConceptId=null, int dateRangeVersion=1)
     {
         ValidateReport(user, from, to);
+        ValidateTraceabilityCalendar(dateRangeVersion, to);
         if (page < 1 || pageSize is < 1 or > 100)
             throw new AccountingValidationException("La paginación de documentos contables no es válida.");
         return store.ListDocumentsAsync(user, from, to, Normalize(documentType),
-            Normalize(status), Normalize(search), page, pageSize, cancellationToken, partyId, Normalize(voucherTypeCode));
+            Normalize(status), Normalize(search), page, pageSize, cancellationToken, partyId, Normalize(voucherTypeCode),financialConceptId,dateRangeVersion);
     }
 
     public Task<FinancialTraceabilityLinePage> ListFinancialTraceabilityLinesAsync(
         AccountingUserIdentity user, DateOnly from, DateOnly to, string? documentType,
         string? status, string? search, int page, int pageSize,
-        CancellationToken cancellationToken = default, Guid? partyId = null, string? voucherTypeCode = null)
+        CancellationToken cancellationToken = default, Guid? partyId = null, string? voucherTypeCode = null,Guid? financialConceptId=null, int dateRangeVersion=1)
     {
         ValidateReport(user, from, to);
+        ValidateTraceabilityCalendar(dateRangeVersion, to);
         if (page < 1 || pageSize is < 1 or > 500)
             throw new AccountingValidationException("La paginación de la trazabilidad financiera no es válida.");
         return store.ListFinancialTraceabilityLinesAsync(user, from, to, Normalize(documentType),
-            Normalize(status), Normalize(search), page, pageSize, cancellationToken, partyId, Normalize(voucherTypeCode));
+            Normalize(status), Normalize(search), page, pageSize, cancellationToken, partyId, Normalize(voucherTypeCode),financialConceptId,dateRangeVersion);
+    }
+
+    private static void ValidateTraceabilityCalendar(int version, DateOnly to)
+    {
+        if (version is not (1 or 2))
+            throw new AccountingValidationException("La versión del calendario de consulta no es válida.");
+        if (version == 2 && to == DateOnly.MaxValue)
+            throw new AccountingValidationException("La fecha final debe permitir calcular el límite del día siguiente.");
     }
 
     private static void ValidateReport(AccountingUserIdentity user, DateOnly from, DateOnly to)

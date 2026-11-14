@@ -81,6 +81,10 @@ CREATE TABLE [accounting].[VoucherDraftLines]
     [TargetSubledgerId] UNIQUEIDENTIFIER NULL,
     [ReversesTransactionId] UNIQUEIDENTIFIER NULL,
     [FinancialDiscountEarned] BIT NULL,
+    [FinancialConceptId] UNIQUEIDENTIFIER NULL REFERENCES reference.FinancialConcepts(FinancialConceptId),
+    [FinancialConceptTargetLineId] UNIQUEIDENTIFIER NULL,
+    CONSTRAINT [CK_VoucherDraftLines_ConceptTarget] CHECK ([FinancialConceptTargetLineId] IS NULL OR
+      ([FinancialConceptTargetLineId]<>'00000000-0000-0000-0000-000000000000' AND [FinancialConceptId] IS NOT NULL)),
     [FinancialGroupId] UNIQUEIDENTIFIER NULL,
     [DueDate] DATETIMEOFFSET(7) NULL,
     [PartySiteId] UNIQUEIDENTIFIER NULL REFERENCES [dbo].[PartySites]([PartySiteId]),
@@ -88,6 +92,16 @@ CREATE TABLE [accounting].[VoucherDraftLines]
     [ApprovalNumber] NVARCHAR(100) NULL,
     [TenderedAmount] DECIMAL(19,4) NULL,
     [PaymentNotes] NVARCHAR(500) NULL,
+    [PaymentMethodId] UNIQUEIDENTIFIER NULL REFERENCES [reference].[PaymentMethods]([PaymentMethodId]),
+    [PaymentMethodTypeCode] NVARCHAR(32) NULL,
+    [PaymentMethodVersion] INT NULL,
+    [PaymentMethodCode] NVARCHAR(64) NULL,
+    [PaymentMethodName] NVARCHAR(160) NULL,
+    CONSTRAINT [CK_VoucherDraftLines_PaymentMethod] CHECK (
+      ([PaymentMethodId] IS NULL AND [PaymentMethodTypeCode] IS NULL AND [PaymentMethodVersion] IS NULL
+        AND [PaymentMethodCode] IS NULL AND [PaymentMethodName] IS NULL) OR
+      ([PaymentMethodId] IS NOT NULL AND [PaymentMethodTypeCode] IS NOT NULL AND [PaymentMethodVersion] IS NOT NULL AND [PaymentMethodVersion]>0
+        AND [PaymentMethodCode] IS NOT NULL AND [PaymentMethodName] IS NOT NULL AND [AccountId] IS NOT NULL)),
     CONSTRAINT [CK_VoucherDraftLines_Target] CHECK (
       ([TargetSubledgerKind] IS NULL AND [TargetSubledgerId] IS NULL) OR
       ([TargetSubledgerKind] IS NOT NULL AND [TargetSubledgerKind] IN(N'Payable',N'Receivable',N'SupplierCredit',N'CustomerCredit')
@@ -107,3 +121,9 @@ GO
 CREATE INDEX [IX_VoucherDraftLines_Party] ON [accounting].[VoucherDraftLines]([PartyId],[DocumentId]) WHERE [PartyId] IS NOT NULL;
 GO
 CREATE UNIQUE INDEX [UX_VoucherDraftLines_LineId] ON [accounting].[VoucherDraftLines]([DocumentId],[LineId]) WHERE [LineId] IS NOT NULL;
+GO
+CREATE INDEX [IX_VoucherDraftLines_PaymentMethod] ON [accounting].[VoucherDraftLines]([PaymentMethodId],[DocumentId])
+    WHERE [PaymentMethodId] IS NOT NULL;
+GO
+CREATE INDEX IX_VoucherDraftLines_FinancialConcept ON accounting.VoucherDraftLines(FinancialConceptId,DocumentId)
+    WHERE FinancialConceptId IS NOT NULL;

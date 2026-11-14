@@ -1,5 +1,6 @@
 using Auraly.Contracts.Tenants;
 using Auraly.BuildingBlocks.Domain.Identity;
+using Auraly.Platform.Application.Time;
 
 namespace Auraly.Platform.Application.Identity.Services;
 
@@ -8,6 +9,7 @@ public static class TenantProvisioningRequestValidator
     public static void Validate(ProvisionTenantRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
+        _ = BusinessTimeZoneResolver.NormalizeConfiguredId(request.TimeZone);
         if (request.ProvisioningRequestId == Guid.Empty || request.CountryId == Guid.Empty
             || request.AdministrativeDivisionId == Guid.Empty || request.CityId == Guid.Empty)
             throw new ArgumentException("La solicitud, país, departamento y ciudad son obligatorios.");

@@ -20,10 +20,20 @@ public sealed record CompletePaymentRequest(
     Guid? BankAccountId = null,
     string? Notes = null,
     decimal? TenderedAmount = null,
-    decimal RoundingAdjustment = 0m);
+    decimal RoundingAdjustment = 0m,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null);
 
 public sealed record CompleteCreditRequest(
-    decimal Amount);
+    decimal Amount,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? PaymentMethodVersion = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodCode = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodName = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? AccountId = null);
 
 public sealed record CompleteDraftRequest(
     string? CustomerIdentification,
@@ -197,7 +207,8 @@ internal static class PosSaleHostModule
                         payment.BankAccountId,
                         payment.Notes,
                         payment.TenderedAmount,
-                        payment.RoundingAdjustment))
+                        payment.RoundingAdjustment,payment.PaymentMethodId,payment.PaymentMethodVersion,
+                        payment.PaymentMethodCode,payment.PaymentMethodName,payment.AccountId))
                     .ToArray();
                 PosSaleCreditTerms? credit = null;
                 var ublSnapshot = request.UblSnapshot;
@@ -231,7 +242,9 @@ internal static class PosSaleHostModule
                         validation.AvailableCredit is null
                             ? null
                             : Math.Max(0m,
-                                validation.AvailableCredit.Value - request.Credit.Amount));
+                                validation.AvailableCredit.Value - request.Credit.Amount),
+                        request.Credit.PaymentMethodId,request.Credit.PaymentMethodVersion,
+                        request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId);
                     if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
                     {
                         var fiscal = fiscalRuntime.Current

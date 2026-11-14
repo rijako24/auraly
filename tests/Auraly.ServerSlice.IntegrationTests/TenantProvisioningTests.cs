@@ -1117,7 +1117,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.AccountingAccounts WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.AccountingAccountMappings WHERE TenantId=@TenantId AND BusinessId IS NULL),
               (SELECT COUNT(*) FROM dbo.AccountingPeriods WHERE TenantId=@TenantId AND Status=N'Open'),
-              (SELECT COUNT(*) FROM dbo.AccountingCostCenters c INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId WHERE b.TenantId=@TenantId AND c.IsDefault=1 AND c.IsActive=1),
+              (SELECT COUNT(*) FROM dbo.AccountingCostCenters c WHERE c.TenantId=@TenantId AND c.IsDefault=1 AND c.IsActive=1),
               (SELECT COUNT(*) FROM dbo.AccountingVoucherCursors WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM reference.Options optionValue
                WHERE optionValue.CatalogCode=N'payment-method' AND optionValue.IsActive=1
@@ -1430,7 +1430,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         await using var command = new SqlCommand("""
             SELECT COUNT(*)
             FROM dbo.AccountingCostCenters c
-            INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
+            INNER JOIN dbo.Businesses b ON b.TenantId=c.TenantId AND b.BusinessId=@BusinessId
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
               AND c.IsDefault=1 AND c.IsActive=1;
             """, connection);

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Application.Expenses;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Purchasing;
@@ -14,6 +15,32 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed partial class ExpenseCaptureTests(ServerSliceFixture fixture, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task A_cost_concept_uses_the_same_batched_expense_resolution()
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure);
+        var cost = await PortfolioOriginalAccountScenario.CreateConfiguredAuxiliaryAsync(fixture, client,
+            "6197", "Cost", "General", "Debit");
+        using var scope = fixture.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<ExpenseService>();
+        var store = scope.ServiceProvider.GetRequiredService<IExpenseStore>();
+        var user = new ExpenseUserIdentity(fixture.UserId, fixture.TenantId, fixture.BusinessId,
+            new HashSet<string> { ExpensePermissionCodes.Configure, ExpensePermissionCodes.Read, ExpensePermissionCodes.Create });
+        var concept = await service.SaveConceptAsync(user, new(Guid.NewGuid(), fixture.BusinessId,
+            "Costo de operación", cost.AccountId, null, null, true));
+        Assert.Contains((await service.GetOptionsAsync(user)).ExpenseAccounts, account => account.AccountId == cost.AccountId);
+        var date = new DateTimeOffset(2026, 9, 30, 12, 0, 0, TimeSpan.FromHours(-5));
+        var request = new ConfirmExpenseRequest(Guid.NewGuid(), fixture.BusinessId, fixture.SupplierId, null, null,
+            "COST-" + Guid.NewGuid().ToString("N"), date, date.AddDays(30), "COP", "Costo por concepto", 0, 0, null, null,
+            Lines: Enumerable.Range(0, 20).Select(_ => new ExpenseLineInput(null, concept.ConceptId, null,
+                "Costo", 100, null, "CapitalizedCost", null)).ToArray());
+        using var commands = new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog);
+        var resolved = await store.ResolveAsync(user, request, default);
+        Assert.Equal(1, commands.Count);
+        Assert.Equal(20, resolved.Lines.Count);
+        Assert.All(resolved.Lines, line => Assert.Equal(cost.AccountId, line.ExpenseAccountId));
+    }
+
     [Fact]
     public async Task Direct_accounts_preview_post_replay_and_cancel_without_a_hidden_concept()
     {

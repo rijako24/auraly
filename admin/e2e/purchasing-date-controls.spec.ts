@@ -37,7 +37,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/**", route => json(route, []));
   await page.route("**/api/auth/me", route => json(route, { userId, tenantId, tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions }));
   await page.route("**/api/execution-context/tenants", route => json(route, [{ tenantId, name: "Auraly" }]));
-  await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly" }]));
+  await page.route("**/api/execution-context/businesses", route => json(route, [{ tenantId, businessId, name: "Auraly", timeZone: "America/Bogota" }]));
   await page.route("**/api/execution-context/access", route => json(route, { tenantId, businessId, roles: ["Administrator"], permissions }));
   await page.route("**/api/commerce/v1/goods-receipts?**", route => json(route, { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 }));
   await page.route("**/api/commerce/v1/goods-receipts/options", route => json(route, receiptOptions));
@@ -47,6 +47,16 @@ test.beforeEach(async ({ page }) => {
     items: [supplierOption],
     page: 1, pageSize: 10, totalCount: 1, totalPages: 1,
   }));
+  await page.route("**/api/commerce/v1/parties/role-options", route => json(route, {
+    items: [supplierOption], page: 1, pageSize: 100, totalCount: 1, totalPages: 1,
+  }));
+  await page.route("**/api/commerce/v1/goods-receipts/cost-withholdings-preview", route => {
+    const { documents } = route.request().postDataJSON() as { documents: { costDocumentId: string; lines: { amount: number }[] }[] };
+    return json(route, documents.map(document => ({ costDocumentId: document.costDocumentId, calculation: {
+      grossAmount: document.lines.reduce((sum, line) => sum + line.amount, 0), withholdingTotal: 0,
+      netAmount: document.lines.reduce((sum, line) => sum + line.amount, 0), lines: [],
+    } })));
+  });
 
   await authenticate(page);
 });
@@ -136,8 +146,6 @@ test(`recuperar un cargo antiguo de contado conserva sus valores (${withProducts
   }, { businessId, supplierId, supplierSiteId, documentId, costDocumentId, withProducts });
   await page.route("**/api/commerce/v1/goods-receipts/withholding-preview", route =>
     json(route, { grossAmount: 1000, withholdingTotal: 0, netAmount: 1000, lines: [] }));
-  await page.route("**/api/commerce/v1/goods-receipts/cost-withholding-preview", route =>
-    json(route, { grossAmount: 5000, withholdingTotal: 0, netAmount: 5000, lines: [] }));
   await page.route("**/api/commerce/v1/goods-receipts/drafts/*", route => {
     saved = route.request().postDataJSON();
     return json(route, { ...saved, updatedAt: new Date().toISOString(), concurrencyToken: "AQ==" });
@@ -386,3 +394,82 @@ for (const distribute of [false, true]) {
     expect(candidateReads).toBe(1);
   });
 }
+
+for (const count of [2, 100]) test(`las facturas adicionales comparten consultas de proveedores y retenciones (${count})`, async ({ page }) => {
+  const documentId = "88888888-8888-8888-8888-888888888888";
+  const suppliers = Array.from({ length: count }, (_, index) => ({ ...supplierOption,
+    roleId: `77777777-7777-7777-7777-${String(index + 1).padStart(12, "0")}`,
+    partyId: `88888888-8888-8888-8888-${String(index + 1).padStart(12, "0")}`,
+    partySiteId: `99999999-9999-9999-9999-${String(index + 1).padStart(12, "0")}`, displayName: `Transportador ${index + 1}` }));
+  const costs = suppliers.map((supplier, index) => ({ costDocumentId: crypto.randomUUID(), supplierId: supplier.roleId,
+    partySiteId: supplier.partySiteId,
+    purchaseEvidenceType: "InternalReceiptVoucher", documentNumber: `FLETE-${index + 1}`, issuedAt: "2026-10-01",
+    createsPayable: true, dueDate: "2026-10-31", currencyCode: "COP", exchangeRate: 1,
+    exchangeRateDate: "2026-10-01", exchangeRateSource: "FunctionalCurrency", lines: [{ lineNumber: 1,
+      costKind: "Freight", description: "Flete", amount: 1000, taxableBaseAmount: 0, taxCode: "00", taxRate: 0,
+      taxAmount: 0, taxTreatment: "NotApplicable", costTreatment: "Capitalize", allocationMethod: "Value" }] }));
+  let metadataReads = 0, previewReads = 0, individualReads = 0, failPreview = false;
+  await page.route("**/api/commerce/v1/portfolio/parties/site-options?**", route => {
+    const params = new URL(route.request().url()).searchParams;
+    const items = [supplierOption, ...suppliers].filter(supplier =>
+      (!params.get("partySiteId") || supplier.partySiteId === params.get("partySiteId")) &&
+      (!params.get("roleId") || supplier.roleId === params.get("roleId")));
+    return json(route, { items, page: 1, pageSize: 25, totalCount: items.length, totalPages: 1 });
+  });
+  await page.route("**/api/commerce/v1/parties/role-options", route => {
+    metadataReads++;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON().roleIds).toHaveLength(count);
+    return json(route, { items: suppliers, page: 1, pageSize: count, totalCount: count, totalPages: 1 });
+  });
+  await page.route("**/api/commerce/v1/parties/role-options?**", route => { individualReads++; return json(route, {}); });
+  await page.route("**/api/commerce/v1/goods-receipts/cost-withholding-preview", route => { individualReads++; return json(route, {}); });
+  await page.route("**/api/commerce/v1/goods-receipts/cost-withholdings-preview", route => {
+    previewReads++;
+    expect(route.request().postDataJSON().documents).toHaveLength(count);
+    if (failPreview) return route.fulfill({ status: 503, json: { detail: "No está disponible la vista previa." } });
+    return json(route, costs.map(cost => ({ costDocumentId: cost.costDocumentId,
+      calculation: { grossAmount: 1000, withholdingTotal: 100, netAmount: 900, lines: [] } })));
+  });
+  await page.addInitScript(({ businessId, documentId, supplierId, supplierSiteId, costs }) => {
+    localStorage.setItem(`auraly.goods-receipt.entry.${businessId}`, JSON.stringify({ draftId: documentId,
+      warehouseId: "55555555-5555-5555-5555-555555555555", supplierId, partySiteId: supplierSiteId,
+      supplierInvoiceNumber: "PRUEBA-LOTE", supplierInvoiceDate: "2026-10-01", purchaseEvidenceType: "InternalReceiptVoucher",
+      receivedAt: "2026-10-02T10:00", dueDate: "2026-10-31", notes: "Revisar lote", lines: [], currencyCode: "COP",
+      exchangeRate: 1, exchangeRateDate: "2026-10-01", exchangeRateSource: "FunctionalCurrency", additionalCostDocuments: costs }));
+  }, { businessId, documentId, supplierId, supplierSiteId, costs });
+  await page.goto("/dashboard/purchasing/goods-receipts");
+  await page.getByRole("button", { name: "Nueva entrada" }).click();
+  const dialog = page.getByRole("dialog", { name: /Recepción de compra/ });
+  await dialog.getByRole("button", { name: /Facturas y otros costos/ }).click();
+  await expect(dialog.getByRole("cell", { name: `Transportador ${count}`, exact: true })).toBeVisible();
+  await expect.poll(() => previewReads).toBe(1);
+  await dialog.locator("textarea").fill("Cambio de observación sin nuevas lecturas");
+  await expect(dialog.locator("textarea")).toHaveValue("Cambio de observación sin nuevas lecturas");
+  expect(metadataReads).toBe(1);
+  expect(previewReads).toBe(1);
+  expect(individualReads).toBe(0);
+  if (count === 2) {
+    await dialog.getByRole("row").filter({ hasText: "FLETE-1" }).getByRole("button", { name: "Ver", exact: true }).click();
+    const editing = page.getByRole("dialog", { name: "Editar documento adicional" });
+    const number = editing.getByText("Número", { exact: true }).locator("..").getByRole("textbox");
+    await number.fill("REFERENCIA-CORREGIDA");
+    await expect(number).toHaveValue("REFERENCIA-CORREGIDA");
+    expect(previewReads).toBe(1);
+    expect(metadataReads).toBe(1);
+    failPreview = true;
+    await editing.getByRole("button", { name: "Actualizar retenciones", exact: true }).click();
+    await expect(editing.getByRole("alert")).toContainText("No fue posible calcular las retenciones");
+    await expect(number).toHaveValue("REFERENCIA-CORREGIDA");
+    expect(previewReads).toBe(2);
+    failPreview = false;
+    await editing.getByRole("button", { name: "Actualizar retenciones", exact: true }).click();
+    await expect(editing.getByRole("alert")).toHaveCount(0);
+    await editing.getByRole("button", { name: "Guardar cambios", exact: true }).click();
+    await expect(editing).toBeHidden();
+    await expect(dialog.getByRole("cell", { name: "REFERENCIA-CORREGIDA", exact: true })).toBeVisible();
+    expect(previewReads).toBe(3);
+    expect(metadataReads).toBe(1);
+    expect(individualReads).toBe(0);
+  }
+});

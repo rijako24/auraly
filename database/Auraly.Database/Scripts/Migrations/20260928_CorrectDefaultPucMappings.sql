@@ -69,14 +69,9 @@ INSERT dbo.AccountingAccountMappings(MappingId,TenantId,BusinessId,Category,
 SELECT NEWID(),TenantId,NULL,Category,NewAccountId,@PucCutover,NULL,@PucNow
 FROM @PucCutovers;
 
--- 240810 pertenece a la clase 2 aunque normalmente tenga saldo débito.
--- No se reclasifican balances históricos de una cuenta que ya recibió asientos.
-UPDATE account SET AccountType=N'Liability'
-FROM dbo.AccountingAccounts account
-WHERE account.Code=N'240810' AND account.Name=N'IVA descontable'
-  AND account.AccountType=N'Asset'
-  AND NOT EXISTS(SELECT 1 FROM dbo.AccountingEntryLines line WHERE line.AccountId=account.AccountId)
-  AND NOT EXISTS(SELECT 1 FROM dbo.AccountingOpeningBalanceLines line WHERE line.AccountId=account.AccountId);
+-- Account classification is no longer rewritten by code/name, even when unused.
+-- Existing account identity and customer configuration are preserved. The
+-- reviewed 20261111 transition retargets only approved mapping identities.
 
 -- Los conceptos de gasto guardan la cuenta directa; se actualizan únicamente
 -- los conceptos de plantilla que nunca fueron editados por el tenant.

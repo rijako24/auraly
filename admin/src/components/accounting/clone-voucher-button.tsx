@@ -15,6 +15,7 @@ export function CloneVoucherButton({ documentId, disabled, onCloned }: {
 }) {
   const tenantId = useTenantContextStore(state => state.selectedTenantId);
   const businessId = useBusinessContextStore(state => state.selectedBusinessId);
+  const timeZone = useBusinessContextStore(state => state.businesses.find(business => business.businessId === state.selectedBusinessId)?.timeZone);
   const queryClient = useQueryClient();
   const router = useRouter();
   const command = useRef<{ sourceId: string; documentId: string; occurredAt: string } | null>(null);
@@ -22,7 +23,7 @@ export function CloneVoucherButton({ documentId, disabled, onCloned }: {
   const clone = useMutation({
     mutationFn: () => {
       if (command.current?.sourceId !== documentId)
-        command.current = { sourceId: documentId, documentId: crypto.randomUUID(), occurredAt: proposedAccountingDate() };
+        command.current = { sourceId: documentId, documentId: crypto.randomUUID(), occurredAt: proposedAccountingDate(timeZone) };
       return accountingApi.cloneVoucher(command.current.sourceId, command.current.documentId, command.current.occurredAt);
     },
   });

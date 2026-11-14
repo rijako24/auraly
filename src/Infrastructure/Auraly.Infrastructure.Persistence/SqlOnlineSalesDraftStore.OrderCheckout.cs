@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Data;
 using System.Globalization;
 using System.Security.Cryptography;
@@ -196,9 +197,11 @@ public sealed partial class SqlOnlineSalesDraftStore
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
 
+        await SqlPaymentMethodResolver.ValidateOnlineSaleAsync(connection, transaction, user.TenantId,
+            request.Payments, request.Credit, ct);
         var now = settlement.Context.OccurredAt;
         var creditValidation = await ValidateCreditAsync(
-            connection, transaction, source.BusinessId, source.CustomerId,
+            connection, transaction, user.TenantId, source.BusinessId, source.CustomerId,
             source.CustomerPartySiteId, request.Credit, now, ct);
         var payments = request.Payments.Select((payment, index) =>
             new PosSalePaymentContract(
@@ -209,7 +212,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 payment.BankAccountId,
                 string.IsNullOrWhiteSpace(payment.Notes) ? null : payment.Notes.Trim(),
                 payment.TenderedAmount,
-                payment.RoundingAdjustment)).ToArray();
+                payment.RoundingAdjustment,payment.PaymentMethodId,payment.PaymentMethodVersion,
+                payment.PaymentMethodCode,payment.PaymentMethodName,payment.AccountId)).ToArray();
         if (!PosPaymentRoundingPolicy.IsValid(settlement.Withholding.NetAmount, payments,
                 source.TableId is not null ? roundingAdjustment : null))
             throw new OnlineSalesDraftValidationException(
@@ -466,7 +470,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 validation!.DueDate!.Value,
                 validation.AvailableCredit is null ? null : Math.Max(
                     0m, validation.AvailableCredit.Value - request.Credit.Amount),
-                user.UserName, source.CustomerPartySiteId);
+                user.UserName, source.CustomerPartySiteId,request.Credit.PaymentMethodId,request.Credit.PaymentMethodVersion,
+                request.Credit.PaymentMethodCode,request.Credit.PaymentMethodName,request.Credit.AccountId);
 
     private static async Task DemandCurrentOrderSourceAsync(
         SqlConnection connection,
@@ -570,9 +575,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                 .Append(payment.Reference?.Trim()).Append(':')
                 .Append(payment.BankAccountId?.ToString("D")).Append(':')
                 .Append(payment.Notes?.Trim());
+        if(request.Payments.Any(payment=>payment.PaymentMethodId.HasValue))
+            value.Append("|forms:").Append(JsonSerializer.Serialize(request.Payments));
         if (request.Credit is not null)
             value.Append("|credit:")
                 .Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture));
+        if (request.Credit?.PaymentMethodId is not null)
+            value.Append("|credit-form:").Append(JsonSerializer.Serialize(request.Credit));
         foreach (var charge in charges ?? [])
             value.Append("|charge:").Append(charge.AppliedChargeId.ToString("D")).Append(':')
                 .Append(charge.ChargeId.ToString("D")).Append(':').Append(charge.Version).Append(':')

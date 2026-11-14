@@ -43,6 +43,11 @@ public static class PayrollAccountingDocumentTypes
     public const string Adjustment = "PayrollAdjustment";
 }
 
+public static class PayrollPaymentLimits
+{
+    public const int MaximumEmployees = 500;
+}
+
 public static class PayrollAccountingCategories
 {
     public const string NetPayable = "NetPayrollPayable";
@@ -147,7 +152,10 @@ public sealed record PayrollEmploymentOption(
     Guid? BankOptionId,
     Guid? BankAccountTypeOptionId,
     string? BankAccountNumber,
-    byte[] RowVersion);
+    byte[] RowVersion)
+{
+    public bool AppliesTransportAllowance { get; init; } = true;
+}
 
 public sealed record PayrollEmploymentPage(
     IReadOnlyList<PayrollEmploymentOption> Items,
@@ -178,7 +186,8 @@ public sealed record SavePayrollEmploymentRequest(
     Guid? BankAccountTypeOptionId,
     string? BankAccountNumber,
     bool IsActive,
-    byte[]? RowVersion);
+    byte[]? RowVersion,
+    bool? AppliesTransportAllowance = null);
 
 public sealed record PayrollEmploymentView(
     Guid EmploymentId,
@@ -203,7 +212,10 @@ public sealed record PayrollEmploymentView(
     Guid? BankAccountTypeOptionId,
     string? BankAccountNumber,
     bool IsActive,
-    byte[] RowVersion);
+    byte[] RowVersion)
+{
+    public bool AppliesTransportAllowance { get; init; } = true;
+}
 
 public sealed record SavePayrollConceptRequest(
     Guid ConceptId,
@@ -349,7 +361,10 @@ public sealed record SavePayrollNoveltyRequest(
     decimal? UnitAmount,
     decimal TotalAmount,
     string? Notes,
-    string? EvidenceUrl);
+    string? EvidenceUrl)
+{
+    public byte[]? RowVersion { get; init; }
+}
 
 public sealed record PayrollNoveltyView(
     Guid NoveltyId,
@@ -367,14 +382,19 @@ public sealed record PayrollNoveltyView(
     decimal TotalAmount,
     string? Notes,
     string? EvidenceUrl,
-    string Status);
+    string Status)
+{
+    public Guid? ReasonId { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
 
 public sealed record CreatePayrollPaymentBatchRequest(
     Guid PaymentBatchId,
     Guid PayrollRunId,
     Guid PaymentMethodOptionId,
     DateOnly PaymentDate,
-    string ReferenceNumber);
+    string ReferenceNumber,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId=null);
 
 public sealed record PayrollPaymentBatchView(
     Guid PaymentBatchId,
@@ -386,7 +406,39 @@ public sealed record PayrollPaymentBatchView(
     string Status,
     int EmployeeCount,
     decimal TotalAmount,
-    byte[] RowVersion);
+    byte[] RowVersion)
+{
+    public IReadOnlyList<PayrollPayableEmployee> RemainingEmployees { get; init; } = [];
+    public Guid? PaymentMethodId { get; init; }
+    public Guid? AccountId { get; init; }
+    public string? AccountingStatus { get; init; }
+    public bool IsPaid { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore] public bool AccountingSignalPublished { get; init; }
+}
+
+public sealed record PayrollPayableEmployee(Guid PayrollRunEmployeeId,Guid PaymentMethodOptionId,
+    string PaymentMethodName,decimal Amount,bool BankDestinationComplete,string EmployeeName);
+
+public sealed record PayrollRunEmploymentSelection(Guid EmploymentId, bool IsSelected);
+public sealed record PayrollWorkedDaysChange(Guid EmploymentId, decimal WorkedDays);
+
+public sealed record PayrollRunEmploymentFilter(
+    string? ContractNumber = null, string SortBy = "employeeName", string SortDirection = "asc");
+
+public sealed record CalculatePayrollRunRequest(
+    byte[]? RowVersion = null,
+    bool? SelectAll = null,
+    IReadOnlyList<PayrollRunEmploymentSelection>? SelectionChanges = null,
+    IReadOnlyList<PayrollWorkedDaysChange>? WorkedDaysChanges = null,
+    IReadOnlyList<Guid>? RecalculateEmploymentIds = null);
+
+public sealed record PayrollRunEmploymentCandidate(
+    Guid EmploymentId, string EmployeeName, string Identification, string ContractNumber,
+    DateOnly StartDate, DateOnly? EndDate, string PayFrequencyName, bool IsSelected);
+
+public sealed record PayrollRunEmploymentPage(
+    IReadOnlyList<PayrollRunEmploymentCandidate> Items, int Page, int PageSize,
+    int TotalCount, int EligibleCount, int SelectedCount, byte[] RowVersion);
 
 public sealed record CreatePayrollRunRequest(
     Guid PayrollRunId,
@@ -416,7 +468,13 @@ public sealed record PayrollRunView(
     decimal TotalProvisions,
     decimal NetPayable,
     IReadOnlyList<PayrollRunEmployeeView> Employees,
-    byte[] RowVersion);
+    byte[] RowVersion)
+{
+    public IReadOnlyList<PayrollPayableEmployee> PayableEmployees { get; init; } = [];
+    public int EmployeeCount { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool IsPartialCalculation { get; init; }
+}
 
 public sealed record PayrollRunSummary(
     Guid PayrollRunId,
@@ -442,7 +500,14 @@ public sealed record PayrollRunEmployeeView(
     decimal EmployerContributions,
     decimal Provisions,
     decimal NetPayable,
-    IReadOnlyList<PayrollRunLineView> Lines);
+    IReadOnlyList<PayrollRunLineView> Lines)
+{
+    public decimal? BaseWorkedDays { get; init; }
+    public decimal? MaximumContractDays { get; init; }
+    public int? PeriodDays { get; init; }
+    public string? Identification { get; init; }
+    public string? ContractNumber { get; init; }
+}
 
 public sealed record PayrollRunLineView(
     int LineNumber,
@@ -456,14 +521,23 @@ public sealed record PayrollRunLineView(
     decimal? Rate,
     decimal? BaseAmount,
     decimal Amount,
-    bool IsEmployerCost);
+    bool IsEmployerCost)
+{
+    public Guid PayrollRunLineId { get; init; }
+    public Guid? NoveltyId { get; init; }
+    public Guid? DeductionAgreementId { get; init; }
+    public bool IsSalaryBase { get; init; }
+}
 
 public sealed record PayrollRunAcceptance(
     Guid PayrollRunId,
     string Status,
     string RunKind,
     Guid? AccountingPostingJobId,
-    bool IdempotentReplay);
+    bool IdempotentReplay)
+{
+    [System.Text.Json.Serialization.JsonIgnore] public bool AccountingSignalPublished { get; init; }
+}
 
 public sealed record GenerateElectronicPayrollPeriodRequest(
     Guid ElectronicPeriodId,
@@ -600,7 +674,9 @@ public sealed record PayrollAccountingPayload(
     DateOnly PeriodEnd,
     DateOnly PaymentDate,
     string Description,
-    IReadOnlyList<PayrollAccountingLine> Lines);
+    IReadOnlyList<PayrollAccountingLine> Lines,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] Guid? PaymentMethodId=null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? PaymentMethodTypeCode=null);
 
 public static class PayrollContractSerializer
 {

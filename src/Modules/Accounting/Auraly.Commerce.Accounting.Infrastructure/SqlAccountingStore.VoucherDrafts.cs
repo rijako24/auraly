@@ -142,13 +142,16 @@ public sealed partial class SqlAccountingStore
                 THROW 51002, N'Configura la moneda funcional de contabilidad antes de guardar.', 1;
             DELETE accounting.VoucherDraftLines WHERE DocumentId=@Id;
             INSERT accounting.VoucherDraftLines(DocumentId,LineNumber,LineId,AccountId,PartyId,CostCenterId,Description,Reference,Debit,Credit,BaseAmount,
-              TargetSubledgerKind,TargetSubledgerId,FinancialGroupId,DueDate,PartySiteId,CardFranchiseCode,ApprovalNumber,TenderedAmount,PaymentNotes,ReversesTransactionId,FinancialDiscountEarned)
+              TargetSubledgerKind,TargetSubledgerId,FinancialGroupId,DueDate,PartySiteId,CardFranchiseCode,ApprovalNumber,TenderedAmount,PaymentNotes,ReversesTransactionId,FinancialDiscountEarned,
+              PaymentMethodId,PaymentMethodTypeCode,PaymentMethodVersion,PaymentMethodCode,PaymentMethodName,FinancialConceptId,FinancialConceptTargetLineId)
             SELECT @Id,LineNumber,LineId,AccountId,PartyId,CostCenterId,Description,Reference,Debit,Credit,BaseAmount,
-              TargetSubledgerKind,TargetSubledgerId,FinancialGroupId,DueDate,PartySiteId,CardFranchiseCode,ApprovalNumber,TenderedAmount,PaymentNotes,ReversesTransactionId,FinancialDiscountEarned
+              TargetSubledgerKind,TargetSubledgerId,FinancialGroupId,DueDate,PartySiteId,CardFranchiseCode,ApprovalNumber,TenderedAmount,PaymentNotes,ReversesTransactionId,FinancialDiscountEarned,
+              PaymentMethodId,PaymentMethodTypeCode,PaymentMethodVersion,PaymentMethodCode,PaymentMethodName,FinancialConceptId,FinancialConceptTargetLineId
             FROM OPENJSON(@Lines) WITH(LineNumber int,LineId uniqueidentifier,AccountId uniqueidentifier,PartyId uniqueidentifier,
               CostCenterId uniqueidentifier,Description nvarchar(500),Reference nvarchar(100),Debit decimal(19,4),Credit decimal(19,4),BaseAmount decimal(19,4),
               TargetSubledgerKind nvarchar(16),TargetSubledgerId uniqueidentifier,FinancialGroupId uniqueidentifier,DueDate datetimeoffset(7),
-              PartySiteId uniqueidentifier,CardFranchiseCode nvarchar(64),ApprovalNumber nvarchar(100),TenderedAmount decimal(19,4),PaymentNotes nvarchar(500),ReversesTransactionId uniqueidentifier,FinancialDiscountEarned bit);
+              PartySiteId uniqueidentifier,CardFranchiseCode nvarchar(64),ApprovalNumber nvarchar(100),TenderedAmount decimal(19,4),PaymentNotes nvarchar(500),ReversesTransactionId uniqueidentifier,FinancialDiscountEarned bit,
+              PaymentMethodId uniqueidentifier,PaymentMethodTypeCode nvarchar(32),PaymentMethodVersion int,PaymentMethodCode nvarchar(64),PaymentMethodName nvarchar(160),FinancialConceptId uniqueidentifier,FinancialConceptTargetLineId uniqueidentifier);
             """, connection, transaction))
         {
             AddDraftScope(save, user, request.DocumentId);
@@ -178,7 +181,10 @@ public sealed partial class SqlAccountingStore
                     TargetSubledgerKind=line.ExistingPosition?.SubledgerKind,TargetSubledgerId=line.ExistingPosition?.SubledgerId,
                     line.FinancialGroupId,line.DueDate,line.PartySiteId,CardFranchiseCode=line.PaymentEvidence?.CardFranchiseCode,
                     ApprovalNumber=line.PaymentEvidence?.ApprovalNumber,TenderedAmount=line.PaymentEvidence?.TenderedAmount,PaymentNotes=line.PaymentEvidence?.Notes,
-                    ReversesTransactionId=line.ExistingPosition?.ReversesTransactionId,line.FinancialDiscountEarned }));
+                    PaymentMethodId=line.PaymentEvidence?.PaymentMethodId,PaymentMethodTypeCode=line.PaymentEvidence?.PaymentMethodTypeCode,
+                    PaymentMethodVersion=line.PaymentEvidence?.PaymentMethodVersion,PaymentMethodCode=line.PaymentEvidence?.PaymentMethodCode,
+                    PaymentMethodName=line.PaymentEvidence?.PaymentMethodName,
+                    ReversesTransactionId=line.ExistingPosition?.ReversesTransactionId,line.FinancialDiscountEarned,line.FinancialConceptId,line.FinancialConceptTargetLineId }));
             try { await save.ExecuteNonQueryAsync(cancellationToken); }
             catch (SqlException error) when (error.Number == 51001) { throw new AccountingConflictException(error.Message); }
             catch (SqlException error) when (error.Number == 51002) { throw new AccountingValidationException(error.Message); }
@@ -195,9 +201,11 @@ public sealed partial class SqlAccountingStore
             SELECT d.DocumentType,d.OccurredAt,d.ConceptCode,d.Description,d.Reference,d.CurrencyCode,d.RowVersion,d.SentAt,
               d.SubledgerKind,d.SubledgerId,d.Direction,d.AdjustmentAmount,d.CounterpartAccountId,d.CostCenterId,
               COALESCE(j.Status,N'Created'),j.AttemptCount,j.LastErrorCode,j.LastErrorMessage,e.EntryId,e.EntryNumber,e.PostedAt,
-              e.DebitTotal,e.CreditTotal,d.MainPartyId,mainParty.DisplayName,mainParty.Identification,d.ClonedFromDocumentId,d.PayloadVersion,JSON_VALUE(source.PayloadJson,'$.Reference'),d.VoucherTypeCode,d.WorkSessionId,JSON_QUERY(source.PayloadJson,'$.FinancialEffects'),d.FiscalCaptureJson,
+              e.DebitTotal,e.CreditTotal,d.MainPartyId,COALESCE(mainParty.DisplayName,mainParty.LegalName,mainParty.Identification),mainParty.Identification,d.ClonedFromDocumentId,d.PayloadVersion,JSON_VALUE(source.PayloadJson,'$.Reference'),
+              CASE WHEN d.SentAt IS NOT NULL THEN COALESCE(JSON_VALUE(source.PayloadJson,'$.VoucherTypeCode'),d.VoucherTypeCode) ELSE d.VoucherTypeCode END,
+              d.WorkSessionId,JSON_QUERY(source.PayloadJson,'$.FinancialEffects'),d.FiscalCaptureJson,
               fiscal.FiscalDocumentType,fiscal.FiscalNumber,fiscal.UniqueCodeType,fiscal.UniqueCode,fiscal.FiscalStatus,
-              reversal.SourceDocumentId,reversalJob.Status
+              reversal.SourceDocumentId,reversalJob.Status,j.AppliedPaymentMethodsJson
             FROM accounting.VoucherDrafts d
             LEFT JOIN dbo.Parties mainParty ON mainParty.PartyId=d.MainPartyId AND mainParty.TenantId=d.TenantId
             LEFT JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=d.DocumentId
@@ -213,17 +221,21 @@ public sealed partial class SqlAccountingStore
               AND reversalJob.TenantId=d.TenantId AND reversalJob.BusinessId=d.BusinessId
             WHERE d.DocumentId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId;
             SELECT l.AccountId,l.PartyId,l.CostCenterId,l.Description,l.Debit,l.Credit,l.Reference,
-              a.Code,a.Name,p.DisplayName,p.Identification,c.Name,
-              CASE WHEN l.AccountId IS NOT NULL AND (a.AccountId IS NULL OR a.IsActive=0 OR a.AllowsPosting=0 OR (a.BusinessId IS NOT NULL AND a.BusinessId<>@BusinessId))
-                THEN N'La cuenta ya no está disponible en esta sede.'
+              a.Code,a.Name,COALESCE(p.DisplayName,p.LegalName,p.Identification),p.Identification,c.Name,
+              CASE WHEN l.AccountId IS NOT NULL AND (a.AccountId IS NULL OR a.IsActive=0 OR a.AllowsPosting=0)
+                THEN N'La cuenta ya no está activa o no admite movimientos.'
                 WHEN l.PartyId IS NOT NULL AND (p.PartyId IS NULL OR p.IsActive=0) THEN N'El tercero de la partida no está activo.'
                 WHEN l.CostCenterId IS NOT NULL AND (c.CostCenterId IS NULL OR c.IsActive=0) THEN N'El centro de costo no está activo.' END,l.LineId,l.BaseAmount,l.TargetSubledgerKind,l.TargetSubledgerId,l.FinancialGroupId,l.DueDate,l.PartySiteId,
-              l.CardFranchiseCode,l.ApprovalNumber,l.TenderedAmount,l.PaymentNotes,l.ReversesTransactionId,l.FinancialDiscountEarned
+              l.CardFranchiseCode,l.ApprovalNumber,l.TenderedAmount,l.PaymentNotes,l.ReversesTransactionId,l.FinancialDiscountEarned,
+              l.PaymentMethodId,l.PaymentMethodTypeCode,l.PaymentMethodVersion,l.PaymentMethodCode,l.PaymentMethodName,
+              l.FinancialConceptId,concept.Code,concept.Name,conceptSide.Code,l.FinancialConceptTargetLineId
             FROM accounting.VoucherDraftLines l
             JOIN accounting.VoucherDrafts d ON d.DocumentId=l.DocumentId
             LEFT JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId AND a.TenantId=d.TenantId
             LEFT JOIN dbo.Parties p ON p.PartyId=l.PartyId AND p.TenantId=d.TenantId
-            LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.BusinessId=d.BusinessId
+            LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.TenantId=d.TenantId
+            LEFT JOIN reference.FinancialConcepts concept ON concept.FinancialConceptId=l.FinancialConceptId AND concept.TenantId=d.TenantId AND d.SentAt IS NULL
+            LEFT JOIN reference.Options conceptSide ON conceptSide.OptionId=concept.SideOptionId AND conceptSide.CatalogCode=N'accounting-balance-side'
             WHERE d.DocumentId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId ORDER BY l.LineNumber;
             """, connection, transaction);
         AddDraftScope(command, user, documentId);
@@ -256,6 +268,9 @@ public sealed partial class SqlAccountingStore
             ?? throw new InvalidOperationException("The fiscal capture is invalid.");
         var reversalDocumentId = NullableId(reader, 38);
         var reversalStatus = NullableText(reader, 39);
+        var appliedJson = NullableText(reader, 40);
+        var appliedPaymentMethods = appliedJson is null ? null : JsonSerializer.Deserialize<VoucherAppliedPaymentMethod[]>(appliedJson)
+            ?? throw new InvalidOperationException("The completed payment form evidence is invalid.");
         var row = new AccountingDocumentRow(documentId, type, reference, date, status, reader.IsDBNull(15) ? 0 : reader.GetInt32(15),
             NullableText(reader, 16), NullableText(reader, 17), NullableId(reader, 18), NullableText(reader, 19),
             reader.IsDBNull(21) ? null : reader.GetDecimal(21), reader.IsDBNull(22) ? null : reader.GetDecimal(22),
@@ -263,23 +278,36 @@ public sealed partial class SqlAccountingStore
             NullableText(reader, 35), NullableText(reader, 36), NullableText(reader, 37), true,
             mainPartyId, mainPartyName, mainPartyIdentification, reversalDocumentId, reversalStatus,voucherType);
         var lines = new List<VoucherDraftLineView>();
+        var capturedConcepts=financialEffects?.Concepts?.ToDictionary(item=>item.FinancialConceptId);
         await reader.NextResultAsync(token);
         while (await reader.ReadAsync(token))
+        {
+            var conceptId=NullableId(reader,31);
+            var conceptCode=NullableText(reader,32);var conceptName=NullableText(reader,33);
+            if(sent is not null&&conceptId is { } selectedConcept)
+            {
+                if(capturedConcepts is null||!capturedConcepts.TryGetValue(selectedConcept,out var captured))
+                    throw new InvalidOperationException("The accepted financial concept evidence is incomplete.");
+                conceptCode=captured.Code;conceptName=captured.Name;
+            }
             lines.Add(new(new(NullableId(reader, 0), NullableId(reader, 1), NullableId(reader, 2), reader.GetString(3),
                 reader.GetDecimal(4), reader.GetDecimal(5), NullableText(reader, 6), NullableId(reader, 13),
                 reader.IsDBNull(14) ? null : reader.GetDecimal(14),
                 reader.IsDBNull(16)?null:new AccountingOpeningPositionReference(reader.GetString(15),reader.GetGuid(16),NullableId(reader,24)),
                 NullableId(reader,17),reader.IsDBNull(18)?null:reader.GetDateTimeOffset(18),NullableId(reader,19),
-                reader.IsDBNull(20)&&reader.IsDBNull(21)&&reader.IsDBNull(22)&&reader.IsDBNull(23)?null:
-                  new VoucherPaymentEvidence(NullableText(reader,20),NullableText(reader,21),reader.IsDBNull(22)?null:reader.GetDecimal(22),NullableText(reader,23)),
-                reader.IsDBNull(25)?null:reader.GetBoolean(25)), NullableText(reader, 7),
-                NullableText(reader, 8), NullableText(reader, 9), NullableText(reader, 10), NullableText(reader, 11), NullableText(reader, 12)));
+                reader.IsDBNull(20)&&reader.IsDBNull(21)&&reader.IsDBNull(22)&&reader.IsDBNull(23)&&reader.IsDBNull(26)?null:
+                  new VoucherPaymentEvidence(NullableText(reader,20),NullableText(reader,21),reader.IsDBNull(22)?null:reader.GetDecimal(22),NullableText(reader,23),
+                    NullableId(reader,26),NullableText(reader,27),reader.IsDBNull(28)?null:reader.GetInt32(28),NullableText(reader,29),NullableText(reader,30)),
+                reader.IsDBNull(25)?null:reader.GetBoolean(25),conceptId,NullableId(reader,35)), NullableText(reader, 7),
+                NullableText(reader, 8), NullableText(reader, 9), NullableText(reader, 10), NullableText(reader, 11), NullableText(reader, 12),
+                conceptCode,conceptName,conceptId is null?null:sent is null?NullableText(reader,34):reader.GetDecimal(4)>0?"Debit":"Credit"));
+        }
         if (sent is null) row = row with { DebitTotal = adjustment?.Amount ?? lines.Sum(line => line.Value.Debit), CreditTotal = adjustment?.Amount ?? lines.Sum(line => line.Value.Credit) };
         return new(documentId, type, date, concept, description, reference, currency, lines, adjustment, version, sent, status,
             sent is null && user.Permissions.Contains(AccountingPermissionCodes.ManualCreate),
             sent is null && user.Permissions.Contains(AccountingPermissionCodes.ManualSend), row,
             mainPartyId, mainPartyName, mainPartyIdentification, clonedFromDocumentId, payloadVersion, acceptedReference, voucherType, workSessionId, financialEffects, fiscalCapture,
-            reversalDocumentId, reversalStatus);
+            reversalDocumentId, reversalStatus, appliedPaymentMethods);
     }
 
     private static string? NullableText(SqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
@@ -299,21 +327,70 @@ public sealed partial class SqlAccountingStore
         await using var command = new SqlCommand("""
             DECLARE @RequestedLines TABLE(AccountId uniqueidentifier,PartyId uniqueidentifier,CostCenterId uniqueidentifier,
               PartySiteId uniqueidentifier,TargetKind nvarchar(16),TargetId uniqueidentifier,
-              GroupId uniqueidentifier,ReversesTransactionId uniqueidentifier);
+              GroupId uniqueidentifier,ReversesTransactionId uniqueidentifier,PaymentMethodId uniqueidentifier,PaymentMethodTypeCode nvarchar(32),Credit decimal(19,4),FinancialConceptId uniqueidentifier,Debit decimal(19,4));
             INSERT @RequestedLines
-            SELECT AccountId,PartyId,CostCenterId,PartySiteId,TargetKind,TargetId,GroupId,ReversesTransactionId FROM OPENJSON(@Lines)
+            SELECT AccountId,PartyId,CostCenterId,PartySiteId,TargetKind,TargetId,GroupId,ReversesTransactionId,PaymentMethodId,PaymentMethodTypeCode,Credit,FinancialConceptId,Debit FROM OPENJSON(@Lines)
               WITH(AccountId uniqueidentifier,PartyId uniqueidentifier,CostCenterId uniqueidentifier,PartySiteId uniqueidentifier,
                 TargetKind nvarchar(16) '$.ExistingPosition.SubledgerKind',TargetId uniqueidentifier '$.ExistingPosition.SubledgerId',
                 GroupId uniqueidentifier '$.FinancialGroupId',
-                ReversesTransactionId uniqueidentifier '$.ExistingPosition.ReversesTransactionId');
+                ReversesTransactionId uniqueidentifier '$.ExistingPosition.ReversesTransactionId',
+                PaymentMethodId uniqueidentifier '$.PaymentEvidence.PaymentMethodId',PaymentMethodTypeCode nvarchar(32) '$.PaymentEvidence.PaymentMethodTypeCode',Credit decimal(19,4),FinancialConceptId uniqueidentifier,Debit decimal(19,4));
+            -- Isolate the selected forms from the general dimension CASE. Its
+            -- per-capture recompile must not expand payment-readiness policies
+            -- against every journal line, including documents without forms.
+            DECLARE @RequestedForms TABLE(PaymentMethodId uniqueidentifier,MethodCode nvarchar(32),
+              AccountId uniqueidentifier,Outgoing bit);
+            INSERT @RequestedForms SELECT DISTINCT PaymentMethodId,PaymentMethodTypeCode,AccountId,
+              CONVERT(bit,CASE WHEN Credit>0 THEN 1 ELSE 0 END)
+              FROM @RequestedLines WHERE PaymentMethodId IS NOT NULL;
+            DECLARE @InvalidForm bit=0;
+            IF EXISTS(SELECT 1 FROM @RequestedForms)
+            BEGIN
+              SELECT @InvalidForm=1 FROM @RequestedForms line
+                LEFT JOIN reference.PaymentMethodDetails form WITH(HOLDLOCK) ON form.TenantId=@TenantId AND form.PaymentMethodId=line.PaymentMethodId
+                WHERE form.PaymentMethodId IS NULL OR form.MethodCode<>line.MethodCode
+                  OR @Final=1 AND (form.IsActive=0 OR form.IsReady=0 OR
+                    CASE @VoucherType WHEN N'CashReceipt' THEN form.UseForReceipts WHEN N'Disbursement' THEN form.UseForSupplierPayments ELSE form.UseForVouchers END=0 OR NOT EXISTS(
+                    SELECT 1 FROM dbo.AccountingAccounts account
+                    WHERE account.TenantId=@TenantId AND account.AccountId=form.AccountId)
+                    OR NOT EXISTS(SELECT 1 FROM accounting.PaymentMethodAccountReadiness(@TenantId,line.MethodCode,form.AccountId) ready
+                      WHERE ready.SourceType=CASE WHEN line.Outgoing=1 THEN N'SupplierPaymentMethod' ELSE N'CustomerPaymentMethod' END)
+                    OR NOT EXISTS(SELECT 1 FROM accounting.PaymentMethodAccountReadiness(@TenantId,line.MethodCode,line.AccountId) ready
+                      WHERE ready.SourceType=CASE WHEN line.Outgoing=1 THEN N'SupplierPaymentMethod' ELSE N'CustomerPaymentMethod' END));
+            END;
+            DECLARE @RequestedConcepts TABLE(FinancialConceptId uniqueidentifier,AccountId uniqueidentifier,SideCode nvarchar(6),TargetId uniqueidentifier,PaymentMethodId uniqueidentifier);
+            INSERT @RequestedConcepts SELECT FinancialConceptId,AccountId,CASE WHEN Credit>0 THEN N'Credit' ELSE N'Debit' END,TargetId,PaymentMethodId
+              FROM @RequestedLines WHERE FinancialConceptId IS NOT NULL;
+            DECLARE @ResolvedConcepts TABLE(FinancialConceptId uniqueidentifier PRIMARY KEY,Code nvarchar(64),Name nvarchar(160),
+              AccountId uniqueidentifier,SideCode nvarchar(6),IsActive bit,IsReady bit,
+              UseForReceipts bit,UseForSupplierPayments bit,UseForVouchers bit);
+            -- The same catalogue head serializes semantic edits and acceptance.
+            -- Hold only the requested heads; do not lock the global option rows
+            -- for update or fetch configuration per journal line.
+            IF EXISTS(SELECT 1 FROM @RequestedConcepts)
+              INSERT @ResolvedConcepts SELECT concept.FinancialConceptId,concept.Code,concept.Name,concept.AccountId,concept.SideCode,
+                concept.IsActive,concept.IsReady,concept.UseForReceipts,concept.UseForSupplierPayments,concept.UseForVouchers
+              FROM (SELECT DISTINCT FinancialConceptId FROM @RequestedConcepts) requested
+              JOIN reference.FinancialConcepts head WITH(UPDLOCK,HOLDLOCK) ON head.FinancialConceptId=requested.FinancialConceptId AND head.TenantId=@TenantId
+              JOIN reference.FinancialConceptDetails concept ON concept.FinancialConceptId=head.FinancialConceptId AND concept.TenantId=@TenantId
+              OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1);
+            DECLARE @InvalidConcept bit=0;
+            IF EXISTS(SELECT 1 FROM @RequestedConcepts)
+              SELECT @InvalidConcept=1 FROM @RequestedConcepts selected
+              LEFT JOIN @ResolvedConcepts concept ON concept.FinancialConceptId=selected.FinancialConceptId
+              WHERE concept.FinancialConceptId IS NULL OR selected.TargetId IS NOT NULL OR selected.PaymentMethodId IS NOT NULL
+                OR @Final=1 AND (@FinancialCapture=0 OR concept.IsActive=0 OR concept.IsReady=0
+                  OR concept.AccountId<>selected.AccountId OR concept.SideCode<>selected.SideCode
+                  OR CASE @VoucherType WHEN N'CashReceipt' THEN concept.UseForReceipts WHEN N'Disbursement' THEN concept.UseForSupplierPayments ELSE concept.UseForVouchers END=0);
             DECLARE @ControlAccounts TABLE(AccountId uniqueidentifier,Kind nvarchar(16));
             IF @Final=1
-              INSERT @ControlAccounts SELECT effective.AccountId,category.Kind
-              FROM (VALUES(N'AccountsReceivable',N'Receivable'),(N'AccountsPayable',N'Payable')) category(Code,Kind)
+              INSERT @ControlAccounts SELECT effective.AccountId,control.FinancialFunction
+              FROM accounting.PostingCategoryControlFunction(NULL) control
               CROSS APPLY(SELECT TOP(1) m.AccountId FROM dbo.AccountingAccountMappings m
-                WHERE m.TenantId=@TenantId AND m.Category=category.Code AND (m.BusinessId=@BusinessId OR m.BusinessId IS NULL)
+                WHERE m.TenantId=@TenantId AND m.Category=control.Category AND (m.BusinessId=@BusinessId OR m.BusinessId IS NULL)
                   AND m.EffectiveFrom<=CONVERT(date,@Date) AND (m.EffectiveTo IS NULL OR m.EffectiveTo>=CONVERT(date,@Date))
-                ORDER BY CASE WHEN m.BusinessId=@BusinessId THEN 0 ELSE 1 END,m.EffectiveFrom DESC) effective;
+                ORDER BY CASE WHEN m.BusinessId=@BusinessId THEN 0 ELSE 1 END,m.EffectiveFrom DESC) effective
+              WHERE control.Category IN(N'AccountsReceivable',N'AccountsPayable');
             SELECT CASE
               WHEN NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                 THEN N'La sede no pertenece a la empresa.'
@@ -330,11 +407,14 @@ public sealed partial class SqlAccountingStore
               WHEN @FinancialCapture=1 AND @Final=1 AND @SessionId IS NOT NULL AND NOT EXISTS(
                 SELECT 1 FROM worksessions.OpenSessionForUser(@TenantId,@BusinessId,@UserId,@SessionId) WHERE DeviceId IS NULL)
                 THEN N'Vincula la sesión web abierta del usuario y sede. La sesión de un dispositivo preparado conserva su captura local.'
+              WHEN @InvalidForm=1
+                THEN N'La forma de pago no corresponde al tenant, tipo, auxiliar o dirección autorizados del comprobante. Revisa su configuración.'
+              WHEN @InvalidConcept=1
+                THEN N'El concepto financiero no corresponde al auxiliar, naturaleza o uso del comprobante. Revisa su configuración y vuelve a seleccionarlo.'
               WHEN EXISTS(SELECT 1 FROM @RequestedLines l
                 LEFT JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId AND a.TenantId=@TenantId AND (@Final=0 OR a.IsActive=1) AND a.AllowsPosting=1
-                  AND (a.BusinessId IS NULL OR a.BusinessId=@BusinessId)
                 LEFT JOIN dbo.Parties p ON p.PartyId=l.PartyId AND p.TenantId=@TenantId AND (@Final=0 OR p.IsActive=1)
-                LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.BusinessId=@BusinessId AND (@Final=0 OR c.IsActive=1)
+                LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.TenantId=@TenantId AND (@Final=0 OR c.IsActive=1)
                 LEFT JOIN dbo.PartySites site ON site.PartySiteId=l.PartySiteId AND site.PartyId=l.PartyId AND (@Final=0 OR site.IsActive=1)
                 WHERE (l.AccountId IS NOT NULL AND a.AccountId IS NULL) OR (l.PartyId IS NOT NULL AND p.PartyId IS NULL)
                   OR (l.CostCenterId IS NOT NULL AND c.CostCenterId IS NULL) OR (l.PartySiteId IS NOT NULL AND site.PartySiteId IS NULL)
@@ -475,7 +555,8 @@ public sealed partial class SqlAccountingStore
               -- Supplier/customer roles are unique by tenant/party in the
               -- schema. Resolve only parties in this capture.
               SELECT party.PartyId,supplier.SupplierId,site.PartySiteId,customer.CustomerId,customer.IsActive
-              FROM (SELECT DISTINCT PartyId FROM @RequestedLines WHERE PartyId IS NOT NULL) input
+              FROM (SELECT PartyId FROM @RequestedLines WHERE PartyId IS NOT NULL
+                UNION SELECT @MainPartyId WHERE @MainPartyId IS NOT NULL) input
               JOIN dbo.Parties party ON party.PartyId=input.PartyId AND party.TenantId=@TenantId AND party.IsActive=1
               LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=party.PartyId AND supplier.TenantId=@TenantId AND supplier.IsActive=1
               LEFT JOIN dbo.Customers customer ON customer.PartyId=party.PartyId AND customer.TenantId=@TenantId
@@ -491,11 +572,11 @@ public sealed partial class SqlAccountingStore
                   AND (selected.EffectiveTo IS NULL OR selected.EffectiveTo>=CONVERT(date,@Date))
                 ORDER BY CASE WHEN selected.BusinessId=@BusinessId THEN 0 ELSE 1 END,
                   selected.EffectiveFrom DESC) mapping
-              OUTER APPLY accounting.PostingAccountReadiness(@TenantId,@BusinessId,category.Code,mapping.AccountId) ready
+              OUTER APPLY accounting.PostingAccountReadiness(@TenantId,category.Code,mapping.AccountId) ready
               LEFT JOIN dbo.AccountingAccounts account ON account.AccountId=ready.AccountId
                 AND account.TenantId=@TenantId AND account.IsActive=1 AND account.AllowsPosting=1
-                AND account.FinancialFunction=N'General'
-                AND (account.BusinessId IS NULL OR account.BusinessId=@BusinessId);
+                AND account.FinancialFunction=N'General';
+              SELECT FinancialConceptId,Code,Name FROM @ResolvedConcepts;
             END;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
@@ -545,6 +626,9 @@ public sealed partial class SqlAccountingStore
             else if (reader.GetString(0) == AccountingCategories.SupplierFinancialDiscountLost)
                 lostAccountId = NullableId(reader, 1);
         }
-        return new(accounts, positions, parties, earnedAccountId, lostAccountId);
+        var concepts=new List<VoucherFinancialConceptDefinition>();
+        await reader.NextResultAsync(token);
+        while(await reader.ReadAsync(token))concepts.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2)));
+        return new(accounts, positions, parties, earnedAccountId, lostAccountId,concepts);
     }
 }
