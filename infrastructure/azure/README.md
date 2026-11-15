@@ -51,6 +51,12 @@ La línea base DEV registrada es `0.1.0-rc7`, generada y desplegada por el pipel
 
 ## Ruta canónica: pipeline de release
 
+`Quality gates` admite ejecución manual con `integration_test_filter` para
+comprobar un cambio puntual sobre la regresión previa documentada. Reutiliza
+el mismo proyecto y entorno SQL, exige al menos un caso ejecutado y conserva
+los límites de rendimiento. Esa ejecución sólo valida pruebas: no publica
+artefactos ni despliega. Las ejecuciones automáticas conservan su alcance completo.
+
 Los despliegues ordinarios ya no se ejecutan desde el equipo del operador. Se usa el workflow manual `.github/workflows/deploy-auraly-release.yml`:
 
 1. En GitHub Actions, abrir **Deploy Auraly release** y seleccionar **Run workflow**.

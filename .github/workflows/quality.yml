@@ -4,6 +4,12 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      integration_test_filter:
+        description: Filtro explícito para validar únicamente los casos afectados
+        required: true
+        type: string
 
 jobs:
   backend:
@@ -30,11 +36,30 @@ jobs:
         shell: pwsh
         run: ./tests/Auraly.Foundation.Tests/bin/Release/net8.0/playwright.ps1 install --only-shell chromium
       - run: dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj --no-build --configuration Release
+        if: github.event_name != 'workflow_dispatch'
       - run: dotnet test tests/Auraly.Pos.Edge.Host.Tests/Auraly.Pos.Edge.Host.Tests.csproj --no-build --configuration Release
+        if: github.event_name != 'workflow_dispatch'
       - run: dotnet test tests/Auraly.Desktop.Tests/Auraly.Desktop.Tests.csproj --no-build --configuration Release
+        if: github.event_name != 'workflow_dispatch'
       - name: Run integration regression
+        if: github.event_name != 'workflow_dispatch'
         run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Isolation!=FreshProcess"
+      - name: Run selected integration regression
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          INTEGRATION_TEST_FILTER: ${{ inputs.integration_test_filter }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:INTEGRATION_TEST_FILTER)) { throw 'Se requiere un filtro de pruebas explícito.' }
+          $results = Join-Path $env:RUNNER_TEMP 'targeted-integration-results'
+          dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj `
+            --no-build --configuration Release --filter $env:INTEGRATION_TEST_FILTER `
+            --logger 'trx;LogFileName=targeted.trx' --results-directory $results
+          if ($LASTEXITCODE -ne 0) { throw 'Fallaron las pruebas seleccionadas.' }
+          [xml]$report = Get-Content (Join-Path $results 'targeted.trx') -Raw
+          if ([int]$report.TestRun.ResultSummary.Counters.executed -eq 0) { throw 'El filtro no ejecutó ninguna prueba.' }
       - name: Run receipt latency in a fresh test process
+        if: github.event_name != 'workflow_dispatch'
         run: dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --no-build --configuration Release --filter "Isolation=FreshProcess"
       - name: Collect failed SQL query plans
         if: failure()
@@ -57,6 +82,7 @@ jobs:
           if-no-files-found: ignore
 
   invoice-pdf-linux:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -70,6 +96,7 @@ jobs:
       - run: dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj -c Release --no-build --filter FullyQualifiedName~DianInvoicePdfRendererTests
 
   admin:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
