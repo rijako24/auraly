@@ -950,6 +950,28 @@ second page continues the first one's balance. The line party snapshot, original
 source number and reference are shown instead of substituting the main party or
 a shortened GUID. A missing historical taxable base remains unknown, never zero.
 
+The release regression on 2026-11-15 found that runtime had diverged from this
+capture contract: totals and page keys each joined the journal again, with a
+shared rowversion cutoff. CI measured 860.9 ms for the deepest grouping against
+the existing 750 ms limit. The retained local physical plan had three journal
+read statements: totals, page keys and bounded page details. Its individual
+reads were seeks scoped to the selected business, so that sample does not prove
+a scan of the 100,000 unrelated lines. The correction captures the filtered
+facts once, preserving the cutoff, and derives totals and page keys from that
+query-local set. Only page details revisit the journal. It retains one SQL
+command and the existing filters, hierarchy, stable ordering, export cap and
+unknown-base semantics; no persistent projection, financial writer or schema
+change is introduced. Reader rollback requires no data rollback.
+
+The same regression profiles the captured read after all timed samples, using
+the existing report profiler. It requires journal-line seeks bounded by the
+selected business and exactly two journal-reading statements: capture and
+bounded details. Latency failures are retained until after profiling, with the
+same 750 ms thresholds and 100,000 unrelated lines. Setup timeouts remain failed
+runs rather than report measurements. Final validation for this correction is
+recorded with the release evidence; it does not replace the pending DEV browser
+regression.
+
 The trial-balance dialog consumes this paged contract (50 rows), preserves totals
 for the complete filtered period, and resets to page one when party or center
 changes. Its parent supplies the existing center catalog; the dialog does not

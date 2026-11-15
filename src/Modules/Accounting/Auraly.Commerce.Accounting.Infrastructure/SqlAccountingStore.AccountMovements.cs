@@ -26,8 +26,8 @@ public sealed partial class SqlAccountingStore
         )
         """;
 
-    // Use the same scoped journal predicate for the separate aggregates and
-    // page keys. The page is limited before loading descriptions and parties.
+    // Capture filtered journal facts once for aggregates and page keys. The
+    // page is limited before loading descriptions and parties.
     private const string AccountMovementScopeSql = """
         FROM dbo.AccountingEntries e
         JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
@@ -60,9 +60,14 @@ public sealed partial class SqlAccountingStore
               OPTION(MAXRECURSION 32);
               DROP TABLE #ReportAccounts;
             END;
-            -- Entries are immutable; this database rowversion cutoff keeps the
-            -- separate totals and page reads on the same posted set.
+            -- Entries are immutable. Capture the scoped set once so aggregates
+            -- and page keys cannot repeat the journal join or diverge.
             DECLARE @ReportCutoff binary(8)=@@DBTS;
+            SELECT a.AccountId,a.Code,a.Name,e.EntryId,e.EntryNumber,e.OccurredAt,
+              l.LineNumber,l.Debit,l.Credit,l.BaseAmount
+            INTO #AccountMovementFacts
+            """ + "\n" + AccountMovementScopeSql + "\n" + """
+            OPTION(RECOMPILE);
             SELECT AccountId,Code,Name,
               SUM(CASE WHEN CAST(OccurredAt AS date)<@From THEN Debit-Credit ELSE 0 END) OpeningBalance,
               SUM(CASE WHEN CAST(OccurredAt AS date)>=@From THEN Debit ELSE 0 END) Debit,
@@ -71,21 +76,17 @@ public sealed partial class SqlAccountingStore
               CASE WHEN SUM(CASE WHEN CAST(OccurredAt AS date)>=@From AND BaseAmount IS NULL THEN 1 ELSE 0 END)=0
                 THEN SUM(CASE WHEN CAST(OccurredAt AS date)>=@From THEN BaseAmount END) END BaseAmount
             INTO #AccountMovementTotals
-            FROM (
-              SELECT a.AccountId,a.Code,a.Name,e.OccurredAt,l.Debit,l.Credit,l.BaseAmount
-            """ + "\n" + AccountMovementScopeSql + "\n" + """
-            ) scope
-            GROUP BY AccountId,Code,Name OPTION(RECOMPILE);
+            FROM #AccountMovementFacts
+            GROUP BY AccountId,Code,Name;
             CREATE UNIQUE CLUSTERED INDEX IX_AccountMovementTotals ON #AccountMovementTotals(AccountId);
             IF @MaximumRows IS NOT NULL AND (SELECT COALESCE(SUM(CONVERT(bigint,MovementCount)
               +CASE WHEN OpeningBalance<>0 OR MovementCount>0 THEN 1 ELSE 0 END),0) FROM #AccountMovementTotals)>@MaximumRows
               THROW 51412,N'AccountMovementReportLimitExceeded',1;
             WITH PeriodKeys AS (
-              SELECT e.EntryId,e.EntryNumber,e.OccurredAt,l.LineNumber,a.Code,a.AccountId,l.BaseAmount,
-                SUM(l.Debit-l.Credit) OVER(PARTITION BY a.AccountId
-                  ORDER BY e.OccurredAt,e.EntryNumber,e.EntryId,l.LineNumber ROWS UNBOUNDED PRECEDING) PeriodBalance
-            """ + "\n" + AccountMovementScopeSql + "\n" + """
-                AND CAST(e.OccurredAt AS date)>=@From
+              SELECT EntryId,EntryNumber,OccurredAt,LineNumber,Code,AccountId,BaseAmount,
+                SUM(Debit-Credit) OVER(PARTITION BY AccountId
+                  ORDER BY OccurredAt,EntryNumber,EntryId,LineNumber ROWS UNBOUNDED PRECEDING) PeriodBalance
+              FROM #AccountMovementFacts WHERE CAST(OccurredAt AS date)>=@From
             )
             SELECT EntryId,LineNumber,AccountId,Code,OccurredAt,EntryNumber,PeriodBalance,BaseAmount
             INTO #AccountMovementPage FROM PeriodKeys
