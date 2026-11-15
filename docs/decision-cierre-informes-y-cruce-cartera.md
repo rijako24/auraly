@@ -116,6 +116,17 @@ Estos ajustes sólo cambian planes de lectura; revertirlos no modifica datos
 ni requiere migración. Las mediciones locales y el gate completo se vuelven
 a ejecutar antes de autorizar el despliegue.
 
+La validación de correcciones conserva `ValidatePaymentVerificationsAsync`
+como único propietario y su transacción serializable. Sus fuentes opcionales
+usan búsquedas explícitas por sus claves indexadas, conservando el filtro de
+tipo de movimiento y sede. LOOP JOIN por sí solo permitía recorridos completos;
+el perfil anterior mostró scans de documentos y movimientos para una sola
+corrección. La regresión de pago parcial y desaplicación comprueba un solo
+comando de validación y las
+búsquedas reales por identidad después del rechazo esperado; no relaja el
+timeout ni cambia efectos, permisos o reglas de corrección. Revertir este
+ajuste restaura únicamente el plan de consulta, sin migración de datos.
+
 Validación local del incremento: compilación Release sin errores ni advertencias,
 build de Admin y lint dirigido; 14 pruebas de exportación/visor; los dos escenarios
 de navegador CxC/CxP, incluidos filtros, exportación completa, dos clientes,

@@ -269,7 +269,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             output.WriteLine($"Administrative selector supplier={supplier} page={pageNumber}: SQL=1 first={samples[0]:F1}ms p95={p95:F1}ms.");
             if(samples[0]>=2_000 || p95>=1_500)
             {
-                try { await CaptureReportProfileAsync(selectorDiagnostic); }
+                try { await CaptureReportProfileAsync(selectorDiagnostic, output); }
                 catch(Exception diagnostic) { output.WriteLine($"Selector diagnostics unavailable: {diagnostic.Message}"); }
             }
             Assert.True(samples[0] < 2_000,$"Administrative selector first page took {samples[0]:F1}ms.");
@@ -365,7 +365,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             output.WriteLine("{0} applied totals: {1}, p95={2:F1}ms; SQL={3}; 10000 payments/unapplications; 20 samples", position, scenario, p95, scenario.StartsWith("invoices")?3:2);
             if (p95 >= 1000)
             {
-                try { await CaptureReportProfileAsync(diagnosticCommand); }
+                try { await CaptureReportProfileAsync(diagnosticCommand, output); }
                 catch (Exception diagnostic) { output.WriteLine($"Report diagnostics unavailable: {diagnostic.Message}"); }
             }
             Assert.True(p95 < 1000, $"Applied totals exceeded their budget: {position}, {scenario}, p95 {p95:F1}ms.");
@@ -373,7 +373,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         // Verify actual work as well as wall time. A fast server must not hide
         // a full payment-history scan while enriching 25 invoices/50 applications.
         // This additional read runs only after every timed scenario has finished.
-        var profileDirectory = await CaptureReportProfileAsync(originPlanCommand);
+        var profileDirectory = await CaptureReportProfileAsync(originPlanCommand, output);
         Assert.NotNull(profileDirectory);
         var foundOrigins = false;
         var foundIssueDates = false;
@@ -498,7 +498,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             output.WriteLine($"10,000 positions + 10,000 credits, page {page}, applications={applications}: p95={p95:F1} ms, 2 SQL.");
             if(p95>=1000)
             {
-                try {await CaptureReportProfileAsync(diagnosticCommand);}
+                try {await CaptureReportProfileAsync(diagnosticCommand, output);}
                 catch(Exception diagnostic){output.WriteLine($"Report diagnostics unavailable: {diagnostic.Message}");}
             }
             Assert.True(p95<1000,$"Credit report p95 {p95:F1} ms exceeds 1,000 ms.");
@@ -508,13 +508,13 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         {
             // Failure-only diagnostics run after the timed reader and its
             // instrumentation have unwound. They never affect a passing budget.
-            try {await CaptureReportProfileAsync(diagnosticCommand);}
+            try {await CaptureReportProfileAsync(diagnosticCommand, output);}
             catch(Exception diagnostic){output.WriteLine($"Report diagnostics unavailable: {diagnostic.Message}");}
             throw;
         }
     }
 
-    private static void CaptureReadCommand(SqlCommand source,SqlCommand captured)
+    internal static void CaptureReadCommand(SqlCommand source,SqlCommand captured)
     {
         captured.CommandText=source.CommandText;
         captured.Parameters.Clear();
@@ -522,7 +522,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             captured.Parameters.Add((SqlParameter)((ICloneable)parameter).Clone());
     }
 
-    private async Task<string?> CaptureReportProfileAsync(SqlCommand captured)
+    internal static async Task<string?> CaptureReportProfileAsync(SqlCommand captured, ITestOutputHelper? output = null)
     {
         // Profile the captured read only after all timed samples. Capturing
         // the warmup command in memory avoids relying on an evicted plan cache
@@ -584,7 +584,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         {
             connection.InfoMessage-=onMessage;
             await File.WriteAllLinesAsync(Path.Combine(directory,"statistics.txt"),messages);
-            output.WriteLine($"Report profiles after timed samples: {index}, {directory}");
+            output?.WriteLine($"Report profiles after timed samples: {index}, {directory}");
         }
         return directory;
     }
