@@ -85,6 +85,7 @@
     <Build Include="StoredProcedures\InventoryMovementsSearch.sql" />
     <Build Include="StoredProcedures\InventoryOperationsSearch.sql" />
     <Build Include="StoredProcedures\AccountingDefaultsProvision.sql" />
+    <Build Include="StoredProcedures\PaymentMethodDefaultsProvision.sql" />
     <Build Include="StoredProcedures\AccountingSourcesAccept.sql" />
     <Build Include="StoredProcedures\PortfolioPaymentAccept.sql" />
     <Build Include="StoredProcedures\GoodsReceiptLinesInsert.sql" />

@@ -21,12 +21,14 @@ BEGIN
         VALUES(@TenantId,N'Configuring',N'COP',@Now);
 
     INSERT dbo.AccountingAccounts(
-        AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
-    SELECT NEWID(),@TenantId,a.AccountCode,a.AccountName,a.AccountType,a.AllowsPosting,a.RequiresParty,1,@Now
+        AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt,FinancialFunction,BalanceSide)
+    SELECT NEWID(),@TenantId,a.AccountCode,a.AccountName,a.AccountType,a.AllowsPosting,a.RequiresParty,1,@Now,a.FinancialFunction,a.BalanceSide
     FROM accounting.DefaultAccountDefinitions(@ProfileCode) a
     WHERE a.ProfileCode=@ProfileCode AND
       NOT EXISTS (SELECT 1 FROM dbo.AccountingAccounts currentAccount
                   WHERE currentAccount.TenantId=@TenantId AND currentAccount.Code=a.AccountCode);
+
+    EXEC dbo.PaymentMethodDefaultsProvision @TenantId=@TenantId,@Now=@Now;
 
     DECLARE @Year int=DATEPART(year,SWITCHOFFSET(@Now,'-05:00'));
     DECLARE @StartsOn date=DATEFROMPARTS(@Year,1,1),@EndsOn date=DATEFROMPARTS(@Year,12,31);

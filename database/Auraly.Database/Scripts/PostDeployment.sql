@@ -190,7 +190,11 @@ GO
 :r .\Migrations\20261023_BankAuxiliariesAndAcceptedAccounts.sql
 :r .\Migrations\20261023_ManualPaymentSites.sql
 :r .\Migrations\20261027_LinkPostedPortfolioOpenings.sql
-:r .\Migrations\20261109_PaymentMethodCatalog.sql
+:r .\Migrations\20261115_LinkHistoricalCustomerCredits.sql
+-- The additive preparation is superseded by the common profile bootstrap.
+-- Existing forms and their chosen accounts/flags remain untouched.
+DECLARE @PaymentDefaultsNow datetimeoffset(7)=SYSDATETIMEOFFSET();
+EXEC dbo.PaymentMethodDefaultsProvision @Now=@PaymentDefaultsNow;
 :r .\Migrations\20261113_RetireAcceptedAccountConfiguration.sql
 :r .\Migrations\ClassifySystemWarehouses.sql
 GO

@@ -529,20 +529,22 @@ public sealed partial class SqlAccountingStore(
                   THROW 51403,'No active default accounting profile is configured.',1;
 
                 ;WITH DefaultAccounts AS(
-                  SELECT d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,
+                  SELECT d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,d.FinancialFunction,d.BalanceSide,
                     ROW_NUMBER() OVER(PARTITION BY d.AccountCode
                       ORDER BY CASE WHEN d.Category=N'OtherExpense' THEN 0 ELSE 1 END,d.Category) AccountRank
                   FROM accounting.DefaultAccountDefinitions(@ProfileCode) d
                 )
                 INSERT dbo.AccountingAccounts(
                   AccountId,TenantId,Code,Name,AccountType,AllowsPosting,
-                  RequiresParty,IsActive,CreatedAt)
+                  RequiresParty,IsActive,CreatedAt,FinancialFunction,BalanceSide)
                 SELECT NEWID(),@TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,
-                       d.RequiresParty,1,@Now
+                       d.RequiresParty,1,@Now,d.FinancialFunction,d.BalanceSide
                 FROM DefaultAccounts d
                 WHERE d.AccountRank=1 AND
                   NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts a WITH(UPDLOCK,HOLDLOCK)
                   WHERE a.TenantId=@TenantId AND a.Code=d.AccountCode);
+
+                EXEC dbo.PaymentMethodDefaultsProvision @TenantId=@TenantId,@Now=@Now;
 
                 INSERT dbo.AccountingAccountMappings(
                   MappingId,TenantId,BusinessId,Category,AccountId,

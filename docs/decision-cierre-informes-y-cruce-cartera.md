@@ -194,6 +194,32 @@ cambia su sede. Las plantillas 2/3 conservan su asociación publicada. La regres
 combina un anticipo sin rol y otro posterior al rol, filtra y consolida ambos y
 verifica que la primera posición permanece sin CustomerId en la base.
 
+La actualización del 2026-11-15 incluye `20261115_LinkHistoricalCustomerCredits`
+para créditos antiguos de devolución aún íntegros que carecen de Opening.
+Sólo completa moneda, naturaleza, vínculo a la partida original y el movimiento
+de apertura; no reejecuta la devolución ni modifica importe, disponible, estado,
+tercero, sede, fecha de creación, inventario o mayor. Exige devolución Processed,
+trabajo Posted con asiento obligatorio, hash y fechas coincidentes, saldo íntegro,
+ninguna historia previa y una única partida original válida mediante
+`ObligationOpeningAccount`. La moneda procede del snapshot fiscal inmutable;
+los recibos de venta usan su contrato COP. Una prueba insuficiente aborta toda
+la migración con 51872, sin completar datos por inferencia. Los créditos de
+fuentes manuales no entran en este tratamiento. Repetirla no cambia rowversion
+ni inserta otro Opening. La consulta del informe no ejecuta reparación ni
+adquiere nuevas consultas: se conserva su guardia de conciliación y presupuesto.
+El Opening usa la fecha efectiva del origen y la fecha de creación histórica
+del crédito, permitiendo el corte anterior sin asignar una sede desconocida.
+Rollback de aplicación conserva estos metadatos conciliados y no elimina
+movimientos ni vuelve a contabilizar. Si se requiere revertir datos, se restaura
+la evidencia previa sólo para los IDs migrados y únicamente si no tienen
+aplicaciones posteriores; de lo contrario requiere revisión explícita. No se
+restaura una base completa sobre operaciones nuevas.
+La regresión SQL/HTTP reproduce el bloqueo, completa sólo el origen probado y
+comprueba el informe, la partida original, una sola apertura y rowversion estable
+al repetir. Los casos de hash distinto y saldo modificado fallan sin completar
+metadatos. Conserva sin sede el crédito histórico y compara el mayor completo
+antes/después, además del único movimiento de inventario ya existente.
+
 Los filtros propios de factura (número, emisión, edad, mora, estado y sólo
 vencidas) limitan los créditos a los terceros/monedas de las facturas
 seleccionadas. CxC permite cruzar entre establecimientos del mismo tercero,

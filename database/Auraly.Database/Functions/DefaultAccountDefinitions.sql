@@ -5,7 +5,7 @@ CREATE FUNCTION accounting.DefaultAccountDefinitions(@ProfileCode nvarchar(32))
 RETURNS TABLE
 AS RETURN
   SELECT ProfileCode,Category,AccountCode,AccountName,AccountType,
-    AllowsPosting,RequiresParty,IsRequired,DisplayOrder
+    AllowsPosting,RequiresParty,IsRequired,DisplayOrder,FinancialFunction,BalanceSide
   FROM dbo.AccountingConfigurationProfileAccounts
   WHERE ProfileCode=@ProfileCode AND AccountCode IS NOT NULL;
 GO

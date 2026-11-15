@@ -55,13 +55,37 @@ CREATE TABLE [dbo].[AccountingConfigurationProfileAccounts]
     [RequiresParty] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfileAccounts_RequiresParty] DEFAULT (0),
     [IsRequired] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfileAccounts_IsRequired] DEFAULT (1),
     [DisplayOrder] INT NOT NULL,
+    [FinancialFunction] NVARCHAR(64) NULL,
+    [BalanceSide] NVARCHAR(6) NULL,
     CONSTRAINT [PK_AccountingConfigurationProfileAccounts] PRIMARY KEY CLUSTERED ([ProfileCode],[Category]),
     CONSTRAINT [FK_AccountingConfigurationProfileAccounts_Profile] FOREIGN KEY ([ProfileCode]) REFERENCES [dbo].[AccountingConfigurationProfiles]([ProfileCode]),
     CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'Cost',N'ContraRevenue',N'OrderDebit',N'OrderCredit')),
     CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Order] CHECK ([DisplayOrder]>0),
+    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Semantics] CHECK (
+      ([FinancialFunction] IS NULL AND [BalanceSide] IS NULL)
+      OR ([FinancialFunction] IS NOT NULL AND [BalanceSide] IS NOT NULL AND [BalanceSide] IN(N'Debit',N'Credit'))),
     CONSTRAINT [CK_AccountingConfigurationProfileAccounts_DefaultAccount] CHECK (
       ([AccountCode] IS NULL AND [AccountName] IS NULL)
       OR ([AccountCode] IS NOT NULL AND [AccountName] IS NOT NULL))
+);
+GO
+
+CREATE TABLE [dbo].[AccountingConfigurationProfilePaymentMethods]
+(
+    [ProfileCode] NVARCHAR(32) NOT NULL,
+    [PaymentTypeId] UNIQUEIDENTIFIER NOT NULL,
+    [AccountCategory] NVARCHAR(64) NOT NULL,
+    [UseForSales] BIT NOT NULL,
+    [UseForReceipts] BIT NOT NULL,
+    [UseForSupplierPayments] BIT NOT NULL,
+    [UseForPayroll] BIT NOT NULL,
+    [UseForVouchers] BIT NOT NULL,
+    [SortOrder] INT NOT NULL,
+    CONSTRAINT [PK_AccountingConfigurationProfilePaymentMethods] PRIMARY KEY ([ProfileCode],[PaymentTypeId]),
+    CONSTRAINT [FK_AccountingConfigurationProfilePaymentMethods_Type] FOREIGN KEY ([PaymentTypeId]) REFERENCES reference.Options(OptionId),
+    CONSTRAINT [FK_AccountingConfigurationProfilePaymentMethods_Account] FOREIGN KEY ([ProfileCode],[AccountCategory])
+      REFERENCES dbo.AccountingConfigurationProfileAccounts(ProfileCode,Category),
+    CONSTRAINT [CK_AccountingConfigurationProfilePaymentMethods_Order] CHECK ([SortOrder]>=0)
 );
 GO
 

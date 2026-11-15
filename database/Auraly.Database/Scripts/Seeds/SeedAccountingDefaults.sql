@@ -6,84 +6,110 @@ IF NOT EXISTS(SELECT 1 FROM dbo.AccountingConfigurationProfiles WHERE ProfileCod
   VALUES(N'AURALY_CO',N'Auraly Colombia',1,1);
 
 MERGE dbo.AccountingConfigurationProfileAccounts AS target
-USING (VALUES
-  (N'Cash',N'Caja',N'110505',N'Caja general',N'Asset',0,1),
-  (N'Bank',N'Bancos',N'111005',N'Bancos nacionales',N'Asset',0,2),
-  (N'DebitCardClearing',N'Tarjeta débito por conciliar',N'13809501',N'Tarjetas débito por conciliar',N'Asset',0,3),
-  (N'CreditCardClearing',N'Tarjeta crédito por conciliar',N'13809502',N'Tarjetas crédito por conciliar',N'Asset',0,4),
-  (N'SupplierDebitCard',N'Pagos a proveedores con tarjeta débito',NULL,NULL,N'Asset',0,62),
-  (N'SupplierCreditCard',N'Pagos a proveedores con tarjeta de crédito corporativa',NULL,NULL,N'Liability',0,63),
-  (N'TransferClearing',N'Transferencias por conciliar',N'13809503',N'Transferencias por conciliar',N'Asset',0,5),
-  (N'CardClearing',N'Tarjetas por conciliar',N'13809504',N'Tarjetas por conciliar',N'Asset',0,50),
-  (N'CashClosureDifferencesPending',N'Diferencias de cierre pendientes',N'13809505',N'Diferencias de cierre pendientes de conciliación',N'Asset',0,51),
-  (N'AccountsReceivable',N'Clientes',N'130505',N'Clientes nacionales',N'Asset',1,6),
-  (N'SupplierCreditsReceivable',N'Saldos a favor con proveedores',N'13809506',N'Saldos a favor con proveedores',N'Asset',1,7),
-  (N'WithholdingIncomeTaxReceivable',N'Retefuente a favor',N'135515',N'Retención en la fuente a favor',N'Asset',0,8),
-  (N'WithholdingVatReceivable',N'ReteIVA a favor',N'135517',N'Retención de IVA a favor',N'Asset',0,9),
-  (N'WithholdingIcaReceivable',N'ReteICA a favor',N'135518',N'Retención de ICA a favor',N'Asset',0,10),
-  (N'Inventory',N'Inventarios',N'143505',N'Inventarios de mercancías',N'Asset',0,11),
-  (N'AccountsPayable',N'Proveedores',N'220505',N'Proveedores nacionales',N'Liability',1,12),
-  (N'OutputVat',N'IVA generado',N'240805',N'IVA generado',N'Liability',0,13),
-  (N'InputVat',N'IVA descontable',N'240810',N'IVA descontable',N'Liability',0,14),
-  (N'WithholdingIncomeTaxPayable',N'Retefuente por pagar',N'236570',N'Otras retenciones en la fuente por pagar',N'Liability',0,15),
-  (N'WithholdingVatPayable',N'ReteIVA por pagar',N'236701',N'Retención de IVA por pagar',N'Liability',0,16),
-  (N'WithholdingIcaPayable',N'ReteICA por pagar',N'236805',N'Retención de ICA por pagar',N'Liability',0,17),
-  (N'CustomerCreditsPayable',N'Saldos a favor de clientes',N'238095',N'Saldos a favor de clientes',N'Liability',1,18),
-  (N'RestaurantTipsPayable',N'Propinas por entregar al personal',N'23809507',N'Propinas recaudadas pendientes de entregar',N'Liability',0,60),
-  (N'OwnerContributions',N'Aportes del propietario',N'311505',N'Aportes del propietario',N'Equity',0,19),
-  (N'SalesRevenue',N'Ingresos por ventas',N'413595',N'Ingresos por venta de mercancías',N'Revenue',0,20),
-  (N'ServiceRevenue',N'Ingresos por servicios',N'415530',N'Ingresos por servicios de software',N'Revenue',0,52),
-  (N'RoundingGain',N'Ajuste al peso a favor',N'429581',N'Ajuste al peso',N'Revenue',0,58),
-  (N'RoundingLoss',N'Ajuste al peso en contra',N'53959503',N'Gastos por aproximaciones',N'Expense',0,59),
-  (N'SalesReturns',N'Devoluciones en ventas',N'417595',N'Devoluciones en ventas',N'ContraRevenue',0,21),
-  (N'OtherIncome',N'Otros ingresos de caja',N'429595',N'Otros ingresos',N'Revenue',0,22),
-  (N'SupplierFinancialDiscountEarned',N'Descuento financiero obtenido de proveedor',N'421040',N'Descuentos comerciales condicionados',N'Revenue',1,64),
-  (N'SupplierFinancialDiscountLost',N'Descuento financiero anticipado no obtenido',N'53959504',N'Descuento financiero anticipado no obtenido',N'Expense',1,65),
-  (N'CashOverageIncome',N'Sobrantes de caja',N'429553',N'Sobrantes de caja',N'Revenue',0,23),
-  (N'OperatingExpense',N'Gastos operativos',N'51959502',N'Otros gastos operativos',N'Expense',0,24),
-  (N'PurchasesExpense',N'Compras no inventariables',N'519595',N'Compras no inventariables',N'Expense',0,25),
-  (N'PurchaseFreightExpense',N'Fletes de compra no capitalizados',N'513550',N'Transporte, fletes y acarreos',N'Expense',0,53),
-  (N'PurchaseInsuranceExpense',N'Seguros de compra no capitalizados',N'513095',N'Otros seguros de compra',N'Expense',0,54),
-  (N'CustomsExpense',N'Gastos aduaneros no capitalizados',N'514020',N'Gastos aduaneros',N'Expense',0,55),
-  (N'PurchaseHandlingExpense',N'Manejo de compra no capitalizado',N'513595',N'Manejo y logística',N'Expense',0,56),
-  (N'OtherPurchaseDirectExpense',N'Otros costos directos no capitalizados',N'51959501',N'Otros costos directos de compra',N'Expense',0,57),
-  (N'OtherExpense',N'Otras salidas de caja',N'539595',N'Otras salidas de caja',N'Expense',0,26),
-  (N'CashShortageExpense',N'Faltantes de caja',N'53959501',N'Faltantes de caja',N'Expense',0,27),
-  (N'CostOfGoodsSold',N'Costo de ventas',N'613595',N'Costo de mercancía vendida',N'Expense',0,28),
-  (N'SalaryExpense',N'Sueldos y salarios',N'510506',N'Sueldos y salarios',N'Expense',1,29),
-  (N'VariableEarningsExpense',N'Devengos variables',N'510515',N'Horas extras y recargos',N'Expense',1,30),
-  (N'TransportAllowanceExpense',N'Auxilio de transporte',N'510527',N'Auxilio de transporte',N'Expense',1,31),
-  (N'EmployerContributionsExpense',N'Aportes patronales',N'51059501',N'Aportes patronales',N'Expense',1,32),
-  (N'BenefitsExpense',N'Prestaciones sociales',N'51059502',N'Prestaciones sociales',N'Expense',1,33),
-  (N'EmployeeContributionsPayable',N'Aportes del trabajador por pagar',N'237095',N'Aportes del trabajador por pagar',N'Liability',1,34),
-  (N'PayrollWithholdingPayable',N'Retención laboral por pagar',N'236505',N'Retención laboral por pagar',N'Liability',1,35),
-  (N'ThirdPartyDeductionsPayable',N'Deducciones a terceros por pagar',N'23809501',N'Deducciones de nómina por pagar',N'Liability',1,36),
-  (N'NetPayrollPayable',N'Nómina por pagar',N'250505',N'Salarios por pagar',N'Liability',1,37),
-  (N'BenefitsProvisionPayable',N'Provisiones laborales por pagar',N'261095',N'Otras provisiones laborales',N'Liability',1,38),
-  (N'EmployeeLoansReceivable',N'Préstamos a empleados',N'136595',N'Préstamos a trabajadores',N'Asset',1,39),
-  (N'EmployeeShortagesReceivable',N'Faltantes de caja a cargo de trabajadores',N'13659501',N'Faltantes de caja a cargo de trabajadores',N'Asset',1,61),
-  (N'EmployerHealthPayable',N'Salud del empleador por pagar',N'237005',N'Salud del empleador por pagar',N'Liability',1,40),
-  (N'EmployerPensionPayable',N'Pensión del empleador por pagar',N'238030',N'Pensión del empleador por pagar',N'Liability',1,41),
-  (N'OccupationalRiskPayable',N'Riesgos laborales por pagar',N'237006',N'Riesgos laborales por pagar',N'Liability',1,42),
-  (N'ParafiscalContributionsPayable',N'Parafiscales por pagar',N'237010',N'Aportes parafiscales por pagar',N'Liability',1,43),
-  (N'InventoryDifferences',N'Diferencias de inventario',N'529595',N'Diferencias de inventario',N'Expense',0,44),
-  (N'DamagedInventoryExpense',N'Pérdidas por averías y vencimientos',N'52959501',N'Pérdidas por averías y vencimientos',N'Expense',0,45),
-  (N'ConversionLossExpense',N'Mermas de conversión',N'52959502',N'Mermas de conversión',N'Expense',0,46),
-  (N'TransferLossExpense',N'Faltantes en traslado',N'52959503',N'Faltantes en traslado',N'Expense',0,47),
-  (N'DispatchCashOverageIncome',N'Sobrantes de transportadores',N'42959501',N'Sobrantes de transportadores',N'Revenue',0,48),
-  (N'DispatchCashShortageExpense',N'Faltantes de transportadores',N'53959502',N'Faltantes de transportadores',N'Expense',0,49)
-) AS source(Category,DisplayName,AccountCode,AccountName,AccountType,RequiresParty,DisplayOrder)
+USING (SELECT initial.*,meaning.FinancialFunction FROM (VALUES
+  (N'Cash',N'Caja',N'110505',N'Caja general',N'Asset',0,1,N'Debit'),
+  (N'Bank',N'Bancos',N'111005',N'Bancos nacionales',N'Asset',0,2,N'Debit'),
+  (N'DebitCardClearing',N'Tarjeta débito por conciliar',N'13809501',N'Tarjetas débito por conciliar',N'Asset',0,3,N'Debit'),
+  (N'CreditCardClearing',N'Tarjeta crédito por conciliar',N'13809502',N'Tarjetas crédito por conciliar',N'Asset',0,4,N'Debit'),
+  (N'SupplierDebitCard',N'Pagos a proveedores con tarjeta débito',NULL,NULL,N'Asset',0,62,N'Debit'),
+  (N'SupplierCreditCard',N'Pagos a proveedores con tarjeta de crédito corporativa',NULL,NULL,N'Liability',0,63,N'Credit'),
+  (N'TransferClearing',N'Transferencias por conciliar',N'13809503',N'Transferencias por conciliar',N'Asset',0,5,N'Debit'),
+  (N'CardClearing',N'Tarjetas por conciliar',N'13809504',N'Tarjetas por conciliar',N'Asset',0,50,N'Debit'),
+  (N'CashClosureDifferencesPending',N'Diferencias de cierre pendientes',N'13809505',N'Diferencias de cierre pendientes de conciliación',N'Asset',0,51,N'Debit'),
+  (N'AccountsReceivable',N'Clientes',N'130505',N'Clientes nacionales',N'Asset',1,6,N'Debit'),
+  (N'SupplierCreditsReceivable',N'Saldos a favor con proveedores',N'13809506',N'Saldos a favor con proveedores',N'Asset',1,7,N'Debit'),
+  (N'WithholdingIncomeTaxReceivable',N'Retefuente a favor',N'135515',N'Retención en la fuente a favor',N'Asset',0,8,N'Debit'),
+  (N'WithholdingVatReceivable',N'ReteIVA a favor',N'135517',N'Retención de IVA a favor',N'Asset',0,9,N'Debit'),
+  (N'WithholdingIcaReceivable',N'ReteICA a favor',N'135518',N'Retención de ICA a favor',N'Asset',0,10,N'Debit'),
+  (N'Inventory',N'Inventarios',N'143505',N'Inventarios de mercancías',N'Asset',0,11,N'Debit'),
+  (N'AccountsPayable',N'Proveedores',N'220505',N'Proveedores nacionales',N'Liability',1,12,N'Credit'),
+  (N'OutputVat',N'IVA generado',N'240805',N'IVA generado',N'Liability',0,13,N'Credit'),
+  (N'InputVat',N'IVA descontable',N'240810',N'IVA descontable',N'Liability',0,14,N'Debit'),
+  (N'WithholdingIncomeTaxPayable',N'Retefuente por pagar',N'236570',N'Otras retenciones en la fuente por pagar',N'Liability',0,15,N'Credit'),
+  (N'WithholdingVatPayable',N'ReteIVA por pagar',N'236701',N'Retención de IVA por pagar',N'Liability',0,16,N'Credit'),
+  (N'WithholdingIcaPayable',N'ReteICA por pagar',N'236805',N'Retención de ICA por pagar',N'Liability',0,17,N'Credit'),
+  (N'CustomerCreditsPayable',N'Saldos a favor de clientes',N'238095',N'Saldos a favor de clientes',N'Liability',1,18,N'Credit'),
+  (N'RestaurantTipsPayable',N'Propinas por entregar al personal',N'23809507',N'Propinas recaudadas pendientes de entregar',N'Liability',0,60,N'Credit'),
+  (N'OwnerContributions',N'Aportes del propietario',N'311505',N'Aportes del propietario',N'Equity',0,19,N'Credit'),
+  (N'SalesRevenue',N'Ingresos por ventas',N'413595',N'Ingresos por venta de mercancías',N'Revenue',0,20,N'Credit'),
+  (N'ServiceRevenue',N'Ingresos por servicios',N'415530',N'Ingresos por servicios de software',N'Revenue',0,52,N'Credit'),
+  (N'RoundingGain',N'Ajuste al peso a favor',N'429581',N'Ajuste al peso',N'Revenue',0,58,N'Credit'),
+  (N'RoundingLoss',N'Ajuste al peso en contra',N'53959503',N'Gastos por aproximaciones',N'Expense',0,59,N'Debit'),
+  (N'SalesReturns',N'Devoluciones en ventas',N'417595',N'Devoluciones en ventas',N'ContraRevenue',0,21,N'Debit'),
+  (N'OtherIncome',N'Otros ingresos de caja',N'429595',N'Otros ingresos',N'Revenue',0,22,N'Credit'),
+  (N'SupplierFinancialDiscountEarned',N'Descuento financiero obtenido de proveedor',N'421040',N'Descuentos comerciales condicionados',N'Revenue',1,64,N'Credit'),
+  (N'SupplierFinancialDiscountLost',N'Descuento financiero anticipado no obtenido',N'53959504',N'Descuento financiero anticipado no obtenido',N'Expense',1,65,N'Debit'),
+  (N'CashOverageIncome',N'Sobrantes de caja',N'429553',N'Sobrantes de caja',N'Revenue',0,23,N'Credit'),
+  (N'OperatingExpense',N'Gastos operativos',N'51959502',N'Otros gastos operativos',N'Expense',0,24,N'Debit'),
+  (N'PurchasesExpense',N'Compras no inventariables',N'519595',N'Compras no inventariables',N'Expense',0,25,N'Debit'),
+  (N'PurchaseFreightExpense',N'Fletes de compra no capitalizados',N'513550',N'Transporte, fletes y acarreos',N'Expense',0,53,N'Debit'),
+  (N'PurchaseInsuranceExpense',N'Seguros de compra no capitalizados',N'513095',N'Otros seguros de compra',N'Expense',0,54,N'Debit'),
+  (N'CustomsExpense',N'Gastos aduaneros no capitalizados',N'514020',N'Gastos aduaneros',N'Expense',0,55,N'Debit'),
+  (N'PurchaseHandlingExpense',N'Manejo de compra no capitalizado',N'513595',N'Manejo y logística',N'Expense',0,56,N'Debit'),
+  (N'OtherPurchaseDirectExpense',N'Otros costos directos no capitalizados',N'51959501',N'Otros costos directos de compra',N'Expense',0,57,N'Debit'),
+  (N'OtherExpense',N'Otras salidas de caja',N'539595',N'Otras salidas de caja',N'Expense',0,26,N'Debit'),
+  (N'CashShortageExpense',N'Faltantes de caja',N'53959501',N'Faltantes de caja',N'Expense',0,27,N'Debit'),
+  (N'CostOfGoodsSold',N'Costo de ventas',N'613595',N'Costo de mercancía vendida',N'Expense',0,28,N'Debit'),
+  (N'SalaryExpense',N'Sueldos y salarios',N'510506',N'Sueldos y salarios',N'Expense',1,29,N'Debit'),
+  (N'VariableEarningsExpense',N'Devengos variables',N'510515',N'Horas extras y recargos',N'Expense',1,30,N'Debit'),
+  (N'TransportAllowanceExpense',N'Auxilio de transporte',N'510527',N'Auxilio de transporte',N'Expense',1,31,N'Debit'),
+  (N'EmployerContributionsExpense',N'Aportes patronales',N'51059501',N'Aportes patronales',N'Expense',1,32,N'Debit'),
+  (N'BenefitsExpense',N'Prestaciones sociales',N'51059502',N'Prestaciones sociales',N'Expense',1,33,N'Debit'),
+  (N'EmployeeContributionsPayable',N'Aportes del trabajador por pagar',N'237095',N'Aportes del trabajador por pagar',N'Liability',1,34,N'Credit'),
+  (N'PayrollWithholdingPayable',N'Retención laboral por pagar',N'236505',N'Retención laboral por pagar',N'Liability',1,35,N'Credit'),
+  (N'ThirdPartyDeductionsPayable',N'Deducciones a terceros por pagar',N'23809501',N'Deducciones de nómina por pagar',N'Liability',1,36,N'Credit'),
+  (N'NetPayrollPayable',N'Nómina por pagar',N'250505',N'Salarios por pagar',N'Liability',1,37,N'Credit'),
+  (N'BenefitsProvisionPayable',N'Provisiones laborales por pagar',N'261095',N'Otras provisiones laborales',N'Liability',1,38,N'Credit'),
+  (N'EmployeeLoansReceivable',N'Préstamos a empleados',N'136595',N'Préstamos a trabajadores',N'Asset',1,39,N'Debit'),
+  (N'EmployeeShortagesReceivable',N'Faltantes de caja a cargo de trabajadores',N'13659501',N'Faltantes de caja a cargo de trabajadores',N'Asset',1,61,N'Debit'),
+  (N'EmployerHealthPayable',N'Salud del empleador por pagar',N'237005',N'Salud del empleador por pagar',N'Liability',1,40,N'Credit'),
+  (N'EmployerPensionPayable',N'Pensión del empleador por pagar',N'238030',N'Pensión del empleador por pagar',N'Liability',1,41,N'Credit'),
+  (N'OccupationalRiskPayable',N'Riesgos laborales por pagar',N'237006',N'Riesgos laborales por pagar',N'Liability',1,42,N'Credit'),
+  (N'ParafiscalContributionsPayable',N'Parafiscales por pagar',N'237010',N'Aportes parafiscales por pagar',N'Liability',1,43,N'Credit'),
+  (N'InventoryDifferences',N'Diferencias de inventario',N'529595',N'Diferencias de inventario',N'Expense',0,44,N'Debit'),
+  (N'DamagedInventoryExpense',N'Pérdidas por averías y vencimientos',N'52959501',N'Pérdidas por averías y vencimientos',N'Expense',0,45,N'Debit'),
+  (N'ConversionLossExpense',N'Mermas de conversión',N'52959502',N'Mermas de conversión',N'Expense',0,46,N'Debit'),
+  (N'TransferLossExpense',N'Faltantes en traslado',N'52959503',N'Faltantes en traslado',N'Expense',0,47,N'Debit'),
+  (N'DispatchCashOverageIncome',N'Sobrantes de transportadores',N'42959501',N'Sobrantes de transportadores',N'Revenue',0,48,N'Credit'),
+  (N'DispatchCashShortageExpense',N'Faltantes de transportadores',N'53959502',N'Faltantes de transportadores',N'Expense',0,49,N'Debit')
+) initial(Category,DisplayName,AccountCode,AccountName,AccountType,RequiresParty,DisplayOrder,BalanceSide)
+CROSS APPLY(SELECT TOP(1) FinancialFunction FROM accounting.PostingCategoryControlFunction(initial.Category)
+  ORDER BY CASE WHEN FinancialFunction=N'General' THEN 0 ELSE 1 END,FinancialFunction) meaning
+) AS source
 ON target.ProfileCode=N'AURALY_CO' AND target.Category=source.Category
 WHEN MATCHED THEN UPDATE SET DisplayName=source.DisplayName,AccountCode=source.AccountCode,
   AccountName=source.AccountName,AccountType=source.AccountType,RequiresParty=source.RequiresParty,
-  DisplayOrder=source.DisplayOrder
-WHEN NOT MATCHED THEN INSERT(ProfileCode,Category,DisplayName,AccountCode,AccountName,AccountType,AllowsPosting,RequiresParty,IsRequired,DisplayOrder)
-  VALUES(N'AURALY_CO',source.Category,source.DisplayName,source.AccountCode,source.AccountName,source.AccountType,1,source.RequiresParty,1,source.DisplayOrder);
+  DisplayOrder=source.DisplayOrder,FinancialFunction=source.FinancialFunction,BalanceSide=source.BalanceSide
+WHEN NOT MATCHED THEN INSERT(ProfileCode,Category,DisplayName,AccountCode,AccountName,AccountType,AllowsPosting,RequiresParty,IsRequired,DisplayOrder,FinancialFunction,BalanceSide)
+  VALUES(N'AURALY_CO',source.Category,source.DisplayName,source.AccountCode,source.AccountName,source.AccountType,1,source.RequiresParty,1,source.DisplayOrder,source.FinancialFunction,source.BalanceSide);
 
 -- These purposes need the tenant's actual bank/card auxiliary. No invented
 -- bank number, automatic acquiring receivable or generic corporate-card debt.
 UPDATE dbo.AccountingConfigurationProfileAccounts SET IsRequired=0
 WHERE ProfileCode=N'AURALY_CO' AND Category IN(N'SupplierDebitCard',N'SupplierCreditCard');
+
+-- Initial tenant forms are configuration, not another runtime payment catalog.
+-- Cards here collect money; corporate supplier cards remain explicit setup.
+MERGE dbo.AccountingConfigurationProfilePaymentMethods AS target
+USING (
+  SELECT type.OptionId PaymentTypeId,initial.AccountCategory,initial.UseForSupplierPayments,
+    initial.UseForPayroll,type.SortOrder
+  FROM (VALUES
+    (N'Cash',N'Cash',1,1),
+    (N'DebitCard',N'DebitCardClearing',0,0),
+    (N'CreditCard',N'CreditCardClearing',0,0),
+    (N'Transfer',N'Bank',1,1)
+  ) initial(MethodCode,AccountCategory,UseForSupplierPayments,UseForPayroll)
+  JOIN reference.Options type ON type.CatalogCode=N'payment-method' AND type.Code=initial.MethodCode
+) source
+ON target.ProfileCode=N'AURALY_CO' AND target.PaymentTypeId=source.PaymentTypeId
+WHEN MATCHED THEN UPDATE SET AccountCategory=source.AccountCategory,
+  UseForSales=1,UseForReceipts=1,UseForSupplierPayments=source.UseForSupplierPayments,
+  UseForPayroll=source.UseForPayroll,UseForVouchers=1,SortOrder=source.SortOrder
+WHEN NOT MATCHED THEN INSERT(ProfileCode,PaymentTypeId,AccountCategory,UseForSales,UseForReceipts,
+  UseForSupplierPayments,UseForPayroll,UseForVouchers,SortOrder)
+  VALUES(N'AURALY_CO',source.PaymentTypeId,source.AccountCategory,1,1,
+    source.UseForSupplierPayments,source.UseForPayroll,1,source.SortOrder);
 
 MERGE dbo.AccountingConfigurationProfileExpenseConcepts AS target
 USING (VALUES
@@ -201,7 +227,7 @@ WHEN NOT MATCHED THEN INSERT(ProfileCode,ReasonType,Code,Name,Direction,Counterp
   VALUES(N'AURALY_CO',source.ReasonType,source.Code,source.Name,source.Direction,source.CounterpartCategory,source.RequiresReference,source.DisplayOrder,1);
 
 ;WITH DefaultAccounts AS(
-  SELECT t.TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,
+  SELECT t.TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,d.FinancialFunction,d.BalanceSide,
     ROW_NUMBER() OVER(PARTITION BY t.TenantId,d.AccountCode
       ORDER BY CASE WHEN d.Category=N'OtherExpense' THEN 0 ELSE 1 END,d.Category) AccountRank
   FROM dbo.Tenants t
@@ -210,8 +236,8 @@ WHEN NOT MATCHED THEN INSERT(ProfileCode,ReasonType,Code,Name,Direction,Counterp
   WHERE t.IsActive=1 AND p.IsDefault=1 AND p.IsActive=1
 )
 INSERT dbo.AccountingAccounts(
-  AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
-SELECT NEWID(),d.TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,1,@AccountingNow
+  AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt,FinancialFunction,BalanceSide)
+SELECT NEWID(),d.TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,d.RequiresParty,1,@AccountingNow,d.FinancialFunction,d.BalanceSide
 FROM DefaultAccounts d
 WHERE d.AccountRank=1 AND NOT EXISTS(
   SELECT 1 FROM dbo.AccountingAccounts a WHERE a.TenantId=d.TenantId AND a.Code=d.AccountCode);

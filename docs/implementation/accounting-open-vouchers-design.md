@@ -3561,6 +3561,42 @@ uso; conservar la presentación no congela los medios técnicos actuales.
 
 ### 14.1 Maestro único de formas de pago del tenant
 
+- Precisión del usuario del 2026-11-15: un tenant nuevo recibe exactamente cuatro
+  formas iniciales: Efectivo, Tarjeta débito, Tarjeta crédito y Transferencia.
+  Comparten identidad entre todas sus sedes; después se pueden agregar otras
+  formas de esos tipos. Crédito cliente conserva su tipo técnico para la venta
+  a plazo, pero no se crea como quinta forma inicial.
+  `AccountingConfigurationProfilePaymentMethods` define esas cuatro plantillas
+  del perfil, con tipo de `reference.Options`, categoría PUC y usos iniciales.
+  No constituye otro catálogo operativo: las formas utilizables siguen viviendo
+  sólo en `reference.PaymentMethods`. `PaymentMethodDefaultsProvision` es el
+  único aprovisionador de formas iniciales, invocado desde alta tenant/sede,
+  completar configuración y despliegue. Sustituye la preparación aditiva del
+  20261109; no recrea formas al agregar una sede ni descubre bancos para crear
+  formas automáticamente. Si ya existe cualquier forma del tipo, la conserva,
+  incluso desactivada, con su cuenta, usos, nombre y versión.
+  Las cuentas nuevas copian función y naturaleza del perfil persistido mediante
+  `DefaultAccountDefinitions`; ninguno de esos caminos cambia cuentas existentes.
+  El seed del perfil obtiene la función desde `PostingCategoryControlFunction`,
+  compartida con habilitación/posting; no mantiene otra clasificación por código
+  PUC. La naturaleza inicial sigue explícita en el perfil, incluido IVA
+  descontable de naturaleza débito aunque su clasificación sea pasivo.
+  Efectivo se habilita para entradas/salidas; las tarjetas iniciales son de
+  recaudo y compensación, no tarjetas corporativas de desembolso. Transferencia
+  queda creada e inactiva con el auxiliar bancario inicial hasta vincular una
+  cuenta bancaria real y activarla explícitamente. La activación inicial usa
+  `PaymentMethodDetails.IsReady`, sin una política alternativa o un banco ficticio.
+  Todo se inserta por conjunto dentro del comando/transacción existente, sin
+  viajes por forma. Rollback conserva tablas/columnas aditivas y formas usadas;
+  sólo se puede volver a binarios compatibles con el esquema y los snapshots
+  aceptados; no se reinician escritores anteriores ni se borran o reinterpretan cuentas.
+  Este aprovisionamiento no habilita por sí solo el corte coordinado de 14.4.
+  La regresión SQL/API dirigida verifica alta nueva, segunda sede, repetición,
+  configuración personalizada y cuenta histórica intacta. El comando completo
+  conserva un viaje SQL y midió 46–504 ms en seis ejecuciones locales, bajo el
+  presupuesto de dos segundos. Nueve regresiones cercanas verifican catálogo,
+  rechazo de auxiliares incompatibles, venta mixta, compra/devolución con CxP e
+  informes con anticipos/cruces. Estos resultados no certifican producción.
 - La definición comercial pertenece al tenant y se comparte en sus sedes.
   Se extiende Catalog con el maestro especializado reference.PaymentMethods,
   no se insertan nombres de bancos por tenant en reference.Options global.
@@ -3766,6 +3802,20 @@ uso; conservar la presentación no congela los medios técnicos actuales.
 
 ### 14.4 Migración, controles y paridad
 
+- Condición expresa del usuario del 2026-11-15: la actualización de Megafruver,
+  único tenant productivo indicado, debe conservar los pagos que ya utiliza.
+  Antes de una promoción futura se debe leer la configuración real de ese
+  destino: formas, tipos, auxiliares, bancos, mappings efectivos y cuentas usadas,
+  junto con cantidades/saldos y evidencia de integridad. DEV no demuestra que
+  producción tenga esos mismos datos. No se cambia una identidad de cuenta
+  utilizada ni se crea un auxiliar para sortear una incompatibilidad sin su
+  tratamiento revisado. La actualización se prueba en aislamiento con el estado
+  previo representativo: operación nueva y repetida, compra/CxP, venta/CxC,
+  pagos vigentes y consulta de los históricos, sin volver a procesarlos.
+  El despliegue se bloquea si una forma que se usaba quedaría inaccesible o si
+  falta una equivalencia demostrable. El bootstrap de cuatro formas no equivale
+  a aprobar ese corte. Esta condición no autoriza desplegar a producción;
+  se mantiene la autorización actual exclusivamente para DEV.
 - Nuevo maestro se carga con equivalencias explícitas de formas técnicas actuales
   por tenant. Se mantienen códigos/snapshots históricos y se resuelve cada cuenta
   válida de forma verificable. Si hay auxiliares ambiguos no se inventa banco;

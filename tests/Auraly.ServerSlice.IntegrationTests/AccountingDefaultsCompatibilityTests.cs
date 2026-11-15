@@ -4,6 +4,96 @@ namespace Auraly.ServerSlice.IntegrationTests;
 
 public sealed partial class AccountingVerticalSliceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Tenant_payment_defaults_are_four_shared_forms_and_reprovisioning_preserves_configuration(bool historicalCash)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        var tenant = Guid.NewGuid(); var business = Guid.NewGuid(); var secondBusiness = Guid.NewGuid();
+        var foreignTenant = Guid.NewGuid();
+        await using (var buffers=new SqlCommand("""
+            SELECT TOP(0) AccountId,CONVERT(binary(8),RowVersion) RowVersion INTO #OriginalCash FROM dbo.AccountingAccounts;
+            SELECT TOP(0) PaymentMethodId,Name,UseForSales,IsActive,Version,CONVERT(binary(8),RowVersion) RowVersion INTO #RetainedForms FROM reference.PaymentMethods;
+            """,connection,transaction)) await buffers.ExecuteNonQueryAsync();
+        try
+        {
+            await using (var setup = new SqlCommand("""
+                INSERT dbo.Tenants(TenantId,Name,Email) VALUES(@Tenant,N'Formas iniciales',CONCAT(@Tenant,N'@example.test')),
+                  (@Foreign,N'Otro tenant',CONCAT(@Foreign,N'@example.test'));
+                INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website)
+                  VALUES(@Business,@Tenant,N'Primera',N'',N'',N'',N'',N''),(@Second,@Tenant,N'Segunda',N'',N'',N'',N'',N'');
+                IF @Historical=1 INSERT dbo.AccountingAccounts(AccountId,TenantId,Code,Name,AccountType,AllowsPosting,
+                  RequiresParty,IsActive,CreatedAt,ConfigurationLockedAt)
+                SELECT NEWID(),@Tenant,AccountCode,AccountName,AccountType,AllowsPosting,RequiresParty,1,@Now,@Now
+                  FROM accounting.DefaultAccountDefinitions(N'AURALY_CO') WHERE Category=N'Cash';
+                INSERT #OriginalCash SELECT AccountId,RowVersion FROM dbo.AccountingAccounts WHERE TenantId=@Tenant;
+                """, connection, transaction))
+            {
+                setup.Parameters.AddWithValue("@Tenant",tenant); setup.Parameters.AddWithValue("@Foreign",foreignTenant);
+                setup.Parameters.AddWithValue("@Business",business); setup.Parameters.AddWithValue("@Second",secondBusiness);
+                setup.Parameters.AddWithValue("@Historical",historicalCash); setup.Parameters.AddWithValue("@Now",DateTimeOffset.UtcNow);
+                await setup.ExecuteNonQueryAsync();
+            }
+            async Task Provision(Guid site)
+            {
+                await using var provision = new SqlCommand("EXEC dbo.AccountingDefaultsProvision @Tenant,@Business,@Now;",connection,transaction);
+                provision.Parameters.AddWithValue("@Tenant",tenant); provision.Parameters.AddWithValue("@Business",site);
+                provision.Parameters.AddWithValue("@Now",DateTimeOffset.UtcNow);
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                await provision.ExecuteNonQueryAsync(); watch.Stop();
+                output.WriteLine("Tenant defaults: {0} commands, {1:F1} ms",counter.Count,watch.Elapsed.TotalMilliseconds);
+                Assert.Equal(1,counter.Count); Assert.True(watch.Elapsed<TimeSpan.FromSeconds(2),watch.Elapsed.ToString());
+            }
+            await Provision(business);
+            await using (var initial = new SqlCommand("""
+                SELECT MethodCode,IsActive,IsReady,UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,UseForVouchers
+                  FROM reference.PaymentMethodDetails WHERE TenantId=@Tenant ORDER BY SortOrder;
+                """,connection,transaction))
+            {
+                initial.Parameters.AddWithValue("@Tenant",tenant);
+                await using var reader = await initial.ExecuteReaderAsync();
+                var types = new List<string>();
+                while(await reader.ReadAsync())
+                {
+                    var type=reader.GetString(0); types.Add(type);
+                    var ready=type!="Transfer" && !(historicalCash && type=="Cash");
+                    Assert.Equal(ready,reader.GetBoolean(1)); Assert.Equal(ready,reader.GetBoolean(2));
+                    Assert.True(reader.GetBoolean(3)); Assert.True(reader.GetBoolean(4)); Assert.True(reader.GetBoolean(7));
+                    Assert.Equal(type is "Cash" or "Transfer",reader.GetBoolean(5));
+                    Assert.Equal(type is "Cash" or "Transfer",reader.GetBoolean(6));
+                }
+                Assert.Equal(new[]{"Cash","DebitCard","CreditCard","Transfer"},types);
+            }
+            await using (var personalize = new SqlCommand("""
+                UPDATE reference.PaymentMethods SET Name=N'Caja personalizada',UseForSales=0,IsActive=0,Version=Version+1
+                  WHERE TenantId=@Tenant AND Code=N'Cash';
+                INSERT #RetainedForms SELECT PaymentMethodId,Name,UseForSales,IsActive,Version,RowVersion
+                  FROM reference.PaymentMethods WHERE TenantId=@Tenant;
+                """,connection,transaction))
+            { personalize.Parameters.AddWithValue("@Tenant",tenant); await personalize.ExecuteNonQueryAsync(); }
+            await Provision(secondBusiness); await Provision(business);
+            await using var verify = new SqlCommand("""
+                SELECT (SELECT COUNT(*) FROM reference.PaymentMethods WHERE TenantId=@Tenant),
+                  (SELECT COUNT(*) FROM reference.PaymentMethods WHERE TenantId=@Foreign),
+                  (SELECT COUNT(*) FROM #RetainedForms original JOIN reference.PaymentMethods currentForm
+                    ON currentForm.PaymentMethodId=original.PaymentMethodId AND currentForm.TenantId=@Tenant
+                    AND currentForm.RowVersion=original.RowVersion),
+                  (SELECT COUNT(*) FROM #OriginalCash original JOIN dbo.AccountingAccounts account ON account.AccountId=original.AccountId
+                    AND account.RowVersion=original.RowVersion AND account.FinancialFunction IS NULL);
+                """,connection,transaction);
+            verify.Parameters.AddWithValue("@Tenant",tenant); verify.Parameters.AddWithValue("@Foreign",foreignTenant);
+            await using var result = await verify.ExecuteReaderAsync(); Assert.True(await result.ReadAsync());
+            Assert.Equal(4,result.GetInt32(0)); Assert.Equal(0,result.GetInt32(1)); Assert.Equal(4,result.GetInt32(2));
+            Assert.Equal(historicalCash?1:0,result.GetInt32(3));
+        }
+        finally { await transaction.RollbackAsync(); }
+    }
+
     [Fact]
     public async Task Reprovisioning_preserves_the_users_existing_mapping_across_years()
     {
