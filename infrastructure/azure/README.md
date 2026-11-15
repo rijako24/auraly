@@ -97,11 +97,21 @@ La exigencia de Admin se comprueba sobre `manifest.deploymentComponents`: el
 workflow lo publica en su propio job y no lo pasa como componente al adaptador
 de nube. API y Function sí deben estar en el subconjunto que ese adaptador va a
 publicar. La regresión ejecuta el guard con esta misma separación.
+En ese corte, el job paralelo del instalador no espera la API detenida: el job
+de nube y la verificación final comprueban su salud después de publicar los
+binarios compatibles. Una publicación independiente del instalador conserva
+su comprobación de API.
 Si falla el corte, no se reinician automáticamente los binarios anteriores contra
 el esquema nuevo. Para el PUC compartido se conserva la dimensión histórica en
 `LegacyBusinessId`; el retorno a binarios anteriores exige una reversión
 coordinada y revisada. Después de registrar operaciones con cuentas compartidas
 se prefiere corregir hacia adelante, preservando sus movimientos.
+
+La retirada idempotente de los helpers de configuración aceptada se ejecuta
+también en la lista revisada previa al DACPAC, después de detener consumidores.
+Así el plan no conserva dependencias de funciones que ya no pertenecen al
+esquema actual. Se reutiliza `20261113_RetireAcceptedAccountConfiguration.sql`;
+no se eliminan documentos, fuentes, trabajos ni partidas.
 
 El catálogo compartido de centros usa TenantId y una respuesta paginada. Admin
 debe pertenecer al mismo release para consumir ese contrato; después de la

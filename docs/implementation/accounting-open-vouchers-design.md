@@ -5278,7 +5278,10 @@ procedimientos `AccountMappingsFreeze`, `BankAccountsFreeze`,
 `PortfolioPaymentAccountsFreeze` y `ResolvedPostingAccount`, sin tocar filas ni
 encolar/reintentar recepciones antiguas. Es idempotente. Exige detener y drenar
 los consumidores contables anteriores antes de publicar esquema y aplicación
-coordinadamente. No se autoriza despliegue desde este checkout sin integrar.
+coordinadamente. El publicador ejecuta esa misma retirada antes de generar el
+plan del DACPAC para que los objetos retirados no bloqueen la verificación por
+dependencias; el postdeployment conserva su llamada idempotente. No se autoriza
+despliegue desde este checkout sin integrar.
 
 Reportes históricos: no cambia AccountType, identidad ni líneas contabilizadas;
 por tanto este corte no reclasifica su presentación. Los nuevos asientos pueden
