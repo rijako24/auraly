@@ -36,6 +36,7 @@ AS RETURN
             CONVERT(decimal(19,4),0)) PendingAdjustmentAmount,
         COUNT_BIG(*) PendingAdjustmentCount
             FROM dbo.AccountingSourceDocuments s
+              WITH(FORCESEEK(IX_AccountingSourceDocuments_AdjustmentObligation(BusinessId,AdjustmentObligationId)))
             WHERE s.BusinessId=@BusinessId AND s.SourceDocumentType=N'AccountAdjustment'
                 AND s.AdjustmentObligationId=@SubledgerId
                 AND (@ExcludedAdjustmentId IS NULL OR s.SourceDocumentId<>@ExcludedAdjustmentId)

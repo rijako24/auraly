@@ -123,6 +123,33 @@ Estos ajustes sólo cambian planes de lectura; revertirlos no modifica datos
 ni requiere migración. Las mediciones locales y el gate completo se vuelven
 a ejecutar antes de autorizar el despliegue.
 
+La ejecución CI 43693287422 aprobó 1.024/1.025 integraciones y rechazó el
+informe CxP anterior a desaplicaciones por p95 de 1.185,7 ms frente al límite
+de 1.000. El perfil mostró que sus agregados arrastraban nombres y referencias
+de `#Scoped` a una ordenación de 20.000 transacciones con filas de 613 bytes.
+CxP reutiliza ahora el patrón de claves estrechas de CxC: captura una vez las
+identidades filtradas y une sólo esas claves a movimientos e importes aplicados.
+La fila documental se recupera al componer el resultado. No cambia el corte,
+signos, moneda, filtros, totales, páginas o límite de exportación. Conserva dos
+viajes SQL y exige el mismo presupuesto y una comprobación física que impide
+ordenar etiquetas documentales dentro del agregado financiero. Quedan por
+ejecutar sus checks posteriores; el rollback retira sólo esta preparación
+temporal, sin escrituras financieras ni migración.
+
+El selector administrativo comparte `ObligationAvailability` con la aceptación
+y el processor. Su perfil con 10.000 obligaciones mostró 25 scans de
+`AccountingSourceDocuments` para comprobar que no existían ajustes: 21.725
+lecturas lógicas y 1.696 físicas. La función exige ahora la búsqueda por sede
+y obligación en `IX_AccountingSourceDocuments_AdjustmentObligation`, ya existente
+y filtrado por `AccountAdjustment`. Conserva todos los predicados, exclusiones,
+reservas y bloqueos del llamador; no cambia importes ni abre otra política.
+El perfil posterior confirma 25 seeks y cero fuentes leídas en ese escenario.
+La regresión física corre después de las muestras de tiempo; también se vuelve
+a ejecutar la prueba existente con 21.000 ajustes reales. Los límites de primera
+carga, páginas y reportes se conservan y sus fallos siguen bloqueando la entrega.
+Rollback publica la definición anterior de la función, sin tocar documentos o
+saldos; el índice pertenece al mismo proyecto SQL versionado.
+
 La validación de correcciones conserva `ValidatePaymentVerificationsAsync`
 como único propietario y su transacción serializable. Sus fuentes opcionales
 usan búsquedas explícitas por sus claves indexadas, conservando el filtro de
