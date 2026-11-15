@@ -127,7 +127,9 @@ for (const direction of ["receivables", "payables"] as const) {
       } else if (path.endsWith("/portfolio/parties/site-options")) {
         body = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0 };
       } else if (path.endsWith("/portfolio/parties/role-options")) {
-        body = {items:[{partyId:"party-2",roleId:"customer-2",role:"Customer",displayName:"Cliente B",identification:"900200002"}],page:1,pageSize:10,totalCount:1,totalPages:1};
+        body = {items:[{partyId:"party-2",roleId:direction === "receivables" ? "customer-2" : "supplier-2",
+          role:direction === "receivables" ? "Customer" : "Supplier",displayName:direction === "receivables" ? "Cliente B" : "Proveedor B",
+          identification:"900200002"}],page:1,pageSize:10,totalCount:1,totalPages:1};
       }
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     });
@@ -145,7 +147,7 @@ for (const direction of ["receivables", "payables"] as const) {
     await expect(dialog.getByText(/AB-1/)).toHaveCount(0);
     expect(reportRequests[0].searchParams.get("includeApplications")).toBe("false");
     expect(reportRequests[0].searchParams.get("cutoff")).toBe("2026-11-11");
-    await dialog.getByRole("checkbox", { name: direction === "receivables" ? "Mostrar detalle de abonos" : "Mostrar detalle de pagos" }).check();
+    await dialog.getByRole("button", { name: direction === "receivables" ? "Detallado con abonos" : "Detallado con pagos", exact:true }).click();
     await expect(dialog.getByText(/AB-1/)).toBeVisible();
     expect(reportRequests.at(-1)!.searchParams.get("includeApplications")).toBe("true");
     await expect(dialog.getByRole("heading", { name: direction === "receivables" ? "Cliente A" : "Proveedor A" })).toBeVisible();
@@ -171,7 +173,7 @@ for (const direction of ["receivables", "payables"] as const) {
     await expect(dialog.getByText("FAC-2", { exact: true })).toBeVisible();
     expect(reportRequests).toHaveLength(3);
     expect(reportRequests[2].searchParams.get("page")).toBe("2");
-    await dialog.getByRole("button", { name: /Consolidado/ }).click();
+    await dialog.getByRole("button", { name: "Consolidado general", exact:true }).click();
     await expect.poll(() => reportRequests.length).toBe(4);
     const summaryRequest = reportRequests.at(-1)!;
     expect(summaryRequest.searchParams.get("page")).toBe("1");
@@ -185,7 +187,7 @@ for (const direction of ["receivables", "payables"] as const) {
     expect(popups).toBe(0);
     expect(printRequests).toHaveLength(1);
     expect(printRequests[0].searchParams.has("pageSize")).toBe(false);
-    await dialog.getByRole("button", { name: "Detallado" }).click();
+    await dialog.getByRole("button", { name: direction === "receivables" ? "Detallado con abonos" : "Detallado con pagos", exact:true }).click();
     await dialog.getByRole("combobox", { name: "Ordenar documentos por" }).click();
     await page.getByRole("option", { name: "Valor original" }).click();
     await expect.poll(() => reportRequests.at(-1)?.searchParams.get("sortBy")).toBe("originalAmount");
@@ -221,7 +223,7 @@ for (const direction of ["receivables", "payables"] as const) {
       await expect(dialog.getByRole("columnheader",{name:"Mora (días)",exact:true})).toBeVisible();
       await expect(dialog.getByText(/Calle de prueba 123/)).toBeVisible();
       await expect(dialog.getByText("Subtotal cliente / sede · 51 documentos filtrados")).toBeVisible();
-      await dialog.getByText("Filtros del informe",{exact:true}).click();
+      await dialog.getByText("Más filtros",{exact:true}).click();
       const beforeDraft = reportRequests.length;
       await dialog.getByRole("combobox",{name:"Cliente del informe"}).click();
       await page.getByRole("option",{name:/Cliente B/}).click();
@@ -251,6 +253,9 @@ for (const direction of ["receivables", "payables"] as const) {
       await dialog.getByRole("spinbutton",{name:"Edad desde (días)"}).fill("20");
       await dialog.getByRole("spinbutton",{name:"Edad hasta (días)"}).fill("10");
       await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await expect(dialog.getByRole("alert")).toContainText("Revisa los rangos");
+      expect(reportRequests).toHaveLength(beforeInvalid);
+      await dialog.getByRole("button",{name:"Consolidado con saldo",exact:true}).click();
       await expect(dialog.getByRole("alert")).toContainText("Revisa los rangos");
       expect(reportRequests).toHaveLength(beforeInvalid);
       await dialog.getByRole("spinbutton",{name:"Edad desde (días)"}).fill("");
@@ -310,9 +315,37 @@ for (const direction of ["receivables", "payables"] as const) {
       const groupedPdfDownload=page.waitForEvent("download");
       await dialog.getByRole("button",{name:"Descargar PDF",exact:true}).click();
       await (await groupedPdfDownload).saveAs(test.info().outputPath("cartera-por-cliente.pdf"));
-      await dialog.getByText("Filtros del informe",{exact:true}).click();
+      await dialog.getByText("Más filtros",{exact:true}).click();
       await clientA.scrollIntoViewIfNeeded();
       await page.screenshot({path:test.info().outputPath("cartera-por-cliente-con-edades.png"),fullPage:true});
     }
+    const beforeParty=reportRequests.length;
+    await dialog.getByRole("combobox",{name:direction === "receivables" ? "Cliente del informe" : "Proveedor del informe"}).click();
+    await page.getByRole("option",{name:direction === "receivables" ? /Cliente B/ : /Proveedor B/}).click();
+    expect(reportRequests).toHaveLength(beforeParty);
+    const shortcuts=[
+      {label:"Consolidado general",summary:true,balance:false,applications:false,status:null},
+      {label:"Consolidado con saldo",summary:true,balance:true,applications:false,status:null},
+      {label:"Detallado con saldo",summary:false,balance:true,applications:false,status:null},
+      {label:direction === "receivables" ? "Detallado con abonos" : "Detallado con pagos",summary:false,balance:false,applications:true,status:null},
+      {label:"Detallado sin saldo",summary:false,balance:false,applications:false,status:"Paid"},
+      {label:"Detallado general",summary:false,balance:false,applications:false,status:null},
+    ];
+    for(const shortcut of shortcuts) {
+      const before=reportRequests.length;
+      await dialog.getByRole("button",{name:shortcut.label,exact:true}).click();
+      await expect.poll(()=>reportRequests.length).toBe(before+1);
+      const requested=reportRequests.at(-1)!;
+      expect(requested.searchParams.get(direction === "receivables" ? "customerId" : "supplierId"))
+        .toBe(direction === "receivables" ? "customer-2" : "supplier-2");
+      expect(requested.searchParams.get("consolidated")).toBe(String(shortcut.summary));
+      expect(requested.searchParams.get("outstandingOnly")).toBe(String(shortcut.balance));
+      expect(requested.searchParams.get("includeApplications")).toBe(String(shortcut.applications));
+      expect(requested.searchParams.get("status")).toBe(shortcut.status);
+      expect(requested.searchParams.get("cutoff")).toBe("2026-11-11");
+      expect(requested.searchParams.get("page")).toBe("1");
+      await expect(dialog.getByRole("button",{name:shortcut.label,exact:true})).toHaveAttribute("aria-pressed","true");
+    }
+    await page.screenshot({path:test.info().outputPath("cartera-reportes-listos.png"),fullPage:true});
   });
 }

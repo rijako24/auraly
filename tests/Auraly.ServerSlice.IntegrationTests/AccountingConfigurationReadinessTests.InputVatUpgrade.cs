@@ -44,11 +44,11 @@ public sealed partial class AccountingConfigurationReadinessTests
     public async Task An_already_valid_source_is_preserved_when_the_reviewed_plan_is_outdated()
     {
         using var scope=fixture.CreateScope(); var store=scope.ServiceProvider.GetRequiredService<IAccountingStore>();
-        var original=await InputVatMappingAsync(); var targetId=Guid.NewGuid();
-        var accountBefore=await InputVatAccountEvidenceAsync(original.AccountId);
-        await ApplyInputVatUpgradeAsync(InputVatPlan(original,targetId,"240813",original.EffectiveFrom.AddDays(1)));
-        Assert.Equal(original,await InputVatMappingAsync());
-        Assert.Equal(accountBefore,await InputVatAccountEvidenceAsync(original.AccountId));
+        var original=await ReadPostingMappingAsync(); var targetId=Guid.NewGuid();
+        var accountBefore=await ReadAccountEvidenceAsync(original.AccountId);
+        await ApplyReviewedMappingUpgradeAsync(InputVatPlan(original,targetId,"240813",original.EffectiveFrom.AddDays(1)));
+        Assert.Equal(original,await ReadPostingMappingAsync());
+        Assert.Equal(accountBefore,await ReadAccountEvidenceAsync(original.AccountId));
         Assert.DoesNotContain(await store.ListAccountsAsync(User,default),account=>account.AccountId==targetId);
     }
 
@@ -56,7 +56,7 @@ public sealed partial class AccountingConfigurationReadinessTests
     public async Task Reviewed_input_vat_upgrade_preserves_used_accounts_and_pending_receipts_and_posts_a_new_backdated_purchase_once()
     {
         using var scope=fixture.CreateScope(); var store=scope.ServiceProvider.GetRequiredService<IAccountingStore>();
-        var original=await InputVatMappingAsync();
+        var original=await ReadPostingMappingAsync();
         var accounts=await store.ListAccountsAsync(User,default);
         var source=Assert.Single(accounts,account=>account.AccountId==original.AccountId);
         var targetId=accounts.SingleOrDefault(account=>account.Code=="240811")?.AccountId ?? Guid.NewGuid();
@@ -77,30 +77,30 @@ public sealed partial class AccountingConfigurationReadinessTests
             Assert.Contains("\"payables\":0",pendingBefore);
             Assert.Contains("\"entries\":0",pendingBefore);
             Assert.Contains("\"movements\":1",pendingBefore);
-            var accountBefore=await InputVatAccountEvidenceAsync(source.AccountId);
+            var accountBefore=await ReadAccountEvidenceAsync(source.AccountId);
             var historyBefore=await ReceiptEvidenceAsync(historical.DocumentId);
             var balanceBefore=await store.GetBalanceSheetAsync(User,new(2026,8,2),default);
             Assert.Contains(balanceBefore,row=>row.AccountCode==source.Code && row.Section=="Asset");
             var plan=InputVatPlan(original,targetId,"240811");
 
-            await ApplyInputVatUpgradeAsync(plan);
-            Assert.Equal(accountBefore,await InputVatAccountEvidenceAsync(source.AccountId));
+            await ApplyReviewedMappingUpgradeAsync(plan);
+            Assert.Equal(accountBefore,await ReadAccountEvidenceAsync(source.AccountId));
             Assert.Equal(historyBefore,await ReceiptEvidenceAsync(historical.DocumentId));
             Assert.Equal(pendingBefore,await ReceiptEvidenceAsync(pending.DocumentId));
             Assert.Equal(balanceBefore,await store.GetBalanceSheetAsync(User,new(2026,8,2),default));
-            var after=await InputVatMappingAsync();
+            var after=await ReadPostingMappingAsync();
             Assert.Equal(targetId,after.AccountId); Assert.Equal(original.MappingId,after.MappingId);
             Assert.Equal(original.EffectiveFrom,after.EffectiveFrom); Assert.Equal(original.EffectiveTo,after.EffectiveTo);
             Assert.True((await store.EnsureDefaultsAsync(User,default)).IsReady);
             Assert.Empty((await store.GetReadinessAsync(User,new(2026,8,3),null,default)).BlockingIssues);
 
-            await ApplyInputVatUpgradeAsync(plan);
-            Assert.Equal(after,await InputVatMappingAsync()); // Includes the unchanged mapping rowversion.
+            await ApplyReviewedMappingUpgradeAsync(plan);
+            Assert.Equal(after,await ReadPostingMappingAsync()); // Includes the unchanged mapping rowversion.
             // The full published DACPAC also keeps this used account and the
             // explicitly selected mapping. Publishing is outside timed reads.
             await fixture.ReapplySchemaAsync();
-            Assert.Equal(accountBefore,await InputVatAccountEvidenceAsync(source.AccountId));
-            Assert.Equal(after,await InputVatMappingAsync());
+            Assert.Equal(accountBefore,await ReadAccountEvidenceAsync(source.AccountId));
+            Assert.Equal(after,await ReadPostingMappingAsync());
             Assert.Equal(pendingBefore,await ReceiptEvidenceAsync(pending.DocumentId));
 
             // Record the first complete operation after publishing separately.
@@ -168,11 +168,11 @@ public sealed partial class AccountingConfigurationReadinessTests
             await ConfirmAsync(next);
             await scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>().ProcessAsync(
                 next.DocumentId,"GoodsReceipt",fixture.BusinessId,default);
-            await ApplyInputVatUpgradeAsync(plan);
+            await ApplyReviewedMappingUpgradeAsync(plan);
             Assert.Equal(newBeforeReplay,await ReceiptEvidenceAsync(next.DocumentId));
             Assert.Equal(pendingBefore,await ReceiptEvidenceAsync(pending.DocumentId));
             Assert.Equal(historyBefore,await ReceiptEvidenceAsync(historical.DocumentId));
-            Assert.Equal(accountBefore,await InputVatAccountEvidenceAsync(source.AccountId));
+            Assert.Equal(accountBefore,await ReadAccountEvidenceAsync(source.AccountId));
 
             var service=scope.ServiceProvider.GetRequiredService<AccountingService>();
             var own=(await store.ListAccountsAsync(User,default)).SingleOrDefault(account=>account.Code=="240812")
@@ -181,9 +181,9 @@ public sealed partial class AccountingConfigurationReadinessTests
                     new(null,"General","Debit",null,null,null)));
             await service.SetMappingAsync(User,new(fixture.TenantId,null,"InputVat",own.AccountId,
                 original.EffectiveFrom,original.EffectiveTo));
-            var custom=await InputVatMappingAsync();
-            await ApplyInputVatUpgradeAsync(plan);
-            Assert.Equal(custom,await InputVatMappingAsync());
+            var custom=await ReadPostingMappingAsync();
+            await ApplyReviewedMappingUpgradeAsync(plan);
+            Assert.Equal(custom,await ReadPostingMappingAsync());
             Assert.Equal(own.AccountId,custom.AccountId);
 
             // A new return is a new operation, not a repair/replay of the old
@@ -243,7 +243,7 @@ public sealed partial class AccountingConfigurationReadinessTests
     public async Task Input_vat_upgrade_rolls_back_ambiguity_collisions_and_unreviewed_configuration(string fault)
     {
         using var scope=fixture.CreateScope(); var store=scope.ServiceProvider.GetRequiredService<IAccountingStore>();
-        var original=await InputVatMappingAsync();
+        var original=await ReadPostingMappingAsync();
         var source=Assert.Single(await store.ListAccountsAsync(User,default),account=>account.AccountId==original.AccountId);
         var targetId=Guid.NewGuid(); var targetCode="240813"; Guid? extraOverride=null; Guid? extraCompliance=null;
         await SetInputVatTypeAsync("Asset",source.AccountId);
@@ -281,13 +281,13 @@ public sealed partial class AccountingConfigurationReadinessTests
                 fiscal.Parameters.AddWithValue("@Id",extraCompliance.Value); fiscal.Parameters.AddWithValue("@Tenant",fixture.TenantId);
                 fiscal.Parameters.AddWithValue("@Account",source.AccountId); await fiscal.ExecuteNonQueryAsync();
             }
-            var accountBefore=await InputVatAccountEvidenceAsync(source.AccountId);
+            var accountBefore=await ReadAccountEvidenceAsync(source.AccountId);
             var plan=fault=="unreviewed" ? "[]" : InputVatPlan(original,targetId,targetCode,
                 fault=="changed-range" ? original.EffectiveFrom.AddDays(1) : null);
-            var error=await Assert.ThrowsAsync<SqlException>(()=>ApplyInputVatUpgradeAsync(plan));
+            var error=await Assert.ThrowsAsync<SqlException>(()=>ApplyReviewedMappingUpgradeAsync(plan));
             Assert.Equal(fault switch {"changed-range"=>51931,"collision"=>51933,"compliance-mapping"=>51937,_=>51935},error.Number);
-            Assert.Equal(original,await InputVatMappingAsync());
-            Assert.Equal(accountBefore,await InputVatAccountEvidenceAsync(source.AccountId));
+            Assert.Equal(original,await ReadPostingMappingAsync());
+            Assert.Equal(accountBefore,await ReadAccountEvidenceAsync(source.AccountId));
             Assert.DoesNotContain(await store.ListAccountsAsync(User,default),account=>account.AccountId==targetId);
         }
         finally
@@ -381,25 +381,29 @@ public sealed partial class AccountingConfigurationReadinessTests
         new(date.AddDays(30).ToDateTime(new(9,0)),TimeSpan.FromHours(-5)),"COP",null,
         [new(1,fixture.ProductId,"Compra para migración de IVA",1m,10_000m,0m,"01",19m,PurchasingTaxTreatments.DeductibleInputVat)]);
 
-    private string InputVatPlan(InputVatMapping original,Guid targetId,string code,DateOnly? from=null) => JsonSerializer.Serialize(new[] {
-        new { tenantId=fixture.TenantId,mappingId=original.MappingId,sourceAccountId=original.AccountId,
+    private string InputVatPlan(PostingMapping original,Guid targetId,string code,DateOnly? from=null) => JsonSerializer.Serialize(new[] {
+        new { category="InputVat", sourceCode="240810", sourceName="IVA descontable", sourceType="Asset",
+            sourceFunction=(string?)null,sourceSide=(string?)null,sourceBankAccountId=(Guid?)null,
+            targetType="Liability",targetFunction="General",targetSide="Debit",
+            tenantId=fixture.TenantId,mappingId=original.MappingId,sourceAccountId=original.AccountId,
             effectiveFrom=from ?? original.EffectiveFrom,effectiveTo=original.EffectiveTo,targetAccountId=targetId,
             targetCode=code,targetName="IVA descontable en compras" } });
 
-    private async Task ApplyInputVatUpgradeAsync(string plan)
+    private async Task ApplyReviewedMappingUpgradeAsync(string plan)
     {
         await using var connection=new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
-        await fixture.ApplyMigrationAsync("20261111_ApplyInputVatMappingUpgrade.sql",connection,
-            parameters:new Dictionary<string,object>{{"@InputVatUpgradePlanJson",plan}});
+        await fixture.ApplyMigrationAsync("20261115_ApplyReviewedPostingMappingUpgrade.sql",connection,
+            parameters:new Dictionary<string,object>{{"@PostingMappingUpgradePlanJson",plan}});
     }
 
-    private async Task<InputVatMapping> InputVatMappingAsync()
+    private async Task<PostingMapping> ReadPostingMappingAsync(string category="InputVat")
     {
         await using var connection=new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         await using var command=new SqlCommand("""
             SELECT TOP(1) MappingId,AccountId,EffectiveFrom,EffectiveTo,RowVersion FROM dbo.AccountingAccountMappings
-            WHERE TenantId=@Tenant AND Category=N'InputVat' AND BusinessId IS NULL ORDER BY EffectiveFrom DESC;
+            WHERE TenantId=@Tenant AND Category=@Category AND BusinessId IS NULL ORDER BY EffectiveFrom DESC;
             """,connection); command.Parameters.AddWithValue("@Tenant",fixture.TenantId);
+        command.Parameters.AddWithValue("@Category",category);
         await using var reader=await command.ExecuteReaderAsync(); Assert.True(await reader.ReadAsync());
         return new(reader.GetGuid(0),reader.GetGuid(1),DateOnly.FromDateTime(reader.GetDateTime(2)),
             reader.IsDBNull(3) ? null : DateOnly.FromDateTime(reader.GetDateTime(3)),Convert.ToBase64String(reader.GetFieldValue<byte[]>(4)));
@@ -414,7 +418,7 @@ public sealed partial class AccountingConfigurationReadinessTests
         command.Parameters.AddWithValue("@Tenant",fixture.TenantId); Assert.Equal(1,await command.ExecuteNonQueryAsync());
     }
 
-    private async Task RestoreInputVatAsync(InputVatMapping original,string type)
+    private async Task RestoreInputVatAsync(PostingMapping original,string type)
     {
         await SetInputVatTypeAsync(type,original.AccountId);
         await using var connection=new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
@@ -428,7 +432,7 @@ public sealed partial class AccountingConfigurationReadinessTests
         command.Parameters.AddWithValue("@From",original.EffectiveFrom.ToDateTime(TimeOnly.MinValue)); Assert.Equal(1,await command.ExecuteNonQueryAsync());
     }
 
-    private async Task<string> InputVatAccountEvidenceAsync(Guid id)
+    private async Task<string> ReadAccountEvidenceAsync(Guid id)
     {
         await using var connection=new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         await using var command=new SqlCommand("SELECT (SELECT * FROM dbo.AccountingAccounts WHERE AccountId=@Id AND TenantId=@Tenant FOR JSON PATH)",connection);
@@ -457,5 +461,5 @@ public sealed partial class AccountingConfigurationReadinessTests
         return (string)(await command.ExecuteScalarAsync())!;
     }
 
-    private sealed record InputVatMapping(Guid MappingId,Guid AccountId,DateOnly EffectiveFrom,DateOnly? EffectiveTo,string Version);
+    private sealed record PostingMapping(Guid MappingId,Guid AccountId,DateOnly EffectiveFrom,DateOnly? EffectiveTo,string Version);
 }

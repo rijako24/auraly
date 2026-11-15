@@ -9,7 +9,7 @@ del objetivo completo al final de esta sección.
 
 ## Cierre de presentación y saldos del 2026-11-09
 
-Este cierre y su actualización de presentación del 14-11-2026 prevalecen sobre
+Este cierre y sus actualizaciones de presentación del 14 y 15-11-2026 prevalecen sobre
 las descripciones anteriores de la salida del informe.
 El propietario de recibos/anticipos es la sección 14 de
 [comprobantes abiertos](implementation/accounting-open-vouchers-design.md);
@@ -589,14 +589,14 @@ La [prohibición de descuentos salariales sin autorización individual o mandami
 
 ## Informes de cuentas por cobrar y por pagar
 
-Cada módulo tendrá un único botón **Reportes** en su encabezado. Abre directamente el visor con **Detallado** y permite cambiar a **Consolidado** dentro de ese mismo visor. El visor adopta los filtros activos de la cartera, sin repetir el formulario; solo permite elegir la fecha de corte, que no existe en la grilla operativa. La impresión prepara el informe completo en la misma ventana, sin abrir otra pestaña. No se crea un tercer informe de movimientos: los abonos y pagos se consultan dentro del detallado.
+Cada módulo tiene un único botón **Reportes** en su encabezado. Abre el visor con los filtros activos de la cartera y ofrece los seis accesos directos descritos abajo, junto al selector de tercero y la fecha de corte. Los demás controles quedan en **Más filtros**. La impresión prepara el informe completo en la misma ventana, sin abrir otra pestaña. No se crea un tercer informe de movimientos: los abonos y pagos se consultan dentro del detallado.
 
 | Informe | Cuentas por cobrar | Cuentas por pagar |
 | --- | --- | --- |
 | Detallado | Cliente y sede → factura → fecha, número e importe de cada abono aplicado; original, total abonado y saldo por factura y por cliente/sede. | Proveedor y sede → factura de compra o gasto → fecha, comprobante e importe de cada pago aplicado; original, total pagado y saldo por obligación y por proveedor/sede. |
 | Consolidado | Una fila por cliente y sede: número de facturas, original, total abonado, saldo pendiente y vencido. | Una fila por proveedor y sede, separada además por moneda: número de obligaciones, original, total pagado, saldo pendiente y vencido. |
 
-Ambos informes aplican los filtros activos del módulo: tercero y sede, búsqueda, fecha de registro desde/hasta, estado y solo vencidas; CxP también conserva el concepto. La fecha de emisión sigue visible como dato del documento. La fecha de corte se elige en el visor. El rango de registro usa la misma versión de calendario que la grilla operativa (admin: días de sede, dateRangeVersion=2; contrato anterior: UTC), para que una selección no cambie el conjunto al abrir el reporte. El corte se interpreta en la zona horaria configurada para la sede, incluida su medianoche final; determina qué facturas y aplicaciones existían a esa fecha. Un abono posterior no reduce retroactivamente el saldo. Sin tercero seleccionado se incluyen todos, no solo los que aparecen en la grilla de la página. El estado y el vencimiento se evalúan al corte y los filtros se aplican en servidor antes de paginar y totalizar. Los totales del encabezado representan todo el conjunto filtrado, no la página visible. El informe conserva una instantánea de los filtros al abrirse; el usuario los cambia en la cartera y vuelve a abrirlo si necesita otros. El filtro interno **solo con saldo** sigue disponible en el contrato del servidor para otros consumidores, pero no se añade un control redundante al visor.
+Ambos informes adoptan los filtros activos del módulo: tercero y sede, búsqueda, fecha de registro desde/hasta, estado y solo vencidas; CxP también conserva el concepto. El usuario puede ajustar los criterios desde el mismo visor mediante el selector de tercero, un acceso directo o **Más filtros**, y aplicarlos explícitamente. La fecha de emisión sigue visible como dato del documento. La fecha de corte se elige en el visor. El rango de registro usa la misma versión de calendario que la grilla operativa (admin: días de sede, dateRangeVersion=2; contrato anterior: UTC), para que una selección no cambie el conjunto al abrir el reporte. El corte se interpreta en la zona horaria configurada para la sede, incluida su medianoche final; determina qué facturas y aplicaciones existían a esa fecha. Un abono posterior no reduce retroactivamente el saldo. Sin tercero seleccionado se incluyen todos, no solo los que aparecen en la grilla de la página. El estado y el vencimiento se evalúan al corte y los filtros se aplican en servidor antes de paginar y totalizar. Los totales del encabezado representan todo el conjunto filtrado, no la página visible. **Solo con saldo** reutiliza el criterio existente del servidor, tanto desde su acceso directo como desde los filtros avanzados.
 
 El detallado pagina facturas u obligaciones y carga las aplicaciones de esa misma página por lote; la paginación nunca divide la historia de pagos de una factura. Agrupa visualmente cada página por cliente/proveedor y sede, con una sección de documentos y abonos/pagos aplicados por documento. El consolidado pagina clientes/proveedores con sede y moneda. Ambos permiten ordenar columnas en servidor e imprimir el reporte completo con una presentación coherente con el visor vigente. La consulta normal descarga solo la página visible. La impresión es una acción explícita: una consulta del servidor reutiliza los filtros, totales y ordenamiento del informe, obtiene hasta 5.001 filas en el mismo viaje y prepara una vista imprimible solo si hay como máximo 5.000; si supera ese límite solicita acotar los filtros, sin truncar datos. No se hace una lectura por tercero, factura o pago. `ReceivablesService` y `PayablesService` conservan la autoridad sobre importes, aplicaciones, permisos y filtros; Reporting compone la presentación sin recalcular saldos ni crear un ledger alterno. Objetivo de respuesta de página y totales: menos de un segundo en el volumen operativo medido, con índices y plan de ejecución verificados.
 
@@ -606,9 +606,39 @@ Las filas de **Recaudos** y **Pagos** ofrecen **Ver e imprimir** a quienes tiene
 
 El saldo al corte incluye únicamente movimientos cuya fecha efectiva y cuya fecha de aplicación/registro son anteriores al final del día de corte. Así un pago registrado después no altera retroactivamente el informe aunque su fecha de pago se haya escrito hacia atrás. **Notas y ajustes** muestra la diferencia entre original, pagos y saldo; hace visibles devoluciones, notas crédito y ajustes de cartera sin llamarlos pagos. La consulta del informe y la exportación deben usar el mismo cálculo autoritativo.
 
+En CxP, los agregados financieros por identidad se materializan antes de unir
+nombres, referencias y demás datos descriptivos. La barrera conserva el cálculo
+canónico y evita que SQL arrastre esas columnas al ordenar los movimientos.
+La regresión inspecciona ambos pasos después de medir 10.000 posiciones;
+se mantienen dos comandos SQL por informe y el presupuesto de p95 inferior a 1.000 ms.
+
+Por solicitud del 2026-11-15, el visor común ofrece seis accesos directos:
+consolidado general, consolidado con saldo, detallado general, detallado con
+saldo, detallado con abonos/pagos y detallado sin saldo. Son acciones de
+presentación y criterios existentes, no otro catálogo ni motor de reportes.
+El selector de cliente/proveedor queda visible; elegir un acceso aplica ese
+tercero y conserva corte, rangos y búsqueda. Los controles específicos de edad,
+mora, documento y presentación se agrupan en **Más filtros**.
+Con saldo pide OutstandingOnly al servidor; sin saldo pide el estado histórico
+Paid al corte, incluidas obligaciones saldadas por ajustes. El detalle con
+abonos/pagos muestra aplicaciones por documento y no excluye facturas sin abonos.
+El detallado general conserva el total abonado en su columna, sin ese desglose.
+Los mismos criterios alimentan página, impresión y exportación. Una acción
+reinicia página/orden en el propietario de consulta existente y produce como
+máximo una solicitud HTTP del informe; no agrega refetch ni filtro sobre la página.
+
+La prueba de navegador `portfolio-report.spec.ts` aprobó ambos sentidos con
+datos controlados: seis accesos, tercero preservado, una solicitud por cambio,
+página/orden reiniciados, rangos inválidos sin consulta, paginación, marca,
+PDF/Excel y vista móvil. La revisión adicional contra la API y SQL locales
+comprobó en el mismo cliente factura saldada, exclusión del documento al pedir
+pendientes, desglose del recibo de abono y conservación del anticipo restante.
+El anticipo puede seguir visible aunque no haya facturas pendientes; no se
+oculta ni se convierte en una deuda. No cambia la plantilla publicada.
+
 CxC opera en COP. CxP admite varias monedas y nunca suma USD y COP como un único importe: los subtotales y el consolidado se separan por `CurrencyCode`. La sede es parte de la agrupación; una obligación histórica asignada a la sede principal aparece allí conforme a la migración de cartera aprobada.
 
-Cuando se imprime el informe con corte en el día actual, el servidor limita los movimientos al instante en que inicia la consulta para que las aplicaciones nuevas no aparezcan a mitad del documento.
+Impresión y exportación usan el día local completo solicitado, igual que el visor; no sustituyen el corte por la hora de descarga. La coherencia de la lectura no modifica ese límite temporal.
 
 ## Cruce de CxP con CxC
 

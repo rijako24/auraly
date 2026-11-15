@@ -408,9 +408,10 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             var operators = profile.RootElement.EnumerateArray().ToArray();
             if (operators.Length == 0) continue;
             var statement = operators[0].GetProperty("StmtText").GetString()!;
-            if (supplier && statement.Contains("INTO #Ledger", StringComparison.Ordinal))
+            if (supplier && (statement.Contains("INTO #Ledger", StringComparison.Ordinal) ||
+                statement.Contains("INTO #FinancialAmounts", StringComparison.Ordinal)))
             {
-                foundNarrowSupplierLedger = true;
+                foundNarrowSupplierLedger |= statement.Contains("INTO #Ledger", StringComparison.Ordinal);
                 Assert.DoesNotContain(operators, item => item.GetProperty("PhysicalOp").GetString() == "Sort"
                     && item.GetProperty("OutputList").GetString() is { } fields
                     && System.Text.RegularExpressions.Regex.IsMatch(fields, @"\[(DocumentNumber|SupplierName|PartySiteName)\]"));

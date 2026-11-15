@@ -46,7 +46,7 @@ public sealed partial class SqlAccountingStore
             FROM accounting.VoucherDrafts WHERE SentAt IS NULL
             """;
 
-    private const string TraceabilityUnfilteredPostingSql = """
+    private static readonly string TraceabilityUnfilteredPostingSql = """
             WITH posting AS (
               SELECT SourceDocumentId,SourceDocumentType,OccurredAt,Status,TenantId,BusinessId
               FROM dbo.AccountingPostingJobs
@@ -55,12 +55,13 @@ public sealed partial class SqlAccountingStore
                      N'MissingAccountingJob',source.TenantId,source.BusinessId
               FROM #MissingPostingSources source
               WHERE
-            """ + "\n" + TraceabilitySourceWithoutJobSql + "\n" + """
+            """ + "\n" + TraceabilitySourceWithoutJobSql() + "\n" + """
               UNION ALL
             """ + "\n" + TraceabilityDraftPostingSql + "\n)\n";
 
-    private const string TraceabilitySourceWithoutJobSql = """
-            NOT EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs job
+    private static string TraceabilitySourceWithoutJobSql(string? candidateKeys = null) =>
+            "NOT EXISTS(SELECT 1 FROM dbo.AccountingPostingJobs job" +
+            (candidateKeys is not null ? " WITH(INDEX(UQ_AccountingPostingJobs_Source),FORCESEEK)" : "") + "\n" + """
               WHERE job.SourceDocumentId=source.SourceDocumentId AND job.SourceDocumentType=source.SourceDocumentType
                 AND job.TenantId=source.TenantId AND job.BusinessId=source.BusinessId)
             """;
@@ -77,7 +78,7 @@ public sealed partial class SqlAccountingStore
               AND {SqlBusinessLocalDates.SourceCalendarPredicate("source.OccurredAt", dateRangeVersion)}
               AND (@DocumentType IS NULL OR source.SourceDocumentType=@DocumentType)
               AND
-            """ + "\n" + TraceabilitySourceWithoutJobSql + ";\n" + """
+            """ + "\n" + TraceabilitySourceWithoutJobSql() + ";\n" + """
             CREATE CLUSTERED INDEX IX_MissingPostingSources_Date ON #MissingPostingSources
               (OccurredAt DESC,SourceDocumentId,SourceDocumentType);
             """;
@@ -282,7 +283,9 @@ public sealed partial class SqlAccountingStore
                     ? $"JOIN #ConceptDocumentKeys conceptMatch ON conceptMatch.SourceDocumentId={alias}.SourceDocumentId AND conceptMatch.SourceDocumentType={alias}.SourceDocumentType\n" : "")
                 : "";
 
-    private static string TraceabilityFilteredPostingSql(string input, bool includeEntry, string? search, Guid? partyId, int dateRangeVersion, Guid? financialConceptId) => $"FROM {input} job\n" +
+    private static string TraceabilityFilteredPostingSql(string input, bool includeEntry, string? search, Guid? partyId, int dateRangeVersion, Guid? financialConceptId) => $"FROM {input} job" +
+            (input=="dbo.AccountingPostingJobs" && TraceabilityMatchesTableSql(search,partyId,financialConceptId) is not null
+                ? " WITH(INDEX(UQ_AccountingPostingJobs_Source),FORCESEEK)\n" : "\n") +
             TraceabilityMatchesJoinSql(search, partyId, "job", financialConceptId) +
             (includeEntry ? "LEFT JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=job.SourceDocumentId AND entry.SourceDocumentType=job.SourceDocumentType AND entry.TenantId=@TenantId AND entry.BusinessId=@BusinessId\n" : "") +
             "WHERE " + TraceabilityScopeSql(dateRangeVersion);
@@ -326,8 +329,9 @@ public sealed partial class SqlAccountingStore
             """ + "\n" + selection + "\n" + TraceabilityFilteredPostingSql("(" + """
             SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
               N'MissingAccountingJob' Status,source.TenantId,source.BusinessId
-            FROM dbo.AccountingSourceDocuments source WHERE source.AccountingPostingJobId IS NULL AND
-            """ + "\n" + TraceabilitySourceWithoutJobSql + "\n" + """
+            FROM dbo.AccountingSourceDocuments source WITH(INDEX(PK_AccountingSourceDocuments),FORCESEEK)
+            WHERE source.AccountingPostingJobId IS NULL AND
+            """ + "\n" + TraceabilitySourceWithoutJobSql(matches) + "\n" + """
               AND NOT EXISTS(SELECT 1 FROM #DocumentKeys captured WHERE captured.SourceDocumentId=source.SourceDocumentId
                 AND captured.SourceDocumentType=source.SourceDocumentType)
             )
@@ -336,6 +340,8 @@ public sealed partial class SqlAccountingStore
             " OPTION(RECOMPILE);\n";
     }
     // Only selected document/line keys are enriched. The same filtered keys own the count.
+    // Drive enrichment from the already-selected page. Its bounded key lookups
+    // do not need a reordered whole-source join plan on the first invocation.
     private const string TraceabilityDocumentDetailsSql = """
             SELECT job.SourceDocumentId,job.SourceDocumentType,COALESCE(sourceNumber.DocumentNumber,draft.Reference) DocumentNumber,
               job.OccurredAt,COALESCE(posting.Status,job.Status) Status,COALESCE(posting.AttemptCount,0) AttemptCount,
@@ -369,7 +375,7 @@ public sealed partial class SqlAccountingStore
             LEFT JOIN dbo.AccountingPostingJobs reversalJob ON reversalJob.SourceDocumentId=reversal.SourceDocumentId
               AND reversalJob.SourceDocumentType=reversal.SourceDocumentType
               AND reversalJob.TenantId=@TenantId AND reversalJob.BusinessId=@BusinessId
-            """ + ";";
+            """ + " OPTION(FORCE ORDER,LOOP JOIN);";
 
     // One relational source map owns native number, counterparty and voucher
     // classification. Native portfolio payments retain their original source:

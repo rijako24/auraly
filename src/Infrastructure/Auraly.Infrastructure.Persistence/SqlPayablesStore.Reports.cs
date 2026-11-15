@@ -128,16 +128,21 @@ public sealed partial class SqlPayablesStore
               WHERE application.AppliedAt<@Cutoff AND application.OccurredAt<@Cutoff
               GROUP BY application.PositionId
             )
-            SELECT scoped.*,COALESCE(movement.Balance,0) OutstandingAmount,
-              COALESCE(paid.PaidAmount,0) PaidAmount,
-              CASE WHEN movement.Balance<=0 THEN
+            -- A CTE is inlined: the optimizer can otherwise pull the wide
+            -- document join below the transaction aggregate. Finish the narrow
+            -- financial projection before joining descriptive fields.
+            SELECT movement.PayableId,movement.Balance,COALESCE(paid.PaidAmount,0) PaidAmount
+            INTO #FinancialAmounts
+            FROM Movement movement LEFT JOIN Paid paid ON paid.PayableId=movement.PayableId;
+            SELECT scoped.*,COALESCE(financial.Balance,0) OutstandingAmount,
+              financial.PaidAmount,
+              CASE WHEN financial.Balance<=0 THEN
                 CASE WHEN cancellation.PayableId IS NOT NULL THEN N'Cancelled' ELSE N'Paid' END
-                WHEN movement.Balance>=scoped.OriginalAmount THEN N'Open'
+                WHEN financial.Balance>=scoped.OriginalAmount THEN N'Open'
                 ELSE N'PartiallyPaid' END HistoricalStatus
             INTO #Ledger
             FROM #Scoped scoped
-            JOIN Movement movement ON movement.PayableId=scoped.PayableId
-            LEFT JOIN Paid paid ON paid.PayableId=scoped.PayableId
+            JOIN #FinancialAmounts financial ON financial.PayableId=scoped.PayableId
             LEFT JOIN #CancelledAtCutoff cancellation ON cancellation.PayableId=scoped.PayableId;
 
             SELECT *,CASE WHEN OutstandingAmount>0 AND DueDate<@AgeDay

@@ -22,10 +22,21 @@ param(
     [ValidatePattern('^https://')]
     [string]$SigningTimestampUrl = 'https://timestamp.digicert.com',
 
-    [switch]$SkipAdmin
+    [switch]$SkipAdmin,
+
+    [string]$IntegrationTestFilter,
+
+    [string]$BaselineQualityRunId
 )
 
 $ErrorActionPreference = 'Stop'
+$targetedValidation = -not [string]::IsNullOrWhiteSpace($IntegrationTestFilter)
+if ($targetedValidation -and $BaselineQualityRunId -notmatch '^[1-9][0-9]*$') {
+    throw 'La validación puntual requiere identificar la regresión base revisada.'
+}
+if (-not $targetedValidation -and -not [string]::IsNullOrWhiteSpace($BaselineQualityRunId)) {
+    throw 'Una regresión base sólo se indica junto al filtro de pruebas puntual.'
+}
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repoRoot 'artifacts\releases'
@@ -149,34 +160,47 @@ try {
     & dotnet build-server shutdown
     if ($LASTEXITCODE) { throw 'No se pudieron liberar los servidores de compilación antes de medir.' }
 
-    & dotnet test (Join-Path $repoRoot 'src\Tests\Auraly.Platform.Tests\Auraly.Platform.Tests.csproj') `
-        -c Release --no-build --logger 'console;verbosity=minimal'
-    if ($LASTEXITCODE) { throw 'La regresion legacy fallo.' }
+    if ($targetedValidation) {
+        $testResults = Join-Path $temporaryPath 'targeted-test-results'
+        & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
+            -c Release --no-build --filter $IntegrationTestFilter `
+            --logger 'trx;LogFileName=targeted.trx' --results-directory $testResults
+        if ($LASTEXITCODE) { throw 'La validación puntual del release falló.' }
+        [xml]$testReport = Get-Content (Join-Path $testResults 'targeted.trx') -Raw
+        if ([int]$testReport.TestRun.ResultSummary.Counters.executed -eq 0) {
+            throw 'El filtro puntual no ejecutó ninguna prueba.'
+        }
+    }
+    else {
+        & dotnet test (Join-Path $repoRoot 'src\Tests\Auraly.Platform.Tests\Auraly.Platform.Tests.csproj') `
+            -c Release --no-build --logger 'console;verbosity=minimal'
+        if ($LASTEXITCODE) { throw 'La regresion legacy fallo.' }
 
-    & (Join-Path $repoRoot 'tests\Auraly.Foundation.Tests\bin\Release\net8.0\playwright.ps1') install --only-shell chromium
-    if ($LASTEXITCODE) { throw 'No se pudo instalar el navegador PDF fijado por el release.' }
+        & (Join-Path $repoRoot 'tests\Auraly.Foundation.Tests\bin\Release\net8.0\playwright.ps1') install --only-shell chromium
+        if ($LASTEXITCODE) { throw 'No se pudo instalar el navegador PDF fijado por el release.' }
 
-    & dotnet test (Join-Path $repoRoot 'tests\Auraly.Foundation.Tests\Auraly.Foundation.Tests.csproj') `
-        -c Release --no-build --logger 'console;verbosity=minimal'
-    if ($LASTEXITCODE) { throw 'Las pruebas de Auraly Foundation fallaron.' }
+        & dotnet test (Join-Path $repoRoot 'tests\Auraly.Foundation.Tests\Auraly.Foundation.Tests.csproj') `
+            -c Release --no-build --logger 'console;verbosity=minimal'
+        if ($LASTEXITCODE) { throw 'Las pruebas de Auraly Foundation fallaron.' }
 
-    & dotnet test (Join-Path $repoRoot 'tests\Auraly.Pos.Edge.Host.Tests\Auraly.Pos.Edge.Host.Tests.csproj') `
-        -c Release --no-build --logger 'console;verbosity=minimal'
-    if ($LASTEXITCODE) { throw 'Las pruebas de POS Edge fallaron.' }
+        & dotnet test (Join-Path $repoRoot 'tests\Auraly.Pos.Edge.Host.Tests\Auraly.Pos.Edge.Host.Tests.csproj') `
+            -c Release --no-build --logger 'console;verbosity=minimal'
+        if ($LASTEXITCODE) { throw 'Las pruebas de POS Edge fallaron.' }
 
-    & dotnet test (Join-Path $repoRoot 'tests\Auraly.Desktop.Tests\Auraly.Desktop.Tests.csproj') `
-        -c Release --no-build --logger 'console;verbosity=minimal'
-    if ($LASTEXITCODE) { throw 'Las pruebas del actualizador de escritorio fallaron.' }
+        & dotnet test (Join-Path $repoRoot 'tests\Auraly.Desktop.Tests\Auraly.Desktop.Tests.csproj') `
+            -c Release --no-build --logger 'console;verbosity=minimal'
+        if ($LASTEXITCODE) { throw 'Las pruebas del actualizador de escritorio fallaron.' }
 
-    & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
-        -c Release --no-build --filter 'Isolation!=FreshProcess' --logger 'console;verbosity=minimal'
-    if ($LASTEXITCODE) { throw 'Las regresiones reales de API, pedidos y facturación fallaron.' }
+        & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
+            -c Release --no-build --filter 'Isolation!=FreshProcess' --logger 'console;verbosity=minimal'
+        if ($LASTEXITCODE) { throw 'Las regresiones reales de API, pedidos y facturación fallaron.' }
 
-    # Release the regression test host before measuring the large receipt. All
-    # tests still run once; the benchmark retains its memory and latency gates.
-    & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
-        -c Release --no-build --filter 'Isolation=FreshProcess' --logger 'console;verbosity=minimal'
-    if ($LASTEXITCODE) { throw 'El presupuesto de rendimiento de recibos no se cumplió.' }
+        # Release the regression test host before measuring the large receipt. All
+        # tests still run once; the benchmark retains its memory and latency gates.
+        & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
+            -c Release --no-build --filter 'Isolation=FreshProcess' --logger 'console;verbosity=minimal'
+        if ($LASTEXITCODE) { throw 'El presupuesto de rendimiento de recibos no se cumplió.' }
+    }
 
     $functionPublish = Join-Path $publishPath 'function'
     & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj') `
@@ -279,6 +303,11 @@ try {
         version = $Version
         commit = $commit
         dirty = [bool]$gitStatus
+        validation = [ordered]@{
+            scope = if ($targetedValidation) { 'Targeted' } else { 'Full' }
+            baselineQualityRunId = $BaselineQualityRunId
+            integrationTestFilter = $IntegrationTestFilter
+        }
         createdUtc = [DateTimeOffset]::UtcNow.ToString('O')
         dotnetSdk = (& dotnet --version).Trim()
         node = (& node --version).Trim()
