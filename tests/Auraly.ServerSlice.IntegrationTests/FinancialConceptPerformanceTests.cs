@@ -53,7 +53,8 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
                 SELECT DocumentId,N'ManualAccountingVoucher',@Tenant,@Business,Payload,HASHBYTES('SHA2_256',CONVERT(varbinary(max),Payload)),At,At FROM #Batch OPTION(LOOP JOIN,MAXDOP 1);
               INSERT dbo.AccountingPostingJobs WITH(TABLOCK)(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
                 SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,CreatedAt)
-                SELECT NEWID(),@Tenant,@Business,DocumentId,N'ManualAccountingVoucher',HASHBYTES('SHA2_256',CONVERT(varbinary(max),Payload)),At,1,N'Pending',0,At FROM #Batch OPTION(LOOP JOIN,MAXDOP 1);
+                SELECT NEWID(),@Tenant,@Business,DocumentId,N'ManualAccountingVoucher',HASHBYTES('SHA2_256',CONVERT(varbinary(max),Payload)),At,1,N'Pending',0,At FROM #Batch
+                WHERE At>'2026-11-01T12:00:00+00:00' OPTION(LOOP JOIN,MAXDOP 1);
               INSERT accounting.SourceConceptIndex WITH(TABLOCK)(FinancialConceptId,SourceDocumentId,SourceDocumentType)
                 SELECT ConceptId,DocumentId,N'ManualAccountingVoucher' FROM #Batch OPTION(LOOP JOIN,MAXDOP 1);
               TRUNCATE TABLE #Batch;SET @Start+=200;
@@ -87,8 +88,20 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
                 var timer=Stopwatch.StartNew();
                 if(sample.Documents)
                 {
-                    var result=await accounting.ListDocumentsAsync(identity,new(2026,11,1),new(2026,11,30),null,null,null,
-                        sample.Page,50,voucherTypeCode:"CashReceipt",financialConceptId:selected);
+                    AccountingDocumentPage result;
+                    try
+                    {
+                        result=await accounting.ListDocumentsAsync(identity,new(2026,11,1),new(2026,11,30),null,null,null,
+                            sample.Page,50,voucherTypeCode:"CashReceipt",financialConceptId:selected);
+                    }
+                    catch(SqlException error) when(error.Number==-2)
+                    {
+                        // This sample is terminal: retain its plan before fixture
+                        // cleanup, never profile between successful timed calls.
+                        try {await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(documentCommand,output);}
+                        catch(Exception diagnosticError) {output.WriteLine($"Timeout profile failed: {diagnosticError.GetType().Name}: {diagnosticError.Message}");}
+                        throw;
+                    }
                     timer.Stop();Assert.Equal(sample.Total,result.TotalCount);Assert.Equal(sample.Rows,result.Items.Count);
                     Assert.Equal(result.Items.Count,result.Items.Select(item=>item.SourceDocumentId).Distinct().Count());
                 }
@@ -110,11 +123,28 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
         var profileDirectory=await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(documentCommand,output);
         Assert.NotNull(profileDirectory);
         var voucherFilterFound=false;
+        var candidateCaptureFound=false;
+        var conceptSeekFound=false;
         foreach(var file in Directory.EnumerateFiles(profileDirectory,"profile-*.json"))
         {
             using var profile=System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(file));
             var operators=profile.RootElement.EnumerateArray().ToArray();
-            if(operators.Length==0||!operators[0].GetProperty("StmtText").GetString()!
+            if(operators.Length==0)continue;
+            var statement=operators[0].GetProperty("StmtText").GetString()!;
+            if(statement.Contains("INTO #DocumentKeys",StringComparison.Ordinal))
+            {
+                candidateCaptureFound=true;
+                Assert.InRange(operators[0].GetProperty("Rows").GetInt64(),0,1000);
+            }
+            foreach(var item in operators.Where(item=>item.GetProperty("StmtText").GetString() is {} text
+                &&System.Text.RegularExpressions.Regex.IsMatch(text,
+                    @"OBJECT:\(\[[^\]]+\]\.\[accounting\]\.\[SourceConceptIndex\]\.")))
+            {
+                conceptSeekFound=true;
+                Assert.Contains("Seek",item.GetProperty("PhysicalOp").GetString());
+                Assert.InRange(item.GetProperty("Rows").GetInt64(),0,1000);
+            }
+            if(!statement
                 .Contains("source.VoucherTypeCode=@VoucherTypeCode",StringComparison.Ordinal))continue;
             voucherFilterFound=true;
             var sources=operators.Where(item=>item.GetProperty("StmtText").GetString() is {} text
@@ -128,6 +158,8 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
             });
         }
         Assert.True(voucherFilterFound,"The captured read must include the voucher-type filter.");
+        Assert.True(candidateCaptureFound,"Only matching concept candidates may enter the posting-key capture.");
+        Assert.True(conceptSeekFound,"Concept membership must seek the persisted index before loading posting keys.");
         Assert.Empty(failures);
     }
 }

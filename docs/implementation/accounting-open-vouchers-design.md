@@ -4260,6 +4260,51 @@ operación y una consulta independiente reproduce la interferencia previa:
 conserva un comando para listado y dos para detalle, sin cambiar el runtime.
 La regresión transversal y el gate completo de despliegue siguen requeridos.
 
+La ronda completa del 15-11 volvió a rechazar este camino: primera lectura
+4.128,1 ms y p95 1.336,1 ms, con 1.021/1.023 integraciones aprobadas. Aunque
+la clasificación ya buscaba sólo 1.000 fuentes, el plan aún capturaba 10.000
+claves de trabajo y después borraba 9.000 (9.125 lecturas lógicas de la tabla
+temporal). La pertenencia por concepto pasa ahora a la misma preparación de
+candidatos que tercero y búsqueda: una selección única desde el índice
+persistido y los borradores pendientes, acotada por tenant, sede, tipo y fechas.
+Los trabajos, fuentes sin trabajo y borradores se intersectan con esas claves
+antes de capturar el conjunto del listado y del reporte de partidas. Se elimina
+el DELETE posterior por concepto; no se duplica su política entre lectores.
+La combinación con tercero/búsqueda mantiene la intersección de filtros y un
+viaje SQL. La regresión física exige también que la captura inicial no supere
+1.000 claves y que la pertenencia busque el índice, con una fuente sin trabajo
+incluida en las 10.000. Las cuatro variantes funcionales de recibo/egreso
+comprueban borrador, contabilizado y filtros combinados. El rollback retira
+únicamente esta preparación de lectura; no modifica pertenencias ni historia.
+La primera tanda local aprobó seis de siete casos: las cuatro variantes
+funcionales, el otro filtro de comprobante y el benchmark de conceptos. Éste
+midió primera página de 601,3 ms, p95 231,2 ms y página siguiente p95 328,4 ms,
+incluida la comprobación física. La búsqueda nativa por número siguió fallando
+(p95 1.108,3 ms, límite 800): preparaba 10.000 claves del tercero antes de
+intersectar el único recibo buscado. La preparación compartida busca primero
+y restringe las ramas existentes de pertenencia del tercero a esas claves;
+mantiene los mismos propietarios nativos, índices y deduplicación. No cambia
+la semántica de LIKE ni omite borradores, ajustes, fuentes sin trabajo o
+terceros presentes sólo en partidas. El perfil posterior a las muestras exige
+que esas ramas incorporen como máximo el documento seleccionado y que los
+lookups de fuentes no recorran las otras 9.999. No añade otro viaje, índice
+persistente ni flujo. La siguiente tanda local no quedó aprobada: encontró
+un falso positivo del verificador (confundía columnas de origen con el objeto
+leído por un INSERT temporal), p95 de tercero de 846,8 ms y un timeout de
+recibos por concepto. La comprobación identifica ahora el objeto físico exacto.
+El lookup de ajustes directos se compila sólo cuando existen fuentes de ese
+tipo en el alcance; se conserva su consulta y no se infiere clasificación.
+Un timeout terminal conserva el plan y estadísticas con el capturador existente
+antes de limpiar el fixture, sin diagnosticar entre muestras exitosas ni
+ampliar umbrales. No se atribuye el timeout a una causa aún no demostrada.
+Una ejecución posterior reprodujo también lecturas de concepto lentas con el
+mismo hash de plan que la ejecución rápida; ese hecho no demuestra por sí solo
+la causa del timeout. Un error de separación al construir el predicado de la
+nueva guarda produjo SQL inválido y se corrigió antes de integrar. Se conservan
+los intentos fallidos en la evidencia de pruebas. La publicación exige aprobar
+la tanda dirigida y la compuerta completa sin exclusiones ni umbrales nuevos;
+los resultados de cada revisión se conservan en el PR del cambio.
+
 Despliegue aditivo: esquema primero y API/cliente compatibles antes de habilitar
 la selección. La columna de borrador es nullable y los campos opcionales no se
 serializan cuando faltan; las fuentes y huellas anteriores se conservan. No
