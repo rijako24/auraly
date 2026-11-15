@@ -963,14 +963,28 @@ command and the existing filters, hierarchy, stable ordering, export cap and
 unknown-base semantics; no persistent projection, financial writer or schema
 change is introduced. Reader rollback requires no data rollback.
 
+The first single-capture run exposed a different physical plan: an account-first
+seek read 50,105 lines before applying business scope, despite all latency
+samples passing. That run failed the new physical bound and its CI was canceled.
+The capture now uses the existing entry/line indexes with a forced entry-first
+loop order, applying tenant/business/date scope before seeking journal lines.
+It does not add an index, duplicate a business key on lines or change financial
+scope. This hint belongs only to the facts capture; paging and enrichment retain
+their existing owners and ordering.
+
 The same regression profiles the captured read after all timed samples, using
 the existing report profiler. It requires journal-line seeks bounded by the
 selected business and exactly two journal-reading statements: capture and
 bounded details. Latency failures are retained until after profiling, with the
 same 750 ms thresholds and 100,000 unrelated lines. Setup timeouts remain failed
-runs rather than report measurements. Final validation for this correction is
-recorded with the release evidence; it does not replace the pending DEV browser
-regression.
+runs rather than report measurements. The final local rerun passed all 68
+account-editing, auxiliary and voucher cases, including concurrent posting and
+unknown/signed bases. With 100,000 unrelated lines, grouping reads took
+166.8/155.8/157.2 ms and pages one/two took 225.1/264.7 ms, one SQL each.
+The profile read 122 scoped lines once and then 50 page lines, in exactly two
+journal-reading statements. Full reports of 200/4,998 movements measured p95
+184.9/392.6 ms across 20 samples each, below their existing two-second limit.
+The complete CI gate and DEV browser regression remain required.
 
 The trial-balance dialog consumes this paged contract (50 rows), preserves totals
 for the complete filtered period, and resets to page one when party or center

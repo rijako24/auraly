@@ -67,7 +67,9 @@ public sealed partial class SqlAccountingStore
               l.LineNumber,l.Debit,l.Credit,l.BaseAmount
             INTO #AccountMovementFacts
             """ + "\n" + AccountMovementScopeSql + "\n" + """
-            OPTION(RECOMPILE);
+            -- Start at scoped entries and seek their lines before matching
+            -- accounts; an account-first plan also visits other sites' lines.
+            OPTION(RECOMPILE,FORCE ORDER,LOOP JOIN);
             SELECT AccountId,Code,Name,
               SUM(CASE WHEN CAST(OccurredAt AS date)<@From THEN Debit-Credit ELSE 0 END) OpeningBalance,
               SUM(CASE WHEN CAST(OccurredAt AS date)>=@From THEN Debit ELSE 0 END) Debit,
