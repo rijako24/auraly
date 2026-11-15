@@ -313,12 +313,46 @@ public sealed partial class PayablesVerticalSliceTests
             """, payableId));
         Assert.Equal(10_000m, await ScalarAsync<decimal>("SELECT SUM(Amount) FROM dbo.SupplierPaymentApplications WHERE PayableId=@Id", payableId));
         var closedAfter = await CloseOriginalPaymentAsync();
+        await using var capturedConnection = new SqlConnection(fixture.ConnectionString);
+        await using var capturedValidation = new SqlCommand { Connection = capturedConnection };
+        using var validationCommands = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter: command => command.CommandText.Contains("CREATE TABLE #Corrections", StringComparison.Ordinal),
+            beforeExecute: command => PortfolioPaymentHistoryPerformanceTests.CaptureReadCommand(command, capturedValidation));
         using (var response = await client.PostAsJsonAsync($"{closedAfter.Path}/payment-corrections/validate",
             new[] { new WorkSessionPaymentCorrection(closedAfter.Payment.VerificationKey, "Cash", closedAfter.Payment.Amount - 1m,
                 "No modificar un pago ya desaplicado") }))
         {
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Contains("desaplicaciones", await response.Content.ReadAsStringAsync());
+            Assert.Equal(1, validationCommands.Count);
+        }
+        validationCommands.Dispose();
+        if (manual && firstAmount == 4000m && !correctedBeforeUnapply)
+        {
+            var profileDirectory = await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(capturedValidation);
+            Assert.NotNull(profileDirectory);
+            var sourceReads = new List<System.Text.Json.JsonElement>();
+            foreach (var path in Directory.EnumerateFiles(profileDirectory, "profile-*.json"))
+            {
+                using var profile = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(path));
+                if (!profile.RootElement[0].GetProperty("StmtText").GetString()!.StartsWith("SELECT correction.VerificationKey", StringComparison.Ordinal))
+                    continue;
+                sourceReads.AddRange(profile.RootElement.EnumerateArray().Where(item =>
+                    item.GetProperty("StmtText").GetString()!.Contains("OBJECT:", StringComparison.Ordinal)
+                    && new[] { ".[dbo].[SalesDocuments].", ".[dbo].[CustomerPayments].", ".[dbo].[SupplierPayments].",
+                        ".[dbo].[SalesReturns].", ".[dbo].[CashMovementDocuments].", ".[dbo].[WorkSessionMovements].",
+                        ".[dbo].[SalesPayments].", ".[dbo].[Receivables].", ".[dbo].[Payables].", ".[dbo].[Customers].",
+                        ".[dbo].[Suppliers].", ".[dbo].[Parties].", ".[dbo].[SalesReturnSettlements].", ".[dbo].[CustomerCredits]." }
+                        .Any(table => item.GetProperty("StmtText").GetString()!.Contains(table, StringComparison.Ordinal)))
+                    .Select(item => item.Clone()));
+            }
+            Assert.NotEmpty(sourceReads);
+            Assert.All(sourceReads, item =>
+            {
+                Assert.Contains("Seek", item.GetProperty("PhysicalOp").GetString());
+                Assert.InRange(item.GetProperty("Rows").GetInt64(), 0, 1);
+            });
         }
     }
 

@@ -1198,11 +1198,11 @@ public sealed partial class SqlWorkSessionStore
                 originalTenderCategory.Category,originalClosureCategory.Category),
               correctedTenderCategory.Category,
               CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.PayableTransactions original
-                JOIN accounting.SourcePositionIndex reversal ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Payable'
+                JOIN accounting.SourcePositionIndex reversal WITH(FORCESEEK(IX_SourcePositionIndex_Reversal(BusinessId,SubledgerKind,ReversesTransactionId))) ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Payable'
                   AND reversal.ReversesTransactionId=original.PayableTransactionId
                 WHERE original.PayableId=supplierApplication.PayableId AND original.SourceDocumentId=supplierPayment.PaymentId AND original.TransactionType=N'Payment')
                 OR EXISTS(SELECT 1 FROM dbo.ReceivableTransactions original
-                JOIN accounting.SourcePositionIndex reversal ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Receivable'
+                JOIN accounting.SourcePositionIndex reversal WITH(FORCESEEK(IX_SourcePositionIndex_Reversal(BusinessId,SubledgerKind,ReversesTransactionId))) ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Receivable'
                   AND reversal.ReversesTransactionId=original.ReceivableTransactionId
                 WHERE original.ReceivableId=customerApplication.ReceivableId AND original.SourceDocumentId=customerPayment.PaymentId AND original.TransactionType=N'Payment')
                 THEN 1 ELSE 0 END AS bit) HasUnapplications
@@ -1239,68 +1239,68 @@ public sealed partial class SqlWorkSessionStore
                 AND correctedTenderCategory.SourceCode=COALESCE(correction.TenderMethodCode,
                   CASE WHEN correction.PaymentMethodCode=source.PaymentMethodCode
                     THEN source.TenderMethodCode ELSE correction.PaymentMethodCode END)
-            LEFT JOIN dbo.SalesDocuments sale WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.SalesDocuments sale WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SalesDocuments(DocumentId)))
               ON source.MovementType=N'Sale' AND sale.DocumentId=source.SourceId AND sale.BusinessId=@BusinessId
-            LEFT JOIN sales.RestaurantAccountCollections restaurantTip WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN sales.RestaurantAccountCollections restaurantTip WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_RestaurantAccountCollections(CollectionId)))
               ON source.MovementType=N'RestaurantTip'
                 AND restaurantTip.CollectionId=source.SourceId
                 AND restaurantTip.BusinessId=@BusinessId
-            LEFT JOIN dbo.SalesPayments saleTender ON source.MovementType=N'Sale'
+            LEFT JOIN dbo.SalesPayments saleTender WITH(FORCESEEK(PK_SalesPayments(DocumentId,PaymentNumber))) ON source.MovementType=N'Sale'
               AND saleTender.DocumentId=sale.DocumentId AND saleTender.PaymentNumber=source.SourceNumber
-            LEFT JOIN dbo.Customers saleCustomer ON saleCustomer.CustomerId=sale.CustomerId
-            LEFT JOIN dbo.Parties saleParty ON saleParty.PartyId=saleCustomer.PartyId
-            LEFT JOIN dbo.Receivables saleReceivable WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.Customers saleCustomer WITH(FORCESEEK) ON saleCustomer.CustomerId=sale.CustomerId
+            LEFT JOIN dbo.Parties saleParty WITH(FORCESEEK) ON saleParty.PartyId=saleCustomer.PartyId
+            LEFT JOIN dbo.Receivables saleReceivable WITH(UPDLOCK,HOLDLOCK,FORCESEEK(UQ_Receivables_Source(SourceDocumentId,SourceDocumentType)))
               ON saleReceivable.SourceDocumentId=sale.DocumentId
                 AND saleReceivable.SourceDocumentType=sale.DocumentType AND saleReceivable.BusinessId=@BusinessId
-            LEFT JOIN dbo.WorkSessionMovements paymentMovement WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.WorkSessionMovements paymentMovement WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_WorkSessionMovements(WorkSessionMovementId)))
               ON paymentMovement.WorkSessionMovementId=source.SourceId
                 AND source.MovementType IN(N'ReceivablePayment',N'PayablePayment')
-            LEFT JOIN dbo.CustomerPayments customerPayment WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.CustomerPayments customerPayment WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_CustomerPayments(PaymentId)))
               ON source.MovementType=N'ReceivablePayment' AND customerPayment.PaymentId=COALESCE(paymentMovement.DocumentId,source.SourceId)
                 AND customerPayment.BusinessId=@BusinessId
-            LEFT JOIN dbo.Customers paymentCustomer ON paymentCustomer.CustomerId=customerPayment.CustomerId
-            LEFT JOIN dbo.Parties customerParty ON customerParty.PartyId=COALESCE(customerPayment.PartyId,paymentCustomer.PartyId)
+            LEFT JOIN dbo.Customers paymentCustomer WITH(FORCESEEK) ON paymentCustomer.CustomerId=customerPayment.CustomerId
+            LEFT JOIN dbo.Parties customerParty WITH(FORCESEEK) ON customerParty.PartyId=COALESCE(customerPayment.PartyId,paymentCustomer.PartyId)
             OUTER APPLY (SELECT COUNT(*) ApplicationCount,MAX(ReceivableId) ReceivableId
-              FROM dbo.CustomerPaymentApplications WHERE PaymentId=customerPayment.PaymentId) customerApplication
-            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId FROM dbo.CustomerPaymentTenders
+              FROM dbo.CustomerPaymentApplications WITH(FORCESEEK) WHERE PaymentId=customerPayment.PaymentId) customerApplication
+            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId FROM dbo.CustomerPaymentTenders WITH(FORCESEEK)
               WHERE PaymentId=customerPayment.PaymentId) customerTender
-            LEFT JOIN dbo.Receivables customerBalance WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.Receivables customerBalance WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_Receivables(ReceivableId)))
               ON customerBalance.ReceivableId=customerApplication.ReceivableId
                 AND customerBalance.BusinessId=@BusinessId
-            LEFT JOIN dbo.SupplierPayments supplierPayment WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.SupplierPayments supplierPayment WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SupplierPayments(PaymentId)))
               ON source.MovementType=N'PayablePayment' AND supplierPayment.PaymentId=COALESCE(paymentMovement.DocumentId,source.SourceId)
                 AND supplierPayment.BusinessId=@BusinessId
-            LEFT JOIN dbo.Suppliers paymentSupplier ON paymentSupplier.SupplierId=supplierPayment.SupplierId
-            LEFT JOIN dbo.Parties supplierParty ON supplierParty.PartyId=paymentSupplier.PartyId
+            LEFT JOIN dbo.Suppliers paymentSupplier WITH(FORCESEEK) ON paymentSupplier.SupplierId=supplierPayment.SupplierId
+            LEFT JOIN dbo.Parties supplierParty WITH(FORCESEEK) ON supplierParty.PartyId=paymentSupplier.PartyId
             OUTER APPLY (SELECT COUNT(*) ApplicationCount,MAX(PayableId) PayableId
-              FROM dbo.SupplierPaymentApplications WHERE PaymentId=supplierPayment.PaymentId) supplierApplication
-            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId FROM dbo.SupplierPaymentTenders
+              FROM dbo.SupplierPaymentApplications WITH(FORCESEEK) WHERE PaymentId=supplierPayment.PaymentId) supplierApplication
+            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId FROM dbo.SupplierPaymentTenders WITH(FORCESEEK)
               WHERE PaymentId=supplierPayment.PaymentId) supplierTender
-            LEFT JOIN dbo.Payables supplierBalance WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.Payables supplierBalance WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_Payables(PayableId)))
               ON supplierBalance.PayableId=supplierApplication.PayableId
                 AND supplierBalance.BusinessId=@BusinessId
-            LEFT JOIN dbo.SalesReturns saleReturn WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.SalesReturns saleReturn WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SalesReturns(ReturnId)))
               ON source.MovementType=N'Refund' AND saleReturn.ReturnId=source.SourceId
                 AND saleReturn.BusinessId=@BusinessId
-            LEFT JOIN dbo.SalesReturnSettlements refundTender ON source.MovementType=N'Refund'
+            LEFT JOIN dbo.SalesReturnSettlements refundTender WITH(FORCESEEK(PK_SalesReturnSettlements(ReturnId,SettlementNumber))) ON source.MovementType=N'Refund'
               AND refundTender.ReturnId=saleReturn.ReturnId
                 AND refundTender.SettlementNumber=source.SourceNumber
-            LEFT JOIN dbo.Customers returnCustomer ON returnCustomer.CustomerId=saleReturn.CustomerId
-            LEFT JOIN dbo.Parties returnParty ON returnParty.PartyId=returnCustomer.PartyId
-            LEFT JOIN dbo.CustomerCredits customerCredit WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.Customers returnCustomer WITH(FORCESEEK) ON returnCustomer.CustomerId=saleReturn.CustomerId
+            LEFT JOIN dbo.Parties returnParty WITH(FORCESEEK) ON returnParty.PartyId=returnCustomer.PartyId
+            LEFT JOIN dbo.CustomerCredits customerCredit WITH(UPDLOCK,HOLDLOCK,FORCESEEK(UQ_CustomerCredits_SourceReturn(SourceReturnId)))
               ON customerCredit.SourceReturnId=saleReturn.ReturnId AND customerCredit.BusinessId=@BusinessId
-            LEFT JOIN dbo.WorkSessionMovements cashMovement WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.WorkSessionMovements cashMovement WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_WorkSessionMovements(WorkSessionMovementId)))
               ON source.MovementType IN(N'CashIn',N'CashOut')
                 AND cashMovement.WorkSessionMovementId=source.SourceId
-            LEFT JOIN dbo.CashMovementDocuments cashDocument WITH(UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.CashMovementDocuments cashDocument WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_CashMovementDocuments(DocumentId)))
               ON source.MovementType IN(N'CashIn',N'CashOut')
                 AND cashDocument.DocumentId=COALESCE(cashMovement.DocumentId,source.SourceId)
                 AND cashDocument.BusinessId=@BusinessId
-            LEFT JOIN dbo.CashMovementReasons cashReason
+            LEFT JOIN dbo.CashMovementReasons cashReason WITH(FORCESEEK(PK_CashMovementReasons(ReasonId)))
               ON cashReason.ReasonId=cashDocument.ReasonId AND cashReason.BusinessId=@BusinessId
-            -- Corrections are already selected by key. Recompile for that set
-            -- and seek its sources instead of reserving hash memory for the
-            -- unfiltered financial tables behind the optional joins.
+            -- Corrections are already selected by key. Optional source joins
+            -- must seek that identity: LOOP JOIN alone can still scan all
+            -- documents or session movements for each selected correction.
             OPTION(RECOMPILE,FORCE ORDER,LOOP JOIN);
             END
             """;
