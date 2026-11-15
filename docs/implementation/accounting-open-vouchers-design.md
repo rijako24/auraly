@@ -4571,8 +4571,11 @@ filtro sin borrar el abono capturado. No se solicita otro detalle para insertar
 una factura externa a la página ni se alteran artificialmente sus totales.
 Los endpoints POS no exponen este filtro y sus servicios lo descartan.
 
-Los filtros administrativos de documento/referencia, fecha de registro y mora
-se aplican mediante acción explícita. Paginar, filtrar o volver desde las formas
+Por decisión del usuario del 2026-11-15, los filtros administrativos de
+documento/referencia, fecha de registro y mora se conservan y se aplican al
+cambiarlos, sin botón Aplicar filtros. Texto agrupa pulsaciones con una pausa
+de 250 ms; fechas, tercero y casillas se aplican inmediatamente. Un rango
+inválido no consulta y se indica junto al filtro. Paginar, filtrar o volver desde las formas
 de pago conserva importes y selección. Cuando una página vuelve a consultarse,
 sus saldos actualizan los límites de las seleccionadas sin sustituir los valores
 introducidos; un abono mayor al límite exige corrección. Las obligaciones que
@@ -4593,9 +4596,36 @@ No se introduce conversión monetaria implícita.
 Este incremento extiende los contratos y lectores existentes. No crea endpoints,
 tablas, escrituras, motores, estados, colas ni procesos de recuperación. Mantiene
 tenant/sede/tercero y permisos en el servidor, tres comandos SQL por página,
-sin lecturas por factura, recarga por pulsación ni polling. La presentación y
+sin lecturas por factura ni polling. El texto no dispara una consulta por
+pulsación: la pausa agrupa la captura y se cancelan solicitudes obsoletas. La presentación y
 la captura POS conservan su ruta. El resto de la captura administrativa de
 14.0, retenciones y nómina 13, y el gate de rendimiento de 14.8 siguen pendientes.
+
+Ajuste visual del 2026-11-15: documento/tipo y fechas comparten una celda;
+mora y tramo de edad aparecen a continuación, antes de los importes original,
+abonado/pagado, ajustes y saldo. Las columnas se ajustan al ancho útil, sin un
+mínimo fijo de 1.600 píxeles. En móvil cada obligación conserva sus etiquetas e
+importes en filas, sin desplazamiento horizontal. No se alteran la captura ni
+la distribución POS. No cambian aceptación, permisos, saldos ni writer.
+
+El selector de cliente/proveedor del informe comparte la misma interacción
+inmediata y limpia la sede del tercero anterior. El informe conserva un solo
+propietario de carga, su paginación y agregados en servidor y sus seis accesos
+listos. Se deshabilita imprimir/exportar mientras hay filtros pendientes o
+inválidos, para no emitir un alcance anterior al visible. No requiere migración
+de datos: el rollback consiste en volver al frontend anterior.
+
+Validación del ajuste del 2026-11-15: cuatro escenarios locales de navegador
+aprobaron cliente/proveedor, filtros automáticos, búsqueda agrupada, casilla y
+fechas inmediatas, rechazo de rangos inválidos sin consulta, selección entre
+páginas, reintento, importes grandes, PDF/Excel y una solicitud por cambio de
+tercero. La regresión contigua aprobó 27 casos de formas y pago/impresión POS.
+Tras compactar sólo el encabezado administrativo se repitieron sus dos casos
+y dos representantes POS (cuatro aprobados), sin repetir la regresión completa.
+Se revisaron capturas reales de 1366 y 390 píxeles; no hay desbordamiento
+horizontal. Cancelación HTTP: regresión sin propagación falla y los cuatro
+casos pasan al restaurarla. Type-check, lint de los ocho archivos afectados y
+build de producción aprobados. No modifica plantillas publicadas ni datos.
 
 Validación de este incremento:
 

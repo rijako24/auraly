@@ -227,7 +227,15 @@ for (const direction of ["receivables", "payables"] as const) {
       const beforeDraft = reportRequests.length;
       await dialog.getByRole("combobox",{name:"Cliente del informe"}).click();
       await page.getByRole("option",{name:/Cliente B/}).click();
+      await expect.poll(()=>reportRequests.at(-1)?.searchParams.get("customerId")).toBe("customer-2");
+      await expect(dialog.getByRole("button",{name:"Aplicar filtros",exact:true})).toHaveCount(0);
+      const beforeText=reportRequests.length;
+      await dialog.getByRole("textbox",{name:"Factura exacta"}).fill("FAC-");
       await dialog.getByRole("textbox",{name:"Factura exacta"}).fill("FAC-42");
+      expect(reportRequests).toHaveLength(beforeText);
+      await expect(dialog.getByRole("button",{name:"Exportar Excel",exact:true})).toBeDisabled();
+      await page.clock.runFor(300);
+      await expect.poll(()=>reportRequests.length).toBe(beforeText+1);
       await dialog.getByRole("spinbutton",{name:"Edad desde (días)"}).fill("40");
       await dialog.getByRole("spinbutton",{name:"Edad hasta (días)"}).fill("42");
       await dialog.getByRole("spinbutton",{name:"Mora desde (días)"}).fill("20");
@@ -237,10 +245,9 @@ for (const direction of ["receivables", "payables"] as const) {
         await dialog.getByRole("button",{name:"Mes anterior",exact:true}).click();
         await dialog.getByRole("button",{name:"1 de octubre de 2026",exact:true}).click();
       }
-      expect(reportRequests).toHaveLength(beforeDraft);
-      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await page.clock.runFor(300);
       await expect(dialog.getByText("FAC-42",{exact:true})).toBeVisible();
-      expect(reportRequests).toHaveLength(beforeDraft+1);
+      expect(reportRequests.length).toBeGreaterThan(beforeDraft);
       const applied = reportRequests.at(-1)!;
       for (const [key,value] of Object.entries({customerId:"customer-2",documentNumber:"FAC-42",issuedFrom:"2026-10-01",issuedTo:"2026-10-01",
         minimumAgeDays:"40",maximumAgeDays:"42",minimumDaysPastDue:"20",maximumDaysPastDue:"30",page:"1"})) expect(applied.searchParams.get(key)).toBe(value);
@@ -252,7 +259,7 @@ for (const direction of ["receivables", "payables"] as const) {
       const beforeInvalid = reportRequests.length;
       await dialog.getByRole("spinbutton",{name:"Edad desde (días)"}).fill("20");
       await dialog.getByRole("spinbutton",{name:"Edad hasta (días)"}).fill("10");
-      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await page.clock.runFor(300);
       await expect(dialog.getByRole("alert")).toContainText("Revisa los rangos");
       expect(reportRequests).toHaveLength(beforeInvalid);
       await dialog.getByRole("button",{name:"Consolidado con saldo",exact:true}).click();
@@ -261,10 +268,10 @@ for (const direction of ["receivables", "payables"] as const) {
       await dialog.getByRole("spinbutton",{name:"Edad desde (días)"}).fill("");
       await dialog.getByRole("spinbutton",{name:"Edad hasta (días)"}).fill("");
       await dialog.getByRole("textbox",{name:"Búsqueda general del informe"}).fill("sin-resultados");
-      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await page.clock.runFor(300);
       await expect(dialog.getByText("No hay documentos para estos filtros.",{exact:true})).toBeVisible();
       await dialog.getByRole("textbox",{name:"Búsqueda general del informe"}).fill("error-consulta");
-      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await page.clock.runFor(300);
       await expect(dialog.getByRole("alert")).toContainText("Fallo de consulta de prueba");
       const beforeRetry=reportRequests.length;
       recoverReport=true;
@@ -274,7 +281,7 @@ for (const direction of ["receivables", "payables"] as const) {
       const beforeCredit=reportRequests.length;
       await dialog.getByRole("textbox",{name:"Búsqueda general del informe"}).fill("saldo-a-favor");
       expect(reportRequests).toHaveLength(beforeCredit);
-      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await page.clock.runFor(300);
       await expect(dialog.getByText("Cliente sólo con anticipo",{exact:true})).toBeVisible();
       await expect(dialog.getByText(/Neto comercial:.*-.*15/).first()).toBeVisible();
       await expect(dialog.getByText(/Sin sede identificada/)).toBeVisible();
@@ -285,7 +292,7 @@ for (const direction of ["receivables", "payables"] as const) {
       expect(strFromU8(creditWorkbook["xl/worksheets/sheet1.xml"])).toContain("-15000");
       await page.screenshot({path:test.info().outputPath("cartera-solo-anticipo.png"),fullPage:true});
       await dialog.getByRole("textbox",{name:"Búsqueda general del informe"}).fill("grupos");
-      await dialog.getByRole("button",{name:"Aplicar filtros",exact:true}).click();
+      await page.clock.runFor(300);
       const clientA=dialog.getByRole("region",{name:"Cliente A",exact:true});
       const clientB=dialog.getByRole("region",{name:"Cliente B",exact:true});
       await expect(clientA.getByRole("heading",{name:"Cliente A",exact:true})).toHaveCount(1);
@@ -322,7 +329,9 @@ for (const direction of ["receivables", "payables"] as const) {
     const beforeParty=reportRequests.length;
     await dialog.getByRole("combobox",{name:direction === "receivables" ? "Cliente del informe" : "Proveedor del informe"}).click();
     await page.getByRole("option",{name:direction === "receivables" ? /Cliente B/ : /Proveedor B/}).click();
-    expect(reportRequests).toHaveLength(beforeParty);
+    await expect.poll(()=>reportRequests.length).toBe(beforeParty+1);
+    expect(reportRequests.at(-1)!.searchParams.get(direction === "receivables" ? "customerId" : "supplierId")).toBe(direction === "receivables" ? "customer-2" : "supplier-2");
+    expect(reportRequests.at(-1)!.searchParams.has("partySiteId")).toBe(false);
     const shortcuts=[
       {label:"Consolidado general",summary:true,balance:false,applications:false,status:null},
       {label:"Consolidado con saldo",summary:true,balance:true,applications:false,status:null},

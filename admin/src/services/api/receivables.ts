@@ -149,8 +149,8 @@ export interface CustomerCreditProfile {
 }
 
 export const receivablesApi = {
-  report: (filters: ReceivablesReportFilters) =>
-    apiClient.get<ReceivablesReportPage>("/commerce/v1/receivables/report", { ...filters, templateVersion: 4, dateRangeVersion: 2 }),
+  report: (filters: ReceivablesReportFilters, signal?: AbortSignal) =>
+    apiClient.get<ReceivablesReportPage>("/commerce/v1/receivables/report", { ...filters, templateVersion: 4, dateRangeVersion: 2 }, {signal}),
   printReport: (filters: ReceivablesReportFilters) =>
     apiClient.getText("/commerce/v1/receivables/report/print", { ...filters, templateVersion: 4, dateRangeVersion: 2, page: undefined, pageSize: undefined }),
   exportReport: (filters: ReceivablesReportFilters) =>
@@ -185,9 +185,10 @@ export const receivablesApi = {
     to?: string;
     sortBy?: string;
     sortDirection?: "asc" | "desc";
-  }) => apiClient.get<ReceivablePage>(
+  }, signal?: AbortSignal) => apiClient.get<ReceivablePage>(
     "/commerce/v1/receivables",
     withPagedDefaults({ ...params, dateRangeVersion: 2 }),
+    {signal},
   ),
   posList: (params: {page:number;pageSize:number;customerId:string;outstandingOnly:true}) =>
     apiClient.get<ReceivablePage>("/commerce/v1/pos/receivables",params),

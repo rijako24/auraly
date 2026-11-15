@@ -249,12 +249,13 @@ class ApiClient {
   async get<T>(
     path: string,
     params?: Record<string, string | number | boolean | undefined>,
-    options?: Pick<RequestInit, "cache" | "headers">,
+    options?: Pick<RequestInit, "cache" | "headers" | "signal">,
   ): Promise<T> {
     const url = this.buildUrl(path, params);
     const response = await fetchWithSessionRetry(url, {
       method: "GET",
       cache: options?.cache,
+      signal: options?.signal,
       headers: {
         ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
         ...options?.headers,

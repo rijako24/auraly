@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Loader2, Printer } from "lucide-react";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -94,7 +94,10 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
     search: initialSearch ?? "", status: initialStatus ?? "", from: initialFrom ?? "", to: initialTo ?? "",
     overdueOnly: initialOverdue === true }));
   const [draft, setDraft] = useState(criteria);
+  const filterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (filterTimer.current) clearTimeout(filterTimer.current); }, []);
   const [filterError, setFilterError] = useState<string | null>(null);
+  const filtersPending = JSON.stringify(draft) !== JSON.stringify(criteria);
   const invalidDates = Boolean(!cutoff || (criteria.from && criteria.from > cutoff) ||
     (criteria.to && criteria.to > cutoff) || (criteria.from && criteria.to && criteria.from > criteria.to) ||
     (criteria.issuedFrom && criteria.issuedFrom > cutoff) || (criteria.issuedTo && criteria.issuedTo > cutoff));
@@ -115,9 +118,9 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
     sortDirection: sortBy ? sortDirection : undefined };
   const report = useQuery<ReceivablesReportPage | PayablesReportPage>({
     queryKey: ["portfolio-report", direction, tenantId, businessId, filters, timeZone],
-    queryFn: () => direction === "receivable"
-      ? receivablesApi.report(filters as ReceivablesReportFilters)
-      : payablesApi.report(filters as PayablesReportFilters),
+    queryFn: ({signal}) => direction === "receivable"
+      ? receivablesApi.report(filters as ReceivablesReportFilters, signal)
+      : payablesApi.report(filters as PayablesReportFilters, signal),
     enabled: Boolean(tenantId && businessId && !invalidDates),
     staleTime: 30_000,
   });
@@ -139,7 +142,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
   const hasOtherImpact = currencyTotals.some(total => total.otherImpact !== 0) ||
     items.some(item => item.otherImpact !== 0);
   const title = direction === "receivable" ? "Informe de cuentas por cobrar" : "Informe de cuentas por pagar";
-  const exportUnavailable = invalidDates || printing || !!exporting || report.isLoading || report.isError || !report.data || !branding.isSuccess;
+  const exportUnavailable = filtersPending || !!filterError || invalidDates || printing || !!exporting || report.isLoading || report.isError || !report.data || !branding.isSuccess;
 
   function order(column: string) {
     setSortDirection(current => sortBy === column && current === "asc" ? "desc" : "asc");
@@ -160,8 +163,8 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
     return <Button type="button" aria-label={label} aria-pressed={active} variant={active ? "default" : "outline"}
       className="h-auto min-h-20 flex-col items-start whitespace-normal px-3 py-3 text-left" onClick={() => {
         const next = {...draft, outstandingOnly: !!selection.outstandingOnly, status: selection.status ?? "", overdueOnly: false};
-        if (!applyCriteria(next)) return;
-        setDraft(next); chooseMode(selection.mode);
+        if (!changeCriteria(next)) return;
+        chooseMode(selection.mode);
         setIncludeApplications(!!selection.includeApplications);
         setFilterError(null); setPrintHtml(null); setPrintError(null);
       }}>
@@ -233,6 +236,13 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
     setCriteria(next); setPage(1); setFilterError(null); setPrintHtml(null); return true;
   }
 
+  function changeCriteria(next: CustomerReportCriteria, defer = false) {
+    if (filterTimer.current) clearTimeout(filterTimer.current);
+    setDraft(next);
+    if (defer) { filterTimer.current = setTimeout(() => applyCriteria(next), 250); return true; }
+    return applyCriteria(next);
+  }
+
   const grouped = groupPortfolioReportRows(mode === "detail" ? items : []);
 
   return <Dialog open onOpenChange={open => !open && onClose()}>
@@ -259,10 +269,10 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
             <div className="w-full space-y-1 text-xs sm:max-w-sm"><span>{direction === "receivable" ? "Cliente" : "Proveedor"} · todas sus sedes</span><PartyRoleSelect role={direction === "receivable" ? "Customer" : "Supplier"}
               value={draft.partyId} selectedOption={draft.partyId && draft.partyLabel ? {value:draft.partyId,label:draft.partyLabel} : null}
               sourceKey="portfolio" loadPage={(search,page,pageSize) => partiesApi.portfolioRoleOptions({role:direction === "receivable" ? "Customer" : "Supplier",search:search || undefined,page,pageSize})}
-              onChange={(partyId, party) => setDraft(value => ({...value,partyId,partyLabel:party?.displayName ?? "",siteId:""}))}
+              onChange={(partyId, party) => changeCriteria({...draft,partyId,partyLabel:party?.displayName ?? "",siteId:""})}
               ariaLabel={direction === "receivable" ? "Cliente del informe" : "Proveedor del informe"}
               placeholder={direction === "receivable" ? "Todos los clientes" : "Todos los proveedores"} />
-              {draft.partyId !== criteria.partyId && <p className="text-muted-foreground">Elige un reporte para aplicar el tercero seleccionado.</p>}</div>
+              </div>
           </div>
           <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
             {reportShortcut("Consolidado general",`Resumen por ${direction === "receivable" ? "cliente" : "proveedor"}, con y sin saldo.`,{mode:"summary"})}
@@ -277,7 +287,7 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
         {filterError && <p role="alert" className="text-sm text-destructive">{filterError}</p>}
         <details className="rounded-xl border p-3">
           <summary className="cursor-pointer text-sm font-semibold">Más filtros</summary>
-          <form className="mt-3 space-y-3" onSubmit={event => { event.preventDefault(); applyCriteria(); }}>
+          <div className="mt-3 space-y-3">
             <div className="flex flex-wrap items-center gap-3">
               <div className="inline-flex rounded-lg border bg-background p-1" role="group" aria-label="Tipo de informe">
                 <Button size="sm" type="button" variant={mode === "detail" ? "default" : "ghost"} onClick={() => chooseMode("detail")}>Detallado</Button>
@@ -289,27 +299,26 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
             </div>
             {direction === "receivable" && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="space-y-1 text-xs">Factura exacta<Input aria-label="Factura exacta" maxLength={64} value={draft.documentNumber}
-                onChange={event => setDraft({...draft,documentNumber:event.target.value})} /></label>
+                onChange={event => changeCriteria({...draft,documentNumber:event.target.value}, true)} /></label>
               <label className="space-y-1 text-xs">Emisión desde<DatePicker today={localToday} value={draft.issuedFrom} max={cutoff}
-                onChange={value => setDraft({...draft,issuedFrom:value})} /></label>
+                onChange={value => changeCriteria({...draft,issuedFrom:value})} /></label>
               <label className="space-y-1 text-xs">Emisión hasta<DatePicker today={localToday} value={draft.issuedTo} max={cutoff}
-                onChange={value => setDraft({...draft,issuedTo:value})} /></label>
+                onChange={value => changeCriteria({...draft,issuedTo:value})} /></label>
               {([['minimumAgeDays','Edad desde (días)',0],['maximumAgeDays','Edad hasta (días)',0],
                 ['minimumDaysPastDue','Mora desde (días)',undefined],['maximumDaysPastDue','Mora hasta (días)',undefined]] as const).map(([key,label,min]) =>
                 <label key={key} className="space-y-1 text-xs">{label}<Input aria-label={label} type="number" step="1" min={min} value={draft[key]}
-                  onChange={event => setDraft({...draft,[key]:event.target.value})} /></label>)}
+                  onChange={event => changeCriteria({...draft,[key]:event.target.value}, true)} /></label>)}
             </div>}
             <label className="block max-w-lg space-y-1 text-xs">Búsqueda general<Input aria-label="Búsqueda general del informe" maxLength={120}
-              value={draft.search} onChange={event => setDraft({...draft,search:event.target.value})} placeholder="Documento, identificación o sede" /></label>
+              value={draft.search} onChange={event => changeCriteria({...draft,search:event.target.value}, true)} placeholder="Documento, identificación o sede" /></label>
             {direction === "receivable" && <p className="text-xs text-muted-foreground">Edad: días desde la emisión al corte. Mora: días desde el vencimiento al corte; un valor negativo indica días pendientes para vencer.</p>}
             <div className="flex flex-wrap items-center gap-4 text-sm">
-              <label className="flex items-center gap-2"><Checkbox checked={draft.outstandingOnly} onCheckedChange={checked => setDraft({...draft,outstandingOnly:checked === true,status:checked === true && draft.status === "Paid" ? "" : draft.status})} />Solo con saldo</label>
-              <label className="flex items-center gap-2"><Checkbox checked={draft.overdueOnly} onCheckedChange={checked => setDraft({...draft,overdueOnly:checked === true,status:checked === true && draft.status === "Paid" ? "" : draft.status})} />Solo vencidas</label>
-              <Button type="submit" size="sm">Aplicar filtros</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => { setDraft({...emptyCustomerCriteria}); setCriteria({...emptyCustomerCriteria}); setPage(1); setFilterError(null); setPrintHtml(null); }}>Ver todos los {direction === "receivable" ? "clientes" : "proveedores"}</Button>
+              <label className="flex items-center gap-2"><Checkbox checked={draft.outstandingOnly} onCheckedChange={checked => changeCriteria({...draft,outstandingOnly:checked === true,status:checked === true && draft.status === "Paid" ? "" : draft.status})} />Solo con saldo</label>
+              <label className="flex items-center gap-2"><Checkbox checked={draft.overdueOnly} onCheckedChange={checked => changeCriteria({...draft,overdueOnly:checked === true,status:checked === true && draft.status === "Paid" ? "" : draft.status})} />Solo vencidas</label>
+              <Button type="button" size="sm" variant="outline" onClick={() => changeCriteria({...emptyCustomerCriteria})}>Ver todos los {direction === "receivable" ? "clientes" : "proveedores"}</Button>
             </div>
             {(draft.siteId || draft.search || draft.status || draft.from || draft.to) && <p className="text-xs text-muted-foreground">Se conservan los filtros de la cartera al abrir el informe. «Ver todos los {direction === "receivable" ? "clientes" : "proveedores"}» limpia también búsqueda, sede, registro y estado heredados.</p>}
-          </form>
+          </div>
         </details>
         {invalidDates && <p role="alert" className="text-sm text-destructive">{!cutoff ? "Selecciona la fecha de corte del informe." : "Revisa las fechas: emisión y registro deben quedar dentro del corte."}</p>}
         {branding.isError && <p role="alert" className="text-sm text-destructive">No se pudo preparar la marca para imprimir o exportar. <Button variant="link" onClick={() => void branding.refetch()}>Reintentar marca</Button></p>}

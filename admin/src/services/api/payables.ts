@@ -129,8 +129,8 @@ export interface PayablesReportFilters {
 }
 
 export const payablesApi = {
-  report: (filters: PayablesReportFilters) =>
-    apiClient.get<PayablesReportPage>("/commerce/v1/payables/report", { ...filters, dateRangeVersion: 2 }),
+  report: (filters: PayablesReportFilters, signal?: AbortSignal) =>
+    apiClient.get<PayablesReportPage>("/commerce/v1/payables/report", { ...filters, dateRangeVersion: 2 }, {signal}),
   printReport: (filters: PayablesReportFilters) =>
     apiClient.getText("/commerce/v1/payables/report/print", { ...filters, dateRangeVersion: 2, page: undefined, pageSize: undefined }),
   exportReport: (filters: PayablesReportFilters) =>
@@ -159,9 +159,10 @@ export const payablesApi = {
     conceptId?: string;
     sortBy?: string;
     sortDirection?: "asc" | "desc";
-  }) => apiClient.get<PayablePage>(
+  }, signal?: AbortSignal) => apiClient.get<PayablePage>(
     "/commerce/v1/payables",
     withPagedDefaults({ ...params, dateRangeVersion: 2 }),
+    {signal},
   ),
   posList: (params: {page:number;pageSize:number;supplierId:string;outstandingOnly:true}) =>
     apiClient.get<PayablePage>("/commerce/v1/pos/payables",params),
