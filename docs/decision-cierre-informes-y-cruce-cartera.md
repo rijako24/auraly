@@ -606,6 +606,12 @@ Las filas de **Recaudos** y **Pagos** ofrecen **Ver e imprimir** a quienes tiene
 
 El saldo al corte incluye únicamente movimientos cuya fecha efectiva y cuya fecha de aplicación/registro son anteriores al final del día de corte. Así un pago registrado después no altera retroactivamente el informe aunque su fecha de pago se haya escrito hacia atrás. **Notas y ajustes** muestra la diferencia entre original, pagos y saldo; hace visibles devoluciones, notas crédito y ajustes de cartera sin llamarlos pagos. La consulta del informe y la exportación deben usar el mismo cálculo autoritativo.
 
+En CxP, los agregados financieros por identidad se materializan antes de unir
+nombres, referencias y demás datos descriptivos. La barrera conserva el cálculo
+canónico y evita que SQL arrastre esas columnas al ordenar los movimientos.
+La regresión inspecciona ambos pasos después de medir 10.000 posiciones;
+se mantienen dos comandos SQL por informe y el presupuesto de p95 inferior a 1.000 ms.
+
 Por solicitud del 2026-11-15, el visor común ofrece seis accesos directos:
 consolidado general, consolidado con saldo, detallado general, detallado con
 saldo, detallado con abonos/pagos y detallado sin saldo. Son acciones de
