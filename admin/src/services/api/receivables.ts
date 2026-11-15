@@ -98,6 +98,7 @@ export interface CustomerPaymentHistoryPage {
 export interface CustomerPortfolioPage {items:Array<{customerId:string;customerName:string;identification:string;invoiceCount:number;originalAmount:number;paidAmount:number;outstandingAmount:number;overdueAmount:number;partySiteId:string|null;partySiteName:string|null}>;page:number;pageSize:number;totalCount:number;totalPages:number;totalOutstanding:number;totalOverdue:number;totalInvoiceCount:number;totalOriginal:number;totalPaid:number}
 export interface AvailableCreditAmounts { availableAdvances?: number; availableCredits?: number; netAmount?: number }
 export interface ReceivablesReportItem extends AvailableCreditAmounts {
+  internalDocumentNumber?: string | null;
   isCreditBalance?: boolean;
   termDays?: number | null; ageDays?: number | null; daysPastDue?: number | null;
   legalName?: string | null; address?: string | null; city?: string | null;

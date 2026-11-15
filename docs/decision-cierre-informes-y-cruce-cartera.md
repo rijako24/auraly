@@ -9,7 +9,8 @@ del objetivo completo al final de esta sección.
 
 ## Cierre de presentación y saldos del 2026-11-09
 
-Esta sección prevalece sobre la presentación por bloques descrita más abajo.
+Este cierre y su actualización de presentación del 14-11-2026 prevalecen sobre
+las descripciones anteriores de la salida del informe.
 El propietario de recibos/anticipos es la sección 14 de
 [comprobantes abiertos](implementation/accounting-open-vouchers-design.md);
 el informe sólo consulta sus fuentes y aplicaciones canónicas.
@@ -51,6 +52,78 @@ el informe sólo consulta sus fuentes y aplicaciones canónicas.
   pruebas a implementar, no una medición declarada.
 
 ### Ampliación del informe de clientes del 2026-11-11
+
+#### Presentación aprobada del 2026-11-14
+
+El detallado actual de clientes (plantilla 4) presenta un bloque por tercero:
+nombre e identificación destacados, información de contacto disponible y tablas
+de sus facturas por sede/moneda, con encabezados de columnas repetidos. En cada
+factura hay una sola columna «Edad de cartera» (Sin vencer, 1–30, 31–60, 61–90,
+más de 90), además de edad y mora numéricas. Los cinco tramos conservan sus
+importes en el resumen del cliente/sede. Los colores pastel menta, amarillo,
+durazno, rosa y lavanda acompañan los textos; nunca sustituyen la clasificación
+del propietario ni cambian sus límites. Pantalla, PDF e impresión y Excel
+conservan el mismo alcance. Los resúmenes, edades y facturas muestran la misma
+precisión de hasta cuatro decimales, sin redondear los totales a pesos enteros.
+Los anticipos y otros créditos aparecen una sola
+vez en el resumen, sin presentarse como facturas ficticias; un tercero con sólo
+crédito conserva su bloque visible.
+
+El número principal es el prefijo/consecutivo fiscal registrado en FiscalDocuments
+para la misma venta y sede; sin documento fiscal se conserva el número interno.
+Una obligación originada por comprobante manual presenta su AccountingEntries.EntryNumber.
+La referencia original se muestra aparte cuando difiere; el CUFE no es el número
+de factura. Los filtros exactos y la búsqueda admiten tanto el número principal
+como la referencia original antes de paginar y totalizar. Las plantillas 2/3
+conservan su identidad publicada. No se reescriben documentos ni movimientos.
+
+La agrupación visual sólo recorre la página ya seleccionada o la exportación
+explícita acotada. No suma filas para reconstruir subtotales ni trae toda la
+cartera al abrir el visor. Los subtotales siguen siendo los del conjunto filtrado
+devueltos por Receivables; los enlaces de identidad son de cardinalidad uno
+respaldada por las claves de FiscalDocuments y AccountingEntries. Se mantienen
+dos comandos SQL, el límite de exportación de 5.000 y el presupuesto p95 <1 s
+con 10.000 posiciones. Es un cambio de lectura/presentación: rollback retira
+estos consumidores, sin migración ni reparación financiera.
+
+El enriquecimiento de abonos CxC/CxP conserva `PortfolioPaymentOrigins` como
+única proyección de identidad. El perfil real del 14-11-2026 mostró que unir
+esa vista directamente podía recorrer 10.000 pagos para devolver las 50
+aplicaciones de una página de 25 facturas. La búsqueda correlacionada por
+PaymentId/tipo mantiene la página como límite: los perfiles de ambos lados
+mostraron 25 búsquedas por clave y las mismas 50 aplicaciones. TOP(1) expresa
+una cardinalidad respaldada por las claves primarias de pagos/borradores y
+UQ_AccountingEntries_Source; no escoge entre documentos duplicados ni crea
+otra numeración. La regresión de volumen comprueba las búsquedas y filas reales
+después de terminar todas sus muestras de latencia, además de los importes,
+filtros y dos viajes de cada petición. Revertir estos dos lectores sólo restaura
+el plan anterior; no requiere cambios de esquema ni modifica movimientos.
+Los umbrales y el gate completo de despliegue siguen siendo obligatorios.
+
+La misma búsqueda acotada de identidad se aplica a las filas ya seleccionadas
+de verificación de cierres. Los batches de lectura de esa página y de
+trazabilidad omiten mensajes intermedios de filas afectadas; conservan sus
+resultados, permisos y viajes existentes. El informe CxP materializa primero
+las obligaciones autorizadas y sus filtros, antes de buscar las fuentes
+inmutables y proyectar una sola fecha por identidad de fuente. La regresión
+comprueba que esas lecturas usan búsquedas por clave y no recorren fuentes
+ajenas al conjunto. En CxC, el número de comprobante se busca por la clave
+única completa de AccountingEntries: el perfil anterior recorría 420.000
+filas contables para 10.000 obligaciones aunque ninguna tuviera comprobante.
+La comprobación de volumen también limita las filas contables realmente
+leídas. No se añade índice, estado, writer, consulta por factura ni viaje SQL.
+Estos ajustes sólo cambian planes de lectura; revertirlos no modifica datos
+ni requiere migración. Las mediciones locales y el gate completo se vuelven
+a ejecutar antes de autorizar el despliegue.
+
+Validación local del incremento: compilación Release sin errores ni advertencias,
+build de Admin y lint dirigido; 14 pruebas de exportación/visor; los dos escenarios
+de navegador CxC/CxP, incluidos filtros, exportación completa, dos clientes,
+encabezados repetidos, colores y sólo anticipo; 42 regresiones de cartera,
+calendario y cortes, más la repetición satisfactoria del caso de venta/pago que
+comprueba identidad fiscal, referencia interna, ambos filtros y plantilla anterior.
+Se inspeccionaron el PDF generado y sus encabezados de continuación. Estas
+comprobaciones no sustituyen el gate completo ni la validación posterior en DEV.
 
 #### Cierre de créditos disponibles — implementación 2026-11-13
 

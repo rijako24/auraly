@@ -1,12 +1,8 @@
 name: Deploy Auraly Admin
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "admin/**"
-      - ".github/workflows/azure-static-web-apps-auraly.yml"
+  # Contract changes are published by deploy-auraly-release after the backend.
+  # Keep standalone publication explicit for compatible frontend-only changes.
   workflow_dispatch:
     inputs:
       environment:
@@ -27,7 +23,7 @@ concurrency:
 
 jobs:
   deploy_dev:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.environment == 'dev')
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.environment == 'dev'
     runs-on: ubuntu-latest
     name: Deploy DEV
     steps:

@@ -10,7 +10,7 @@ using Xunit.Abstractions;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class AccountingSharedCostCenterTests(ServerSliceFixture fixture, ITestOutputHelper output)
+public sealed class AccountingSharedCostCenterTests(ServerSliceFixture fixture)
 {
     [Fact]
     public async Task Centers_are_shared_between_sites_without_warehouse_capture_and_posted_snapshots_do_not_change()
@@ -106,6 +106,17 @@ public sealed class AccountingSharedCostCenterTests(ServerSliceFixture fixture, 
         Assert.True(await result.ReadAsync()); Assert.Equal(1, result.GetInt32(0)); Assert.Equal(2, result.GetInt32(1)); Assert.Equal(0, result.GetDecimal(2));
     }
 
+}
+
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class AccountingSharedCostCenterPerformanceCollection : ICollectionFixture<ServerSliceFixture>
+{
+    public const string Name = "Shared cost-center performance";
+}
+
+[Collection(AccountingSharedCostCenterPerformanceCollection.Name)]
+public sealed class AccountingSharedCostCenterPerformanceTests(ServerSliceFixture fixture, ITestOutputHelper output)
+{
     [Fact]
     public async Task Ten_thousand_centers_keep_search_and_first_next_pages_in_one_bounded_command()
     {
@@ -123,35 +134,29 @@ public sealed class AccountingSharedCostCenterTests(ServerSliceFixture fixture, 
             """, connection);
         seed.Parameters.AddWithValue("@Tenant", fixture.TenantId); seed.Parameters.AddWithValue("@Prefix", prefix);
         await seed.ExecuteNonQueryAsync();
-        try
+        // The collection owns an isolated database. Its fixture drops that
+        // database after measurement instead of deleting 10,000 referenced
+        // principals against another scenario's accumulated financial history.
+        foreach (var query in new[] { new AccountingCostCenterQuery(Search: prefix, PageSize: 20),
+            new AccountingCostCenterQuery(Search: prefix, Page: 2, PageSize: 20),
+            new AccountingCostCenterQuery(Search: prefix + "09", PageSize: 20) })
         {
-            foreach (var query in new[] { new AccountingCostCenterQuery(Search: prefix, PageSize: 20),
-                new AccountingCostCenterQuery(Search: prefix, Page: 2, PageSize: 20),
-                new AccountingCostCenterQuery(Search: prefix + "09", PageSize: 20) })
+            var times = new List<double>();
+            for (var sample = 0; sample <= 20; sample++)
             {
-                var times = new List<double>();
-                for (var sample = 0; sample <= 20; sample++)
-                {
-                    using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
-                        commandFilter: command => command.CommandText.Contains("SELECT COUNT(*) FROM dbo.AccountingCostCenters", StringComparison.Ordinal));
-                    var timer = Stopwatch.StartNew();
-                    var page = await service.ListCostCentersAsync(user, query);
-                    timer.Stop(); Assert.Equal(1, counter.Count); Assert.Equal(20, page.Items.Count);
-                    Assert.Equal(query.Search == prefix ? 10_000 : 100, page.TotalCount);
-                    Assert.All(page.Items, row => Assert.StartsWith(query.Search!, row.Code));
-                    if (query.Page == 2) Assert.Equal(prefix + "0020", page.Items[0].Code);
-                    if (sample > 0) times.Add(timer.Elapsed.TotalMilliseconds);
-                }
-                var p95 = times.Order().ElementAt(18);
-                output.WriteLine("Cost centers: page={0}, search={1}, p95={2:F1}ms, 1 SQL, 20 samples", query.Page, query.Search, p95);
-                Assert.True(p95 < 500, $"The cost-center page exceeded 500ms: p95 {p95:F1}ms.");
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                    commandFilter: command => command.CommandText.Contains("SELECT COUNT(*) FROM dbo.AccountingCostCenters", StringComparison.Ordinal));
+                var timer = Stopwatch.StartNew();
+                var page = await service.ListCostCentersAsync(user, query);
+                timer.Stop(); Assert.Equal(1, counter.Count); Assert.Equal(20, page.Items.Count);
+                Assert.Equal(query.Search == prefix ? 10_000 : 100, page.TotalCount);
+                Assert.All(page.Items, row => Assert.StartsWith(query.Search!, row.Code));
+                if (query.Page == 2) Assert.Equal(prefix + "0020", page.Items[0].Code);
+                if (sample > 0) times.Add(timer.Elapsed.TotalMilliseconds);
             }
-        }
-        finally
-        {
-            await using var cleanup = new SqlCommand("DELETE dbo.AccountingCostCenters WHERE TenantId=@Tenant AND Code LIKE @Prefix+N'%';", connection);
-            cleanup.Parameters.AddWithValue("@Tenant", fixture.TenantId); cleanup.Parameters.AddWithValue("@Prefix", prefix);
-            Assert.Equal(10_000, await cleanup.ExecuteNonQueryAsync());
+            var p95 = times.Order().ElementAt(18);
+            output.WriteLine("Cost centers: page={0}, search={1}, p95={2:F1}ms, 1 SQL, 20 samples", query.Page, query.Search, p95);
+            Assert.True(p95 < 500, $"The cost-center page exceeded 500ms: p95 {p95:F1}ms.");
         }
     }
 }

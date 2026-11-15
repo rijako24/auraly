@@ -47,7 +47,8 @@ internal static class PortfolioReportPrint
                         .Where(value => !string.IsNullOrWhiteSpace(value))),
                     CreditLimit = item.CreditLimit, GroupTotals = item.GroupTotals,
                     AvailableAdvances = item.AvailableAdvances, AvailableCredits = item.AvailableCredits, NetAmount = item.NetAmount,
-                    IsCreditBalance = item.IsCreditBalance
+                    IsCreditBalance = item.IsCreditBalance,
+                    InternalDocumentNumber = item.InternalDocumentNumber
                 }).ToArray()), brand, token, query.TemplateVersion,
                 string.Join(" · ", new[] {
                     query.DocumentNumber is null ? null : $"Factura: {query.DocumentNumber}",
@@ -111,9 +112,11 @@ internal static class PortfolioReportPrint
             th{background:#eaf4f3;color:#174d4a}td.num,th.num{text-align:right;white-space:nowrap}.sub{font-size:10px;color:#536271}
             tr{break-inside:avoid}thead{display:table-header-group}.empty{text-align:center;padding:24px}.footer{margin-top:14px;border-top:1px solid #d9e4e5;padding-top:7px;color:#526478;font-size:10px}
             .party{margin:14px 0}.party-head{background:#eaf4f3;border:1px solid #d9e4e5;padding:8px 10px;font-weight:700;color:#174d4a;break-after:avoid}
+            .customer-head{display:block;margin:0;border:0;background:#0f766e;padding:8px 10px;color:white;break-after:avoid}.customer-head h2{margin:0;font-size:18px}.site-head{background:#eaf4f3;padding:8px 10px;break-after:avoid}.party-site{margin:0 0 10px}
             .applications{background:#f5f8f8;margin-top:8px;padding:6px 8px}
             .applications div{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #d9e4e5;padding:3px 0}.applications div:first-of-type{border:0}
             .aging{border:1px solid #c7e1df;background:#f2faf9;border-radius:8px;padding:8px 10px;margin:10px 0}.aging-items{display:flex;flex-wrap:wrap;gap:14px}.aging-items div{min-width:100px}.aging-items span{display:block;color:#536271;font-size:10px}
+            .age-badge{display:inline-block;padding:3px 7px;border-radius:4px;white-space:nowrap}.age-badge span{color:inherit}.age-current{background:#ddf4e8;color:#166443}.age-30{background:#fff1c2;color:#805b00}.age-60{background:#ffe2cc;color:#934317}.age-90{background:#f9dce5;color:#933657}.age-old{background:#e8dff7;color:#65428b}
             </style></head><body><header><div class="brand">
             """);
         if (brand.LogoUrl is { Length: > 0 } logo)
@@ -151,11 +154,11 @@ internal static class PortfolioReportPrint
         foreach (var total in first.Totals)
             html.Append("<div class=\"aging\"><strong>Edades de cartera · ").Append(Encode(total.Currency))
                 .Append("</strong><div class=\"aging-items\">")
-                .Append(AgeCell("Al día", total.NotDue, total.Currency))
-                .Append(AgeCell("1–30 días", total.Overdue1To30, total.Currency))
-                .Append(AgeCell("31–60 días", total.Overdue31To60, total.Currency))
-                .Append(AgeCell("61–90 días", total.Overdue61To90, total.Currency))
-                .Append(AgeCell("Más de 90 días", total.OverdueOver90, total.Currency))
+                .Append(AgeCell(templateVersion >= 4 ? "Sin vencer" : "Al día", total.NotDue, total.Currency, templateVersion >= 4))
+                .Append(AgeCell("1–30 días", total.Overdue1To30, total.Currency, templateVersion >= 4))
+                .Append(AgeCell("31–60 días", total.Overdue31To60, total.Currency, templateVersion >= 4))
+                .Append(AgeCell("61–90 días", total.Overdue61To90, total.Currency, templateVersion >= 4))
+                .Append(AgeCell("Más de 90 días", total.OverdueOver90, total.Currency, templateVersion >= 4))
                 .Append("</div></div>");
         if (consolidated)
         {
@@ -197,8 +200,11 @@ internal static class PortfolioReportPrint
         IReadOnlyList<PrintRow> rows, CancellationToken token, bool expanded, bool withCredits)
     {
         string? previousGroup = null;
+        Guid? previousParty = null;
         PrintRow? previous = null;
-        foreach (var row in rows)
+        var orderedRows = withCredits ? rows.GroupBy(row => row.PartyId)
+            .SelectMany(party => party.GroupBy(row => (row.PartySiteId, row.Currency)).SelectMany(site => site)) : rows;
+        foreach (var row in orderedRows)
         {
             token.ThrowIfCancellationRequested();
             var group = string.Join('\u001f', row.PartyId.ToString("N"),
@@ -206,9 +212,18 @@ internal static class PortfolioReportPrint
             if (group != previousGroup)
             {
                 if (previousGroup is not null) CloseDetailGroup(html, previous!, expanded, withCredits);
-                html.Append("<section class=\"party\"><div class=\"party-head\">")
-                    .Append(Encode(row.Name)).Append(" · ").Append(Encode(row.Identification))
-                    .Append(" · ").Append(Encode(row.Site ?? (withCredits ? "Sin sede identificada" : "Sede principal")))
+                if (withCredits && previousParty != row.PartyId)
+                {
+                    if (previousParty is not null) html.Append("</section>");
+                    html.Append("<section class=\"party\"><header class=\"customer-head\"><h2>")
+                        .Append(Encode(row.Name)).Append("</h2><div>Identificación ")
+                        .Append(Encode(row.Identification)).Append("</div></header>");
+                    previousParty = row.PartyId;
+                }
+                if (withCredits) html.Append("<div class=\"party-site\"><div class=\"site-head\">");
+                else html.Append("<section class=\"party\"><div class=\"party-head\">")
+                    .Append(Encode(row.Name)).Append(" · ").Append(Encode(row.Identification)).Append(" · ");
+                html.Append(Encode(row.Site ?? (withCredits ? "Sin sede identificada" : "Sede principal")))
                     .Append(" · ").Append(Encode(row.Currency));
                 if (expanded) html.Append("<div class=\"sub\">").Append(Encode(row.Contact ?? ""))
                     .Append(" · Cupo vigente: ").Append(row.CreditLimit is { } limit ? Money(limit, row.Currency) : "Sin cupo definido").Append("</div>");
@@ -217,14 +232,23 @@ internal static class PortfolioReportPrint
                 html.Append("<th class=\"num\">Original</th><th class=\"num\">")
                     .Append(applicationLabel == "Abono" ? "Abonado" : "Pagado")
                     .Append("</th><th class=\"num\">Notas y ajustes</th><th class=\"num\">Saldo pendiente</th><th>")
-                    .Append(expanded ? "Tramo" : "Edad").Append("</th></tr></thead><tbody>");
+                    .Append(withCredits ? "Edad de cartera" : expanded ? "Tramo" : "Edad")
+                    .Append("</th></tr></thead><tbody>");
                 previousGroup = group;
+            }
+            previous = row;
+            if (withCredits && row.IsCreditBalance)
+            {
+                if (row.GroupTotals?.InvoiceCount == 0)
+                    html.Append("<tr><td colspan=\"").Append(expanded ? 11 : 8)
+                        .Append("\" class=\"empty\">Sin facturas para estos filtros.</td></tr>");
+                continue;
             }
             html.Append("<tr><td><strong>")
                 .Append(Encode(row.DocumentNumber ?? "Sin número"))
                 .Append("</strong>");
-            if (withCredits && row.IsCreditBalance)
-                AppendCredits(html,row.AvailableAdvances,row.AvailableCredits,row.NetAmount,row.Currency);
+            if (row.InternalDocumentNumber is { } internalNumber)
+                html.Append("<div class=\"sub\">Referencia interna: ").Append(Encode(internalNumber)).Append("</div>");
             html.Append("</td><td>").Append(Date(row.IssuedAt))
                 .Append("</td><td>").Append(Date(row.DueDate)).Append("</td>");
             if (expanded) html.Append("<td class=\"num\">").Append(row.TermDays?.ToString(Culture) ?? "—")
@@ -234,9 +258,11 @@ internal static class PortfolioReportPrint
                 .Append(Money(row.Original, row.Currency)).Append("</td><td class=\"num\">")
                 .Append(Money(row.Paid, row.Currency)).Append("</td><td class=\"num\">")
                 .Append(Money(row.OtherImpact, row.Currency)).Append("</td><td class=\"num\"><strong>")
-                .Append(Money(row.Outstanding, row.Currency)).Append("</strong></td><td>")
-                .Append(AgeLabel(row)).Append("</td></tr>");
-            previous = row;
+                .Append(Money(row.Outstanding, row.Currency)).Append("</strong></td><td>");
+            if (withCredits) html.Append("<span class=\"age-badge ").Append(AgeClass(AgeLabel(row))).Append("\">");
+            html.Append(!withCredits && row.NotDue > 0 ? "Al día" : AgeLabel(row));
+            if (withCredits) html.Append("</span>");
+            html.Append("</td></tr>");
             if (!includeApplications || row.IsCreditBalance) continue;
             html.Append("<tr><td colspan=\"").Append(expanded ? 11 : 8).Append("\"><div class=\"applications\"><strong>").Append(applicationLabel)
                 .Append("s aplicados</strong>");
@@ -250,6 +276,7 @@ internal static class PortfolioReportPrint
             html.Append("</div></td></tr>");
         }
         if (previousGroup is not null) CloseDetailGroup(html, previous!, expanded, withCredits);
+        if (previousParty is not null) html.Append("</section>");
     }
 
     private static void CloseDetailGroup(StringBuilder html, PrintRow row, bool expanded, bool withCredits)
@@ -263,16 +290,16 @@ internal static class PortfolioReportPrint
                 .Append("</td><td class=\"num\">").Append(Money(total.OtherImpact,row.Currency))
                 .Append("</td><td class=\"num\">").Append(Money(total.OutstandingAmount,row.Currency))
                 .Append("</td><td></td></tr><tr><td colspan=\"11\"><div class=\"aging-items\">")
-                .Append(AgeCell("Al día",total.NotDueAmount,row.Currency))
-                .Append(AgeCell("1–30 días",total.Overdue1To30Amount,row.Currency))
-                .Append(AgeCell("31–60 días",total.Overdue31To60Amount,row.Currency))
-                .Append(AgeCell("61–90 días",total.Overdue61To90Amount,row.Currency))
-                .Append(AgeCell("Más de 90 días",total.OverdueOver90Amount,row.Currency))
+                .Append(AgeCell(withCredits ? "Sin vencer" : "Al día",total.NotDueAmount,row.Currency,withCredits))
+                .Append(AgeCell("1–30 días",total.Overdue1To30Amount,row.Currency,withCredits))
+                .Append(AgeCell("31–60 días",total.Overdue31To60Amount,row.Currency,withCredits))
+                .Append(AgeCell("61–90 días",total.Overdue61To90Amount,row.Currency,withCredits))
+                .Append(AgeCell("Más de 90 días",total.OverdueOver90Amount,row.Currency,withCredits))
                 .Append("</div>");
             if (withCredits) AppendCredits(html, total.AvailableAdvances, total.AvailableCredits, total.NetAmount, row.Currency);
             html.Append("</td></tr></tfoot>");
         }
-        html.Append("</table></section>");
+        html.Append(withCredits ? "</table></div>" : "</table></section>");
     }
 
     private static string Encode(string value) => WebUtility.HtmlEncode(value);
@@ -280,15 +307,20 @@ internal static class PortfolioReportPrint
         html.Append("<div class=\"sub\">Anticipos disponibles: ").Append(Money(advances,currency))
             .Append(" · Otros saldos a favor: ").Append(Money(credits,currency))
             .Append(" · <strong>Neto comercial: ").Append(Money(net,currency)).Append("</strong></div>");
-    private static string AgeCell(string label, decimal amount, string currency) =>
-        $"<div><span>{label}</span><strong>{Money(amount, currency)}</strong></div>";
+    private static string AgeCell(string label, decimal amount, string currency, bool highlighted) =>
+        $"<div{(highlighted ? $" class=\"age-badge {AgeClass(label)}\"" : "")}><span>{label}</span><strong>{Money(amount, currency)}</strong></div>";
+    private static string AgeClass(string label) => label switch
+    {
+        "Al día" or "Sin vencer" => "age-current", "1–30 días" => "age-30",
+        "31–60 días" => "age-60", "61–90 días" => "age-90", "Más de 90 días" => "age-old", _ => ""
+    };
     private static string AgeInline(PrintRow row) => row.Outstanding <= 0 ? "Sin saldo" : string.Join(" · ", new[]
     {
         ("Al día", row.NotDue), ("1–30", row.Overdue1To30),
         ("31–60", row.Overdue31To60), ("61–90", row.Overdue61To90),
         (">90", row.OverdueOver90)
     }.Where(band => band.Item2 != 0).Select(band => $"{band.Item1}: {Money(band.Item2, row.Currency)}"));
-    private static string AgeLabel(PrintRow row) => row.NotDue > 0 ? "Al día" :
+    private static string AgeLabel(PrintRow row) => row.NotDue > 0 ? "Sin vencer" :
         row.Overdue1To30 > 0 ? "1–30 días" : row.Overdue31To60 > 0 ? "31–60 días" :
         row.Overdue61To90 > 0 ? "61–90 días" : row.OverdueOver90 > 0 ? "Más de 90 días" : "Sin saldo";
     private static string Money(decimal amount, string currency) =>
@@ -306,6 +338,7 @@ internal static class PortfolioReportPrint
         public decimal AvailableCredits { get; init; }
         public decimal NetAmount { get; init; }
         public bool IsCreditBalance { get; init; }
+        public string? InternalDocumentNumber { get; init; }
         public int? TermDays { get; init; }
         public int? AgeDays { get; init; }
         public int? DaysPastDue { get; init; }

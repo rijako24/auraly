@@ -12,6 +12,7 @@ export interface ReportColumn {
   numberFormat?: string;
   excelType?: "date";
   format?: (value: ReportCell, row: ReportRow) => string;
+  cellStyle?: (row: ReportRow) => {backgroundColor:string;textColor:string} | undefined;
 }
 
 export function reportCellText(column: ReportColumn, row: ReportRow): string {

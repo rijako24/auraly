@@ -73,17 +73,29 @@ public sealed partial class SqlReceivablesStore
               -- A COALESCE in the party join produced a cartesian candidate plan
               -- and thousands of repeated site/role lookups for one customer.
               SELECT r.ReceivableId,r.CustomerId,COALESCE(customer.PartyId,r.PartyId) PartyId,
-                r.PartySiteId,r.DocumentNumber,r.CurrencyCode,r.OriginalAmount,r.DueDate,r.Status,
+                r.PartySiteId,CASE WHEN @TemplateVersion>=4 THEN COALESCE(fiscal.FiscalNumber,entry.EntryNumber,r.DocumentNumber)
+                  ELSE r.DocumentNumber END DocumentNumber,r.DocumentNumber InternalDocumentNumber,
+                r.CurrencyCode,r.OriginalAmount,r.DueDate,r.Status,
                 r.SourceDocumentId,r.SourceDocumentType
               INTO #DocumentCandidates
               FROM dbo.Receivables r
               JOIN dbo.Businesses business ON business.BusinessId=r.BusinessId AND business.TenantId=@TenantId
               LEFT JOIN dbo.Customers customer ON customer.CustomerId=r.CustomerId AND customer.TenantId=@TenantId
+              LEFT JOIN dbo.FiscalDocuments fiscal ON @TemplateVersion>=4 AND fiscal.DocumentId=r.SourceDocumentId
+                AND fiscal.BusinessId=r.BusinessId AND fiscal.SourceDocumentType=r.SourceDocumentType AND fiscal.FiscalDocumentType=N'Invoice'
+              -- Seek the complete unique source identity. A tenant-only index
+              -- plan otherwise reread unrelated entries for every obligation.
+              LEFT JOIN dbo.AccountingEntries entry
+                WITH(FORCESEEK(UQ_AccountingEntries_Source(SourceDocumentId,SourceDocumentType)))
+                ON @TemplateVersion>=4 AND r.SourceDocumentType=N'ManualAccountingVoucher'
+                AND entry.SourceDocumentId=r.SourceDocumentId AND entry.SourceDocumentType=r.SourceDocumentType
+                AND entry.BusinessId=r.BusinessId AND entry.TenantId=@TenantId
               WHERE r.BusinessId=@BusinessId AND r.CreatedAt<@Cutoff
                 AND (@CustomerId IS NULL OR @WithCredits=1 AND COALESCE(customer.PartyId,r.PartyId)=@RequestedPartyId
                   OR @WithCredits=0 AND r.CustomerId=@CustomerId)
                 AND (@PartySiteId IS NULL OR r.PartySiteId=@PartySiteId)
-                AND (@DocumentNumber IS NULL OR r.DocumentNumber=@DocumentNumber)
+                AND (@DocumentNumber IS NULL OR r.DocumentNumber=@DocumentNumber OR
+                  @TemplateVersion>=4 AND COALESCE(fiscal.FiscalNumber,entry.EntryNumber)=@DocumentNumber)
                 AND (@DueUpper IS NULL OR r.DueDate<@DueUpper)
                 AND (@DueLower IS NULL OR r.DueDate>=@DueLower)
                 AND (@From IS NULL OR r.CreatedAt>=@From)
@@ -137,6 +149,7 @@ public sealed partial class SqlReceivablesStore
                 AND source.SourceDocumentType=document.SourceDocumentType
               WHERE (@CustomerId IS NULL OR CASE WHEN @WithCredits=1 THEN identityScope.CustomerId ELSE document.CustomerId END=@CustomerId)
                 AND (@Search IS NULL OR document.DocumentNumber LIKE N'%' + @Search + N'%'
+                  OR document.InternalDocumentNumber LIKE N'%' + @Search + N'%'
                   OR identityScope.DisplayName LIKE N'%' + @Search + N'%'
                   OR identityScope.Identification LIKE N'%' + @Search + N'%'
                   OR identityScope.PartySiteName LIKE N'%' + @Search + N'%'
@@ -339,8 +352,11 @@ public sealed partial class SqlReceivablesStore
               details.LegalName,details.Address,details.City,details.Phone,details.Email,details.CreditLimit,
               GroupInvoiceCount,GroupOriginal,GroupPaid,GroupOutstanding,GroupNotDue,
               Group1To30,Group31To60,Group61To90,GroupOver90,
-              AvailableAdvances,AvailableCredits,IsCreditBalance,GroupAdvances,GroupCredits
+              AvailableAdvances,AvailableCredits,IsCreditBalance,GroupAdvances,GroupCredits,
+              documentIdentity.InternalDocumentNumber
             FROM PageDetails page
+            OUTER APPLY (SELECT CASE WHEN original.DocumentNumber<>page.DocumentNumber THEN original.DocumentNumber END InternalDocumentNumber
+              FROM dbo.Receivables original WHERE original.ReceivableId=page.ReceivableId AND original.BusinessId=@BusinessId) documentIdentity
             JOIN #ReportGroups totals ON totals.GroupPartyId=page.PartyId
               AND totals.GroupCurrencyCode=page.CurrencyCode
               AND (totals.GroupSiteId=page.PartySiteId OR (totals.GroupSiteId IS NULL AND page.PartySiteId IS NULL))
@@ -370,8 +386,13 @@ public sealed partial class SqlReceivablesStore
               CASE WHEN application.Amount<0 THEN CONCAT(N'Desaplicación de ',origin.DocumentNumber) ELSE origin.DocumentNumber END,application.AppliedAt,
               application.Amount
             FROM #PageApplications application
-            JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=application.PaymentId
-              AND origin.SubledgerKind=N'Receivable' AND origin.BusinessId=@BusinessId
+            -- PaymentId and kind identify one origin: payment/draft primary
+            -- keys and UQ_AccountingEntries_Source enforce that cardinality.
+            -- Keep that lookup correlated with the bounded application page.
+            CROSS APPLY (SELECT TOP(1) receipt.DocumentNumber
+              FROM accounting.PortfolioPaymentOrigins receipt
+              WHERE receipt.PaymentId=application.PaymentId
+                AND receipt.SubledgerKind=N'Receivable' AND receipt.BusinessId=@BusinessId) origin
             ORDER BY application.PositionId,application.AppliedAt,application.PaymentId,application.UnapplicationTransactionId;
             END
             ELSE
@@ -396,6 +417,7 @@ public sealed partial class SqlReceivablesStore
         command.Parameters.AddWithValue("@CustomerId", (object?)query.CustomerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PartySiteId", (object?)query.PartySiteId ?? DBNull.Value);
         command.Parameters.Add("@DocumentNumber", SqlDbType.NVarChar, 64).Value = (object?)query.DocumentNumber ?? DBNull.Value;
+        command.Parameters.AddWithValue("@TemplateVersion", query.TemplateVersion);
         command.Parameters.Add("@IssuedFrom", SqlDbType.DateTimeOffset).Value = query.IssuedFrom is { } issuedFrom
             ? SqlBusinessLocalDates.StartOfDay(issuedFrom, zone) : DBNull.Value;
         command.Parameters.Add("@IssuedTo", SqlDbType.DateTimeOffset).Value = query.IssuedTo is { } issuedTo
@@ -465,6 +487,7 @@ public sealed partial class SqlReceivablesStore
                 PartyId: reader.IsDBNull(20) ? null : reader.GetGuid(20))
             {
                 TermDays = age?.TermDays, AgeDays = age?.AgeDays, DaysPastDue = age?.DaysPastDue,
+                InternalDocumentNumber = reader.IsDBNull(41) ? null : reader.GetString(41),
                 LegalName = reader.IsDBNull(21) ? null : reader.GetString(21),
                 Address = reader.IsDBNull(22) ? null : reader.GetString(22),
                 City = reader.IsDBNull(23) ? null : reader.GetString(23),

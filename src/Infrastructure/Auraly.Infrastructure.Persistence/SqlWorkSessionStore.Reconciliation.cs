@@ -175,7 +175,9 @@ public sealed partial class SqlWorkSessionStore
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await EnsureClosureScopeAsync(connection, null, identity.TenantId, closureId, cancellationToken);
-        await using var command = new SqlCommand(PaymentVerificationFactsSql + """
+        // This batch reads result sets; intermediate temp-table row counts are
+        // not part of its contract and need not be sent to the reader.
+        await using var command = new SqlCommand("SET NOCOUNT ON;\n" + PaymentVerificationFactsSql + """
             WITH SummaryRows AS
             (
               SELECT movement.PaymentMethodCode,movement.MovementType,movement.Amount,
@@ -896,8 +898,10 @@ public sealed partial class SqlWorkSessionStore
               LEFT JOIN dbo.WorkSessionMovements cash ON cash.WorkSessionMovementId=movement.SourceId
               JOIN dbo.CustomerPayments payment ON payment.PaymentId=COALESCE(cash.DocumentId,movement.SourceId)
                 AND payment.BusinessId=context.BusinessId
-              JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
-                AND origin.SubledgerKind=N'Receivable' AND origin.BusinessId=context.BusinessId AND origin.TenantId=context.TenantId
+              CROSS APPLY (SELECT TOP(1) receipt.DocumentNumber
+                FROM accounting.PortfolioPaymentOrigins receipt
+                WHERE receipt.PaymentId=payment.PaymentId AND receipt.SubledgerKind=N'Receivable'
+                  AND receipt.BusinessId=context.BusinessId AND receipt.TenantId=context.TenantId) origin
               LEFT JOIN dbo.Customers customer ON customer.CustomerId=payment.CustomerId AND customer.TenantId=context.TenantId
               LEFT JOIN dbo.Parties party ON party.PartyId=COALESCE(payment.PartyId,customer.PartyId) AND party.TenantId=context.TenantId
               WHERE movement.MovementType=N'ReceivablePayment'
@@ -908,8 +912,10 @@ public sealed partial class SqlWorkSessionStore
               LEFT JOIN dbo.WorkSessionMovements cash ON cash.WorkSessionMovementId=movement.SourceId
               JOIN dbo.SupplierPayments payment ON payment.PaymentId=COALESCE(cash.DocumentId,movement.SourceId)
                 AND payment.BusinessId=context.BusinessId
-              JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=payment.PaymentId
-                AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=context.BusinessId AND origin.TenantId=context.TenantId
+              CROSS APPLY (SELECT TOP(1) receipt.DocumentNumber
+                FROM accounting.PortfolioPaymentOrigins receipt
+                WHERE receipt.PaymentId=payment.PaymentId AND receipt.SubledgerKind=N'Payable'
+                  AND receipt.BusinessId=context.BusinessId AND receipt.TenantId=context.TenantId) origin
               LEFT JOIN dbo.Suppliers supplier ON supplier.SupplierId=payment.SupplierId AND supplier.TenantId=context.TenantId
               LEFT JOIN dbo.Parties party ON party.PartyId=supplier.PartyId AND party.TenantId=context.TenantId
               WHERE movement.MovementType=N'PayablePayment'

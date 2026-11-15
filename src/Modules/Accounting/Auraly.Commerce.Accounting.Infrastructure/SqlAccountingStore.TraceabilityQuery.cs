@@ -6,6 +6,7 @@ public sealed partial class SqlAccountingStore
     // Operation/status are search filters with an existing empty-page contract for
     // unmatched values; the new voucher selector validates its persisted catalog.
     private const string TraceabilityFilterValidationSql="""
+        SET NOCOUNT ON;
         IF @VoucherTypeCode IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.Options WHERE CatalogCode=N'accounting-voucher-type' AND Code=@VoucherTypeCode AND IsActive=1)
           THROW 51799,N'El tipo de comprobante no es válido.',1;
         IF @FinancialConceptId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM reference.FinancialConcepts

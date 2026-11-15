@@ -44,20 +44,15 @@ public sealed partial class SqlPayablesStore
             SET NOCOUNT ON;
               SELECT p.PayableId,p.SupplierId,p.PartySiteId,p.DocumentNumber,
                 p.CurrencyCode,p.OriginalAmount,p.DueDate,p.Status,
-                issue.IssuedAt,s.Name SupplierName,
-                COALESCE(s.Identification,N'') Identification,site.Name PartySiteName
-              INTO #Scoped
+                s.Name SupplierName,COALESCE(s.Identification,N'') Identification,site.Name PartySiteName,
+                p.SourceDocumentId,p.SourceDocumentType
+              INTO #Candidates
               FROM dbo.Payables p
               JOIN dbo.Businesses business ON business.BusinessId=p.BusinessId
               JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
               LEFT JOIN dbo.PartySites site ON site.PartySiteId=p.PartySiteId AND site.PartyId=s.PartyId
-              JOIN dbo.AccountingSourceDocuments source
-                ON source.SourceDocumentId=p.SourceDocumentId
-                AND source.SourceDocumentType=p.SourceDocumentType
-                AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId
-              CROSS APPLY accounting.PortfolioDocumentIssueDate(source.PayloadJson,source.OccurredAt) issue
               WHERE p.BusinessId=@BusinessId AND business.TenantId=@TenantId
-                AND p.CreatedAt<@Cutoff AND source.OccurredAt<@Cutoff
+                AND p.CreatedAt<@Cutoff
                 AND (@SupplierId IS NULL OR p.SupplierId=@SupplierId)
                 AND (@PartySiteId IS NULL OR p.PartySiteId=@PartySiteId)
                 AND (@ConceptId IS NULL OR EXISTS (
@@ -76,6 +71,24 @@ public sealed partial class SqlPayablesStore
                   OR s.Identification LIKE N'%' + @Search + N'%')
                 AND (@From IS NULL OR p.CreatedAt>=@From)
                 AND (@To IS NULL OR p.CreatedAt<@To);
+            -- Filter obligations before reading immutable payloads. The former
+            -- join could scan unrelated wide sources before applying the filters.
+            -- A source can open several obligations; decode its issue date once.
+            SELECT DISTINCT SourceDocumentId,SourceDocumentType INTO #CandidateSources FROM #Candidates;
+            SELECT selected.SourceDocumentId,selected.SourceDocumentType,issue.IssuedAt
+            INTO #DocumentSources FROM #CandidateSources selected
+            JOIN dbo.AccountingSourceDocuments source
+              ON source.SourceDocumentId=selected.SourceDocumentId AND source.SourceDocumentType=selected.SourceDocumentType
+                AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId
+            CROSS APPLY accounting.PortfolioDocumentIssueDate(source.PayloadJson,source.OccurredAt) issue
+            WHERE source.OccurredAt<@Cutoff
+            OPTION (FORCE ORDER, LOOP JOIN);
+            SELECT candidate.PayableId,candidate.SupplierId,candidate.PartySiteId,candidate.DocumentNumber,
+              candidate.CurrencyCode,candidate.OriginalAmount,candidate.DueDate,candidate.Status,
+              document.IssuedAt,candidate.SupplierName,candidate.Identification,candidate.PartySiteName
+            INTO #Scoped FROM #Candidates candidate
+            JOIN #DocumentSources document ON document.SourceDocumentId=candidate.SourceDocumentId
+              AND document.SourceDocumentType=candidate.SourceDocumentType;
             -- Materialize the authorized filter once for both aggregates, keeping
             -- their plans independent of estimates from repeated search joins.
             CREATE UNIQUE CLUSTERED INDEX IX_Scoped ON #Scoped(PayableId);
@@ -181,8 +194,12 @@ public sealed partial class SqlPayablesStore
               CASE WHEN application.Amount<0 THEN CONCAT(N'Desaplicación de ',origin.DocumentNumber) ELSE origin.DocumentNumber END,application.AppliedAt,
               application.Amount
             FROM #PageApplications application
-            JOIN accounting.PortfolioPaymentOrigins origin ON origin.PaymentId=application.PaymentId
-              AND origin.SubledgerKind=N'Payable' AND origin.BusinessId=@BusinessId
+            -- PaymentId and kind identify one origin: payment/draft primary
+            -- keys and UQ_AccountingEntries_Source enforce that cardinality.
+            CROSS APPLY (SELECT TOP(1) receipt.DocumentNumber
+              FROM accounting.PortfolioPaymentOrigins receipt
+              WHERE receipt.PaymentId=application.PaymentId
+                AND receipt.SubledgerKind=N'Payable' AND receipt.BusinessId=@BusinessId) origin
             ORDER BY application.PositionId,application.AppliedAt,application.PaymentId,application.UnapplicationTransactionId;
             END
             ELSE

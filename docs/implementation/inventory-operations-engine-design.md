@@ -78,6 +78,12 @@ It applies that difference to the current balance. A receipt, sale or transfer
 posted after the count began is therefore preserved. A count does not overwrite
 the current quantity.
 
+The read-only count detail displays that same difference against the frozen
+system quantity, not against the operator's preliminary count. A missing
+historical base is displayed as unknown, never as a zero base. Preliminary
+and final counted quantities remain visible separately; this presentation
+does not confirm, recalculate or reapply an inventory operation.
+
 ## Adjustment semantics
 
 Adjustments require a non-zero signed quantity and an explicit reason. Outbound

@@ -958,6 +958,35 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
             $"/api/commerce/v1/receivables/report/print?consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=2");
         Assert.Contains("portfolio-v2",legacyPrint);
         Assert.DoesNotContain("Plazo (días)",legacyPrint);
+        // Exercise the identities returned by the canonical checkout itself,
+        // without changing its fiscal read model or immutable snapshot.
+        var fiscalNumber = Assert.IsType<string>(checkout.Receipt.FiscalNumber);
+        Assert.NotEqual(checkout.Receipt.DocumentNumber, fiscalNumber);
+        var identityPath = $"/api/commerce/v1/receivables/report?page=1&pageSize=50&consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}&templateVersion=4";
+        foreach (var number in new[] { fiscalNumber, checkout.Receipt.DocumentNumber })
+        {
+            using var identifiedResponse = await client.GetAsync(
+                identityPath + "&documentNumber=" + Uri.EscapeDataString(number));
+            Assert.True(identifiedResponse.IsSuccessStatusCode, await identifiedResponse.Content.ReadAsStringAsync());
+            var identified = (await identifiedResponse.Content.ReadFromJsonAsync<ReceivablesReportPage>())!;
+            var invoice = Assert.Single(identified.Items, item => item.ReceivableId == receivable.ReceivableId);
+            Assert.Equal(fiscalNumber, invoice.DocumentNumber);
+            Assert.Equal(checkout.Receipt.DocumentNumber, invoice.InternalDocumentNumber);
+            Assert.Equal(compactInvoice.OutstandingAmount, invoice.OutstandingAmount);
+        }
+        var identifiedSearch = (await client.GetFromJsonAsync<ReceivablesReportPage>(
+            identityPath + "&search=" + fiscalNumber))!;
+        Assert.Equal(fiscalNumber, Assert.Single(identifiedSearch.Items,
+            item => item.ReceivableId == receivable.ReceivableId).DocumentNumber);
+        var fiscalPrint = await client.GetStringAsync(identityPath.Replace("/report?", "/report/print?", StringComparison.Ordinal));
+        Assert.Contains(fiscalNumber, fiscalPrint);
+        Assert.Contains(checkout.Receipt.DocumentNumber, fiscalPrint);
+        if (!string.IsNullOrWhiteSpace(checkout.Receipt.Cufe))
+            Assert.DoesNotContain(checkout.Receipt.Cufe, fiscalPrint);
+        var legacyIdentity = (await client.GetFromJsonAsync<ReceivablesReportPage>(
+            identityPath.Replace("templateVersion=4", "templateVersion=3", StringComparison.Ordinal)))!;
+        Assert.Equal(checkout.Receipt.DocumentNumber, Assert.Single(legacyIdentity.Items,
+            item => item.ReceivableId == receivable.ReceivableId).DocumentNumber);
         using (var exportResponse = await client.GetAsync(
                    $"/api/commerce/v1/receivables/report/export?page=1&pageSize=100&consolidated=false&includeApplications=false&cutoff={today:yyyy-MM-dd}&customerId={customerId:D}"))
         {

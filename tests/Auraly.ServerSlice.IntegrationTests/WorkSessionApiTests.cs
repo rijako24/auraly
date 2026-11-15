@@ -2196,12 +2196,21 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
         foreach (var filter in new[] { "page=1&pageSize=1", $"movementType={kind}&page=1&pageSize=10" })
         {
             var times = new List<double>();
+            var sqlTimes = new Dictionary<string, List<double>>();
             for (var sample = 0; sample <= 20; sample++)
             {
                 using var counter = new InventoryBalanceProcessingTests.CommandCounter(
                     new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
                     commandFilter: command => command.CommandText.Contains("INTO #EligibleMovements FROM EligibleMovements", StringComparison.Ordinal)
-                        || command.CommandText.Contains("WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId;", StringComparison.Ordinal));
+                        || command.CommandText.Contains("WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId;", StringComparison.Ordinal),
+                    afterExecute: (command, elapsed) =>
+                    {
+                        if (sample == 0) return;
+                        var stage = command.CommandText.Contains("INTO #EligibleMovements FROM EligibleMovements", StringComparison.Ordinal)
+                            ? "page" : "scope";
+                        if (!sqlTimes.TryGetValue(stage, out var measurements)) sqlTimes.Add(stage, measurements = []);
+                        measurements.Add(elapsed);
+                    });
                 var timer = Stopwatch.StartNew();
                 var page = await client.GetFromJsonAsync<WorkSessionPaymentVerificationPage>($"{path}/payment-verifications/page?{filter}");
                 timer.Stop();
@@ -2213,6 +2222,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture, ITestOutputH
             }
             var p95 = times.Order().ElementAt((int)Math.Ceiling(times.Count * .95) - 1);
             output.WriteLine("Conciliación {0}, {1}: p95 {2:F1} ms, 2 SQL, 20 muestras.", kind, filter, p95);
+            foreach (var (stage, measurements) in sqlTimes)
+                output.WriteLine("SQL {0}: p95 {1:F1} ms.", stage,
+                    measurements.Order().ElementAt((int)Math.Ceiling(measurements.Count * .95) - 1));
             Assert.True(p95 < 2000, $"La página de conciliación {kind}, {filter} superó dos segundos: p95 {p95:F1} ms.");
         }
     }

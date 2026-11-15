@@ -269,7 +269,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             output.WriteLine($"Administrative selector supplier={supplier} page={pageNumber}: SQL=1 first={samples[0]:F1}ms p95={p95:F1}ms.");
             if(samples[0]>=2_000 || p95>=1_500)
             {
-                try { await CaptureReportFailureAsync(selectorDiagnostic); }
+                try { await CaptureReportProfileAsync(selectorDiagnostic); }
                 catch(Exception diagnostic) { output.WriteLine($"Selector diagnostics unavailable: {diagnostic.Message}"); }
             }
             Assert.True(samples[0] < 2_000,$"Administrative selector first page took {samples[0]:F1}ms.");
@@ -277,12 +277,24 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         }
         var reportScenarios = new[] { "invoices-1", "invoices-2", "report-before", "report-after-1", "report-after-2", "report-compact-1", "report-compact-2" }
             .Concat(supplier ? [] : new[] { "report-filtered-1", "report-filtered-2" });
+        await using var originPlanCommand = new SqlCommand { Connection = connection };
         foreach (var scenario in reportScenarios)
         {
             var samples = new List<double>();
+            await using var diagnosticCommand = new SqlCommand { Connection = connection };
             for (var sample = 0; sample <= 20; sample++)
             {
-                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                    beforeExecute: command =>
+                    {
+                        // Capture only the warmup in memory. Profiling a failed
+                        // read runs after all measured samples, never inside them.
+                        if (sample == 0 && command.CommandText.Contains("INTO #Report", StringComparison.Ordinal))
+                        {
+                            CaptureReadCommand(command, diagnosticCommand);
+                            if (scenario == "report-after-1") CaptureReadCommand(command, originPlanCommand);
+                        }
+                    });
                 var timer = Stopwatch.StartNew();
                 var pageNumber = scenario.EndsWith('2') ? 2 : 1;
                 if (scenario.StartsWith("invoices"))
@@ -351,8 +363,67 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             }
             var p95 = samples.Order().ElementAt(18);
             output.WriteLine("{0} applied totals: {1}, p95={2:F1}ms; SQL={3}; 10000 payments/unapplications; 20 samples", position, scenario, p95, scenario.StartsWith("invoices")?3:2);
+            if (p95 >= 1000)
+            {
+                try { await CaptureReportProfileAsync(diagnosticCommand); }
+                catch (Exception diagnostic) { output.WriteLine($"Report diagnostics unavailable: {diagnostic.Message}"); }
+            }
             Assert.True(p95 < 1000, $"Applied totals exceeded their budget: {position}, {scenario}, p95 {p95:F1}ms.");
         }
+        // Verify actual work as well as wall time. A fast server must not hide
+        // a full payment-history scan while enriching 25 invoices/50 applications.
+        // This additional read runs only after every timed scenario has finished.
+        var profileDirectory = await CaptureReportProfileAsync(originPlanCommand);
+        Assert.NotNull(profileDirectory);
+        var foundOrigins = false;
+        var foundIssueDates = false;
+        var foundDocumentNumbers = supplier;
+        foreach (var file in Directory.EnumerateFiles(profileDirectory, "profile-*.json"))
+        {
+            using var profile = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(file));
+            var operators = profile.RootElement.EnumerateArray().ToArray();
+            if (operators.Length == 0) continue;
+            var statement = operators[0].GetProperty("StmtText").GetString()!;
+            if (!supplier && statement.Contains("INTO #DocumentCandidates", StringComparison.Ordinal))
+            {
+                foundDocumentNumbers = true;
+                var entryReads = operators.Where(item => item.GetProperty("StmtText").GetString() is { } text
+                    && text.Contains("OBJECT:", StringComparison.Ordinal)
+                    && text.Contains("[dbo].[AccountingEntries]", StringComparison.Ordinal)).ToArray();
+                Assert.NotEmpty(entryReads);
+                Assert.All(entryReads, item =>
+                    Assert.InRange(item.GetProperty("Rows").GetInt64(), 0, 10_000));
+            }
+            if (statement.Contains("accounting.PortfolioDocumentIssueDate(", StringComparison.Ordinal))
+            {
+                foundIssueDates = true;
+                var sourceReads = operators.Where(item => item.GetProperty("StmtText").GetString() is { } text
+                    && text.Contains("OBJECT:", StringComparison.Ordinal)
+                    && text.Contains("[dbo].[AccountingSourceDocuments]", StringComparison.Ordinal)).ToArray();
+                Assert.NotEmpty(sourceReads);
+                Assert.All(sourceReads, item =>
+                {
+                    Assert.Contains("Seek", item.GetProperty("PhysicalOp").GetString());
+                    Assert.InRange(item.GetProperty("Rows").GetInt64(), 0, 10_000);
+                });
+            }
+            if (!statement.Contains("FROM #PageApplications application", StringComparison.Ordinal)) continue;
+            foundOrigins = true;
+            var returned = operators[0].GetProperty("Rows").GetInt64();
+            Assert.Equal(50, returned);
+            var paymentReads = operators.Where(item => item.GetProperty("StmtText").GetString() is { } text
+                && text.Contains("OBJECT:", StringComparison.Ordinal)
+                && text.Contains($"[dbo].[{role}Payments]", StringComparison.Ordinal)).ToArray();
+            Assert.NotEmpty(paymentReads);
+            Assert.All(paymentReads, item =>
+            {
+                Assert.Contains("Seek", item.GetProperty("PhysicalOp").GetString());
+                Assert.InRange(item.GetProperty("Rows").GetInt64(), 0, returned);
+            });
+        }
+        Assert.True(foundOrigins, "The actual plan must include receipt identity enrichment.");
+        Assert.True(foundIssueDates, "The actual plan must include canonical issue-date lookups.");
+        Assert.True(foundDocumentNumbers, "The actual plan must include bounded document-number lookups.");
         // The complete-export guard runs after the timed reads and must reject
         // the full filtered set, rather than silently returning its first page.
         if (supplier)
@@ -427,7 +498,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             output.WriteLine($"10,000 positions + 10,000 credits, page {page}, applications={applications}: p95={p95:F1} ms, 2 SQL.");
             if(p95>=1000)
             {
-                try {await CaptureReportFailureAsync(diagnosticCommand);}
+                try {await CaptureReportProfileAsync(diagnosticCommand);}
                 catch(Exception diagnostic){output.WriteLine($"Report diagnostics unavailable: {diagnostic.Message}");}
             }
             Assert.True(p95<1000,$"Credit report p95 {p95:F1} ms exceeds 1,000 ms.");
@@ -437,7 +508,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         {
             // Failure-only diagnostics run after the timed reader and its
             // instrumentation have unwound. They never affect a passing budget.
-            try {await CaptureReportFailureAsync(diagnosticCommand);}
+            try {await CaptureReportProfileAsync(diagnosticCommand);}
             catch(Exception diagnostic){output.WriteLine($"Report diagnostics unavailable: {diagnostic.Message}");}
             throw;
         }
@@ -451,17 +522,17 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             captured.Parameters.Add((SqlParameter)((ICloneable)parameter).Clone());
     }
 
-    private async Task CaptureReportFailureAsync(SqlCommand captured)
+    private async Task<string?> CaptureReportProfileAsync(SqlCommand captured)
     {
-        // Re-execute only the failed read, after all timed samples. Capturing
+        // Profile the captured read only after all timed samples. Capturing
         // the warmup command in memory avoids relying on an evicted plan cache
-        // and adds no diagnostic SQL to a passing budget.
-        if(string.IsNullOrEmpty(captured.CommandText))return;
+        // and keeps diagnostics outside latency and API command-count checks.
+        if(string.IsNullOrEmpty(captured.CommandText))return null;
         await using var connection=new SqlConnection(new SqlConnectionStringBuilder(captured.Connection!.ConnectionString)
             {Pooling=false}.ConnectionString);
         await connection.OpenAsync();
         captured.Connection=connection;
-        var directory=Path.Combine(AppContext.BaseDirectory,"TestResults","portfolio-credit-failure-"+Guid.NewGuid().ToString("N"));
+        var directory=Path.Combine(AppContext.BaseDirectory,"TestResults","portfolio-report-profile-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         // Keep the original cached plan before profiling recompiles a different
         // batch. Its compile time distinguishes a cold optimization cost from
@@ -513,7 +584,8 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         {
             connection.InfoMessage-=onMessage;
             await File.WriteAllLinesAsync(Path.Combine(directory,"statistics.txt"),messages);
-            output.WriteLine($"Failure-only report profiles: {index}, {directory}");
+            output.WriteLine($"Report profiles after timed samples: {index}, {directory}");
         }
+        return directory;
     }
 }

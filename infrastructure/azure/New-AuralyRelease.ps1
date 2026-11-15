@@ -144,6 +144,11 @@ try {
         "-p:PathMap=$repoRoot=/_/src"
     if ($LASTEXITCODE) { throw 'dotnet build de regresion legacy fallo.' }
 
+    # Latency gates measure the application, without retaining the solution's
+    # MSBuild nodes and compiler server alongside the test host and SQL Server.
+    & dotnet build-server shutdown
+    if ($LASTEXITCODE) { throw 'No se pudieron liberar los servidores de compilación antes de medir.' }
+
     & dotnet test (Join-Path $repoRoot 'src\Tests\Auraly.Platform.Tests\Auraly.Platform.Tests.csproj') `
         -c Release --no-build --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'La regresion legacy fallo.' }
@@ -164,8 +169,14 @@ try {
     if ($LASTEXITCODE) { throw 'Las pruebas del actualizador de escritorio fallaron.' }
 
     & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
-        -c Release --no-build --logger 'console;verbosity=minimal'
+        -c Release --no-build --filter 'Isolation!=FreshProcess' --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'Las regresiones reales de API, pedidos y facturación fallaron.' }
+
+    # Release the regression test host before measuring the large receipt. All
+    # tests still run once; the benchmark retains its memory and latency gates.
+    & dotnet test (Join-Path $repoRoot 'tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj') `
+        -c Release --no-build --filter 'Isolation=FreshProcess' --logger 'console;verbosity=minimal'
+    if ($LASTEXITCODE) { throw 'El presupuesto de rendimiento de recibos no se cumplió.' }
 
     $functionPublish = Join-Path $publishPath 'function'
     & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj') `

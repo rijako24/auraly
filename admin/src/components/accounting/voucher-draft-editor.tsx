@@ -204,7 +204,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     setLines(current => current.map((line, position) => position === index ? { ...line, value: { ...line.value, ...patch } } : line));
     markChanged();
   }
-  function accept(value: VoucherDraft) {
+  function applySnapshot(value: VoucherDraft) {
     // The selection page was read before this operation. Once accepted, show
     // the document's applied effects rather than stale available balances.
     if (value.sentAt) setShowPendingDocuments(false);
@@ -213,9 +213,13 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       lines: value.lines.map(line => line.value) }); setLines(identifyLines(value.lines));
     setMainParty({ name: value.mainPartyName ?? null, identification: value.mainPartyIdentification ?? null });
     setDirty(!value.sentAt && value.documentType === "ManualAccountingVoucher" &&
-      (value.payloadVersion !== editablePayloadVersion(value) || !!value.workSessionId)); onSaved?.(value);
+      (value.payloadVersion !== editablePayloadVersion(value) || !!value.workSessionId));
   }
-  async function save(): Promise<VoucherDraft | null> {
+  function accept(value: VoucherDraft) {
+    applySnapshot(value);
+    onSaved?.(value);
+  }
+  async function persistDraft(): Promise<VoucherDraft | null> {
     if (busy) return null;
     if (!form.description.trim() || !form.occurredAt || !form.conceptCode) { setError("Completa fecha y descripción."); return null; }
     if (form.adjustment && (!form.adjustment.subledgerId || !obligation.data)) { setError("Selecciona la factura u obligación que vas a ajustar."); return null; }
@@ -224,11 +228,19 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
     setPhase("save"); setError(null);
     try {
       const result = await accountingApi.saveVoucherDraft({ ...form, workSessionId: null, lines: lines.map(line => line.value) });
-      accept(result);
+      // The composed save/post action still owns this editor. Publishing this
+      // intermediate result navigates to the saved URL and remounts it before
+      // the posting response can apply its authoritative state.
+      applySnapshot(result);
       return result;
     }
     catch (value) { setError(value instanceof Error ? value.message : "No se pudo guardar el comprobante."); return null; }
     finally { setPhase(null); }
+  }
+  async function save(): Promise<VoucherDraft | null> {
+    const result = await persistDraft();
+    if (result) onSaved?.(result);
+    return result;
   }
   async function discard() {
     if (!saved || saved.sentAt || busy) return;
@@ -254,7 +266,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   }
   async function saveAndPost() {
     if (busy || saved?.sentAt) return;
-    const current = dirty || !saved ? await save() : saved;
+    const current = dirty || !saved ? await persistDraft() : saved;
     if (!current) return;
     if (!current.canSend) {
       setError("El borrador quedó guardado. Completa las partidas y corrige los avisos antes de guardar el comprobante definitivo.");

@@ -15,6 +15,40 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class AccountingBusinessDateTests(ServerSliceFixture fixture)
 {
     [Theory]
+    [InlineData("1753-01-01", 2, 2)]
+    [InlineData("2026-10-01", 11, 2)]
+    [InlineData("9999-12-31", 21, 4)]
+    public async Task Legacy_source_calendar_preserves_extreme_offsets_and_the_last_supported_day(
+        string text, int firstId, int count)
+    {
+        var day = DateOnly.Parse(text);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand($"""
+            DECLARE @Samples TABLE(Id int,OccurredAt datetimeoffset(7));
+            INSERT @Samples VALUES
+              (1,'1752-12-31T23:59:59-14:00'),(2,'1753-01-01T00:00:00+14:00'),
+              (3,'1753-01-01T23:59:59.9999999-14:00'),(4,'1753-01-02T00:00:00+14:00'),
+              (10,'2026-09-30T23:59:59-14:00'),(11,'2026-10-01T00:00:00+14:00'),
+              (12,'2026-10-01T23:59:59.9999999-14:00'),(13,'2026-10-02T00:00:00+14:00'),
+              (20,'9999-12-30T23:59:59-14:00'),(21,'9999-12-31T00:00:00+14:00'),
+              (22,'9999-12-31T23:59:59.9999999+00:00'),(23,'9999-12-31T09:59:59-14:00'),
+              (24,'9999-12-31T23:59:59.9999999+14:00');
+            SELECT Id FROM @Samples
+            WHERE {Auraly.BuildingBlocks.Infrastructure.Persistence.SqlBusinessLocalDates.SourceCalendarPredicate("OccurredAt", 1)}
+            ORDER BY Id;
+            """, connection);
+        Assert.True(await Auraly.BuildingBlocks.Infrastructure.Persistence.SqlBusinessLocalDates.BindSourceDateRangeAsync(
+            command, fixture.TenantId, fixture.BusinessId, day, day, 1, default));
+        var ids = new List<int>();
+        using var reads = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync()) ids.Add(reader.GetInt32(0));
+        Assert.Equal(Enumerable.Range(firstId, count), ids);
+        Assert.Equal(1, reads.Count);
+    }
+
+    [Theory]
     [InlineData("America/Bogota", "2026-11-11")]
     [InlineData("Asia/Tokyo", "2026-11-11")]
     [InlineData("America/New_York", "2026-03-08")]

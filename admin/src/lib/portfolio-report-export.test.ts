@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PayablesReportPage } from "../services/api/payables";
 import type { ReceivablesReportPage } from "../services/api/receivables";
-import { buildPortfolioReportExport, portfolioReportDate, portfolioAgingBandLabel } from "./portfolio-report-export";
+import { buildPortfolioReportExport, groupPortfolioReportRows, portfolioReportDate, portfolioAgingBandLabel, portfolioAgingBandStyle, portfolioAgingBands } from "./portfolio-report-export";
 import { reportExcelCell } from "./report-export";
 
 test("credit rows preserve server balances once and export a negative commercial net as a number", () => {
@@ -27,7 +27,10 @@ test("credit rows preserve server balances once and export a negative commercial
   const total=excel.rows.find(row=>row.documentNumber==="TOTAL COP")!;
   assert.deepEqual(reportExcelCell(excel.columns.find(column=>column.key==="netAmount")!,total),
     {value:-1_000_000,format:"#,##0.00##"});
-  assert.equal(excel.rows.filter(row=>row.documentNumber?.toString().startsWith("FAC-")).reduce((sum,row)=>sum+Number(row.availableAdvances),0),0);
+  assert.ok(excel.rows.filter(row=>row.documentNumber?.toString().startsWith("FAC-")).every(row=>row.availableAdvances === undefined));
+  assert.equal(excel.rows.some(row=>row.documentNumber === "Anticipos y otros saldos a favor"),false);
+  assert.equal(excel.rows.filter(row=>row.__group === "Cliente" && row.__groupLevel === 1).length,1);
+  assert.equal(excel.groupedHeaders,true);
   assert.equal(excel.rows.find(row=>row.documentNumber==="Subtotal cliente / sede")?.availableAdvances,2_000_000);
   const pdf=buildPortfolioReportExport(data,{...options,format:"pdf"});
   assert.ok(pdf.rows.some(row=>String(row.__group).includes("Neto comercial: -1.000.000")));
@@ -35,7 +38,7 @@ test("credit rows preserve server balances once and export a negative commercial
 
 test("aging presentation uses the owner's band code and never invents a current band", () => {
   assert.equal(portfolioAgingBandLabel("Overdue31To60"),"31–60 días");
-  assert.equal(portfolioAgingBandLabel("NotDue"),"Al día");
+  assert.equal(portfolioAgingBandLabel("NotDue"),"Sin vencer");
   assert.equal(portfolioAgingBandLabel(undefined),"—");
   assert.equal(portfolioAgingBandLabel("unknown"),"—");
 });
@@ -93,10 +96,37 @@ test("customer detail exports numeric terms and signed maturity, contact and aut
     assert.equal(invoice.termDays,8); assert.equal(invoice.ageDays,5); assert.equal(invoice.daysPastDue,-3);
     const column=report.columns.find(column=>column.key==="daysPastDue")!;
     assert.deepEqual(reportExcelCell(column,invoice),{value:-3,format:"0"});
-    assert.match(String(report.rows[0].__group),/Calle 1.*3000000000.*5\.000/);
+    assert.equal(report.rows[0].__group,"Cliente");
+    assert.ok(report.rows.some(row=>/Calle 1.*3000000000/.test(String(row.__group))));
+    assert.ok(report.rows.some(row=>/Cupo vigente: 5\.000/.test(String(row.__group))));
     assert.equal(report.rows.find(row=>row.documentNumber==="Subtotal cliente / sede")?.outstandingAmount,300);
     assert.equal(report.rows.find(row=>row.documentNumber==="TOTAL COP")?.outstandingAmount,300);
     assert.equal(report.rows.find(row=>row.applicationDocument==="RC-01")?.originalAmount,undefined);
     if (format === "xlsx") assert.deepEqual(reportExcelCell(report.columns.find(column=>column.key==="creditLimit")!,invoice),{value:5000,format:"#,##0.00##"});
   }
+});
+
+test("groups interleaved rows by customer before site without repeating a customer heading", () => {
+  const bands={notDueAmount:10,overdue1To30Amount:0,overdue31To60Amount:0,overdue61To90Amount:0,overdueOver90Amount:0};
+  const first:ReceivablesReportPage["items"][number]={customerId:"a",customerName:"Cliente A",identification:"1",partySiteId:"north",partySiteName:"Norte",
+    currencyCode:"COP",invoiceCount:1,originalAmount:10,paidAmount:0,outstandingAmount:10,overdueAmount:0,otherImpact:0,
+    receivableId:"a-1",documentNumber:"FE-1",issuedAt:null,dueDate:null,applications:[],...bands};
+  const second={...first,customerId:"b",customerName:"Cliente B",identification:"2",receivableId:"b-1",documentNumber:"FE-2"};
+  const rows=[first,second,{...first,partySiteId:"south",partySiteName:"Sur",receivableId:"a-2",documentNumber:"ASI-1"},
+    {...first,receivableId:"a-3",documentNumber:"BTAX-3"}];
+  const grouped=groupPortfolioReportRows(rows);
+  assert.equal(grouped.size,2);
+  assert.deepEqual(Array.from(grouped.get("a")!.values()).flat().map(row=>row.documentNumber),["FE-1","BTAX-3","ASI-1"]);
+  assert.deepEqual(Array.from(grouped.get("b")!.values()).flat().map(row=>row.documentNumber),["FE-2"]);
+  assert.equal(grouped.get("a")!.size,2);
+});
+
+test("aging colors stay distinct and only style classified values without changing numeric exports", () => {
+  assert.equal(new Set(portfolioAgingBands.map(band=>band[3])).size,5);
+  assert.equal(portfolioAgingBandStyle("unknown"),undefined);
+  const style=portfolioAgingBandStyle("Overdue31To60")!;
+  assert.equal(style.backgroundColor,"#FFE2CC");
+  assert.deepEqual(reportExcelCell({key:"age",label:"Edad de cartera",cellStyle:()=>style},{age:"31–60 días"}),
+    {value:"31–60 días",...style});
+  assert.deepEqual(reportExcelCell({key:"amount",label:"Saldo"},{amount:100.1234}),{value:100.1234,format:"#,##0.00"});
 });
