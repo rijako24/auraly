@@ -1267,7 +1267,7 @@ public sealed partial class SqlAccountingStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(TraceabilityDocumentsSql(search, partyId, status is not null, dateRangeVersion) + """
+        await using var command = new SqlCommand(TraceabilityDocumentsSql(search, partyId, status is not null, dateRangeVersion, financialConceptId) + """
             SELECT * FROM #Documents ORDER BY OccurredAt DESC,SourceDocumentId,SourceDocumentType;
             SELECT COUNT(*) FROM #DocumentKeys;
             """, connection);
@@ -1319,7 +1319,7 @@ public sealed partial class SqlAccountingStore(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(TraceabilityDocumentKeysSql(search, partyId, dateRangeVersion) + TraceabilityVoucherFilterSql + """
+        await using var command = new SqlCommand(TraceabilityDocumentKeysSql(search, partyId, dateRangeVersion, financialConceptId: financialConceptId) + TraceabilityVoucherFilterSql + """
             SELECT d.*,line.LineNumber INTO #TraceabilityLinePage
             FROM #DocumentKeys d
             OUTER APPLY(

@@ -108,18 +108,23 @@ public sealed partial class SqlPayablesStore
                 AND (cancellation.SourceDocumentType=N'ExpenseCancellation'
                   OR cancellation.SourceDocumentType=N'ManualAccountingVoucher'
                     AND JSON_VALUE(cancellation.PayloadJson,'$.VoucherTypeCode')=N'SupportDocumentCancellation');
+            -- Financial aggregates need only the selected identities. Joining
+            -- the wide document rows here carried names and references into a
+            -- 20,000-row transaction sort (613 bytes per row in the CI plan).
+            CREATE TABLE #ScopedKeys(PayableId uniqueidentifier PRIMARY KEY);
+            INSERT #ScopedKeys SELECT PayableId FROM #Scoped;
             WITH Movement AS (
               SELECT tx.PayableId,
                 SUM(effect.BalanceChange) Balance
               FROM dbo.PayableTransactions tx
               CROSS APPLY accounting.PortfolioTransactionEffect(tx.TransactionType,tx.Amount) effect
-              JOIN #Scoped scoped ON scoped.PayableId=tx.PayableId
+              JOIN #ScopedKeys scoped ON scoped.PayableId=tx.PayableId
               WHERE tx.CreatedAt<@Cutoff AND tx.OccurredAt<@Cutoff
               GROUP BY tx.PayableId
             ), Paid AS (
               SELECT application.PositionId PayableId,SUM(application.Amount) PaidAmount
               FROM accounting.PortfolioAppliedAmounts(@BusinessId,N'Payable') application
-              JOIN #Scoped scoped ON scoped.PayableId=application.PositionId
+              JOIN #ScopedKeys scoped ON scoped.PayableId=application.PositionId
               WHERE application.AppliedAt<@Cutoff AND application.OccurredAt<@Cutoff
               GROUP BY application.PositionId
             )
@@ -220,13 +225,7 @@ public sealed partial class SqlPayablesStore
         command.Parameters.AddWithValue("@OverdueOnly", query.OverdueOnly);
         command.Parameters.AddWithValue("@Status", (object?)query.Status ?? DBNull.Value);
         SqlBusinessLocalDates.BindDateRange(command,query.From,query.To,zone,query.DateRangeVersion);
-        var cutoff = SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(1), zone);
-        if (take > 100)
-        {
-            var observed = timeProvider.GetUtcNow();
-            if (observed < cutoff) cutoff = observed;
-        }
-        command.Parameters.AddWithValue("@Cutoff", cutoff);
+        command.Parameters.AddWithValue("@Cutoff", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(1), zone));
         command.Parameters.AddWithValue("@AgeDay", SqlBusinessLocalDates.StartOfDay(query.Cutoff, zone));
         command.Parameters.AddWithValue("@Age30", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(-PortfolioAging.FirstBandDays), zone));
         command.Parameters.AddWithValue("@Age60", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(-PortfolioAging.SecondBandDays), zone));

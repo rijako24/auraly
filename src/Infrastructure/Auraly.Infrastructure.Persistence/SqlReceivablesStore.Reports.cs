@@ -439,13 +439,7 @@ public sealed partial class SqlReceivablesStore
         command.Parameters.AddWithValue("@OverdueOnly", query.OverdueOnly);
         command.Parameters.AddWithValue("@Status", (object?)query.Status ?? DBNull.Value);
         SqlBusinessLocalDates.BindDateRange(command,query.From,query.To,zone,query.DateRangeVersion);
-        var cutoff = SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(1), zone);
-        if (take > 100)
-        {
-            var observed = timeProvider.GetUtcNow();
-            if (observed < cutoff) cutoff = observed;
-        }
-        command.Parameters.AddWithValue("@Cutoff", cutoff);
+        command.Parameters.AddWithValue("@Cutoff", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(1), zone));
         command.Parameters.AddWithValue("@AgeDay", SqlBusinessLocalDates.StartOfDay(query.Cutoff, zone));
         command.Parameters.AddWithValue("@Age30", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(-PortfolioAging.FirstBandDays), zone));
         command.Parameters.AddWithValue("@Age60", SqlBusinessLocalDates.StartOfDay(query.Cutoff.AddDays(-PortfolioAging.SecondBandDays), zone));

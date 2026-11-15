@@ -96,12 +96,18 @@ public sealed class AccountingTraceabilityFilterTests(ServerSliceFixture fixture
             (Name:"missing-job",Page:1,Party:(Guid?)party,Search:(string?)null,Status:(string?)"MissingAccountingJob",Total:1,Items:1)
         };
         Guid? firstNative = null;
+        await using var numberCommand=new SqlCommand { Connection=connection };
+        var failures=new List<string>();
         foreach (var sample in cases)
         {
             var elapsed = new List<double>(20);
             for (var i=0;i<20;i++)
             {
-                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+                using var counter = new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                    beforeExecute: command => {
+                        if(sample.Name=="number"&&i==0)
+                            PortfolioPaymentHistoryPerformanceTests.CaptureReadCommand(command,numberCommand);
+                    });
                 var timer = Stopwatch.StartNew();
                 var page = await service.ListDocumentsAsync(user,from,to,null,sample.Status,sample.Search,sample.Page,25,
                     partyId:sample.Party,voucherTypeCode:"CashReceipt");
@@ -123,8 +129,29 @@ public sealed class AccountingTraceabilityFilterTests(ServerSliceFixture fixture
             }
             var p95=elapsed.Order().ElementAt(18);
             output.WriteLine($"10000 native receipts, {sample.Name}: first {elapsed[0]:F1} ms, p95 {p95:F1} ms, 1 SQL/page.");
-            Assert.True(p95<=800,$"{sample.Name}: p95 {p95:F1} ms exceeds the 800 ms inbox budget.");
+            if(p95>800)failures.Add($"{sample.Name}: p95 {p95:F1} ms exceeds the 800 ms inbox budget.");
         }
+        var profileDirectory=await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(numberCommand,output);
+        Assert.NotNull(profileDirectory);
+        var partyCaptures=0;
+        foreach(var file in Directory.EnumerateFiles(profileDirectory,"profile-*.json"))
+        {
+            using var profile=System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(file));
+            var operators=profile.RootElement.EnumerateArray().ToArray();
+            if(operators.Length==0||!operators[0].GetProperty("StmtText").GetString()!
+                .StartsWith("INSERT #PartyDocumentKeys",StringComparison.Ordinal))continue;
+            partyCaptures++;
+            Assert.InRange(operators[0].GetProperty("Rows").GetInt64(),0,1);
+            foreach(var item in operators.Where(item=>item.GetProperty("StmtText").GetString() is {} text
+                &&System.Text.RegularExpressions.Regex.IsMatch(text,
+                    @"OBJECT:\(\[[^\]]+\]\.\[dbo\]\.\[AccountingSourceDocuments\]\.")))
+            {
+                Assert.Contains("Seek",item.GetProperty("PhysicalOp").GetString());
+                Assert.InRange(item.GetProperty("Rows").GetInt64(),0,1);
+            }
+        }
+        Assert.True(partyCaptures>0,"The number-filtered read must restrict party membership to its search candidates.");
+        Assert.Empty(failures);
         var egress=await service.ListDocumentsAsync(user,from,to,null,null,null,1,25,voucherTypeCode:"Disbursement");
         Assert.Equal(supplier,Assert.Single(egress.Items).SourceDocumentId);
         Assert.Equal("Disbursement",egress.Items[0].VoucherTypeCode);

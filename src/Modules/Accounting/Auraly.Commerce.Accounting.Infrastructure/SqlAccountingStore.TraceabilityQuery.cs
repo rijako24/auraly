@@ -19,7 +19,9 @@ public sealed partial class SqlAccountingStore
         BEGIN
           DELETE selected FROM #DocumentKeys selected
           WHERE NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments source
-            WHERE source.SourceDocumentId=selected.SourceDocumentId AND source.SourceDocumentType=selected.SourceDocumentType
+            WITH(INDEX(IX_AccountingSourceDocuments_Manual_PartyProjection),FORCESEEK)
+            WHERE source.SourceDocumentType=N'ManualAccountingVoucher'
+              AND source.SourceDocumentId=selected.SourceDocumentId AND source.SourceDocumentType=selected.SourceDocumentType
               AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId AND source.VoucherTypeCode=@VoucherTypeCode)
             AND NOT EXISTS(SELECT 1 FROM accounting.VoucherDrafts draft
             WHERE draft.DocumentId=selected.SourceDocumentId AND draft.DocumentType=selected.SourceDocumentType
@@ -30,15 +32,6 @@ public sealed partial class SqlAccountingStore
               ) native WHERE native.SourceDocumentId=selected.SourceDocumentId
                 AND native.SourceDocumentType=selected.SourceDocumentType AND native.VoucherTypeCode=@VoucherTypeCode);
         END;
-        IF @FinancialConceptId IS NOT NULL
-          DELETE selected FROM #DocumentKeys selected
-          WHERE NOT EXISTS(SELECT 1 FROM accounting.SourceConceptIndex reference
-            WHERE reference.FinancialConceptId=@FinancialConceptId AND reference.SourceDocumentId=selected.SourceDocumentId
-              AND reference.SourceDocumentType=selected.SourceDocumentType)
-            AND NOT EXISTS(SELECT 1 FROM accounting.VoucherDraftLines line JOIN accounting.VoucherDrafts draft
-              ON draft.DocumentId=line.DocumentId AND draft.DocumentType=selected.SourceDocumentType
-              AND draft.DocumentId=selected.SourceDocumentId AND draft.TenantId=@TenantId AND draft.BusinessId=@BusinessId
-              AND draft.SentAt IS NULL WHERE line.FinancialConceptId=@FinancialConceptId);
         """;
 
     private static async Task<Microsoft.Data.SqlClient.SqlDataReader> ExecuteTraceabilityReaderAsync(
@@ -93,7 +86,11 @@ public sealed partial class SqlAccountingStore
     // non-manual fallback has a filtered source index, so it does not scan or
     // parse unrelated manual-voucher payloads. The measured 5/50005-row skew
     // requires compiling this candidate query for the selected party.
-    private static string TraceabilityPartyMatchesSql(int dateRangeVersion) => $"""
+    private static string TraceabilitySearchCandidateSql(string alias, bool filterSearch) => filterSearch
+        ? $"\nAND EXISTS(SELECT 1 FROM #SearchDocumentKeys searched WHERE searched.SourceDocumentId={alias}.SourceDocumentId AND searched.SourceDocumentType={alias}.SourceDocumentType)\n"
+        : "\n";
+
+    private static string TraceabilityPartyMatchesSql(int dateRangeVersion, bool filterSearch) => $"""
             CREATE TABLE #PartyDocumentKeys(SourceDocumentId uniqueidentifier NOT NULL,
               SourceDocumentType nvarchar(64) COLLATE DATABASE_DEFAULT NOT NULL,
               OccurredAt datetimeoffset(7) NULL,HasAcceptedJob bit NULL,
@@ -101,12 +98,18 @@ public sealed partial class SqlAccountingStore
             INSERT #PartyDocumentKeys(SourceDocumentId,SourceDocumentType,OccurredAt,HasAcceptedJob)
               SELECT source.SourceDocumentId,source.SourceDocumentType,source.OccurredAt,
                 CONVERT(bit,CASE WHEN source.AccountingPostingJobId IS NOT NULL THEN 1 ELSE 0 END) FROM accounting.SourcePartyIndex indexedParty
-                JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=indexedParty.SourceDocumentId
+                -- Follow this party's indexed identities. The offset-calendar
+                -- plan otherwise scanned every manual source, including other
+                -- parties, before joining a frequently used party's membership.
+                JOIN dbo.AccountingSourceDocuments source
+                  WITH(INDEX(IX_AccountingSourceDocuments_Manual_PartyProjection),FORCESEEK)
+                  ON source.SourceDocumentId=indexedParty.SourceDocumentId
                   AND source.SourceDocumentType=indexedParty.SourceDocumentType
                 WHERE indexedParty.PartyId=@PartyId AND source.SourceDocumentType=N'ManualAccountingVoucher'
                   AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId
                   AND {SqlBusinessLocalDates.SourceCalendarPredicate("source.OccurredAt", dateRangeVersion)}
                   AND (@DocumentType IS NULL OR source.SourceDocumentType=@DocumentType)
+            """ + TraceabilitySearchCandidateSql("source", filterSearch) + $"""
               OPTION(RECOMPILE);
             -- The immutable membership index is already unique. Keep its skewed
             -- history outside the native-source deduplication and compilation.
@@ -138,12 +141,20 @@ public sealed partial class SqlAccountingStore
                 AND {SqlBusinessLocalDates.SourceCalendarPredicate("draft.OccurredAt", dateRangeVersion)}
                 AND adjustmentParty.PartyId=@PartyId
             ) matched WHERE (@DocumentType IS NULL OR matched.SourceDocumentType=@DocumentType)
+            """ + TraceabilitySearchCandidateSql("matched", filterSearch) + $"""
               AND NOT EXISTS(SELECT 1 FROM #PartyDocumentKeys existing
                 WHERE existing.SourceDocumentId=matched.SourceDocumentId AND existing.SourceDocumentType=matched.SourceDocumentType)
             OPTION(RECOMPILE);
             -- Accepted direct adjustments have no draft. Keep their indexed
             -- position lookup separate from the native-source UNION so its
             -- extra joins do not inflate compilation of every candidate branch.
+            -- Compile that lookup only if this scope has a direct adjustment.
+            IF EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments source
+              WHERE source.TenantId=@TenantId AND source.BusinessId=@BusinessId
+                AND source.SourceDocumentType=N'AccountAdjustment'
+                AND {SqlBusinessLocalDates.SourceCalendarPredicate("source.OccurredAt", dateRangeVersion)}
+            """ + TraceabilitySearchCandidateSql("source", filterSearch) + """
+            )
             INSERT #PartyDocumentKeys(SourceDocumentId,SourceDocumentType)
             SELECT source.SourceDocumentId,source.SourceDocumentType FROM (
             """ + AdjustmentPositionPartiesSql + $"""
@@ -152,17 +163,18 @@ public sealed partial class SqlAccountingStore
               AND source.BusinessId=@BusinessId AND source.TenantId=@TenantId
               AND source.SourceDocumentType=N'AccountAdjustment'
             WHERE position.PartyId=@PartyId AND {SqlBusinessLocalDates.SourceCalendarPredicate("source.OccurredAt", dateRangeVersion)}
+            """ + TraceabilitySearchCandidateSql("source", filterSearch) + """
               AND CASE WHEN ISJSON(source.PayloadJson)=1 THEN JSON_VALUE(source.PayloadJson,'$.SubledgerKind') END=position.SubledgerKind
               AND NOT EXISTS(SELECT 1 FROM #PartyDocumentKeys existing
                 WHERE existing.SourceDocumentId=source.SourceDocumentId AND existing.SourceDocumentType=source.SourceDocumentType)
             OPTION(RECOMPILE);
             IF EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments source WHERE
-            """ + "\n" + PendingLinePartySourceScopeSql(dateRangeVersion) + "\n" + """
+            """ + "\n" + PendingLinePartySourceScopeSql(dateRangeVersion) + "\n" + TraceabilitySearchCandidateSql("source", filterSearch) + """
             )
               INSERT #PartyDocumentKeys(SourceDocumentId,SourceDocumentType)
               SELECT source.SourceDocumentId,source.SourceDocumentType FROM dbo.AccountingSourceDocuments source
               WHERE
-            """ + "\n" + PendingLinePartySourceScopeSql(dateRangeVersion) + "\n" + """
+            """ + "\n" + PendingLinePartySourceScopeSql(dateRangeVersion) + "\n" + TraceabilitySearchCandidateSql("source", filterSearch) + """
                 AND NOT EXISTS(SELECT 1 FROM #PartyDocumentKeys matched
                   WHERE matched.SourceDocumentId=source.SourceDocumentId AND matched.SourceDocumentType=source.SourceDocumentType)
                 AND EXISTS(SELECT 1 FROM OPENJSON(CASE WHEN source.SourceDocumentType=N'AccountingOpeningBalance'
@@ -195,7 +207,7 @@ public sealed partial class SqlAccountingStore
 
     // Search each attribute at its owner before joining posting state. A miss
     // must not enrich every document or build the full missing-job anti-join.
-    private static string TraceabilitySearchMatchesSql(bool filterParty, int dateRangeVersion) => $"""
+    private static string TraceabilitySearchMatchesSql(int dateRangeVersion) => $"""
             -- Literal letters outside the GUID alphabet cannot match its ID.
             -- Keep LIKE patterns and database collation behavior unchanged.
             DECLARE @SearchCanMatchDocumentId bit=CASE WHEN CHARINDEX(N'%',@Search)>0
@@ -228,57 +240,80 @@ public sealed partial class SqlAccountingStore
             )
             SELECT DISTINCT searchable.SourceDocumentId,searchable.SourceDocumentType INTO #SearchDocumentKeys
             FROM searchable
-            """ + (filterParty ? "\nJOIN #PartyDocumentKeys matched ON matched.SourceDocumentId=searchable.SourceDocumentId AND matched.SourceDocumentType=searchable.SourceDocumentType\n" : "\n") + """
             WHERE (@DocumentType IS NULL OR searchable.SourceDocumentType=@DocumentType) OPTION(RECOMPILE);
             CREATE UNIQUE CLUSTERED INDEX IX_SearchDocumentKeys ON #SearchDocumentKeys(SourceDocumentId,SourceDocumentType);
             """;
 
-    private static string TraceabilityMatchPreparationSql(string? search, Guid? partyId, int dateRangeVersion) =>
-            (partyId.HasValue ? TraceabilityPartyMatchesSql(dateRangeVersion) + "\n" : "") +
-            (search is not null ? TraceabilitySearchMatchesSql(partyId.HasValue, dateRangeVersion) + "\n" : "") +
-            (TraceabilityMatchesTableSql(search, partyId) is null ? TraceabilityMissingPostingSourcesSql(dateRangeVersion) + "\n" : "");
+    private static string TraceabilityConceptMatchesSql(int dateRangeVersion) => $"""
+            SELECT reference.SourceDocumentId,reference.SourceDocumentType INTO #ConceptDocumentKeys
+            FROM accounting.SourceConceptIndex reference
+            JOIN dbo.AccountingSourceDocuments source ON source.SourceDocumentId=reference.SourceDocumentId
+              AND source.SourceDocumentType=reference.SourceDocumentType
+            WHERE reference.FinancialConceptId=@FinancialConceptId
+              AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId
+              AND {SqlBusinessLocalDates.SourceCalendarPredicate("source.OccurredAt", dateRangeVersion)}
+              AND (@DocumentType IS NULL OR source.SourceDocumentType=@DocumentType)
+            UNION
+            SELECT draft.DocumentId,draft.DocumentType FROM accounting.VoucherDraftLines line
+            JOIN accounting.VoucherDrafts draft ON draft.DocumentId=line.DocumentId
+            WHERE line.FinancialConceptId=@FinancialConceptId AND draft.SentAt IS NULL
+              AND draft.TenantId=@TenantId AND draft.BusinessId=@BusinessId
+              AND {SqlBusinessLocalDates.SourceCalendarPredicate("draft.OccurredAt", dateRangeVersion)}
+              AND (@DocumentType IS NULL OR draft.DocumentType=@DocumentType)
+            OPTION(RECOMPILE);
+            CREATE UNIQUE CLUSTERED INDEX IX_ConceptDocumentKeys ON #ConceptDocumentKeys(SourceDocumentId,SourceDocumentType);
+            """;
+
+    private static string TraceabilityMatchPreparationSql(string? search, Guid? partyId, int dateRangeVersion, Guid? financialConceptId) =>
+            (search is not null ? TraceabilitySearchMatchesSql(dateRangeVersion) + "\n" : "") +
+            (partyId.HasValue ? TraceabilityPartyMatchesSql(dateRangeVersion, search is not null) + "\n" : "") +
+            (financialConceptId.HasValue ? TraceabilityConceptMatchesSql(dateRangeVersion) + "\n" : "") +
+            (TraceabilityMatchesTableSql(search, partyId, financialConceptId) is null ? TraceabilityMissingPostingSourcesSql(dateRangeVersion) + "\n" : "");
 
     // Apply the same candidate keys to exceptions, page and count. A narrow
     // party or a missing search must not classify the entire history first.
-    private static string? TraceabilityMatchesTableSql(string? search, Guid? partyId) =>
-            search is not null ? "#SearchDocumentKeys" : partyId.HasValue ? "#PartyDocumentKeys" : null;
+    private static string? TraceabilityMatchesTableSql(string? search, Guid? partyId, Guid? financialConceptId = null) =>
+            partyId.HasValue ? "#PartyDocumentKeys" : search is not null ? "#SearchDocumentKeys" : financialConceptId.HasValue ? "#ConceptDocumentKeys" : null;
 
-    private static string TraceabilityMatchesJoinSql(string? search, Guid? partyId, string alias) =>
-            TraceabilityMatchesTableSql(search, partyId) is { } matches
-                ? $"JOIN {matches} matched ON matched.SourceDocumentId={alias}.SourceDocumentId AND matched.SourceDocumentType={alias}.SourceDocumentType\n" : "";
+    private static string TraceabilityMatchesJoinSql(string? search, Guid? partyId, string alias, Guid? financialConceptId) =>
+            TraceabilityMatchesTableSql(search, partyId, financialConceptId) is { } matches
+                ? $"JOIN {matches} matched ON matched.SourceDocumentId={alias}.SourceDocumentId AND matched.SourceDocumentType={alias}.SourceDocumentType\n" +
+                  (financialConceptId.HasValue && matches != "#ConceptDocumentKeys"
+                    ? $"JOIN #ConceptDocumentKeys conceptMatch ON conceptMatch.SourceDocumentId={alias}.SourceDocumentId AND conceptMatch.SourceDocumentType={alias}.SourceDocumentType\n" : "")
+                : "";
 
-    private static string TraceabilityFilteredPostingSql(string input, bool includeEntry, string? search, Guid? partyId, int dateRangeVersion) => $"FROM {input} job\n" +
-            TraceabilityMatchesJoinSql(search, partyId, "job") +
+    private static string TraceabilityFilteredPostingSql(string input, bool includeEntry, string? search, Guid? partyId, int dateRangeVersion, Guid? financialConceptId) => $"FROM {input} job\n" +
+            TraceabilityMatchesJoinSql(search, partyId, "job", financialConceptId) +
             (includeEntry ? "LEFT JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=job.SourceDocumentId AND entry.SourceDocumentType=job.SourceDocumentType AND entry.TenantId=@TenantId AND entry.BusinessId=@BusinessId\n" : "") +
             "WHERE " + TraceabilityScopeSql(dateRangeVersion);
 
     // Freeze filtered metadata once: a newly accepted document cannot change
     // the count after pagination. Document details still load only for the page.
     private static string TraceabilityDocumentKeysSql(string? search, Guid? partyId, int dateRangeVersion, bool includeEntry = true,
-        bool reuseAcceptedPartyMetadata = false)
+        bool reuseAcceptedPartyMetadata = false, Guid? financialConceptId = null)
     {
-        var preparation = TraceabilityFilterValidationSql+"\n"+TraceabilityMatchPreparationSql(search, partyId, dateRangeVersion);
+        var preparation = TraceabilityFilterValidationSql+"\n"+TraceabilityMatchPreparationSql(search, partyId, dateRangeVersion, financialConceptId);
         var selection = "SELECT job.SourceDocumentId,job.SourceDocumentType,job.OccurredAt,job.Status" +
             (includeEntry ? ",entry.EntryId" : "");
-        if (TraceabilityMatchesTableSql(search, partyId) is not { } matches)
+        if (TraceabilityMatchesTableSql(search, partyId, financialConceptId) is not { } matches)
             return preparation + TraceabilityUnfilteredPostingSql + "\n" + selection + " INTO #DocumentKeys\n" +
-                TraceabilityFilteredPostingSql("posting", includeEntry, null, null, dateRangeVersion) + ";\n";
+                TraceabilityFilteredPostingSql("posting", includeEntry, null, null, dateRangeVersion, financialConceptId) + ";\n";
 
         // The source's scoped FK already proves its accepted job exists. When
         // status/entry filtering is unnecessary, reuse that narrow metadata and
         // load the authoritative job status only for the selected page. Legacy
         // unlinked sources and native matches still use the ordinary job lookup.
-        var acceptedSelection = reuseAcceptedPartyMetadata && partyId.HasValue && search is null && !includeEntry
+        var acceptedSelection = reuseAcceptedPartyMetadata && partyId.HasValue && search is null && !includeEntry && !financialConceptId.HasValue
             ? """
               SELECT matched.SourceDocumentId,matched.SourceDocumentType,matched.OccurredAt,
                 CONVERT(nvarchar(40),NULL) Status INTO #DocumentKeys
               FROM #PartyDocumentKeys matched WHERE matched.HasAcceptedJob=1;
               INSERT #DocumentKeys
               """ + "\n" + selection + "\n" +
-                TraceabilityFilteredPostingSql("dbo.AccountingPostingJobs", false, null, partyId, dateRangeVersion) +
+                TraceabilityFilteredPostingSql("dbo.AccountingPostingJobs", false, null, partyId, dateRangeVersion, financialConceptId) +
                 " AND (matched.HasAcceptedJob IS NULL OR matched.HasAcceptedJob=0) OPTION(RECOMPILE);\n"
             : selection + " INTO #DocumentKeys\n" +
-                TraceabilityFilteredPostingSql("dbo.AccountingPostingJobs", includeEntry, search, partyId, dateRangeVersion) + " OPTION(RECOMPILE);\n";
+                TraceabilityFilteredPostingSql("dbo.AccountingPostingJobs", includeEntry, search, partyId, dateRangeVersion, financialConceptId) + " OPTION(RECOMPILE);\n";
 
         // Candidate keys and posting jobs are each unique by source ID/type.
         // Equal counts prove every candidate has a matching job; no source
@@ -296,8 +331,8 @@ public sealed partial class SqlAccountingStore
               AND NOT EXISTS(SELECT 1 FROM #DocumentKeys captured WHERE captured.SourceDocumentId=source.SourceDocumentId
                 AND captured.SourceDocumentType=source.SourceDocumentType)
             )
-            """, includeEntry, search, partyId, dateRangeVersion) + " OPTION(RECOMPILE);\nEND;\nINSERT #DocumentKeys\n" +
-            selection + "\n" + TraceabilityFilteredPostingSql("(" + TraceabilityDraftPostingSql + ")", includeEntry, search, partyId, dateRangeVersion) +
+            """, includeEntry, search, partyId, dateRangeVersion, financialConceptId) + " OPTION(RECOMPILE);\nEND;\nINSERT #DocumentKeys\n" +
+            selection + "\n" + TraceabilityFilteredPostingSql("(" + TraceabilityDraftPostingSql + ")", includeEntry, search, partyId, dateRangeVersion, financialConceptId) +
             " OPTION(RECOMPILE);\n";
     }
     // Only selected document/line keys are enriched. The same filtered keys own the count.
@@ -381,8 +416,8 @@ public sealed partial class SqlAccountingStore
             ) sourceNumber ON sourceNumber.SourceDocumentId=job.SourceDocumentId AND sourceNumber.SourceDocumentType=job.SourceDocumentType
             """;
 
-    private static string TraceabilityDocumentsSql(string? search, Guid? partyId, bool filterStatus, int dateRangeVersion) =>
-            TraceabilityDocumentKeysSql(search, partyId, dateRangeVersion, includeEntry: false, reuseAcceptedPartyMetadata: !filterStatus) + TraceabilityVoucherFilterSql + "\n" + """
+    private static string TraceabilityDocumentsSql(string? search, Guid? partyId, bool filterStatus, int dateRangeVersion, Guid? financialConceptId) =>
+            TraceabilityDocumentKeysSql(search, partyId, dateRangeVersion, includeEntry: false, reuseAcceptedPartyMetadata: !filterStatus, financialConceptId: financialConceptId) + TraceabilityVoucherFilterSql + "\n" + """
             SELECT job.SourceDocumentId,job.SourceDocumentType,job.OccurredAt,job.Status INTO #DocumentPageKeys
             FROM #DocumentKeys job
             ORDER BY job.OccurredAt DESC,job.SourceDocumentId,job.SourceDocumentType

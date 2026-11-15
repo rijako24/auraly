@@ -275,6 +275,29 @@ con cartera y WorkSessionApiTests aprobó 96/96. Se conserva el fallo previo
 de preview (2.442,6 ms) de `portfolio-filter-facts-final.trx`; la ronda aprobada
 no lo elimina ni certifica los restantes gates del paquete de despliegue.
 
+La regresión de cartera del 15 de noviembre reprodujo timeouts de validación
+después de desaplicar pagos: tres casos fallaron en la tanda de 73, aunque
+las seis variantes pasaron aisladas. El perfil conservado mostró dos sorts
+en la proyección ancha de una corrección: uno estimaba 6.236 filas de 2.832
+bytes para una fila real. La observación de esa misma consulta registró
+`RESOURCE_SEMAPHORE`; no se atribuye la espera a una regla financiera ni se
+amplía el timeout. La validación prepara ahora por conjunto las referencias
+seleccionadas y los hechos de cada pago (aplicaciones y medios), con claves
+únicas antes de unirlos al resto de evidencia. Sólo lee los encabezados de la
+sede autorizada y conserva sus bloqueos, la transacción serializable, cuentas
+originales y rechazos anteriores, incluido el conteo cero sin aplicaciones.
+Preview y confirmación siguen usando `ValidatePaymentVerificationsAsync`, dos
+comandos por preview y el mismo presupuesto de dos segundos; no aparece otro
+flujo, writer, saldo ni lectura por fila desde aplicación. La regresión física
+comprueba también esas lecturas preparatorias y prohíbe sorts en la proyección
+ancha. La tanda `bounded-financial-readers-acceptance` aprobó los 44 casos
+funcionales y físicos, incluidas las seis variantes de pago/corrección y el
+rechazo posterior a desaplicación. El perfil posterior devuelve una fila sin
+sorts en esa proyección. Sus tres fallos de volumen de cartera se conservan como
+bloqueos separados y no se consideran aprobados por ese resultado funcional.
+Falta el gate completo actualizado; rollback restaura sólo el lector, sin
+migración o reversión de movimientos.
+
 La corrección de un medio conserva el comprobante original y su snapshot; registra
 el movimiento corregido asociado a su identificador y aplica el ajuste por
 la fuente contable `WorkSessionClosureReconciliation` existente. Corregir un importe

@@ -249,13 +249,15 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
         if (withUnrelatedMovements) await SeedUnrelatedMovementsAsync();
 
         var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
+        var auxiliaryFailures = new List<string>();
         using var activity = new Activity("trial-balance-free-hierarchy").SetIdFormat(ActivityIdFormat.W3C).Start();
         using var counter = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId);
         var timer = Stopwatch.StartNew();
         var rows = await service.GetTrialBalanceAsync(user, new(2026, 10, 21), new(2026, 10, 21));
         timer.Stop();
         Assert.Equal(1, counter.Count);
-        Assert.True(timer.Elapsed < TimeSpan.FromMilliseconds(750), $"Trial balance took {timer.Elapsed.TotalMilliseconds:F1} ms.");
+        if (timer.Elapsed >= TimeSpan.FromMilliseconds(750))
+            auxiliaryFailures.Add($"Trial balance took {timer.Elapsed.TotalMilliseconds:F1} ms.");
         output.WriteLine($"Jerarquía libre: {counter.Count} SQL, {timer.Elapsed.TotalMilliseconds:F1} ms.");
         foreach (var account in new[] { root, site, concept })
         {
@@ -282,17 +284,24 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
 
         // Opening a balance grouping must return its actual children, including
         // intermediate auxiliary parents, with the same totals as that balance.
+        await using var profileConnection = new SqlConnection(fixture.ConnectionString);
+        await using var profileCommand = new SqlCommand { Connection = profileConnection };
         foreach (var ancestor in new[] { root, site, concept })
         {
             var query = new AccountMovementQuery(new(2026, 10, 21), new(2026, 10, 21), AccountRootCode: ancestor.Code);
             await service.GetAccountMovementsPageAsync(user, query);
-            using var rootCounter = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId);
+            using var rootCounter = new InventoryBalanceProcessingTests.CommandCounter(database, activity.TraceId,
+                beforeExecute: command =>
+                {
+                    if (ancestor.AccountId == concept.AccountId)
+                        PortfolioPaymentHistoryPerformanceTests.CaptureReadCommand(command, profileCommand);
+                });
             var rootTimer = Stopwatch.StartNew();
             var page = await service.GetAccountMovementsPageAsync(user, query);
             rootTimer.Stop();
             Assert.Equal(1, rootCounter.Count);
-            Assert.True(rootTimer.Elapsed < TimeSpan.FromMilliseconds(750),
-                $"Auxiliary grouping {ancestor.Code}: {rootTimer.Elapsed.TotalMilliseconds:F1} ms.");
+            if (rootTimer.Elapsed >= TimeSpan.FromMilliseconds(750))
+                auxiliaryFailures.Add($"Auxiliary grouping {ancestor.Code}: {rootTimer.Elapsed.TotalMilliseconds:F1} ms.");
             Assert.Equal(2, page.TotalCount);
             Assert.Equal(100m, page.Accounts.Sum(account => account.OpeningBalance));
             Assert.Equal(100m, page.Accounts.Sum(account => account.Debit));
@@ -333,8 +342,8 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
                 var page = await service.GetAccountMovementsPageAsync(user, query);
                 pageTimer.Stop();
                 Assert.Equal(1, pageCounter.Count);
-                Assert.True(pageTimer.Elapsed < TimeSpan.FromMilliseconds(750),
-                    $"Auxiliary page {pageNumber}: {pageTimer.Elapsed.TotalMilliseconds:F1} ms.");
+                if (pageTimer.Elapsed >= TimeSpan.FromMilliseconds(750))
+                    auxiliaryFailures.Add($"Auxiliary page {pageNumber}: {pageTimer.Elapsed.TotalMilliseconds:F1} ms.");
                 Assert.Equal(50, page.Items.Count);
                 Assert.Equal(103, page.TotalCount);
                 Assert.Equal(201m, page.Accounts.Sum(item => item.Debit));
@@ -344,6 +353,48 @@ public sealed class AccountingAccountEditingTests(ServerSliceFixture fixture, IT
                 output.WriteLine($"Auxiliar con 100000 partidas ajenas, página {pageNumber}: {pageCounter.Count} SQL, {pageTimer.Elapsed.TotalMilliseconds:F1} ms.");
             }
         }
+
+        if (withUnrelatedMovements)
+        {
+            await profileConnection.OpenAsync();
+            // This setup count and the profile run after the timed calls. The
+            // 100,000 lines in the other business must never reach this read.
+            await using var scopeCount = new SqlCommand("""
+                SELECT COUNT_BIG(*) FROM dbo.AccountingEntries entry
+                JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId
+                WHERE entry.TenantId=@Tenant AND entry.BusinessId=@Business
+                  AND CAST(entry.OccurredAt AS date)<='20261021';
+                """, profileConnection);
+            scopeCount.Parameters.AddWithValue("@Tenant", fixture.TenantId);
+            scopeCount.Parameters.AddWithValue("@Business", fixture.BusinessId);
+            var scopedLines = (long)(await scopeCount.ExecuteScalarAsync())!;
+            var directory = await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(profileCommand, output);
+            Assert.NotNull(directory);
+            var lineReadsFound = false;
+            var journalReadStatements = 0;
+            foreach (var file in Directory.EnumerateFiles(directory, "profile-*.json"))
+            {
+                using var profile = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(file));
+                var statementReadsJournal = false;
+                foreach (var item in profile.RootElement.EnumerateArray())
+                {
+                    var text = item.GetProperty("StmtText").GetString()!;
+                    if (!System.Text.RegularExpressions.Regex.IsMatch(text,
+                        @"OBJECT:\(\[[^\]]+\]\.\[dbo\]\.\[AccountingEntryLines\]\.")) continue;
+                    lineReadsFound = true;
+                    statementReadsJournal = true;
+                    Assert.Contains("Seek", item.GetProperty("PhysicalOp").GetString());
+                    Assert.InRange(item.GetProperty("Rows").GetInt64(), 0, scopedLines);
+                }
+                if (statementReadsJournal) journalReadStatements++;
+            }
+            Assert.True(lineReadsFound, "The auxiliary profile must include its journal-line reads.");
+            // One capture feeds both aggregates and page keys; only the bounded
+            // page reads journal descriptions afterward. Re-reading the full
+            // journal separately for totals and keys violates that contract.
+            Assert.Equal(2, journalReadStatements);
+        }
+        Assert.Empty(auxiliaryFailures);
 
         Task<AccountingAccountView> CreateAsync(string code, string name, bool posting, AccountingAccountView? parent = null) =>
             service.CreateAccountAsync(user, new(Guid.NewGuid(), fixture.TenantId, code, name, "OrderDebit", posting, false,

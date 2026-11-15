@@ -370,6 +370,29 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             }
             Assert.True(p95 < 1000, $"Applied totals exceeded their budget: {position}, {scenario}, p95 {p95:F1}ms.");
         }
+        // Inspect availability only after all timed scenarios. Its absence of
+        // adjustments must seek the obligation key, not scan every source once
+        // for each of the 25 selected rows.
+        var selectorProfile = await CaptureReportProfileAsync(selectorDiagnostic, output);
+        Assert.NotNull(selectorProfile);
+        var adjustmentSeeks = new List<System.Text.Json.JsonElement>();
+        foreach (var file in Directory.EnumerateFiles(selectorProfile, "profile-*.json"))
+        {
+            using var profile = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(file));
+            adjustmentSeeks.AddRange(profile.RootElement.EnumerateArray().Where(item =>
+                System.Text.RegularExpressions.Regex.IsMatch(item.GetProperty("StmtText").GetString()!,
+                    @"OBJECT:\(\[[^\]]+\]\.\[dbo\]\.\[AccountingSourceDocuments\]\."))
+                .Select(item => item.Clone()));
+        }
+        Assert.NotEmpty(adjustmentSeeks);
+        Assert.All(adjustmentSeeks, item =>
+        {
+            Assert.Contains("Seek", item.GetProperty("PhysicalOp").GetString());
+            Assert.Equal(0, item.GetProperty("Rows").GetInt64());
+        });
+        Assert.Contains(adjustmentSeeks, item => item.GetProperty("StmtText").GetString()!
+            .Contains("[IX_AccountingSourceDocuments_AdjustmentObligation]", StringComparison.Ordinal));
+
         // Verify actual work as well as wall time. A fast server must not hide
         // a full payment-history scan while enriching 25 invoices/50 applications.
         // This additional read runs only after every timed scenario has finished.
@@ -378,12 +401,20 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         var foundOrigins = false;
         var foundIssueDates = false;
         var foundDocumentNumbers = supplier;
+        var foundNarrowSupplierLedger = !supplier;
         foreach (var file in Directory.EnumerateFiles(profileDirectory, "profile-*.json"))
         {
             using var profile = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(file));
             var operators = profile.RootElement.EnumerateArray().ToArray();
             if (operators.Length == 0) continue;
             var statement = operators[0].GetProperty("StmtText").GetString()!;
+            if (supplier && statement.Contains("INTO #Ledger", StringComparison.Ordinal))
+            {
+                foundNarrowSupplierLedger = true;
+                Assert.DoesNotContain(operators, item => item.GetProperty("PhysicalOp").GetString() == "Sort"
+                    && item.GetProperty("OutputList").GetString() is { } fields
+                    && System.Text.RegularExpressions.Regex.IsMatch(fields, @"\[(DocumentNumber|SupplierName|PartySiteName)\]"));
+            }
             if (!supplier && statement.Contains("INTO #DocumentCandidates", StringComparison.Ordinal))
             {
                 foundDocumentNumbers = true;
@@ -424,6 +455,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
         Assert.True(foundOrigins, "The actual plan must include receipt identity enrichment.");
         Assert.True(foundIssueDates, "The actual plan must include canonical issue-date lookups.");
         Assert.True(foundDocumentNumbers, "The actual plan must include bounded document-number lookups.");
+        Assert.True(foundNarrowSupplierLedger, "Supplier financial aggregates must keep document labels outside transaction sorts.");
         // The complete-export guard runs after the timed reads and must reject
         // the full filtered set, rather than silently returning its first page.
         if (supplier)
@@ -542,7 +574,7 @@ public sealed class PortfolioPaymentHistoryPerformanceTests(ServerSliceFixture f
             FROM sys.dm_exec_cached_plans cached
             CROSS APPLY sys.dm_exec_sql_text(cached.plan_handle) text
             OUTER APPLY sys.dm_exec_query_plan(cached.plan_handle) planData
-            WHERE CHARINDEX(LEFT(@Batch,4000),text.text)>0 AND EXISTS(
+            WHERE RIGHT(text.text,LEN(@Batch))=@Batch AND EXISTS(
               SELECT 1 FROM sys.dm_exec_plan_attributes(cached.plan_handle) attribute
               WHERE attribute.attribute=N'dbid' AND CONVERT(int,attribute.value)=DB_ID())
             ORDER BY cached.usecounts DESC;

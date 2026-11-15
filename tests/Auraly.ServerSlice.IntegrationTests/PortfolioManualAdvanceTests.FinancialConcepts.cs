@@ -425,5 +425,12 @@ public sealed partial class PortfolioManualAdvanceTests
             var result=await accounting.ListDocumentsAsync(identity,new(2026,8,1),new(2026,8,31),null,null,null,1,25,financialConceptId:created.FinancialConceptId);
             Assert.Equal(capture.DocumentId,Assert.Single(result.Items).SourceDocumentId);Assert.Equal(1,reads.Count);
         }
+        foreach(var search in new string?[]{null,"RC-CONCEPTO"})
+        {
+            using var reads=new InventoryBalanceProcessingTests.CommandCounter(new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog);
+            var result=await accounting.ListDocumentsAsync(identity,new(2026,8,1),new(2026,8,31),null,"Posted",search,1,25,
+                partyId:party,voucherTypeCode:capture.VoucherTypeCode,financialConceptId:created.FinancialConceptId);
+            Assert.Equal(capture.DocumentId,Assert.Single(result.Items).SourceDocumentId);Assert.Equal(1,reads.Count);
+        }
     }
 }

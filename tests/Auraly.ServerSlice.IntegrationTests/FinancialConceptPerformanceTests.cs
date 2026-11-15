@@ -53,7 +53,8 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
                 SELECT DocumentId,N'ManualAccountingVoucher',@Tenant,@Business,Payload,HASHBYTES('SHA2_256',CONVERT(varbinary(max),Payload)),At,At FROM #Batch OPTION(LOOP JOIN,MAXDOP 1);
               INSERT dbo.AccountingPostingJobs WITH(TABLOCK)(AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
                 SourcePayloadHash,OccurredAt,AccountingEntryRequired,Status,AttemptCount,CreatedAt)
-                SELECT NEWID(),@Tenant,@Business,DocumentId,N'ManualAccountingVoucher',HASHBYTES('SHA2_256',CONVERT(varbinary(max),Payload)),At,1,N'Pending',0,At FROM #Batch OPTION(LOOP JOIN,MAXDOP 1);
+                SELECT NEWID(),@Tenant,@Business,DocumentId,N'ManualAccountingVoucher',HASHBYTES('SHA2_256',CONVERT(varbinary(max),Payload)),At,1,N'Pending',0,At FROM #Batch
+                WHERE At>'2026-11-01T12:00:00+00:00' OPTION(LOOP JOIN,MAXDOP 1);
               INSERT accounting.SourceConceptIndex WITH(TABLOCK)(FinancialConceptId,SourceDocumentId,SourceDocumentType)
                 SELECT ConceptId,DocumentId,N'ManualAccountingVoucher' FROM #Batch OPTION(LOOP JOIN,MAXDOP 1);
               TRUNCATE TABLE #Batch;SET @Start+=200;
@@ -72,18 +73,35 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
             (Name:"master-search",Page:1,Documents:false,Search:(string?)"TARGET",Total:1,Rows:1),
             (Name:"receipts-first",Page:1,Documents:true,Search:(string?)null,Total:1000,Rows:50),
             (Name:"receipts-next",Page:2,Documents:true,Search:(string?)null,Total:1000,Rows:50)};
-        var failures=new List<string>();string? documentSql=null;
+        var failures=new List<string>();
+        await using var documentCommand=new SqlCommand { Connection=connection };
         foreach(var sample in cases)
         {
             var elapsed=new List<double>(20);
             for(var i=0;i<20;i++)
             {
-                using var counter=new InventoryBalanceProcessingTests.CommandCounter(connection.Database);
+                using var counter=new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
+                    beforeExecute: command => {
+                        if(sample.Name=="receipts-first"&&i==0)
+                            PortfolioPaymentHistoryPerformanceTests.CaptureReadCommand(command,documentCommand);
+                    });
                 var timer=Stopwatch.StartNew();
                 if(sample.Documents)
                 {
-                    var result=await accounting.ListDocumentsAsync(identity,new(2026,11,1),new(2026,11,30),null,null,null,
-                        sample.Page,50,voucherTypeCode:"CashReceipt",financialConceptId:selected);
+                    AccountingDocumentPage result;
+                    try
+                    {
+                        result=await accounting.ListDocumentsAsync(identity,new(2026,11,1),new(2026,11,30),null,null,null,
+                            sample.Page,50,voucherTypeCode:"CashReceipt",financialConceptId:selected);
+                    }
+                    catch(SqlException error) when(error.Number==-2)
+                    {
+                        // This sample is terminal: retain its plan before fixture
+                        // cleanup, never profile between successful timed calls.
+                        try {await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(documentCommand,output);}
+                        catch(Exception diagnosticError) {output.WriteLine($"Timeout profile failed: {diagnosticError.GetType().Name}: {diagnosticError.Message}");}
+                        throw;
+                    }
                     timer.Stop();Assert.Equal(sample.Total,result.TotalCount);Assert.Equal(sample.Rows,result.Items.Count);
                     Assert.Equal(result.Items.Count,result.Items.Select(item=>item.SourceDocumentId).Distinct().Count());
                 }
@@ -93,33 +111,55 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
                     timer.Stop();Assert.Equal(sample.Total,result.TotalCount);Assert.Equal(sample.Rows,result.Items.Count);
                 }
                 Assert.Equal(1,counter.Count);elapsed.Add(timer.Elapsed.TotalMilliseconds);
-                if(sample.Documents)documentSql=counter.LastCommandText;
             }
             var p95=elapsed.Order().ElementAt(18);
             output.WriteLine($"10001 concepts / 10000 sources, {sample.Name}: first {elapsed[0]:F1} ms, p95 {p95:F1} ms, 1 SQL/page.");
             if(p95>800||elapsed[0]>2000)failures.Add($"{sample.Name}: first {elapsed[0]:F1} ms, p95 {p95:F1} ms exceeds 2000/800 ms.");
             if(p95>800)output.WriteLine("Samples: "+string.Join(", ",elapsed.Select(value=>value.ToString("F1"))));
         }
-        if(failures.Count>0&&documentSql is not null)
+        // Inspect the physical read only after every timed sample. A concept
+        // selecting 1,000 of 10,000 sources must narrow the keys before the
+        // voucher classification and must not scan immutable payloads.
+        var profileDirectory=await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(documentCommand,output);
+        Assert.NotNull(profileDirectory);
+        var voucherFilterFound=false;
+        var candidateCaptureFound=false;
+        var conceptSeekFound=false;
+        foreach(var file in Directory.EnumerateFiles(profileDirectory,"profile-*.json"))
         {
-            // Diagnose only after all timed samples. Never run plan capture in parallel.
-            await using var diagnostic=new SqlCommand("SET STATISTICS XML ON;\n"+documentSql+"\nSET STATISTICS XML OFF;",connection);
-            diagnostic.Parameters.AddWithValue("@TenantId",fixture.TenantId);diagnostic.Parameters.AddWithValue("@BusinessId",business);
-            diagnostic.Parameters.AddWithValue("@From",new DateTime(2026,11,1));diagnostic.Parameters.AddWithValue("@To",new DateTime(2026,11,30));
-            foreach(var name in new[]{"@DocumentType","@Status","@Search","@PartyId"})diagnostic.Parameters.AddWithValue(name,DBNull.Value);
-            diagnostic.Parameters.AddWithValue("@VoucherTypeCode","CashReceipt");diagnostic.Parameters.AddWithValue("@FinancialConceptId",selected);
-            diagnostic.Parameters.AddWithValue("@Offset",0);diagnostic.Parameters.AddWithValue("@PageSize",50);
-            await using var reader=await diagnostic.ExecuteReaderAsync();var index=0;
-            do
+            using var profile=System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(file));
+            var operators=profile.RootElement.EnumerateArray().ToArray();
+            if(operators.Length==0)continue;
+            var statement=operators[0].GetProperty("StmtText").GetString()!;
+            if(statement.Contains("INTO #DocumentKeys",StringComparison.Ordinal))
             {
-                if(reader.FieldCount!=1||!reader.GetName(0).Contains("Showplan",StringComparison.OrdinalIgnoreCase))continue;
-                while(await reader.ReadAsync())
-                {
-                    var path=Path.Combine(Path.GetTempPath(),$"auraly-concepts-{connection.Database}-{index++}.sqlplan");
-                    await File.WriteAllTextAsync(path,reader.GetString(0));output.WriteLine("Diagnostic plan: "+path);
-                }
-            }while(await reader.NextResultAsync());
+                candidateCaptureFound=true;
+                Assert.InRange(operators[0].GetProperty("Rows").GetInt64(),0,1000);
+            }
+            foreach(var item in operators.Where(item=>item.GetProperty("StmtText").GetString() is {} text
+                &&System.Text.RegularExpressions.Regex.IsMatch(text,
+                    @"OBJECT:\(\[[^\]]+\]\.\[accounting\]\.\[SourceConceptIndex\]\.")))
+            {
+                conceptSeekFound=true;
+                Assert.Contains("Seek",item.GetProperty("PhysicalOp").GetString());
+                Assert.InRange(item.GetProperty("Rows").GetInt64(),0,1000);
+            }
+            if(!statement
+                .Contains("source.VoucherTypeCode=@VoucherTypeCode",StringComparison.Ordinal))continue;
+            voucherFilterFound=true;
+            var sources=operators.Where(item=>item.GetProperty("StmtText").GetString() is {} text
+                &&text.Contains("OBJECT:",StringComparison.Ordinal)
+                &&text.Contains("[dbo].[AccountingSourceDocuments]",StringComparison.Ordinal)).ToArray();
+            Assert.NotEmpty(sources);
+            Assert.All(sources,item=>
+            {
+                Assert.Contains("Seek",item.GetProperty("PhysicalOp").GetString());
+                Assert.InRange(item.GetProperty("Rows").GetInt64(),0,1000);
+            });
         }
+        Assert.True(voucherFilterFound,"The captured read must include the voucher-type filter.");
+        Assert.True(candidateCaptureFound,"Only matching concept candidates may enter the posting-key capture.");
+        Assert.True(conceptSeekFound,"Concept membership must seek the persisted index before loading posting keys.");
         Assert.Empty(failures);
     }
 }

@@ -2466,6 +2466,22 @@ Las claves candidatas se insertan en su tabla temporal con la clave primaria ya
 definida; no se carga primero un heap para volver a construir y ordenar su índice
 después. El conjunto deduplicado y sus filtros no cambian.
 
+El gate 43701130559 aprobó 1.024/1.025 integraciones y rechazó el tercero
+frecuente en calendario v1 por p95 de 1.169,6 ms (límite 800). Su plan mostró
+una lectura de 100.000 fuentes manuales para 50.005 pertenencias del tercero.
+La selección conserva `SourcePartyIndex` como propietario y exige búsquedas por
+esas identidades en `IX_AccountingSourceDocuments_Manual_PartyProjection`, ya
+existente. No copia fechas o estados al índice, no agrega otro índice y mantiene
+tenant, sede y ambos contratos de calendario. La regresión física posterior a
+las muestras rechaza scans y filas de fuente superiores a las pertenencias
+seleccionadas; el plan anterior incumple ambas condiciones. La regresión
+funcional dirigida aprobó siete casos de conceptos/tercero/búsqueda, filtros y
+corte completo en dos zonas. Los ensayos locales de 100.000 fuentes agotaron el
+tiempo preparando/revalidando el índice, antes de medir el lector: no constituyen
+evidencia de su rendimiento. El gate completo del ajuste sigue pendiente y no
+habilita el despliegue. Rollback retira sólo el hint del lector, sin cambiar
+fuentes, movimientos o configuración.
+
 La clasificación de fuentes sin trabajo usa el vínculo nullable
 `AccountingSourceDocuments.AccountingPostingJobId` y su índice filtrado de
 valores nulos. Su FK compuesta exige el mismo tenant, sede, documento y tipo;
@@ -4232,6 +4248,87 @@ sin lecturas por elemento; rige el presupuesto de 2 s de aceptación/posting.
 La validación debe incluir negativos de permisos, tenant, uso, cuenta y naturaleza,
 rechazo sin fuente/índice/efectos, repetición y cambio posterior de catálogo,
 hash legado y regresiones de los flujos que comparten la captura.
+
+El cierre del 14-11 detectó una primera página de recibos de 2.899,5 ms y p95
+de 1.354,2 ms en CI, aunque otras ejecuciones del mismo árbol aprobaron. El plan
+leyó las 10.000 fuentes completas para clasificar el comprobante antes de
+reducirlas por concepto. La regresión física reprodujo ese scan en local,
+independientemente del tiempo observado. El mismo filtro compartido ahora
+reduce primero por `SourceConceptIndex` y clasifica únicamente los candidatos.
+La proyección manual existente incluye `VoucherTypeCode` y se busca por la
+identidad inmutable, sin leer los payloads completos ni crear otro índice de
+conceptos, writer o fuente de saldo. El predicado manual explicita el alcance
+que ya define la columna calculada; nativos y borradores conservan sus rutas.
+
+La comprobación del plan se ejecuta después de todas las muestras, reutiliza
+el capturador SQL existente y exige seeks de hasta los 1.000 candidatos del
+concepto seleccionado. Listado y detalle de partidas comparten este filtro;
+siguen aplicándolo antes del conteo y de la página. Se mantienen un viaje,
+primera lectura menor de 2 s y p95 menor de 800 ms. El corte es una ampliación
+aditiva del índice desplegado por DACPAC; no reescribe documentos ni importes.
+Su rollback retira esa cobertura y la optimización de lectura, sin migración
+de saldos. Las dos regresiones nuevas fallaron antes de la corrección. Después
+aprobaron siete casos SQL, incluidos los cuatro de migración de centros y
+ambas direcciones de redondeo de devoluciones. Recibos: primera lectura
+860,6/158,2 ms y p95 171,7/177,8 ms en páginas 1/2, siempre un SQL; el plan
+confirmó los seeks acotados. El contador de historial usa la traza de la
+operación y una consulta independiente reproduce la interferencia previa:
+conserva un comando para listado y dos para detalle, sin cambiar el runtime.
+La regresión transversal y el gate completo de despliegue siguen requeridos.
+
+La ronda completa del 15-11 volvió a rechazar este camino: primera lectura
+4.128,1 ms y p95 1.336,1 ms, con 1.021/1.023 integraciones aprobadas. Aunque
+la clasificación ya buscaba sólo 1.000 fuentes, el plan aún capturaba 10.000
+claves de trabajo y después borraba 9.000 (9.125 lecturas lógicas de la tabla
+temporal). La pertenencia por concepto pasa ahora a la misma preparación de
+candidatos que tercero y búsqueda: una selección única desde el índice
+persistido y los borradores pendientes, acotada por tenant, sede, tipo y fechas.
+Los trabajos, fuentes sin trabajo y borradores se intersectan con esas claves
+antes de capturar el conjunto del listado y del reporte de partidas. Se elimina
+el DELETE posterior por concepto; no se duplica su política entre lectores.
+La combinación con tercero/búsqueda mantiene la intersección de filtros y un
+viaje SQL. La regresión física exige también que la captura inicial no supere
+1.000 claves y que la pertenencia busque el índice, con una fuente sin trabajo
+incluida en las 10.000. Las cuatro variantes funcionales de recibo/egreso
+comprueban borrador, contabilizado y filtros combinados. El rollback retira
+únicamente esta preparación de lectura; no modifica pertenencias ni historia.
+La primera tanda local aprobó seis de siete casos: las cuatro variantes
+funcionales, el otro filtro de comprobante y el benchmark de conceptos. Éste
+midió primera página de 601,3 ms, p95 231,2 ms y página siguiente p95 328,4 ms,
+incluida la comprobación física. La búsqueda nativa por número siguió fallando
+(p95 1.108,3 ms, límite 800): preparaba 10.000 claves del tercero antes de
+intersectar el único recibo buscado. La preparación compartida busca primero
+y restringe las ramas existentes de pertenencia del tercero a esas claves;
+mantiene los mismos propietarios nativos, índices y deduplicación. No cambia
+la semántica de LIKE ni omite borradores, ajustes, fuentes sin trabajo o
+terceros presentes sólo en partidas. El perfil posterior a las muestras exige
+que esas ramas incorporen como máximo el documento seleccionado y que los
+lookups de fuentes no recorran las otras 9.999. No añade otro viaje, índice
+persistente ni flujo. La siguiente tanda local no quedó aprobada: encontró
+un falso positivo del verificador (confundía columnas de origen con el objeto
+leído por un INSERT temporal), p95 de tercero de 846,8 ms y un timeout de
+recibos por concepto. La comprobación identifica ahora el objeto físico exacto.
+El lookup de ajustes directos se compila sólo cuando existen fuentes de ese
+tipo en el alcance; se conserva su consulta y no se infiere clasificación.
+Un timeout terminal conserva el plan y estadísticas con el capturador existente
+antes de limpiar el fixture, sin diagnosticar entre muestras exitosas ni
+ampliar umbrales. No se atribuye el timeout a una causa aún no demostrada.
+Una ejecución posterior reprodujo también lecturas de concepto lentas con el
+mismo hash de plan que la ejecución rápida; ese hecho no demuestra por sí solo
+la causa del timeout. Un error de separación al construir el predicado de la
+nueva guarda produjo SQL inválido y se corrigió antes de integrar. Se conservan
+los intentos fallidos en la evidencia de pruebas. La publicación exige aprobar
+la tanda dirigida y la compuerta completa sin exclusiones ni umbrales nuevos;
+los resultados de cada revisión se conservan en el PR del cambio.
+
+La compuerta completa de `aae94d99` aprobó el 15-11-2026 en la ejecución
+43688312163: 1.249 Foundation, 221 Edge, 20 Desktop y 1.023 integraciones,
+más el escenario de latencia de recibos en proceso nuevo; ninguno omitido.
+Admin y los nueve casos PDF en Linux también aprobaron. Esto comprueba los
+presupuestos y perfiles de esa revisión en CI; no convierte en aprobada la
+última medición local de búsqueda nativa ni sustituye el despliegue o su
+validación posterior en DEV. Una corrección posterior de corte de exportación
+de cartera requiere sus propias regresiones y otra compuerta completa.
 
 Despliegue aditivo: esquema primero y API/cliente compatibles antes de habilitar
 la selección. La columna de borrador es nullable y los campos opcionales no se

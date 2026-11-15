@@ -1148,6 +1148,44 @@ public sealed partial class SqlWorkSessionStore
             END
             ELSE
             BEGIN
+            -- Aggregate only selected payment identities before the wide
+            -- correction projection. Correlated aggregates in that projection
+            -- produced 6,236 estimated rows and large sorts for one payment.
+            SELECT DISTINCT source.MovementType,source.SourceId,
+              COALESCE(movement.DocumentId,source.SourceId) PaymentId
+            INTO #CorrectionPaymentReferences
+            FROM #Corrections correction
+            JOIN #PaymentVerifications source
+              ON source.VerificationKey COLLATE Latin1_General_100_CI_AS=correction.VerificationKey
+            LEFT JOIN dbo.WorkSessionMovements movement WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_WorkSessionMovements(WorkSessionMovementId)))
+              ON movement.WorkSessionMovementId=source.SourceId
+            WHERE source.MovementType IN(N'ReceivablePayment',N'PayablePayment');
+            CREATE UNIQUE CLUSTERED INDEX IX_CorrectionPaymentReferences ON #CorrectionPaymentReferences(MovementType,SourceId);
+
+            SELECT payment.PaymentId,payment.BusinessId,payment.CustomerId,payment.PartyId,payment.Status,
+              application.ApplicationCount,application.ReceivableId,tender.TenderCount,tender.BankAccountId,tender.AccountId
+            INTO #CorrectionCustomerPayments
+            FROM (SELECT DISTINCT PaymentId FROM #CorrectionPaymentReferences WHERE MovementType=N'ReceivablePayment') selected
+            JOIN dbo.CustomerPayments payment WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_CustomerPayments(PaymentId)))
+              ON payment.PaymentId=selected.PaymentId AND payment.BusinessId=@BusinessId
+            OUTER APPLY (SELECT COUNT(*) ApplicationCount,MAX(ReceivableId) ReceivableId
+              FROM dbo.CustomerPaymentApplications WITH(FORCESEEK) WHERE PaymentId=payment.PaymentId) application
+            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId
+              FROM dbo.CustomerPaymentTenders WITH(FORCESEEK) WHERE PaymentId=payment.PaymentId) tender;
+            CREATE UNIQUE CLUSTERED INDEX IX_CorrectionCustomerPayments ON #CorrectionCustomerPayments(PaymentId);
+
+            SELECT payment.PaymentId,payment.BusinessId,payment.SupplierId,payment.CurrencyCode,payment.Status,
+              application.ApplicationCount,application.PayableId,tender.TenderCount,tender.BankAccountId,tender.AccountId
+            INTO #CorrectionSupplierPayments
+            FROM (SELECT DISTINCT PaymentId FROM #CorrectionPaymentReferences WHERE MovementType=N'PayablePayment') selected
+            JOIN dbo.SupplierPayments payment WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SupplierPayments(PaymentId)))
+              ON payment.PaymentId=selected.PaymentId AND payment.BusinessId=@BusinessId
+            OUTER APPLY (SELECT COUNT(*) ApplicationCount,MAX(PayableId) PayableId
+              FROM dbo.SupplierPaymentApplications WITH(FORCESEEK) WHERE PaymentId=payment.PaymentId) application
+            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId
+              FROM dbo.SupplierPaymentTenders WITH(FORCESEEK) WHERE PaymentId=payment.PaymentId) tender;
+            CREATE UNIQUE CLUSTERED INDEX IX_CorrectionSupplierPayments ON #CorrectionSupplierPayments(PaymentId);
+
             SELECT correction.VerificationKey,source.MovementType,source.SourceId,
               source.SourceNumber,source.PaymentMethodCode,source.Amount,
               correction.PaymentMethodCode,correction.Amount,correction.Reason,
@@ -1155,12 +1193,13 @@ public sealed partial class SqlWorkSessionStore
               COALESCE(saleParty.PartyId,customerParty.PartyId,supplierParty.PartyId,
                 returnParty.PartyId,evidence.PartyId) PartyId,
               COALESCE(sale.CustomerId,customerPayment.CustomerId,saleReturn.CustomerId) CustomerId,
-              COALESCE(saleReceivable.ReceivableId,customerApplication.ReceivableId,
-                supplierApplication.PayableId) SubledgerId,
+              COALESCE(saleReceivable.ReceivableId,customerPayment.ReceivableId,
+                supplierPayment.PayableId) SubledgerId,
               COALESCE(saleReceivable.OutstandingAmount,customerBalance.OutstandingAmount,
                 supplierBalance.OutstandingAmount) OutstandingAmount,
-              COALESCE(NULLIF(customerApplication.ApplicationCount,0),supplierApplication.ApplicationCount,1) ApplicationCount,
-              COALESCE(NULLIF(customerTender.TenderCount,0),supplierTender.TenderCount,1) TenderCount,
+              -- The previous scalar counts returned zero for an absent kind.
+              COALESCE(NULLIF(customerPayment.ApplicationCount,0),supplierPayment.ApplicationCount,0) ApplicationCount,
+              COALESCE(NULLIF(customerPayment.TenderCount,0),supplierPayment.TenderCount,0) TenderCount,
               cashReason.CounterpartAccountingCategory,
               CAST(CASE WHEN
                 (source.MovementType=N'Sale' AND sale.ProcessingStatus=N'Completed') OR
@@ -1184,27 +1223,27 @@ public sealed partial class SqlWorkSessionStore
               COALESCE(CASE
                 WHEN source.SourceDocumentType=N'ManualAccountingVoucher' AND manual.AccountId IS NOT NULL
                   THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),manual.AccountId))
-                WHEN source.MovementType=N'ReceivablePayment' AND customerTender.TenderCount=1 AND customerTender.AccountId IS NOT NULL
-                  THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),customerTender.AccountId))
-                WHEN source.MovementType=N'PayablePayment' AND supplierTender.TenderCount=1 AND supplierTender.AccountId IS NOT NULL
-                  THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),supplierTender.AccountId)) END,
+                WHEN source.MovementType=N'ReceivablePayment' AND customerPayment.TenderCount=1 AND customerPayment.AccountId IS NOT NULL
+                  THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),customerPayment.AccountId))
+                WHEN source.MovementType=N'PayablePayment' AND supplierPayment.TenderCount=1 AND supplierPayment.AccountId IS NOT NULL
+                  THEN CONCAT(N'PostedAccount:',CONVERT(nvarchar(36),supplierPayment.AccountId)) END,
                 NULLIF(CONCAT(N'BankAccount:',CONVERT(nvarchar(36),
                 CASE WHEN source.MovementType=N'Sale' THEN saleTender.BankAccountId
                      WHEN source.MovementType=N'Refund' THEN refundTender.BankAccountId
-                     WHEN source.MovementType=N'ReceivablePayment' AND customerTender.TenderCount=1
-                       THEN customerTender.BankAccountId
-                     WHEN source.MovementType=N'PayablePayment' AND supplierTender.TenderCount=1
-                       THEN supplierTender.BankAccountId END)),N'BankAccount:'),
+                     WHEN source.MovementType=N'ReceivablePayment' AND customerPayment.TenderCount=1
+                       THEN customerPayment.BankAccountId
+                     WHEN source.MovementType=N'PayablePayment' AND supplierPayment.TenderCount=1
+                       THEN supplierPayment.BankAccountId END)),N'BankAccount:'),
                 originalTenderCategory.Category,originalClosureCategory.Category),
               correctedTenderCategory.Category,
               CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.PayableTransactions original
                 JOIN accounting.SourcePositionIndex reversal WITH(FORCESEEK(IX_SourcePositionIndex_Reversal(BusinessId,SubledgerKind,ReversesTransactionId))) ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Payable'
                   AND reversal.ReversesTransactionId=original.PayableTransactionId
-                WHERE original.PayableId=supplierApplication.PayableId AND original.SourceDocumentId=supplierPayment.PaymentId AND original.TransactionType=N'Payment')
+                WHERE original.PayableId=supplierPayment.PayableId AND original.SourceDocumentId=supplierPayment.PaymentId AND original.TransactionType=N'Payment')
                 OR EXISTS(SELECT 1 FROM dbo.ReceivableTransactions original
                 JOIN accounting.SourcePositionIndex reversal WITH(FORCESEEK(IX_SourcePositionIndex_Reversal(BusinessId,SubledgerKind,ReversesTransactionId))) ON reversal.BusinessId=@BusinessId AND reversal.SubledgerKind=N'Receivable'
                   AND reversal.ReversesTransactionId=original.ReceivableTransactionId
-                WHERE original.ReceivableId=customerApplication.ReceivableId AND original.SourceDocumentId=customerPayment.PaymentId AND original.TransactionType=N'Payment')
+                WHERE original.ReceivableId=customerPayment.ReceivableId AND original.SourceDocumentId=customerPayment.PaymentId AND original.TransactionType=N'Payment')
                 THEN 1 ELSE 0 END AS bit) HasUnapplications
             FROM #Corrections correction
             LEFT JOIN #PaymentVerifications source ON source.VerificationKey COLLATE Latin1_General_100_CI_AS = correction.VerificationKey
@@ -1252,32 +1291,23 @@ public sealed partial class SqlWorkSessionStore
             LEFT JOIN dbo.Receivables saleReceivable WITH(UPDLOCK,HOLDLOCK,FORCESEEK(UQ_Receivables_Source(SourceDocumentId,SourceDocumentType)))
               ON saleReceivable.SourceDocumentId=sale.DocumentId
                 AND saleReceivable.SourceDocumentType=sale.DocumentType AND saleReceivable.BusinessId=@BusinessId
-            LEFT JOIN dbo.WorkSessionMovements paymentMovement WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_WorkSessionMovements(WorkSessionMovementId)))
-              ON paymentMovement.WorkSessionMovementId=source.SourceId
-                AND source.MovementType IN(N'ReceivablePayment',N'PayablePayment')
-            LEFT JOIN dbo.CustomerPayments customerPayment WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_CustomerPayments(PaymentId)))
-              ON source.MovementType=N'ReceivablePayment' AND customerPayment.PaymentId=COALESCE(paymentMovement.DocumentId,source.SourceId)
+            LEFT JOIN #CorrectionPaymentReferences paymentReference ON paymentReference.SourceId=source.SourceId
+              AND paymentReference.MovementType=source.MovementType
+            LEFT JOIN #CorrectionCustomerPayments customerPayment
+              ON source.MovementType=N'ReceivablePayment' AND customerPayment.PaymentId=paymentReference.PaymentId
                 AND customerPayment.BusinessId=@BusinessId
             LEFT JOIN dbo.Customers paymentCustomer WITH(FORCESEEK) ON paymentCustomer.CustomerId=customerPayment.CustomerId
             LEFT JOIN dbo.Parties customerParty WITH(FORCESEEK) ON customerParty.PartyId=COALESCE(customerPayment.PartyId,paymentCustomer.PartyId)
-            OUTER APPLY (SELECT COUNT(*) ApplicationCount,MAX(ReceivableId) ReceivableId
-              FROM dbo.CustomerPaymentApplications WITH(FORCESEEK) WHERE PaymentId=customerPayment.PaymentId) customerApplication
-            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId FROM dbo.CustomerPaymentTenders WITH(FORCESEEK)
-              WHERE PaymentId=customerPayment.PaymentId) customerTender
             LEFT JOIN dbo.Receivables customerBalance WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_Receivables(ReceivableId)))
-              ON customerBalance.ReceivableId=customerApplication.ReceivableId
+              ON customerBalance.ReceivableId=customerPayment.ReceivableId
                 AND customerBalance.BusinessId=@BusinessId
-            LEFT JOIN dbo.SupplierPayments supplierPayment WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SupplierPayments(PaymentId)))
-              ON source.MovementType=N'PayablePayment' AND supplierPayment.PaymentId=COALESCE(paymentMovement.DocumentId,source.SourceId)
+            LEFT JOIN #CorrectionSupplierPayments supplierPayment
+              ON source.MovementType=N'PayablePayment' AND supplierPayment.PaymentId=paymentReference.PaymentId
                 AND supplierPayment.BusinessId=@BusinessId
             LEFT JOIN dbo.Suppliers paymentSupplier WITH(FORCESEEK) ON paymentSupplier.SupplierId=supplierPayment.SupplierId
             LEFT JOIN dbo.Parties supplierParty WITH(FORCESEEK) ON supplierParty.PartyId=paymentSupplier.PartyId
-            OUTER APPLY (SELECT COUNT(*) ApplicationCount,MAX(PayableId) PayableId
-              FROM dbo.SupplierPaymentApplications WITH(FORCESEEK) WHERE PaymentId=supplierPayment.PaymentId) supplierApplication
-            OUTER APPLY (SELECT COUNT(*) TenderCount,MAX(BankAccountId) BankAccountId,MAX(AccountId) AccountId FROM dbo.SupplierPaymentTenders WITH(FORCESEEK)
-              WHERE PaymentId=supplierPayment.PaymentId) supplierTender
             LEFT JOIN dbo.Payables supplierBalance WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_Payables(PayableId)))
-              ON supplierBalance.PayableId=supplierApplication.PayableId
+              ON supplierBalance.PayableId=supplierPayment.PayableId
                 AND supplierBalance.BusinessId=@BusinessId
             LEFT JOIN dbo.SalesReturns saleReturn WITH(UPDLOCK,HOLDLOCK,FORCESEEK(PK_SalesReturns(ReturnId)))
               ON source.MovementType=N'Refund' AND saleReturn.ReturnId=source.SourceId

@@ -323,6 +323,17 @@ public sealed partial class PayablesVerticalSliceTests
             new[] { new WorkSessionPaymentCorrection(closedAfter.Payment.VerificationKey, "Cash", closedAfter.Payment.Amount - 1m,
                 "No modificar un pago ya desaplicado") }))
         {
+            if (response.StatusCode != HttpStatusCode.BadRequest)
+            {
+                validationCommands.Dispose();
+                Console.WriteLine("Unexpected payment-correction response: " + await response.Content.ReadAsStringAsync());
+                try
+                {
+                    var diagnostic = await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(capturedValidation);
+                    Console.WriteLine("Correction SQL profile: " + diagnostic);
+                }
+                catch (Exception error) { Console.WriteLine($"Correction diagnostic failed: {error.GetType().Name}: {error.Message}"); }
+            }
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Contains("desaplicaciones", await response.Content.ReadAsStringAsync());
             Assert.Equal(1, validationCommands.Count);
@@ -336,15 +347,22 @@ public sealed partial class PayablesVerticalSliceTests
             foreach (var path in Directory.EnumerateFiles(profileDirectory, "profile-*.json"))
             {
                 using var profile = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(path));
-                if (!profile.RootElement[0].GetProperty("StmtText").GetString()!.StartsWith("SELECT correction.VerificationKey", StringComparison.Ordinal))
+                var statement = profile.RootElement[0].GetProperty("StmtText").GetString()!;
+                var wideProjection = statement.StartsWith("SELECT correction.VerificationKey", StringComparison.Ordinal);
+                if (!wideProjection && !statement.Contains("INTO #CorrectionPaymentReferences", StringComparison.Ordinal)
+                    && !statement.Contains("INTO #CorrectionCustomerPayments", StringComparison.Ordinal)
+                    && !statement.Contains("INTO #CorrectionSupplierPayments", StringComparison.Ordinal))
                     continue;
+                if (wideProjection)
+                    Assert.DoesNotContain(profile.RootElement.EnumerateArray(), item =>
+                        item.GetProperty("PhysicalOp").GetString() == "Sort");
+                // Match the physical object, not source columns named by a
+                // temporary INSERT's SET metadata.
                 sourceReads.AddRange(profile.RootElement.EnumerateArray().Where(item =>
-                    item.GetProperty("StmtText").GetString()!.Contains("OBJECT:", StringComparison.Ordinal)
-                    && new[] { ".[dbo].[SalesDocuments].", ".[dbo].[CustomerPayments].", ".[dbo].[SupplierPayments].",
-                        ".[dbo].[SalesReturns].", ".[dbo].[CashMovementDocuments].", ".[dbo].[WorkSessionMovements].",
-                        ".[dbo].[SalesPayments].", ".[dbo].[Receivables].", ".[dbo].[Payables].", ".[dbo].[Customers].",
-                        ".[dbo].[Suppliers].", ".[dbo].[Parties].", ".[dbo].[SalesReturnSettlements].", ".[dbo].[CustomerCredits]." }
-                        .Any(table => item.GetProperty("StmtText").GetString()!.Contains(table, StringComparison.Ordinal)))
+                    System.Text.RegularExpressions.Regex.IsMatch(item.GetProperty("StmtText").GetString()!,
+                        @"OBJECT:\(\[[^\]]+\]\.\[dbo\]\.\[(SalesDocuments|CustomerPayments|SupplierPayments|SalesReturns|" +
+                        @"CashMovementDocuments|WorkSessionMovements|SalesPayments|Receivables|Payables|Customers|" +
+                        @"Suppliers|Parties|SalesReturnSettlements|CustomerCredits)\]\."))
                     .Select(item => item.Clone()));
             }
             Assert.NotEmpty(sourceReads);
