@@ -24,6 +24,16 @@ on:
         required: false
         default: true
         type: boolean
+      integration_test_filter:
+        description: Filtro puntual revisado; vacío ejecuta toda la regresión
+        required: false
+        default: ''
+        type: string
+      baseline_quality_run_id:
+        description: Regresión base revisada cuando se usa filtro puntual
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -138,6 +148,8 @@ jobs:
         shell: pwsh
         env:
           AURALY_TEST_SQLSERVER: '(localdb)\MSSQLLocalDB'
+          RELEASE_INTEGRATION_TEST_FILTER: ${{ inputs.integration_test_filter }}
+          RELEASE_BASELINE_QUALITY_RUN_ID: ${{ inputs.baseline_quality_run_id }}
         run: >-
           ./infrastructure/azure/New-AuralyRelease.ps1
           -Version '${{ inputs.version }}'
@@ -146,6 +158,8 @@ jobs:
           -SigningCertificateThumbprint '${{ steps.signing_certificate.outputs.thumbprint }}'
           -SigningTimestampUrl 'https://timestamp.digicert.com'
           -SkipAdmin
+          -IntegrationTestFilter "$env:RELEASE_INTEGRATION_TEST_FILTER"
+          -BaselineQualityRunId "$env:RELEASE_BASELINE_QUALITY_RUN_ID"
 
       - name: Login to Azure release archive with OIDC
         uses: azure/login@v3
