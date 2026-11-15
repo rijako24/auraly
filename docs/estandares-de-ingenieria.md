@@ -250,6 +250,30 @@ npm --prefix admin run build
 
 Ejecutar primero pruebas enfocadas y luego ampliar proporcionalmente al riesgo. Nunca afirmar que un check paso si no se ejecuto; reportar bloqueo, comando y causa.
 
+### Regresión previa a DEV y correcciones posteriores
+
+1. Completar la implementación y las pruebas locales de los flujos modificados.
+   Antes de desplegar a DEV, ejecutar una regresión completa del conjunto que se
+   va a publicar y registrar su commit, alcance y resultados como base de validación.
+2. Si esa regresión encuentra fallos, agrupar las correcciones y ejecutar la
+   regresión específica de cada fallo junto con las pruebas de sus flujos afectados.
+   No reiniciar toda la regresión por cada corrección puntual ni repetir suites
+   aprobadas cuyos caminos no cambiaron.
+3. Ampliar la comprobación sólo cuando un cambio, fallo o dependencia compartida
+   invalide evidencia anterior. Documentar qué cobertura se invalida y por qué;
+   el alcance se decide por impacto real, no por repetir todo de forma automática.
+4. Antes del despliegue, auditar que la base y las verificaciones posteriores
+   cubren todo el diff que se publica y que cada fallo encontrado tiene evidencia
+   de corrección. Conservar los fallos originales; una base con fallos no se
+   presenta como aprobada por haber ejecutado un filtro que no los cubre.
+5. Publicar desde el commit integrado en `origin/main`, reutilizando los mecanismos
+   existentes para registrar la base y las pruebas enfocadas del release. La
+   compilación y los controles de integridad, seguridad y despliegue siguen siendo
+   obligatorios; no se falsean resultados ni se omiten controles sin cobertura.
+6. La comprobación posterior en DEV verifica la versión instalada y sus flujos
+   reales. Reunir los hallazgos antes de otra publicación y validar localmente sus
+   correcciones con el alcance anterior; DEV no sustituye la regresión previa.
+
 ## 16. Automatizacion de calidad y supply chain
 
 - Los checks locales y CI deben ser reproducibles y usar las versiones/lock files del repositorio. No actualizar dependencias o locks incidentalmente.

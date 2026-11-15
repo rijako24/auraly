@@ -48,6 +48,11 @@ Antes de crear una clase, servicio, flujo, handler, endpoint, tabla, configuraci
   explícita del usuario para desplegar a producción. La autorización para
   implementar, probar, integrar a `origin/main` o desplegar a DEV no autoriza
   por sí sola la promoción a producción.
+- Antes de desplegar a DEV, completar las pruebas locales y ejecutar la regresión
+  del conjunto que se va a publicar. Una corrección posterior se verifica con las
+  pruebas y flujos afectados, conservando la evidencia de la base; no se repite
+  toda la regresión por cada ajuste puntual. Aplicar la política de regresión
+  previa a DEV de `docs/estandares-de-ingenieria.md`, sección 15.
 - Trabajar siempre sobre el único checkout operativo, ya sea en la rama `main`
   o en una rama creada a partir de `main`. No crear `git worktree`, clones
   anidados ni copias paralelas del repositorio. Una tarea que requiera
