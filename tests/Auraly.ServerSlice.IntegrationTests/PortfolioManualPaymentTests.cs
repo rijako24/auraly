@@ -323,6 +323,12 @@ public sealed partial class PayablesVerticalSliceTests
             new[] { new WorkSessionPaymentCorrection(closedAfter.Payment.VerificationKey, "Cash", closedAfter.Payment.Amount - 1m,
                 "No modificar un pago ya desaplicado") }))
         {
+            if (response.StatusCode != HttpStatusCode.BadRequest)
+            {
+                Console.WriteLine("Unexpected payment-correction response: " + await response.Content.ReadAsStringAsync());
+                try { await PortfolioPaymentHistoryPerformanceTests.CaptureReportProfileAsync(capturedValidation); }
+                catch (Exception error) { Console.WriteLine($"Correction diagnostic failed: {error.GetType().Name}: {error.Message}"); }
+            }
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Contains("desaplicaciones", await response.Content.ReadAsStringAsync());
             Assert.Equal(1, validationCommands.Count);
