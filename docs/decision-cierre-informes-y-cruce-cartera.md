@@ -606,6 +606,30 @@ Las filas de **Recaudos** y **Pagos** ofrecen **Ver e imprimir** a quienes tiene
 
 El saldo al corte incluye únicamente movimientos cuya fecha efectiva y cuya fecha de aplicación/registro son anteriores al final del día de corte. Así un pago registrado después no altera retroactivamente el informe aunque su fecha de pago se haya escrito hacia atrás. **Notas y ajustes** muestra la diferencia entre original, pagos y saldo; hace visibles devoluciones, notas crédito y ajustes de cartera sin llamarlos pagos. La consulta del informe y la exportación deben usar el mismo cálculo autoritativo.
 
+Por solicitud del 2026-11-15, el visor común ofrece seis accesos directos:
+consolidado general, consolidado con saldo, detallado general, detallado con
+saldo, detallado con abonos/pagos y detallado sin saldo. Son acciones de
+presentación y criterios existentes, no otro catálogo ni motor de reportes.
+El selector de cliente/proveedor queda visible; elegir un acceso aplica ese
+tercero y conserva corte, rangos y búsqueda. Los controles específicos de edad,
+mora, documento y presentación se agrupan en **Más filtros**.
+Con saldo pide OutstandingOnly al servidor; sin saldo pide el estado histórico
+Paid al corte, incluidas obligaciones saldadas por ajustes. El detalle con
+abonos/pagos muestra aplicaciones por documento y no excluye facturas sin abonos.
+El detallado general conserva el total abonado en su columna, sin ese desglose.
+Los mismos criterios alimentan página, impresión y exportación. Una acción
+reinicia página/orden en el propietario de consulta existente y produce como
+máximo una solicitud HTTP del informe; no agrega refetch ni filtro sobre la página.
+
+La prueba de navegador `portfolio-report.spec.ts` aprobó ambos sentidos con
+datos controlados: seis accesos, tercero preservado, una solicitud por cambio,
+página/orden reiniciados, rangos inválidos sin consulta, paginación, marca,
+PDF/Excel y vista móvil. La revisión adicional contra la API y SQL locales
+comprobó en el mismo cliente factura saldada, exclusión del documento al pedir
+pendientes, desglose del recibo de abono y conservación del anticipo restante.
+El anticipo puede seguir visible aunque no haya facturas pendientes; no se
+oculta ni se convierte en una deuda. No cambia la plantilla publicada.
+
 CxC opera en COP. CxP admite varias monedas y nunca suma USD y COP como un único importe: los subtotales y el consolidado se separan por `CurrencyCode`. La sede es parte de la agrupación; una obligación histórica asignada a la sede principal aparece allí conforme a la migración de cartera aprobada.
 
 Cuando se imprime el informe con corte en el día actual, el servidor limita los movimientos al instante en que inicia la consulta para que las aplicaciones nuevas no aparezcan a mitad del documento.

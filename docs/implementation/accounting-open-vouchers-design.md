@@ -576,6 +576,47 @@ detiene la actualización en vez de inventar cuentas o modificar al cliente.
 Producción no se inspeccionó ni se presume igual a DEV: sus identidades no se
 incluyen por inferencia. Esta preparación no autoriza ejecutar un despliegue.
 
+El 2026-11-15 se autorizó continuar con el tratamiento explícito de caja en DEV:
+conservar 110505 «Caja general», Asset/Bank/Debit y su vínculo bancario, junto
+con sus 428 partidas, y crear 110506 «Caja operativa», Asset/Cash/Debit, sin
+vínculo bancario. El mapping Cash conserva su identidad y rango
+2026-01-01/sin fin; cambia sólo su auxiliar para operaciones nuevas. No hay
+traslado de saldos, reclasificación de historia ni reproceso de documentos.
+El saldo anterior continúa en 110505; consultar períodos previos conserva su
+presentación y las nuevas operaciones se distinguen por el auxiliar aplicado.
+
+Ambas correcciones se ejecutan como un único plan transaccional revisado en
+`20261115_RetargetHistoricalPostingMappings.sql`, antes de verificar cobertura
+Ready y aprovisionar el catálogo de formas de pago. El aplicador existente se
+amplía a las dos categorías mediante expectativas explícitas de origen y
+destino, sin un segundo proceso ni excepciones en runtime. La política canónica
+decide elegibilidad; un origen ya válido o un mapping sustituido por el cliente
+no se sobrescribe. El plan de identidades de DEV sólo se habilita con
+DeploymentEnvironment=dev; otros ambientes validan cobertura sin inferirlo.
+La cuenta bancaria anterior sigue disponible para su uso bancario conforme al
+catálogo. La lectura previa de DEV confirmó que PaymentMethods aún no existía;
+su seed posterior crea el efectivo con el auxiliar nuevo, sin reasignar formas
+propias ya existentes en otras instalaciones.
+
+Rollback detiene primero nuevos comandos. Antes de usar los destinos se puede
+restaurar el mapping revisado, pero eso reintroduce la incompatibilidad y no
+permite reabrir el procesamiento con la validación actual. Después de registrar
+movimientos se conservan cuentas, mapping aplicado y asientos; el rollback de
+binarios no elimina ni traslada saldos. Cualquier reversión contable exige una
+decisión explícita posterior. El aplicador falla cerrado ante configuración
+distinta, colisión o cumplimiento fiscal no revisado y revierte todo el lote.
+
+La regresión local `reviewed-cash-vat-capture-general` aprobó cuatro casos:
+el plan conjunto corrige IVA y caja antes de validar cobertura, mantiene los
+auxiliares usados y sus partidas/reportes, y repetirlo conserva el rowversion
+del mapping. El seed de formas ofrece exactamente un efectivo para el nuevo
+auxiliar; un recibo aceptado desde el borrador v4 produce un asiento balanceado
+y un solo movimiento de dinero incluso al repetir el envío. Los otros casos
+rechazan origen distinto, colisión y rango modificado sin cambios parciales.
+Los intentos previos del fixture usaron aceptación directa o una contrapartida
+sin función explícita; sus rechazos se conservaron y se corrigió la preparación
+para ejercer la captura canónica, sin debilitar esas validaciones.
+
 La vigencia debe cubrir las fechas permitidas de compras nuevas, incluidas
 retrodatadas: ConfiguredPostingAccountIdentity resuelve por fecha del documento.
 Una cuenta ya fijada en un job histórico no se sustituye cambiando el mapping.
@@ -2481,6 +2522,39 @@ tiempo preparando/revalidando el índice, antes de medir el lector: no constituy
 evidencia de su rendimiento. El gate completo del ajuste sigue pendiente y no
 habilita el despliegue. Rollback retira sólo el hint del lector, sin cambiar
 fuentes, movimientos o configuración.
+
+El gate posterior de main 43712311720 detectó además que el mismo conjunto
+de 1.000 coincidencias por concepto terminaba ordenando 9.991 trabajos y
+9.992 fuentes ajenas a ese conjunto. El lector filtrado exige ahora búsquedas
+por identidad en las claves únicas existentes de trabajos y fuentes sin job.
+La comprobación compartida de ausencia de job usa asimismo su clave única por
+fuente cuando existen claves candidatas: el primer ensayo local detectó que
+todavía leía 9.996 trabajos ajenos. El recorrido sin filtro conserva la elección
+de plan por conjunto para encontrar todas las excepciones del rango solicitado.
+La carga principal sin filtros conserva su acceso por fecha. La regresión física comprueba
+también esos dos accesos después de las muestras, manteniendo los límites
+2.000/800 ms y un comando por página. No se agregan índices ni otro lector.
+
+Después de acotar esos accesos, la medición aislada registró 2.495,3 ms en
+la primera llamada, de los que ExecuteReader tomó 2.473,2 ms; p95 quedó en
+213,1 ms y el plan físico cumplió el límite de identidades. El enriquecimiento
+existente se guía ahora desde la página con FORCE ORDER/LOOP JOIN, sin cambiar
+su proyección ni las fuentes de metadatos. La nueva medición aislada de
+10.000 fuentes aprobó todos los límites originales: primera llamada 1.851,4 ms,
+p95 283,8 ms y siguiente página p95 199,2 ms, un comando por consulta.
+Los planes se inspeccionaron después de las muestras. No se atribuye al tiempo
+de ExecuteReader una separación exacta entre compilación, espera y ejecución.
+
+La ampliación local aprobó trece casos funcionales de fechas, conceptos,
+concurrencia y paginación; el caso nativo de 10.000 recibos incumplió p95 de
+ausencia de job (1.178,4 ms). Se limitó el hint de ausencia a consultas que ya
+tienen claves candidatas, conservando el plan por conjunto sin filtro. La
+repetición combinada registró 806,0 ms frente a 800 en ese caso y 4.581,4 ms
+frente a 2.000 en el primer recibo por concepto, con p95 212,9 ms. Los planes
+físicos dirigidos sí quedaron acotados. Estos fallos se retienen: el ensayo
+aislado aprobado no certifica por sí solo el paquete ni autoriza desplegar;
+la validación completa del commit actualizado sigue pendiente, sin ampliar
+umbrales ni repetir efectos financieros.
 
 La clasificación de fuentes sin trabajo usa el vínculo nullable
 `AccountingSourceDocuments.AccountingPostingJobId` y su índice filtrado de

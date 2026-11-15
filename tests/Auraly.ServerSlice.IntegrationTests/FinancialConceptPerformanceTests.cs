@@ -78,13 +78,14 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
         foreach(var sample in cases)
         {
             var elapsed=new List<double>(20);
+            var firstSqlMilliseconds=0d;
             for(var i=0;i<20;i++)
             {
                 using var counter=new InventoryBalanceProcessingTests.CommandCounter(connection.Database,
                     beforeExecute: command => {
                         if(sample.Name=="receipts-first"&&i==0)
                             PortfolioPaymentHistoryPerformanceTests.CaptureReadCommand(command,documentCommand);
-                    });
+                    },afterExecute:(_,milliseconds)=>{if(i==0)firstSqlMilliseconds+=milliseconds;});
                 var timer=Stopwatch.StartNew();
                 if(sample.Documents)
                 {
@@ -113,7 +114,7 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
                 Assert.Equal(1,counter.Count);elapsed.Add(timer.Elapsed.TotalMilliseconds);
             }
             var p95=elapsed.Order().ElementAt(18);
-            output.WriteLine($"10001 concepts / 10000 sources, {sample.Name}: first {elapsed[0]:F1} ms, p95 {p95:F1} ms, 1 SQL/page.");
+            output.WriteLine($"10001 concepts / 10000 sources, {sample.Name}: first {elapsed[0]:F1} ms (execute-reader {firstSqlMilliseconds:F1} ms), p95 {p95:F1} ms, 1 SQL/page.");
             if(p95>800||elapsed[0]>2000)failures.Add($"{sample.Name}: first {elapsed[0]:F1} ms, p95 {p95:F1} ms exceeds 2000/800 ms.");
             if(p95>800)output.WriteLine("Samples: "+string.Join(", ",elapsed.Select(value=>value.ToString("F1"))));
         }
@@ -136,6 +137,15 @@ public sealed class FinancialConceptPerformanceTests(ServerSliceFixture fixture,
                 candidateCaptureFound=true;
                 Assert.InRange(operators[0].GetProperty("Rows").GetInt64(),0,1000);
             }
+            if(statement.Contains("INTO #DocumentKeys",StringComparison.Ordinal) ||
+                statement.StartsWith("INSERT #DocumentKeys",StringComparison.Ordinal))
+                foreach(var item in operators.Where(item=>item.GetProperty("StmtText").GetString() is {} text &&
+                    System.Text.RegularExpressions.Regex.IsMatch(text,
+                        @"OBJECT:\(\[[^\]]+\]\.\[dbo\]\.\[(AccountingPostingJobs|AccountingSourceDocuments)\]\.")))
+                {
+                    Assert.Contains("Seek",item.GetProperty("PhysicalOp").GetString());
+                    Assert.InRange(item.GetProperty("Rows").GetInt64(),0,1000);
+                }
             foreach(var item in operators.Where(item=>item.GetProperty("StmtText").GetString() is {} text
                 &&System.Text.RegularExpressions.Regex.IsMatch(text,
                     @"OBJECT:\(\[[^\]]+\]\.\[accounting\]\.\[SourceConceptIndex\]\.")))

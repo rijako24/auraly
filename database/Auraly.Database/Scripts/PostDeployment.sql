@@ -177,7 +177,7 @@ GO
 :r .\Migrations\BackfillEngineOwnedSourcesAndReportingJobs.sql
 :r .\Seeds\SeedAccountingDefaults.sql
 :r .\Migrations\20260928_CorrectDefaultPucMappings.sql
-:r .\Migrations\20261111_RetargetHistoricalInputVatMappings.sql
+:r .\Migrations\20261115_RetargetHistoricalPostingMappings.sql
 :r .\Seeds\SeedAuralyBillingAccounting.sql
 :r .\Seeds\SeedComplianceReportDefinitions.sql
 :r .\Seeds\SeedDispatchReasons.sql

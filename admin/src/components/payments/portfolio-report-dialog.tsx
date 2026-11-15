@@ -107,11 +107,11 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
       maximumAgeDays: criteria.maximumAgeDays === "" ? undefined : Number(criteria.maximumAgeDays),
       minimumDaysPastDue: criteria.minimumDaysPastDue === "" ? undefined : Number(criteria.minimumDaysPastDue),
       maximumDaysPastDue: criteria.maximumDaysPastDue === "" ? undefined : Number(criteria.maximumDaysPastDue),
-      outstandingOnly: criteria.outstandingOnly }
-      : { supplierId: initialPartyId, conceptId: initialConceptId }),
+      }
+      : { supplierId: criteria.partyId || undefined, conceptId: initialConceptId }),
     partySiteId: criteria.siteId || undefined, from: criteria.from || undefined, to: criteria.to || undefined,
     search: criteria.search || undefined, status: criteria.status || undefined,
-    overdueOnly: criteria.overdueOnly, sortBy,
+    overdueOnly: criteria.overdueOnly, outstandingOnly: criteria.outstandingOnly, sortBy,
     sortDirection: sortBy ? sortDirection : undefined };
   const report = useQuery<ReceivablesReportPage | PayablesReportPage>({
     queryKey: ["portfolio-report", direction, tenantId, businessId, filters, timeZone],
@@ -151,6 +151,24 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
     setSortBy(undefined);
     setSortDirection("asc");
   }
+  function reportShortcut(label: string, description: string, selection: {
+    mode: ReportMode; outstandingOnly?: boolean; includeApplications?: boolean; status?: "Paid";
+  }) {
+    const active = mode === selection.mode && criteria.outstandingOnly === !!selection.outstandingOnly &&
+      criteria.status === (selection.status ?? "") && !criteria.overdueOnly &&
+      (selection.mode === "summary" || includeApplications === !!selection.includeApplications);
+    return <Button type="button" aria-label={label} aria-pressed={active} variant={active ? "default" : "outline"}
+      className="h-auto min-h-20 flex-col items-start whitespace-normal px-3 py-3 text-left" onClick={() => {
+        const next = {...draft, outstandingOnly: !!selection.outstandingOnly, status: selection.status ?? "", overdueOnly: false};
+        if (!applyCriteria(next)) return;
+        setDraft(next); chooseMode(selection.mode);
+        setIncludeApplications(!!selection.includeApplications);
+        setFilterError(null); setPrintHtml(null); setPrintError(null);
+      }}>
+      <span className="font-semibold">{label}</span>
+      <span className={`mt-1 text-xs font-normal ${active ? "text-primary-foreground/80" : "text-muted-foreground"}`}>{description}</span>
+    </Button>;
+  }
   function sortButton(column: string, label: string) {
     return <button type="button" onClick={() => order(column)} className="inline-flex items-center gap-1 text-left font-semibold hover:text-teal-700">
       {label}{sortBy === column && (sortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}
@@ -187,7 +205,8 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
   }
 
   const filterSummary = [criteria.search && `Búsqueda: ${criteria.search}`,
-    criteria.partyId && (criteria.partyLabel || "Tercero seleccionado"), criteria.status && `Estado: ${criteria.status}`,
+    criteria.partyId && (criteria.partyLabel || "Tercero seleccionado"),
+    criteria.status && (criteria.status === "Paid" ? "Documentos saldados al corte" : `Estado: ${criteria.status}`),
     criteria.overdueOnly && "Solo vencidas", criteria.outstandingOnly && "Solo con saldo",
     criteria.from && `Registro desde ${criteria.from}`, criteria.to && `Registro hasta ${criteria.to}`,
     criteria.documentNumber && `Factura: ${criteria.documentNumber}`,
@@ -199,15 +218,19 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
     initialConceptId && (initialConceptLabel ?? "Concepto seleccionado")]
     .filter(Boolean).join(" · ") || "Todos los documentos";
 
-  function applyCriteria() {
-    if ((draft.issuedFrom && draft.issuedTo && draft.issuedFrom > draft.issuedTo) ||
-      (draft.from && draft.to && draft.from > draft.to) ||
-      [draft.from, draft.to, draft.issuedFrom, draft.issuedTo].some(value => value && value > cutoff) ||
-      (draft.minimumAgeDays !== "" && draft.maximumAgeDays !== "" && Number(draft.minimumAgeDays) > Number(draft.maximumAgeDays)) ||
-      (draft.minimumDaysPastDue !== "" && draft.maximumDaysPastDue !== "" && Number(draft.minimumDaysPastDue) > Number(draft.maximumDaysPastDue))) {
-      setFilterError("Revisa los rangos: desde no puede superar hasta ni la fecha de corte."); return;
+  function applyCriteria(next = draft) {
+    const ageValues=[next.minimumAgeDays,next.maximumAgeDays];
+    const dayValues=[...ageValues,next.minimumDaysPastDue,next.maximumDaysPastDue];
+    if (dayValues.some(value => value !== "" && !Number.isInteger(Number(value))) ||
+      ageValues.some(value => value !== "" && Number(value) < 0) ||
+      (next.issuedFrom && next.issuedTo && next.issuedFrom > next.issuedTo) ||
+      (next.from && next.to && next.from > next.to) ||
+      [next.from, next.to, next.issuedFrom, next.issuedTo].some(value => value && value > cutoff) ||
+      (next.minimumAgeDays !== "" && next.maximumAgeDays !== "" && Number(next.minimumAgeDays) > Number(next.maximumAgeDays)) ||
+      (next.minimumDaysPastDue !== "" && next.maximumDaysPastDue !== "" && Number(next.minimumDaysPastDue) > Number(next.maximumDaysPastDue))) {
+      setFilterError("Revisa los rangos: usa días enteros y edad no negativa; desde no puede superar hasta ni la fecha de corte."); return false;
     }
-    setCriteria(draft); setPage(1); setFilterError(null); setPrintHtml(null);
+    setCriteria(next); setPage(1); setFilterError(null); setPrintHtml(null); return true;
   }
 
   const grouped = groupPortfolioReportRows(mode === "detail" ? items : []);
@@ -223,13 +246,6 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
         <p className="break-words text-xs font-semibold leading-relaxed">{brandName}</p>
       </DialogHeader>
       <div className="flex flex-wrap items-center gap-3 border-b bg-muted/30 px-5 py-3">
-        <div className="inline-flex rounded-lg border bg-background p-1" role="group" aria-label="Tipo de informe">
-          <Button size="sm" variant={mode === "detail" ? "default" : "ghost"} onClick={() => chooseMode("detail")}>Detallado</Button>
-          <Button size="sm" variant={mode === "summary" ? "default" : "ghost"} onClick={() => chooseMode("summary")}>Consolidado</Button>
-        </div>
-        {mode === "detail" && <label className="flex items-center gap-2 text-sm"><Checkbox
-          checked={includeApplications} onCheckedChange={checked => { setIncludeApplications(checked === true); setPage(1); }} />
-          Mostrar detalle de {direction === "receivable" ? "abonos" : "pagos"}</label>}
         <label className="flex items-center gap-2 text-sm">Corte <span className="w-56"><DatePicker today={localToday} value={cutoff}
           onChange={value => { setCutoff(value); setPage(1); }} /></span></label>
         <span className="ml-auto text-sm text-muted-foreground">{mode === "detail" && report.data && "totalInvoiceCount" in report.data
@@ -237,15 +253,41 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
           : `${totalCount.toLocaleString("es-CO")} ${mode === "detail" ? "registros" : "grupos"}`}</span>
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-white p-5 text-slate-950">
-        {direction === "receivable" && <details className="rounded-xl border p-3">
-          <summary className="cursor-pointer text-sm font-semibold">Filtros del informe</summary>
+        <section className="space-y-3" aria-label="Reportes listos">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div><h3 className="font-semibold">Elige un reporte</h3><p className="text-xs text-muted-foreground">Para todos los {direction === "receivable" ? "clientes" : "proveedores"} o uno en particular. Se conservan el tercero, el corte y los rangos seleccionados.</p></div>
+            <div className="w-full space-y-1 text-xs sm:max-w-sm"><span>{direction === "receivable" ? "Cliente" : "Proveedor"} · todas sus sedes</span><PartyRoleSelect role={direction === "receivable" ? "Customer" : "Supplier"}
+              value={draft.partyId} selectedOption={draft.partyId && draft.partyLabel ? {value:draft.partyId,label:draft.partyLabel} : null}
+              sourceKey="portfolio" loadPage={(search,page,pageSize) => partiesApi.portfolioRoleOptions({role:direction === "receivable" ? "Customer" : "Supplier",search:search || undefined,page,pageSize})}
+              onChange={(partyId, party) => setDraft(value => ({...value,partyId,partyLabel:party?.displayName ?? "",siteId:""}))}
+              ariaLabel={direction === "receivable" ? "Cliente del informe" : "Proveedor del informe"}
+              placeholder={direction === "receivable" ? "Todos los clientes" : "Todos los proveedores"} />
+              {draft.partyId !== criteria.partyId && <p className="text-muted-foreground">Elige un reporte para aplicar el tercero seleccionado.</p>}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+            {reportShortcut("Consolidado general",`Resumen por ${direction === "receivable" ? "cliente" : "proveedor"}, con y sin saldo.`,{mode:"summary"})}
+            {reportShortcut("Consolidado con saldo","Resumen de obligaciones pendientes.",{mode:"summary",outstandingOnly:true})}
+            {reportShortcut("Detallado general",`Documentos y total ${direction === "receivable" ? "abonado" : "pagado"}.`,{mode:"detail"})}
+            {reportShortcut("Detallado con saldo","Documentos con saldo pendiente al corte.",{mode:"detail",outstandingOnly:true})}
+            {reportShortcut(direction === "receivable" ? "Detallado con abonos" : "Detallado con pagos",
+              `Cada documento y el detalle de sus ${direction === "receivable" ? "abonos" : "pagos"}.`,{mode:"detail",includeApplications:true})}
+            {reportShortcut("Detallado sin saldo","Documentos saldados al corte.",{mode:"detail",status:"Paid"})}
+          </div>
+        </section>
+        {filterError && <p role="alert" className="text-sm text-destructive">{filterError}</p>}
+        <details className="rounded-xl border p-3">
+          <summary className="cursor-pointer text-sm font-semibold">Más filtros</summary>
           <form className="mt-3 space-y-3" onSubmit={event => { event.preventDefault(); applyCriteria(); }}>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="space-y-1 text-xs"><span>Cliente · todas sus sedes</span><PartyRoleSelect role="Customer"
-                value={draft.partyId} selectedOption={draft.partyId && draft.partyLabel ? {value:draft.partyId,label:draft.partyLabel} : null}
-                sourceKey="portfolio" loadPage={(search,page,pageSize) => partiesApi.portfolioRoleOptions({role:"Customer",search:search || undefined,page,pageSize})}
-                onChange={(partyId, party) => setDraft(value => ({...value,partyId,partyLabel:party?.displayName ?? "",siteId:""}))}
-                ariaLabel="Cliente del informe" placeholder="Todos los clientes" /></div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex rounded-lg border bg-background p-1" role="group" aria-label="Tipo de informe">
+                <Button size="sm" type="button" variant={mode === "detail" ? "default" : "ghost"} onClick={() => chooseMode("detail")}>Detallado</Button>
+                <Button size="sm" type="button" variant={mode === "summary" ? "default" : "ghost"} onClick={() => chooseMode("summary")}>Consolidado</Button>
+              </div>
+              {mode === "detail" && <label className="flex items-center gap-2 text-sm"><Checkbox checked={includeApplications}
+                onCheckedChange={checked => { setIncludeApplications(checked === true); setPage(1); }} />
+                Mostrar detalle de {direction === "receivable" ? "abonos" : "pagos"}</label>}
+            </div>
+            {direction === "receivable" && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="space-y-1 text-xs">Factura exacta<Input aria-label="Factura exacta" maxLength={64} value={draft.documentNumber}
                 onChange={event => setDraft({...draft,documentNumber:event.target.value})} /></label>
               <label className="space-y-1 text-xs">Emisión desde<DatePicker today={localToday} value={draft.issuedFrom} max={cutoff}
@@ -256,20 +298,19 @@ export function PortfolioReportDialog({ direction, onClose, initialPartyId,
                 ['minimumDaysPastDue','Mora desde (días)',undefined],['maximumDaysPastDue','Mora hasta (días)',undefined]] as const).map(([key,label,min]) =>
                 <label key={key} className="space-y-1 text-xs">{label}<Input aria-label={label} type="number" step="1" min={min} value={draft[key]}
                   onChange={event => setDraft({...draft,[key]:event.target.value})} /></label>)}
-            </div>
+            </div>}
             <label className="block max-w-lg space-y-1 text-xs">Búsqueda general<Input aria-label="Búsqueda general del informe" maxLength={120}
               value={draft.search} onChange={event => setDraft({...draft,search:event.target.value})} placeholder="Documento, identificación o sede" /></label>
-            <p className="text-xs text-muted-foreground">Edad: días desde la emisión al corte. Mora: días desde el vencimiento al corte; un valor negativo indica días pendientes para vencer.</p>
+            {direction === "receivable" && <p className="text-xs text-muted-foreground">Edad: días desde la emisión al corte. Mora: días desde el vencimiento al corte; un valor negativo indica días pendientes para vencer.</p>}
             <div className="flex flex-wrap items-center gap-4 text-sm">
-              <label className="flex items-center gap-2"><Checkbox checked={draft.outstandingOnly} onCheckedChange={checked => setDraft({...draft,outstandingOnly:checked === true})} />Solo con saldo</label>
-              <label className="flex items-center gap-2"><Checkbox checked={draft.overdueOnly} onCheckedChange={checked => setDraft({...draft,overdueOnly:checked === true})} />Solo vencidas</label>
+              <label className="flex items-center gap-2"><Checkbox checked={draft.outstandingOnly} onCheckedChange={checked => setDraft({...draft,outstandingOnly:checked === true,status:checked === true && draft.status === "Paid" ? "" : draft.status})} />Solo con saldo</label>
+              <label className="flex items-center gap-2"><Checkbox checked={draft.overdueOnly} onCheckedChange={checked => setDraft({...draft,overdueOnly:checked === true,status:checked === true && draft.status === "Paid" ? "" : draft.status})} />Solo vencidas</label>
               <Button type="submit" size="sm">Aplicar filtros</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => { setDraft({...emptyCustomerCriteria}); setCriteria({...emptyCustomerCriteria}); setPage(1); setFilterError(null); setPrintHtml(null); }}>Ver todos los clientes</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => { setDraft({...emptyCustomerCriteria}); setCriteria({...emptyCustomerCriteria}); setPage(1); setFilterError(null); setPrintHtml(null); }}>Ver todos los {direction === "receivable" ? "clientes" : "proveedores"}</Button>
             </div>
-            {(draft.siteId || draft.search || draft.status || draft.from || draft.to) && <p className="text-xs text-muted-foreground">Se conservan los filtros de la cartera al abrir el informe. «Ver todos los clientes» limpia también búsqueda, sede, registro y estado heredados.</p>}
-            {filterError && <p role="alert" className="text-sm text-destructive">{filterError}</p>}
+            {(draft.siteId || draft.search || draft.status || draft.from || draft.to) && <p className="text-xs text-muted-foreground">Se conservan los filtros de la cartera al abrir el informe. «Ver todos los {direction === "receivable" ? "clientes" : "proveedores"}» limpia también búsqueda, sede, registro y estado heredados.</p>}
           </form>
-        </details>}
+        </details>
         {invalidDates && <p role="alert" className="text-sm text-destructive">{!cutoff ? "Selecciona la fecha de corte del informe." : "Revisa las fechas: emisión y registro deben quedar dentro del corte."}</p>}
         {branding.isError && <p role="alert" className="text-sm text-destructive">No se pudo preparar la marca para imprimir o exportar. <Button variant="link" onClick={() => void branding.refetch()}>Reintentar marca</Button></p>}
         {report.isLoading && !invalidDates && <p className="flex items-center gap-2 py-8 text-sm"><Loader2 className="h-4 w-4 animate-spin" />Cargando informe…</p>}
