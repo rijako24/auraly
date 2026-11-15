@@ -64,10 +64,10 @@ GO
 
 -- Party-filtered traceability joins manual sources by immutable identity. A
 -- narrow covering projection avoids fetching the wide JSON source for every
--- candidate of a frequently used third party.
+-- candidate of a frequently used third party or voucher-type filter.
 CREATE INDEX [IX_AccountingSourceDocuments_Manual_PartyProjection]
     ON [dbo].[AccountingSourceDocuments]([SourceDocumentId],[SourceDocumentType])
-    INCLUDE([TenantId],[BusinessId],[OccurredAt],[AccountingPostingJobId])
+    INCLUDE([TenantId],[BusinessId],[OccurredAt],[AccountingPostingJobId],[VoucherTypeCode])
     WHERE [SourceDocumentType]=N'ManualAccountingVoucher';
 GO
 

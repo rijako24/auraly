@@ -4233,6 +4233,33 @@ La validación debe incluir negativos de permisos, tenant, uso, cuenta y natural
 rechazo sin fuente/índice/efectos, repetición y cambio posterior de catálogo,
 hash legado y regresiones de los flujos que comparten la captura.
 
+El cierre del 14-11 detectó una primera página de recibos de 2.899,5 ms y p95
+de 1.354,2 ms en CI, aunque otras ejecuciones del mismo árbol aprobaron. El plan
+leyó las 10.000 fuentes completas para clasificar el comprobante antes de
+reducirlas por concepto. La regresión física reprodujo ese scan en local,
+independientemente del tiempo observado. El mismo filtro compartido ahora
+reduce primero por `SourceConceptIndex` y clasifica únicamente los candidatos.
+La proyección manual existente incluye `VoucherTypeCode` y se busca por la
+identidad inmutable, sin leer los payloads completos ni crear otro índice de
+conceptos, writer o fuente de saldo. El predicado manual explicita el alcance
+que ya define la columna calculada; nativos y borradores conservan sus rutas.
+
+La comprobación del plan se ejecuta después de todas las muestras, reutiliza
+el capturador SQL existente y exige seeks de hasta los 1.000 candidatos del
+concepto seleccionado. Listado y detalle de partidas comparten este filtro;
+siguen aplicándolo antes del conteo y de la página. Se mantienen un viaje,
+primera lectura menor de 2 s y p95 menor de 800 ms. El corte es una ampliación
+aditiva del índice desplegado por DACPAC; no reescribe documentos ni importes.
+Su rollback retira esa cobertura y la optimización de lectura, sin migración
+de saldos. Las dos regresiones nuevas fallaron antes de la corrección. Después
+aprobaron siete casos SQL, incluidos los cuatro de migración de centros y
+ambas direcciones de redondeo de devoluciones. Recibos: primera lectura
+860,6/158,2 ms y p95 171,7/177,8 ms en páginas 1/2, siempre un SQL; el plan
+confirmó los seeks acotados. El contador de historial usa la traza de la
+operación y una consulta independiente reproduce la interferencia previa:
+conserva un comando para listado y dos para detalle, sin cambiar el runtime.
+La regresión transversal y el gate completo de despliegue siguen requeridos.
+
 Despliegue aditivo: esquema primero y API/cliente compatibles antes de habilitar
 la selección. La columna de borrador es nullable y los campos opcionales no se
 serializan cuando faltan; las fuentes y huellas anteriores se conservan. No

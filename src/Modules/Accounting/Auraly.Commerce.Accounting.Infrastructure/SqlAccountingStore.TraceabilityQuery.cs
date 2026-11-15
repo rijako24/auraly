@@ -15,11 +15,24 @@ public sealed partial class SqlAccountingStore
         """;
 
     private const string TraceabilityVoucherFilterSql="""
+        -- The persisted concept index narrows the keys before classifying the
+        -- remaining vouchers. Both filters retain the same count/page scope.
+        IF @FinancialConceptId IS NOT NULL
+          DELETE selected FROM #DocumentKeys selected
+          WHERE NOT EXISTS(SELECT 1 FROM accounting.SourceConceptIndex reference
+            WHERE reference.FinancialConceptId=@FinancialConceptId AND reference.SourceDocumentId=selected.SourceDocumentId
+              AND reference.SourceDocumentType=selected.SourceDocumentType)
+            AND NOT EXISTS(SELECT 1 FROM accounting.VoucherDraftLines line JOIN accounting.VoucherDrafts draft
+              ON draft.DocumentId=line.DocumentId AND draft.DocumentType=selected.SourceDocumentType
+              AND draft.DocumentId=selected.SourceDocumentId AND draft.TenantId=@TenantId AND draft.BusinessId=@BusinessId
+              AND draft.SentAt IS NULL WHERE line.FinancialConceptId=@FinancialConceptId);
         IF @VoucherTypeCode IS NOT NULL
         BEGIN
           DELETE selected FROM #DocumentKeys selected
           WHERE NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments source
-            WHERE source.SourceDocumentId=selected.SourceDocumentId AND source.SourceDocumentType=selected.SourceDocumentType
+            WITH(INDEX(IX_AccountingSourceDocuments_Manual_PartyProjection),FORCESEEK)
+            WHERE source.SourceDocumentType=N'ManualAccountingVoucher'
+              AND source.SourceDocumentId=selected.SourceDocumentId AND source.SourceDocumentType=selected.SourceDocumentType
               AND source.TenantId=@TenantId AND source.BusinessId=@BusinessId AND source.VoucherTypeCode=@VoucherTypeCode)
             AND NOT EXISTS(SELECT 1 FROM accounting.VoucherDrafts draft
             WHERE draft.DocumentId=selected.SourceDocumentId AND draft.DocumentType=selected.SourceDocumentType
@@ -30,15 +43,6 @@ public sealed partial class SqlAccountingStore
               ) native WHERE native.SourceDocumentId=selected.SourceDocumentId
                 AND native.SourceDocumentType=selected.SourceDocumentType AND native.VoucherTypeCode=@VoucherTypeCode);
         END;
-        IF @FinancialConceptId IS NOT NULL
-          DELETE selected FROM #DocumentKeys selected
-          WHERE NOT EXISTS(SELECT 1 FROM accounting.SourceConceptIndex reference
-            WHERE reference.FinancialConceptId=@FinancialConceptId AND reference.SourceDocumentId=selected.SourceDocumentId
-              AND reference.SourceDocumentType=selected.SourceDocumentType)
-            AND NOT EXISTS(SELECT 1 FROM accounting.VoucherDraftLines line JOIN accounting.VoucherDrafts draft
-              ON draft.DocumentId=line.DocumentId AND draft.DocumentType=selected.SourceDocumentType
-              AND draft.DocumentId=selected.SourceDocumentId AND draft.TenantId=@TenantId AND draft.BusinessId=@BusinessId
-              AND draft.SentAt IS NULL WHERE line.FinancialConceptId=@FinancialConceptId);
         """;
 
     private static async Task<Microsoft.Data.SqlClient.SqlDataReader> ExecuteTraceabilityReaderAsync(

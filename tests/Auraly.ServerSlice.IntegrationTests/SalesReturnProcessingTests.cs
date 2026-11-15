@@ -359,8 +359,16 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             var query = new SalesReturnQuery(1,25,originalNumber,null,null,null);
             await service.ListReturnsAsync(actor,query); // Warm up JIT and the query plan outside the measurement.
             var database = new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog;
-            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            using var historyActivity = new Activity("sales-return-history").SetIdFormat(ActivityIdFormat.W3C)
+                .SetParentId(ActivityTraceId.CreateRandom(),ActivitySpanId.CreateRandom(),ActivityTraceFlags.Recorded).Start();
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database,historyActivity.TraceId))
             {
+                // Reproduce an unrelated request to the same database. The
+                // query budget belongs to this operation, not that request.
+                using(var unrelated = new Activity("unrelated-database-request").SetIdFormat(ActivityIdFormat.W3C)
+                    .SetParentId(ActivityTraceId.CreateRandom(),ActivitySpanId.CreateRandom(),ActivityTraceFlags.Recorded).Start())
+                await using(var noise = new SqlCommand("SELECT 1",connection))
+                    await noise.ExecuteScalarAsync();
                 var started = Stopwatch.GetTimestamp();
                 var page = await service.ListReturnsAsync(actor,query);
                 var elapsed = Stopwatch.GetElapsedTime(started);
@@ -370,7 +378,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
                 Console.WriteLine($"Historial 1000 devoluciones / página 25: {elapsed.TotalMilliseconds:F1} ms, {counter.Count} comando SQL.");
                 Assert.True(elapsed < TimeSpan.FromSeconds(2), $"Historial: {elapsed.TotalMilliseconds:F1} ms");
             }
-            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database))
+            using (var counter = new InventoryBalanceProcessingTests.CommandCounter(database,historyActivity.TraceId))
             {
                 Assert.NotNull((await service.GetReturnAsync(actor,seedReturnId))?.Receipt);
                 Assert.Equal(2,counter.Count);
