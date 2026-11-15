@@ -42,6 +42,13 @@ el informe sólo consulta sus fuentes y aplicaciones canónicas.
 - Fecha efectiva editable del recibo no sustituye su fecha de registro en el
   corte histórico. Las aplicaciones/anticipos del corte cumplen ambas fechas.
   Se conservan orden, filtros de la grilla y totales de todo el conjunto.
+- El corte incluye el día local completo también al imprimir o exportar. La
+  hora de descarga no sustituye ese límite: un pago registrado esta mañana
+  con fecha efectiva de hoy a mediodía pertenece al mismo corte del visor.
+  Los hechos efectivos o registrados al día siguiente quedan fuera. La
+  transacción Snapshot de CxC asegura coherencia entre agregados; no
+  redefine el período solicitado. CxC y CxP conservan sus dos comandos SQL
+  (zona y consulta por conjunto), sin cambios de movimientos ni saldos.
 - Template nueva versionada para esta salida; reimpresión de documentos
   históricos conserva su versión. Logo pertenece sólo a representación.
 - Aceptación adicional: 5M deuda/10M anticipo muestra -5M neto y edades 5M;

@@ -4305,6 +4305,15 @@ los intentos fallidos en la evidencia de pruebas. La publicación exige aprobar
 la tanda dirigida y la compuerta completa sin exclusiones ni umbrales nuevos;
 los resultados de cada revisión se conservan en el PR del cambio.
 
+La compuerta completa de `aae94d99` aprobó el 15-11-2026 en la ejecución
+43688312163: 1.249 Foundation, 221 Edge, 20 Desktop y 1.023 integraciones,
+más el escenario de latencia de recibos en proceso nuevo; ninguno omitido.
+Admin y los nueve casos PDF en Linux también aprobaron. Esto comprueba los
+presupuestos y perfiles de esa revisión en CI; no convierte en aprobada la
+última medición local de búsqueda nativa ni sustituye el despliegue o su
+validación posterior en DEV. Una corrección posterior de corte de exportación
+de cartera requiere sus propias regresiones y otra compuerta completa.
+
 Despliegue aditivo: esquema primero y API/cliente compatibles antes de habilitar
 la selección. La columna de borrador es nullable y los campos opcionales no se
 serializan cuando faltan; las fuentes y huellas anteriores se conservan. No
