@@ -1050,6 +1050,55 @@ public sealed partial class AccountingVerticalSliceTests(ServerSliceFixture fixt
     }
 
     [Fact]
+    public async Task Prepared_sale_combines_a_configured_money_form_with_automatic_receivable_and_replays_once()
+    {
+        using var client = fixture.CreateAdminClient(AccountingPermissionCodes.Read,
+            AccountingPermissionCodes.Configure, AccountingPermissionCodes.Activate,
+            CatalogPermissionCodes.Read, CatalogPermissionCodes.Update);
+        using (var defaults = await client.PutAsync("/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await client.PostAsJsonAsync("/api/commerce/v1/accounting/activate",
+            new ActivateAccountingRequest(new(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+        var cash = await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture, client);
+        var type = (await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!
+            .Single(option => option.Code == "Cash");
+        var configuration = new SavePaymentMethodRequest(Guid.NewGuid(), $"PREP-{Guid.NewGuid():N}",
+            "Caja de venta preparada", type.Id, cash.AccountId, true, false, false, false, true, 10);
+        using var saved = await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{configuration.PaymentMethodId}", configuration);
+        Assert.True(saved.IsSuccessStatusCode, await saved.Content.ReadAsStringAsync());
+        var form = (await saved.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
+        var (customerId, siteId) = await CreateCustomerAsync();
+        var sale = WithUblSnapshot(fixture.CreateValidRequest(9_977));
+        sale = sale with {
+            CustomerId = customerId, CustomerPartySiteId = siteId,
+            Payments = [new(1, "Cash", 7_900m, null, PaymentMethodId: form.PaymentMethodId,
+                PaymentMethodVersion: form.Version, PaymentMethodCode: form.Code,
+                PaymentMethodName: form.Name, AccountId: form.AccountId)],
+            Credit = new(customerId, 4_000m, sale.FiscalSnapshot!.IssuedAt.AddDays(30), PartySiteId: siteId),
+            UblSnapshot = sale.UblSnapshot! with { PaymentFormCode = "2",
+                DueDate = DateOnly.FromDateTime(sale.FiscalSnapshot.IssuedAt.AddDays(30).Date) }
+        };
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var upload = fixture.CreateUploadMessage(sale);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        }
+        await AssertBalancedAsync(sale.DocumentId);
+        Assert.Equal(7_900m, await AccountAmountAsync(sale.DocumentId, cash.Code, true));
+        Assert.Equal(4_000m, await AccountAmountAsync(sale.DocumentId, "130505", true));
+        Assert.Equal(4_000m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE SourceDocumentId=@Id", sale.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Receivables WHERE SourceDocumentId=@Id", sale.DocumentId));
+        Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", sale.DocumentId));
+        Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", sale.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@Id", sale.DocumentId));
+    }
+
+    [Fact]
     public async Task Pos_mixed_payment_methods_are_all_posted_to_their_configured_accounts()
     {
         using var accounting = fixture.CreateAdminClient(

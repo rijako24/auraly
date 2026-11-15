@@ -1,11 +1,13 @@
 using System.Data;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Application.Catalog;
 using Auraly.Contracts.Catalog;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections) : IPaymentMethodStore
+public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections,
+    IPosSynchronizationOutboxDispatcher synchronization) : IPaymentMethodStore
 {
     private const string Columns = "PaymentMethodId,Code,Name,PaymentTypeId,MethodCode,TypeLabel,AccountId,AccountCode,AccountName,BankAccountId,UseForSales,UseForReceipts,UseForSupplierPayments,UseForPayroll,IsActive,SortOrder,Version,RowVersion,UseForVouchers";
 
@@ -123,7 +125,16 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
               WHERE TenantId=@Tenant AND PaymentMethodId=@Id AND Code=@Code AND RowVersion=@RowVersion;
               IF @@ROWCOUNT<>1 THROW 51221,N'La forma cambió o su código no coincide. Recarga antes de guardar.',1;
             END;
+            DECLARE @Businesses TABLE(BusinessId uniqueidentifier PRIMARY KEY);
+            INSERT @Businesses SELECT BusinessId FROM dbo.Businesses WHERE TenantId=@Tenant;
+            INSERT dbo.PosSynchronizationOutboxMessages(NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+            SELECT NEWID(),business.BusinessId,N'Configuration',COALESCE(latest.CursorValue,0)+1,SYSUTCDATETIME()
+            FROM @Businesses business OUTER APPLY(
+              SELECT MAX(AvailableThroughCursor) CursorValue
+              FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=business.BusinessId AND Stream=N'Configuration') latest;
             SELECT {Columns} FROM reference.PaymentMethodDetails WHERE TenantId=@Tenant AND PaymentMethodId=@Id;
+            SELECT BusinessId FROM @Businesses ORDER BY BusinessId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@Tenant", user.TenantId);
         command.Parameters.AddWithValue("@Id", request.PaymentMethodId);
@@ -142,12 +153,19 @@ public sealed class SqlPaymentMethodStore(SqlServerConnectionFactory connections
         try
         {
             PaymentMethodView result;
+            var businesses = new List<Guid>();
             await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
             {
                 await reader.ReadAsync(cancellationToken);
                 result = Read(reader);
+                await reader.NextResultAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken)) businesses.Add(reader.GetGuid(0));
             }
             await transaction.CommitAsync(cancellationToken);
+            // The same committed batch returns its affected scopes. Signalling
+            // the existing dispatcher performs no read to rediscover them.
+            foreach (var business in businesses)
+                await synchronization.DispatchPendingAsync(user.TenantId, business, CancellationToken.None);
             return result;
         }
         catch (SqlException error) when (error.Number == 51220)

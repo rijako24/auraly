@@ -13,6 +13,79 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed partial class OnlineSalesCheckoutTests
 {
     [Theory]
+    [InlineData(PosSaleDocumentTypes.Invoice)]
+    [InlineData(PosSaleDocumentTypes.Receipt)]
+    public async Task Configured_money_and_automatic_financing_create_one_receivable_without_an_extra_credit_form(string documentType)
+    {
+        var userId=await CreateUserAsync("automatic-financing");
+        var (customer,site)=await CreateCustomerAsync(userId,false,"Cliente de financiación automática");
+        using var client=fixture.CreateUserClient(userId,CommercePermissionCodes.SalesCreate,
+            ReceivablesPermissionCodes.ManageCredit,CatalogPermissionCodes.Read,CatalogPermissionCodes.Update,
+            AccountingPermissionCodes.Read,AccountingPermissionCodes.Configure);
+        using(var profile=await client.PutAsJsonAsync($"/api/commerce/v1/customers/{customer}/credit",
+            new UpdateCustomerCreditProfileRequest(fixture.BusinessId,1_000_000m,30,true)))
+            Assert.True(profile.IsSuccessStatusCode,await profile.Content.ReadAsStringAsync());
+        var cash=await PortfolioOriginalAccountScenario.CreateCashAuxiliaryAsync(fixture,client);
+        var type=(await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!
+            .Single(value=>value.Code=="Cash");
+        var configured=new SavePaymentMethodRequest(Guid.NewGuid(),$"AUTO-{Guid.NewGuid():N}","Caja de financiación automática",
+            type.Id,cash.AccountId,true,false,false,false,true,10);
+        using var saved=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{configured.PaymentMethodId}",configured);
+        Assert.True(saved.IsSuccessStatusCode,await saved.Content.ReadAsStringAsync());
+        var form=(await saved.Content.ReadFromJsonAsync<PaymentMethodSaveResult>())!.Method;
+        var draft=await OpenAsync(client);
+        using(var select=new HttpRequestMessage(HttpMethod.Put,$"/api/commerce/v1/pos/drafts/{draft.DraftId}/customer")
+            {Content=JsonContent.Create(new SelectOnlineSalesDraftCustomerRequest(customer,draft.Version,site))})
+        {
+            select.Headers.Add("Idempotency-Key",Guid.NewGuid().ToString("N"));
+            using var response=await client.SendAsync(select);
+            Assert.True(response.IsSuccessStatusCode,await response.Content.ReadAsStringAsync());
+            draft=(await response.Content.ReadFromJsonAsync<OnlineSalesCustomerSelection>())!.Draft;
+        }
+        var captured=await CaptureAsync(client,draft);
+        var total=PosPaymentRoundingPolicy.RoundedTotal(captured.PayableAmount);
+        var financed=total/2;
+        var adjustment=PosPaymentRoundingPolicy.Adjustment(captured.PayableAmount);
+        var request=new CompleteOnlineSalesDraftRequest(captured.Version,
+            [new("Cash",total-financed-adjustment,null,RoundingAdjustment:adjustment,
+                PaymentMethodId:form.PaymentMethodId,PaymentMethodVersion:form.Version,
+                PaymentMethodCode:form.Code,PaymentMethodName:form.Name,AccountId:form.AccountId)],
+            new(financed),documentType);
+        var key=$"automatic-financing-{Guid.NewGuid():N}";
+        using var validationReads = new InventoryBalanceProcessingTests.CommandCounter(
+            new SqlConnectionStringBuilder(fixture.ConnectionString).InitialCatalog,
+            commandFilter: command => command.CommandText.Contains(
+                "La forma de pago de la venta no coincide", StringComparison.Ordinal));
+        var completed=await CompleteAsync(client,captured.DraftId,request,key);
+        var replay=await CompleteAsync(client,captured.DraftId,request,key);
+        Assert.Equal(1, validationReads.Count);
+        Assert.Equal(completed.Receipt.DocumentId,replay.Receipt.DocumentId);
+        var credit=Assert.Single(completed.Receipt.Payments.Where(payment=>payment.MethodCode=="Credit"));
+        Assert.Equal(financed,credit.Amount); Assert.Null(credit.PaymentMethodId);
+        await using var connection=new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var verify=new SqlCommand("""
+            SELECT receivable.OutstandingAmount,opening.AccountId,configured.AccountId,
+              (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId=@Id),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Id),
+              (SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@Id),
+              (SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@Id AND PaymentMethodId=@Form)
+            FROM dbo.Receivables receivable
+            JOIN dbo.AccountingEntryLines opening ON opening.EntryId=receivable.OpeningEntryId
+              AND opening.LineNumber=receivable.OpeningEntryLineNumber
+            JOIN dbo.AccountingEntries entry ON entry.EntryId=opening.EntryId
+            CROSS APPLY accounting.ConfiguredPostingAccountIdentity(@Tenant,@Business,N'AccountsReceivable',CAST(entry.OccurredAt AS date)) configured
+            WHERE receivable.BusinessId=@Business AND receivable.SourceDocumentId=@Id;
+            """,connection);
+        verify.Parameters.AddWithValue("@Id",completed.Receipt.DocumentId); verify.Parameters.AddWithValue("@Form",form.PaymentMethodId);
+        verify.Parameters.AddWithValue("@Tenant",fixture.TenantId); verify.Parameters.AddWithValue("@Business",fixture.BusinessId);
+        await using var result=await verify.ExecuteReaderAsync(); Assert.True(await result.ReadAsync());
+        Assert.Equal(financed,result.GetDecimal(0)); Assert.Equal(result.GetGuid(2),result.GetGuid(1));
+        for(var index=3;index<7;index++) Assert.Equal(1,result.GetInt32(index));
+        Assert.False(await result.ReadAsync());
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Incomplete_financing_form_is_rejected_before_numbering(bool accountOnly)

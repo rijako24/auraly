@@ -225,12 +225,15 @@ public sealed class PosCatalogSynchronizer(
             }
 
             var previousTiers = previousPricing.PriceChannelTiers.ToDictionary(TierKey);
-            foreach (var tier in pricing.PriceChannelTiers)
+            var changedTiers = pricing.PriceChannelTiers
+                .Select(tier => (Current: tier, Previous: previousTiers.GetValueOrDefault(TierKey(tier))))
+                .Where(change => change.Previous != change.Current).ToArray();
+            var products = await store.GetByProductIdsAsync(
+                changedTiers.Select(change => change.Current.ProductId).ToArray(), cancellationToken);
+            foreach (var change in changedTiers)
             {
-                previousTiers.TryGetValue(TierKey(tier), out var previous);
-                if (previous == tier) continue;
-                var product = await store.GetByProductIdAsync(tier.ProductId, cancellationToken);
-                events!.ChannelTierReceived(tier, previous, product?.Name);
+                events!.ChannelTierReceived(change.Current, change.Previous,
+                    products.GetValueOrDefault(change.Current.ProductId)?.Name);
             }
         }
         // A failed later download must not acknowledge the configuration cursor.

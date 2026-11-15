@@ -5,6 +5,18 @@ namespace Auraly.Foundation.Tests;
 public sealed class PaymentMethodEvidenceTests
 {
     [Fact]
+    public void Financing_can_use_the_automatic_receivable_account_with_configured_money_forms()
+    {
+        var money = new PaymentMethodEvidence(Guid.NewGuid(),1,"CASH","Caja",Guid.NewGuid());
+        Assert.True(PaymentMethodEvidence.IsValidSale([money],new(null,null,null,null,null)));
+        Assert.True(PaymentMethodEvidence.IsValidSale([],new(null,null,null,null,null)));
+        Assert.True(PaymentMethodEvidence.IsValidSale([money],null));
+        Assert.False(PaymentMethodEvidence.IsValidSale([money],new(null,null,null,null,Guid.NewGuid())));
+        Assert.False(PaymentMethodEvidence.IsValidSale([money],money));
+        Assert.False(PaymentMethodEvidence.IsValidSale([money,new(null,null,null,null,null)],null));
+    }
+
+    [Fact]
     public void Legacy_payments_do_not_require_catalog_metadata()
         => Assert.True(PaymentMethodEvidence.IsValidSet([new(null, null, null, null, null)]));
 

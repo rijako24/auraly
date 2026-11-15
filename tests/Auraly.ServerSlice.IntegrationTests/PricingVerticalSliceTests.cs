@@ -588,10 +588,11 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         try
         {
             var local = new PosCatalogStore($"Data Source={sqlitePath}");
+            var events = new Auraly.Pos.Edge.Host.PosSynchronizationEventLog(TimeProvider.System);
             using var server = fixture.CreateClient();
             var sync = new PosCatalogSynchronizer(server, local,
                 new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret),
-                new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId));
+                new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId), events);
             await sync.SynchronizeAsync();
             Assert.Equal(10_000m, (await local.CaptureAsync(barcode))!.Product.UnitPrice);
             Assert.Equal(16_000m, (await local.ResolvePriceAsync(productId, customerId, 1m)).Amount);
@@ -640,6 +641,13 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(10_625m, (await local.CaptureAsync(barcode))!.Product.UnitPrice);
             Assert.Equal(17_000m, (await local.ResolvePriceAsync(productId, customerId, 1m)).Amount);
             Assert.Equal(12_000m, (await local.ResolvePriceAsync(productId, customerId, 3m)).Amount);
+            var tierEvent = Assert.Single(events.Read(250).Where(value =>
+                value.ProductId == productId && value.NewPrice == 17_000m));
+            Assert.Equal(16_000m, tierEvent.PreviousPrice);
+            Assert.DoesNotContain(productId.ToString("D"), tierEvent.Title, StringComparison.Ordinal);
+            Assert.DoesNotContain(events.Read(250), value => value.ProductId == productId && value.NewPrice == 12_000m);
+            await sync.SynchronizeConfigurationAsync();
+            Assert.Single(events.Read(250).Where(value => value.ProductId == productId && value.NewPrice == 17_000m));
         }
         finally
         {

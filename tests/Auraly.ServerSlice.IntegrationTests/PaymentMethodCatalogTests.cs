@@ -1,13 +1,93 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Catalog;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
-public sealed class PaymentMethodCatalogTests(ServerSliceFixture fixture)
+public sealed class PaymentMethodCatalogTests(ServerSliceFixture fixture, Xunit.Abstractions.ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData(2)]
+    [InlineData(50)]
+    public async Task Saving_a_shared_form_atomically_notifies_its_sites_without_extra_reads(int siteCount)
+    {
+        var tenant = Guid.NewGuid(); var foreign = Guid.NewGuid(); var account = Guid.NewGuid();
+        var sites = Enumerable.Range(0, siteCount).Select(_ => Guid.NewGuid()).ToArray();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var setup = new SqlCommand("""
+            INSERT dbo.Tenants(TenantId,Name,Email) VALUES(@Tenant,N'Catálogo compartido',CONCAT(@Tenant,N'@example.test')),
+              (@Foreign,N'Otro tenant',CONCAT(@Foreign,N'@example.test'));
+            INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website)
+              SELECT Id,@Tenant,N'Sede de prueba',N'',N'',N'',N'',N'' FROM OPENJSON(@Sites) WITH(Id uniqueidentifier '$');
+            INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website)
+              VALUES(NEWID(),@Foreign,N'Sede ajena',N'',N'',N'',N'',N'');
+            INSERT dbo.AccountingAccounts(AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,
+              IsActive,CreatedAt,FinancialFunction,BalanceSide)
+              VALUES(@Account,@Tenant,N'110501',N'Caja de prueba',N'Asset',1,0,1,SYSUTCDATETIME(),N'Cash',N'Debit');
+            SELECT OptionId FROM reference.Options WHERE CatalogCode=N'payment-method' AND Code=N'Cash';
+            """, connection);
+        setup.Parameters.AddWithValue("@Tenant", tenant); setup.Parameters.AddWithValue("@Foreign", foreign);
+        setup.Parameters.AddWithValue("@Sites", JsonSerializer.Serialize(sites)); setup.Parameters.AddWithValue("@Account", account);
+        var type = (Guid)(await setup.ExecuteScalarAsync())!;
+        using var scope = fixture.CreateScope();
+        var signals = new CatalogDispatchRecorder();
+        var store = new SqlPaymentMethodStore(scope.ServiceProvider.GetRequiredService<SqlServerConnectionFactory>(), signals);
+        var user = new CatalogUserIdentity(fixture.UserId, tenant, sites[0], new HashSet<string> { CatalogPermissionCodes.Update });
+        var request = new SavePaymentMethodRequest(Guid.NewGuid(), "CASH", "Caja compartida", type, account,
+            true, true, true, true, true, 10);
+        PaymentMethodView saved;
+        using (var commands = new InventoryBalanceProcessingTests.CommandCounter(connection.Database))
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            saved = await store.SaveAsync(user, request, CancellationToken.None);
+            watch.Stop();
+            output.WriteLine("Save tenant form for {0} sites: {1} SQL commands, {2:F1} ms",
+                siteCount, commands.Count, watch.Elapsed.TotalMilliseconds);
+            Assert.Equal(1, commands.Count);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), watch.Elapsed.ToString());
+        }
+        Assert.Equal(sites.Order(), signals.Scopes.Select(value => value.Business).Order());
+        Assert.All(signals.Scopes, value => Assert.Equal(tenant, value.Tenant));
+        await store.SaveAsync(user, request with { IsActive = false, RowVersion = saved.RowVersion }, CancellationToken.None);
+        await Assert.ThrowsAsync<Auraly.Application.Catalog.CatalogConflictException>(() =>
+            store.SaveAsync(user, request with { RowVersion = saved.RowVersion }, CancellationToken.None));
+        Assert.Equal(siteCount * 2, signals.Scopes.Count);
+        await using var verify = new SqlCommand("""
+            SELECT notice.BusinessId,COUNT(*),MIN(notice.AvailableThroughCursor),MAX(notice.AvailableThroughCursor)
+            FROM dbo.PosSynchronizationOutboxMessages notice JOIN dbo.Businesses business ON business.BusinessId=notice.BusinessId
+            WHERE business.TenantId IN(@Tenant,@Foreign) AND notice.Stream=N'Configuration'
+            GROUP BY notice.BusinessId ORDER BY notice.BusinessId;
+            """, connection);
+        verify.Parameters.AddWithValue("@Tenant", tenant); verify.Parameters.AddWithValue("@Foreign", foreign);
+        await using var reader = await verify.ExecuteReaderAsync();
+        var notified = new List<Guid>();
+        while (await reader.ReadAsync())
+        {
+            notified.Add(reader.GetGuid(0)); Assert.Equal(2, reader.GetInt32(1));
+            Assert.Equal(1L, reader.GetInt64(2)); Assert.Equal(2L, reader.GetInt64(3));
+        }
+        Assert.Equal(sites.Order(), notified.Order());
+    }
+
+    private sealed class CatalogDispatchRecorder : IPosSynchronizationOutboxDispatcher
+    {
+        public List<(Guid Tenant, Guid Business)> Scopes { get; } = [];
+        public Task DispatchPendingAsync(Guid tenantId, Guid businessId, CancellationToken cancellationToken = default)
+        {
+            Scopes.Add((tenantId, businessId));
+            return Task.CompletedTask;
+        }
+        public Task DispatchTenantPendingAsync(Guid tenantId, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("The committed mutation already returned its affected sites.");
+    }
+
     [Fact]
     public async Task An_unused_form_type_can_be_corrected_before_a_cached_sale_is_accepted()
     {

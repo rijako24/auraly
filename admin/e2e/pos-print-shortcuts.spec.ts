@@ -2,7 +2,8 @@ import { expect, test, type Route } from "@playwright/test";
 import { login } from "./support/auth";
 
 for (const mode of ["browser", "installed-online", "prepared"] as const) {
-  test(`printing letters preserve amounts and a failed logo never blocks sales (${mode})`, async ({ page, baseURL }) => {
+  for (const automaticCredit of [false, true]) {
+  test(`${automaticCredit ? "configured money and automatic credit keep the existing checkout" : "printing letters preserve amounts and a failed logo never blocks sales"} (${mode})`, async ({ page, baseURL }) => {
     test.setTimeout(150_000);
     if (process.env.AURALY_E2E_TENANT_KEY) await login(page, undefined, 90_000);
     else await page.context().addCookies([{ name: "auth_token", value: "printing-test", url: baseURL!, httpOnly: true }]);
@@ -19,7 +20,7 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       currencyCode: "COP", priceSource: "Public", discount: 0, documentUnitCost: 500,
       net: 1000, tax: 0, total: 1000 };
     const draft = { draftId: "draft", ...workspace, userId: user.userId, status: "Active", version: 1,
-      customerId: null, lines: [line], untaxedAmount: 1000, taxAmount: 0, payableAmount: 1000 };
+      customerId: automaticCredit ? "customer" : null, lines: [line], untaxedAmount: 1000, taxAmount: 0, payableAmount: 1000 };
     const nextDraft = { ...draft, draftId: "next", lines: [], untaxedAmount: 0, payableAmount: 0 };
     const toEdge = (value: typeof draft | typeof nextDraft) => ({ ...value, draftId: { value: value.draftId },
       lines: value.lines.map(item => ({ ...item, productId: { value: item.productId } })) });
@@ -42,7 +43,12 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
 
     let brandingReads = 0;
     let confirmed = false;
-    const completions: Array<{ payments: Array<{ amount: number; methodCode: string }> }> = [];
+    const completions: Array<{ payments: Array<{ amount: number; methodCode: string; paymentMethodId?: string }>; credit?: { amount: number; paymentMethodId?: string | null; accountId?: string | null } }> = [];
+    const forms = ["Cash", "DebitCard", "CreditCard", "Transfer"].map((methodCode, index) => ({
+      paymentMethodId: `form-${index}`, version: 1, code: `FORM-${index}`, name: `Forma ${methodCode}`,
+      methodCode, accountId: `account-${index}`, useForSales: true, useForReceipts: true,
+      useForSupplierPayments: true, useForPayroll: true, isActive: true,
+    }));
     const printed: string[] = [];
     const handle = async (route: Route) => {
       const request = route.request(), url = new URL(request.url()), path = url.pathname;
@@ -62,10 +68,18 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       else if (path.endsWith("/workspace/select")) body = workspace;
       else if (path.endsWith("/work-sessions/current")) body = { workSessionId: "session" };
       else if (path.endsWith("/drafts/active")) body = mode === "prepared" ? toEdge(draft) : draft;
+      else if (path.endsWith("/customers/get") || path.endsWith("/customers/customer")) body = {
+        customerId: "customer", identification: "1001", name: "Cliente con crédito", isActive: true,
+        requiresElectronicInvoice: false, isCreditEnabled: true, availableCredit: 10000,
+      };
       else if (path.endsWith("/inventory-validation")) body = { isValid: true, wasValidated: true, issues: [] };
       else if (path.endsWith("/settlement")) body = { grossAmount: 1000, withholdingTotal: 0, netAmount: 1000, lines: [] };
-      else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [] };
-      else if (path.endsWith("/reference-options/payment-method")) body = [{ code: "Cash", label: "Efectivo" }, { code: "Transfer", label: "Transferencia" }, { code: "Voucher", label: "Bono" }];
+      else if (path.endsWith("/settlement-configuration")) body = { isAccountingEnabled: false, bankAccounts: [],
+        ...(automaticCredit ? { paymentMethods: { contractVersion: 2, forms } } : {}) };
+      else if (path.endsWith("/reference-options/payment-method")) body = automaticCredit
+        ? (["Cash", "DebitCard", "CreditCard", "Transfer", "Credit"] as const).map(code => ({ code,
+          label: { Cash: "Efectivo", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia", Credit: "Crédito cliente" }[code] }))
+        : [{ code: "Cash", label: "Efectivo" }, { code: "Transfer", label: "Transferencia" }, { code: "Voucher", label: "Bono" }];
       else if (path.endsWith("/configuration/printers")) body = { configuration };
       else if (path.endsWith("/complete")) {
         completions.push(request.postDataJSON());
@@ -86,6 +100,37 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
     };
     await page.route("**/api/**", handle);
     await page.route("**/edge/v1/**", handle);
+
+    if (automaticCredit) {
+      await page.goto("/pos");
+      await expect(page.locator("#pos-scanner")).toBeEnabled();
+      await page.getByRole("button", { name: /^Cobrar/ }).click();
+      const dialog = page.getByRole("dialog", { name: "Finalizar venta" });
+      const cash = dialog.getByRole("textbox", { name: "Valor recibido en Efectivo" });
+      await expect(dialog.getByRole("combobox", { name: "Medio de pago" })).toContainText("Forma Cash");
+      await cash.fill("500");
+      await cash.press("F5");
+      const creditAmount = dialog.getByRole("textbox", { name: "Valor recibido en Crédito cliente" });
+      await expect(creditAmount).toHaveValue("500");
+      await expect(dialog.getByText("Se registra en la cartera del cliente.", { exact: true })).toBeVisible();
+      await expect(dialog.getByRole("alert")).toHaveCount(0);
+      const amountBox = await creditAmount.boundingBox();
+      const currencyBox = await creditAmount.locator("..").getByText("$", { exact: true }).boundingBox();
+      expect(amountBox).not.toBeNull();
+      expect(currencyBox).not.toBeNull();
+      expect(currencyBox!.y).toBeGreaterThanOrEqual(amountBox!.y);
+      expect(currencyBox!.y + currencyBox!.height).toBeLessThanOrEqual(amountBox!.y + amountBox!.height);
+      if (mode === "browser") await dialog.screenshot({ path: test.info().outputPath("configured-credit.png") });
+      await dialog.getByRole("button", { name: "Sin imprimir", exact: true }).click();
+      await expect.poll(() => completions.length).toBe(1);
+      expect(completions[0].payments).toMatchObject([{ methodCode: "Cash", amount: 500, paymentMethodId: "form-0" }]);
+      expect(completions[0].credit).toMatchObject({ amount: 500 });
+      expect(completions[0].credit?.paymentMethodId ?? null).toBeNull();
+      expect(completions[0].credit?.accountId ?? null).toBeNull();
+      await expect(dialog).toBeHidden();
+      expect(printed).toHaveLength(0);
+      return;
+    }
 
     for (const [key, format] of [["s", null], ["t", "Receipt"], ["m", "HalfLetter"], ["o", "HalfLegal"], ["c", "Letter"], ["Enter", "Letter"]] as const) {
       confirmed = false;
@@ -133,4 +178,5 @@ for (const mode of ["browser", "installed-online", "prepared"] as const) {
       if (mode === "prepared") expect(brandingReads).toBe(0);
     }
   });
+  }
 }

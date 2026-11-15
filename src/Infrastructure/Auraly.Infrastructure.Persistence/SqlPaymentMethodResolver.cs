@@ -10,14 +10,14 @@ internal static class SqlPaymentMethodResolver
     public static Task ValidateSaleAsync(SqlConnection connection, SqlTransaction transaction,
         Auraly.Contracts.Sales.PosSaleUploadRequest sale, CancellationToken cancellationToken)
     {
-        if (!PaymentMethodEvidence.IsValidSet(sale.Payments.Select(payment => new PaymentMethodEvidence(
+        if (!PaymentMethodEvidence.IsValidSale(sale.Payments.Select(payment => new PaymentMethodEvidence(
                 payment.PaymentMethodId, payment.PaymentMethodVersion, payment.PaymentMethodCode,
-                payment.PaymentMethodName, payment.AccountId)).Concat(sale.Credit is { } credit ?
-                [new PaymentMethodEvidence(credit.PaymentMethodId,credit.PaymentMethodVersion,
-                    credit.PaymentMethodCode,credit.PaymentMethodName,credit.AccountId)] : [])))
+                payment.PaymentMethodName, payment.AccountId)), sale.Credit is { } credit ?
+                new PaymentMethodEvidence(credit.PaymentMethodId,credit.PaymentMethodVersion,
+                    credit.PaymentMethodCode,credit.PaymentMethodName,credit.AccountId) : null))
             throw new Auraly.Application.Sales.PosSaleInvalidException("La identidad de las formas de pago no es válida.");
         var selections = sale.Payments.Select(payment => new { payment.MethodCode, payment.PaymentMethodId })
-            .Concat(sale.Credit is null ? [] : [new { MethodCode="Credit", sale.Credit.PaymentMethodId }]).ToArray();
+            .Concat(sale.Credit?.PaymentMethodId is null ? [] : [new { MethodCode="Credit", sale.Credit.PaymentMethodId }]).ToArray();
         return selections.All(payment => payment.PaymentMethodId is null) ? Task.CompletedTask :
             ValidateSaleEvidenceAsync(connection, transaction, sale.TenantId,
                 JsonSerializer.Serialize(selections), false, cancellationToken);
@@ -29,7 +29,7 @@ internal static class SqlPaymentMethodResolver
         CancellationToken cancellationToken)
     {
         var selections = payments.Select(payment => new { payment.MethodCode, payment.PaymentMethodId })
-            .Concat(credit is null ? [] : [new { MethodCode="Credit", credit.PaymentMethodId }]).ToArray();
+            .Concat(credit?.PaymentMethodId is null ? [] : [new { MethodCode="Credit", credit.PaymentMethodId }]).ToArray();
         if (selections.All(payment => payment.PaymentMethodId is null)) return;
         try
         {

@@ -683,11 +683,11 @@ public sealed class OnlineSalesCheckoutService(
             (request.Payments.Count == 0 && request.Credit is null))
             throw new OnlineSalesDraftValidationException(
                 "La venta requiere pagos reales, saldo a crédito o ambos.");
-        if (!PaymentMethodEvidence.IsValidSet(request.Payments.Select(payment => new PaymentMethodEvidence(
+        if (!PaymentMethodEvidence.IsValidSale(request.Payments.Select(payment => new PaymentMethodEvidence(
                 payment.PaymentMethodId, payment.PaymentMethodVersion, payment.PaymentMethodCode,
-                payment.PaymentMethodName, payment.AccountId)).Concat(request.Credit is { } credit ?
-                [new PaymentMethodEvidence(credit.PaymentMethodId,credit.PaymentMethodVersion,
-                    credit.PaymentMethodCode,credit.PaymentMethodName,credit.AccountId)] : [])))
+                payment.PaymentMethodName, payment.AccountId)), request.Credit is { } credit ?
+                new PaymentMethodEvidence(credit.PaymentMethodId,credit.PaymentMethodVersion,
+                    credit.PaymentMethodCode,credit.PaymentMethodName,credit.AccountId) : null))
             throw new OnlineSalesDraftValidationException("La identidad de las formas de pago no es válida.");
         if (request.Payments.Any(payment =>
                 !PaymentMethods.Contains(payment.MethodCode) ||

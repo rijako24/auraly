@@ -114,6 +114,7 @@ export function PosPaymentDialog({
   const configuredForms = formCatalog?.contractVersion === 2;
   const effectiveMaximum=portfolioDirection && configuredForms ? 10 : maxPaymentMethods;
   const forms = useMemo(() => (formCatalog?.forms ?? []).filter(form => portfolioDirection === "receivable" ? form.useForReceipts : portfolioDirection === "payable" ? form.useForSupplierPayments : form.useForSales), [formCatalog, portfolioDirection]);
+  const automaticCredit = !portfolioDirection && !forms.some(form => form.methodCode === "Credit");
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
@@ -314,7 +315,9 @@ export function PosPaymentDialog({
   }, [focusAmount, pendingFocusId, payments]);
 
   const canSubmit = settlement.isValid && !busy && documentTypeReady && settlementConfigurationLoaded &&
-    (!configuredForms || payments.every(payment=>forms.some(form=>form.paymentMethodId===payment.paymentMethodId && form.version===payment.paymentMethodVersion && form.methodCode===payment.methodCode))) &&
+    (!configuredForms || payments.every(payment=>
+      (automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null) ||
+      forms.some(form=>form.paymentMethodId===payment.paymentMethodId && form.version===payment.paymentMethodVersion && form.methodCode===payment.methodCode))) &&
     !payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) &&
     !payments.some(payment => payment.methodCode === "Transfer" &&
       (!payment.reference?.trim() || (accountingEnabled && !payment.bankAccountId))) &&
@@ -546,9 +549,10 @@ export function PosPaymentDialog({
               <div className="text-xs font-medium text-slate-600">
                 <span>Medio</span>
                 <Select
-                  value={configuredForms ? payment.paymentMethodId ?? "" : payment.methodCode}
+                  value={configuredForms ? payment.paymentMethodId ?? (automaticCredit && payment.methodCode === "Credit" ? "automatic-credit" : "") : payment.methodCode}
                   onValueChange={(selection) => {
                     if(configuredForms) {
+                      if (selection === "automatic-credit" && automaticCredit && payment.methodCode === "Credit") return;
                       const form=forms.find(value=>value.paymentMethodId===selection);
                       if(!form)return;
                       const updated={...payment,paymentMethodId:form.paymentMethodId,paymentMethodVersion:form.version,bankAccountId:form.methodCode==="Transfer"?form.bankAccountId:null,reference:null,notes:null,cardFranchiseCode:null,approvalNumber:null};
@@ -569,15 +573,19 @@ export function PosPaymentDialog({
                     <SelectValue aria-label="Medio de pago" placeholder="Seleccionar forma" />
                   </SelectTrigger>
                   <SelectContent className="rounded-xl border-slate-200 shadow-xl">
-                    {configuredForms ? forms.filter(form=>form.methodCode===payment.methodCode).map(form=><SelectItem key={form.paymentMethodId} value={form.paymentMethodId} className="py-2.5">{form.name}</SelectItem>) : methods.map((method) => (
+                    {configuredForms ? automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null
+                      ? <SelectItem value="automatic-credit" className="py-2.5">{methods.find(method=>method.code==="Credit")?.label}</SelectItem>
+                      : forms.filter(form=>form.methodCode===payment.methodCode).map(form=><SelectItem key={form.paymentMethodId} value={form.paymentMethodId} className="py-2.5">{form.name}</SelectItem>) : methods.map((method) => (
                       <SelectItem key={method.code} value={method.code} className="py-2.5">{method.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {configuredForms && !forms.some(form=>form.methodCode===payment.methodCode) &&
+                {configuredForms && automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null &&
+                  <p className="mt-1 text-xs text-slate-500">Se registra en la cartera del cliente.</p>}
+                {configuredForms && !forms.some(form=>form.methodCode===payment.methodCode) && !(automaticCredit && payment.methodCode === "Credit" && payment.paymentMethodId == null) &&
                   <p role="alert" className="mt-1 text-xs text-amber-800">No hay formas activas para este tipo de pago y operación. Revisa Formas de pago.</p>}
               </div>
-              <label className="relative text-xs font-medium text-slate-600">
+              <label className="relative self-start text-xs font-medium text-slate-600">
                 {portfolioDirection === "payable" ? "Valor pagado" : "Valor recibido"}
                 <input
                   ref={(element) => {

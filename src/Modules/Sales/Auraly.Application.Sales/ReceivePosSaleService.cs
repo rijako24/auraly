@@ -439,11 +439,11 @@ public sealed class ReceivePosSaleService(
              withholding.NetAmount + withholding.WithholdingTotal != withholding.GrossAmount))
             throw new PosSaleInvalidException(
                 "The immutable sale withholding snapshot does not reconcile.");
-        if (!PaymentMethodEvidence.IsValidSet(request.Payments.Select(payment => new PaymentMethodEvidence(
+        if (!PaymentMethodEvidence.IsValidSale(request.Payments.Select(payment => new PaymentMethodEvidence(
                 payment.PaymentMethodId, payment.PaymentMethodVersion, payment.PaymentMethodCode,
-                payment.PaymentMethodName, payment.AccountId)).Concat(request.Credit is { } financed ?
-                [new PaymentMethodEvidence(financed.PaymentMethodId,financed.PaymentMethodVersion,
-                    financed.PaymentMethodCode,financed.PaymentMethodName,financed.AccountId)] : [])))
+                payment.PaymentMethodName, payment.AccountId)), request.Credit is { } financed ?
+                new PaymentMethodEvidence(financed.PaymentMethodId,financed.PaymentMethodVersion,
+                    financed.PaymentMethodCode,financed.PaymentMethodName,financed.AccountId) : null))
             throw new PosSaleInvalidException("La identidad de las formas de pago no es válida.");
         if (request.Payments.Any(payment => payment.Amount <= 0) ||
             request.Payments.Select(payment => payment.PaymentNumber).Distinct().Count() != request.Payments.Count ||

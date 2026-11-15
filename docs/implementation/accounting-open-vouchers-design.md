@@ -3566,6 +3566,17 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   Comparten identidad entre todas sus sedes; después se pueden agregar otras
   formas de esos tipos. Crédito cliente conserva su tipo técnico para la venta
   a plazo, pero no se crea como quinta forma inicial.
+  La financiación sin forma elegida usa el mapping `AccountsReceivable` vigente
+  al contabilizar, incluso cuando la venta combina formas monetarias del catálogo
+  y saldo a plazo. No requiere otra cuenta ni convierte el crédito en dinero
+  recibido. Una forma de crédito elegida explícitamente conserva su validación
+  completa y su resolución vigente; no se sustituye si dejó de ser válida.
+  `PaymentMethodEvidence.IsValidSale` valida separadamente esa identidad opcional
+  y el conjunto monetario para checkout web y recepción preparada. Un conjunto
+  monetario incompleto o una cuenta sin identidad de forma sigue rechazado.
+  El selector existente muestra «Crédito cliente» cuando no hay forma de crédito
+  configurada y explica que se registra en cartera; no muestra una configuración
+  monetaria faltante para ese caso ni crea otro catálogo de financiación.
   `AccountingConfigurationProfilePaymentMethods` define esas cuatro plantillas
   del perfil, con tipo de `reference.Options`, categoría PUC y usos iniciales.
   No constituye otro catálogo operativo: las formas utilizables siguen viviendo
@@ -3814,7 +3825,12 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   pagos vigentes y consulta de los históricos, sin volver a procesarlos.
   El despliegue se bloquea si una forma que se usaba quedaría inaccesible o si
   falta una equivalencia demostrable. El bootstrap de cuatro formas no equivale
-  a aprobar ese corte. Esta condición no autoriza desplegar a producción;
+  a aprobar ese corte. La comprobación de un corte global cubre todos los tenants
+  operativos del destino, también en DEV; preparar sólo el tenant de pruebas no
+  autoriza retirar el selector anterior para los demás. Cuentas sin uso y cuentas
+  históricas utilizadas requieren su tratamiento correspondiente; no se clasifica
+  una cuenta existente por su código ni se modifica su configuración propia para
+  que el catálogo quede habilitado. Esta condición no autoriza desplegar a producción;
   se mantiene la autorización actual exclusivamente para DEV.
 - Nuevo maestro se carga con equivalencias explícitas de formas técnicas actuales
   por tenant. Se mantienen códigos/snapshots históricos y se resuelve cada cuenta
@@ -3824,6 +3840,32 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   proyecciones preparadas, ventas, cartera, comprobantes, nómina y reportes.
   El catálogo sincronizado es una proyección del mismo maestro por tenant,
   sin edición o reglas alternas en Edge. Se preserva la presentación del POS.
+  Guardar una forma añade los avisos `Configuration` para las sedes del tenant
+  al outbox de sincronización existente, dentro de la misma transacción SQL.
+  El mismo resultado devuelve las sedes afectadas; después del commit se señala
+  el dispatcher existente, sin releerlas ni consultar por sede. Un conflicto
+  revierte también los avisos. La caja preparada utiliza la descarga de
+  configuración y su promoción de cursor existentes para renovar las formas;
+  no se añade polling, cola ni sincronizador. Esta notificación no activa por sí
+  misma el corte de contrato ni altera formularios/configuraciones históricas.
+  La regresión dirigida SQL/API comprueba dos y cincuenta sedes, aislamiento de
+  otro tenant, creación/desactivación, cursor y ausencia de aviso ante rowversion
+  vencido: el guardado con sus avisos mantiene un comando SQL (143 y 6 ms locales,
+  respectivamente, presupuesto menor de dos segundos). La respuesta HTTP conserva
+  la consulta existente de su página canónica; no se añade otra para sincronizar.
+  Las ventas web factura/comprobante y el envío preparado comprueban efectivo
+  del catálogo más financiación automática, una CxC, un asiento balanceado,
+  un movimiento de inventario y replay sin efectos repetidos. La validación de
+  formas de esa venta sigue usando un solo comando por conjunto; el replay no
+  vuelve a validarlas ni aplicar efectos. Esto verifica los puntos de extensión
+  actuales y no certifica la migración productiva ni el corte nativo pendiente.
+  La descarga de configuración conserva el lector local por lote para los
+  nombres de productos de los precios por cantidad que cambiaron: cero lecturas
+  si no cambiaron y una lectura conjunta en caso contrario, mediante
+  `GetByProductIdsAsync`. No consulta un producto por cada detalle del aviso.
+  La regresión de publicación/caja comprueba precio anterior/nuevo, nombre del
+  producto, exclusión de tramos sin cambios y ausencia de avisos repetidos al
+  volver a sincronizar el mismo cursor.
   Cada movimiento conserva su atribución de origen/sesión; no se mezclan
   operaciones administrativas y sesiones preparadas por reutilizar IDs antiguos.
   No hay dos escritores ni fallback al catálogo global para una forma desconocida.

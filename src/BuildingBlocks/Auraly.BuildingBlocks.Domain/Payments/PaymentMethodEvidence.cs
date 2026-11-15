@@ -4,6 +4,15 @@ namespace Auraly.BuildingBlocks.Domain.Payments;
 public readonly record struct PaymentMethodEvidence(
     Guid? Id, int? Version, string? Code, string? Name, Guid? AccountId)
 {
+    // Financing is an obligation, not another monetary tender. Its optional
+    // form is validated independently; absent evidence uses the A/R mapping.
+    public static bool IsValidSale(IEnumerable<PaymentMethodEvidence> payments, PaymentMethodEvidence? financing)
+    {
+        var money = payments.ToArray();
+        return IsValidSet(money) && (financing is not { } credit ||
+            IsValidSet([credit]) && (credit.Id is null || !money.Any(payment => payment.Id == credit.Id)));
+    }
+
     public static bool IsValidSet(IEnumerable<PaymentMethodEvidence> evidence)
     {
         var values = evidence.ToArray();
