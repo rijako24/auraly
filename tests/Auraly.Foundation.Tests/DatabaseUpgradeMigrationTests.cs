@@ -6,6 +6,50 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public async Task Retired_account_freezers_are_removed_before_dacpac_planning()
+    {
+        var pipeline = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var start = pipeline.IndexOf("$reviewedMigrations = @(", StringComparison.Ordinal);
+        var end = pipeline.IndexOf("if (-not $ValidateOnly)", start, StringComparison.Ordinal);
+        var plan = pipeline.IndexOf("'/Action:DeployReport'", StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start && plan > end);
+        using var result = JsonDocument.Parse(await RunPowerShellAsync(
+            pipeline[start..end] + "\nConvertTo-Json -InputObject @($reviewedMigrations) -Compress"));
+        Assert.Contains(result.RootElement.EnumerateArray(), migration =>
+            migration.GetString() == "20261113_RetireAcceptedAccountConfiguration.sql");
+    }
+
+    [Theory]
+    [InlineData("pos-installer", "database,api,function,admin,pos-installer", 0)]
+    [InlineData("pos-installer", "pos-installer", 1)]
+    [InlineData("api", "api", 1)]
+    [InlineData("api", "database,api,function,admin,pos-installer", 1)]
+    [InlineData("function", "function", 0)]
+    [InlineData("api,pos-installer", "database,api,function,admin,pos-installer", 1)]
+    public async Task Installer_health_wait_respects_the_coordinated_database_cutover(
+        string components, string recordedScope, int expectedChecks)
+    {
+        var pipeline = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var start = pipeline.IndexOf("$apiStatus = if (", StringComparison.Ordinal);
+        var end = pipeline.IndexOf("$functionStatus = if (", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var script = $$"""
+            $ErrorActionPreference='Stop'
+            $selectedComponents='{{components}}'.Split(',')
+            $manifest=@{deploymentComponents='{{recordedScope}}'.Split(',')}
+            $configuration=@{Api='api.test'}
+            $checks=[Collections.Generic.List[string]]::new()
+            function Wait-HttpHealthy { param([string]$Uri) $checks.Add($Uri); return @{status=200} }
+            {{pipeline[start..end]}}
+            ConvertTo-Json -InputObject @($checks.ToArray()) -Compress
+            """;
+        using var result = JsonDocument.Parse(await RunPowerShellAsync(script));
+        Assert.Equal(expectedChecks, result.RootElement.GetArrayLength());
+        Assert.All(result.RootElement.EnumerateArray(), check =>
+            Assert.Equal("https://api.test.azurewebsites.net/health", check.GetString()));
+    }
+
+    [Fact]
     public void Database_cutover_stops_old_writers_and_requires_compatible_binaries_in_every_environment()
     {
         var pipeline = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));

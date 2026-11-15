@@ -429,7 +429,8 @@ function Publish-Database {
             '20260930_ReconcileTenantCustomerCopies.sql',
             '20260930_ReconcileTenantTaxProfileCopies.sql',
             '20261113_PreflightSharedPucAccounts.sql',
-            '20261113_ShareAccountingCostCenters.sql')
+            '20261113_ShareAccountingCostCenters.sql',
+            '20261113_RetireAcceptedAccountConfiguration.sql')
         if (-not $ValidateOnly) {
             foreach ($migration in $reviewedMigrations) {
                 Invoke-ReviewedPreDacpacMigration `
@@ -805,7 +806,8 @@ if ($selectedComponents -contains 'function') {
 if ($selectedComponents -contains 'api') { Publish-Api }
 $installerMetadata = if ($selectedComponents -contains 'pos-installer') { Publish-PosInstallerIfPresent } else { $null }
 
-$apiStatus = if ($selectedComponents -contains 'api' -or $selectedComponents -contains 'pos-installer') {
+$apiStatus = if ($selectedComponents -contains 'api' -or
+    ($selectedComponents -contains 'pos-installer' -and $manifest.deploymentComponents -notcontains 'database')) {
     Wait-HttpHealthy "https://$($configuration.Api).azurewebsites.net/health"
 }
 else { $null }
