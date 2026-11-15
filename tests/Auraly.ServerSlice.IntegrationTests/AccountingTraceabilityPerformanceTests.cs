@@ -238,6 +238,7 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
             {
                 await using var reader = await diagnostic.ExecuteReaderAsync();
                 var planNumber = 0;
+                var boundedPartySourcePlanSeen = false;
                 do
                 {
                     if (reader.FieldCount != 1 || !reader.GetName(0).Contains("Showplan", StringComparison.OrdinalIgnoreCase)) continue;
@@ -247,6 +248,25 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
                         var planText = reader.GetString(0);
                         await File.WriteAllTextAsync(path, planText);
                         var plan = XDocument.Parse(planText);
+                        XNamespace planNamespace = "http://schemas.microsoft.com/sqlserver/2004/07/showplan";
+                        if (failure.Name == "frequent-party" && plan.Descendants(planNamespace + "StmtSimple")
+                            .Any(statement => ((string?)statement.Attribute("StatementText"))?.Contains(
+                                "INSERT #PartyDocumentKeys(SourceDocumentId,SourceDocumentType,OccurredAt,HasAcceptedJob)",
+                                StringComparison.Ordinal) == true))
+                        {
+                            var sourceReads = plan.Descendants(planNamespace + "RelOp").Where(operation =>
+                                operation.Element(planNamespace + "IndexScan")?.Element(planNamespace + "Object")
+                                    ?.Attribute("Table")?.Value == "[AccountingSourceDocuments]").ToArray();
+                            Assert.NotEmpty(sourceReads);
+                            foreach (var operation in sourceReads)
+                            {
+                                Assert.Equal("Index Seek", (string?)operation.Attribute("PhysicalOp"));
+                                var rows = operation.Descendants(planNamespace + "RunTimeCountersPerThread")
+                                    .Sum(counter => (long?)counter.Attribute("ActualRows") ?? 0);
+                                Assert.InRange(rows, 0, cases.Single(sample => sample.Name == failure.Name).Total);
+                            }
+                            boundedPartySourcePlanSeen = true;
+                        }
                         var grants = plan.Descendants().Where(node => node.Name.LocalName == "MemoryGrantInfo")
                             .Select(node => $"granted {node.Attribute("GrantedMemory")?.Value} KB, used {node.Attribute("MaxUsedMemory")?.Value} KB");
                         var spills = plan.Descendants().Count(node => node.Name.LocalName == "SpillToTempDb");
@@ -254,6 +274,8 @@ public sealed class AccountingTraceabilityPerformanceTests(ServerSliceFixture fi
                         output.WriteLine($"Diagnostic plan after timed samples: {path}");
                     }
                 } while (await reader.NextResultAsync());
+                if (failure.Name == "frequent-party")
+                    Assert.True(boundedPartySourcePlanSeen, "The party-candidate plan must seek only its indexed source identities.");
             }
             catch (SqlException error) when (exceededBudgets.Count > 0)
             {

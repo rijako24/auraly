@@ -2466,6 +2466,22 @@ Las claves candidatas se insertan en su tabla temporal con la clave primaria ya
 definida; no se carga primero un heap para volver a construir y ordenar su índice
 después. El conjunto deduplicado y sus filtros no cambian.
 
+El gate 43701130559 aprobó 1.024/1.025 integraciones y rechazó el tercero
+frecuente en calendario v1 por p95 de 1.169,6 ms (límite 800). Su plan mostró
+una lectura de 100.000 fuentes manuales para 50.005 pertenencias del tercero.
+La selección conserva `SourcePartyIndex` como propietario y exige búsquedas por
+esas identidades en `IX_AccountingSourceDocuments_Manual_PartyProjection`, ya
+existente. No copia fechas o estados al índice, no agrega otro índice y mantiene
+tenant, sede y ambos contratos de calendario. La regresión física posterior a
+las muestras rechaza scans y filas de fuente superiores a las pertenencias
+seleccionadas; el plan anterior incumple ambas condiciones. La regresión
+funcional dirigida aprobó siete casos de conceptos/tercero/búsqueda, filtros y
+corte completo en dos zonas. Los ensayos locales de 100.000 fuentes agotaron el
+tiempo preparando/revalidando el índice, antes de medir el lector: no constituyen
+evidencia de su rendimiento. El gate completo del ajuste sigue pendiente y no
+habilita el despliegue. Rollback retira sólo el hint del lector, sin cambiar
+fuentes, movimientos o configuración.
+
 La clasificación de fuentes sin trabajo usa el vínculo nullable
 `AccountingSourceDocuments.AccountingPostingJobId` y su índice filtrado de
 valores nulos. Su FK compuesta exige el mismo tenant, sede, documento y tipo;
