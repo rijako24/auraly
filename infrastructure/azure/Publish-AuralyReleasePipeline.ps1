@@ -301,6 +301,12 @@ function Invoke-ReviewedPreDacpacMigration {
             }
         }
         $contents = Get-Content -LiteralPath $MigrationPath -Raw
+        # ADO executes these batches before SQLPackage can expand SQLCMD values.
+        # Use the validated target environment, never PowerShell interpolation.
+        $contents = $contents.Replace('$(DeploymentEnvironment)', $Environment.ToLowerInvariant())
+        if ($contents -match '\$\([A-Za-z_][A-Za-z0-9_]*\)') {
+            throw "La migracion contiene una variable SQLCMD no resuelta: $($Matches[0])."
+        }
         $batches = [Text.RegularExpressions.Regex]::Split(
             $contents,
             '(?im)^\s*GO\s*(?:--.*)?$')

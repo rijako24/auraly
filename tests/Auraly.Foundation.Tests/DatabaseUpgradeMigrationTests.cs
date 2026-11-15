@@ -73,42 +73,73 @@ public sealed class DatabaseUpgradeMigrationTests
             } catch {$issue=$_.Exception.Message}
             [pscustomobject]@{events=$events.ToArray();issue=$issue}|ConvertTo-Json -Compress
             """;
-        var path = Path.Combine(Path.GetTempPath(), $"auraly-cutover-{Guid.NewGuid():N}.ps1");
+        using var result = JsonDocument.Parse(await RunPowerShellAsync(script));
+        var events = result.RootElement.GetProperty("events").EnumerateArray().Select(item => item.GetString()!).ToArray();
+        var stops = events.Where(item => item.Contains(" stop ", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(expectedStops, stops.Length);
+        Assert.Equal(expectedStarts, events.Count(item => item.StartsWith("functionapp start ", StringComparison.Ordinal)));
+        if (expectedStops > 0) Assert.StartsWith("webapp stop ", stops[0]);
+        if (expectedStops > 1) Assert.StartsWith("functionapp stop ", stops[1]);
+        var issue = result.RootElement.GetProperty("issue");
+        if (expectedIssue is null) Assert.Equal(JsonValueKind.Null, issue.ValueKind);
+        else Assert.Contains(expectedIssue, issue.GetString(), StringComparison.Ordinal);
+
+    }
+
+    [Theory]
+    [InlineData("dev", false)]
+    [InlineData("DEV", false)]
+    [InlineData("prod", false)]
+    [InlineData("dev", true)]
+    public async Task Reviewed_migration_preparation_expands_the_environment_and_rejects_unknown_sqlcmd_variables(
+        string environment, bool unknownVariable)
+    {
+        var root = FindRepositoryRoot();
+        var pipeline = await File.ReadAllTextAsync(Path.Combine(root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var function = pipeline.IndexOf("function Invoke-ReviewedPreDacpacMigration", StringComparison.Ordinal);
+        var start = pipeline.IndexOf("        $contents =", function, StringComparison.Ordinal);
+        var end = pipeline.IndexOf("        foreach ($batch in $batches)", start, StringComparison.Ordinal);
+        Assert.True(function >= 0 && start > function && end > start);
+        // Execute the preparation used by the real publisher, not the fixture's
+        // independent SQLCMD substitution. No Azure or SQL writes run here.
+        var prepare = pipeline[start..end];
+        var migration = Path.Combine(root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20261113_ShareAccountingCostCenters.sql");
+        var temporaryMigration = Path.Combine(Path.GetTempPath(), $"auraly-migration-{Guid.NewGuid():N}.sql");
         try
         {
-            await File.WriteAllTextAsync(path, script);
-            using var process = new Process { StartInfo = new("pwsh")
+            if (unknownVariable)
             {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
-            }};
-            foreach (var argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File", path })
-                process.StartInfo.ArgumentList.Add(argument);
-            process.Start();
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
-            try
-            {
-                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+                await File.WriteAllTextAsync(temporaryMigration, "SELECT N'$(UnreviewedVariable)';\nGO\n");
+                migration = temporaryMigration;
             }
-            catch (TimeoutException)
-            {
-                if (!process.HasExited) process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
-                throw;
-            }
-            Assert.True(process.ExitCode == 0, await error);
-            using var result = JsonDocument.Parse(await output);
-            var events = result.RootElement.GetProperty("events").EnumerateArray().Select(item => item.GetString()!).ToArray();
-            var stops = events.Where(item => item.Contains(" stop ", StringComparison.Ordinal)).ToArray();
-            Assert.Equal(expectedStops, stops.Length);
-            Assert.Equal(expectedStarts, events.Count(item => item.StartsWith("functionapp start ", StringComparison.Ordinal)));
-            if (expectedStops > 0) Assert.StartsWith("webapp stop ", stops[0]);
-            if (expectedStops > 1) Assert.StartsWith("functionapp stop ", stops[1]);
+            var script = $$"""
+                $ErrorActionPreference='Stop'
+                $MigrationPath=$args[0]
+                $Environment=$args[1]
+                $issue=$null
+                try {
+                {{prepare}}
+                } catch {$issue=$_.Exception.Message}
+                [pscustomobject]@{batches=@($batches);issue=$issue}|ConvertTo-Json -Compress
+                """;
+            using var result = JsonDocument.Parse(await RunPowerShellAsync(script, migration, environment));
             var issue = result.RootElement.GetProperty("issue");
-            if (expectedIssue is null) Assert.Equal(JsonValueKind.Null, issue.ValueKind);
-            else Assert.Contains(expectedIssue, issue.GetString(), StringComparison.Ordinal);
+            if (unknownVariable)
+            {
+                Assert.Contains("SQLCMD", issue.GetString(), StringComparison.Ordinal);
+                Assert.All(result.RootElement.GetProperty("batches").EnumerateArray(), item => Assert.Equal(JsonValueKind.Null, item.ValueKind));
+            }
+            else
+            {
+                Assert.Equal(JsonValueKind.Null, issue.ValueKind);
+                var batches = string.Join("\n", result.RootElement.GetProperty("batches").EnumerateArray().Select(item => item.GetString()));
+                Assert.DoesNotContain("$(DeploymentEnvironment)", batches, StringComparison.Ordinal);
+                Assert.Contains($"IF N''{environment.ToLowerInvariant()}''=N''dev''", batches, StringComparison.Ordinal);
+                Assert.Contains("COMMIT TRANSACTION", batches, StringComparison.Ordinal);
+            }
         }
-        finally { File.Delete(path); }
+        finally { if (File.Exists(temporaryMigration)) File.Delete(temporaryMigration); }
     }
 
     [Fact]
@@ -942,6 +973,34 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.Contains("20260921_PreserveOrderItemQuantityPrecision.sql", pipeline,
             StringComparison.Ordinal);
+    }
+
+    private static async Task<string> RunPowerShellAsync(string script, params string[] arguments)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-migration-check-{Guid.NewGuid():N}.ps1");
+        try
+        {
+            await File.WriteAllTextAsync(path, script);
+            using var process = new Process { StartInfo = new("pwsh")
+            {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+            }};
+            foreach (var argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-File", path }.Concat(arguments))
+                process.StartInfo.ArgumentList.Add(argument);
+            process.Start();
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30)); }
+            catch (TimeoutException)
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+                throw;
+            }
+            Assert.True(process.ExitCode == 0, await error);
+            return await output;
+        }
+        finally { File.Delete(path); }
     }
 
     private static string FindRepositoryRoot()

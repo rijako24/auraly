@@ -58,6 +58,18 @@ Los despliegues ordinarios ya no se ejecutan desde el equipo del operador. Se us
 3. El alcance queda guardado en `manifest.json` antes de archivar y etiquetar el release. Para PROD se elige la misma versión validada en DEV: el pipeline descarga los mismos bytes y reutiliza obligatoriamente ese alcance; no recompila, amplía ni reemplaza componentes ajenos al cambio.
 4. Revisar el resumen final y los health checks. Un job fallido no se corrige con comandos aislados: se reejecuta el job idempotente después de corregir la causa.
 
+Las migraciones revisadas previas al DACPAC pasan por
+`Invoke-ReviewedPreDacpacMigration`. Ese ejecutor sustituye explícitamente
+`$(DeploymentEnvironment)` por el destino validado y rechaza cualquier variable
+SQLCMD sin resolver antes de ejecutar lotes. SQLPackage recibe el mismo destino
+para sus scripts; no se presupone que expanda el SQL enviado previamente por
+ADO. La regresión ejecuta la preparación real del publicador para DEV, PROD y
+una variable desconocida, además de probar en SQL la migración idempotente de
+centros y sus referencias históricas. No se cambia el plan aprobado ni se
+renombran centros fuera de él. Si cambian los scripts de un release ya archivado,
+se integra el arreglo y se genera otra versión; no se reemplazan sus bytes ni
+se ejecuta una reparación manual para saltar el control.
+
 Cada environment de GitHub (`dev` y `prod`) debe definir las variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` y `AZURE_SUBSCRIPTION_ID`. DEV también define los secretos `AURALY_SIGNING_PFX_BASE64`, `AURALY_SIGNING_PFX_PASSWORD` y `AURALY_SIGNING_THUMBPRINT` del certificado Authenticode de publicación; el workflow rechaza el release si falta alguno o si el PFX no coincide con la huella esperada. La identidad usa federación OIDC y no guarda secretos de Azure. Además necesita `Contributor` en su resource group, `Storage Blob Data Contributor` en el storage del ambiente y un usuario contenido con permisos de despliegue en Azure SQL. La identidad PROD solo recibe `Storage Blob Data Reader` sobre el archivo privado de DEV para promover exactamente el release aprobado. `prod` debe tener aprobación obligatoria en GitHub Environments. Los tokens existentes `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV` y `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD` publican el Admin. Los binarios y el DACPAC no se publican como GitHub Release porque este repositorio es público.
 
 El bootstrap se ejecuta una sola vez por ambiente desde una sesión administradora de Azure y GitHub. Requiere el módulo PowerShell `SqlServer` para crear el usuario contenido sin contraseña:
