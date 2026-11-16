@@ -112,6 +112,21 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
     public Guid FiscalIssuerConfigurationId { get; } = Guid.NewGuid();
 
+    internal async Task EnsureSupplierPaymentSeriesAsync(SqlConnection connection, SqlTransaction? transaction = null)
+    {
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        await using var command = new SqlCommand("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@BusinessId AND DocumentType=N'PayablePayment' AND IsActive=1)
+              INSERT dbo.DocumentSeries
+                (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
+                 Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+              VALUES(@SeriesId,@BusinessId,NULL,N'PayablePayment',N'PGP',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@SeriesId", Guid.NewGuid());
+        command.Parameters.AddWithValue("@BusinessId", BusinessId);
+        await command.ExecuteNonQueryAsync();
+    }
+
     public IServiceScope CreateScope() =>
         (_factory ?? throw new InvalidOperationException("The test host is not initialized."))
         .Services.CreateScope();

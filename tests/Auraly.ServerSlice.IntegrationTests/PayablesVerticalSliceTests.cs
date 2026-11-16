@@ -511,19 +511,7 @@ public sealed partial class PayablesVerticalSliceTests(ServerSliceFixture fixtur
             IsolationLevel.Serializable);
         try
         {
-            var seriesId = Guid.NewGuid();
-            await using (var series = new SqlCommand("""
-                IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@BusinessId AND DocumentType=N'PayablePayment' AND IsActive=1)
-                  INSERT dbo.DocumentSeries
-                    (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
-                     Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-                  VALUES(@SeriesId,@BusinessId,NULL,N'PayablePayment',N'PGP',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
-                """, connection, transaction))
-            {
-                series.Parameters.AddWithValue("@SeriesId", seriesId);
-                series.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-                await series.ExecuteNonQueryAsync();
-            }
+            await fixture.EnsureSupplierPaymentSeriesAsync(connection, transaction);
             await using (var product = new SqlCommand("""
                 INSERT dbo.Products
                   (ProductId,TenantId,Source,Sku,Name,Currency,ManageStock,IsActive,CreatedAt)

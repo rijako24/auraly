@@ -557,13 +557,20 @@ public sealed partial class ReceivablesVerticalSliceTests(ServerSliceFixture fix
                 sale.Receipt.DocumentId));
             await AssertCommercialOnlyProcessingAsync(sale.Receipt.DocumentId);
 
+            var configuration = (await client.GetFromJsonAsync<PosAccountingSettlementConfiguration>(
+                "/api/commerce/v1/accounting/settlement-configuration"))!;
+            Assert.False(configuration.IsAccountingEnabled);
+            Assert.NotNull(configuration.PaymentMethods);
+            var cash = Assert.Single(configuration.PaymentMethods.Forms.Where(method =>
+                method.MethodCode == "Cash" && method.UseForReceipts));
             var partialAmount = decimal.Round(receivable.OriginalAmount * .4m, 4);
             var payment = new ConfirmCustomerPaymentRequest(
                 Guid.NewGuid(), fixture.BusinessId, customerId,
                 workSession.WorkSessionId, DateTimeOffset.UtcNow, "COP", "Abono sin contabilidad",
                 [new CustomerPaymentAllocationRequest(
                     receivable.ReceivableId, partialAmount)],
-                [new CustomerPaymentTenderRequest(CustomerPaymentMethods.Cash,partialAmount,partialAmount)]);
+                [new CustomerPaymentTenderRequest(cash.MethodCode,partialAmount,partialAmount,
+                    PaymentMethodId:cash.PaymentMethodId,PaymentMethodVersion:cash.Version)]);
             var paymentKey = $"commercial-payment-{payment.PaymentId:N}";
             using (var response = await SendAsync(client,
                        "/api/commerce/v1/receivable-payments/confirm", payment, paymentKey))

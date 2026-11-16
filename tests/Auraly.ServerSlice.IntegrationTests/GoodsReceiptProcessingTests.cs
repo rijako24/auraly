@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
+using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Payables;
@@ -319,6 +321,9 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
     {
         var request = CreateRequest();
         request = request with { DueDate = request.SupplierInvoiceDate };
+        var paymentId = Guid.NewGuid();
+        var payableId = Guid.Empty;
+        decimal originalAmount = 0, paidAmount = 0;
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         // Create the connection-scoped temp table outside the parameterized
@@ -341,7 +346,7 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
         try
         {
             using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts,
-                PurchasingPermissionCodes.ConfirmGoodsReceipts);
+                PurchasingPermissionCodes.ConfirmGoodsReceipts, PayablesPermissionCodes.RegisterPayment);
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 using var message = CreateMessage(request, $"immediate-commercial-{request.DocumentId:N}");
@@ -381,6 +386,40 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
             Assert.True(reader.IsDBNull(10));
             Assert.True(reader.IsDBNull(11));
             Assert.False(await reader.ReadAsync());
+            await reader.CloseAsync();
+
+            // The native catalogue and commercial payment must work without an
+            // opening GL line, because accounting was disabled for both sources.
+            var configuration = (await client.GetFromJsonAsync<PosAccountingSettlementConfiguration>(
+                "/api/commerce/v1/accounting/settlement-configuration"))!;
+            Assert.False(configuration.IsAccountingEnabled);
+            Assert.NotNull(configuration.PaymentMethods);
+            var method = Assert.Single(configuration.PaymentMethods.Forms.Where(form =>
+                form.MethodCode == "Cash" && form.UseForSupplierPayments));
+            await fixture.EnsureSupplierPaymentSeriesAsync(connection);
+            await using (var position = new SqlCommand(
+                "SELECT PayableId,OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id AND BusinessId=@Business;", connection))
+            {
+                position.Parameters.AddWithValue("@Id", request.DocumentId);
+                position.Parameters.AddWithValue("@Business", fixture.BusinessId);
+                await using var row = await position.ExecuteReaderAsync();
+                Assert.True(await row.ReadAsync());
+                payableId = row.GetGuid(0); originalAmount = row.GetDecimal(1);
+            }
+            paidAmount = decimal.Round(originalAmount * .4m, 4);
+            var payment = new ConfirmSupplierPaymentRequest(paymentId, fixture.BusinessId,
+                request.SupplierId, request.ReceivedAt.AddDays(1), "COP", "Abono comercial sin contabilidad",
+                [new(payableId, paidAmount)],
+                [new(method.MethodCode, paidAmount, paidAmount, PaymentMethodId: method.PaymentMethodId,
+                    PaymentMethodVersion: method.Version)]);
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                using var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/payable-payments/confirm")
+                    { Content = JsonContent.Create(payment) };
+                message.Headers.Add("Idempotency-Key", paymentId.ToString("N"));
+                using var response = await client.SendAsync(message);
+                Assert.True(response.StatusCode == HttpStatusCode.Accepted, await response.Content.ReadAsStringAsync());
+            }
         }
         finally
         {
@@ -393,6 +432,35 @@ public sealed partial class GoodsReceiptProcessingTests(ServerSliceFixture fixtu
             restore.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             await restore.ExecuteNonQueryAsync();
         }
+
+        // Enabling accounting cannot reinterpret or post those finished sources.
+        using (var scope = fixture.CreateScope())
+        {
+            var processor = scope.ServiceProvider.GetRequiredService<SqlAccountingPostingProcessor>();
+            await processor.ProcessAsync(request.DocumentId, PurchasingDocumentTypes.GoodsReceipt,
+                fixture.BusinessId, CancellationToken.None);
+            await processor.ProcessAsync(paymentId, "PayablePayment", fixture.BusinessId, CancellationToken.None);
+        }
+        await using var final = new SqlCommand("""
+            SELECT payable.OutstandingAmount,payable.OpeningEntryId,
+              (SELECT COUNT(*) FROM dbo.SupplierPaymentApplications WHERE PayableId=@Position AND PaymentId=@Payment),
+              (SELECT COUNT(*) FROM dbo.PayableTransactions WHERE PayableId=@Position AND TransactionType=N'Payment'),
+              (SELECT COUNT(*) FROM dbo.AccountingEntries WHERE SourceDocumentId IN(@Receipt,@Payment)),
+              (SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId IN(@Receipt,@Payment)
+                AND AccountingEntryRequired=0 AND Status=N'CommercialEffectsApplied'),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@Receipt),
+              (SELECT COUNT(*) FROM dbo.SupplierPaymentTenders WHERE PaymentId=@Payment AND PaymentMethodId IS NOT NULL)
+            FROM dbo.Payables payable WHERE payable.PayableId=@Position AND payable.BusinessId=@Business;
+            """, connection);
+        final.Parameters.AddWithValue("@Position", payableId); final.Parameters.AddWithValue("@Payment", paymentId);
+        final.Parameters.AddWithValue("@Receipt", request.DocumentId); final.Parameters.AddWithValue("@Business", fixture.BusinessId);
+        await using var result = await final.ExecuteReaderAsync();
+        Assert.True(await result.ReadAsync());
+        Assert.Equal(originalAmount - paidAmount, result.GetDecimal(0));
+        Assert.True(result.IsDBNull(1));
+        Assert.Equal(1, result.GetInt32(2)); Assert.Equal(1, result.GetInt32(3));
+        Assert.Equal(0, result.GetInt32(4)); Assert.Equal(2, result.GetInt32(5));
+        Assert.Equal(1, result.GetInt32(6)); Assert.Equal(1, result.GetInt32(7));
     }
 
     [Fact]
