@@ -217,8 +217,8 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     onBack={()=>setStep(1)} portfolioDirection={direction}
     portfolioPaymentDate={printOnPos?undefined:{value:paymentDate,today:localToday,onChange:setPaymentDate}}
     submissionError={mutation.error?paymentSubmissionError(mutation.error):null}
-    maxPaymentMethods={allocations.length>1?1:undefined}
-    onConfirm={async (payments,_,printChoice,methodLabels)=>{if(allocations.length>1&&payments.length>1&&!payments.every(payment=>payment.paymentMethodId)){toast.error("Para varias facturas se usa un solo medio de pago.");return;}mutation.mutate({tenders:payments,printChoice,methodLabels});}}
+    maxPaymentMethods={direction==="receivable"&&allocations.length>1?1:undefined}
+    onConfirm={async (payments,_,printChoice,methodLabels)=>{if(allocations.length>1&&payments.length>1&&(direction==="receivable"||!payments.every(payment=>payment.paymentMethodId))){toast.error("Para varias facturas se usa un solo medio de pago.");return;}mutation.mutate({tenders:payments,printChoice,methodLabels});}}
   />;
   return <Dialog open={open} onOpenChange={next=>{if(!next&&mutation.isPending)return;changeOpen(next)}}><DialogContent className={`flex max-h-[92dvh] w-[96vw] ${printOnPos?"max-w-4xl":"max-w-7xl"} flex-col overflow-hidden p-0`}>
     <DialogHeader className={`border-b border-slate-200 text-left ${printOnPos?"px-6 py-5":"px-4 py-3"}`}><DialogTitle className="flex items-center gap-2 text-xl"><CreditCard className="h-5 w-5 text-teal-700"/>{direction==="receivable"?"Abono a cartera":"Pago a proveedores"}</DialogTitle><DialogDescription>Selecciona las facturas y el valor de cada una.</DialogDescription></DialogHeader>

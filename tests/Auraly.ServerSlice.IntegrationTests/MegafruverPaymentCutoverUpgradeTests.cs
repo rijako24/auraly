@@ -5,6 +5,50 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class MegafruverPaymentCutoverUpgradeTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Commercial_snapshot_upgrade_preserves_existing_megafruver_order_amounts_and_costs_on_replay()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
+        Assert.StartsWith("AuralyServerSlice_", connection.Database);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        var orderId = Guid.NewGuid();
+        try
+        {
+            await using (var seed = new SqlCommand("""
+                UPDATE dbo.Tenants SET Name=N'MEGAFRUVER' WHERE TenantId=@Tenant;
+                INSERT dbo.Orders(OrderId,BusinessId,Status,ExternalDocumentNumber,Subtotal,Total)
+                  VALUES(@Order,@Business,2,N'PED-QA-PRESERVE',97.37,97.37);
+                INSERT dbo.OrderItems(OrderItemId,OrderId,BusinessId,ProductId,ProductNameSnapshot,Quantity,
+                  UnitPrice,DocumentUnitCost,LineTotal)
+                  VALUES(NEWID(),@Order,@Business,@Product,N'Precio histórico capturado',3,32.45,0,97.35);
+                IF EXISTS(SELECT 1 FROM sys.extended_properties WHERE class=0
+                  AND name=N'Auraly.Migration.20260916.AlignCommercialLineSnapshots')
+                  EXEC sys.sp_dropextendedproperty @name=N'Auraly.Migration.20260916.AlignCommercialLineSnapshots';
+                """, connection, transaction))
+            {
+                seed.Parameters.AddWithValue("@Tenant", fixture.TenantId); seed.Parameters.AddWithValue("@Business", fixture.BusinessId);
+                seed.Parameters.AddWithValue("@Order", orderId); seed.Parameters.AddWithValue("@Product", fixture.ProductId);
+                await seed.ExecuteNonQueryAsync();
+            }
+            async Task<byte[]> Fingerprint()
+            {
+                await using var read = new SqlCommand("""
+                    SELECT HASHBYTES('SHA2_256',CONCAT(
+                      (SELECT * FROM dbo.Orders WHERE OrderId=@Order FOR JSON PATH,INCLUDE_NULL_VALUES),
+                      (SELECT * FROM dbo.OrderItems WHERE OrderId=@Order ORDER BY OrderItemId FOR JSON PATH,INCLUDE_NULL_VALUES)));
+                    """, connection, transaction);
+                read.Parameters.AddWithValue("@Order", orderId);
+                return (byte[])(await read.ExecuteScalarAsync())!;
+            }
+            var before = await Fingerprint();
+            await fixture.ApplyMigrationAsync("20260916_AlignCommercialLineSnapshots.sql", connection, transaction);
+            Assert.Equal(before, await Fingerprint());
+            await fixture.ApplyMigrationAsync("20260916_AlignCommercialLineSnapshots.sql", connection, transaction);
+            Assert.Equal(before, await Fingerprint());
+        }
+        finally { if (transaction.Connection is not null) await transaction.RollbackAsync(); }
+    }
+
     [Theory]
     [InlineData("Valid")]
     [InlineData("CustomForm")]

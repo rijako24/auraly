@@ -608,6 +608,10 @@ public sealed partial class SqlReceivablesStore(
         try
         {
             var replay=await FindReplayAsync(connection,tx,user.TenantId,user.BusinessId,request.PaymentId,key,hash,settlement,token); if(replay is not null){await tx.CommitAsync(token);return replay;}
+            // Apply capture policy only to new receipts. Accepted sources retain
+            // their immutable shape and return before any new validation/effect.
+            try { PaymentTenderBreakdown.EnsureUnambiguousInvoiceAttribution(settlement.Allocations.Count, tenders.Tenders.Count); }
+            catch (ArgumentException error) { throw new ReceivablesValidationException(error.Message, error); }
             if(request.PaidOn is {} paidOn)
             {
                 try { request=request with {PaidAt=await SqlBusinessLocalDates.EffectivePaymentDateAsync(connection,tx,user.TenantId,user.BusinessId,paidOn,token)}; }

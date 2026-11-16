@@ -40,6 +40,12 @@ public sealed record PaymentTenderBreakdown(
     public const int MaximumCardFranchiseLength = 40;
     public const int MaximumApprovalLength = 80;
 
+    public static void EnsureUnambiguousInvoiceAttribution(int invoiceCount, int paymentMethodCount)
+    {
+        if (invoiceCount > 1 && paymentMethodCount > 1)
+            throw new ArgumentException("Para varias facturas se usa una sola forma de pago. Conserva una factura o retira las formas adicionales.");
+    }
+
     public static PaymentTenderBreakdown Create(
         IEnumerable<PaymentTender> tenders,
         decimal expectedAmount,

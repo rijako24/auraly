@@ -635,7 +635,19 @@ perfil y la política canónica de readiness. Las formas propias no se editan ni
 reactivan. El cambio publica un solo aviso de configuración por sede; repetirlo
 no duplica cuentas, formas, avisos ni efectos financieros. El resto de tenants
 conserva su configuración. El corte usa DeploymentEnvironment=prod sólo cuando
-existen esas identidades revisadas; su ensayo se ejecuta contra una copia local.
+existen esas identidades revisadas; su ensayo se ejecuta contra una copia aislada
+en DEV, sin conectar aplicaciones o workers a esa copia.
+
+La actualización conserva también los importes capturados de pedidos pendientes.
+Se retiró de `20260916_AlignCommercialLineSnapshots.sql` la corrección específica
+de Megafruver que redondeaba precios y recalculaba subtotales/costos desde el
+catálogo actual. La migración conserva únicamente su transformación de esquema
+y los backfills de campos nuevos ausentes; no vuelve a valorar líneas existentes.
+La regresión `Commercial_snapshot_upgrade_preserves_existing_megafruver_order_amounts_and_costs_on_replay`
+compara el pedido y sus líneas completos antes, después y tras repetir la migración.
+Esto no revierte cambios ejecutados por una versión anterior de esa migración:
+no se deducen importes originales ni se reescribe historia. Una restauración
+exige una copia consistente previa; el rollback de binarios no recompone datos.
 
 Rollback: antes de nuevos movimientos, restauración coherente de la copia y
 binarios previos. Después de operar se conserva la historia y se corrige hacia
@@ -1138,10 +1150,11 @@ Las diferencias de captura no crean excepciones a las reglas de dominio:
 
 - Los pagos actuales son COP, de un tercero, y en CxP agrupan obligaciones de
   una sola sede del proveedor. Esa sede es distinta de la sede de la empresa.
-- `PaymentTenderBreakdown` admite varios medios para una obligación, pero exige
-  un solo medio cuando el grupo aplica a varias facturas; también evita repetir
-  un medio. Se conserva esa regla por grupo en ambas superficies. El editor no
-  la elude generando grupos ocultos; una ampliación se haría en ese mismo contrato.
+- `PaymentTenderBreakdown` admite varios medios para una obligación y evita
+  repetir una forma. La decisión del 2026-11-16 limita recibos/recaudos nuevos
+  a una forma cuando aplican a varias facturas, considerando todo el recibo;
+  dividir partidas en grupos no elude la regla. Egresos y comprobantes generales
+  conservan las capacidades del catálogo nuevo descritas en 14.1.
 - Estas reglas de abono se refieren a grupos aplicados a obligaciones. El anticipo
   sin factura acordado en 13.5 exige ampliar el contrato canónico con destino
   anticipo y validar su importe contra los medios; no pasa una factura ficticia
@@ -3543,6 +3556,36 @@ el pago asistido/POS. La verificación puntual incluye el egreso anterior para
 demostrar esa separación. Rollback del cliente conserva las mismas partidas,
 IDs y APIs; no necesita migrar pagos ni reproducir efectos financieros.
 
+**Atribución del recaudo, decisión posterior del 2026-11-16:** una factura
+permite varias formas; dos o más facturas admiten una sola forma. Dos cajas o
+dos bancos distintos cuentan como dos formas aunque compartan tipo técnico.
+Se cuentan las obligaciones distintas con aplicación positiva, no el tipo de
+documento ni la cantidad de partidas de la misma factura. Un cruce sin dinero
+conserva sus referencias y no cuenta como una forma monetaria. El panel bloquea
+otra forma con varias facturas; el selector de documentos bloquea otra factura
+con varias formas, conservando actualizaciones de la ya seleccionada. Retirar
+explícitamente una forma/factura libera el otro selector sin refetch ni pérdida
+de importes. Un borrador previo incompatible se puede corregir/guardar, pero no
+enviar en esa combinación.
+
+La política pura pertenece a `PaymentTenderBreakdown.EnsureUnambiguousInvoiceAttribution`.
+Normalización manual la aplica al recibo completo, sin excepción por grupos.
+La aceptación nativa de CxC la invoca después de reconocer un replay y antes de
+asignar número/reservas. Un aceptado histórico conserva hash, fuente, dinero,
+aplicaciones y contabilización; ni la consulta ni su replay pasan por la regla
+de captura nueva. El processor no reinterpreta pendientes ya aceptados. El
+contrato genérico de breakdown sigue leyendo esos snapshots históricos y las
+otras operaciones; no se cambia la capacidad de egresos ni ventas. El pago
+asistido de CxC respeta su límite existente en el diálogo compartido, mientras
+el pago de proveedor conserva su capacidad previa.
+
+Presupuesto: hasta 500 partidas, recorrido lineal acotado por documento y sin
+SQL/HTTP adicional. El límite se comprueba sobre la captura disponible, no
+consultando la cartera por partida. Los controles siguen usando catálogo y
+posiciones paginados bajo sus propietarios actuales. No hay cambio de esquema,
+backfill, proceso nuevo ni asignación automática medio→factura. Rollback de
+esta validación restaura la captura anterior sin modificar datos aceptados.
+
 Decisión objetivo pendiente de implementación/migración. Se basa en la solicitud
 Mantis y sus aclaraciones, no atribuye a DIAN reglas de interfaz ni afirma conocer
 efectos ocultos de botones. Reutiliza Catalog, Receivables/Payables, aceptación,
@@ -3804,11 +3847,11 @@ aceptados y usa binarios compatibles; nunca borra cobros para volver atrás.
   ventas, cartera, comprobantes, nómina y reportes comparten esta definición.
   El tipo técnico permite aplicar reglas y correspondencias oficiales, pero
   no sustituye la identidad de la forma elegida ni constituye otro maestro.
-- Cada recibo administrativo nuevo admite 1–10 formas monetarias, incluso para varias facturas.
-  Un cruce sin dinero admite cero. La restricción previa de varias facturas/un
-  solo medio se retira en el contrato canónico nuevo de recaudo/pago de cartera,
-  con adaptación coordinada de sus consumidores. No se conserva esa restricción
-  como excepción POS para la misma operación ni se rediseña su captura visual.
+- La decisión del 2026-11-16 sustituye la ampliación inicial para recaudos:
+  un recibo de caja nuevo admite 1–10 formas monetarias con una sola factura,
+  y una forma cuando aplica a varias facturas. Un cruce sin dinero admite cero.
+  Egresos y comprobantes generales mantienen la capacidad del catálogo nuevo.
+  No se restringen ventas ni se reinterpretan recibos ya aceptados.
 - Formas utilizadas se desactivan; no se borran ni cambian de significado.
   Decisión corregida expresamente por el usuario el 2026-11-09: la cuenta de
   una forma del catálogo se consulta **al contabilizar**, incluso si cambió
@@ -4334,7 +4377,9 @@ usa el selector paginado existente dentro de Detalles de la partida; muestra
 la cuenta de la forma y captura el importe sin vuelto. Permite varias formas
 del mismo tipo, hasta diez por documento, sin mezclar identidades configuradas
 con partidas monetarias del contrato anterior. La validación pertenece a
-`PaymentTenderBreakdown`, también para varias facturas y movimientos generales.
+`PaymentTenderBreakdown`; los recaudos nuevos aplican además la restricción de
+atribución del 2026-11-16. Egresos, movimientos generales y fuentes ya aceptadas
+conservan su contrato.
 
 `VoucherDraftLines` conserva identidad/tipo y metadatos capturados. Aceptación
 reutiliza `PortfolioPaymentAccept` para sus grupos; la fuente y su hash no se

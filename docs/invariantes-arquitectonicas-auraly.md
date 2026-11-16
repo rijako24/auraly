@@ -106,8 +106,10 @@ facturacion de pedidos, devolucion, idempotencia ni efectos operativos o fiscale
   implementación anterior admite varios medios por factura y uno para varias.
   El objetivo del 2026-11-09 en la sección 14 de
   `implementation/accounting-open-vouchers-design.md` admite hasta diez formas
-  del tenant también para varias facturas, con cutover
-  completo/versionado. Su sección 14.0 conserva la presentación de pagos POS,
+  del tenant. La decisión posterior del 2026-11-16 limita los recaudos nuevos:
+  una factura admite varias formas y varias facturas admiten una sola forma;
+  los cruces sin dinero no cuentan como forma. Los egresos y fuentes ya aceptadas
+  conservan su contrato. Su sección 14.0 conserva la presentación de pagos POS,
   pero exige el mismo catálogo por tenant y las reglas canónicas de cada
   operación en administración y POS/Edge. Sus contratos/proyecciones se adaptan
   coordinadamente; no se conserva un catálogo o validador financiero alterno.

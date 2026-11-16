@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { SaveVoucherDraft, VoucherDraft } from "../src/services/api/accounting";
 import type { PaymentMethod } from "../src/services/api/payment-methods";
 import { financialVoucherScenario, installFinancialVoucherContext } from "./support/financial-voucher";
+import { paymentCatalogFixture } from "./support/payment-catalog";
 
 for (const supplier of [false, true]) test(`${supplier ? "egreso" : "recibo"} conserva dos formas del catálogo y muestra la cuenta utilizada sin recargas`, async ({ page, baseURL }, testInfo) => {
   const scenario = financialVoucherScenario();
@@ -206,3 +207,74 @@ for (const methodCode of ["Cash", "DebitCard", "CreditCard", "Transfer"] as cons
     expect(reads).toBe(1); expect(formReads).toBe(1); expect(franchiseReads).toBe(card ? 1 : 0);
   });
 }
+
+for (const multipleForms of [false, true]) test(`recibo evita la combinación ambigua empezando por ${multipleForms ? "varias formas" : "varias facturas"} sin borrar valores`, async ({ page, baseURL }) => {
+  const scenario = financialVoucherScenario();
+  const first = paymentCatalogFixture().forms[0];
+  const second = { ...first, paymentMethodId: "10000000-0000-0000-0000-000000000099", name: "Segunda caja", code: "CAJA-2" };
+  const otherInvoice = "99999999-9999-9999-9999-999999999998";
+  const original = scenario.draft.lines[0];
+  const invoiceLine = { ...original, value: { ...original.value, debit: 0, credit: multipleForms ? 100 : 50,
+    financialGroupId: scenario.documentId, existingPosition: { subledgerKind: "Receivable" as const, subledgerId: scenario.positionId } } };
+  const moneyLine = (form: typeof first, amount: number) => ({ ...scenario.draft.lines[1], value: {
+    ...scenario.draft.lines[1].value, lineId: form.paymentMethodId, accountId: form.accountId,
+    financialGroupId: scenario.documentId, debit: amount, credit: 0, paymentEvidence: {
+      paymentMethodId: form.paymentMethodId, paymentMethodVersion: 1, paymentMethodTypeCode: "Cash",
+      paymentMethodCode: form.code, paymentMethodName: form.name } } });
+  scenario.draft.voucherTypeCode = "CashReceipt";
+  scenario.draft.lines = [invoiceLine, ...(multipleForms ? [] : [{ ...invoiceLine, value: { ...invoiceLine.value,
+    lineId: otherInvoice, reference: "FACT-2", existingPosition: { subledgerKind: "Receivable" as const, subledgerId: otherInvoice } } }]),
+    moneyLine(first, multipleForms ? 60 : 100), ...(multipleForms ? [moneyLine(second, 40)] : [])];
+  let reads = 0, positions = 0, catalogs = 0;
+  await installFinancialVoucherContext(page, baseURL!, scenario);
+  await page.route("**/api/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith(`/manual/drafts/${scenario.documentId}`)) { reads++; await route.fulfill({ json: scenario.draft }); return; }
+    if (path.endsWith("/payment-methods/")) { catalogs++; await route.fulfill({ json: { items: [first, second], page: 1, pageSize: 10, totalCount: 2 } }); return; }
+    if (path.endsWith("/accounting/open-positions")) {
+      positions++;
+      await route.fulfill({ json: { items: [scenario.positionId, otherInvoice].map((id, index) => ({
+        subledgerKind: "Receivable", subledgerId: id, partyId: scenario.draft.mainPartyId,
+        partyName: "Proveedor de prueba", sourceDocumentId: id, sourceDocumentType: "SalesInvoice",
+        documentNumber: index ? "FACT-2" : "FACT-1", occurredAt: "2026-10-01T12:00:00Z", dueDate: "2026-10-30T12:00:00Z",
+        originalAmount: 100, outstandingAmount: 100, availableAmount: 100, currencyCode: "COP",
+        accountId: original.value.accountId, accountCode: "130505", accountName: "Clientes", openingDebit: 100, openingCredit: 0,
+        openingLinkIssue: null, accountIsActive: true, pendingPaymentAmount: 0, pendingAdjustmentAmount: 0,
+      })), page: 1, pageSize: 10, totalCount: 2, totalOutstandingAmount: 200 } }); return;
+    }
+    await route.fallback();
+  });
+  await page.goto(`/dashboard/cash-receipts?document=${scenario.documentId}`);
+  const panel = page.getByRole("region", { name: "Formas de pago del comprobante", exact: true });
+  const add = panel.getByRole("group", { name: "Agregar forma de pago", exact: true });
+  await expect(page.getByRole("row", { name: /^Partida \d+$/ })).toHaveCount(3);
+  if (!multipleForms) {
+    await expect(add.getByRole("combobox", { name: "Seleccionar forma de pago", exact: true })).toBeDisabled();
+    await expect(panel.getByText("Este recibo aplica a varias facturas y admite una sola forma de pago. Puedes cambiar o quitar la existente.")).toBeVisible();
+    await expect(panel.getByLabel("Valor recibido por la forma 1", { exact: true })).toHaveValue("100");
+    await expect(page.getByRole("button", { name: "Guardar borrador", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Eliminar partida 2", exact: true }).click();
+    await expect(add.getByRole("combobox", { name: "Seleccionar forma de pago", exact: true })).toBeEnabled();
+  }
+  await page.getByRole("button", { name: "Ver documentos", exact: true }).click();
+  const nextInvoice = page.getByRole("row", { name: "Documento FACT-2", exact: true });
+  if (multipleForms) {
+    await expect(nextInvoice.getByRole("button", { name: "Agregar", exact: true })).toBeDisabled();
+    await expect(nextInvoice).toContainText("Retira las formas adicionales");
+    await expect(panel.getByLabel("Valor recibido por la forma 1", { exact: true })).toHaveValue("60");
+    await expect(panel.getByLabel("Valor recibido por la forma 2", { exact: true })).toHaveValue("40");
+    await panel.getByRole("button", { name: "Quitar forma de pago 2", exact: true }).click();
+    await expect(nextInvoice.getByRole("button", { name: "Agregar", exact: true })).toBeEnabled();
+    await nextInvoice.getByRole("button", { name: "Agregar", exact: true }).click();
+    await expect(add.getByRole("combobox", { name: "Seleccionar forma de pago", exact: true })).toBeDisabled();
+    await expect(panel.getByLabel("Valor recibido por la forma 1", { exact: true })).toHaveValue("60");
+  } else {
+    await add.getByRole("combobox", { name: "Seleccionar forma de pago", exact: true }).click();
+    await page.getByRole("option", { name: /Segunda caja/ }).click();
+    await add.getByLabel("Valor de la nueva forma de pago").fill("25");
+    await add.getByRole("button", { name: "Agregar forma de pago", exact: true }).click();
+    await expect(nextInvoice.getByRole("button", { name: "Agregar", exact: true })).toBeDisabled();
+    await expect(panel.getByLabel("Valor recibido por la forma 1", { exact: true })).toHaveValue("100");
+  }
+  expect(reads).toBe(1); expect(positions).toBe(1); expect(catalogs).toBe(multipleForms ? 0 : 1);
+});

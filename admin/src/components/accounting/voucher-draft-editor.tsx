@@ -102,6 +102,12 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   const [mainParty, setMainParty] = useState({ name: initial?.mainPartyName ?? preparation?.mainPartyName ?? null, identification: initial?.mainPartyIdentification ?? preparation?.mainPartyIdentification ?? null });
   const voucherTypes = useReferenceOptions("accounting-voucher-type", form.payloadVersion === 4);
   const inlinePaymentVoucher = form.payloadVersion === 4 && form.voucherTypeCode === "CashReceipt";
+  const receiptInvoiceIds = new Set(lines.filter(line => line.value.existingPosition?.subledgerKind === "Receivable" &&
+    !line.value.existingPosition.reversesTransactionId && line.value.credit > 0).map(line => line.value.existingPosition!.subledgerId));
+  const paymentLines = lines.flatMap((line, index) => line.value.paymentEvidence && !line.value.existingPosition && !line.value.financialConceptId ? [{ line, index }] : []);
+  const receiptAttributionConflict = inlinePaymentVoucher && receiptInvoiceIds.size > 1 && paymentLines.length > 1;
+  const paymentAddBlockReason = inlinePaymentVoucher && receiptInvoiceIds.size > 1 && paymentLines.length > 0
+    ? "Este recibo aplica a varias facturas y admite una sola forma de pago. Puedes cambiar o quitar la existente." : undefined;
   const franchises = useReferenceOptions("card-franchise", !inlinePaymentVoucher && detailLineId !== null);
   const directions = useReferenceOptions("accounting-adjustment-direction", !!form.adjustment);
   const statuses = useReferenceOptions("accounting-document-status");
@@ -383,6 +389,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
 
   function selectPaymentForm(method: PaymentMethod, requestedIndex = detailIndex, capture?: VoucherPaymentCapture) {
     if (busy || readOnly || inlinePaymentVoucher && !form.mainPartyId) return false;
+    if (requestedIndex < 0 && paymentAddBlockReason) { setError(paymentAddBlockReason); return false; }
     const index = requestedIndex >= 0 ? requestedIndex : lines.findIndex(item => !hasLineCapture(item));
     if (index < 0 && lines.length >= 500) return false;
     if (lines.some((line, itemIndex) => itemIndex !== index && line.value.paymentEvidence?.paymentMethodId === method.paymentMethodId)) {
@@ -415,6 +422,11 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
   }
 
   function addPositionLines(added: VoucherDraftLineView[]) {
+    if (inlinePaymentVoucher && paymentLines.length > 1 && new Set([...receiptInvoiceIds,
+      ...added.filter(line => line.value.existingPosition?.subledgerKind === "Receivable" && line.value.credit > 0)
+        .map(line => line.value.existingPosition!.subledgerId)]).size > 1) {
+      setError("Este recibo tiene varias formas de pago y admite una sola factura. Retira las formas adicionales para agregar otra factura."); return;
+    }
     added = added.map(line => line.value.financialGroupId || !defaultFinancialGroupId ? line
       : { ...line, value: { ...line.value, financialGroupId: defaultFinancialGroupId } });
     setLines(previous => {
@@ -569,6 +581,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
             businessId={businessId} documentId={form.documentId} occurredAt={form.occurredAt}
             voucherTypeCode={form.voucherTypeCode} partyId={form.mainPartyId}
             remainingLineCapacity={500 - lines.length} linkedPositions={linkedPositions} crossTargets={crossTargets}
+            receivableSelectionLimit={inlinePaymentVoucher && paymentLines.length > 1 ? 1 : undefined}
             onCross={crossCredit} onAdd={addPositionLines} /></div>}
         <div className="space-y-2"><Label htmlFor="voucher-occurred-at">{form.voucherTypeCode === "CashReceipt" || form.voucherTypeCode === "Disbursement" ? "Fecha de pago" : "Fecha contable"}</Label><DatePicker id="voucher-occurred-at" value={form.occurredAt.slice(0, 10)} onChange={date => {
           try { change({ occurredAt: date ? accountingDateAtNoon(date, timeZone) : "" }); }
@@ -588,8 +601,9 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       </section>
       {inlinePaymentVoucher && <>
         <VoucherPaymentForms tenantId={tenantId} businessId={businessId}
-          lines={lines.flatMap((line, index) => line.value.paymentEvidence && !line.value.existingPosition && !line.value.financialConceptId ? [{ line, index }] : [])}
+          lines={paymentLines}
           applied={appliedPayments} disabled={busy} readOnly={readOnly}
+          addBlockReason={paymentAddBlockReason}
           canAdd={!!form.mainPartyId && (lines.length < 500 || lines.some(line => !hasLineCapture(line)))}
           onSelect={selectPaymentForm} onChange={updateValue}
           onEvidence={(index, patch) => updateValue(index, { paymentEvidence: { ...lines[index].value.paymentEvidence, ...patch } })}
@@ -598,6 +612,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
             setLines(remaining); markChanged(new Set(remaining.map(line => line.value.lineId!)));
           }} />
       </>}
+      {!readOnly && receiptAttributionConflict && <p role="alert" className="rounded-xl border p-4 text-sm text-destructive">Para varias facturas se usa una sola forma de pago. Conserva una factura o retira las formas adicionales; tus valores se mantienen.</p>}
       {form.adjustment ? <section className="grid gap-4 rounded-2xl border bg-card p-5 sm:grid-cols-3">
         <div className="space-y-2"><Label>Dirección del ajuste</Label><Select value={form.adjustment.direction} disabled={readOnly || busy} onValueChange={direction => change({ adjustment: { ...form.adjustment!, direction: direction as "Increase" | "Decrease" } })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{directions.data?.map(item => <SelectItem key={item.id} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></div>
         <div className="space-y-2"><Label>Valor del ajuste</Label><FormattedNumberInput kind="currency" ariaLabel="Valor del ajuste" value={form.adjustment.amount} onValueChange={amount => change({ adjustment: { ...form.adjustment!, amount: amount ?? 0 } })} /></div>
@@ -674,7 +689,7 @@ export function VoucherDraftEditor({ businessId, initial, adjustment, preparatio
       {canCancelPlainJournal && <Button variant="destructive" disabled={busy} onClick={() => setCancelOpen(true)}><RotateCcw className="mr-2 h-4 w-4" />Anular comprobante</Button>}
       {saved && !saved.sentAt && !readOnly && <Button variant="destructive" disabled={busy} onClick={() => setDeleteOpen(true)}>{phase === "discard" ? "Descartando…" : "Descartar borrador"}</Button>}
       {!readOnly && <Button variant="outline" disabled={busy || !dirty} onClick={() => void save()}><Save className="mr-2 h-4 w-4" />{phase === "save" ? "Guardando…" : "Guardar borrador"}</Button>}
-      {!readOnly && permissions.includes("accounting.manual.send") && <Button disabled={busy || fiscalDocument && !form.fiscalCapture?.calculationHash} onClick={() => void saveAndPost()}><Send className="mr-2 h-4 w-4" />{phase === "send" ? "Contabilizando…" : "Guardar comprobante"}</Button>}
+      {!readOnly && permissions.includes("accounting.manual.send") && <Button disabled={busy || receiptAttributionConflict || fiscalDocument && !form.fiscalCapture?.calculationHash} onClick={() => void saveAndPost()}><Send className="mr-2 h-4 w-4" />{phase === "send" ? "Contabilizando…" : "Guardar comprobante"}</Button>}
     </footer>
     {entryOpen && <AccountingDocumentDialog documentId={saved?.documentId} hasFiscalDocument={!!saved?.row.fiscalDocumentType} onClose={() => setEntryOpen(false)} />}
     {reversalOpen && saved?.reversalDocumentId && <AccountingDocumentDialog documentId={saved.reversalDocumentId} onClose={() => setReversalOpen(false)} />}

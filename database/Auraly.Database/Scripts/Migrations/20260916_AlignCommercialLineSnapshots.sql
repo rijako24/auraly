@@ -150,51 +150,8 @@ IF EXISTS(SELECT 1 FROM sys.columns
             AND name=N'PublicLineTotal' AND is_nullable=1)
     ALTER TABLE dbo.SalesDraftLines ALTER COLUMN PublicLineTotal DECIMAL(18,2) NOT NULL;
 
-DECLARE @MegafruverBusinessId UNIQUEIDENTIFIER=(
-    SELECT TOP(1) business.BusinessId
-    FROM dbo.Businesses business
-    JOIN dbo.Tenants tenant ON tenant.TenantId=business.TenantId
-    WHERE tenant.Name=N'MEGAFRUVER'
-    ORDER BY business.CreatedAt);
-
-IF @MegafruverBusinessId IS NOT NULL
-BEGIN
-    UPDATE item
-    SET UnitPrice=CEILING(item.UnitPrice*100)/100,
-        LineTotal=ROUND(item.Quantity*(CEILING(item.UnitPrice*100)/100)-item.DiscountAmount,2),
-        DocumentUnitCost=CASE WHEN item.DocumentUnitCost>0 THEN item.DocumentUnitCost
-                              ELSE COALESCE(price.CostBasisAmount,item.DocumentUnitCost) END
-    FROM dbo.OrderItems item
-    JOIN dbo.Orders orderValue ON orderValue.OrderId=item.OrderId
-    OUTER APPLY
-    (
-        SELECT TOP(1) value.CostBasisAmount
-        FROM dbo.ProductPrices value
-        WHERE value.BusinessId=item.BusinessId AND value.ProductId=item.ProductId
-          AND value.IsActive=1
-        ORDER BY value.ValidFrom DESC,value.ProductPriceId
-    ) price
-    WHERE orderValue.BusinessId=@MegafruverBusinessId
-      AND orderValue.ExternalDocumentNumber LIKE N'PED-%'
-      AND orderValue.Status IN(2,5)
-      AND NOT EXISTS(SELECT 1 FROM dbo.OrderInvoiceLinks link
-                     WHERE link.OrderId=orderValue.OrderId)
-      AND (item.UnitPrice<>CEILING(item.UnitPrice*100)/100
-           OR item.LineTotal<>ROUND(item.Quantity*(CEILING(item.UnitPrice*100)/100)-item.DiscountAmount,2)
-           OR (item.DocumentUnitCost<=0 AND price.CostBasisAmount>0));
-
-    UPDATE orderValue
-    SET Subtotal=totals.Total,Total=totals.Total,UpdatedAt=SYSUTCDATETIME()
-    FROM dbo.Orders orderValue
-    CROSS APPLY(SELECT SUM(item.LineTotal) Total
-                FROM dbo.OrderItems item WHERE item.OrderId=orderValue.OrderId) totals
-    WHERE orderValue.BusinessId=@MegafruverBusinessId
-      AND orderValue.ExternalDocumentNumber LIKE N'PED-%'
-      AND orderValue.Status IN(2,5)
-      AND NOT EXISTS(SELECT 1 FROM dbo.OrderInvoiceLinks link
-                     WHERE link.OrderId=orderValue.OrderId)
-      AND (orderValue.Subtotal<>totals.Total OR orderValue.Total<>totals.Total);
-END;
+-- Preserve the captured amounts and costs of existing orders. A schema
+-- upgrade never reprices a tenant's pending commercial documents.
 
 EXEC sys.sp_addextendedproperty
     @name=N'Auraly.Migration.20260916.AlignCommercialLineSnapshots',

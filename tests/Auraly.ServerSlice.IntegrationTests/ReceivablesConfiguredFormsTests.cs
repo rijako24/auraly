@@ -1,4 +1,13 @@
 using System.Net.Http.Json;
+using System.Data;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Auraly.BuildingBlocks.Domain.Payments;
+using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.Commerce.Accounting.Infrastructure;
+using Auraly.Domain.Receivables;
+using Auraly.Infrastructure.Persistence;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Receivables;
@@ -61,11 +70,13 @@ public sealed partial class ReceivablesVerticalSliceTests
             Assert.Equal(DBNull.Value,await pending.ExecuteScalarAsync());
             var transferType = (await client.GetFromJsonAsync<ReferenceOption[]>("/api/commerce/v1/reference-options/payment-method"))!
                 .Single(value => value.Code == "Transfer");
+            var lockedForm = Assert.Single((await client.GetFromJsonAsync<PaymentMethodPage>(
+                $"/api/commerce/v1/payment-methods/?paymentMethodId={form.PaymentMethodId}"))!.Items);
             using var semanticEdit = await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{form.PaymentMethodId}",
-                configuration with { PaymentTypeId = transferType.Id, IsActive = false, RowVersion = form.RowVersion });
+                configuration with { PaymentTypeId = transferType.Id, IsActive = false, RowVersion = lockedForm.RowVersion });
             Assert.Equal(System.Net.HttpStatusCode.Conflict, semanticEdit.StatusCode);
             using var changed=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{form.PaymentMethodId}",
-                configuration with {AccountId=current.AccountId,Name="Caja vigente",RowVersion=form.RowVersion});
+                configuration with {AccountId=current.AccountId,Name="Caja vigente",RowVersion=lockedForm.RowVersion});
             Assert.True(changed.IsSuccessStatusCode,await changed.Content.ReadAsStringAsync());
         }
         finally
@@ -104,8 +115,10 @@ public sealed partial class ReceivablesVerticalSliceTests
         Assert.Equal(900m,await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",invoice));
     }
 
-    [Fact]
-    public async Task Configured_forms_settle_two_invoices_once_and_keep_the_effective_date_and_original_accounts()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Configured_receipts_restrict_new_multi_invoice_tenders_but_preserve_accepted_replay(bool historical)
     {
         var (customerId,userId,_)=await ConfigureAsync();
         using var client=fixture.CreateUserClient(userId,ReceivablesPermissionCodes.Read,
@@ -136,6 +149,50 @@ public sealed partial class ReceivablesVerticalSliceTests
             [new(invoice1,500),new(invoice2,500)],[
                 new("Cash",600,600,PaymentMethodId:form1.PaymentMethodId,PaymentMethodVersion:form1.Version),
                 new("Cash",400,400,PaymentMethodId:form2.PaymentMethodId,PaymentMethodVersion:form2.Version)],PaidOn:new(2026,8,2));
+        if (historical)
+        {
+            // Reconstruct a receipt accepted before the new capture policy using
+            // the existing SQL participant and source writer, then replay via API.
+            var settlement = ReceivableSettlement.Create(payment.Allocations.Select(item => new ReceivableAllocation(item.ReceivableId, item.Amount)));
+            var tenders = PaymentTenderBreakdown.Create(payment.Payments.Select(item => new PaymentTender(item.MethodCode, item.Amount,
+                item.TenderedAmount, PaymentMethodId: item.PaymentMethodId, PaymentMethodVersion: item.PaymentMethodVersion)), 1000, 2, PortfolioPaymentMethods.Supported);
+            var hash = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { payment.PaymentId, payment.BusinessId,
+                payment.CustomerId, payment.WorkSessionId, payment.PaidAt, payment.CurrencyCode, payment.Notes, settlement.Allocations, tenders.Tenders }));
+            hash = SHA256.HashData(hash.Concat(Encoding.UTF8.GetBytes(payment.PaidOn!.Value.ToString("O", System.Globalization.CultureInfo.InvariantCulture))).ToArray());
+            await using var seedConnection = new SqlConnection(fixture.ConnectionString); await seedConnection.OpenAsync();
+            await using var transaction = (SqlTransaction)await seedConnection.BeginTransactionAsync(IsolationLevel.Serializable);
+            var number = await SqlOperationalDocumentAllocator.AllocateExistingNumberAsync(seedConnection, transaction,
+                fixture.TenantId, fixture.BusinessId, ReceivablesDocumentTypes.Payment, payment.PaidAt, default);
+            var resolved = await SqlPaymentMethodResolver.ResolveAsync(seedConnection, transaction, fixture.TenantId,
+                fixture.BusinessId, "Receipts", tenders.Tenders, default);
+            var payload = CustomerPaymentContractSerializer.Serialize(new(fixture.TenantId, fixture.BusinessId, payment.PaymentId,
+                customerId, userId, null, number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive,
+                payment.PaidAt, "COP", null, 1000, settlement.Allocations.Select((item,index) => new CustomerPaymentAllocationSnapshot(index+1,item.ReceivableId,item.Amount)).ToArray(),
+                resolved.Select((item,index) => new CustomerPaymentTenderSnapshot(index+1,item.MethodCode,item.Amount,item.TenderedAmount,
+                    item.BankAccountId,item.Reference,item.Notes,item.CardFranchiseCode,item.ApprovalNumber,item.PaymentMethodId,
+                    item.PaymentMethodVersion,item.PaymentMethodCode,item.PaymentMethodName,item.AccountId)).ToArray()));
+            await using var seed = new SqlCommand("accounting.PortfolioPaymentAccept", seedConnection, transaction) { CommandType = CommandType.StoredProcedure };
+            seed.Parameters.AddWithValue("@TenantId", fixture.TenantId); seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@UserId", userId); seed.Parameters.AddWithValue("@SubledgerKind", "Receivable");
+            seed.Parameters.Add("@Payload", SqlDbType.NVarChar, -1).Value = payload;
+            seed.Parameters.AddWithValue("@IdempotencyKey", payment.PaymentId.ToString("N")); seed.Parameters.Add("@PayloadHash", SqlDbType.Binary,32).Value = hash;
+            seed.Parameters.AddWithValue("@AcceptedAt", payment.PaidAt); await seed.ExecuteNonQueryAsync();
+            await SqlAccountingPostingJobWriter.InsertSourceAsync(seedConnection, transaction, fixture.TenantId, fixture.BusinessId,
+                payment.PaymentId, ReceivablesDocumentTypes.Payment, payload, payment.PaidAt, new Uuid7AuralyIdGenerator(TimeProvider.System),
+                TimeProvider.System, default, AccountingJobRequirement.PreserveCommercialEffects);
+            await transaction.CommitAsync();
+            await ReprocessAsync(payment.PaymentId, ReceivablesDocumentTypes.Payment);
+        }
+        else
+        {
+            using var rejected = await SendAsync(client,"/api/commerce/v1/receivable-payments/confirm",payment,payment.PaymentId.ToString("N"));
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, rejected.StatusCode);
+            Assert.Contains("una sola forma de pago", await rejected.Content.ReadAsStringAsync());
+            Assert.Equal(0, await CountAsync("AccountingEntries","SourceDocumentId",payment.PaymentId));
+            Assert.Equal(0, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.CustomerPayments WHERE PaymentId=@Id", payment.PaymentId));
+            Assert.Equal(1000m,await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",invoice1));
+            payment = payment with { Payments = [payment.Payments.First() with { Amount = 1000, TenderedAmount = 1000 }] };
+        }
         using(var accepted=await SendAsync(client,"/api/commerce/v1/receivable-payments/confirm",payment,payment.PaymentId.ToString("N")))
         {
             Assert.True(accepted.IsSuccessStatusCode,await accepted.Content.ReadAsStringAsync());
@@ -145,9 +202,11 @@ public sealed partial class ReceivablesVerticalSliceTests
         Assert.Equal(500m,await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",invoice1));
         Assert.Equal(500m,await ScalarAsync<decimal>("SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",invoice2));
         Assert.Equal(1,await CountAsync("AccountingEntries","SourceDocumentId",payment.PaymentId));
-        Assert.Equal(2,await CountAsync("CustomerPaymentTenders","PaymentId",payment.PaymentId));
+        Assert.Equal(historical ? 2 : 1,await CountAsync("CustomerPaymentTenders","PaymentId",payment.PaymentId));
+        var lockedFirst = Assert.Single((await client.GetFromJsonAsync<PaymentMethodPage>(
+            $"/api/commerce/v1/payment-methods/?paymentMethodId={form1.PaymentMethodId}"))!.Items);
         var edit=new SavePaymentMethodRequest(form1.PaymentMethodId,form1.Code,"Caja renombrada",form1.PaymentTypeId,form1.AccountId,
-            form1.UseForSales,form1.UseForReceipts,form1.UseForSupplierPayments,form1.UseForPayroll,true,10,form1.RowVersion);
+            form1.UseForSales,form1.UseForReceipts,form1.UseForSupplierPayments,form1.UseForPayroll,true,10,lockedFirst.RowVersion);
         using(var changed=await client.PutAsJsonAsync($"/api/commerce/v1/payment-methods/{form1.PaymentMethodId}?page=1&pageSize=50",edit))
             Assert.True(changed.IsSuccessStatusCode,await changed.Content.ReadAsStringAsync());
         using(var replay=await SendAsync(client,"/api/commerce/v1/receivable-payments/confirm",payment,payment.PaymentId.ToString("N")))
@@ -164,7 +223,8 @@ public sealed partial class ReceivablesVerticalSliceTests
             """,connection);
         verify.Parameters.AddWithValue("@Payment",payment.PaymentId);
         await using var reader=await verify.ExecuteReaderAsync();
-        Assert.True(await reader.ReadAsync());Assert.Equal("Caja uno",reader.GetString(0));Assert.Equal(1,reader.GetInt32(1));Assert.Equal(600m,reader.GetDecimal(2));
-        Assert.True(await reader.ReadAsync());Assert.Equal("Caja dos",reader.GetString(0));Assert.Equal(1,reader.GetInt32(1));Assert.Equal(400m,reader.GetDecimal(2));
+        Assert.True(await reader.ReadAsync());Assert.Equal("Caja uno",reader.GetString(0));Assert.Equal(1,reader.GetInt32(1));Assert.Equal(historical ? 600m : 1000m,reader.GetDecimal(2));
+        Assert.Equal(historical, await reader.ReadAsync());
+        if (historical) { Assert.Equal("Caja dos",reader.GetString(0));Assert.Equal(1,reader.GetInt32(1));Assert.Equal(400m,reader.GetDecimal(2)); }
     }
 }

@@ -492,6 +492,11 @@ public static partial class AccountingVoucherFinancialValidation
         if (request.Lines.Any(line => line.PartyId is { } partyId && partyId != receiptParty))
             throw new AccountingValidationException("Las partidas del recibo deben corresponder al tercero principal.");
         var treasury = request.Lines.Where(line => accounts.TryGetValue(line.AccountId, out var account) && IsTreasury(account.Function)).ToArray();
+        var invoices = request.Lines.Where(line => line.ExistingPosition is
+                { SubledgerKind: AccountingSubledgerKinds.Receivable, ReversesTransactionId: null } && line.Credit > 0)
+            .Select(line => line.ExistingPosition!.SubledgerId).Distinct().Count();
+        try { PaymentTenderBreakdown.EnsureUnambiguousInvoiceAttribution(invoices, treasury.Length); }
+        catch (ArgumentException error) { throw new AccountingValidationException(error.Message, error); }
         if (treasury.Any(line => accounts[line.AccountId].Function == "CreditCardLiability"))
             throw new AccountingValidationException("El recibo requiere una entrada real de dinero. Reducir la deuda de una tarjeta no es un recaudo.");
         if (treasury.Length == 0 && !(request.Lines.All(line => line.ExistingPosition is not null || line.FinancialConceptTargetLineId is not null) &&

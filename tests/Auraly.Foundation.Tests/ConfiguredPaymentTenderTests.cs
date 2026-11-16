@@ -7,12 +7,25 @@ namespace Auraly.Foundation.Tests;
 public sealed class ConfiguredPaymentTenderTests
 {
     [Fact]
-    public void Two_bank_forms_of_the_same_type_can_settle_multiple_invoices()
+    public void Historical_configured_breakdowns_with_multiple_forms_and_invoices_remain_readable()
     {
         var values = new[] { Transfer(Guid.NewGuid(), 30), Transfer(Guid.NewGuid(), 70) };
         var result = PaymentTenderBreakdown.Create(values, 100, 2, PortfolioPaymentMethods.Supported);
         Assert.Equal(2, result.Tenders.Count);
         Assert.Equal(100m, result.TotalAmount);
+    }
+
+    [Theory]
+    [InlineData(0, 2)]
+    [InlineData(1, 1)]
+    [InlineData(1, 10)]
+    [InlineData(2, 1)]
+    [InlineData(2, 2)]
+    public void New_receipt_attribution_counts_forms_even_when_they_share_the_same_technical_type(int invoices, int forms)
+    {
+        if (invoices > 1 && forms > 1)
+            Assert.Throws<ArgumentException>(() => PaymentTenderBreakdown.EnsureUnambiguousInvoiceAttribution(invoices, forms));
+        else PaymentTenderBreakdown.EnsureUnambiguousInvoiceAttribution(invoices, forms);
     }
 
     [Fact]

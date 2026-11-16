@@ -115,7 +115,7 @@ export function PosPaymentDialog({
   });
   const formCatalog = configurationQuery.data?.paymentMethods ?? null;
   const catalogReady = formCatalog?.contractVersion === 2;
-  const effectiveMaximum = portfolioDirection ? 10 : maxPaymentMethods;
+  const effectiveMaximum = maxPaymentMethods ?? (portfolioDirection ? 10 : undefined);
   const forms = useMemo(() => (catalogReady ? formCatalog.forms : []).filter(form => portfolioDirection === "receivable" ? form.useForReceipts : portfolioDirection === "payable" ? form.useForSupplierPayments : form.useForSales), [catalogReady, formCatalog, portfolioDirection]);
   const automaticCredit = !portfolioDirection && !forms.some(form => form.methodCode === "Credit");
   const [payments, setPayments] = useState<PaymentRow[]>([]);

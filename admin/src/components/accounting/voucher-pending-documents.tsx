@@ -33,13 +33,14 @@ export function createVoucherPositionLine(position: AccountingOpenPosition, amou
   }, accountCode: position.accountCode, accountName: position.accountName,
     partyName: position.partyName, partyIdentification: position.partyIdentification, costCenterName: null };
 }
-function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, linked, remainingLineCapacity, crossTargets, onCross, onAdd, onOpenOrigin }: {
+function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, linked, remainingLineCapacity, crossTargets, onCross, onAdd, onOpenOrigin, addBlockReason }: {
   position: AccountingOpenPosition; kind: Kind; voucherTypeCode?: string | null;
   sourceTypeLabel: string;
   linked: LinkedPosition[]; remainingLineCapacity: number;
   crossTargets: ReadonlyArray<VoucherCreditTarget>;
   onCross: (position: AccountingOpenPosition, targetLineId: string, amount: number) => void;
   onAdd: (lines: VoucherDraftLineView[]) => void; onOpenOrigin: (id: string) => void;
+  addBlockReason?: string;
 }) {
   const money = useMemo(() => new Intl.NumberFormat("es-CO", {
     ...(position.currencyCode && /^[A-Z]{3}$/.test(position.currencyCode)
@@ -86,7 +87,7 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, 
       (adjustment === 0 || !!discountAccountId));
 
   function add() {
-    if (!canAdd || amount === null) return;
+    if (!canAdd || addBlockReason || amount === null) return;
     const groupId = decision === "pending" ? null : crypto.randomUUID();
     const selected = createVoucherPositionLine(position, amount, groupId, decision === "pending" ? null : decision === "earned");
     const counterpart: VoucherDraftLineView[] = adjustment === 0 ? [] : [{ value: {
@@ -121,7 +122,8 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, 
     <td className="p-2">{assistedCredit
       ? <Button size="sm" disabled={remainingCredit <= 0 || !!position.openingLinkIssue || position.currencyCode !== "COP" || !position.accountId}
           onClick={() => setCrossOpen(current => !current)}>Cruzar</Button>
-      : <Button size="sm" disabled={!canAdd} onClick={add}>{editableLinked.length === 1 ? "Actualizar" : "Agregar"}</Button>}</td>
+      : <Button size="sm" disabled={!canAdd || !!addBlockReason} onClick={add}>{editableLinked.length === 1 ? "Actualizar" : "Agregar"}</Button>}
+      {addBlockReason && <p className="mt-1 max-w-56 text-xs text-muted-foreground">{addBlockReason}</p>}</td>
   </tr>
   {crossOpen && assistedCredit && <tr className="border-t bg-muted/20"><td colSpan={9} className="space-y-2 px-3 py-3 text-sm">
     <p>Selecciona la obligación que cubrirá este saldo a favor. El cruce agrega sus dos partidas y reduce el importe pendiente de cubrir con dinero nuevo; no cambia el dinero registrado.</p>
@@ -151,12 +153,13 @@ function PendingDocumentRow({ position, kind, voucherTypeCode, sourceTypeLabel, 
 }
 
 export function VoucherPendingDocuments({ businessId, documentId, occurredAt, voucherTypeCode, partyId,
-  remainingLineCapacity, linkedPositions, crossTargets, onCross, onAdd }: {
+  remainingLineCapacity, linkedPositions, crossTargets, onCross, onAdd, receivableSelectionLimit }: {
   businessId: string; documentId: string; occurredAt: string; voucherTypeCode?: string | null; partyId: string;
   remainingLineCapacity: number; linkedPositions: ReadonlyArray<LinkedPosition>;
   crossTargets: ReadonlyArray<VoucherCreditTarget>;
   onCross: (position: AccountingOpenPosition, targetLineId: string, amount: number) => void;
   onAdd: (lines: VoucherDraftLineView[]) => void;
+  receivableSelectionLimit?: number;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const kinds = useReferenceOptions("accounting-subledger-kind", filtersOpen);
@@ -180,6 +183,7 @@ export function VoucherPendingDocuments({ businessId, documentId, occurredAt, vo
       accountId: accountId || undefined, dueFrom: dueFrom || undefined, dueTo: dueTo || undefined,
       effectiveOn: occurredAt.slice(0, 10), voucherTypeCode: cashReceipt ? "CashReceipt" : disbursement ? "Disbursement" : undefined }), enabled: !!partyId, staleTime: 60_000 });
   const totalPages = Math.ceil((positions.data?.totalCount ?? 0) / 10);
+  const selectedReceivables = new Set(linkedPositions.filter(item => item.subledgerKind === "Receivable" && item.amount > 0).map(item => item.subledgerId));
 
   return <section aria-label="Documentos pendientes del tercero" className="space-y-3 rounded-xl border bg-muted/10 p-4">
     <div><h3 className="font-semibold">Documentos pendientes del tercero</h3>
@@ -211,6 +215,9 @@ export function VoucherPendingDocuments({ businessId, documentId, occurredAt, vo
         {positions.data.items.map(position => <PendingDocumentRow key={`${position.subledgerKind}:${position.subledgerId}`} position={position} kind={position.subledgerKind}
           sourceTypeLabel={documentTypes.data?.find(item => item.code === position.sourceDocumentType)?.label ?? position.sourceDocumentType}
           voucherTypeCode={voucherTypeCode} remainingLineCapacity={remainingLineCapacity}
+          addBlockReason={position.subledgerKind === "Receivable" && receivableSelectionLimit !== undefined &&
+            !selectedReceivables.has(position.subledgerId) && selectedReceivables.size >= receivableSelectionLimit
+            ? "El recibo tiene varias formas de pago. Retira las formas adicionales para agregar otra factura." : undefined}
           crossTargets={crossTargets} onCross={onCross}
           linked={linkedPositions.filter(item => item.subledgerKind === position.subledgerKind && item.subledgerId === position.subledgerId)}
           onAdd={onAdd} onOpenOrigin={setOriginId} />)}

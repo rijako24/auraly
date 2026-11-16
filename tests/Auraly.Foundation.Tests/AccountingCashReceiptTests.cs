@@ -7,6 +7,50 @@ namespace Auraly.Foundation.Tests;
 
 public sealed class AccountingCashReceiptTests
 {
+    [Theory]
+    [InlineData(1, 1, false, false)]
+    [InlineData(1, 2, false, false)]
+    [InlineData(2, 1, false, false)]
+    [InlineData(2, 2, false, false)]
+    [InlineData(2, 2, true, false)]
+    [InlineData(2, 2, false, true)]
+    public void New_receipts_require_unambiguous_invoice_attribution_without_changing_general_vouchers(
+        int invoiceCount, int formCount, bool separateGroups, bool generalVoucher)
+    {
+        var (user, request, context) = Receipt(true, false);
+        var first = request.Lines[0] with { Credit = invoiceCount == 1 ? 250m : 125m, FinancialGroupId = request.VoucherId };
+        var cash = request.Lines[1] with { Debit = formCount == 1 ? 250m : 125m, FinancialGroupId = request.VoucherId,
+            PaymentEvidence = new(PaymentMethodId: Guid.NewGuid(), PaymentMethodVersion: 1, PaymentMethodTypeCode: "Cash", PaymentMethodCode: "C1", PaymentMethodName: "Caja uno") };
+        var lines = new List<ManualVoucherLineRequest> { first, cash };
+        if (invoiceCount == 2)
+        {
+            var position = context.Positions[0] with { PositionId = Guid.NewGuid() };
+            context = context with { Positions = [..context.Positions, position] };
+            lines.Add(first with { LineId = Guid.NewGuid(), ExistingPosition = new("Receivable", position.PositionId),
+                FinancialGroupId = separateGroups ? position.PositionId : request.VoucherId });
+        }
+        if (formCount == 2)
+        {
+            var account = Guid.NewGuid();
+            context = context with { Accounts = [..context.Accounts, new(account, "Cash", "Cash", null)] };
+            lines.Add(cash with { AccountId = account, LineId = Guid.NewGuid(),
+                FinancialGroupId = separateGroups ? context.Positions[1].PositionId : request.VoucherId,
+                PaymentEvidence = new(PaymentMethodId: Guid.NewGuid(), PaymentMethodVersion: 1, PaymentMethodTypeCode: "Cash", PaymentMethodCode: "C2", PaymentMethodName: "Caja dos") });
+        }
+        request = request with { Lines = lines, VoucherTypeCode = generalVoucher ? "Accounting" : "CashReceipt" };
+        if (!generalVoucher && invoiceCount > 1 && formCount > 1)
+        {
+            var error = Assert.Throws<AccountingValidationException>(() => AccountingVoucherFinancialValidation.Normalize(user, request, context, Ids()));
+            Assert.Contains("una sola forma de pago", error.Message);
+            return;
+        }
+        var effects = AccountingVoucherFinancialValidation.Normalize(user, request, context, Ids());
+        var payment = Assert.Single(effects.Payments);
+        Assert.Equal(invoiceCount, payment.Allocations.Count);
+        Assert.Equal(formCount, payment.Tenders.Count);
+        Assert.Equal(250m, payment.Allocations.Sum(item => item.Amount));
+    }
+
     [Fact]
     public void An_explicit_reduction_can_share_a_credit_cross_without_creating_cash_or_a_second_advance()
     {
@@ -195,29 +239,26 @@ public sealed class AccountingCashReceiptTests
     [InlineData("incomplete")]
     [InlineData("mixed")]
     [InlineData("change")]
-    public void Configured_forms_share_the_native_tender_rules_for_multiple_invoices(string? fault)
+    public void Configured_forms_share_the_native_tender_rules_for_one_invoice(string? fault)
     {
         var (user, request, context) = Receipt(true, false);
         var debt = request.Lines[0]; var money = request.Lines[1];
-        var secondPosition = Guid.NewGuid();
         var firstForm = new VoucherPaymentEvidence(PaymentMethodId:Guid.NewGuid(),PaymentMethodTypeCode:"Cash",
             PaymentMethodVersion:1,PaymentMethodCode:"CAJA-A",PaymentMethodName:"Caja A");
         var secondForm = firstForm with { PaymentMethodId=Guid.NewGuid(),PaymentMethodCode="CAJA-B",PaymentMethodName="Caja B" };
         if (fault == "duplicate") secondForm = firstForm;
         if (fault == "incomplete") secondForm = secondForm with { PaymentMethodVersion=null };
         if (fault == "change") secondForm = secondForm with { TenderedAmount=200m };
-        request = request with { Lines = [debt with { Credit=150m },
-            debt with { LineId=Guid.NewGuid(),Credit=100m,ExistingPosition=new("Receivable",secondPosition) },
+        request = request with { Lines = [debt with { Credit=250m },
             money with { Debit=125m,PaymentEvidence=firstForm },
             money with { LineId=Guid.NewGuid(),Debit=125m,PaymentEvidence=fault == "mixed" ? null : secondForm }] };
-        context = context with { Positions=[.. context.Positions,context.Positions[0] with { PositionId=secondPosition }] };
         if (fault is not null)
         {
             Assert.Throws<AccountingValidationException>(() => AccountingVoucherFinancialValidation.Normalize(user,request,context,Ids()));
             return;
         }
         var group = Assert.Single(AccountingVoucherFinancialValidation.Normalize(user,request,context,Ids()).Payments);
-        Assert.Equal(2,group.Allocations.Count);
+        Assert.Single(group.Allocations);
         Assert.Equal(2,group.Tenders.Count);
         Assert.Equal(250m,group.Tenders.Sum(item => item.Amount));
         Assert.Equal(new[] { firstForm.PaymentMethodId,secondForm.PaymentMethodId },group.Tenders.Select(item => item.PaymentMethodId));

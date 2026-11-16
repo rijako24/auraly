@@ -16,11 +16,12 @@ export interface VoucherPaymentCapture {
 }
 
 export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
-  disabled, readOnly, canAdd, onSelect, onChange, onEvidence, onRemove }: {
+  disabled, readOnly, canAdd, addBlockReason, onSelect, onChange, onEvidence, onRemove }: {
   tenantId: string | null; businessId: string;
   lines: ReadonlyArray<{ line: VoucherDraftLineView; index: number }>;
   applied: ReadonlyMap<string, VoucherAppliedPaymentMethod>;
   disabled: boolean; readOnly: boolean; canAdd: boolean;
+  addBlockReason?: string;
   onSelect: (method: PaymentMethod, index: number, capture?: VoucherPaymentCapture) => boolean;
   onChange: (index: number, patch: Partial<VoucherDraftLine>) => void;
   onEvidence: (index: number, patch: Partial<VoucherPaymentEvidence>) => void;
@@ -83,12 +84,13 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
           onClick={() => onRemove(index)}>Quitar forma de pago {ordinal + 1}</Button></div>}
       </fieldset>;
     })}
-    {!readOnly && <fieldset disabled={disabled || !canAdd} aria-label="Agregar forma de pago" className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
+    {!readOnly && addBlockReason && <p role="status" className="text-sm text-muted-foreground">{addBlockReason}</p>}
+    {!readOnly && <fieldset disabled={disabled || !canAdd || !!addBlockReason} aria-label="Agregar forma de pago" className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
       <div className="space-y-1"><Label>{lines.length ? "Otra forma de pago (opcional)" : "Forma de pago"}</Label>
       <PaymentMethodSelect tenantId={tenantId} businessId={businessId} usage="Receipts"
         value={candidate?.paymentMethodId ?? ""} name={candidate?.name}
         accountLabel={candidate ? `${candidate.accountCode} · ${candidate.accountName}` : null}
-        ariaLabel="Seleccionar forma de pago" disabled={disabled || !canAdd}
+        ariaLabel="Seleccionar forma de pago" disabled={disabled || !canAdd || !!addBlockReason}
         onChange={method => {
           setCandidate(method);
           setCapture(previous => ({ amount: previous.amount, reference: null, approvalNumber: null, cardFranchiseCode: null }));
@@ -104,7 +106,7 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
         <Input id="new-payment-approval" maxLength={100} value={capture.approvalNumber ?? ""}
           onChange={event => setCapture(previous => ({ ...previous, approvalNumber: event.target.value || null }))} /></div>
         <div className="space-y-1"><Label>Franquicia de tarjeta</Label>
-          <Select value={capture.cardFranchiseCode ?? "none"} disabled={disabled || !canAdd}
+          <Select value={capture.cardFranchiseCode ?? "none"} disabled={disabled || !canAdd || !!addBlockReason}
             onValueChange={value => setCapture(previous => ({ ...previous, cardFranchiseCode: value === "none" ? null : value }))}>
             <SelectTrigger aria-label="Franquicia de la nueva forma"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="none">Selecciona una franquicia</SelectItem>
@@ -112,7 +114,7 @@ export function VoucherPaymentForms({ tenantId, businessId, lines, applied,
             </SelectContent>
           </Select></div></>}
       {duplicate && <p role="alert" className="text-sm text-destructive sm:col-span-2">La forma ya está en las partidas. Cambia su importe o selecciona otra forma.</p>}
-      <div className="sm:col-span-2"><Button type="button" disabled={disabled || !canAdd || !candidate || capture.amount <= 0 || duplicate || !!evidenceMissing}
+      <div className="sm:col-span-2"><Button type="button" disabled={disabled || !canAdd || !!addBlockReason || !candidate || capture.amount <= 0 || duplicate || !!evidenceMissing}
         onClick={() => {
           if (candidate && onSelect(candidate, -1, capture)) {
             setCandidate(null); setCapture({ amount: 0, reference: null, approvalNumber: null, cardFranchiseCode: null });
