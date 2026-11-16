@@ -264,8 +264,8 @@ public sealed partial class PayrollVerticalSliceTests(ServerSliceFixture fixture
         using (var approve = await client.SendAsync(approveRequest))
             Assert.True(approve.IsSuccessStatusCode, await approve.Content.ReadAsStringAsync());
         await AssertZeroNoveltiesConsumedAsync(run);
-        var consumedNovelty=Assert.Single((await GetAsync<PayrollWorkspaceOptions>(client,
-            "/api/commerce/v1/payroll/options")).Novelties,item=>item.NoveltyId==noveltyRequest.NoveltyId);
+        var consumedNovelty=Assert.Single((await GetAsync<PayrollRunView>(client,
+            $"/api/commerce/v1/payroll/runs/{runId:D}")).Employees.SelectMany(employee=>employee.Novelties),item=>item.NoveltyId==noveltyRequest.NoveltyId);
         Assert.Equal("Consumed",consumedNovelty.Status);
         using(var updateConsumed=await client.PutAsJsonAsync($"/api/commerce/v1/payroll/novelties/{noveltyRequest.NoveltyId:D}",
             noveltyRequest with {RowVersion=consumedNovelty.RowVersion}))

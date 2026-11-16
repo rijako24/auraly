@@ -404,6 +404,44 @@ forzar rollback: se preservan las entradas y se corrige hacia adelante.
 
 - Liquidar prepara el cálculo editable. Novedades permite elegir liquidación y
   trabajador y administrar ingresos y deducciones juntos, sin sección Descuentos.
+  La vista del 16-11-2026 excluye borradores sin calcular y muestra primero todos
+  los trabajadores de la liquidación, con identificación, contrato, días y totales.
+  Entrar a uno abre su detalle en esa misma pantalla: conceptos, cantidades,
+  bases, valores y observaciones; permite ajustar días y agregar, editar o retirar
+  novedades manuales. La captura reutiliza el formulario existente dentro del
+  detalle, sin otra lista global ni un modal adicional. Las autorizaciones siguen
+  siendo el soporte de las deducciones, no un segundo cálculo de descuentos.
+  Si guardar una novedad funciona pero falla el recálculo, la entrada permanece
+  visible y editable como pendiente de recalcular; los totales conservan el último
+  cálculo aceptado. Cambiar de trabajador o liquidación cierra su editor.
+  Se conserva el paso existente «Aprobar y contabilizar», seguido de pago cuando
+  el motor confirme la causación. El ajuste visual no certifica los campos
+  contractuales/perfiles/centros por línea pendientes en 13.4 ni la paginación
+  histórica pendiente de 13.7. Un período sin elegibles explica que los contratos
+  deben coincidir en vigencia y periodicidad; no transforma un mensual en quincenal.
+  El lector canónico ReadRunAsync devuelve las novedades de cada trabajador:
+  las que se superponen al período y las referenciadas por sus partidas. También
+  incluye una entrada guardada aún sin recalcular y conserva la referencia de una
+  novedad cuyas fechas se corrigieron. Resuelve el conjunto autorizado antes de
+  enriquecerlo y usa el mismo comando SQL para detalle completo y respuesta parcial;
+  no consulta por trabajador ni trae novedades de otros períodos o contratos.
+  GetOptions deja de consultar el historial de novedades; su miembro Novelties
+  conserva la forma del contrato, vacío, como los antiguos selectores laborales.
+  La UI consume sólo las novedades del trabajador y aplica la respuesta del
+  guardado a ese mismo detalle antes del recálculo. No agrega endpoint, tabla,
+  writer, motor, polling ni GET posterior al guardado. El despliegue de API y web
+  se hace coordinadamente. Esto no cierra la paginación de los otros historiales
+  generales de nómina pendientes en 13.7.
+  La verificación local de este lector aprobó cinco escenarios SQL/API, incluido
+  el ciclo completo hasta pago, fiscal y reportes y los lotes de 2/100/500/501.
+  Cálculo de 500: 2.196 ms; recálculo individual p95: 712 ms, con diez comandos;
+  lectura del detalle: un comando. Se comprobaron novedades consumidas y de
+  importe cero, separación por trabajador y exclusión de otro período. La
+  regresión de pantalla cubre lista/detalle, días, alta/edición/retiro, fallo de
+  recálculo sin perder la captura, lectura histórica, cambio de sede/período y
+  respuesta tardía que no cierra una segunda captura. La revisión con datos
+  locales confirmó persistencia después de recargar y salario del snapshot
+  mostrado en el encabezado, sin consultar ni inventar un salario histórico.
 - Cada línea conserva identidad, concepto/naturaleza, cantidad/unidad, tarifa,
   base, valor, centro, observación y soporte según su método. Dos préstamos del
   mismo concepto siguen separados por origen. Importe fijo admite cantidad
@@ -1218,10 +1256,12 @@ pausas tanto en escrituras como en consumo del detalle, con lecturas físicas y
 presión de memoria; las capturas con XE son diagnóstico, no certificación. No se
 ampliaron los límites de tiempo ni se atribuyó toda variación a una sola causa.
 
-Pendientes de cierre de este incremento: estabilidad de rendimiento y el camino
-de corrección de novedades manuales existentes. La edición/retiro de manuales y los límites
-calendario/solapamientos siguen pendientes de sus slices; las nuevas validaciones
-de ausencias requieren completar el camino de corrección de entradas existentes.
+La corrección de novedades manuales se completa por la captura y el lector
+acotado de 13.2; las pruebas de calendario/solapamientos conservan sus propios
+escenarios. Las cifras históricas anteriores no certifican el rendimiento de
+un lector modificado: su verificación de 500 trabajadores y recálculo individual
+debe repetirse para ese cambio puntual. Continúan abiertos los gates generales
+de perfiles/afiliaciones, centros por línea e historiales descritos en 13.4 y 13.7.
 
 Evidencia y auditoría del incremento, sin declarar cerrado el diseño completo:
 

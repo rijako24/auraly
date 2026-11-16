@@ -502,6 +502,8 @@ public sealed record PayrollRunEmployeeView(
     decimal NetPayable,
     IReadOnlyList<PayrollRunLineView> Lines)
 {
+    public IReadOnlyList<PayrollNoveltyView> Novelties { get; init; } = [];
+    public decimal? MonthlySalary { get; init; }
     public decimal? BaseWorkedDays { get; init; }
     public decimal? MaximumContractDays { get; init; }
     public int? PeriodDays { get; init; }

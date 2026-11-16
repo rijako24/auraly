@@ -56,7 +56,15 @@ public sealed partial class PayrollVerticalSliceTests
             new CalculatePayrollRunRequest(run.RowVersion,WorkedDaysChanges:[new(employmentId,0)]));
         var zero=Assert.Single(edited.Employees);Assert.Equal(0,zero.WorkedDays);Assert.Equal(0,zero.Earnings);
         Assert.Equal(3,zero.BaseWorkedDays);Assert.Equal(0,Assert.Single(zero.Lines).Amount);
-        return await GetAsync<PayrollRunView>(client,$"/api/commerce/v1/payroll/runs/{run.PayrollRunId}");
+        Assert.Equal(absence.NoveltyId,Assert.Single(zero.Novelties).NoveltyId);
+        var future=await PostAsync<PayrollNoveltyView>(client,"/api/commerce/v1/payroll/novelties",new SavePayrollNoveltyRequest(
+            Guid.NewGuid(),employmentId,conceptId,Option(PayrollCatalogCodes.NoveltyType,"Amount"),null,null,
+            run.PeriodStart.AddMonths(1),run.PeriodEnd.AddMonths(1),0,null,0,"Otro período no pertenece al detalle",null));
+        var detail=await GetAsync<PayrollRunView>(client,$"/api/commerce/v1/payroll/runs/{run.PayrollRunId}");
+        Assert.All(detail.Employees,employee=>Assert.All(employee.Novelties,novelty=>Assert.Equal(employee.EmploymentId,novelty.EmploymentId)));
+        Assert.DoesNotContain(detail.Employees.SelectMany(employee=>employee.Novelties),novelty=>novelty.NoveltyId==future.NoveltyId);
+        Assert.Empty((await GetAsync<PayrollWorkspaceOptions>(client,"/api/commerce/v1/payroll/options")).Novelties);
+        return detail;
     }
 
     private async Task AssertWorkedDaysAsync(HttpClient configurationClient,PayrollWorkspaceOptions options,PayrollService service,
@@ -106,7 +114,14 @@ public sealed partial class PayrollVerticalSliceTests
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         await File.WriteAllTextAsync(file,JsonSerializer.Serialize(new{workers=500,affected=1,commands=10,p95,samples,sqlSamples}));
         Assert.True(p95<1000,$"Individual recalculation exceeded its budget: {p95:F1} ms");
-        var reread=await store.GetRunAsync(user,initial.PayrollRunId,CancellationToken.None);
+        PayrollRunView reread;
+        using(var reads=new InventoryBalanceProcessingTests.CommandCounter(database))
+        {
+            reread=await store.GetRunAsync(user,initial.PayrollRunId,CancellationToken.None);
+            Assert.Equal(1,reads.Count);
+        }
+        Assert.Equal(noveltyId,Assert.Single(reread.Employees.Single(employee=>employee.EmploymentId==employmentId).Novelties).NoveltyId);
+        Assert.All(reread.Employees.Where(employee=>employee.EmploymentId!=employmentId),employee=>Assert.Empty(employee.Novelties));
         Assert.False(reread.IsPartialCalculation);Assert.Equal(500,reread.Employees.Count);
         Assert.Equal(reread.Employees.Sum(value=>value.Earnings),reread.TotalEarnings);
         Assert.Equal(reread.Employees.Sum(value=>value.NetPayable),reread.NetPayable);

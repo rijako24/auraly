@@ -78,10 +78,12 @@ async function setup(page: Page, baseURL: string, granted = permissions) {
         runs.push(run); body = run;
       } else if (path.endsWith("/calculate") && data.recalculateEmploymentIds) {
         if(failures.calculation){failures.calculation=false;await route.fulfill({status:503,json:{detail:"Recálculo temporalmente no disponible"}});return;}
-        const updated={...runs[0].employees[0],payrollRunEmployeeId:crypto.randomUUID(),earnings:1000000,deductions:130000,netPayable:870000,
-          lines:[{lineNumber:1,conceptId:"loan",conceptCode:"PRESTAMO",conceptName:"Préstamo empleado",natureCode:"Deduction",dianConceptCode:null,
-            accountingCategoryCode:"EmployeeLoansReceivable",quantity:0,rate:null,baseAmount:null,amount:50000,isEmployerCost:false,isSalaryBase:false,
-            noveltyId:options.novelties[0].noveltyId}]};
+        const novelty=options.novelties[0];
+        const amount=novelty.status==="Voided"?0:novelty.totalAmount;
+        const updated={...runs[0].employees[0],novelties:[novelty],payrollRunEmployeeId:crypto.randomUUID(),earnings:1000000,deductions:130000,netPayable:870000,
+          lines:amount?[{lineNumber:1,conceptId:"loan",conceptCode:"PRESTAMO",conceptName:"Préstamo empleado",natureCode:"Deduction",dianConceptCode:null,
+            accountingCategoryCode:"EmployeeLoansReceivable",quantity:0,rate:null,baseAmount:null,amount,isEmployerCost:false,isSalaryBase:false,
+            noveltyId:novelty.noveltyId}]:[]};
         Object.assign(runs[0],{employees:[updated],rowVersion:"AAAAAAAAAAI=",totalDeductions:130000,netPayable:870000,calculationVersion:2});
         body={...runs[0],isPartialCalculation:true};
       } else if (path.endsWith("/calculate")) {
@@ -114,13 +116,16 @@ async function setup(page: Page, baseURL: string, granted = permissions) {
       else if (path.endsWith("/execution-context/tenants")) body = [{ tenantId, name: "Empresa prueba" }];
       else if (path.endsWith("/execution-context/businesses")) body = [{ tenantId, businessId, name: "Sede principal", timeZone: "America/Bogota" }, { tenantId, businessId: secondBusinessId, name: "Sede norte", timeZone: "Asia/Tokyo" }];
       else if (path.endsWith("/execution-context/access")) body = { tenantId, businessId: business, roles: user.roles, permissions: granted };
-      else if (path.endsWith("/payroll/options")) body = options;
+      else if (path.endsWith("/payroll/options")) body = {...options,novelties:[]};
       else if (path.endsWith("/payroll/runs")) body = runs;
       else if (/\/payroll\/runs\/[^/]+\/employments$/.test(path)) body = {
         items: employees.map(employee => ({ ...employee, identification: "123456", payFrequencyName: "Mensual", isSelected: true })),
         page: 1, pageSize: 50, totalCount: employees.length, eligibleCount: employees.length, selectedCount: employees.length, rowVersion: version };
       else if (path.includes("/payment-methods/")) body = { items: [{ paymentMethodId: "cash-form", code: "CAJA", name: "Caja nómina", methodCode: "Cash", accountId: "cash-account", accountCode: "110501", accountName: "Caja" }], page: 1, pageSize: 20, totalCount: 1 };
-      else if (path.includes("/payroll/runs/")) body = runs.find(run => path.endsWith(run.payrollRunId));
+      else if (path.includes("/payroll/runs/")) {
+        const run=runs.find(run => path.endsWith(run.payrollRunId));
+        body=run?{...run,employees:run.employees.map(employee=>({...employee,novelties:options.novelties.filter(novelty=>novelty.employmentId===employee.employmentId && novelty.startDate<=run.periodEnd && novelty.endDate>=run.periodStart)}))}:null;
+      }
       else if (path.endsWith("/payroll/employments")) body = { items: business === secondBusinessId ? [] : employees, page: 1, pageSize: 25, totalPages: 1, totalCount: business === secondBusinessId ? 0 : employees.length };
       else if (path.endsWith("/parties/role-options")) body = { items: [{ partyId: "party", employeeId: "employee", roleId: "employee", role: "Employee", name: "Elena Prueba", displayName: "Elena Prueba", identification: "123456" }], page: 1, pageSize: 10, totalPages: 1, totalCount: 1 };
       else if (path.endsWith("/subscription")) body = { dianDocumentMonthlyLimit: 10, dianDocumentsUsed: 0 };
@@ -210,9 +215,17 @@ test("crear y reabrir contrato, descuento y novedad conserva sus datos", async (
   await page.getByRole("button", { name: "Guardar autorización" }).click();
   await expect.poll(() => state.options.deductionAgreements.length).toBe(1);
   state.options.deductionAgreements[0].beneficiaryPartyId = "beneficiary";
+  const employee=state.employees[0];
+  state.runs.push({payrollRunId:"worker-run",businessId,ruleSetId:"rules",runKind:"Regular",originalPayrollRunId:null,periodStart:"2026-08-01",periodEnd:"2026-08-31",paymentDate:"2026-08-31",
+    status:"Calculated",employeeCount:1,totalEarnings:1000000,totalDeductions:80000,netPayable:920000,totalEmployerContributions:0,totalProvisions:0,calculationVersion:1,rowVersion:version,payableEmployees:[],
+    employees:[{payrollRunEmployeeId:"calculation-before",employmentId:employee.employmentId,partyId:employee.partyId,employeeName:"Elena Prueba",workedDays:30,baseWorkedDays:30,maximumContractDays:30,periodDays:30,
+      earnings:1000000,deductions:80000,netPayable:920000,employerContributions:0,provisions:0,lines:[]}]});
   await page.getByRole("button", { name: "Actualizar nómina" }).click();
-  await page.getByRole("button", { name: "Agregar", exact: true }).last().click();
-  await choose(page, "Trabajador", "Elena Prueba");
+  await choose(page,"Liquidación","2026-08-01 — 2026-08-31");
+  await page.getByRole("button",{name:"Elena Prueba",exact:true}).click();
+  await page.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+  const noveltyEditor=page.getByRole("region",{name:"Edición de novedad",exact:true});
+  await expect(noveltyEditor.getByRole("textbox").first()).toHaveValue("Elena Prueba");
   await choose(page, "Concepto", "PRESTAMO · Préstamo empleado");
   await choose(page, "Tipo de novedad", "Valor");
   await expect(page.getByRole("button", { name: "Registrar novedad" })).toBeDisabled();
@@ -225,15 +238,15 @@ test("crear y reabrir contrato, descuento y novedad conserva sus datos", async (
   await choose(page,"Tipo de novedad","Valor");
   const readsBefore=state.reads.length;
   await page.getByRole("button", { name: "Registrar novedad" }).click();
-  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(noveltyEditor).toBeHidden();
   expect(state.options.novelties[0].quantity).toBe(0);
   expect(state.reads.length).toBe(readsBefore);
   await page.getByRole("button",{name:"Editar novedad",exact:true}).click();
-  await expect(page.getByRole("dialog").getByRole("textbox").first()).toHaveValue("Elena Prueba");
+  await expect(noveltyEditor.getByRole("textbox").first()).toHaveValue("Elena Prueba");
   await page.getByLabel("Valor total",{exact:true}).fill("60000");
   await page.getByLabel("Notas",{exact:true}).fill("Cuota corregida");
   await page.getByRole("button",{name:"Guardar novedad",exact:true}).click();
-  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(noveltyEditor).toBeHidden();
   await expect(page.getByText("Cuota corregida",{exact:true})).toBeVisible();
   expect(state.options.novelties[0].totalAmount).toBe(60000);
   expect(state.reads.length).toBe(readsBefore);
@@ -397,7 +410,7 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
   const editor=page.getByRole("region",{name:"Liquidación de Elena Prueba",exact:true});
   const readsBefore=state.reads.length;
   await editor.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
-  const dialog=page.getByRole("dialog");
+  const dialog=page.getByRole("region",{name:"Edición de novedad",exact:true});
   await expect(dialog.getByRole("textbox").first()).toHaveValue("Elena Prueba");
   await choose(page,"Concepto","PRESTAMO · Préstamo empleado");await choose(page,"Tipo de novedad","Valor");
   await choose(page,"Acuerdo de descuento (si aplica)","AUT-WORKER");await page.getByLabel("Valor total",{exact:true}).fill("50000");
@@ -407,7 +420,7 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
     await page.getByRole("button",{name:"Registrar novedad",exact:true}).click();
     try {
       await expect.poll(()=>state.options.novelties.length).toBe(1);
-      await page.keyboard.press("Escape");
+      await page.getByRole("button",{name:"Cerrar edición",exact:true}).click();
       await page.getByRole("banner").getByRole("combobox").click();
       await page.getByRole("button",{name:"Sede norte Espacio de trabajo"}).click();
       await expect(page.getByRole("banner").getByRole("combobox")).toContainText("Sede norte");
@@ -418,8 +431,18 @@ for(const switchScope of [false,true]) test(`novedad del trabajador guarda una v
     expect(state.writes.filter(item=>item.path.endsWith("/novelties"))).toHaveLength(1);return;
   }
   state.failures.calculation=true;
+  let release:()=>void=()=>{};state.controls.noveltyResponse=new Promise<void>(resolve=>{release=resolve;});
   await page.getByRole("button",{name:"Registrar novedad",exact:true}).click();
-  await expect(dialog).toBeHidden();await expect(page.getByText(/Novedad guardada. No fue posible actualizar el cálculo/)).toBeVisible();
+  try {
+    await expect.poll(()=>state.options.novelties.length).toBe(1);
+    await page.getByRole("button",{name:"Cerrar edición",exact:true}).click();
+    await editor.getByRole("button",{name:"Agregar novedad al trabajador",exact:true}).click();
+    await dialog.getByRole("textbox",{name:"Notas",exact:true}).fill("Segunda captura sin guardar");
+  } finally {release();}
+  await expect(page.getByText(/Novedad guardada. No fue posible actualizar el cálculo/)).toBeVisible();
+  await expect(dialog.getByRole("textbox",{name:"Notas",exact:true})).toHaveValue("Segunda captura sin guardar");
+  await page.getByRole("button",{name:"Cerrar edición",exact:true}).click();
+  await expect(dialog).toBeHidden();
   expect(state.options.novelties).toHaveLength(1);
   await editor.getByRole("button",{name:"Recalcular trabajador",exact:true}).click();
   await expect(editor.getByRole("row").filter({hasText:"PRESTAMO"})).toContainText("50.000");

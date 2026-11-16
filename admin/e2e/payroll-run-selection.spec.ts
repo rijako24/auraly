@@ -141,3 +141,24 @@ test("sólo lectura no carga el selector de trabajadores",async({page,baseURL})=
     await expect(page.getByText("Seleccionar trabajadores",{exact:true})).toHaveCount(0);
     await expect(page.getByRole("button",{name:"Calcular nómina",exact:true})).toHaveCount(0);
 });
+
+test("sin contratos elegibles explica periodicidad y vigencia antes de liquidar",async({page,baseURL})=>{
+    const scenario=financialVoucherScenario();scenario.user.permissions.push("payroll.read","payroll.calculate");
+    await installFinancialVoucherContext(page,baseURL!,scenario);
+    const run={payrollRunId:id(1),periodStart:"2026-12-01",periodEnd:"2026-12-15",status:"Draft",employeeCount:0,
+        totalEarnings:0,totalDeductions:0,netPayable:0,employees:[],rowVersion:"AAAAAAAAAAE="};
+    let candidateReads=0;
+    await page.route("**/api/commerce/v1/payroll/**",async route=>{
+        expect(route.request().method()).toBe("GET");const path=new URL(route.request().url()).pathname;
+        if(path.endsWith("/options")){await route.fulfill({json:{catalogs:{},concepts:[],employments:[],parties:[],ruleSets:[],settings:null,deductionAgreements:[],novelties:[],paymentBatches:[],electronicPeriods:[]}});return;}
+        if(path.endsWith("/runs")){await route.fulfill({json:[run]});return;}
+        if(path.endsWith(`/runs/${id(1)}`)){await route.fulfill({json:run});return;}
+        if(path.endsWith("/employments")){candidateReads++;await route.fulfill({json:{items:[],page:1,pageSize:50,totalCount:0,eligibleCount:0,selectedCount:0,rowVersion:run.rowVersion}});return;}
+        throw new Error(`Unexpected request ${path}`);
+    });
+    await page.goto("/dashboard/payroll");
+    await page.getByRole("button",{name:/2026-12-01 — 2026-12-15/}).click();
+    await expect(page.getByText("No hay contratos activos y vigentes que coincidan con la periodicidad de esta liquidación. Revisa la periodicidad y las fechas de los contratos.",{exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Calcular nómina",exact:true})).toBeDisabled();
+    expect(candidateReads).toBe(1);
+});

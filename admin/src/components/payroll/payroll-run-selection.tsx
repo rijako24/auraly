@@ -115,7 +115,9 @@ export function PayrollRunSelection({ run, disabled, calculating, onCalculate, o
                     </tr>;
                 })}</tbody>
             </table></div>
-            {data.items.length === 0 && <p className="text-sm">No hay trabajadores que coincidan con la búsqueda.</p>}
+            {data.items.length === 0 && <p className="text-sm">{data.eligibleCount === 0
+                ? "No hay contratos activos y vigentes que coincidan con la periodicidad de esta liquidación. Revisa la periodicidad y las fechas de los contratos."
+                : "No hay trabajadores que coincidan con la búsqueda."}</p>}
             <div className="flex items-center justify-between gap-2 text-sm"><span>Página {page} · {data.totalCount} resultados</span><div className="flex gap-2">
                 <Button size="sm" variant="outline" disabled={locked || query.isFetching || page === 1} onClick={() => setPage(value => value - 1)}>Anterior trabajadores</Button>
                 <Button size="sm" variant="outline" disabled={locked || query.isFetching || page * data.pageSize >= data.totalCount} onClick={() => setPage(value => value + 1)}>Siguiente trabajadores</Button>

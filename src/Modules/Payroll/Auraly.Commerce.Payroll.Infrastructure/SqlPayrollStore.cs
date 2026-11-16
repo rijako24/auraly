@@ -151,18 +151,6 @@ public sealed partial class SqlPayrollStore(
             WHERE a.TenantId=@TenantId AND e.BusinessId=@BusinessId
             ORDER BY a.IsActive DESC,a.Priority,p.DisplayName;
 
-            SELECT n.NoveltyId,n.EmploymentId,
-                   COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),e.ContractNumber),
-                   n.ConceptId,c.Name,n.NoveltyTypeOptionId,o.Label,n.DeductionAgreementId,
-                   n.StartDate,n.EndDate,n.Quantity,n.UnitAmount,n.TotalAmount,n.Notes,n.EvidenceUrl,n.Status,n.ReasonId,n.RowVersion
-            FROM payroll.Novelties n
-            JOIN payroll.Employments e ON e.EmploymentId=n.EmploymentId AND e.TenantId=n.TenantId
-            JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
-            JOIN payroll.Concepts c ON c.ConceptId=n.ConceptId AND c.TenantId=n.TenantId
-            JOIN payroll.CatalogOptions o ON o.OptionId=n.NoveltyTypeOptionId
-            WHERE n.TenantId=@TenantId AND n.BusinessId=@BusinessId
-            ORDER BY n.StartDate DESC,n.CreatedAt DESC;
-
             SELECT b.PaymentBatchId,
                    (SELECT TOP(1) re.PayrollRunId FROM payroll.PaymentLines pl
                     JOIN payroll.RunEmployees re ON re.PayrollRunEmployeeId=pl.PayrollRunEmployeeId
@@ -281,11 +269,6 @@ public sealed partial class SqlPayrollStore(
                 reader.GetInt16(15), reader.GetBoolean(16), reader.GetBoolean(17), (byte[])reader[18]));
 
         await reader.NextResultAsync(ct);
-        var novelties = new List<PayrollNoveltyView>();
-        while (await reader.ReadAsync(ct))
-            novelties.Add(ReadNovelty(reader));
-
-        await reader.NextResultAsync(ct);
         var paymentBatches = new List<PayrollPaymentBatchView>();
         while (await reader.ReadAsync(ct))
             paymentBatches.Add(new(reader.GetGuid(0), reader.GetGuid(1),
@@ -311,7 +294,7 @@ public sealed partial class SqlPayrollStore(
         return new(catalogs.ToDictionary(x => x.Key,
             x => (IReadOnlyList<PayrollCatalogOption>)x.Value, StringComparer.Ordinal),
             concepts, employments, parties, rules, settings,
-            electronicConfiguration, fiscalIssuers, agreements, novelties,
+            electronicConfiguration, fiscalIssuers, agreements, [],
             paymentBatches, electronicPeriods);
     }
 
@@ -754,7 +737,7 @@ public sealed partial class SqlPayrollStore(
         { throw new PayrollConflictException(error.Message); }
     }
 
-    private const string NoveltyResultSql = """
+    private const string NoveltyProjectionSql = """
         SELECT n.NoveltyId,n.EmploymentId,
           COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),e.ContractNumber),
           n.ConceptId,c.Name,n.NoveltyTypeOptionId,o.Label,n.DeductionAgreementId,
@@ -764,6 +747,10 @@ public sealed partial class SqlPayrollStore(
         JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
         JOIN payroll.Concepts c ON c.ConceptId=n.ConceptId AND c.TenantId=n.TenantId
         JOIN payroll.CatalogOptions o ON o.OptionId=n.NoveltyTypeOptionId
+        """;
+
+    private const string NoveltyResultSql = NoveltyProjectionSql + """
+
         WHERE n.NoveltyId=@Id AND n.TenantId=@TenantId AND n.BusinessId=@BusinessId;
         """;
 
@@ -2180,7 +2167,8 @@ public sealed partial class SqlPayrollStore(
               TRY_CONVERT(decimal(9,4),JSON_VALUE(e.EmployeeSnapshotJson,'$.BaseWorkedDays')),
               TRY_CONVERT(decimal(9,4),JSON_VALUE(e.EmployeeSnapshotJson,'$.MaximumContractDays')),
               TRY_CONVERT(int,JSON_VALUE(e.EmployeeSnapshotJson,'$.PeriodDays')),
-              JSON_VALUE(e.EmployeeSnapshotJson,'$.Identification'),JSON_VALUE(e.EmployeeSnapshotJson,'$.ContractNumber')
+              JSON_VALUE(e.EmployeeSnapshotJson,'$.Identification'),JSON_VALUE(e.EmployeeSnapshotJson,'$.ContractNumber'),
+              TRY_CONVERT(decimal(19,4),JSON_VALUE(e.EmployeeSnapshotJson,'$.MonthlySalary'))
             FROM @ReadEmployees selected JOIN payroll.RunEmployees e ON e.PayrollRunEmployeeId=selected.PayrollRunEmployeeId
             JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
             ORDER BY 4,e.EmploymentId OPTION(LOOP JOIN,FORCE ORDER,MAXDOP 1,RECOMPILE);
@@ -2192,6 +2180,22 @@ public sealed partial class SqlPayrollStore(
             SELECT TOP(@EmployeeReadLimit) PayrollRunEmployeeId,PaymentMethodOptionId,PaymentMethodName,NetPayable,
               BankDestinationComplete,EmployeeName
             FROM payroll.PayableRunEmployees(@TenantId,@BusinessId,@RunId);
+            DECLARE @ReadNovelties TABLE(NoveltyId uniqueidentifier PRIMARY KEY);
+            INSERT @ReadNovelties
+            SELECT n.NoveltyId FROM @ReadEmployees selected
+            JOIN payroll.RunEmployees employee ON employee.PayrollRunEmployeeId=selected.PayrollRunEmployeeId
+            JOIN payroll.Runs run ON run.PayrollRunId=employee.PayrollRunId AND run.TenantId=@TenantId AND run.BusinessId=@BusinessId
+            JOIN payroll.Novelties n ON n.EmploymentId=employee.EmploymentId AND n.TenantId=run.TenantId AND n.BusinessId=run.BusinessId
+              AND n.StartDate<=run.PeriodEnd AND n.EndDate>=run.PeriodStart;
+            INSERT @ReadNovelties
+            SELECT DISTINCT line.NoveltyId FROM @ReadEmployees selected
+            JOIN payroll.RunLines line ON line.PayrollRunEmployeeId=selected.PayrollRunEmployeeId
+            WHERE line.NoveltyId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM @ReadNovelties present WHERE present.NoveltyId=line.NoveltyId);
+            """ + NoveltyProjectionSql + """
+
+            WHERE n.TenantId=@TenantId AND n.BusinessId=@BusinessId
+              AND EXISTS(SELECT 1 FROM @ReadNovelties selected WHERE selected.NoveltyId=n.NoveltyId)
+            ORDER BY n.EmploymentId,n.StartDate,n.NoveltyId;
             """, connection,transaction);
         command.Parameters.Add("@EmployeeIds",SqlDbType.NVarChar,-1).Value=(object?)employeeIds??DBNull.Value;
         command.Parameters.AddWithValue("@EmployeeReadLimit",PayrollPaymentLimits.MaximumEmployees+1);
@@ -2203,16 +2207,21 @@ public sealed partial class SqlPayrollStore(
             DateOnly.FromDateTime(reader.GetDateTime(7)), reader.GetString(8), reader.GetInt32(9), reader.GetDecimal(10), reader.GetDecimal(11), reader.GetDecimal(12), reader.GetDecimal(13), reader.GetDecimal(14), (byte[])reader[15],reader.GetInt32(16));
         await reader.NextResultAsync(ct);
         var employeeRows = new List<EmployeeRow>();
-        while (await reader.ReadAsync(ct)) employeeRows.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3).Trim(), reader.GetDecimal(4), reader.GetDecimal(5), reader.GetDecimal(6), reader.GetDecimal(7), reader.GetDecimal(8), reader.GetDecimal(9),reader.IsDBNull(10)?null:reader.GetDecimal(10),reader.IsDBNull(11)?null:reader.GetDecimal(11),reader.IsDBNull(12)?null:reader.GetInt32(12),NullableString(reader,13),NullableString(reader,14)));
+        while (await reader.ReadAsync(ct)) employeeRows.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3).Trim(), reader.GetDecimal(4), reader.GetDecimal(5), reader.GetDecimal(6), reader.GetDecimal(7), reader.GetDecimal(8), reader.GetDecimal(9),reader.IsDBNull(10)?null:reader.GetDecimal(10),reader.IsDBNull(11)?null:reader.GetDecimal(11),reader.IsDBNull(12)?null:reader.GetInt32(12),NullableString(reader,13),NullableString(reader,14),reader.IsDBNull(15)?null:reader.GetDecimal(15)));
         await reader.NextResultAsync(ct);
         var lineLookup = employeeRows.ToDictionary(x => x.Id, _ => new List<PayrollRunLineView>());
         while (await reader.ReadAsync(ct))
             lineLookup[reader.GetGuid(0)].Add(new(reader.GetInt32(1), reader.GetGuid(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), NullableString(reader, 6), reader.GetString(7), reader.GetDecimal(8),
                 reader.IsDBNull(9) ? null : reader.GetDecimal(9), reader.IsDBNull(10) ? null : reader.GetDecimal(10), reader.GetDecimal(11), reader.GetBoolean(12)) {IsSalaryBase=reader.GetBoolean(13),NoveltyId=reader.IsDBNull(14)?null:reader.GetGuid(14),DeductionAgreementId=reader.IsDBNull(15)?null:reader.GetGuid(15),PayrollRunLineId=reader.GetGuid(16)});
         var employees = employeeRows.Select(x => new PayrollRunEmployeeView(x.Id, x.EmploymentId, x.PartyId, x.Name,
-            x.Days, x.Earnings, x.Deductions, x.Employer, x.Provisions, x.Net, lineLookup[x.Id]) {BaseWorkedDays=x.BaseDays,MaximumContractDays=x.MaximumDays,PeriodDays=x.PeriodDays,Identification=x.Identification,ContractNumber=x.ContractNumber}).ToArray();
+            x.Days, x.Earnings, x.Deductions, x.Employer, x.Provisions, x.Net, lineLookup[x.Id]) {BaseWorkedDays=x.BaseDays,MaximumContractDays=x.MaximumDays,PeriodDays=x.PeriodDays,Identification=x.Identification,ContractNumber=x.ContractNumber,MonthlySalary=x.MonthlySalary}).ToArray();
         await reader.NextResultAsync(ct);
         var payable=await ReadPayableEmployeesAsync(reader,ct);
+        await reader.NextResultAsync(ct);
+        var novelties=new List<PayrollNoveltyView>();
+        while(await reader.ReadAsync(ct))novelties.Add(ReadNovelty(reader));
+        var noveltyLookup=novelties.ToLookup(item=>item.EmploymentId);
+        employees=employees.Select(employee=>employee with {Novelties=noveltyLookup[employee.EmploymentId].ToArray()}).ToArray();
         return new(header.Id, header.BusinessId, header.RuleSetId, header.Kind, header.OriginalId, header.Start, header.End,
             header.Payment, header.Status, header.Version, header.Earnings, header.Deductions, header.Employer,
             header.Provisions, header.Net, employees, header.RowVersion) {PayableEmployees=payable,EmployeeCount=header.EmployeeCount,IsPartialCalculation=employeeIds is not null};
@@ -2415,7 +2424,7 @@ public sealed partial class SqlPayrollStore(
 
     private sealed record EmployeeSeed(Guid EmploymentId, Guid PartyId, decimal MonthlySalary, decimal WorkedDays, bool IsIntegral, decimal RiskRate, bool AppliesTransportAllowance, byte[] EmploymentVersion, decimal MaximumContractDays);
     private sealed record RunHeader(Guid Id, Guid BusinessId, Guid RuleSetId, string Kind, Guid? OriginalId, DateOnly Start, DateOnly End, DateOnly Payment, string Status, int Version, decimal Earnings, decimal Deductions, decimal Employer, decimal Provisions, decimal Net, byte[] RowVersion, int EmployeeCount);
-    private sealed record EmployeeRow(Guid Id, Guid EmploymentId, Guid PartyId, string Name, decimal Days, decimal Earnings, decimal Deductions, decimal Employer, decimal Provisions, decimal Net,decimal? BaseDays,decimal? MaximumDays,int? PeriodDays,string? Identification,string? ContractNumber);
+    private sealed record EmployeeRow(Guid Id, Guid EmploymentId, Guid PartyId, string Name, decimal Days, decimal Earnings, decimal Deductions, decimal Employer, decimal Provisions, decimal Net,decimal? BaseDays,decimal? MaximumDays,int? PeriodDays,string? Identification,string? ContractNumber,decimal? MonthlySalary);
     private sealed class ElectronicEmployeeSnapshotSeed(
         Guid partyId,
         string name,
