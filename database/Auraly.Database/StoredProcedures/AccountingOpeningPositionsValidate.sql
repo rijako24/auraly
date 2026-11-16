@@ -67,10 +67,12 @@ BEGIN
           OR position.Kind=N'Payable' AND (line.Debit<>0 OR line.Credit<>position.Amount OR account.AccountType<>N'Liability' OR ISNULL(account.BalanceSide,N'')<>N'Credit')
           OR position.Kind=N'Receivable' AND (line.Credit<>0 OR line.Debit<>position.Amount OR account.AccountType<>N'Asset' OR ISNULL(account.BalanceSide,N'')<>N'Debit')
           OR pending.PendingPaymentAmount<>0))
-        OR (@HistoricalCatchup=1 AND (position.Kind<>N'Receivable' OR line.Credit<>0
-          OR line.Debit<>position.OriginalAmount OR account.AccountType<>N'Asset'
-          OR account.FinancialFunction IS NOT NULL AND account.FinancialFunction<>N'Receivable'
-          OR account.BalanceSide IS NOT NULL AND account.BalanceSide<>N'Debit'
+        OR (@HistoricalCatchup=1 AND (
+          position.Kind=N'Receivable' AND (line.Credit<>0 OR line.Debit<>position.OriginalAmount
+            OR account.AccountType<>N'Asset' OR account.BalanceSide IS NOT NULL AND account.BalanceSide<>N'Debit')
+          OR position.Kind=N'Payable' AND (line.Debit<>0 OR line.Credit<>position.OriginalAmount
+            OR account.AccountType<>N'Liability' OR account.BalanceSide IS NOT NULL AND account.BalanceSide<>N'Credit')
+          OR account.FinancialFunction IS NOT NULL AND account.FinancialFunction<>position.Kind
           OR EXISTS(SELECT 1 FROM dbo.AccountingEntries entry
             WHERE entry.SourceDocumentId=position.SourceDocumentId
               AND entry.SourceDocumentType=position.SourceDocumentType)))
@@ -104,49 +106,63 @@ BEGIN
       RETURN;
     END;
 
-    -- A late, commercial-only imported sale can have posted collections before
-    -- its missing original journal is recognized. Those collections prove the
+    -- A commercial-only imported obligation can have posted payments before
+    -- its missing original journal is recognized. Those payments prove the
     -- control account; they are not replayed or subtracted a second time.
     IF EXISTS(SELECT 1 FROM @Transactions movement WHERE movement.TransactionType NOT IN(N'Opening',N'Payment',N'Adjustment')
         OR movement.TransactionType=N'Opening' AND CONVERT(date,movement.OccurredAt)>=@EffectiveOn
         OR movement.TransactionType=N'Payment' AND (movement.Amount<=0 OR CONVERT(date,movement.OccurredAt)<@EffectiveOn)
         OR movement.TransactionType=N'Adjustment' AND (movement.Amount=0 OR CONVERT(date,movement.OccurredAt)<@EffectiveOn))
       OR EXISTS(SELECT 1 FROM @Positions position LEFT JOIN
-        (SELECT movement.PositionId,
+        (SELECT movement.Kind,movement.PositionId,
           SUM(CASE movement.TransactionType WHEN N'Opening' THEN movement.Amount
             WHEN N'Adjustment' THEN movement.Amount ELSE -movement.Amount END) Balance,
           SUM(CASE WHEN movement.TransactionType=N'Opening' THEN 1 ELSE 0 END) OpeningCount,
           SUM(CASE WHEN movement.TransactionType=N'Opening' THEN movement.Amount ELSE 0 END) OpeningAmount
-         FROM @Transactions movement GROUP BY movement.PositionId) history ON history.PositionId=position.PositionId
+         FROM @Transactions movement GROUP BY movement.Kind,movement.PositionId) history
+         ON history.Kind=position.Kind AND history.PositionId=position.PositionId
         WHERE ISNULL(history.OpeningCount,0)<>1 OR history.OpeningAmount IS NULL
           OR history.OpeningAmount<>position.OriginalAmount OR history.Balance IS NULL
           OR history.Balance<>position.Amount)
       THROW 51408,N'La cartera histórica requiere una sola apertura y movimientos posteriores que expliquen exactamente su saldo.',1;
     IF EXISTS(SELECT 1 FROM @Transactions movement JOIN @Lines selected
-        ON selected.ExistingReceivableId=movement.PositionId
-      JOIN @Positions position ON position.PositionId=movement.PositionId
-        AND position.Kind=N'Receivable'
-      LEFT JOIN dbo.CustomerPayments payment ON payment.PaymentId=movement.SourceDocumentId
-        AND payment.BusinessId=@BusinessId AND payment.Status=N'Processed'
-      LEFT JOIN dbo.CustomerPaymentApplications application ON application.PaymentId=payment.PaymentId
-        AND application.ReceivableId=movement.PositionId AND application.Amount=movement.Amount
-      LEFT JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=application.PaymentId
-        AND job.SourceDocumentType=N'ReceivablePayment' AND job.TenantId=@TenantId
+        ON selected.ExistingReceivableId=movement.PositionId AND movement.Kind=N'Receivable'
+          OR selected.ExistingPayableId=movement.PositionId AND movement.Kind=N'Payable'
+      JOIN @Positions position ON position.PositionId=movement.PositionId AND position.Kind=movement.Kind
+      OUTER APPLY
+      (
+        SELECT payment.PaymentId,payment.TotalAmount,application.PaymentId AppliedPaymentId
+        FROM dbo.CustomerPayments payment
+        JOIN dbo.CustomerPaymentApplications application ON application.PaymentId=payment.PaymentId
+          AND application.ReceivableId=movement.PositionId AND application.Amount=movement.Amount
+        WHERE movement.Kind=N'Receivable' AND payment.PaymentId=movement.SourceDocumentId
+          AND payment.BusinessId=@BusinessId AND payment.Status=N'Processed' AND payment.ParentSourceDocumentId IS NULL
+        UNION ALL
+        SELECT payment.PaymentId,payment.TotalAmount,application.PaymentId
+        FROM dbo.SupplierPayments payment
+        JOIN dbo.SupplierPaymentApplications application ON application.PaymentId=payment.PaymentId
+          AND application.PayableId=movement.PositionId AND application.Amount=movement.Amount
+        WHERE movement.Kind=N'Payable' AND payment.PaymentId=movement.SourceDocumentId
+          AND payment.BusinessId=@BusinessId AND payment.Status=N'Processed' AND payment.ParentSourceDocumentId IS NULL
+      ) payment
+      LEFT JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=payment.PaymentId
+        AND job.SourceDocumentType=CASE movement.Kind WHEN N'Receivable' THEN N'ReceivablePayment' ELSE N'PayablePayment' END AND job.TenantId=@TenantId
         AND job.BusinessId=@BusinessId AND job.Status=N'Posted' AND job.AccountingEntryRequired=1
       LEFT JOIN dbo.AccountingEntries entry ON entry.SourceDocumentId=job.SourceDocumentId
         AND entry.SourceDocumentType=job.SourceDocumentType AND entry.TenantId=@TenantId
         AND entry.BusinessId=@BusinessId AND entry.SourcePayloadHash=job.SourcePayloadHash
       LEFT JOIN dbo.AccountingEntryLines journal ON journal.EntryId=entry.EntryId
         AND journal.AccountId=selected.AccountId AND journal.PartyId=position.PartyId
-        AND journal.Debit=0 AND journal.Credit>0
+        AND (movement.Kind=N'Receivable' AND journal.Debit=0 AND journal.Credit>0
+          OR movement.Kind=N'Payable' AND journal.Credit=0 AND journal.Debit>0)
       WHERE movement.TransactionType=N'Payment'
-      GROUP BY movement.PositionId,movement.SourceDocumentId,movement.Amount
-      HAVING COUNT_BIG(application.PaymentId)=0
-        OR ISNULL(SUM(journal.Credit),0)<>ISNULL(MAX(payment.TotalAmount),0))
+      GROUP BY movement.Kind,movement.PositionId,movement.SourceDocumentId,movement.Amount
+      HAVING COUNT_BIG(payment.AppliedPaymentId)=0
+        OR ISNULL(SUM(CASE movement.Kind WHEN N'Receivable' THEN journal.Credit ELSE journal.Debit END),0)<>ISNULL(MAX(payment.TotalAmount),0))
       OR EXISTS(SELECT 1 FROM @Transactions movement JOIN @Lines selected
-          ON selected.ExistingReceivableId=movement.PositionId
-        JOIN @Positions position ON position.PositionId=movement.PositionId
-          AND position.Kind=N'Receivable'
+          ON selected.ExistingReceivableId=movement.PositionId AND movement.Kind=N'Receivable'
+            OR selected.ExistingPayableId=movement.PositionId AND movement.Kind=N'Payable'
+        JOIN @Positions position ON position.PositionId=movement.PositionId AND position.Kind=movement.Kind
         LEFT JOIN dbo.AccountingPostingJobs job ON job.SourceDocumentId=movement.SourceDocumentId
           AND job.SourceDocumentType=N'AccountAdjustment' AND job.TenantId=@TenantId
           AND job.BusinessId=@BusinessId AND job.Status=N'Posted' AND job.AccountingEntryRequired=1
@@ -156,14 +172,15 @@ BEGIN
         LEFT JOIN dbo.AccountingEntryLines journal ON journal.EntryId=entry.EntryId
           AND journal.AccountId=selected.AccountId AND journal.PartyId=position.PartyId
         WHERE movement.TransactionType=N'Adjustment'
-        GROUP BY movement.PositionId,movement.SourceDocumentId,movement.Amount
+        GROUP BY movement.Kind,movement.PositionId,movement.SourceDocumentId,movement.Amount
         HAVING COUNT_BIG(entry.EntryId)=0
-          OR ISNULL(SUM(journal.Debit-journal.Credit),0)<>MAX(movement.Amount))
+          OR ISNULL(SUM(CASE movement.Kind WHEN N'Receivable' THEN journal.Debit-journal.Credit ELSE journal.Credit-journal.Debit END),0)<>MAX(movement.Amount))
       OR EXISTS(SELECT 1 FROM @Lines selected JOIN dbo.AccountingAccounts account
         ON account.AccountId=selected.AccountId AND account.TenantId=@TenantId
-        WHERE selected.ExistingReceivableId IS NOT NULL AND account.FinancialFunction IS NULL
+        WHERE (selected.ExistingReceivableId IS NOT NULL OR selected.ExistingPayableId IS NOT NULL) AND account.FinancialFunction IS NULL
           AND NOT EXISTS(SELECT 1 FROM @Transactions movement
-            WHERE movement.PositionId=selected.ExistingReceivableId
+            WHERE (movement.PositionId=selected.ExistingReceivableId AND movement.Kind=N'Receivable'
+              OR movement.PositionId=selected.ExistingPayableId AND movement.Kind=N'Payable')
               AND movement.TransactionType IN(N'Payment',N'Adjustment')))
-      THROW 51408,N'Los recaudos o ajustes previos no prueban una única cuenta de cartera y asiento por su valor. Revisa la conciliación histórica.',1;
+      THROW 51408,N'Los pagos, recaudos o ajustes previos no prueban una única cuenta de cartera y asiento por su valor. Revisa la conciliación histórica.',1;
 END;

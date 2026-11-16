@@ -3537,6 +3537,11 @@ La fecha del pago administrativo se edita en ese segundo paso, junto a los
 importes total y recibido/pagado, y se conserva al volver a seleccionar facturas.
 No aparece en la selección de obligaciones ni en el diálogo de una venta;
 el mismo estado del wizard sigue siendo la fuente de `PaidOn` e idempotencia.
+El aviso de confirmación muestra «Pago de cliente registrado» o «Pago a
+proveedor registrado», seguido del número de comprobante. Describe el registro
+aceptado sin afirmar que ya redujo el saldo; el historial y el detalle conservan
+el estado autoritativo de aplicación y su diagnóstico. No cambia la aceptación,
+el procesamiento ni los reintentos.
 
 - Administración de CxC recauda mediante Recibo de caja de cliente, accesible
   desde su módulo. CxP conserva el módulo de pago actual y la captura mediante

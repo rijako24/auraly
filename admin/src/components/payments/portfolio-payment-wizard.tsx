@@ -183,8 +183,7 @@ export function PortfolioPaymentWizard({direction,open,onOpenChange,initialParty
     if(printContext.traceabilityContext)void queryClient.invalidateQueries({queryKey:["financial-traceability",printContext.traceabilityContext],refetchType:"none"});
     sessionStorage.removeItem(attemptStorageKey);
     pendingAttempt.current=null;
-    if(accepted.status==="Processed")toast.success(`Pago aplicado: ${accepted.documentNumber}.`);
-    else toast.info(`${accepted.documentNumber} recibido y pendiente de aplicar. El abono aún no está confirmado.`);
+    toast.success(`${direction==="receivable"?"Pago de cliente":"Pago a proveedor"} registrado: ${accepted.documentNumber}.`);
     changeOpen(false);
     onCompleted?.();
     if(accepted.idempotentReplay||!businessId||printContext.printChoice==="none")return;

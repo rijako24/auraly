@@ -321,7 +321,7 @@ test(`recibe compra por UI, conserva foco y descuento y retoma el cargo existent
   expect(paymentResponse.ok(), await paymentResponse.text()).toBe(true);
   const payment = await paymentResponse.json() as { paymentId: string; documentNumber: string; status: string };
   expect(payment.status).toBe("Accepted");
-  await expect(page.getByText(`${payment.documentNumber} recibido y pendiente de aplicar. El abono aún no está confirmado.`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`Pago a proveedor registrado: ${payment.documentNumber}.`, { exact: true })).toBeVisible();
   expect(receiptReads).toBe(1);
   const paymentKey = paymentResponse.request().headers()["idempotency-key"];
   expect(paymentKey).toBeTruthy();

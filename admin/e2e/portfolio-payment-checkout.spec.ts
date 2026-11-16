@@ -179,13 +179,13 @@ test(`abono conserva captura y distingue rechazo de resultado incierto (${failur
     expect(confirmation).not.toHaveProperty("paidOn");
   }
   await expect.poll(() => customerReads).toBeGreaterThan(1);
+  await expect(page.getByText("Pago de cliente registrado: RCC-001.", { exact: true })).toBeVisible();
+  await expect(page.getByText(/recibido y pendiente de aplicar/)).toHaveCount(0);
   if (acceptedStatus === "Accepted") {
-    await expect(page.getByText(/RCC-001 recibido y pendiente de aplicar/)).toBeVisible();
     await expect(page.getByLabel("Resumen de cartera")).toContainText("10.450");
     expect(paid).toBe(false);
     return;
   }
-  await expect(page.getByText("Pago aplicado: RCC-001.")).toBeVisible();
   await expect(page.getByLabel("Resumen de cartera")).toContainText("$ 0");
   const readsAfterPayment = paymentInvoiceReads;
   await page.getByRole("row", { name: /Cliente prueba/ }).click();
@@ -308,8 +308,9 @@ test(`pago a proveedor muestra cuatro medios, usa F1-F4 y captura tarjeta (${sup
     allocations: [{ payableId, amount: financialDiscount ? 10000 : 12400,
       financialDiscountEarned: financialDiscount ? true : null }] });
   await expect.poll(() => supplierReads).toBeGreaterThan(1);
+  await expect(page.getByText("Pago a proveedor registrado: PGP-001.", { exact: true })).toBeVisible();
+  await expect(page.getByText(/recibido y pendiente de aplicar/)).toHaveCount(0);
   if (supplierStatus === "Accepted") {
-    await expect(page.getByText(/PGP-001 recibido y pendiente de aplicar/)).toBeVisible();
     await expect(page.getByLabel("Resumen de cartera")).toContainText("12.400");
     expect(paid).toBe(false);
     return;

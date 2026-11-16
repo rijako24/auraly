@@ -147,6 +147,29 @@ existing accounting retry processes them once. The ordinary opening path and
 its stricter cut remain unchanged. No payment or balance is written by this
 reconciliation outside `SqlAccountingPostingProcessor`.
 
+The DEV payment audit on 2026-11-16 reproduced the same gap for a migrated
+commercial-only payable: its original COP 2,000,000 obligation had no opening
+journal, while a COP 500,000 payment was already posted and two new payments
+were accepted without application. The explicit historical opening validator is
+extended to payables through the same reconciled opening and processor. It
+requires the original credit to a liability control account, proves prior
+supplier payments against that account's posted debit and the entire original
+payment amount, and checks signed adjustments with liability polarity. The
+original balance, transactions and previous journal remain unchanged by opening;
+only explicitly selected pending jobs are retried afterward. Accounts,
+counterpart, date and selected payment IDs require an approved data plan. No
+current mapping substitutes for missing historical evidence, and the ordinary
+opening/activation editability rules remain unchanged. Eight targeted local
+cases passed: the existing historical receivable, valid and invalid historical
+payables, both ordinary opening lifecycles, and captures of 2/50/500 lines. The
+captures retained three SQL commands and took 476/719/728 ms respectively. The
+historical validator used one command, and replay preserved the old payment,
+one opening journal and one effect per new payment. This evidence does not
+certify execution of the DEV data plan or PROD. A separate purchase case with a
+COP 2,000,000 unit cost and COP 10,000 sale price exposed a negative-margin
+numeric overflow before financial opening; that pricing issue remains pending
+an explicit scope decision and is not covered by the passed reconciliation case.
+
 The production cutover must quiesce old API and worker writers before publishing
 the DACPAC, verify that every posted position is linked, and start only the new
 workers/API afterward. Releasing the schema while an old writer continues to
