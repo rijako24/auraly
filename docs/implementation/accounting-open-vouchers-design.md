@@ -3874,6 +3874,10 @@ uso; conservar la presentación no congela los medios técnicos actuales.
   proyecciones preparadas, ventas, cartera, comprobantes, nómina y reportes.
   El catálogo sincronizado es una proyección del mismo maestro por tenant,
   sin edición o reglas alternas en Edge. Se preserva la presentación del POS.
+  Retirar el selector histórico también avanza una sola vez el cursor
+  `Configuration` de cada sede en el outbox existente, aunque ya tuviera las
+  cuatro formas y el bootstrap no inserte filas. Así una caja preparada recibe
+  el contrato vigente sin borrar su captura ni exigir una resincronización total.
   Guardar una forma añade los avisos `Configuration` para las sedes del tenant
   al outbox de sincronización existente, dentro de la misma transacción SQL.
   El mismo resultado devuelve las sedes afectadas; después del commit se señala

@@ -15,6 +15,13 @@ public sealed partial class AccountingVerticalSliceTests
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
         try
         {
+            await using (var cursors = new SqlCommand("""
+                SELECT business.BusinessId,COALESCE(MAX(notice.AvailableThroughCursor),0) CursorValue,
+                  COUNT(notice.NotificationId) NoticeCount INTO #PreviousConfigurationCursors
+                FROM dbo.Businesses business LEFT JOIN dbo.PosSynchronizationOutboxMessages notice
+                  ON notice.BusinessId=business.BusinessId AND notice.Stream=N'Configuration'
+                GROUP BY business.BusinessId;
+                """,connection,transaction)) await cursors.ExecuteNonQueryAsync();
             byte[] original;
             await using (var snapshot = new SqlCommand(
                 "SELECT HASHBYTES('SHA2_256',(SELECT * FROM dbo.Tenants ORDER BY TenantId FOR JSON PATH));", connection, transaction))
@@ -32,11 +39,19 @@ public sealed partial class AccountingVerticalSliceTests
                 await fixture.ApplyMigrationAsync("20261116_RetireTenantPaymentContractSwitch.sql", connection, transaction);
             await using var verify = new SqlCommand("""
                 SELECT COL_LENGTH(N'dbo.Tenants',N'PaymentMethodContractVersion'),
-                  HASHBYTES('SHA2_256',(SELECT * FROM dbo.Tenants ORDER BY TenantId FOR JSON PATH));
+                  HASHBYTES('SHA2_256',(SELECT * FROM dbo.Tenants ORDER BY TenantId FOR JSON PATH)),
+                  (SELECT COUNT(*) FROM #PreviousConfigurationCursors previous OUTER APPLY(
+                    SELECT COALESCE(MAX(notice.AvailableThroughCursor),0) CursorValue,COUNT(*) NoticeCount
+                    FROM dbo.PosSynchronizationOutboxMessages notice
+                    WHERE notice.BusinessId=previous.BusinessId AND notice.Stream=N'Configuration') currentNotices
+                   WHERE currentNotices.CursorValue<>previous.CursorValue+@Added
+                     OR currentNotices.NoticeCount<>previous.NoticeCount+@Added);
                 """, connection, transaction);
+            verify.Parameters.AddWithValue("@Added",historicalSwitch?1:0);
             await using var reader = await verify.ExecuteReaderAsync();
             Assert.True(await reader.ReadAsync()); Assert.True(reader.IsDBNull(0));
             Assert.Equal(original, (byte[])reader[1]);
+            Assert.Equal(0,reader.GetInt32(2));
         }
         finally { await transaction.RollbackAsync(); }
     }
